@@ -1,6 +1,6 @@
 # PLAN — Conversation Intervention Tickets
 
-Status: Phases 1-3 DONE (PR #137 open); defect batch D1-D6 in flight; Phase 4 (parity + liveness) PLANNED 2026-08-14, awaiting user review
+Status: Phases 1-3 DONE (PR #137 open); defect batch D1-D6 in flight; Phase 4 (parity + liveness) PLANNED 2026-08-14, awaiting user review. S4.9 backend gaps 1-4 CLOSED 2026-08-15 (contract below); FE follow-up (consume them) + gaps 5-6 still open.
 UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M + B3/B4 added 2026-08-14)
 
 ## Decision summary
@@ -659,17 +659,19 @@ untouched) and `(focusMessageId, focusNonce)` (AC-N6, caller-driven scroll targe
 
 Follow-ups this slice deliberately did NOT do (each is a backend gap, not an FE
 choice):
-1. **Contact-keyed note CREATE.** Only the LIST is contact-keyed. The inbox therefore
-   disables Note unless the viewer holds exactly one open ticket for the contact, and
-   posts through the ticket route when they do.
-2. **Contact-keyed 24h window / chat-template read.** The inbox composer cannot show
-   the out-of-window template inline the way the drawer does; the backend still
-   smart-sends it.
-3. **`POST /conversations/{ref}/reply` carries no `reply_to_message_id` /
-   `reply_to_excerpt`,** so the inbox thread offers no per-bubble Reply-quote.
-4. **`.../conversation-sla-tracking/visible-users` does not return `respond_user_id`.**
-   The Respond-linked badge reads the shared user-select endpoint instead, gated by
-   `user_management.users.view`, and degrades to no-badge-no-filter when that 403s.
+1. ~~**Contact-keyed note CREATE.**~~ **CLOSED 2026-08-15 (backend)** - see the
+   gap-closure contract below. Only the LIST was contact-keyed, so the inbox
+   disabled Note unless the viewer held exactly one open ticket for the contact.
+2. ~~**Contact-keyed 24h window / chat-template read.**~~ **CLOSED 2026-08-15
+   (backend)** - the inbox composer could not show the out-of-window template
+   inline the way the drawer does; the backend still smart-sent it.
+3. ~~**`POST /conversations/{ref}/reply` carries no `reply_to_message_id` /
+   `reply_to_excerpt`.**~~ **CLOSED 2026-08-15 (backend)** - the inbox thread
+   offered no per-bubble Reply-quote.
+4. ~~**`.../conversation-sla-tracking/visible-users` does not return the Respond
+   linkage.**~~ **CLOSED 2026-08-15 (backend)** - the badge read the shared
+   user-select endpoint, gated by `user_management.users.view`, and degraded to
+   no-badge-no-filter when that 403'd.
 5. **The S4.2 SSE subscriber is still backend-only.** No `EventSource` hook exists in
    the FE, so inbox liveness is a bounded 30s list interval plus the thread's existing
    10s poll. When the subscriber lands, the open thread subscribes with `?contacts=`
@@ -679,6 +681,82 @@ choice):
    `PurchaseRequestConversationPanel`) and still render the legacy bubble list. Moving
    them onto the shared thread is its own slice: each has form-SLA chrome around the
    panel, and their contact is reached by entity, not by tracking id.
+
+**Backend gap-closure as built 2026-08-15 (gaps 1-4). This IS the FE contract for
+the follow-up FE slice - build from this text.** Everything stays under
+`/api/v1/sla-management`; `contact_ref` resolves exactly as it already does (a
+Respond.io contact id, a `respond_contacts.id` or a phone number; unresolvable ->
+404). Tests: `tests/test_conversations_contact_note_create.py` (15),
+`tests/test_conversations_contact_window_template.py` (14), the quoted-reply and
+picker-linkage additions in `tests/test_conversations_contact_endpoints.py` (20
+total) and `tests/test_sla_takeover_reassign.py` (17 total).
+
+1. **`POST /conversations/{contact_ref}/comments`** - permission
+   `sla_management.conversations.view` (a note is internal staff context, so a
+   view-holder may annotate; assignment has nothing to do with it). Body
+   `{"body": "...", "mentioned_user_ids": ["<user uuid>", ...]}`, response `201`
+   with the SAME `TicketCommentResponse` the drawer renders (`tracking_id` is
+   `null` - the note belongs to the contact). Blank body -> 422; a mentioned user
+   who no longer exists -> 400 (the whole note is refused rather than silently
+   dropping the mention). The row is contact-scoped, i.e. the same shape a
+   Respond-ingested note has, so it renders in `GET /{ref}/comments` AND in every
+   open ticket drawer for that contact with no new rule.
+   `TicketCommentService.create_for_contact` shares mention validation, the
+   persist, the in-app mention notification, the Respond mirror (+ its
+   `integration_log` outbox row on success AND failure) and the live-thread poke
+   with `create_comment`. The only difference is the mention deep link: a drawer
+   note links to its ticket (`/?ticket=<id>`), a contact note links to
+   `/sla-management/conversations?contact=<contact_ref>` with
+   `source_entity_type="respond_contacts"`. **FE follow-up:** the inbox page does
+   not read that query param yet, so the notification currently lands on the
+   inbox with nothing selected - honour `?contact=` when wiring Note mode.
+2. **`POST /conversations/{contact_ref}/reply`** now also accepts
+   `reply_to_message_id` and `reply_to_excerpt`, on BOTH the JSON body and the
+   multipart form, exactly like `POST /conversation-sla-tracking/{id}/ticket/send`.
+   They are audit-only and never reach Respond (it has no reply-to parameter):
+   the composer composes the ">" quote prefix into `text`, which is sent verbatim.
+   On the STAMPED lane they land on that ticket's `response` event log reason
+   (`CRM reply (sent_as=text, reply_to_message_id=..., quoted_reply=true)`); on the
+   unstamped lane there is no ticket to record them against, so they are accepted
+   and dropped rather than refused. Response shape is unchanged.
+3. **`GET /conversations/{contact_ref}/window`** - permission `.view`. Returns
+   ```json
+   {"window": {"open": false, "expires_at": null},
+    "chat_template": { /* ChatTemplatePreview, or {configured:false, reason:"no_contact"} */ }}
+   ```
+   the SAME two objects the drawer reads off `GET .../{tracking_id}/ticket` (one
+   service core, `_window_and_template`, answers both - pinned by a test that
+   compares the two responses). Feed it straight into
+   `SharedConversationComposer`'s `windowStateOverride` as
+   `{closed: !window.open, template: chat_template}` and drop the
+   `{closed:false}` hard-code. NOT DB-only: the window is a live Respond call.
+   **`POST /conversations/{contact_ref}/template-message`** - permission
+   `.reply`, body `{"template_id": "<uuid>", "params": {"1": "...", ...}}` (the
+   entity routes' body; a `tracking_id` in the body is ignored here because the
+   ticket is derived, not chosen). Synchronous. Response:
+   ```json
+   {"ok": true, "queued": false, "template_name": "...", "rendered_body": "...",
+    "stamped_ticket_id": "<uuid>|null"}
+   ```
+   Stamping follows the reply's rule exactly: exactly one open ticket of the
+   sender's for that contact makes this that ticket's first response (clock +
+   AC-J human-send signal, identical to the drawer's template send); zero or
+   several leaves it unstamped against the contact. Unknown template -> 404,
+   missing parameter -> 400 (both DB-only, before anything is sent), Respond
+   refusal -> 502 with the outbox row still written and NO response stamp.
+   Delivery goes through the new shared
+   `respond_chat_template_service.deliver_manual_template_now`, which the entity
+   chat panels' ticket lane now calls too.
+4. **`GET /conversation-sla-tracking/visible-users`** rows gain
+   `respond_linked: boolean` (additive; the route has no `response_model`, and a
+   route-level test pins that the field reaches the wire). True when the user
+   carries a REAL Respond mapping, resolved by the same
+   `usable_respond_user_id()` the send path uses - so a CRM `users.id` parked in
+   `respond_user_id` reads as UNLINKED, and the badge can never promise a linkage
+   the send would find unusable. **FE follow-up:** drop the `ReassignDialog`'s
+   second, best-effort call to the `user_management.users.view`-gated user-select
+   endpoint; the badge and the Respond-linked-only filter now work for every
+   holder of the picker.
 
 ### Phase 4 execution order (user-approved 2026-08-14)
 

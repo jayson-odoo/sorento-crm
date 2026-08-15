@@ -857,6 +857,26 @@ Journey addition:
   `resolve_internal_respond_contact_id`, so it accepts a Respond.io contact id, a
   `respond_contacts.id` or a phone number in any of the shapes the integration lookups
   already tolerate; an unresolvable ref is a 404.
+
+  **Backend gap closure, as built (2026-08-15).** The first FE pass could only
+  LIST notes by contact and had no contact-keyed composer state, which forced
+  three FE compromises (recorded under the frontend note below). All closed:
+  (a) `POST .../conversations/{contact_ref}/comments` writes a CONTACT-scoped
+  note (`tracking_id` NULL) gated by the AC-N2 view permission - a note is
+  internal staff context, so a view-holder may annotate; it shares mention
+  validation, the mention notification, the Respond mirror + outbox row and the
+  live-thread poke with the drawer's `create_comment` rather than reimplementing
+  them, and being contact-scoped it renders in the drawer too with no new rule.
+  (b) `GET .../conversations/{contact_ref}/window` returns the SAME
+  `{window, chat_template}` pair the drawer reads off the ticket detail (one
+  service core answers both, pinned by comparing the two responses), and
+  `POST .../conversations/{contact_ref}/template-message` sends it - stamping by
+  the reply's exactly-one-open-ticket rule, synchronous so the operator gets the
+  real outcome, outbox written on success AND failure (a Respond refusal is a 502
+  with no response stamp). (c) `POST .../conversations/{contact_ref}/reply`
+  accepts `reply_to_message_id` / `reply_to_excerpt` on both the JSON and the
+  multipart lane, audit-only exactly as the drawer send treats them. Full
+  contracts in PLAN S4.9 under "Backend gap-closure as built".
 - **AC-N4 [BE][FE][T]** (Excel/office preview: captain hit "No source available to load
   this file" on an .xlsx) Given an attachment bubble whose bytes live on a host that
   sends no CORS headers (R2 CDN, CloudFront, Respond media), When the viewer opens it,
@@ -949,6 +969,17 @@ Journey addition:
   filter on drops the selection instead of submitting an invisible one. Backend
   follow-up: have `visible-users` return `respond_user_id` and the second call goes
   away.
+
+  **Backend follow-up done (2026-08-15).** `.../conversation-sla-tracking/
+  visible-users` rows now carry `respond_linked: boolean` (additive; the route has
+  no `response_model` and a route-level test pins that the field reaches the wire).
+  It is NOT the raw `respond_user_id`: the picker has no business rendering a
+  Respond id, and the only question it asks is answered by the same
+  `usable_respond_user_id()` the send path uses - so a CRM `users.id` parked in
+  `respond_user_id` reads as UNLINKED and the badge can never promise a linkage the
+  send would find unusable. FE follow-up: drop the second, `user_management.users.
+  view`-gated call, so the badge and the filter work for every holder of the picker
+  rather than degrading away for exactly the agents who need it.
 - **AC-N8 [FE][T]** Given the SLA-tracking detail page, When "Chat Records" is opened,
   Then it renders the SAME shared thread panel (scroll-back, search, preview, notes,
   quoted context) the drawer uses - the legacy `SlaTrackingConversationPanel` sheet is
@@ -976,7 +1007,10 @@ Journey addition:
   with retry. Switching tab clears the selection: the row may not exist in the new
   tab. Right pane = the shared thread with contact-keyed loaders + contact-keyed
   notes + contact media proxy. Three FE deviations, each forced by a missing
-  backend piece and each recorded as a follow-up:
+  backend piece and each recorded as a follow-up. **All three backend pieces
+  landed on 2026-08-15** (see the AC-N3 gap-closure note and PLAN S4.9): the FE
+  compromises below are now removable and are the next FE slice, not the
+  shipped behaviour's justification.
   (1) **Note mode is offered only when the viewer holds exactly one open enquiry for
   the contact** and posts via the ticket-keyed `POST .../{tracking_id}/comments` -
   there is no contact-keyed note CREATE (the AC only specified the contact-keyed
