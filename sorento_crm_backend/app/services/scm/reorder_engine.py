@@ -41,9 +41,9 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.services.scm.cover_service import DEFAULT_COVER_SCOPE
 from app.services.scm.money import BASE_CURRENCY, Rate, load_rates, to_base
 from app.services.scm.reorder_policy import (
+    DEFAULT_COVER_SCOPE,
     DEFAULT_DEAD_STOCK_DAYS,
     DEFAULT_OVERSTOCK_DAYS,
     global_policy_row,

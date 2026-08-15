@@ -42,7 +42,7 @@ from app.services.scm.analytics_service import (
     _supplier_policy,
     ensure_policy_defaults,
 )
-from app.services.scm.cover_service import DEFAULT_COVER_SCOPE
+from app.services.scm.reorder_policy import DEFAULT_COVER_SCOPE
 from app.services.scm.reorder_engine import (
     DEFAULT_LEAD_TIME_DAYS,
     DEFAULT_SUPPLIER_SELECTION,

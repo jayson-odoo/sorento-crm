@@ -19,16 +19,20 @@ from typing import Literal, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.services.scm.cover_service import (
-    COVER_SCOPES,
-    DEFAULT_COVER_SCOPE,
-)
-
 # Engine default fallback when no global policy row carries a value.
 DEFAULT_DEAD_STOCK_DAYS = 180
 # Days-of-cover ceiling above which a SKU reads as overstock (M2). Engine default
 # when no global policy row carries an ``overstock_days`` value.
 DEFAULT_OVERSTOCK_DAYS = 120
+
+# The two values of ``scm.reorder_policy.cover_scope``: where "use stock" may draw from
+# before buying. ``own_pool`` keeps a row's cover inside its own site, ``all_locations`` is
+# the behaviour that shipped first. Unset resolves to ``own_pool`` (captain: "either I use
+# stock from BRW, or buy"), never to the whole network.
+OWN_POOL = "own_pool"
+ALL_LOCATIONS = "all_locations"
+COVER_SCOPES = (OWN_POOL, ALL_LOCATIONS)
+DEFAULT_COVER_SCOPE = OWN_POOL
 
 PlanningMode = Literal["auto", "manual"]
 # policy_type values that resolve to each universal planning mode (S1). Only

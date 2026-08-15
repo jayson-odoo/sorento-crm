@@ -31,9 +31,17 @@ def _client(scm_app, role_slug="purchasing"):
 
 
 def _mk_product(db, code):
-    cat, uom = db.execute(text(
-        "SELECT category_id, base_uom_id FROM products WHERE category_id IS NOT NULL LIMIT 1"
-    )).fetchone()
+    """Seed the whole chain (category -> uom -> product). Borrowing an existing product's
+    category with LIMIT 1 passes on a prod-copy database and returns None on an empty one."""
+    cat_id, uom_id = str(uuid.uuid4()), str(uuid.uuid4())
+    db.execute(text(
+        "INSERT INTO product_categories (id, category_code, category_name) "
+        "VALUES (:id, :c, :c)"
+    ), {"id": cat_id, "c": f"{MARKER}-CAT-{cat_id[:8]}"})
+    db.execute(text(
+        "INSERT INTO units_of_measure (id, uom_code, uom_name) VALUES (:id, :c, :c)"
+    ), {"id": uom_id, "c": f"{MARKER}U{uom_id[:8]}"})
+    cat, uom = cat_id, uom_id
     pid = str(uuid.uuid4())
     db.execute(text(
         "INSERT INTO products (id, product_code, product_name, category_id, base_uom_id, "

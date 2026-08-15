@@ -36,13 +36,19 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.scm.reorder_policy import ALL_LOCATIONS, COVER_SCOPES, DEFAULT_COVER_SCOPE, OWN_POOL
 
-#: The two values of `scm.reorder_policy.cover_scope`. `own_pool` keeps a row's cover inside
-#: its own site; `all_locations` is the behaviour that shipped first.
-OWN_POOL = "own_pool"
-ALL_LOCATIONS = "all_locations"
-COVER_SCOPES = (OWN_POOL, ALL_LOCATIONS)
-DEFAULT_COVER_SCOPE = OWN_POOL
+__all__ = [
+    "ALL_LOCATIONS",
+    "COVER_SCOPES",
+    "CoverProposal",
+    "CoverSource",
+    "DEFAULT_COVER_SCOPE",
+    "OWN_POOL",
+    "free_stock_by_product",
+    "propose_cover",
+    "sources_in_scope",
+]
 
 
 @dataclass(frozen=True)
@@ -187,6 +193,11 @@ def propose_cover(
     out-of-scope location is never proposed, never ranked and never counted. The row's own
     warehouse is still excluded either way: scope narrows the offer, it never re-admits stock
     that is already inside the net.
+
+    No production caller: the allocation runs client-side because the free pool is shared and
+    only the client knows what has been decided so far (see the module docstring). This
+    function is the MIRROR-OF-RECORD for `scm/reorder/lib/coverPlan.ts` and is exercised by
+    tests alone - when the two disagree, this one states the intended rule.
     """
     if shortage <= 0:
         return CoverProposal(cover_qty=0.0, buy_qty=0.0, sources=[])

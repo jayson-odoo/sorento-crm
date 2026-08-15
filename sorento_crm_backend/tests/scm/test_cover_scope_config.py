@@ -41,9 +41,11 @@ def _seed_global_policy(db, **updates):
 
 
 def _global_row(db):
+    """The row `global_policy_row` resolves to - same ORDER BY, or a database carrying a
+    legacy duplicate global row would have the test asserting against the other one."""
     return db.execute(text(
         "SELECT policy_type, dead_stock_days, cover_scope FROM scm.reorder_policy "
-        "WHERE scope_type = 'global'"
+        "WHERE scope_type = 'global' ORDER BY is_active DESC, created_at ASC LIMIT 1"
     )).fetchone()
 
 
