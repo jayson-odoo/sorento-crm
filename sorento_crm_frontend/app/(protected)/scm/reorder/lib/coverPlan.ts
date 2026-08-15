@@ -23,9 +23,10 @@
  * > "why am I allowed to use stock from other locations? It is either I use stock from BRW,
  * >  or buy."
  *
- * `own_pool` (the default) keeps a row's cover inside its own site: only warehouses sharing
- * the row's pool are offered. `all_locations` is the behaviour that shipped first, kept
- * because a single-site company loses nothing by it. The knob is the global reorder policy's
+ * `own_pool` (the default, and what an absent value resolves to) keeps a row's cover inside
+ * its own site: only warehouses sharing the row's pool are offered. `all_locations` is the
+ * behaviour that shipped first, kept because a single-site company loses nothing by it, and
+ * it now has to be asked for explicitly. The knob is the global reorder policy's
  * `cover_scope`, read off the run and applied here so the FE never renders a source the
  * policy has ruled out.
  */
@@ -46,7 +47,10 @@ export interface CoverSource {
 
 /** How a row's own pool is scoped: the run's setting plus the row's pool. */
 export interface CoverScopeOptions {
-  /** The run's policy value. Absent reads as `all_locations` (what shipped first). */
+  /**
+   * The run's policy value. Absent reads as `own_pool`, the policy's own default: "we do not
+   * know what we are allowed to draw on" has to narrow the offer, not open it up.
+   */
   scope?: CoverScope;
   /** `COALESCE(pool_warehouse_id, id)` of the ROW's warehouse. */
   poolWarehouseId?: string | null;
@@ -64,13 +68,18 @@ function poolOf(s: CoverSource): string {
  * unknown (a network row carries no warehouse) is NOT filtered to nothing: there is no pool
  * to compare against, so scoping it would silently delete every option rather than narrow
  * them.
+ *
+ * Only an explicit `all_locations` opens the network. Testing for `scope !== 'own_pool'`
+ * failed OPEN: an absent scope (an older payload, a fetch that fell over, a caller that
+ * forgot the option) offered every site, which is the one answer the policy default rules
+ * out.
  */
 export function sourcesInScope(
   free: CoverSource[] | undefined,
   { scope, poolWarehouseId }: CoverScopeOptions = {},
 ): CoverSource[] {
   const list = free ?? [];
-  if (scope !== 'own_pool' || !poolWarehouseId) return list;
+  if (scope === 'all_locations' || !poolWarehouseId) return list;
   return list.filter((s) => poolOf(s) === poolWarehouseId);
 }
 

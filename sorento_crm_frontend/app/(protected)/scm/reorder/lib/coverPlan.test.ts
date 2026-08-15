@@ -213,8 +213,17 @@ describe('cover scope - own site, or anywhere', () => {
     expect(sourcesInScope(free, { scope: 'own_pool', poolWarehouseId: null })).toEqual(free);
   });
 
-  it('an absent scope reads as all_locations - the behaviour that shipped first', () => {
-    expect(sourcesInScope(free, { poolWarehouseId: POOL_A })).toEqual(free);
+  it('an absent scope falls closed to the row own pool, never to the whole network', () => {
+    // The policy default is own_pool, so a payload that carries no scope (an older run, a
+    // failed fetch, a caller that forgot the option) must narrow, not open up.
+    const kept = sourcesInScope(free, { poolWarehouseId: POOL_A });
+    expect(kept.map((s) => s.warehouse_code)).toEqual(['B']);
+  });
+
+  it('proposes against the own pool when no scope was given', () => {
+    const p = proposeCover(60, POOL_A, 'project', free, {}, { poolWarehouseId: POOL_A });
+    expect(p).toMatchObject({ coverQty: 5, buyQty: 55 });
+    expect(p.offered.map((s) => s.warehouse_code)).toEqual(['B']);
   });
 
   it('coverForLine scopes an ordinary buy line the same way', () => {

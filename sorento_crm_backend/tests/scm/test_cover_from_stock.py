@@ -21,7 +21,7 @@ import uuid
 
 import pytest
 
-from app.services.scm.cover_service import CoverSource, propose_cover
+from app.services.scm.cover_service import CoverSource, propose_cover, sources_in_scope
 
 MARKER = "ZZTCOV"
 
@@ -288,10 +288,27 @@ def test_a_row_with_no_pool_is_not_scoped_to_nothing():
     assert [s.warehouse_code for s in p.sources] == ["C", "B"]
 
 
-def test_the_default_scope_is_todays_behaviour():
+def test_an_absent_scope_falls_closed_to_the_rows_own_pool():
+    """The policy default is `own_pool`, so an absent value has to mean own_pool here too.
+
+    Reading it as `all_locations` failed OPEN: a caller that forgot the argument (or a payload
+    that predates the column) silently offered the whole network, which is the one answer the
+    captain ruled out ("either I use stock from BRW, or buy").
+    """
     free = [scoped("B", 5, "wh-A"), scoped("C", 50, "wh-C")]
-    p = propose_cover(60, "wh-A", "project", free)
-    assert [s.warehouse_code for s in p.sources] == ["C", "B"]
+
+    p = propose_cover(60, "wh-A", "project", free, line_pool_warehouse_id="wh-A")
+
+    assert [s.warehouse_code for s in p.sources] == ["B"]
+    assert p.cover_qty == 5
+    assert p.buy_qty == 55
+
+
+def test_sources_in_scope_falls_closed_on_an_absent_scope():
+    free = [scoped("B", 5, "wh-A"), scoped("C", 50, "wh-C")]
+
+    assert [s.warehouse_code for s in sources_in_scope(free, None, "wh-A")] == ["B"]
+    assert [s.warehouse_code for s in sources_in_scope(free, "", "wh-A")] == ["B"]
 
 
 def test_own_pool_still_excludes_the_lines_own_warehouse():

@@ -638,9 +638,10 @@ export async function getCoverSources(runId: string): Promise<CoverSourcesRespon
     sources?: Record<string, CoverSource[]>;
     cover_scope?: CoverScope;
   };
-  // An older run payload carries no scope. Reading that as `all_locations` keeps the
-  // behaviour that shipped first rather than silently withdrawing every source.
-  return { sources: body.sources ?? {}, cover_scope: body.cover_scope ?? 'all_locations' };
+  // An older run payload carries no scope. That reads as `own_pool`, the policy's own
+  // default: not knowing what this run is allowed to draw on has to narrow the offer, never
+  // open the whole network up.
+  return { sources: body.sources ?? {}, cover_scope: body.cover_scope ?? 'own_pool' };
 }
 
 export interface CoverSourcesResponse {

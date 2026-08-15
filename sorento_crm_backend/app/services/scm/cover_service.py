@@ -159,8 +159,13 @@ def sources_in_scope(
     compare against, and scoping it would silently delete every option rather than narrow
     them. A source with no pool of its own IS its own pool, which is what
     `COALESCE(pool_warehouse_id, id)` means one layer down.
+
+    An absent or unrecognised `cover_scope` reads as ``own_pool``, matching
+    ``DEFAULT_COVER_SCOPE``. Only the explicit ``all_locations`` opens the whole network:
+    testing for ``!= OWN_POOL`` failed OPEN, so a caller that omitted the argument offered
+    every site rather than the one the policy allows.
     """
-    if cover_scope != OWN_POOL or not line_pool_warehouse_id:
+    if cover_scope == ALL_LOCATIONS or not line_pool_warehouse_id:
         return list(free)
     return [
         s for s in free
@@ -190,9 +195,10 @@ def propose_cover(
 
     `cover_scope` is the global policy's answer to "may this row use another site's stock at
     all". `own_pool` narrows the offer to the row's own pool BEFORE anything else, so an
-    out-of-scope location is never proposed, never ranked and never counted. The row's own
-    warehouse is still excluded either way: scope narrows the offer, it never re-admits stock
-    that is already inside the net.
+    out-of-scope location is never proposed, never ranked and never counted. It is also the
+    default: absent or unrecognised reads as `own_pool`, never as the whole network. The row's
+    own warehouse is still excluded either way: scope narrows the offer, it never re-admits
+    stock that is already inside the net.
 
     No production caller: the allocation runs client-side because the free pool is shared and
     only the client knows what has been decided so far (see the module docstring). This
