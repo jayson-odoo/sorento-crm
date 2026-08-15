@@ -120,11 +120,45 @@ All 29 promotions belong to the Sorento company. Three shapes of answer:
 - **(a) Intended.** Mocha contacts genuinely have no promotions. Then nothing changes except we
   must ship the scope discriminator so the bot stops saying "no promotion found" (AC-SCOPE-01).
 - **(b) Promotions should be company-neutral.** Promotions are a Sorento-group asset visible to
-  all companies. Needs a visibility rule, not a re-stamp.
+  all companies. Needs a visibility rule, not a re-stamp. **This has an existing sanctioned
+  implementation**: `__company_shared__ = True` on the model (`app/models/base.py:103`), already
+  used by attachments (`app/models/resources.py:78`) and already honoured by the entity resolver
+  (`app/services/entity_resolver.py:3788`). A NULL `company_id` then reads under any scope. No
+  new machinery.
 - **(c) Promotions should be re-stamped / duplicated per company**, mirroring what was done to
   products on 2026-07-26.
 
-Gates: AC-SCOPE-02, and the whole promotion-tagging migration shape.
+**Evidence that (a) is unlikely to be the real intent.** `company_id` on a `CompanyScopedMixin`
+model is **auto-stamped on insert from the request scope** (`before_insert`, see
+`app/services/company_scope.py`). So "all 29 are Sorento" records WHO UPLOADED THEM, not a
+decision that Mocha may not see them. Nobody chose this. Read (a) as "we accept the artefact",
+not as "the artefact expresses intent".
+
+**D2 is an instance of a general question, and the general answer is not uniform.** Two live
+issues are the same shape, flagged by the n8n session and verified here:
+
+| | Missing rows | Symptom | Where |
+|---|---|---|---|
+| #134 | MOCHA has no `purchasing` team | `next-assignee` **404**, ~40% of live intervention requests die after the customer was told help was coming | `next_assignee.py:139-145` |
+| #141 | MOCHA has 3 SLA policy bindings, SRT has the full set | conversation-SLA create **400**, one layer later | `resolve_policy_id_for` |
+| D2 | MOCHA owns 0 promotions | well-formed **empty 200** | promotion read + resolver |
+
+Same root: **Mocha exists as a routing/scoping company but is not populated with the rows each
+flow expects.** So the question deserves a general answer: how should an under-populated company
+behave? But the answer must split on a distinction the three cases do not share:
+
+- #134 and #141 are missing **configuration**. Falling back to the default company's team set or
+  policy binding is safe, and both issues already propose exactly that plus a `routing_fallback`
+  marker. Nothing crosses a data boundary.
+- D2 is missing **data**. A runtime "fall back to Sorento's promotions" would show a Mocha-scoped
+  contact Sorento-owned rows, which is the precise thing multi-company isolation exists to
+  prevent. **Do not answer D2 with a fallback.** The honest options stay (a), (b) or (c), all of
+  which are decided once and stamped in the data, not resolved per request.
+
+Also note the failure modes differ in kind: #134 and #141 fail LOUD, so they got filed as bugs.
+D2 fails SILENT, which is why it needed the scope discriminator to become visible at all.
+
+Gates: AC-SCOPE-02, and the whole promotion-tagging migration shape. Related: #134, #141.
 
 ### D3. Who re-confirms the five all-seven holders, and by when?
 
