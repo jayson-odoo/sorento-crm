@@ -1,7 +1,7 @@
 """Audit log service for recording and querying change history."""
 import weakref
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, MANYTOONE
 from sqlalchemy import inspect
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.orm.base import PASSIVE_NO_FETCH
@@ -79,23 +79,43 @@ def _dirty_has_real_changes(obj: Any, columns: Optional[list[str]] = None) -> bo
     key at all, regardless of whether the pre-image value was ever loaded.
 
     ``passive=PASSIVE_NO_FETCH`` matters here for a second, sharper reason: we
-    are inside ``before_flush``. Reading history for an EXPIRED column with
-    the default passive setting makes SQLAlchemy fetch it - and that fetch
-    autoflushes this object's own pending change first, which (observed
-    directly building this guard) silently persists the very edit we are
-    trying to detect before we ever get to check it, so every column checked
-    AFTER the changed one sees no history left to report. `PASSIVE_NO_FETCH`
-    never issues SQL: an untouched expired column just reports no history
-    (correctly - nothing was assigned to it), and a genuinely assigned column
-    still reports its `added` entry regardless, because SQLAlchemy records
-    that at SET time without needing a fetch.
+    are inside ``before_flush``, where issuing SQL is dangerous. Reading
+    history for an EXPIRED or deferred column - or an unloaded relationship,
+    below - with the default passive setting would lazy-load it mid-flush.
+    ``PASSIVE_NO_FETCH`` guarantees this guard never emits SQL from inside the
+    hook: an untouched expired column correctly reports no history (nothing
+    was assigned to it), and a genuinely assigned column still reports its
+    `added` entry regardless, because SQLAlchemy records that at SET time
+    without needing a fetch.
+
+    Column history alone is not the whole story. Reassigning a many-to-one
+    relationship (``obj.category = other_category``) does not touch the FK
+    column's own history at the point ``before_flush`` runs - the FK is
+    synchronised from the relationship later in the SAME flush, during the
+    unit-of-work's dependency processing - so a column-only check reported no
+    change for an object whose relationship really did move, and wrote nothing
+    for it. Checked here by also asking each MANYTOONE relationship (never a
+    collection: a child appended to a one-to-many is the CHILD's own audited
+    change, not a content change on this, the parent) for its own history,
+    scoped to whichever relationships have a local FK column inside the
+    audited set - or every MANYTOONE relationship, when the caller audits
+    every column.
     """
     insp = inspect(obj)
     mapper = insp.mapper
     keys = columns if columns is not None else [c.key for c in mapper.column_attrs]
-    return any(
-        get_history(obj, key, passive=PASSIVE_NO_FETCH).has_changes() for key in keys
-    )
+    if any(get_history(obj, key, passive=PASSIVE_NO_FETCH).has_changes() for key in keys):
+        return True
+
+    key_set = set(keys)
+    for rel in mapper.relationships:
+        if rel.direction is not MANYTOONE:
+            continue
+        if columns is not None and not ({col.key for col in rel.local_columns} & key_set):
+            continue
+        if get_history(obj, rel.key, passive=PASSIVE_NO_FETCH).has_changes():
+            return True
+    return False
 
 
 def _old_new_from_dirty(obj: Any, columns: Optional[list[str]] = None) -> tuple[dict, dict]:

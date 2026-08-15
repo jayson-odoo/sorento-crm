@@ -22,6 +22,8 @@ from typing import Iterable, Optional, Sequence
 
 from sqlalchemy import String as _String
 from sqlalchemy import cast as _cast
+from sqlalchemy import func as _func
+from sqlalchemy import or_ as _or
 from sqlalchemy.dialects.postgresql import ARRAY as _ARRAY
 from sqlalchemy.orm import Session, joinedload
 
@@ -386,13 +388,26 @@ def _visible_product_ids(
     not intersect the viewer's codes makes every one of its products ABSENT
     from the tile list, not merely hidden.
 
+    A brand with an EMPTY (or NULL) ``access_levels`` is unrestricted too,
+    mirroring the "no levels recorded = public" convention
+    ``product_images._may_see`` uses for an untagged attachment. This has to be
+    an explicit case rather than falling out of the ``?|`` overlap: overlap
+    against an empty array is false for every viewer including staff-adjacent
+    ones, so ``BrandCreate.access_levels`` defaulting to ``[]`` would otherwise
+    make a brand created without ticking a level vanish from every non-staff
+    catalogue the moment it was saved.
+
     Staff - the internal builder and the office copy - see everything, exactly
     as staff see trade imagery in ``product_images._may_see``. Everyone else
     falls back to ``PUBLIC_ACCESS_CODE`` when they carry no codes at all, the
     same fallback that module uses.
 
-    ONE flat query for the whole document, keyed on the union's distinct brand
-    ids, whatever the collection count.
+    One brand query per bulk call, keyed on the union's distinct brand ids,
+    whatever the collection count within that call. A caller that resolved
+    several collections by looping ``resolve_tiles`` one at a time would pay
+    one of these per collection instead of one for the document - the only
+    caller doing that today is staff-only tooling, which short-circuits above
+    before this query ever runs.
     """
     if viewer.is_staff:
         return {product.id for product in products}
@@ -406,7 +421,13 @@ def _visible_product_ids(
             row[0]
             for row in db.query(Brand.id)
             .filter(Brand.id.in_(brand_ids))
-            .filter(Brand.access_levels.op("?|")(_cast(list(codes), _ARRAY(_String))))
+            .filter(
+                _or(
+                    Brand.access_levels.op("?|")(_cast(list(codes), _ARRAY(_String))),
+                    _func.jsonb_array_length(Brand.access_levels) == 0,
+                    Brand.access_levels.is_(None),
+                )
+            )
             .all()
         }
 

@@ -15,10 +15,11 @@ version id, written when the request is made.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Mapping, Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.access import ContactAccessType
 from app.models.dealer_kit import ExportRequest, PageLabel, PageVersion
 from app.models.download import DownloadStatus, UserDownload
 from app.services.dealer_kit import page_service
@@ -151,14 +152,37 @@ def get_request(db: Session, download_id: str) -> ExportRequest:
 #: audience is "consumer" while the access code it grants is "end_user". Keying
 #: this map on "end_user" matched no real audience at all, and a consumer export
 #: only behaved because empty codes fall back to the public code downstream.
-_AUDIENCE_ACCESS_CODES = {
-    "dealer": frozenset({"dealer"}),
-    "consumer": frozenset({"end_user"}),
-    "staff": frozenset(),
-}
+#:
+#: "dealer" is not one code. `contact_access_types` gates brands per-tier-per-
+#: brand - the bare code `dealer` means the Sorento dealer, but CABANA and MOCHA
+#: each carry their OWN dealer-tier code (`cabana_dealer`, `mocha_dealer`, ...).
+#: A staff-requested "dealer" export must read as every brand's dealer tier, not
+#: just the bare code, or every non-Sorento brand's tiles silently disappear from
+#: a document a dealer was promised the full catalogue in. So this is resolved
+#: from the table at call time rather than hardcoded: every ACTIVE code that is
+#: exactly `dealer` or ends with `_dealer` (an inactive code such as `nl_dealer`
+#: is excluded - a retired tier must not keep gating a live catalogue).
+def audience_access_codes(db: Session) -> dict[str, frozenset[str]]:
+    """The access codes each export audience is entitled to, read fresh from
+    `contact_access_types` so a brand added under a new dealer-tier code is
+    covered without a code change here."""
+    codes = [
+        code
+        for (code,) in db.query(ContactAccessType.code)
+        .filter(ContactAccessType.is_active.is_(True))
+        .all()
+    ]
+    dealer_codes = frozenset(
+        code for code in codes if code == "dealer" or code.endswith("_dealer")
+    )
+    return {
+        "dealer": dealer_codes,
+        "consumer": frozenset({"end_user"}),
+        "staff": frozenset(),
+    }
 
 
-def viewer_for(request: ExportRequest) -> ViewerContext:
+def viewer_for(request: ExportRequest, audience_codes: Mapping[str, frozenset[str]]) -> ViewerContext:
     """The viewer a render must use. Derived only from the snapshot.
 
     The audience used to set `is_staff` alone, leaving `access_codes` empty, so a
@@ -168,11 +192,15 @@ def viewer_for(request: ExportRequest) -> ViewerContext:
     An unrecognised audience gets nothing rather than the most generous reading:
     a new audience nobody has taught this function about must not default into
     seeing trade prices.
+
+    ``audience_codes`` is REQUIRED, not defaulted - a caller that forgot to pass
+    it must fail loudly rather than silently get the narrowest (empty) reading,
+    which reads as "works" right up until someone notices the PDF is wrong.
     """
     is_staff = request.audience == "staff"
     return ViewerContext(
         is_staff=is_staff,
-        access_codes=_AUDIENCE_ACCESS_CODES.get(request.audience, frozenset()),
+        access_codes=audience_codes.get(request.audience, frozenset()),
         show_invoice_price=bool(request.show_invoice_price),
         # The office copy is the brochure. A dealer or consumer export is a
         # document for that audience and is gated like one.
@@ -194,6 +222,6 @@ def render_inputs(db: Session, download_id: str) -> dict:
         "version_id": version.id,
         "version": version.version,
         "doc": version.doc,
-        "viewer": viewer_for(request),
+        "viewer": viewer_for(request, audience_access_codes(db)),
         "audience": request.audience,
     }

@@ -28,6 +28,14 @@ pytestmark = pytest.mark.skipif(
 SORENTO = "00000000-0000-0000-0000-000000000001"
 
 
+class _ExportRequest:
+    """Minimal stand-in for the `ExportRequest` fields `viewer_for` reads."""
+
+    def __init__(self, audience: str, show_invoice_price: bool = False) -> None:
+        self.audience = audience
+        self.show_invoice_price = show_invoice_price
+
+
 def _product(db, **overrides):
     from app.models.product import Product, ProductCategory, UnitOfMeasure
 
@@ -319,6 +327,58 @@ def test_the_default_brand_access_levels_stay_visible_to_everyone():
         assert product.id in anon_ids
         assert product.id in dealer_ids
         assert product.id in end_user_ids
+
+
+def test_a_brand_gated_only_on_a_dealer_tier_code_is_present_for_a_dealer_export_and_absent_for_a_consumer_export():
+    """A staff-requested "dealer" export must reach EVERY brand's dealer tier,
+    not just the bare `dealer` code - `viewer_for` built from
+    `audience_access_codes` is exercised the same way a real export render
+    does it, against a brand gated on a CABANA-style per-brand tier code that
+    is neither `dealer` nor `end_user`."""
+    from app.models.access import ContactAccessType
+    from app.services.dealer_kit.export_service import audience_access_codes, viewer_for
+
+    with pg_session() as db:
+        tier_code = f"zzt_{uuid.uuid4().hex[:8]}_dealer"
+        db.add(ContactAccessType(code=tier_code, name="ZZT brand-tier dealer", is_active=True))
+        db.flush()
+
+        brand = _brand(db, access_levels=[tier_code])
+        product = _product(db, brand_id=brand.id)
+        collection = _collection(db, pinned_product_ids=[product.id])
+
+        codes = audience_access_codes(db)
+        dealer_viewer = viewer_for(_ExportRequest("dealer"), codes)
+        consumer_viewer = viewer_for(_ExportRequest("consumer"), codes)
+
+        dealer_ids = {
+            tile["product_id"]
+            for tile in collection_service.resolve_tiles(db, collection, dealer_viewer)
+        }
+        consumer_ids = {
+            tile["product_id"]
+            for tile in collection_service.resolve_tiles(db, collection, consumer_viewer)
+        }
+
+        assert product.id in dealer_ids
+        assert product.id not in consumer_ids
+
+
+def test_a_brand_with_empty_access_levels_is_visible_to_everyone():
+    """`BrandCreate.access_levels` defaults to `[]`, inserted verbatim - a brand
+    added without ticking any level must stay visible, mirroring the "no levels
+    recorded = public" rule `product_images._may_see` already applies to an
+    untagged attachment. The `?|` overlap alone treats `[]` as matching NOBODY,
+    the opposite of that convention."""
+    with pg_session() as db:
+        brand = _brand(db, access_levels=[])
+        product = _product(db, brand_id=brand.id)
+        collection = _collection(db, pinned_product_ids=[product.id])
+
+        anon_ids = {
+            tile["product_id"] for tile in collection_service.resolve_tiles(db, collection, ANONYMOUS)
+        }
+        assert product.id in anon_ids
 
 
 # --------------------------------------------------------------------------

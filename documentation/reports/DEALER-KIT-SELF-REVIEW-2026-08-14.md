@@ -34,6 +34,13 @@ over. Every fix below therefore targets main via follow-up, not this branch's me
    brand's products render on the anonymous public catalogue. Prices are gated; presence
    is not. **Fix:** mirror the references.py brand filter in `_sellable_products` /
    `_sellable_by_ids`, plus a test with a dealer-only brand and an anonymous viewer.
+   Fixed 2026-08-15: enforced in `collection_service.resolve_tiles_bulk`
+   (`_visible_product_ids`), which every collection/tile render goes through, including the
+   public catalogue and PDF export paths. Two paths do **not** yet apply it -
+   `bundle_service.resolve_bundle` and `selection_service._resolve_lines` - and are not a
+   currently-reachable public leak (`CatalogueRenderer` has no bundle-rendering branch, so a
+   bundle cannot be reached from a public render today), but they are open scope, recorded
+   here rather than claimed as met.
 2. **No audit trail on Edition transitions (AC-L11, NOT-MET).** An approval workflow
    whose approvals leave no record of who moved what, when. `Edition` has no audit
    columns and no transition log. **Fix:** audit-track `status_key` changes or write a
