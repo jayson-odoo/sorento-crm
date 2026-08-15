@@ -239,6 +239,16 @@ def notify_ticket_resolved_close(
         threading.Thread(target=_send_async, daemon=True).start()
         return True
     except Exception:  # noqa: BLE001 - the resolve already committed
+        # Roll back first. When the failure was the outbox INSERT itself, the
+        # transaction is left aborted and every later statement on this session
+        # raises - so the caller's route reports a 500 for a resolve that
+        # committed, and the retry takes the already-resolved short-circuit
+        # which never re-fires this webhook. Same rule as
+        # _write_event_log_best_effort in the SLA routes.
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         logger.warning(
             "respond-close-convo webhook failed for tracking %s", tracking_id, exc_info=True
         )

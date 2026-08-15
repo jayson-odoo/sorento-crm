@@ -1116,6 +1116,14 @@ def log_respond_send(
             request_payload_dict=payload,
         )
     except Exception:  # noqa: BLE001
+        # Roll back first: the message already reached the contact, and a failed
+        # INSERT leaves the transaction aborted, so the send route would answer
+        # 500 for a send that succeeded. Logging must never be the reason a send
+        # fails - which includes failing the response it still has to build.
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         logger.exception(
             "Failed to write Respond outbox row for %s %s", business_table, business_id
         )

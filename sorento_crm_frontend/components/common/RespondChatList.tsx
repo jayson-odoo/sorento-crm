@@ -387,12 +387,14 @@ export default function RespondChatList({
   const pinToBottom = !searchController?.open && !activeMatchId;
 
   /**
-   * Every scroll WE perform, and only ours. The timestamp is what lets
-   * `handleScroll` tell the animation frames of our own smooth scroll apart
-   * from a reader who genuinely dragged to the top.
+   * When we last scrolled the reader to an arbitrary bubble (the enquiry, a
+   * search match, a quoted message). Those animations emit scroll events all
+   * the way there, and one landing near the top reads exactly like a reader who
+   * dragged to the top - which fetched a page nobody asked for. Scrolling to
+   * the BOTTOM needs no such guard: it ends far from the top threshold.
    */
   const lastProgrammaticScrollAt = useRef(0);
-  const scrollNodeIntoView = useCallback(
+  const scrollBubbleIntoView = useCallback(
     (node: HTMLElement | null | undefined, options: ScrollIntoViewOptions) => {
       if (!node?.scrollIntoView) return;
       lastProgrammaticScrollAt.current = Date.now();
@@ -414,8 +416,8 @@ export default function RespondChatList({
     const node = highlightRef.current;
     if (!node) return;
     didHighlight.current = normalizedHighlightId;
-    scrollNodeIntoView(node, { behavior: 'smooth', block: 'center' });
-  }, [sortedItems.length, normalizedHighlightId, activeMatchId, scrollNodeIntoView]);
+    scrollBubbleIntoView(node, { behavior: 'smooth', block: 'center' });
+  }, [sortedItems.length, normalizedHighlightId, activeMatchId, scrollBubbleIntoView]);
 
   useEffect(() => {
     if (activeMatchId || !pinToBottom) return;
@@ -432,14 +434,8 @@ export default function RespondChatList({
       ? node.scrollHeight - node.scrollTop - node.clientHeight
       : 0;
     if (distanceFromBottom > PIN_TO_BOTTOM_SLACK_PX) return;
-    scrollNodeIntoView(messagesEndRef.current, { behavior: 'smooth' });
-  }, [
-    sortedItems.length,
-    normalizedHighlightId,
-    activeMatchId,
-    pinToBottom,
-    scrollNodeIntoView,
-  ]);
+    messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
+  }, [sortedItems.length, normalizedHighlightId, activeMatchId, pinToBottom]);
 
   // Scroll anchoring: restore the reader's distance from the OLD top edge.
   useLayoutEffect(() => {
@@ -460,11 +456,11 @@ export default function RespondChatList({
 
   useEffect(() => {
     if (!activeMatchId) return;
-    scrollNodeIntoView(bubbleRefs.current.get(activeMatchId), {
+    scrollBubbleIntoView(bubbleRefs.current.get(activeMatchId), {
       behavior: 'smooth',
       block: 'center',
     });
-  }, [activeMatchId, sortedItems.length, scrollNodeIntoView]);
+  }, [activeMatchId, sortedItems.length, scrollBubbleIntoView]);
 
   // In-flight latch for the older lane. A ref, not the `isLoadingOlder` prop:
   // scroll fires many times per frame and the prop only arrives a render later,
@@ -537,10 +533,10 @@ export default function RespondChatList({
 
   const jumpToMessage = useCallback(
     (id: string) => {
-      scrollNodeIntoView(bubbleRefs.current.get(id), { behavior: 'smooth', block: 'center' });
+      scrollBubbleIntoView(bubbleRefs.current.get(id), { behavior: 'smooth', block: 'center' });
       setFlashMessageId(id);
     },
-    [scrollNodeIntoView],
+    [scrollBubbleIntoView],
   );
 
   // Clear the flash ring after it has been seen. Reset on every new target so a

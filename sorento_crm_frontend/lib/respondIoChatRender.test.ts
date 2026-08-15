@@ -152,6 +152,35 @@ describe('fileNameFromAttachmentUrl', () => {
     expect(fileNameFromAttachmentUrl('   ')).toBeUndefined();
     expect(fileNameFromAttachmentUrl('https://cdn.test/a/')).toBeUndefined();
   });
+
+  // FINDING 8: Respond-hosted media is named after a uuid or a content hash.
+  // Showing that as the filename is worse than the typed label - it is a UUID
+  // in the UI, and it tells the reader nothing.
+  it('refuses a bare uuid basename, so the typed label is used instead', () => {
+    expect(
+      fileNameFromAttachmentUrl(
+        'https://cdn.respond.io/e2f1c0b8-9a3d-4f21-8c77-2b6e5a9d1234.jpg',
+      ),
+    ).toBeUndefined();
+    expect(
+      fileNameFromAttachmentUrl('https://cdn.respond.io/e2f1c0b8-9a3d-4f21-8c77-2b6e5a9d1234'),
+    ).toBeUndefined();
+  });
+
+  it('refuses a long hex hash basename', () => {
+    expect(
+      fileNameFromAttachmentUrl(
+        'https://cdn.respond.io/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.png',
+      ),
+    ).toBeUndefined();
+    expect(fileNameFromAttachmentUrl('https://cdn.respond.io/e2f1c0b89a3d4f218c772b6e5a9d1234')).toBeUndefined();
+  });
+
+  it('keeps a real name that merely looks technical', () => {
+    expect(fileNameFromAttachmentUrl('https://cf.test/a/DO-2026-0442.pdf')).toBe('DO-2026-0442.pdf');
+    expect(fileNameFromAttachmentUrl('https://cf.test/a/abc123.jpg')).toBe('abc123.jpg');
+    expect(fileNameFromAttachmentUrl('https://cf.test/a/IMG_20260815.jpg')).toBe('IMG_20260815.jpg');
+  });
 });
 
 // ---------------------------------------------------------------------------
