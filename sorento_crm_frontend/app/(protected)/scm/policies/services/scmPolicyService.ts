@@ -53,6 +53,8 @@ import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   AbcXyzPolicy,
   AbcXyzWrite,
+  CoverScopeSetting,
+  CoverScopeWrite,
   PlanningMode,
   PlanningModeWrite,
   ReorderPolicyRow,
@@ -205,6 +207,30 @@ export async function savePlanningMode(body: PlanningModeWrite): Promise<Plannin
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save planning mode'));
   return (await res.json()) as PlanningMode;
+}
+
+// ── Cover scope (where "use stock" may draw from) ───────────────────────────
+//
+//  GET /api/v1/scm/config/cover-scope  → { cover_scope: 'own_pool' | 'all_locations' }
+//  PUT /api/v1/scm/config/cover-scope    body CoverScopeWrite → CoverScopeSetting
+//    Same route family + gates as planning-mode (read scm.dashboard.view, write
+//    scm.config.manage); writes the GLOBAL reorder_policy row's `cover_scope` column.
+//    Anything but the two values is a 422 from the schema.
+
+export async function getCoverScope(): Promise<CoverScopeSetting> {
+  const res = await apiFetch(`${CONFIG_BASE}/cover-scope`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the cover setting'));
+  return (await res.json()) as CoverScopeSetting;
+}
+
+export async function saveCoverScope(body: CoverScopeWrite): Promise<CoverScopeSetting> {
+  const res = await apiFetch(`${CONFIG_BASE}/cover-scope`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the cover setting'));
+  return (await res.json()) as CoverScopeSetting;
 }
 
 // ── Resolution preview ──────────────────────────────────────────────────────
