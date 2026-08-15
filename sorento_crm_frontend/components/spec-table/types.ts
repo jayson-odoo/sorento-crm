@@ -64,7 +64,7 @@ export interface SpecTableCallbacks {
   onSetValue: (specKey: string, value: SpecScalar) => Promise<void>;
   /** "This product does not have this spec" - a tombstone that survives re-derivation. */
   onTombstone: (specKey: string) => Promise<void>;
-  /** "Use what the rules read" - hand the key back to derivation. */
+  /** "Reset" - hand the key back to derivation. */
   onRevert: (specKey: string) => Promise<void>;
   /**
    * The typed word is not in the key's vocabulary. Adding it is a registry edit, so it

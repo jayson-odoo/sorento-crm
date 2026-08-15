@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { readableValue } from '@/lib/spec-readable';
+import { readable, readableValue } from '@/lib/spec-readable';
 import { SpecSourceBadge } from './SpecSourceBadge';
 import { SpecValueCell } from './SpecValueCell';
 import type { SpecKeyDefinition, SpecScalar, SpecTableCallbacks, SpecTableRow } from './types';
@@ -58,13 +58,18 @@ export function SpecTable({
   /** False renders the table read-only: no edit affordance, no row menu, no CTA. */
   canEdit?: boolean;
   /**
-   * Open this key's editor as soon as its row exists.
+   * Open this key's editor, adding an empty row for it when the product has none.
    *
    * The add-a-specification picker names a key; it does not set a value, because an
    * empty value is not a value - stored, it would raise the same conflict on every
    * derivation run forever, and the API refuses one for that reason. So the picker
    * hands the key here and the person types the value on the row, in the same place
    * they would edit any other.
+   *
+   * That row has to be MADE. `rows` is built from the values the product holds, and
+   * the picker only ever offers keys it does not hold, so waiting for the row to turn
+   * up meant waiting for something nothing was going to write: the dialog closed and
+   * the table was unchanged, for a new key and an existing one alike.
    */
   openEditorFor?: string | null;
   /** Called once the editor has been opened, so the caller can clear its request. */
@@ -80,16 +85,62 @@ export function SpecTable({
     null,
   );
 
+  /**
+   * A key picked from the dialog that this product does not carry yet.
+   *
+   * It lives here rather than in the caller because it is not a fact about the
+   * product: nothing is written until the value is saved, and cancelling has to leave
+   * the table exactly as it was.
+   */
+  const [draftKey, setDraftKey] = useState<string | null>(null);
+
   const synonymsByKey = useMemo(
     () => new Map(registry.map((key) => [key.spec_key, key.synonyms ?? {}])),
+    [registry],
+  );
+
+  const definitionsByKey = useMemo(
+    () => new Map(registry.map((key) => [key.spec_key, key])),
     [registry],
   );
 
   useEffect(() => {
     if (!openEditorFor) return;
     setEditingKey(openEditorFor);
+    setDraftKey(rows.some((row) => row.specKey === openEditorFor) ? null : openEditorFor);
     onEditorOpened?.();
+    // `rows` is read, not depended on: the request is answered once, at the moment the
+    // picker makes it, and re-running on every refetch would re-open a closed editor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openEditorFor, onEditorOpened]);
+
+  /** The rows plus the picked key, until the save that turns it into a real one. */
+  const tableRows = useMemo<SpecTableRow[]>(() => {
+    if (!draftKey || rows.some((row) => row.specKey === draftKey)) return rows;
+    const definition = definitionsByKey.get(draftKey);
+    if (!definition) return rows;
+    const draft: SpecTableRow = {
+      specKey: definition.spec_key,
+      label: definition.label || readable(definition.spec_key),
+      value: null,
+      unit: definition.unit ?? null,
+      dataType: definition.data_type ?? 'text',
+      options: definition.allowed_values ?? [],
+      source: null,
+      evidence: null,
+      tombstoned: false,
+      unknownKey: false,
+      conflict: null,
+    };
+    // Sorted in, not appended: the reader is scanning labels, and a row that arrives
+    // at the bottom is a row they have to hunt for after the save moves it.
+    return [...rows, draft].sort((a, b) => a.label.localeCompare(b.label));
+  }, [rows, draftKey, definitionsByKey]);
+
+  /** The save landed and the server's own row took over. */
+  useEffect(() => {
+    if (draftKey && rows.some((row) => row.specKey === draftKey)) setDraftKey(null);
+  }, [rows, draftKey]);
 
   const columns = useMemo<ColumnDef<SpecTableRow>[]>(
     () => [
@@ -141,7 +192,11 @@ export function SpecTable({
             busy={busyKey === row.original.specKey}
             synonyms={synonymsByKey.get(row.original.specKey)}
             onStartEdit={() => canEdit && setEditingKey(row.original.specKey)}
-            onCancel={() => setEditingKey(null)}
+            onCancel={() => {
+              setEditingKey(null);
+              // A cancelled draft leaves nothing behind: it was never a value.
+              if (draftKey === row.original.specKey) setDraftKey(null);
+            }}
             onAddValueToKey={
               callbacks.onAddValueToKey
                 ? (value) => callbacks.onAddValueToKey!(row.original.specKey, value)
@@ -215,7 +270,7 @@ export function SpecTable({
                   <DropdownMenuItem
                     onClick={() => setRemoving({ row: row.original, intent: 'revert' })}
                   >
-                    Use what the rules read
+                    Reset
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -224,12 +279,12 @@ export function SpecTable({
         },
       },
     ],
-    [canEdit, editingKey, busyKey, callbacks, synonymsByKey],
+    [canEdit, editingKey, busyKey, callbacks, synonymsByKey, draftKey],
   );
 
   const table = useReactTable({
     columns,
-    data: rows,
+    data: tableRows,
     getRowId: (row) => row.specKey,
     getCoreRowModel: getCoreRowModel(),
     // A product carries a median of 4 spec keys and at most 14. Paging that would be
@@ -253,7 +308,7 @@ export function SpecTable({
 
       <DataGrid
         table={table}
-        recordCount={rows.length}
+        recordCount={tableRows.length}
         isLoading={isLoading}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         listingKey={listingKey}
@@ -296,9 +351,7 @@ export function SpecTable({
         open={removing !== null}
         onOpenChange={(open) => !open && setRemoving(null)}
         title={
-          removing?.intent === 'absent'
-            ? 'This product does not have this spec'
-            : 'Use what the rules read'
+          removing?.intent === 'absent' ? 'This product does not have this spec' : 'Reset'
         }
         description={
           removing?.intent === 'absent' ? (

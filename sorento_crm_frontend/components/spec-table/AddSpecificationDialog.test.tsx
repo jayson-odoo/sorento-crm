@@ -88,6 +88,9 @@ describe('creating a key', () => {
         data_type: 'enum',
       }),
     );
+    // And hands the fresh key to the table, exactly as picking an existing one does -
+    // a key created and not set on this product was the dead end the person was in.
+    await waitFor(() => expect(props.onPick).toHaveBeenCalledWith('seat_hinge_type'));
   });
 
   it('offers the existing key instead, and creates nothing', async () => {

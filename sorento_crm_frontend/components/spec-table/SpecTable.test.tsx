@@ -280,6 +280,69 @@ describe('editing in place', () => {
       expect(container.querySelector('[data-spec-editor="material"]')).not.toBeNull(),
     );
   });
+
+  /**
+   * The picker only ever names keys the product does NOT carry, so "open the editor on
+   * that row" is a request for a row that does not exist yet. Waiting for one to turn up
+   * meant the dialog closed and the table was unchanged - for an existing key and a
+   * freshly created one alike, with no request made and nothing to see after a refresh.
+   */
+  it('makes a row for a key the product does not carry, and opens its editor', async () => {
+    // `seat_material` is in MOCK_REGISTRY and in neither MOCK_VALUES nor MOCK_PROVENANCE.
+    expect(rows().some((row) => row.specKey === 'seat_material')).toBe(false);
+
+    const { container } = renderTable({ openEditorFor: 'seat_material' });
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-spec-editor="seat_material"]')).not.toBeNull(),
+    );
+    expect(screen.getByText('Seat cover material')).toBeInTheDocument();
+  });
+
+  it('saves the value typed on that new row through the same callback', async () => {
+    // A key with no vocabulary, so the editor is the typed input rather than a select.
+    const registry = [
+      ...MOCK_REGISTRY,
+      {
+        spec_key: 'warranty_months',
+        label: 'Warranty',
+        data_type: 'numeric',
+        unit: 'months',
+        allowed_values: [],
+      },
+    ];
+    const { callbacks } = renderTable({ registry, openEditorFor: 'warranty_months' });
+
+    await waitFor(() => expect(screen.getByLabelText('Warranty')).toBeInTheDocument());
+    typeInto(screen.getByLabelText('Warranty'), '24');
+    fireEvent.click(screen.getByLabelText('Save Warranty'));
+
+    await waitFor(() => expect(callbacks.onSetValue).toHaveBeenCalledWith('warranty_months', 24));
+  });
+
+  it('cancelling that new row leaves the table exactly as it was', async () => {
+    const { container, callbacks } = renderTable({ openEditorFor: 'seat_material' });
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-spec-editor="seat_material"]')).not.toBeNull(),
+    );
+    fireEvent.click(screen.getByLabelText('Cancel editing Seat cover material'));
+
+    expect(callbacks.onSetValue).not.toHaveBeenCalled();
+    expect(screen.queryByText('Seat cover material')).not.toBeInTheDocument();
+  });
+
+  it('sorts that new row in by label rather than dropping it at the bottom', async () => {
+    const { container } = renderTable({ openEditorFor: 'seat_material' });
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-spec-editor="seat_material"]')).not.toBeNull(),
+    );
+    const labels = Array.from(container.querySelectorAll('tbody tr td:first-child')).map((cell) =>
+      (cell.textContent ?? '').trim(),
+    );
+    expect(labels).toEqual([...labels].sort((a, b) => a.localeCompare(b)));
+  });
 });
 
 describe('removing, by name', () => {
@@ -287,7 +350,7 @@ describe('removing, by name', () => {
     renderTable();
     openMenu(screen.getByLabelText('More actions for Material'));
     expect(screen.getByText('This product does not have this spec')).toBeInTheDocument();
-    expect(screen.getByText('Use what the rules read')).toBeInTheDocument();
+    expect(screen.getByText('Reset')).toBeInTheDocument();
     expect(screen.queryByText(/^delete$/i)).not.toBeInTheDocument();
   });
 
@@ -304,7 +367,7 @@ describe('removing, by name', () => {
   it('reverts behind its own confirmation', async () => {
     const { callbacks } = renderTable();
     openMenu(screen.getByLabelText('More actions for Material'));
-    fireEvent.click(screen.getByText('Use what the rules read'));
+    fireEvent.click(screen.getByText('Reset'));
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await waitFor(() => expect(callbacks.onRevert).toHaveBeenCalledWith('material'));
   });
