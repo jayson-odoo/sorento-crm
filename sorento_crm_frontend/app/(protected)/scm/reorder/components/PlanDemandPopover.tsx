@@ -95,7 +95,7 @@ function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string 
                       answerable from the order itself rather than from a second screen;
                       a line the extract carries no price for simply says nothing. */}
                   <div className="mt-0.5 flex items-baseline gap-1.5 text-2xs text-muted-foreground">
-                    <span className="min-w-0 flex-1 truncate" title={l.customer_label ?? undefined}>
+                    <span className="min-w-0 flex-1 truncate" title={l.customer_label}>
                       {l.customer_label}
                     </span>
                     {l.unit_price !== null && l.unit_price !== undefined ? (

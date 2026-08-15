@@ -508,8 +508,9 @@ export interface PlanDemandLine {
   required_date: string | null;
   qty: number;
   /** Who ordered it: the customer name, `Debtor <code>` when the code resolves to
-   *  nobody, or `No customer on order` when the order names neither. */
-  customer_label: string | null;
+   *  nobody, or `No customer on order` when the order names neither. Never null - the
+   *  backend's COALESCE always lands on one of the three. */
+  customer_label: string;
   /** What they pay for it, when the order line carries a price. */
   unit_price: number | null;
 }
