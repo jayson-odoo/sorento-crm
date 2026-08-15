@@ -15,6 +15,7 @@ under test here.
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -23,6 +24,8 @@ from sqlalchemy.orm import Session
 
 import app.database as app_database
 import app.services.embedding_service as embedding_service
+import app.services.product_spec_change_listener as listener
+import app.tasks.product_spec_tasks as product_spec_tasks
 from app.models.base import company_scope
 from app.models.company import Company
 from app.models.embeddings import EmbeddingQueue
@@ -32,6 +35,7 @@ from app.services.product_class_signal import backfill_category_signals
 from app.services.product_spec_change_listener import register_product_spec_listeners
 from app.services.product_spec_derivation import derive_for_code
 from app.services.product_spec_write import apply_spec_values
+from app.services import queue_service
 from tests._pg_fixture import blank_session
 
 _REFS: dict = {}
@@ -226,6 +230,172 @@ def test_a_spec_row_with_no_sentence_queues_nothing(db):
     ).filter(Product.product_code == "ZZT-EP-5").one()
     assert not (spec.rendered_text or "").strip(), "the fixture must render nothing or this proves nothing"
     assert _queued_ids(db) == []
+
+
+# --------------------------------------------------------------------------- #
+# S2 - the volume split, mirroring the re-derive twin in
+# tests/test_product_spec_change_listener.py
+# --------------------------------------------------------------------------- #
+def _ids(prefix: str, n: int) -> set[str]:
+    return {f"zzt-ep-{prefix}-{i}" for i in range(n)}
+
+
+def test_above_the_threshold_enqueues_and_skips_the_inline_drain(monkeypatch):
+    enqueued: list[list[str]] = []
+    inline_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        listener, "_enqueue_embed", lambda ids: (enqueued.append(sorted(ids)), True)[1]
+    )
+    monkeypatch.setattr(listener, "embed_products_inline", lambda ids: inline_calls.append(sorted(ids)))
+
+    ids = _ids("ABOVE", listener.INLINE_ENQUEUE_LIMIT + 1)
+    listener.embed_products(ids)
+
+    assert len(enqueued) == 1
+    assert enqueued[0] == sorted(ids), "the whole batch goes to the worker, not a slice of it"
+    assert inline_calls == [], "above the threshold, a successful enqueue must skip the inline drain"
+
+
+def test_at_the_threshold_drains_inline_without_enqueuing(monkeypatch):
+    enqueue_calls: list[int] = []
+    inline_calls: list[list[str]] = []
+    monkeypatch.setattr(listener, "_enqueue_embed", lambda ids: enqueue_calls.append(1) or True)
+    monkeypatch.setattr(listener, "embed_products_inline", lambda ids: inline_calls.append(sorted(ids)))
+
+    listener.embed_products(_ids("AT", listener.INLINE_ENQUEUE_LIMIT))
+
+    assert enqueue_calls == [], "exactly at the limit, one person's edit stays inline"
+    assert len(inline_calls) == 1
+
+
+def test_an_empty_batch_does_nothing(monkeypatch):
+    enqueue_calls: list[int] = []
+    inline_calls: list[int] = []
+    monkeypatch.setattr(listener, "_enqueue_embed", lambda ids: enqueue_calls.append(1) or True)
+    monkeypatch.setattr(listener, "embed_products_inline", lambda ids: inline_calls.append(1))
+
+    listener.embed_products(set())
+
+    assert enqueue_calls == []
+    assert inline_calls == []
+
+
+def test_an_unreachable_queue_falls_back_to_inline_and_loses_nothing(monkeypatch):
+    """AC4. Dropping the ids would leave those products' index entries stale with
+    nothing recording it, so an unreachable queue costs latency, never work."""
+    inline_calls: list[list[str]] = []
+    monkeypatch.setattr(listener, "_enqueue_embed", lambda ids: False)
+    monkeypatch.setattr(listener, "embed_products_inline", lambda ids: inline_calls.append(sorted(ids)))
+
+    ids = _ids("FAIL", listener.INLINE_ENQUEUE_LIMIT + 1)
+    listener.embed_products(ids)  # must not raise
+
+    assert len(inline_calls) == 1
+    assert inline_calls[0] == sorted(ids), "every id must still be enqueued, not just the first chunk"
+
+
+def test_enqueue_embed_reports_a_dead_queue_as_false_and_never_raises(monkeypatch):
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated queue failure")
+
+    monkeypatch.setattr(queue_service, "enqueue_job", _boom)
+
+    assert listener._enqueue_embed({"zzt-ep-boom-1"}) is False
+
+
+def test_a_batch_above_the_threshold_hands_the_worker_every_changed_row(db, monkeypatch):
+    """The split, from a real transaction rather than a hand-made set: 51 spec rows
+    written in one commit are handed to the worker whole."""
+    handed: list[list[str]] = []
+    monkeypatch.setattr(
+        listener, "_enqueue_embed", lambda ids: (handed.append(sorted(ids)), True)[1]
+    )
+
+    expected = []
+    for index in range(listener.INLINE_ENQUEUE_LIMIT + 1):
+        code = f"ZZT-EP-BATCH-{index}"
+        expected.append(_product(db, code).id)
+        derive_for_code(db, code)
+    db.commit()
+
+    assert len(handed) == 1
+    assert handed[0] == sorted(expected)
+
+
+# --------------------------------------------------------------------------- #
+# S2 - the task the queue path runs
+# --------------------------------------------------------------------------- #
+def test_the_task_enqueues_in_chunks(monkeypatch):
+    """A catalogue-sized batch must not sit in one transaction for its whole run, so
+    the task takes a session per chunk. Counting the sessions is how that is visible
+    from outside."""
+    sessions: list[int] = []
+    enqueued: list[str] = []
+
+    class _FakeSession:
+        def __enter__(self):
+            sessions.append(1)
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def rollback(self):
+            pass
+
+        def info(self):  # pragma: no cover - never read, present for symmetry
+            return {}
+
+    monkeypatch.setattr(product_spec_tasks, "SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(product_spec_tasks, "company_scope", _null_scope)
+    monkeypatch.setattr(
+        product_spec_tasks, "enqueue_spec_embedding", lambda db, pid: enqueued.append(pid)
+    )
+
+    result = product_spec_tasks.enqueue_spec_embeddings(
+        [f"zzt-ep-task-{i}" for i in range(10)], chunk_size=4
+    )
+
+    assert sessions == [1, 1, 1], "10 ids at a chunk of 4 is three chunks, so three sessions"
+    assert len(enqueued) == 10, "chunking must not lose an id"
+    assert result["products"] == 10
+    assert result["queued"] == 10
+
+
+def test_the_task_does_not_let_one_bad_id_lose_the_rest(monkeypatch):
+    enqueued: list[str] = []
+
+    class _FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def rollback(self):
+            pass
+
+    def _one_bad(db, product_id):
+        if product_id == "zzt-ep-task-2":
+            raise RuntimeError("simulated enqueue failure")
+        enqueued.append(product_id)
+
+    monkeypatch.setattr(product_spec_tasks, "SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(product_spec_tasks, "company_scope", _null_scope)
+    monkeypatch.setattr(product_spec_tasks, "enqueue_spec_embedding", _one_bad)
+
+    result = product_spec_tasks.enqueue_spec_embeddings(
+        [f"zzt-ep-task-{i}" for i in range(5)], chunk_size=2
+    )
+
+    assert len(enqueued) == 4
+    assert result["queued"] == 4
+    assert result["failed"] == 1
+
+
+@contextmanager
+def _null_scope(db, value):
+    yield
 
 
 def _drain(db) -> None:
