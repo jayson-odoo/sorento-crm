@@ -262,6 +262,20 @@ against this).**
 - D6: attachment bubbles open the EXISTING CRM attachment preview surface on click; no
   new viewer.
 
+Built 2026-08-15 (code + tests; awaiting tester/review):
+- D5 `upload_chat_attachment` key is now `{table}/{id}/{uuid}/{name}`; `chat_attachment_basename`
+  collapses whitespace to underscores (stem+extension kept). The S3 branch already
+  percent-encodes via the CloudFront signer; the R2 branch encodes the key at the call
+  site (`quote(key, safe="/")`) rather than changing `get_cdn_base_url`, which every
+  stored attachment row's URL format depends on. No Respond fileName field exists (R1).
+- D6 handled in the SHARED `RespondChatList` (so complaint / SI / PR / portal threads get
+  it too, no fork): an attachment bubble with a url is a button opening
+  `components/common/AttachmentPreviewModal` with `{id, name, url}` items - no
+  `downloadUrl`, since chat media has no `attachments` row (which also keeps the
+  token-authenticated portal thread working: the modal's authenticated byte-fetch is
+  never reached). The modal's fallback slide now offers the CDN url as a download when
+  there is no same-origin route, so an unpreviewable type is no longer a dead end.
+
 ### S4.8 Thread scroll-back + message search (UAC L7-L8) [BE coder + FE coder]
 (added 2026-08-15 from captain hands-on testing)
 

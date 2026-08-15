@@ -554,6 +554,23 @@ def respond_attachment_kind(mime: Optional[str]) -> str:
     return "file"
 
 
+def chat_attachment_basename(filename: Optional[str]) -> str:
+    """Storage-safe LAST path segment for a chat attachment (AC-D5).
+
+    WhatsApp names the delivered document after the last path segment of the URL
+    Respond.io fetches, so this segment must BE the user's filename - stem and
+    extension intact, no uuid prefix. Whitespace collapses to underscores so the
+    segment stays readable both raw (the storage key) and percent-encoded (the
+    URL); everything else is the shared ``sanitize_storage_filename`` charset.
+    """
+    import re
+
+    from app.services.storage_router import sanitize_storage_filename
+
+    safe = sanitize_storage_filename(filename) or "file"
+    return re.sub(r"\s+", "_", safe) or "file"
+
+
 def upload_chat_attachment(
     *,
     business_table: str,
@@ -572,8 +589,16 @@ def upload_chat_attachment(
     presign would go stale by the time anyone re-opens this ticket's thread to
     see what was actually sent (R2 research item, PLAN-conversation-
     intervention-tickets.md).
+
+    Key shape ``{table}/{id}/{uuid}/{filename}`` - the repo's existing
+    uuid-segregated attachment convention. The uuid is a PATH SEGMENT, never a
+    basename prefix: the contact's WhatsApp names the delivered document from
+    the URL's last segment, so ``{uuid}_{name}.xlsx`` reached them as a uuid
+    soup (AC-D5). Respond's send API carries no fileName field (R1 - the v2
+    attachment object is ``{type, url}``), so the URL IS the only name channel.
     """
     import uuid
+    from urllib.parse import quote
 
     from app.services.image_normalizer import ensure_rgb_image
     from app.services.storage_router import (
@@ -581,22 +606,25 @@ def upload_chat_attachment(
         cdn_base_url,
         default_provider,
         get_backend,
-        sanitize_storage_filename,
     )
 
     normalized_content, normalized_filename, normalized_mime = ensure_rgb_image(
         content, filename, mime
     )
     kind = respond_attachment_kind(normalized_mime)
-    safe_name = sanitize_storage_filename(normalized_filename) or "file"
-    key = f"{business_table}/{business_id}/{uuid.uuid4()}_{safe_name}"
+    safe_name = chat_attachment_basename(normalized_filename)
+    key = f"{business_table}/{business_id}/{uuid.uuid4()}/{safe_name}"
     provider = default_provider()
     backend = get_backend(provider)
     backend.upload_file(
         file_content=normalized_content, file_path=key, content_type=normalized_mime
     )
+    # Both branches must hand Respond a fetchable URL whose path ends in the
+    # clean name: the CloudFront signer percent-encodes the path itself (and
+    # signs the encoded form), the R2 CDN builder concatenates raw - so encode
+    # for R2 here rather than changing a builder every stored row depends on.
     url = (
-        cdn_base_url(provider, key)
+        cdn_base_url(provider, quote(key, safe="/"))
         if provider == PROVIDER_R2
         else backend.get_signed_url(key, expires_in=60 * 60 * 24 * 7)
     )

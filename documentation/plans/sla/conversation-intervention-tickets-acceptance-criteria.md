@@ -129,6 +129,12 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
   segment, clean filename as the last segment) so the URL Respond fetches ends in the
   real name. Applies to every attachment type; the thread bubble shows the clean name
   too.
+  Implementation note (2026-08-15): whitespace in the name collapses to underscores
+  (`Q3 stock.xlsx` -> `Q3_stock.xlsx`) - stem and extension intact - so the delivered
+  name is readable whether the client shows the raw or the percent-encoded segment;
+  everything else keeps the shared `sanitize_storage_filename` charset. Respond's send
+  API carries NO fileName field on the attachment object (R1: `{type, url}` only), so
+  the URL is the sole name channel - nothing was invented there.
 - **AC-D6 [FE][T]** (added 2026-08-15, captain dogfooding) Given an attachment bubble in
   the ticket thread (sent OR received), When clicked, Then it opens in the EXISTING
   attachment preview surface (same viewer used across the CRM) - image/pdf inline,
