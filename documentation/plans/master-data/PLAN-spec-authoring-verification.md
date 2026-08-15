@@ -610,6 +610,26 @@ creation from the product page; an authored value always wins a conflict.
 - **Cross-page `selectAllMatching` stays off** (D12, 2026-08-14). Bulk covers rows the user had
   on screen. Enabling it later is a one-prop change plus a confirm stating the full count.
 
+### Settled by the captain at PR 2 hands-on testing (2026-08-15)
+
+All four are deliberate product orders; the UAC's Journey A, AC-A.2 and AC-A.4 are amended to
+match. Do not propose reverting them.
+
+- **Create/edit/add-word affordances are permission-gated in the UI** (D13):
+  `spec_registry.add` to create a key, `products.edit` for value writes, either edit grant to
+  extend vocabulary. The server remains the actual guard; the UI gating only hides what a user
+  cannot do.
+- **A dropdown-typed key gets the `SearchableSelect` editor even with an empty vocabulary**
+  (D14). The free-text fallthrough is removed on purpose; the empty dropdown's only affordance
+  is the add-a-word path, so the first word becomes vocabulary and value together.
+- **The fixed-list data type is labeled "Dropdown"** (D15) in both create dialogs
+  (`AddSpecificationDialog` and the registry page's `AddSpecKey`) - named after the control the
+  user will see.
+- **The row's tombstone action is plain "Remove"** (D16), behind the standard "Confirm delete"
+  dialog, keeping the durable-absence semantics (survives re-derivation); the second action is
+  **"Reset"** (back to derived). These replace the earlier sentence-length labels "This product
+  does not have this spec" and "Use what the rules read".
+
 ### Outstanding - still the captain's call
 
 None. Every question raised during planning has been answered.

@@ -8,18 +8,19 @@
 **Slug:** `spec-authoring-verification` · **Domain:** master-data · **Milestone:** 1
 **Classification:** CORE, schema `public`, normal FKs (per `PRINCIPLES.md` modular-architecture
 rule: products and their specifications are a base-platform capability every install needs).
-**Status:** ACCEPTED - captain-reviewed 2026-08-14, the contract for milestone 1. PR 1
-(Foundations) implemented on `fm/spec-pr1-foundations`: AC-F.1 to AC-F.14 plus the PR-1 half of
-AC-D.17. PRs 2-4 pending.
+**Status:** ACCEPTED - captain-reviewed 2026-08-14, the contract for milestone 1. Amended
+2026-08-15 per captain decisions at PR 2 hands-on testing (see the plan's Decisions section):
+editor and action-label wording in Journey A, AC-A.2 and AC-A.4. Implementation progress is
+tracked in the plan's Status line, not here.
 
 ## Scope
 
 Make the spec table the single source of truth for product specifications, and make a person
 able to vouch for it.
 
-- **A** - the spec table becomes editable: add, edit, remove, with dropdown where the registry
-  defines a vocabulary and free text otherwise, and a real removal (a tombstone) rather than
-  today's "revert to derived".
+- **A** - the spec table becomes editable: add, edit, remove, with a dropdown for every
+  dropdown-typed key (even one whose vocabulary is still empty) and free text otherwise, and a
+  real removal (a tombstone) rather than today's "revert to derived".
 - **B** - the stored flyer card becomes a paste-once prompt box: extraction proposes, a person
   reviews, accepted rows write as authored values, the pasted text is never stored. Then the
   flyer-derived values are promoted to authored and `ProductFlyerText` is discarded.
@@ -98,9 +99,11 @@ None of that is asked for.
 
 1. They see the table. Each row shows its value and a **source badge**; the evidence sits behind
    the badge on hover and behind a tap-to-expand strip on touch, not in a column of its own.
-2. **Edit** - they click a value. It swaps to an input **in place**: a dropdown when the registry
-   defines the vocabulary, Yes/No for a boolean, free text otherwise. The unit is shown as a
-   suffix and is never typed. Nothing on the page moves. Save writes it as authored.
+2. **Edit** - they click a value. It swaps to an input **in place**: a dropdown when the key's
+   data type is dropdown - even while its vocabulary is still empty, where the add-a-word row is
+   the only affordance, so the first word becomes vocabulary and value together - Yes/No for a
+   boolean, free text otherwise (amended 2026-08-15, captain). The unit is shown as a suffix and
+   is never typed. Nothing on the page moves. Save writes it as authored.
 3. **The word is not in the list** - before offering to create anything, the system checks what
    they typed against every value and every customer synonym the key already holds, normalised.
    If "Brushed Brass" already exists for "brushed brass" it offers that instead. Only when
@@ -109,9 +112,10 @@ None of that is asked for.
    does not already hold, everything else one click away. If genuinely nothing matches, a create
    dialog opens, and before it will submit it checks the proposed label against every existing
    key, label and synonym and offers the match instead.
-5. **Remove** - the row's menu offers the two intents **by name**: **"This product does not have
-   this spec"** (a tombstone that survives re-derivation) or **"Use what the rules read"** (revert
-   to derived). Confirmation dialog either way.
+5. **Remove** - the row's menu offers the two intents as **"Remove"** (a tombstone that survives
+   re-derivation, behind the standard "Confirm delete" dialog) and **"Reset"** (revert to
+   derived, with its own confirmation). Labels amended 2026-08-15 by the captain from the earlier
+   sentence-length names; the semantics are unchanged.
 
 **They leave with:** the table showing exactly what they set, badged as theirs, and a promise the
 next catalogue run cannot undo it.
@@ -265,16 +269,19 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   edit icon) THEN the value cell swaps to an input **in place** - the cells keep their DOM order
   and nothing reflows. On a narrow screen the grid scrolls horizontally inside its own container,
   per the repo's responsive standard; the page never scrolls sideways.
-- **AC-A.2** `[FE]` GIVEN a spec key WHEN its editor renders THEN a boolean gets Yes/No, a key
-  with a non-empty merged vocabulary gets a `SearchableSelect`, and anything else gets a typed
-  input. The **unit renders as a suffix and can never be typed**. A stored key the registry no
-  longer defines renders read-only rather than crashing.
+- **AC-A.2** `[FE]` GIVEN a spec key WHEN its editor renders THEN a boolean gets Yes/No, a
+  dropdown-typed key or a key with a non-empty merged vocabulary gets a `SearchableSelect` -
+  **even when the vocabulary is empty**, in which case the add-a-word row is the only affordance
+  and there is no free-text fallthrough (amended 2026-08-15, captain) - and anything else gets a
+  typed input. The **unit renders as a suffix and can never be typed**. A stored key the registry
+  no longer defines renders read-only rather than crashing.
 - **AC-A.3** `[FE]` GIVEN any dropdown in this slice THEN it is
   `SearchableSelect`/`SearchableMultiSelect`; a raw `<select>` or `@/components/ui/select` is an
   auto-reject. Optional selects are `clearable`.
-- **AC-A.4** `[FE]` GIVEN the remove control WHEN it is used THEN the two intents are offered
-  **by name** - "This product does not have this spec" (tombstone) and "Use what the rules read"
-  (revert to derived) - each behind `ConfirmDeleteDialog`. `confirm()` is never used.
+- **AC-A.4** `[FE]` GIVEN the remove control WHEN it is used THEN the two intents are offered as
+  **"Remove"** (tombstone, behind the standard "Confirm delete" dialog) and **"Reset"** (revert
+  to derived) - labels amended 2026-08-15 by the captain, semantics unchanged - each behind a
+  confirmation dialog. `confirm()` is never used.
 - **AC-A.5** `[FE]` GIVEN a **tombstoned** key WHEN the table renders THEN it still shows a row.
   The table model is the **union** of the `values` keys and the `absent` provenance entries, since
   a tombstone lives only in `provenance`. The row reads "Not on this product" with a revert
