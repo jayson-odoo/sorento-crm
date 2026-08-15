@@ -64,12 +64,13 @@ def enqueue_schedule_extraction(schedule_version_id: str):
 
 def extract_po_version(po_version_id: str) -> dict:
     """Read a customer PO version and persist its lines and annotations."""
+    from app.models.project_so import ProjectPOVersion
+
     db = SessionLocal()
     # Worker sessions start at the fail-closed UNSET scope. The version's own company
     # is on the row, so run system-wide and let the service scope by what it loads.
     set_company_scope(db, None)
     try:
-        from app.models.project_so import ProjectPOVersion
         from app.services.project_po_extraction_service import ProjectPOExtractionService
 
         return ProjectPOExtractionService(db).run_extraction(po_version_id)
@@ -83,10 +84,11 @@ def extract_po_version(po_version_id: str) -> dict:
 
 def extract_schedule_version(schedule_version_id: str) -> dict:
     """Read a delivery-schedule version and persist its phases, products and cells."""
+    from app.models.project_so import DeliveryScheduleVersion
+
     db = SessionLocal()
     set_company_scope(db, None)
     try:
-        from app.models.project_so import DeliveryScheduleVersion
         from app.services.project_schedule_service import ProjectScheduleService
 
         return ProjectScheduleService(db).run_extraction(schedule_version_id)
