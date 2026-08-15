@@ -75,12 +75,11 @@ function renderTable(overrides: Partial<Parameters<typeof SpecTable>[0]> = {}) {
 }
 
 describe('the table model', () => {
-  it('includes a tombstoned key, which lives only in provenance', () => {
-    // The row a values-driven table renders as nothing at all.
-    const overflow = rows().find((row) => row.specKey === 'has_overflow');
-    expect(overflow).toBeDefined();
-    expect(overflow!.tombstoned).toBe(true);
-    expect(overflow!.value).toBeNull();
+  it('leaves a removed key out - removed means gone, not shown empty', () => {
+    // `has_overflow` is a tombstone in MOCK_PROVENANCE and nowhere in MOCK_VALUES.
+    // The server keeps the tombstone so re-derivation will not refill it; the table
+    // does not turn it into a row (captain's call: "when I click remove, I mean it").
+    expect(rows().some((row) => row.specKey === 'has_overflow')).toBe(false);
   });
 
   it('marks a stored key the registry no longer defines', () => {
@@ -114,9 +113,10 @@ describe('rendering', () => {
     expect(screen.getByText('Model note')).toBeInTheDocument();
   });
 
-  it('shows a tombstoned key as a row reading "Not on this product"', () => {
+  it('renders no trace of a removed key', () => {
     renderTable();
-    expect(screen.getByText('Not on this product')).toBeInTheDocument();
+    expect(screen.queryByText('Overflow')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not on this product')).not.toBeInTheDocument();
   });
 
   it('renders a numeric value with its unit as a suffix', () => {
@@ -306,6 +306,68 @@ describe('editing in place', () => {
     expect(screen.getByLabelText('Model note')).toHaveValue('Fresh from the server');
   });
 
+  /**
+   * Adding a word to a key's vocabulary refetches the registry, and the grid remounts
+   * the cell under that refetch. A draft kept in the cell reset to the OLD value at
+   * that moment, so the person who had just created "brushed brass" saw the dropdown
+   * still on "matt black" and had to pick their own word by hand (captain's report).
+   * The draft lives in the table now; the registry can change all it likes.
+   */
+  it('selects a word just added to the vocabulary, even when the registry refetches', async () => {
+    const callbacks = {
+      onSetValue: vi.fn().mockResolvedValue(undefined),
+      onTombstone: vi.fn().mockResolvedValue(undefined),
+      onRevert: vi.fn().mockResolvedValue(undefined),
+      onAddValueToKey: vi.fn().mockResolvedValue(undefined),
+      onAddSpecification: vi.fn(),
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <SpecTable rows={rows()} registry={MOCK_REGISTRY} callbacks={callbacks} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByLabelText('Edit Finish or colour'));
+    fireEvent.click(document.querySelector('[data-slot="searchable-select-trigger"]')!);
+    fireEvent.change(screen.getByPlaceholderText('Search...'), {
+      target: { value: 'brushed brass' },
+    });
+    fireEvent.click(document.querySelector('[data-slot="searchable-select-create"]')!);
+    await waitFor(() =>
+      expect(callbacks.onAddValueToKey).toHaveBeenCalledWith('finish', 'brushed brass'),
+    );
+
+    // The registry comes back with the new word, as the real hook's refetch would.
+    const grown = MOCK_REGISTRY.map((key) =>
+      key.spec_key === 'finish'
+        ? { ...key, allowed_values: [...key.allowed_values, 'brushed brass'] }
+        : key,
+    );
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <SpecTable
+          rows={buildSpecTableRows({
+            values: MOCK_VALUES,
+            provenance: MOCK_PROVENANCE,
+            registry: grown,
+            exceptions: MOCK_EXCEPTIONS,
+          })}
+          registry={grown}
+          callbacks={callbacks}
+        />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="searchable-select-trigger"]')).toHaveTextContent(
+        'Brushed brass',
+      ),
+    );
+    fireEvent.click(screen.getByLabelText('Save Finish or colour'));
+    await waitFor(() => expect(callbacks.onSetValue).toHaveBeenCalledWith('finish', 'brushed brass'));
+  });
+
   it('refuses to save an empty value - a blank is a removal wearing one', async () => {
     renderTable();
     fireEvent.click(screen.getByLabelText('Edit Model note'));
@@ -435,14 +497,5 @@ describe('removing, by name', () => {
     fireEvent.click(screen.getByText('Reset'));
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await waitFor(() => expect(callbacks.onRevert).toHaveBeenCalledWith('material'));
-  });
-
-  it('will not remove a key that already is removed', async () => {
-    renderTable();
-    openMenu(screen.getByLabelText('More actions for Overflow'));
-    expect(screen.getByText('Remove').closest('[role="menuitem"]')).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
   });
 });

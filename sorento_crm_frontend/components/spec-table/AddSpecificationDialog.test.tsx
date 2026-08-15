@@ -41,6 +41,23 @@ function renderDialog(overrides: Partial<Parameters<typeof AddSpecificationDialo
   return { ...render(<AddSpecificationDialog {...props} />), props };
 }
 
+/** Open the key search and type a name, the way a person reaches "Create". */
+function searchFor(name: string) {
+  fireEvent.click(document.querySelector('[data-slot="searchable-select-trigger"]')!);
+  fireEvent.change(screen.getByPlaceholderText('Search...'), { target: { value: name } });
+}
+
+/** The last entry of the list: "Create ..." or "... already exists". */
+function lastEntry(): HTMLElement | null {
+  return document.querySelector('[data-slot="searchable-select-create"]');
+}
+
+/** Type a brand-new name and take the list's Create entry - lands on the type step. */
+function startCreating(name: string) {
+  searchFor(name);
+  fireEvent.click(lastEntry()!);
+}
+
 describe('choosing a key', () => {
   it('keeps everything else behind one more click', () => {
     renderDialog();
@@ -59,31 +76,52 @@ describe('choosing a key', () => {
 });
 
 describe('who may create a key', () => {
-  it('offers the create route to a user who holds the grant', () => {
+  it('offers Create as the last entry of the search list to a user who holds the grant', () => {
     renderDialog();
-    expect(screen.getByText('None of these — create a new specification')).toBeInTheDocument();
+    searchFor('Seat hinge type');
+    expect(lastEntry()).toHaveTextContent('Create “Seat hinge type”');
   });
 
-  it('tells a user without the grant who to ask, rather than showing a dead button', () => {
+  it('tells a user without the grant who to ask, and offers no Create entry', () => {
     renderDialog({ canCreateKey: false });
-    expect(screen.queryByText('None of these — create a new specification')).not.toBeInTheDocument();
     expect(
       screen.getByText('Ask an administrator for the Add Spec Registry permission.'),
     ).toBeInTheDocument();
+    searchFor('Seat hinge type');
+    expect(lastEntry()).toBeNull();
+  });
+
+  it('points a typed name that already IS a key at that key instead of Create', () => {
+    const { props } = renderDialog();
+    searchFor('flush type');
+    expect(lastEntry()).toHaveTextContent('Flush type already exists');
+    fireEvent.click(lastEntry()!);
+    // Picked, not created - the Add button now carries it through.
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect(props.onPick).toHaveBeenCalledWith('flush_type');
+    expect(props.onCreateKey).not.toHaveBeenCalled();
+  });
+
+  it('reveals a key hidden behind "show everything" when its name is typed', () => {
+    const { props } = renderDialog();
+    searchFor('Number of bowls');
+    fireEvent.click(lastEntry()!);
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect(props.onPick).toHaveBeenCalledWith('bowl_count');
   });
 });
 
 describe('creating a key', () => {
-  it('asks what kind of answer it has, because the API refuses free text', () => {
+  it('asks what kind of answer it has, with the typed name carried over', () => {
     renderDialog();
-    fireEvent.click(screen.getByText('None of these — create a new specification'));
+    startCreating('Seat hinge type');
     expect(screen.getByText('What kind of answer it has')).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toHaveValue('Seat hinge type');
   });
 
   it('checks for a duplicate BEFORE creating, and creates when there is none', async () => {
     const { props } = renderDialog();
-    fireEvent.click(screen.getByText('None of these — create a new specification'));
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Seat hinge type' } });
+    startCreating('Seat hinge type');
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(props.onCheckSimilar).toHaveBeenCalledWith('Seat hinge type'));
@@ -108,8 +146,7 @@ describe('creating a key', () => {
         matched_text: 'Finish or colour',
       }),
     });
-    fireEvent.click(screen.getByText('None of these — create a new specification'));
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Finish Or Colour' } });
+    startCreating('Finish Or Colour');
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(screen.getByText('Finish or colour already exists.')).toBeInTheDocument());
@@ -128,8 +165,7 @@ describe('creating a key', () => {
         matched_text: 'surface colour',
       }),
     });
-    fireEvent.click(screen.getByText('None of these — create a new specification'));
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Surface colour' } });
+    startCreating('Surface colour');
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() =>
@@ -141,7 +177,8 @@ describe('creating a key', () => {
 
   it('cannot submit an empty name', () => {
     renderDialog();
-    fireEvent.click(screen.getByText('None of these — create a new specification'));
+    startCreating('Seat hinge type');
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: '   ' } });
     expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
   });
 
@@ -149,8 +186,7 @@ describe('creating a key', () => {
     const { props } = renderDialog({
       onCheckSimilar: vi.fn().mockRejectedValue(new Error('Network down')),
     });
-    fireEvent.click(screen.getByText('None of these — create a new specification'));
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Seat hinge type' } });
+    startCreating('Seat hinge type');
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() =>

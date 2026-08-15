@@ -164,14 +164,19 @@ def test_it_reports_which_keys_the_product_already_holds(db):
     assert keys["zzt_material"]["held"] is False
 
 
-def test_a_tombstoned_key_counts_as_held(db):
-    """It is on the table with a revert action; offering it again would double it up."""
+def test_a_removed_key_is_offered_again(db):
+    """Removed means gone from the table, so the picker is the only way back on.
+
+    The tombstone still lives in provenance - re-derivation must not refill the key -
+    but a removed key that could never be re-added would be a delete with no undo.
+    Setting a value by hand replaces the stamp wholesale, which clears the tombstone.
+    """
     _key(db, "zzt_overflow", data_type="boolean")
     product = _product(db, "ZZT-AK-0007")
     _spec(db, product, {}, {"zzt_overflow": {"source": "human", "absent": True}})
 
     keys = {row["spec_key"]: row for row in applicable_keys_for_code(db, product.product_code)}
-    assert keys["zzt_overflow"]["held"] is True
+    assert keys["zzt_overflow"]["held"] is False
 
 
 def test_a_product_with_no_spec_row_still_gets_the_whole_registry(db):

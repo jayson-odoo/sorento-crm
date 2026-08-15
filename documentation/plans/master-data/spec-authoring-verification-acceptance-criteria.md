@@ -282,10 +282,12 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   **"Remove"** (tombstone, behind the standard "Confirm delete" dialog) and **"Reset"** (revert
   to derived) - labels amended 2026-08-15 by the captain, semantics unchanged - each behind a
   confirmation dialog. `confirm()` is never used.
-- **AC-A.5** `[FE]` GIVEN a **tombstoned** key WHEN the table renders THEN it still shows a row.
-  The table model is the **union** of the `values` keys and the `absent` provenance entries, since
-  a tombstone lives only in `provenance`. The row reads "Not on this product" with a revert
-  action.
+- **AC-A.5** `[FE][BE]` GIVEN a **removed** key WHEN the table renders THEN it shows **no row**
+  for it - removed means gone (amended 2026-08-15 by the captain: "when I click remove, I really
+  mean it"; the earlier "Not on this product" row is withdrawn). The tombstone still lives in
+  `provenance` as `absent: true`, so re-derivation will not refill it, and
+  `applicable_keys_for_code` reports the key as **not held**, so the add picker is the way back
+  on; setting a value there replaces the stamp wholesale.
 - **AC-A.6** `[FE]` GIVEN a row WHEN it renders THEN it shows a **source badge** with the evidence
   behind hover **and** a tap-to-expand strip (hover `title` is unreachable at 375px, which is a
   DoD gate). There is **no permanent evidence column** (D6). For an authored row the strip is
@@ -297,9 +299,13 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   (M5). Applicability is `applies_when` alone, and absence of a gate value never excludes a key.
 - **AC-A.8** `[FE]` GIVEN the picker WHEN it opens THEN keys this product may carry and does not
   hold come first, everything else behind one more click.
-- **AC-A.9** `[FE]` GIVEN the picker finds no matching key WHEN the create dialog opens THEN it
-  is gated on `master_data.spec_registry.add` (D7); a user without the grant sees the picker
-  **without** the create option plus one line saying who to ask.
+- **AC-A.9** `[FE]` GIVEN a typed name no key goes by WHEN the picker's list is shown THEN
+  **"Create"** is the last entry of that list (amended 2026-08-15 by the captain: same shape
+  as adding a word on a row's value dropdown, no separate create link), it leads to the type
+  question and then the key is on the product with its editor open. It is gated on
+  `master_data.spec_registry.add` (D7); a user without the grant sees the picker **without**
+  the create entry plus one line saying who to ask. A typed name that already IS a key points
+  at that key instead.
 - **AC-A.10** `[FE][BE]` GIVEN a proposed new key label WHEN the create dialog validates THEN a
   new `GET /spec-registry/similar` runs a normalised match against every existing `spec_key`,
   label **and merged synonym**, and on a hit offers the existing key instead. The guard is also

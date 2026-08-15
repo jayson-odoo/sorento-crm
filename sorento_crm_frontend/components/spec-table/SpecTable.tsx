@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   getCoreRowModel,
   useReactTable,
@@ -23,7 +23,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { readable, readableValue } from '@/lib/spec-readable';
 import { SpecSourceBadge } from './SpecSourceBadge';
-import { SpecValueCell } from './SpecValueCell';
+import { SpecValueCell, toDraft } from './SpecValueCell';
 import type { SpecKeyDefinition, SpecScalar, SpecTableCallbacks, SpecTableRow } from './types';
 
 /**
@@ -79,7 +79,19 @@ export function SpecTable({
   /** Which row is in edit, by key. One at a time: two open editors on one product
       invite a person to change two things and save one. */
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  /**
+   * The value under edit, held here and not in the cell: the grid remounts a cell when
+   * the registry refetches under it, and adding a word to a key's vocabulary causes
+   * exactly that refetch. A draft kept in the cell reset to the old value at the very
+   * moment it should have become the new word.
+   */
+  const [editDraft, setEditDraft] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  const startEdit = useCallback((row: SpecTableRow) => {
+    setEditingKey(row.specKey);
+    setEditDraft(toDraft(row.value));
+  }, []);
   /** The row whose removal is being confirmed, and which of the two intents it is. */
   const [removing, setRemoving] = useState<{ row: SpecTableRow; intent: 'absent' | 'revert' } | null>(
     null,
@@ -106,8 +118,10 @@ export function SpecTable({
 
   useEffect(() => {
     if (!openEditorFor) return;
+    const existing = rows.find((row) => row.specKey === openEditorFor);
     setEditingKey(openEditorFor);
-    setDraftKey(rows.some((row) => row.specKey === openEditorFor) ? null : openEditorFor);
+    setEditDraft(existing ? toDraft(existing.value) : '');
+    setDraftKey(existing ? null : openEditorFor);
     onEditorOpened?.();
     // `rows` is read, not depended on: the request is answered once, at the moment the
     // picker makes it, and re-running on every refetch would re-open a closed editor.
@@ -128,7 +142,6 @@ export function SpecTable({
       options: definition.allowed_values ?? [],
       source: null,
       evidence: null,
-      tombstoned: false,
       unknownKey: false,
       conflict: null,
     };
@@ -189,9 +202,11 @@ export function SpecTable({
           <SpecValueCell
             row={row.original}
             editing={canEdit && editingKey === row.original.specKey}
+            draft={editingKey === row.original.specKey ? editDraft : ''}
+            onDraftChange={setEditDraft}
             busy={busyKey === row.original.specKey}
             synonyms={synonymsByKey.get(row.original.specKey)}
-            onStartEdit={() => canEdit && setEditingKey(row.original.specKey)}
+            onStartEdit={() => canEdit && startEdit(row.original)}
             onCancel={() => {
               setEditingKey(null);
               // A cancelled draft leaves nothing behind: it was never a value.
@@ -241,7 +256,7 @@ export function SpecTable({
                 size="icon"
                 className="size-8"
                 aria-label={`Edit ${row.original.label}`}
-                onClick={() => setEditingKey(row.original.specKey)}
+                onClick={() => startEdit(row.original)}
               >
                 <Pencil className="size-4" />
               </Button>
@@ -257,14 +272,14 @@ export function SpecTable({
                   </Button>
                 </DropdownMenuTrigger>
                 {/* Plain action names, captain's call: this page is the product
-                    editor, not a review surface. "Remove" still records the absence
-                    durably (the next catalogue run must not refill it - a removal
-                    that comes back is not a removal), and "Reset" hands the key back
-                    to the rules; the confirmation carries the consequence. */}
+                    editor, not a review surface. "Remove" takes the row off the
+                    table and records the absence so the next catalogue run does not
+                    refill it (a removal that comes back is not a removal); "Reset"
+                    hands the key back to the rules. The confirmation carries the
+                    consequence. */}
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem
                     onClick={() => setRemoving({ row: row.original, intent: 'absent' })}
-                    disabled={row.original.tombstoned}
                   >
                     Remove
                   </DropdownMenuItem>
@@ -280,7 +295,7 @@ export function SpecTable({
         },
       },
     ],
-    [canEdit, editingKey, busyKey, callbacks, synonymsByKey, draftKey],
+    [canEdit, editingKey, editDraft, busyKey, callbacks, synonymsByKey, draftKey, startEdit],
   );
 
   const table = useReactTable({

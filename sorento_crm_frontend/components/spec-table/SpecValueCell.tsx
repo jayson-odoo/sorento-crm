@@ -51,7 +51,8 @@ function toScalar(draft: string, dataType: string): SpecScalar | null {
   return text;
 }
 
-function toDraft(value: SpecScalar | null): string {
+/** The editor's string form of a stored value. Exported so the table can seed a draft. */
+export function toDraft(value: SpecScalar | null): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   return String(value);
@@ -60,6 +61,8 @@ function toDraft(value: SpecScalar | null): string {
 export function SpecValueCell({
   row,
   editing,
+  draft,
+  onDraftChange,
   onStartEdit,
   onCancel,
   onSave,
@@ -69,6 +72,14 @@ export function SpecValueCell({
 }: {
   row: SpecTableRow;
   editing: boolean;
+  /**
+   * The value being edited, owned by the table rather than by this cell. The grid
+   * remounts a cell whenever the registry refetches underneath it, and a word added
+   * to the vocabulary triggers exactly that refetch - a draft held here was reset to
+   * the old value at the very moment it should have become the new word.
+   */
+  draft: string;
+  onDraftChange: (draft: string) => void;
   onStartEdit: () => void;
   onCancel: () => void;
   onSave: (value: SpecScalar) => Promise<void>;
@@ -78,17 +89,7 @@ export function SpecValueCell({
   synonyms?: Record<string, string[]>;
   busy?: boolean;
 }) {
-  const [draft, setDraft] = useState(() => toDraft(row.value));
   const [saving, setSaving] = useState(false);
-
-  // The cell stays mounted across edit sessions (stable getRowId), so the draft is
-  // re-seeded from the row each time the editor opens - a cancelled edit's leftovers,
-  // or a value refetched since mount, must not be what the next edit starts from.
-  const [wasEditing, setWasEditing] = useState(editing);
-  if (editing !== wasEditing) {
-    setWasEditing(editing);
-    if (editing) setDraft(toDraft(row.value));
-  }
 
   // A key the registry no longer defines is still stored on the row, and is still worth
   // showing - it just has no editor, because there is no data type, no vocabulary and
@@ -105,18 +106,6 @@ export function SpecValueCell({
   }
 
   if (!editing) {
-    if (row.tombstoned) {
-      return (
-        <button
-          type="button"
-          onClick={onStartEdit}
-          className="text-start text-sm text-muted-foreground italic hover:underline"
-          data-spec-value={row.specKey}
-        >
-          Not on this product
-        </button>
-      );
-    }
     return (
       <button
         type="button"
@@ -149,7 +138,7 @@ export function SpecValueCell({
         {row.dataType === 'boolean' ? (
           <SearchableSelect
             value={draft}
-            onChange={setDraft}
+            onChange={onDraftChange}
             options={BOOLEAN_OPTIONS}
             size="sm"
             disabled={disabled}
@@ -158,7 +147,7 @@ export function SpecValueCell({
         ) : row.dataType === 'enum' || row.options.length > 0 ? (
           <SearchableSelect
             value={draft}
-            onChange={setDraft}
+            onChange={onDraftChange}
             options={row.options.map((option) => ({ value: option, label: readable(option) }))}
             size="sm"
             disabled={disabled}
@@ -196,7 +185,7 @@ export function SpecValueCell({
                     onCreate: (query) => {
                       if (findVocabularyMatch(query, row.options, synonyms)) return;
                       void onAddValueToKey(query)
-                        .then(() => setDraft(query))
+                        .then(() => onDraftChange(query))
                         .catch(() => {});
                     },
                   }
@@ -207,7 +196,7 @@ export function SpecValueCell({
           <div className="relative">
             <Input
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => onDraftChange(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') void save();
                 if (event.key === 'Escape') onCancel();

@@ -30,7 +30,11 @@ import type { SpecKeyDefinition } from './types';
  * **Creating a key is the last resort, and it is gated** (D7, AC-A.9). A key is
  * vocabulary the ranker and the n8n parser both hold; minting one because the picker
  * was scrolled past is how a catalogue ends up with `finish` and `colour` meaning the
- * same thing and answering half the questions each.
+ * same thing and answering half the questions each. So "Create" is the LAST entry of
+ * the search list, offered for the name just typed and only when no key already goes
+ * by it - the same shape as adding a word on a row's value dropdown, which is where
+ * the reader learned it. It leads to one question, the type, and then the key is on
+ * the product with its editor open.
  */
 
 /**
@@ -233,6 +237,43 @@ export function AddSpecificationDialog({
               placeholder="Search specifications"
               emptyMessage="No specification matches that."
               clearable
+              // The same shape as the value dropdown on a row (captain's call): type
+              // the name, and when nothing matches, "Create" is the last entry of the
+              // list itself rather than a separate link to hunt for. It leads to the
+              // type question, because a key without a type cannot be created.
+              createOption={
+                canCreateKey
+                  ? {
+                      label: (query) => {
+                        const known = knownLabel(query, applicableKeys, otherKeys);
+                        if (known) {
+                          return (
+                            <span className="text-muted-foreground">
+                              <span className="font-medium text-foreground">
+                                {known.key.label}
+                              </span>{' '}
+                              already exists — use it
+                            </span>
+                          );
+                        }
+                        return <span>Create &ldquo;{query}&rdquo;</span>;
+                      },
+                      onCreate: (query) => {
+                        const known = knownLabel(query, applicableKeys, otherKeys);
+                        if (known) {
+                          // The name IS a key already: pick it, revealing it first if
+                          // it was behind the "show everything" fold.
+                          if (known.hidden) setShowEverything(true);
+                          setPicked(known.key.spec_key);
+                          return;
+                        }
+                        setProposedLabel(query);
+                        setMatch(null);
+                        setCreating(true);
+                      },
+                    }
+                  : undefined
+              }
             />
             {!showEverything && otherKeys.length > 0 && (
               <button
@@ -243,15 +284,7 @@ export function AddSpecificationDialog({
                 Show every specification ({otherKeys.length} more)
               </button>
             )}
-            {canCreateKey ? (
-              <button
-                type="button"
-                className="w-fit text-sm underline underline-offset-2"
-                onClick={() => setCreating(true)}
-              >
-                None of these — create a new specification
-              </button>
-            ) : (
+            {!canCreateKey && (
               // Stated rather than hidden: a person who cannot find their key needs to
               // know a key CAN be created and by whom, or they invent a value instead.
               <p className="text-sm text-muted-foreground">{createDeniedHint}</p>
@@ -285,6 +318,29 @@ export function AddSpecificationDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * The key a typed name already IS, by label or by key, ignoring case and spacing.
+ *
+ * Only the exact-name case is caught here, so a person who types "Flush type" is
+ * pointed at the row instead of offered a duplicate. Near-misses ("Flush kind") are
+ * the server's call at Create time (D7), which sees synonyms this list does not.
+ */
+function knownLabel(
+  query: string,
+  applicable: SpecKeyDefinition[],
+  other: SpecKeyDefinition[],
+): { key: SpecKeyDefinition; hidden: boolean } | null {
+  const wanted = toSpecKey(query);
+  if (!wanted) return null;
+  const same = (key: SpecKeyDefinition) =>
+    key.spec_key === wanted || toSpecKey(key.label || '') === wanted;
+  const inApplicable = applicable.find(same);
+  if (inApplicable) return { key: inApplicable, hidden: false };
+  const inOther = other.find(same);
+  if (inOther) return { key: inOther, hidden: true };
+  return null;
 }
 
 /** "Tap hole count" -> `tap_hole_count`, the shape every stored key already has. */
