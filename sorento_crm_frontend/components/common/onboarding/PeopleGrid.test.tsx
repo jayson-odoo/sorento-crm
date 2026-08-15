@@ -329,6 +329,95 @@ describe('PeopleGrid', () => {
     });
   });
 
+  it.each(['intake', 'review'] as const)(
+    'keeps a destructive control out from under the needs field in %s mode',
+    (mode) => {
+      // The reported "it behaves like a single select" came from here, not from
+      // the toggle. The component's default trigger renders one removable chip
+      // per choice, and in a 240px cell those chips fill the field: the X for
+      // the first chip sat 14px from the field's own centre and unset that need
+      // on pointer-down WITHOUT opening the menu, so the next pick looked like
+      // it had replaced the selection. The trigger reports the answer; only the
+      // menu changes it.
+      render(
+        <PeopleGrid
+          mode={mode}
+          people={[person({ needs_system_account: true, needs_respond_contact: true })]}
+          templates={TEMPLATES}
+          onPatchPerson={vi.fn()}
+        />,
+      );
+      const trigger = within(grid()).getByLabelText('Needs');
+      expect(within(trigger).queryByRole('button')).not.toBeInTheDocument();
+      expect(trigger).toHaveTextContent('System account, Access to chatbot AI');
+    },
+  );
+
+  it.each(['intake', 'review'] as const)(
+    'toggles one need at a time in %s mode, never replacing the selection',
+    async (mode) => {
+      // The bug this pins: picking a second need silently dropped the first, so
+      // the control behaved as a single select. Each click has to be a toggle
+      // against the row as it stands NOW, which means the cell must be reading
+      // the person the parent last handed it and not the one it first rendered.
+      const onPatch = vi.fn();
+      let current = person({
+        needs_system_account: true,
+        needs_respond_contact: false,
+        needs_agent_seat: false,
+      });
+      const { rerender } = render(
+        <PeopleGrid
+          mode={mode}
+          people={[current]}
+          templates={TEMPLATES}
+          onPatchPerson={onPatch}
+        />,
+      );
+
+      const draw = () =>
+        rerender(
+          <PeopleGrid
+            mode={mode}
+            people={[current]}
+            templates={TEMPLATES}
+            onPatchPerson={onPatch}
+          />,
+        );
+
+      fireEvent.click(within(grid()).getByLabelText('Needs'));
+      fireEvent.click(await screen.findByRole('option', { name: 'Access to chatbot AI' }));
+      expect(onPatch).toHaveBeenLastCalledWith('p1', {
+        needs_system_account: true,
+        needs_respond_contact: true,
+        needs_agent_seat: false,
+      });
+
+      // The controlled parent applies the patch and re-renders, exactly as the
+      // intake screen and the review page both do.
+      current = { ...current, needs_respond_contact: true };
+      draw();
+
+      fireEvent.click(await screen.findByRole('option', { name: 'Respond.io account' }));
+      expect(onPatch).toHaveBeenLastCalledWith('p1', {
+        needs_system_account: true,
+        needs_respond_contact: true,
+        needs_agent_seat: true,
+      });
+
+      current = { ...current, needs_agent_seat: true };
+      draw();
+
+      // And a second click on a chosen option unticks that one alone.
+      fireEvent.click(await screen.findByRole('option', { name: 'System account' }));
+      expect(onPatch).toHaveBeenLastCalledWith('p1', {
+        needs_system_account: false,
+        needs_respond_contact: true,
+        needs_agent_seat: true,
+      });
+    },
+  );
+
   it('says what each person needs in words when the row cannot be edited', () => {
     render(<PeopleGrid mode="readonly" people={[person()]} templates={TEMPLATES} />);
     const cells = within(grid());

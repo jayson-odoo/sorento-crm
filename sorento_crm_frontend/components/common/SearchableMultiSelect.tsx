@@ -253,11 +253,16 @@ export function SearchableMultiSelect({
           )}
         >
           {renderTriggerLabel ? (
-            <span className="flex-1 text-left">{renderTriggerLabel(chosen)}</span>
+            <span className="min-w-0 flex-1 text-left">{renderTriggerLabel(chosen)}</span>
           ) : chosen.length === 0 ? (
             <span className="flex-1 truncate text-left text-muted-foreground">{placeholder}</span>
           ) : (
-            <span className="flex flex-1 flex-wrap gap-1">
+            // `min-w-0` is what actually makes the chips wrap inside the
+            // trigger: a flex child refuses to shrink below its content without
+            // it, so in a narrow control the chips ran past the border - and
+            // each chip's remove X went with them, landing over whatever sat
+            // beside the field.
+            <span className="flex min-w-0 flex-1 flex-wrap gap-1">
               {chosen.map((opt) => (
                 <span
                   key={opt.value}

@@ -236,6 +236,15 @@ function selectedNeeds(person: OnboardingPerson): NeedField[] {
  *
  * Read-only modes render the same words as plain text, so the row says the same
  * thing whether or not it can be edited.
+ *
+ * The trigger deliberately does NOT use the component's default removable
+ * chips. In a 240px fixed-height cell those chips fill the control, and each one
+ * carries an X that unsets that need on pointer-down without opening the menu -
+ * measured at 14px from the field's own centre, i.e. under the click that opens
+ * it. A stray hit silently dropped a need and the next pick then looked like it
+ * had REPLACED the selection, which is exactly how a working multi-select gets
+ * reported as a single-select. Here the menu is the only way to change the
+ * answer, and the trigger only reports it.
  */
 function NeedsSelect({
   personId,
@@ -249,12 +258,9 @@ function NeedsSelect({
   onPatch: (patch: OnboardingPersonPatch) => void;
 }) {
   const chosen = selectedNeeds(person);
+  const spoken = chosen.map((field) => NEED_LABELS[field]).join(', ');
   if (disabled) {
-    return (
-      <span className="text-sm break-words">
-        {chosen.length ? chosen.map((field) => NEED_LABELS[field]).join(', ') : 'Nothing'}
-      </span>
-    );
+    return <span className="text-sm break-words">{spoken || 'Nothing'}</span>;
   }
   const id = `people-grid-needs-${personId}`;
   return (
@@ -282,6 +288,13 @@ function NeedsSelect({
         }}
         options={NEED_FIELDS.map((field) => ({ value: field, label: NEED_LABELS[field] }))}
         placeholder="Nothing"
+        // Words, not removable chips - see the note above this component. The
+        // menu still shows a tick per chosen option, so nothing is hidden.
+        renderTriggerLabel={() => (
+          <span className="truncate" title={spoken || undefined}>
+            {spoken || 'Nothing'}
+          </span>
+        )}
       />
     </>
   );
