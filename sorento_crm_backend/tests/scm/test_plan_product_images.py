@@ -5,12 +5,17 @@
 Written BEFORE the implementation.
 
 The photo is not a new asset: it is the one already chosen in Dealer Kit -> Brochure
-images (`product_attachments.is_primary`), read through the same viewer-gated reader the
-catalogue uses. So what is pinned here is the CONTRACT, not the picture: one call for the
-whole run keyed by product id, a product with no permitted image ABSENT from the map
-rather than mapped to null (the popover has a designed empty state and a blank url would
-render a broken image), the same permission as every sibling reorder-run endpoint, and a
-run belonging to another company reading as 404 rather than leaking its product list.
+images, read through the same viewer-gated reader the catalogue uses. So what is pinned
+here is the CONTRACT, not the picture, and the contract is split in two on purpose:
+
+- the run-wide call answers only WHETHER each product has a photo, in one SQL and with no
+  signing, because the icon is on every row of a plan that can run to thousands of them;
+- the per-product call signs exactly one URL, on the open of one popover.
+
+`is_primary` says whether anyone ever made a deliberate choice in Brochure images. The
+reader falls back to the first catalogue image when nobody did (744 of the 762 imaged
+products on the live run), which is the right picture to show and still worth telling the
+buyer about, so the popover can offer the loop back to the picker.
 """
 from __future__ import annotations
 
@@ -78,9 +83,22 @@ def _product(db, company_id):
     return product
 
 
-def _primary_photo(db, product, company_id, *, mime="image/jpeg", thumb=None):
-    """The Brochure-images choice, as the picker writes it: an image attachment linked
-    to the product with `is_primary` set."""
+def _photo(
+    db,
+    product,
+    company_id,
+    *,
+    primary=True,
+    mime="image/jpeg",
+    thumb=None,
+    deleted=False,
+    sort_order=0,
+):
+    """A catalogue image linked to the product, as the Brochure-images picker writes it.
+
+    `primary=False` is the ordinary live row: an image attached to the product that nobody
+    ever nominated.
+    """
     from app.models.product import ProductAttachment
     from app.models.resources import Attachment
     from tests._pg_fixture import unique_code
@@ -95,7 +113,7 @@ def _primary_photo(db, product, company_id, *, mime="image/jpeg", thumb=None):
         mime_type=mime,
         storage_provider="s3",
         company_id=company_id,
-        is_deleted=False,
+        is_deleted=deleted,
     )
     db.add(attachment)
     db.flush()
@@ -104,8 +122,8 @@ def _primary_photo(db, product, company_id, *, mime="image/jpeg", thumb=None):
             id=_u(),
             product_id=product.id,
             attachment_id=attachment.id,
-            is_primary=True,
-            sort_order=0,
+            is_primary=primary,
+            sort_order=sort_order,
             access_levels=["dealer", "end_user"],
             company_id=company_id,
         )
@@ -136,55 +154,84 @@ def _run_with(db, company_id, products):
     return run_id
 
 
-def test_the_run_serves_the_primary_photo_of_each_product_it_planned(scm_app):
+def _deny(app, db, gcu, gcuk):
+    nobody = seed_user(db, None)
+    for dep in (gcu, gcuk):
+        app.dependency_overrides[dep] = lambda: {"id": nobody, "email": "x@y", "roles": []}
+
+
+def _other_company(db):
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+
+    set_company_scope(db, None)
+    other = Company(id=_u(), code=f"{MARKER}-OTH"[:20], name=f"{MARKER} other company")
+    db.add(other)
+    db.flush()
+    return other
+
+
+# ---------------------------------------------------------------------------
+# the run-wide map: which rows get a lit icon
+# ---------------------------------------------------------------------------
+
+def test_the_run_says_which_of_its_products_have_a_photo(scm_app):
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    imaged = _product(db, company_id)
+    bare = _product(db, company_id)
+    _photo(db, imaged, company_id)
+    run_id = _run_with(db, company_id, [imaged, bare])
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
+
+    assert r.status_code == 200, r.text
+    has_image = r.json()["has_image"]
+    assert has_image[str(imaged.id)] is True
+    # Absent, not `false`: the map is what the icon reads, and a product with nothing to
+    # show simply is not in it.
+    assert str(bare.id) not in has_image
+
+
+def test_the_map_costs_no_signatures(scm_app, monkeypatch):
+    """The icon is on EVERY row. A plan of four thousand lines must not sign four thousand
+    URLs to decide which icons are lit - the signature is bought on the popover open."""
+    from app.services.dealer_kit import product_images
+
+    def _explode(*args, **kwargs):
+        raise AssertionError("the run-wide map must not sign anything")
+
     app, db, gcu, gcuk = scm_app
     company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
     product = _product(db, company_id)
-    _primary_photo(db, product, company_id)
+    _photo(db, product, company_id)
+    run_id = _run_with(db, company_id, [product])
+    # The reader binds `resolve_signed_url` by name at import, so the module under test is
+    # where the trap has to go.
+    monkeypatch.setattr(product_images, "resolve_signed_url", _explode)
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["has_image"][str(product.id)] is True
+
+
+def test_a_product_nobody_nominated_still_counts_as_having_a_photo(scm_app):
+    """744 of the 762 imaged products on the live run have no `is_primary` row. Dimming
+    their icons would say "no photo" about a product we can show a photo of."""
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    product = _product(db, company_id)
+    _photo(db, product, company_id, primary=False)
     run_id = _run_with(db, company_id, [product])
 
     with TestClient(app) as c:
         r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
 
     assert r.status_code == 200, r.text
-    images = r.json()["images"]
-    assert str(product.id) in images
-    assert images[str(product.id)].startswith("https://cdn.test.invalid/")
-
-
-def test_the_thumbnail_is_preferred_over_the_full_size_photo(scm_app):
-    """A plan of four thousand rows must not pull full-resolution photographs; the reader
-    already prefers the thumbnail, and this endpoint must not undo that."""
-    app, db, gcu, gcuk = scm_app
-    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
-    product = _product(db, company_id)
-    _primary_photo(db, product, company_id, thumb="products/thumbs/zzt-thumb.jpg")
-    run_id = _run_with(db, company_id, [product])
-
-    with TestClient(app) as c:
-        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
-
-    assert r.status_code == 200, r.text
-    assert "thumb" in r.json()["images"][str(product.id)]
-
-
-def test_a_product_with_no_photo_is_absent_rather_than_null(scm_app):
-    """Absent, not `null`: the popover renders "No primary photo yet" for a missing key,
-    and a null url would reach the browser as a broken image instead."""
-    app, db, gcu, gcuk = scm_app
-    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
-    with_photo = _product(db, company_id)
-    without = _product(db, company_id)
-    _primary_photo(db, with_photo, company_id)
-    run_id = _run_with(db, company_id, [with_photo, without])
-
-    with TestClient(app) as c:
-        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
-
-    assert r.status_code == 200, r.text
-    images = r.json()["images"]
-    assert str(with_photo.id) in images
-    assert str(without.id) not in images
+    assert r.json()["has_image"][str(product.id)] is True
 
 
 def test_a_spec_sheet_linked_to_the_product_is_not_its_photo(scm_app):
@@ -193,14 +240,30 @@ def test_a_spec_sheet_linked_to_the_product_is_not_its_photo(scm_app):
     app, db, gcu, gcuk = scm_app
     company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
     product = _product(db, company_id)
-    _primary_photo(db, product, company_id, mime="application/pdf")
+    _photo(db, product, company_id, mime="application/pdf")
     run_id = _run_with(db, company_id, [product])
 
     with TestClient(app) as c:
         r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
 
     assert r.status_code == 200, r.text
-    assert str(product.id) not in r.json()["images"]
+    assert str(product.id) not in r.json()["has_image"]
+
+
+def test_an_image_deleted_in_resource_management_does_not_light_the_icon(scm_app):
+    """The reader skips soft-deleted attachments, so a lit icon that opens onto the empty
+    state would be the map disagreeing with the popover about the same product."""
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    product = _product(db, company_id)
+    _photo(db, product, company_id, deleted=True)
+    run_id = _run_with(db, company_id, [product])
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
+
+    assert r.status_code == 200, r.text
+    assert str(product.id) not in r.json()["has_image"]
 
 
 def test_a_run_with_no_recommendations_answers_an_empty_map(scm_app):
@@ -212,19 +275,16 @@ def test_a_run_with_no_recommendations_answers_an_empty_map(scm_app):
         r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
 
     assert r.status_code == 200, r.text
-    assert r.json() == {"images": {}}
+    assert r.json() == {"has_image": {}}
 
 
-def test_a_user_without_the_dashboard_permission_is_denied(scm_app):
+def test_the_map_is_denied_without_the_dashboard_permission(scm_app):
     app, db, gcu, gcuk = scm_app
     company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
     product = _product(db, company_id)
-    _primary_photo(db, product, company_id)
+    _photo(db, product, company_id)
     run_id = _run_with(db, company_id, [product])
-
-    nobody = seed_user(db, None)
-    for dep in (gcu, gcuk):
-        app.dependency_overrides[dep] = lambda: {"id": nobody, "email": "x@y", "roles": []}
+    _deny(app, db, gcu, gcuk)
 
     with TestClient(app) as c:
         denied = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
@@ -245,20 +305,143 @@ def test_an_unknown_run_is_a_404(scm_app):
 def test_a_run_from_another_company_is_a_404_not_a_leak(scm_app):
     """`assert_run_visible` is the gate every sibling endpoint relies on: another
     company's run must read as not found, never served with its product list."""
-    from app.models.base import set_company_scope
-    from app.models.company import Company
-
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
-    set_company_scope(db, None)
-    other = Company(id=_u(), code=f"{MARKER}-OTH"[:20], name=f"{MARKER} other company")
-    db.add(other)
-    db.flush()
+    other = _other_company(db)
     product = _product(db, other.id)
-    _primary_photo(db, product, other.id)
+    _photo(db, product, other.id)
     run_id = _run_with(db, other.id, [product])
 
     with TestClient(app) as c:
         r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
+
+    assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# the per-product photo: one signature, on the open of one popover
+# ---------------------------------------------------------------------------
+
+def test_the_chosen_photo_is_served_and_reported_as_chosen(scm_app):
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    product = _product(db, company_id)
+    _photo(db, product, company_id)
+    run_id = _run_with(db, company_id, [product])
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images/{product.id}")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["url"].startswith("https://cdn.test.invalid/")
+    assert body["is_primary"] is True
+
+
+def test_a_product_nobody_nominated_still_gets_a_photo_marked_as_a_fallback(scm_app):
+    """The picture is the right one to show; `is_primary: false` is what lets the popover
+    offer the way back to Brochure images so the buyer can nominate a better one."""
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    product = _product(db, company_id)
+    _photo(db, product, company_id, primary=False)
+    run_id = _run_with(db, company_id, [product])
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images/{product.id}")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["url"].startswith("https://cdn.test.invalid/")
+    assert body["is_primary"] is False
+
+
+def test_the_nominated_photo_wins_over_the_other_catalogue_images(scm_app):
+    """Someone deliberately picked one. Ordering must not quietly override that."""
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    product = _product(db, company_id)
+    _photo(db, product, company_id, primary=False, sort_order=0)
+    chosen = _photo(db, product, company_id, primary=True, sort_order=9)
+    run_id = _run_with(db, company_id, [product])
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images/{product.id}")
+
+    assert r.status_code == 200, r.text
+    assert chosen.file_path in r.json()["url"]
+
+
+def test_the_thumbnail_is_preferred_over_the_full_size_photo(scm_app):
+    """A popover panel is 336px wide. Sending the full-resolution photograph is megabytes
+    over a showroom's wifi for a picture rendered at a third of its size."""
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    product = _product(db, company_id)
+    _photo(db, product, company_id, thumb="products/thumbs/zzt-thumb.jpg")
+    run_id = _run_with(db, company_id, [product])
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images/{product.id}")
+
+    assert r.status_code == 200, r.text
+    assert "thumb" in r.json()["url"]
+
+
+def test_a_product_with_no_photo_answers_a_null_url_not_a_404(scm_app):
+    """A 404 would read as "that product is not on this plan". It is: it simply has no
+    picture, which is the popover's designed empty state."""
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    product = _product(db, company_id)
+    run_id = _run_with(db, company_id, [product])
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images/{product.id}")
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {"url": None, "is_primary": False}
+
+
+def test_a_product_that_is_not_on_the_run_is_a_404(scm_app):
+    """The run id is the gate. Reading any product's imagery through it would make this a
+    general product-photo endpoint that skipped the catalogue's own permissions."""
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    planned = _product(db, company_id)
+    elsewhere = _product(db, company_id)
+    _photo(db, elsewhere, company_id)
+    run_id = _run_with(db, company_id, [planned])
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images/{elsewhere.id}")
+
+    assert r.status_code == 404
+
+
+def test_the_photo_is_denied_without_the_dashboard_permission(scm_app):
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    product = _product(db, company_id)
+    _photo(db, product, company_id)
+    run_id = _run_with(db, company_id, [product])
+    _deny(app, db, gcu, gcuk)
+
+    with TestClient(app) as c:
+        denied = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images/{product.id}")
+
+    assert denied.status_code == 403
+
+
+def test_a_photo_on_another_company_s_run_is_a_404(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    other = _other_company(db)
+    product = _product(db, other.id)
+    _photo(db, product, other.id)
+    run_id = _run_with(db, other.id, [product])
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images/{product.id}")
 
     assert r.status_code == 404

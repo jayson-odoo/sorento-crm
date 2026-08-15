@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
-from app.models.product import Product
+from app.models.product import Product, ProductAttachment
+from app.models.resources import Attachment
 from app.schemas.scm_reorder import (
     CreateReorderRunRequest,
     ReorderRunAccepted,
@@ -477,23 +478,22 @@ def list_product_images(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """What each product on the plan LOOKS like, keyed by product id (AC-7).
+    """WHICH products on the plan have a photo to show (AC-7).
 
     > "as IT I do not know what a product looks like"
 
     A row is a code and a name, and a buyer who never handles the goods cannot tell two
-    codes apart from either. The photo is NOT a new asset: it is the one already chosen in
-    Dealer Kit -> Brochure images (`product_attachments.is_primary`), read through the same
-    viewer-gated reader the catalogue tiles use, so the plan screen and the brochure can
-    never show a different picture of the same product.
+    codes apart from either. The photo is NOT a new asset: it is the one Dealer Kit ->
+    Brochure images already governs, so the plan screen and the catalogue can never show a
+    different picture of the same product.
 
-    ONE call for the whole run rather than one per row: every entry is a signed URL, and a
-    plan of four thousand lines whose buyer opens two photos must not sign four thousand of
-    them. The frontend asks for it lazily, on the first icon opened.
+    This call answers only the QUESTION the icon asks (lit or dimmed), in one SQL and with
+    no signing at all: the icon is on every row, a plan runs to thousands of them, and the
+    buyer opens two. The picture itself, and the one signature it costs, is bought by the
+    per-product call below when a popover opens.
 
-    A product with no permitted image is ABSENT from the map rather than mapped to null -
-    the popover has a designed "No primary photo yet" state, and a blank url would reach
-    the browser as a broken image instead.
+    A product with nothing to show is ABSENT from the map rather than mapped to false - the
+    popover has a designed empty state and the frontend reads a missing key as "no photo".
     """
     svc.assert_run_visible(db, run_id)
     product_ids = [
@@ -507,13 +507,73 @@ def list_product_images(
         ).fetchall()
     ]
     if not product_ids:
-        return {"images": {}}
-    products = db.query(Product).filter(Product.id.in_(product_ids)).all()
+        return {"has_image": {}}
+    # The same three conditions the reader applies, and for the same reasons: a PDF spec
+    # sheet is not a photo, and an attachment deleted in Resource Management does not exist.
+    # An ORM query (not raw SQL) so the company scope filter still runs, and columns only so
+    # no Product or Attachment rows are built for a boolean answer.
+    rows = (
+        db.query(ProductAttachment.product_id)
+        .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .filter(ProductAttachment.product_id.in_(product_ids))
+        .filter(Attachment.mime_type.ilike("image/%"))
+        .filter(Attachment.is_deleted.is_(False))
+        .distinct()
+        .all()
+    )
+    return {"has_image": {row[0]: True for row in rows}}
+
+
+@router.get("/reorder-runs/{run_id}/product-images/{product_id}")
+def get_product_image(
+    run_id: str,
+    product_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The photo of ONE product on the plan, signed on the open of its popover (AC-7).
+
+    `is_primary` says whether anyone ever nominated this picture in Brochure images. The
+    reader falls back to the first catalogue image when nobody has (the overwhelming
+    majority of imaged products today), which is the right thing to show and still worth
+    telling the buyer, so the popover can offer the way back to the picker.
+
+    No photo is `{"url": null}`, not a 404: a 404 here would read as "that product is not
+    on this plan", which is a different and alarming statement.
+    """
+    svc.assert_run_visible(db, run_id)
+    # The run id is the gate (`assert_run_visible`), so the product has to be one the run
+    # planned. Without this the route would be a general product-photo reader that happened
+    # to take a run id, reachable for any product in the company.
+    on_run = db.execute(
+        text(
+            "SELECT 1 FROM scm.reorder_recommendation "
+            "WHERE run_id::text = :run AND product_id::text = :product LIMIT 1"
+        ),
+        {"run": run_id, "product": product_id},
+    ).first()
+    if not on_run:
+        raise AppException(404, "Product not found on this run")
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise AppException(404, "Product not found on this run")
+
     # Staff: the plan screen is behind `scm.dashboard.view`, an internal permission, so
     # trade imagery is permitted here exactly as it is in the dealer-kit builder. What a
     # CONSUMER may see is decided again, per reader, when a catalogue page is published.
     viewer = ViewerContext(is_staff=True)
-    return {"images": product_images.primary_image_urls(db, products, viewer)}
+    url = product_images.primary_image_urls(db, [product], viewer).get(product.id)
+    nominated = (
+        db.query(ProductAttachment.id)
+        .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .filter(ProductAttachment.product_id == product_id)
+        .filter(ProductAttachment.is_primary.is_(True))
+        .filter(Attachment.mime_type.ilike("image/%"))
+        .filter(Attachment.is_deleted.is_(False))
+        .first()
+    )
+    return {"url": url, "is_primary": bool(url and nominated)}
 
 
 @router.get("/reorder-runs/{run_id}/level-suggestions")
