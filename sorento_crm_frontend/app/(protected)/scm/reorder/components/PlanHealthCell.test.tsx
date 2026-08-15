@@ -9,7 +9,7 @@ import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PlanHealthCell } from './PlanHealthCell';
-import { marginOf, type ProductEconomics } from '../lib/productHealth';
+import { marginOf, type DiscontinueAdvice, type ProductEconomics } from '../lib/productHealth';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -107,5 +107,77 @@ describe('PlanHealthCell - pill content (Fix C, user feedback, 2026-08-12)', () 
 
     expect(screen.getByText('Margin unknown')).toBeInTheDocument();
     expect(screen.queryByText(/RM/)).not.toBeInTheDocument();
+  });
+});
+
+describe('PlanHealthCell - the popover answers, it does not editorialise (AC-5)', () => {
+  const advice = (consider: boolean, factors: string[] = ['Sold 240 in the window']): DiscontinueAdvice => ({
+    consider,
+    factors,
+  });
+
+  it('names the suggestion as a discontinue in one line', () => {
+    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={advice(true)} econ={econ()} />);
+    open();
+
+    expect(screen.getByText('Suggestion: Discontinue')).toBeInTheDocument();
+  });
+
+  it('names the suggestion as keep selling in the same one line', () => {
+    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={advice(false)} econ={econ()} />);
+    open();
+
+    expect(screen.getByText('Suggestion: Keep selling')).toBeInTheDocument();
+  });
+
+  it('shows a dash rather than claiming "keep selling" when there is no verdict yet', () => {
+    // `advice` is null while the economics are still loading, and on any product the
+    // advisory holds no opinion about. Defaulting that to "Keep selling" would be a claim
+    // the system has not made.
+    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={null} econ={econ()} />);
+    open();
+
+    expect(screen.getByText('Suggestion: -')).toBeInTheDocument();
+    expect(screen.queryByText(/Suggestion: Keep selling/)).not.toBeInTheDocument();
+  });
+
+  it('drops the two prose verdicts it used to open with', () => {
+    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={advice(false)} econ={econ()} />);
+    open();
+
+    expect(screen.queryByText('The product is earning its place.')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('The factors argue for discontinuing this product.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('drops the AutoCount footer', () => {
+    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={advice(true)} econ={econ()} />);
+    open();
+
+    expect(screen.queryByText(/Based on our own orders and stock only/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/AutoCount/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the factor lines, the list-price note, both buttons and the suggested hint', () => {
+    const noSales = econ({ avg_sell_price: 90, sell_source: 'list_price', sold_qty: 0 });
+    render(
+      <PlanHealthCell
+        margin={marginOf(60, noSales, 15)}
+        advice={advice(true, ['Turnover 14 months', 'Demand falling'])}
+        econ={noSales}
+        onDecideLifecycle={() => {}}
+      />,
+    );
+    open();
+
+    expect(screen.getByText('Turnover 14 months')).toBeInTheDocument();
+    expect(screen.getByText('Demand falling')).toBeInTheDocument();
+    expect(
+      screen.getByText('No sales in the window, so the margin compares against the list price.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Keep selling' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Discontinue' })).toBeInTheDocument();
+    expect(screen.getByText('suggested')).toBeInTheDocument();
   });
 });
