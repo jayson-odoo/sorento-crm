@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   CheckCheck,
@@ -31,6 +31,9 @@ import {
   getNormalizedRespondSource,
   getOutgoingSenderLabel,
 } from '@/lib/respondIoOutgoingMessage';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 
 interface RespondChatListProps {
   items: RespondMessageRenderable[];
@@ -67,12 +70,27 @@ function AttachmentIcon({ kind }: { kind: MessageAttachmentDescriptor['kind'] })
   return <Paperclip className="size-3.5 shrink-0" />;
 }
 
+/** Human label for an attachment: the real filename when we have one (ours end
+ *  in the clean name by construction - AC-D5), else the typed placeholder. */
+function attachmentDisplayName(item: MessageAttachmentDescriptor): string {
+  return item.fileName || item.label;
+}
+
 /** Typed placeholder for a non-text payload. Images preview inline; everything
- *  else (including types we do not know) shows an icon + label, never a blank. */
-function AttachmentBlock({ item }: { item: MessageAttachmentDescriptor }) {
+ *  else (including types we do not know) shows an icon + label, never a blank.
+ *  With a URL the whole block opens the shared CRM attachment preview (AC-D6);
+ *  without one it stays a static placeholder. */
+function AttachmentBlock({
+  item,
+  onOpen,
+}: {
+  item: MessageAttachmentDescriptor;
+  onOpen?: () => void;
+}) {
+  const name = attachmentDisplayName(item);
   const caption = item.fileName ? `${item.label} · ${item.fileName}` : item.label;
-  return (
-    <div className="mt-1 rounded-md border border-black/5 bg-black/5 p-1.5 dark:border-white/10 dark:bg-white/5">
+  const body = (
+    <>
       {item.kind === 'image' && item.url ? (
         // Remote Respond.io media: a plain <img> (next/image needs configured hosts).
         <img
@@ -86,7 +104,19 @@ function AttachmentBlock({ item }: { item: MessageAttachmentDescriptor }) {
         <AttachmentIcon kind={item.kind} />
         <span className="truncate">{caption}</span>
       </div>
-    </div>
+    </>
+  );
+  const shell = 'mt-1 rounded-md border border-black/5 bg-black/5 p-1.5 dark:border-white/10 dark:bg-white/5';
+  if (!onOpen) return <div className={shell}>{body}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`Preview ${name}`}
+      className={`${shell} block w-full cursor-pointer text-left hover:bg-black/10 dark:hover:bg-white/10`}
+    >
+      {body}
+    </button>
   );
 }
 
@@ -112,6 +142,33 @@ export default function RespondChatList({
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
+
+  // AC-D6: attachment bubbles open the SAME preview surface the rest of the CRM
+  // uses (image/video/pdf inline, spreadsheets via its Excel slide, everything
+  // else its download/open fallback) - never a raw-URL new tab. Chat media has
+  // no `attachments` row, so items carry the CDN url only: no `downloadUrl`
+  // means the modal's authenticated byte-fetch is never called, which is also
+  // what keeps this working on the token-authenticated portal thread.
+  const [previewItems, setPreviewItems] = useState<AttachmentPreviewItem[]>([]);
+  const [previewIndex, setPreviewIndex] = useState(0);
+
+  const openPreview = useCallback(
+    (attachments: MessageAttachmentDescriptor[], clicked: number, idPrefix: string) => {
+      const items = attachments
+        .map((att, i) => ({ att, i }))
+        .filter(({ att }) => !!att.url)
+        .map(({ att, i }) => ({
+          id: `${idPrefix}-att-${i}`,
+          name: attachmentDisplayName(att),
+          url: att.url as string,
+        }));
+      if (items.length === 0) return;
+      const start = items.findIndex((it) => it.id === `${idPrefix}-att-${clicked}`);
+      setPreviewIndex(start < 0 ? 0 : start);
+      setPreviewItems(items);
+    },
+    [],
+  );
 
   const normalizedHighlightId =
     highlightMessageId != null && String(highlightMessageId).trim() !== ''
@@ -233,7 +290,11 @@ export default function RespondChatList({
                     </div>
                   )}
                   {attachments.map((att, i) => (
-                    <AttachmentBlock key={`${key}-att-${i}`} item={att} />
+                    <AttachmentBlock
+                      key={`${key}-att-${i}`}
+                      item={att}
+                      onOpen={att.url ? () => openPreview(attachments, i, key) : undefined}
+                    />
                   ))}
                   {text && (
                     <div className="whitespace-pre-wrap break-words leading-snug">{text}</div>
@@ -264,6 +325,15 @@ export default function RespondChatList({
         })}
         <div ref={messagesEndRef} />
       </div>
+
+      <AttachmentPreviewModal
+        open={previewItems.length > 0}
+        onOpenChange={(next) => {
+          if (!next) setPreviewItems([]);
+        }}
+        items={previewItems}
+        startIndex={previewIndex}
+      />
     </div>
   );
 }

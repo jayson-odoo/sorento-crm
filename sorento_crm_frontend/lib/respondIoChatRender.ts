@@ -122,12 +122,41 @@ function normalizeAttachmentKind(raw: unknown): MessageAttachmentKind {
   return 'unknown';
 }
 
+/**
+ * Filename carried by an attachment URL's last path segment.
+ *
+ * Respond.io's message payload has no fileName field on most shapes, so the URL
+ * is the only name channel we get - the same segment WhatsApp itself names the
+ * delivered document from (AC-D5, which is why our own uploads put the uuid in
+ * its own path segment and keep the clean filename last). Query string and
+ * fragment are dropped, percent-escapes decoded; anything unusable yields
+ * `undefined` so the caller falls back to the typed label.
+ */
+export function fileNameFromAttachmentUrl(url?: string): string | undefined {
+  const raw = (url ?? '').trim();
+  if (!raw) return undefined;
+  const last = raw.split(/[?#]/)[0].split('/').pop() ?? '';
+  if (!last) return undefined;
+  let decoded = last;
+  try {
+    decoded = decodeURIComponent(last);
+  } catch {
+    // Malformed escape - keep the raw segment rather than losing the name.
+  }
+  return decoded.trim() || undefined;
+}
+
 function toDescriptor(raw: unknown, fallbackKind?: unknown): MessageAttachmentDescriptor | null {
   if (typeof raw === 'string') {
     const url = raw.trim();
     if (!url) return null;
     const kind = normalizeAttachmentKind(fallbackKind);
-    return { kind, label: ATTACHMENT_LABELS[kind], url };
+    return {
+      kind,
+      label: ATTACHMENT_LABELS[kind],
+      url,
+      fileName: fileNameFromAttachmentUrl(url),
+    };
   }
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
@@ -140,6 +169,7 @@ function toDescriptor(raw: unknown, fallbackKind?: unknown): MessageAttachmentDe
     (typeof o.fileName === 'string' && o.fileName) ||
     (typeof o.filename === 'string' && o.filename) ||
     (typeof o.name === 'string' && o.name) ||
+    fileNameFromAttachmentUrl(url) ||
     undefined;
   if (!url && !fileName && kind === 'unknown') return null;
   return { kind, label: ATTACHMENT_LABELS[kind], url, fileName };

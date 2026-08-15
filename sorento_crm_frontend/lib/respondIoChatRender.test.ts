@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   describeMessageAttachments,
   buildQuotedReplyText,
+  fileNameFromAttachmentUrl,
   splitMessageQuote,
   splitQuotedPrefix,
   QUOTE_EXCERPT_MAX_CHARS,
@@ -18,11 +19,40 @@ function msg(message: RespondMessageRenderable['message']): RespondMessageRender
 // typed placeholder; unknown types never crash and never render blank.
 // ---------------------------------------------------------------------------
 describe('describeMessageAttachments', () => {
-  it('single object attachment (image)', () => {
+  it('single object attachment (image) - name falls back to the URL basename (AC-D5)', () => {
     const out = describeMessageAttachments(
       msg({ type: 'attachment', attachment: { type: 'image', url: '/media/photo.jpg' } }),
     );
-    expect(out).toEqual([{ kind: 'image', label: 'Photo', url: '/media/photo.jpg', fileName: undefined }]);
+    expect(out).toEqual([
+      { kind: 'image', label: 'Photo', url: '/media/photo.jpg', fileName: 'photo.jpg' },
+    ]);
+  });
+
+  it('an explicit fileName always wins over the URL basename', () => {
+    const out = describeMessageAttachments(
+      msg({
+        type: 'attachment',
+        attachment: {
+          type: 'file',
+          url: 'https://cdn.test/t/id/uuid/Q3_stock.xlsx',
+          fileName: 'Q3 stock.xlsx',
+        },
+      }),
+    );
+    expect(out[0].fileName).toBe('Q3 stock.xlsx');
+  });
+
+  it('our own uploads surface the clean filename, never the uuid segment (AC-D5)', () => {
+    const out = describeMessageAttachments(
+      msg({
+        type: 'attachment',
+        attachment: {
+          type: 'file',
+          url: 'https://cdn.test/conversation_sla_tracking/biz-1/9f1c8f5e-aaaa-bbbb-cccc-1234567890ab/Q3_stock.xlsx',
+        },
+      }),
+    );
+    expect(out[0].fileName).toBe('Q3_stock.xlsx');
   });
 
   it('document attachment carries a fileName', () => {
@@ -85,6 +115,40 @@ describe('describeMessageAttachments', () => {
 
   it('plain text message has no attachments', () => {
     expect(describeMessageAttachments(msg({ type: 'text', text: 'hello' }))).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fileNameFromAttachmentUrl - the URL is the only name channel Respond gives us
+// ---------------------------------------------------------------------------
+describe('fileNameFromAttachmentUrl', () => {
+  it('takes the last path segment', () => {
+    expect(fileNameFromAttachmentUrl('https://cdn.test/a/b/DO-2026-0442.pdf')).toBe(
+      'DO-2026-0442.pdf',
+    );
+  });
+
+  it('drops the signed-URL query string and the fragment', () => {
+    expect(
+      fileNameFromAttachmentUrl('https://cf.test/a/uuid/Q3_stock.xlsx?Expires=1&Signature=x'),
+    ).toBe('Q3_stock.xlsx');
+    expect(fileNameFromAttachmentUrl('https://cf.test/a/report.pdf#page=2')).toBe('report.pdf');
+  });
+
+  it('decodes percent-escapes', () => {
+    expect(fileNameFromAttachmentUrl('https://cdn.test/a/%E6%8A%A5%E4%BB%B7%E5%8D%95.pdf')).toBe(
+      '报价单.pdf',
+    );
+  });
+
+  it('keeps the raw segment when the escape is malformed, never throws', () => {
+    expect(fileNameFromAttachmentUrl('https://cdn.test/a/100%.pdf')).toBe('100%.pdf');
+  });
+
+  it('returns undefined for missing / unusable urls', () => {
+    expect(fileNameFromAttachmentUrl(undefined)).toBeUndefined();
+    expect(fileNameFromAttachmentUrl('   ')).toBeUndefined();
+    expect(fileNameFromAttachmentUrl('https://cdn.test/a/')).toBeUndefined();
   });
 });
 
