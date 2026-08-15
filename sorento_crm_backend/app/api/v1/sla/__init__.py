@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.sla import (
     sla_policies,
     sla_tracking,
+    conversations,
     conversation_events,
     form_sla_config,
     form_sla_tracking,
@@ -16,6 +17,9 @@ router = APIRouter()
 
 router.include_router(sla_policies.router, prefix="/sla-policies", tags=["sla-policies"])
 router.include_router(sla_tracking.router, prefix="/conversation-sla-tracking", tags=["sla-tracking"])
+# Contact-keyed conversations inbox (UAC N, S4.9): the list, the contact-keyed
+# thread reads and the inbox reply. Permission-gated, NOT assignment-gated.
+router.include_router(conversations.router, prefix="/conversations", tags=["conversations"])
 # Live server push for the ticket drawer + pending-tasks widget (UAC K, S4.2).
 router.include_router(
     conversation_events.router, prefix="/conversation-events", tags=["sla-tracking"]

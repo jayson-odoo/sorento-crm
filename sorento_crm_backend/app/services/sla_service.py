@@ -5443,18 +5443,110 @@ class ConversationSLATrackingService:
 
     def _thread_contact_for_tracking(self, tracking: ConversationSLATracking):
         """The contact descriptor the thread reads need, or None when unlinked."""
-        from app.services.conversation_thread_service import ThreadContact
+        from app.services.conversation_thread_service import thread_contact_for
 
-        ident = self._respond_io_identifier_for_tracking(tracking)
-        if not ident:
+        if not self._respond_io_identifier_for_tracking(tracking):
             return None
-        contact = tracking.contact
-        return ThreadContact(
-            respond_io_id=ident,
-            phone_number=str(getattr(contact, "phone_number", "") or ""),
-            first_name=getattr(contact, "first_name", None),
-            last_name=getattr(contact, "last_name", None),
+        return thread_contact_for(getattr(tracking, "contact", None))
+
+    # -- contact reference resolution --------------------------------------
+
+    def resolve_contact_by_ref(self, contact_ref: str) -> Optional[RespondContact]:
+        """A ``RespondContact`` from whatever identifier the caller holds.
+
+        Accepts a Respond.io contact id, a ``respond_contacts.id`` or a phone
+        number in any of the shapes the integration lookups already tolerate -
+        the SAME resolution order as ``resolve_internal_respond_contact_id``,
+        which this delegates to rather than re-deriving.
+        """
+        internal_id = self.resolve_internal_respond_contact_id(contact_ref)
+        if not internal_id:
+            return None
+        return self.db.query(RespondContact).filter(RespondContact.id == internal_id).first()
+
+    def require_contact(self, contact_ref: str) -> RespondContact:
+        contact = self.resolve_contact_by_ref(contact_ref)
+        if contact is None:
+            raise handle_not_found("Contact", str(contact_ref))
+        return contact
+
+    # -- thread reads, shared by the ticket-keyed and contact-keyed routes --
+
+    def _thread_page_for_contact(
+        self,
+        contact,
+        *,
+        before: Optional[str],
+        after: Optional[str],
+        around: Optional[str],
+        limit: int,
+    ) -> dict:
+        """The page read itself, given an already-authorised thread contact.
+
+        Both entry points (ticket-keyed for the drawer, contact-keyed for the
+        inbox) end here, so the response shape is one implementation and cannot
+        drift between the two surfaces. Authorisation happens BEFORE this - the
+        two surfaces have deliberately different gates (AC-N2).
+        """
+        from app.services import conversation_thread_service as thread_service
+        from app.services.integration_service import RespondClient
+
+        if contact is None:
+            return thread_service.empty_page(limit=limit, error="No Respond.io contact linked")
+        return thread_service.fetch_thread_page(
+            self.db,
+            contact,
+            before=before,
+            after=after,
+            around=around,
+            limit=limit,
+            # Per CONTACT, not the deployment default: a contact on any other
+            # Respond workspace 401s on the default key and the page silently
+            # degrades to the text-only local lane, which is exactly what
+            # AC-L7's lane order was revised to avoid.
+            client=RespondClient.for_identifier(self.db, contact.respond_io_id),
         )
+
+    def _thread_search_for_contact(self, contact, *, q: str, limit: int) -> dict:
+        from app.services import conversation_thread_service as thread_service
+
+        if contact is None:
+            return thread_service.empty_search(q=q, error="No Respond.io contact linked")
+        return thread_service.search_thread(self.db, contact, q=q, limit=limit)
+
+    def fetch_contact_thread_page(
+        self,
+        contact_ref: str,
+        *,
+        before: Optional[str] = None,
+        after: Optional[str] = None,
+        around: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict:
+        """One scroll-back window of a contact's thread, keyed by the CONTACT
+        (AC-N3).
+
+        No ticket scope: the route already required
+        ``sla_management.conversations.view``, which is the whole point of the
+        inbox - reading a conversation is a permission, not an assignment.
+        """
+        from app.services.conversation_thread_service import thread_contact_for
+
+        contact = self.require_contact(contact_ref)
+        return self._thread_page_for_contact(
+            thread_contact_for(contact),
+            before=before,
+            after=after,
+            around=around,
+            limit=limit,
+        )
+
+    def search_contact_thread(self, contact_ref: str, *, q: str, limit: int = 100) -> dict:
+        """In-thread search keyed by the CONTACT (AC-N3)."""
+        from app.services.conversation_thread_service import thread_contact_for
+
+        contact = self.require_contact(contact_ref)
+        return self._thread_search_for_contact(thread_contact_for(contact), q=q, limit=limit)
 
     def _ticket_tracking_in_scope(self, tracking_id: str, viewer_user_id: str):
         """This conversation ticket, or a 404.
@@ -5474,6 +5566,11 @@ class ConversationSLATrackingService:
             raise handle_not_found("Conversation SLA tracking", tracking_id)
         return tracking
 
+    def require_ticket_in_scope(self, tracking_id: str, viewer_user_id: str):
+        """Public name for the ticket-scope gate, for routes that need the gate
+        without a read attached (the media proxy)."""
+        return self._ticket_tracking_in_scope(tracking_id, viewer_user_id)
+
     def fetch_conversation_thread_page(
         self,
         tracking_id: str,
@@ -5488,38 +5585,17 @@ class ConversationSLATrackingService:
 
         Assignee-or-manager scoped like every sibling ticket read: this returns
         a contact's WhatsApp conversation, so an unscoped version let any
-        authenticated user read any contact's thread from a guessed id.
+        authenticated user read any contact's thread from a guessed id. The
+        contact-keyed twin (``fetch_contact_thread_page``) shares the read but
+        NOT the gate - see AC-N2.
         """
-        from app.services import conversation_thread_service as thread_service
-        from app.services.integration_service import RespondClient
-
         tracking = self._ticket_tracking_in_scope(tracking_id, viewer_user_id)
-        contact = self._thread_contact_for_tracking(tracking)
-        if contact is None:
-            return {
-                "items": [],
-                "has_more_older": False,
-                "has_more_newer": False,
-                "oldest_message_id": None,
-                "newest_message_id": None,
-                "anchor_message_id": None,
-                "limit": limit,
-                "source": "none",
-                "backfilled": 0,
-                "error": "No Respond.io contact linked",
-            }
-        return thread_service.fetch_thread_page(
-            self.db,
-            contact,
+        return self._thread_page_for_contact(
+            self._thread_contact_for_tracking(tracking),
             before=before,
             after=after,
             around=around,
             limit=limit,
-            # Per CONTACT, not the deployment default: a contact on any other
-            # Respond workspace 401s on the default key and the page silently
-            # degrades to the text-only local lane, which is exactly what
-            # AC-L7's lane order was revised to avoid.
-            client=RespondClient.for_identifier(self.db, contact.respond_io_id),
         )
 
     def search_conversation_thread(
@@ -5530,19 +5606,10 @@ class ConversationSLATrackingService:
         Assignee-or-manager scoped: free text over a stranger's conversation is
         the worse half of an unscoped thread read.
         """
-        from app.services import conversation_thread_service as thread_service
-
         tracking = self._ticket_tracking_in_scope(tracking_id, viewer_user_id)
-        contact = self._thread_contact_for_tracking(tracking)
-        if contact is None:
-            return {
-                "items": [],
-                "total": 0,
-                "truncated": False,
-                "query": (q or "").strip(),
-                "error": "No Respond.io contact linked",
-            }
-        return thread_service.search_thread(self.db, contact, q=q, limit=limit)
+        return self._thread_search_for_contact(
+            self._thread_contact_for_tracking(tracking), q=q, limit=limit
+        )
 
     def send_conversation_reply_for_tracking(
         self,
@@ -6076,14 +6143,7 @@ class ConversationSLATrackingService:
         (not implemented yet - tracked separately from this fix).
         """
         from app.services.crm_chat_outbound_webhook import notify_human_ticket_send
-        from app.services.error_handler import AppException
         from app.services.form_sla_service import FORM_SLA_TYPES
-        from app.services.respond_chat_template_service import (
-            send_chat_attachment_for,
-            send_chat_message_for,
-            upload_chat_attachment,
-        )
-        from app.services.respond_messaging_service import get_window_state
 
         tracking = self.get_tracking(tracking_id, load_event_logs=False)
         if not tracking:
@@ -6109,6 +6169,99 @@ class ConversationSLATrackingService:
 
         business_table = "conversation_sla_tracking"
         business_id = str(tracking.id)
+
+        result = self._deliver_conversation_message(
+            identifier=identifier,
+            respond_contact_id=respond_contact_id,
+            business_table=business_table,
+            business_id=business_id,
+            text=text,
+            files=files,
+            sender_user_id=sender_user_id,
+            sender_name=sender_name,
+        )
+        anything_delivered = result.pop("_delivered")
+        first_respond_response = result.pop("_first_response")
+        sent_as = result["sent_as"]
+        rendered_text = result["rendered_text"]
+
+        # AC-E1: stamp THIS ticket's response clock only, and only if
+        # something ACTUALLY reached the contact (a total attachment failure
+        # with no caption stamps nothing). Best-effort - the message already
+        # reached the contact; a stamping bug must never turn a delivered
+        # send into a 500 for the assignee.
+        if anything_delivered:
+            try:
+                reason_bits = [f"sent_as={sent_as}"]
+                if reply_to_message_id:
+                    reason_bits.append(f"reply_to_message_id={reply_to_message_id}")
+                if reply_to_excerpt:
+                    reason_bits.append("quoted_reply=true")
+                self.mark_ticket_responded(
+                    tracking,
+                    responded_by_user_id=sender_user_id,
+                    reason=f"CRM reply ({', '.join(reason_bits)})",
+                )
+            except Exception:  # noqa: BLE001
+                _module_logger.warning(
+                    "send_ticket_message: response-clock stamp failed for %s",
+                    tracking_id,
+                    exc_info=True,
+                )
+
+            # AC-J1: tell n8n a HUMAN answered, so the bot stops replying to this
+            # contact (is_human_intervened + ht timeout lane), exactly as a manual
+            # reply from the Respond app does. Once per drawer send, whatever it
+            # carried; itself best-effort (notify_human_ticket_send never raises).
+            notify_human_ticket_send(
+                self.db,
+                tracking_id=business_id,
+                contact_respond_io_id=identifier,
+                message_text=rendered_text,
+                respond_api_response=first_respond_response,
+                sender_user_id=sender_user_id,
+            )
+
+        return result
+
+    def _deliver_conversation_message(
+        self,
+        *,
+        identifier: str,
+        respond_contact_id: Optional[str],
+        business_table: str,
+        business_id: str,
+        text: str,
+        files: list,
+        sender_user_id: Optional[str],
+        sender_name: str,
+    ) -> dict:
+        """Put a message (text and/or attachments) in front of a contact.
+
+        The delivery half of a CRM-native reply, with nothing ticket-specific
+        left in it: the ticket drawer (``send_ticket_message``) and the
+        Conversations inbox (``send_contact_message``) both come through here,
+        so the smart-send behaviour, the multi-attachment contract and the
+        Respond outbox rows are ONE implementation rather than two that drift.
+        Callers own their own authorisation, their own ``business_table`` /
+        ``business_id`` for the outbox, and whatever they do afterwards (a
+        response clock, a human-send signal).
+
+        The multi-attachment FE contract is documented on
+        ``send_ticket_message``; ``_delivered`` / ``_first_response`` are
+        internal and never leave the two callers.
+        """
+        from app.services.error_handler import AppException
+        from app.services.respond_chat_template_service import (
+            send_chat_attachment_for,
+            send_chat_message_for,
+            upload_chat_attachment,
+        )
+        from app.services.respond_messaging_service import get_window_state
+
+        clean_text = (text or "").strip()
+        if not clean_text and not files:
+            raise handle_validation_error("Provide message text or at least one attachment.")
 
         attachments_result: Optional[dict] = None
         anything_delivered = False
@@ -6227,43 +6380,6 @@ class ConversationSLATrackingService:
             first_respond_response = result.get("response")
             anything_delivered = True
 
-        # AC-E1: stamp THIS ticket's response clock only, and only if
-        # something ACTUALLY reached the contact (a total attachment failure
-        # with no caption stamps nothing). Best-effort - the message already
-        # reached the contact; a stamping bug must never turn a delivered
-        # send into a 500 for the assignee.
-        if anything_delivered:
-            try:
-                reason_bits = [f"sent_as={sent_as}"]
-                if reply_to_message_id:
-                    reason_bits.append(f"reply_to_message_id={reply_to_message_id}")
-                if reply_to_excerpt:
-                    reason_bits.append("quoted_reply=true")
-                self.mark_ticket_responded(
-                    tracking,
-                    responded_by_user_id=sender_user_id,
-                    reason=f"CRM reply ({', '.join(reason_bits)})",
-                )
-            except Exception:  # noqa: BLE001
-                _module_logger.warning(
-                    "send_ticket_message: response-clock stamp failed for %s",
-                    tracking_id,
-                    exc_info=True,
-                )
-
-            # AC-J1: tell n8n a HUMAN answered, so the bot stops replying to this
-            # contact (is_human_intervened + ht timeout lane), exactly as a manual
-            # reply from the Respond app does. Once per drawer send, whatever it
-            # carried; itself best-effort (notify_human_ticket_send never raises).
-            notify_human_ticket_send(
-                self.db,
-                tracking_id=business_id,
-                contact_respond_io_id=identifier,
-                message_text=rendered_text,
-                respond_api_response=first_respond_response,
-                sender_user_id=sender_user_id,
-            )
-
         return {
             "sent_as": sent_as,
             "rendered_text": rendered_text,
@@ -6273,4 +6389,110 @@ class ConversationSLATrackingService:
                 "expires_at": None,
             },
             "attachments": attachments_result,
+            # Private to the two callers below and stripped before the route
+            # sees it: "did anything actually reach the contact" is what gates
+            # the response clock and the human-send signal, and the first
+            # acknowledgement carries the messageId that signal mirrors (AC-J5).
+            "_delivered": anything_delivered,
+            "_first_response": first_respond_response,
         }
+
+    def my_open_tickets_for_contact(
+        self, respond_contact_id: str, user_id: Optional[str]
+    ) -> list:
+        """The caller's OPEN conversation-scope tickets for one contact.
+
+        ``conversation_tracking_scope()`` is mandatory: form-SLA stage rows
+        share this table, and a complaint stage assigned to the caller would
+        otherwise look like an enquiry to stamp a WhatsApp reply onto.
+        """
+        if not user_id:
+            return []
+        return (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.respond_contact_id == str(respond_contact_id),
+                ConversationSLATracking.assigned_to_id == str(user_id),
+                ConversationSLATracking.is_resolved.is_(False),
+                conversation_tracking_scope(),
+            )
+            .order_by(ConversationSLATracking.initiated_at.asc())
+            .all()
+        )
+
+    def send_contact_message(
+        self,
+        contact_ref: str,
+        *,
+        text: str,
+        files: list,
+        sender_user_id: Optional[str],
+        sender_name: str,
+    ) -> dict:
+        """Reply to a CONTACT from the Conversations inbox (UAC AC-N2).
+
+        Stamped onto the sender's own OPEN conversation ticket for this contact
+        when they hold EXACTLY ONE - then it IS that ticket's first response,
+        indistinguishable from a drawer send, and it goes through
+        ``send_ticket_message`` so the response clock, the event log and the
+        human-send signal all behave identically. Zero or several: the message
+        still goes, but unstamped. Guessing which of two open enquiries a reply
+        answers would corrupt both clocks, and refusing to send would make the
+        inbox useless for exactly the colleague AC-N2 opened it for.
+
+        Either way the Respond outbox is written (by the shared send helpers)
+        and the AC-J human-intervention signal fires, so the bot stands down for
+        this contact whichever lane carried the message.
+
+        Response shape is the ticket send's, plus ``stamped_ticket_id`` (null on
+        the unstamped lane) so the caller can tell which one happened.
+        """
+        from app.services.crm_chat_outbound_webhook import notify_human_contact_send
+
+        contact = self.require_contact(contact_ref)
+        identifier = str(getattr(contact, "respond_io_id", "") or "").strip()
+        if not identifier:
+            raise handle_validation_error(
+                "No Respond.io contact linked; cannot send a message."
+            )
+
+        mine = self.my_open_tickets_for_contact(str(contact.id), sender_user_id)
+        if len(mine) == 1:
+            result = self.send_ticket_message(
+                str(mine[0].id),
+                text=text,
+                files=files,
+                reply_to_message_id=None,
+                reply_to_excerpt=None,
+                sender_user_id=sender_user_id,
+                sender_name=sender_name,
+            )
+            result["stamped_ticket_id"] = str(mine[0].id)
+            return result
+
+        result = self._deliver_conversation_message(
+            identifier=identifier,
+            respond_contact_id=str(contact.id),
+            # The outbox row is keyed on the CONTACT, because no one ticket owns
+            # this send. `integration_log.business_id` is a uuid column and
+            # `respond_contacts.id` holds a uuid, so it fits.
+            business_table="respond_contacts",
+            business_id=str(contact.id),
+            text=text,
+            files=files,
+            sender_user_id=sender_user_id,
+            sender_name=sender_name,
+        )
+        delivered = result.pop("_delivered")
+        first_respond_response = result.pop("_first_response")
+        if delivered:
+            notify_human_contact_send(
+                self.db,
+                respond_contact_id=str(contact.id),
+                contact_respond_io_id=identifier,
+                message_text=result["rendered_text"],
+                respond_api_response=first_respond_response,
+                sender_user_id=sender_user_id,
+            )
+        result["stamped_ticket_id"] = None
+        return result

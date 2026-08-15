@@ -2276,6 +2276,29 @@ async def get_sla_tracking_conversation_page(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{tracking_id}/media")
+async def proxy_ticket_media(
+    tracking_id: UUID,
+    url: str = Query(..., description="Attachment URL on an allowlisted media host"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Viewer-scoped byte proxy for an attachment in THIS ticket's thread (AC-N4).
+
+    Scoped exactly like the sibling thread reads - an outsider gets a 404, never
+    a 403 - and the URL itself must be on the media allowlist
+    (``media_proxy_service``), so this can never be used as a general URL
+    fetcher. The contact-keyed twin lives under ``/conversations/{ref}/media``
+    and differs only in its gate.
+    """
+    from app.services import media_proxy_service
+
+    ConversationSLATrackingService(db).require_ticket_in_scope(
+        str(tracking_id), current_user["id"]
+    )
+    return await media_proxy_service.stream(url)
+
+
 @router.get("/{tracking_id}/conversation/search")
 async def search_sla_tracking_conversation(
     tracking_id: UUID,

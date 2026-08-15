@@ -184,6 +184,23 @@ class TicketCommentService:
             raise handle_not_found("Conversation SLA tracking", tracking_id)
         return tracking
 
+    def _list(self, *scope) -> list[TicketCommentResponse]:
+        """Serialize whatever the given scope selects, oldest first.
+
+        The one render order (AC-L1) and the one serializer, shared by the
+        ticket-keyed and contact-keyed lists so the two cannot drift.
+        """
+        rows = (
+            self.db.query(ConversationTicketComment)
+            .filter(*scope)
+            .order_by(
+                ConversationTicketComment.created_at.asc(),
+                ConversationTicketComment.id.asc(),
+            )
+            .all()
+        )
+        return [self.serialize(row) for row in rows]
+
     def list_for_tracking(
         self, tracking_id: str, *, viewer_user_id: str
     ) -> list[TicketCommentResponse]:
@@ -196,23 +213,48 @@ class TicketCommentService:
             scope.append(
                 ConversationTicketComment.respond_contact_id == str(contact_id)
             )
-        rows = (
-            self.db.query(ConversationTicketComment)
-            .filter(
-                or_(*scope),
-                # A sibling ticket's CRM note belongs to that ticket, not here.
-                or_(
-                    ConversationTicketComment.tracking_id == str(tracking.id),
-                    ConversationTicketComment.tracking_id.is_(None),
-                ),
-            )
-            .order_by(
-                ConversationTicketComment.created_at.asc(),
-                ConversationTicketComment.id.asc(),
-            )
-            .all()
+        return self._list(
+            or_(*scope),
+            # A sibling ticket's CRM note belongs to that ticket, not here.
+            or_(
+                ConversationTicketComment.tracking_id == str(tracking.id),
+                ConversationTicketComment.tracking_id.is_(None),
+            ),
         )
-        return [self.serialize(row) for row in rows]
+
+    def list_for_contact(self, contact_ref: str) -> list[TicketCommentResponse]:
+        """Every internal note about a CONTACT, oldest first (AC-N3).
+
+        Wider than ``list_for_tracking`` on purpose: the inbox thread is not
+        looking at one ticket, and a note is internal staff context rather than
+        ticket-private, so a sibling ticket's note renders here too. Read
+        access is the caller's ``sla_management.conversations.view`` permission,
+        checked at the route - there is no assignment to check against.
+
+        The gate is a permission, so this method authorises nothing: never call
+        it from a surface that has not already required that permission.
+        """
+        from app.services.sla_service import (
+            ConversationSLATrackingService,
+            conversation_tracking_scope,
+        )
+
+        contact = ConversationSLATrackingService(self.db).require_contact(contact_ref)
+        contact_pk = str(contact.id)
+        tickets_for_contact = (
+            self.db.query(ConversationSLATracking.id)
+            .filter(
+                ConversationSLATracking.respond_contact_id == contact_pk,
+                conversation_tracking_scope(),
+            )
+            .scalar_subquery()
+        )
+        return self._list(
+            or_(
+                ConversationTicketComment.respond_contact_id == contact_pk,
+                ConversationTicketComment.tracking_id.in_(tickets_for_contact),
+            )
+        )
 
     def serialize(self, comment: ConversationTicketComment) -> TicketCommentResponse:
         names = [

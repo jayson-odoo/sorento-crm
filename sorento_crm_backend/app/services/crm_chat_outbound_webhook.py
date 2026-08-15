@@ -325,6 +325,87 @@ def resolve_sender_respond_user_id(
     return respond_id
 
 
+def _notify_human_send(
+    db: Session,
+    *,
+    business_table: str,
+    business_id: str,
+    contact_respond_io_id: str,
+    message_text: str,
+    respond_api_response: Optional[dict],
+    sender_user_id: Optional[str],
+    subject: str,
+) -> bool:
+    """The human-intervention signal itself, independent of what it hangs off.
+
+    Shared by the ticket-keyed and contact-keyed senders so the payload n8n
+    receives (``source: "User"`` + a REAL Respond user id) is one
+    implementation. ``subject`` only names the thing in the log lines.
+    """
+    try:
+        respond_user_id = resolve_sender_respond_user_id(db, sender_user_id)
+        if not respond_user_id:
+            logger.warning(
+                "respond-send-user webhook skipped for %s: sender %s has no "
+                "mapped Respond user id",
+                subject,
+                sender_user_id,
+            )
+            return False
+        enqueue_crm_chat_outbound_webhook(
+            db,
+            business_table=business_table,
+            business_id=str(business_id),
+            contact_respond_io_id=str(contact_respond_io_id),
+            message_text=message_text or "",
+            respond_api_response=(
+                respond_api_response if isinstance(respond_api_response, dict) else None
+            ),
+            space_id=None,
+            crm_sender_user_id=str(sender_user_id) if sender_user_id else None,
+            # The acting agent on a human send is the SENDER, not necessarily the
+            # ticket's assignee (a colleague can answer). Pin it on both inputs so
+            # the payload cannot fall back to anything else.
+            respond_user_id_fallback=respond_user_id,
+            assignee_respond_user_id=respond_user_id,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - the contact already has the message
+        logger.warning("respond-send-user webhook failed for %s", subject, exc_info=True)
+        return False
+
+
+def notify_human_contact_send(
+    db: Session,
+    *,
+    respond_contact_id: str,
+    contact_respond_io_id: str,
+    message_text: str,
+    respond_api_response: Optional[dict],
+    sender_user_id: Optional[str],
+) -> bool:
+    """The AC-J signal for an UNSTAMPED human send (UAC AC-N2).
+
+    A reply sent from the Conversations inbox when the sender holds no single
+    open ticket for that contact still has to stop the bot: from the contact's
+    side a human answered, whatever the CRM did or did not stamp. The only
+    difference from the ticket lane is what the outbox row is keyed on -
+    ``respond_contacts`` and the contact's own id, because there is no one
+    ticket that owns the send (and ``integration_log.business_id`` is a uuid
+    column, which ``respond_contacts.id`` satisfies).
+    """
+    return _notify_human_send(
+        db,
+        business_table="respond_contacts",
+        business_id=str(respond_contact_id),
+        contact_respond_io_id=contact_respond_io_id,
+        message_text=message_text,
+        respond_api_response=respond_api_response,
+        sender_user_id=sender_user_id,
+        subject=f"contact {respond_contact_id}",
+    )
+
+
 def notify_human_ticket_send(
     db: Session,
     *,
@@ -353,36 +434,13 @@ def notify_human_ticket_send(
     handed off, False when it was skipped (AC-J3: an unmapped sender is skipped
     rather than sent with a null/fake ``user.id``, which throws inside n8n).
     """
-    try:
-        respond_user_id = resolve_sender_respond_user_id(db, sender_user_id)
-        if not respond_user_id:
-            logger.warning(
-                "respond-send-user webhook skipped for ticket %s: sender %s has no "
-                "mapped Respond user id",
-                tracking_id,
-                sender_user_id,
-            )
-            return False
-        enqueue_crm_chat_outbound_webhook(
-            db,
-            business_table=HUMAN_TICKET_BUSINESS_TABLE,
-            business_id=str(tracking_id),
-            contact_respond_io_id=str(contact_respond_io_id),
-            message_text=message_text or "",
-            respond_api_response=(
-                respond_api_response if isinstance(respond_api_response, dict) else None
-            ),
-            space_id=None,
-            crm_sender_user_id=str(sender_user_id) if sender_user_id else None,
-            # The acting agent on a drawer send is the SENDER, not necessarily the
-            # ticket's assignee (a colleague can answer). Pin it on both inputs so
-            # the payload cannot fall back to anything else.
-            respond_user_id_fallback=respond_user_id,
-            assignee_respond_user_id=respond_user_id,
-        )
-        return True
-    except Exception:  # noqa: BLE001 - the contact already has the message
-        logger.warning(
-            "respond-send-user webhook failed for ticket %s", tracking_id, exc_info=True
-        )
-        return False
+    return _notify_human_send(
+        db,
+        business_table=HUMAN_TICKET_BUSINESS_TABLE,
+        business_id=str(tracking_id),
+        contact_respond_io_id=contact_respond_io_id,
+        message_text=message_text,
+        respond_api_response=respond_api_response,
+        sender_user_id=sender_user_id,
+        subject=f"ticket {tracking_id}",
+    )

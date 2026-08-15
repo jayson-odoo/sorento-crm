@@ -81,6 +81,52 @@ class ThreadContact:
     channel: str = "whatsapp"
 
 
+def thread_contact_for(contact: Any) -> Optional[ThreadContact]:
+    """Descriptor for a ``RespondContact`` row, or None when it has no
+    Respond.io id.
+
+    The single place that turns a CRM contact row into a thread descriptor:
+    both the ticket-keyed reads (via the tracking's contact) and the
+    contact-keyed inbox reads go through here, so the two can never disagree
+    about what a thread is scoped to.
+    """
+    if contact is None:
+        return None
+    ident = str(getattr(contact, "respond_io_id", "") or "").strip()
+    if not ident:
+        return None
+    return ThreadContact(
+        respond_io_id=ident,
+        phone_number=str(getattr(contact, "phone_number", "") or ""),
+        first_name=getattr(contact, "first_name", None),
+        last_name=getattr(contact, "last_name", None),
+    )
+
+
+def empty_page(*, limit: int, error: str) -> dict:
+    """The page a caller gets when there is no thread to read.
+
+    Not a 404: the ticket / contact exists, it simply has no Respond.io link,
+    and the drawer still has to render. Shape-identical to a real page so the
+    client needs no special case.
+    """
+    payload = _page_payload(
+        [], has_more_older=False, has_more_newer=False, limit=limit, source="none", error=error
+    )
+    payload["backfilled"] = 0
+    return payload
+
+
+def empty_search(*, q: str, error: str) -> dict:
+    return {
+        "items": [],
+        "total": 0,
+        "truncated": False,
+        "query": (q or "").strip(),
+        "error": error,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Shaping
 # ---------------------------------------------------------------------------
