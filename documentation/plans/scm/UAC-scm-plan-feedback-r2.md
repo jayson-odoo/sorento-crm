@@ -73,10 +73,15 @@ they set themselves, and confidence in what the product is.
   location". Migration adds the column with default `own_pool`; `bootstrap_env` replays.
 - **AC-3.3** With `own_pool`, cover sources for a row are limited to warehouses in the row's
   pool (`COALESCE(pool_warehouse_id, id)` equal), still excluding the row's own warehouse and
-  still requiring `counts_as_available`. With `all_locations` behaviour is today's. Backend
-  filters (`propose_cover` / cover-sources), the FE never sees out-of-scope sources.
-  Pinned by test: three warehouses, two in one pool, `own_pool` offers one source,
-  `all_locations` offers two.
+  still requiring `counts_as_available`. With `all_locations` behaviour is today's. The
+  cover-sources map is keyed by product (two rows of one product can sit in different
+  pools), so it carries each source's `pool_warehouse_id` plus the policy value and the
+  per-row filter runs where the row is known: in the FE (`coverPlan.sourcesInScope`),
+  mirrored by the backend `propose_cover` (test-only mirror of record). The FE never RENDERS
+  an out-of-scope source. Pinned by test on both sides: three warehouses, two in one pool,
+  `own_pool` offers one source, `all_locations` offers two. Data note: 80 of 82 warehouses
+  carry a pool (all `BRW-*` pool to `BRW`), so `own_pool` means "my site" in practice; a
+  self-pooled warehouse (PJ-SR) is correctly offered nothing.
 - **AC-3.4** Ledger COVER BEFORE BUYING: `Use stock` is a toggle. On, one row per offered
   source: `code | free qty | editable use qty` (0..free), sum = cover qty, buy = gap - cover
   clamped at 0, then MoQ/multiple rounding as today. Off, cover = 0. The recorded decision's
