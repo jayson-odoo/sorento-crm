@@ -125,7 +125,7 @@ describe('PoWorklistView - committed cash reads like money everywhere else (AC-2
     // money a second way.
     renderView(state());
     const r = rowFor('SRTWC8613-RL');
-    expect(within(r).getByText('RM 226,464')).toBeInTheDocument();
+    expect(within(r).getByText('RM 226,464.00')).toBeInTheDocument();
   });
 
   it('names a foreign currency rather than claiming ringgit', () => {
@@ -139,7 +139,23 @@ describe('PoWorklistView - committed cash reads like money everywhere else (AC-2
       }),
     );
     const r = rowFor('SRTWC8613-RL');
-    expect(within(r).getByText('USD 226,464')).toBeInTheDocument();
+    expect(within(r).getByText('USD 226,464.00')).toBeInTheDocument();
+  });
+
+  it('keeps the cents, on a column somebody totals by eye', () => {
+    // qty x unit cost lands on cents far more often than not, and a rounded column does
+    // not add up to the figure beside it.
+    renderView(
+      state({
+        data: {
+          run_id: 'run-2026-w32',
+          as_of: '2026-08-04',
+          rows: [row({ cash_committed: 226464.5 })],
+        },
+      }),
+    );
+    const r = rowFor('SRTWC8613-RL');
+    expect(within(r).getByText('RM 226,464.50')).toBeInTheDocument();
   });
 
   it('says no cost is recorded rather than printing a zero', () => {
