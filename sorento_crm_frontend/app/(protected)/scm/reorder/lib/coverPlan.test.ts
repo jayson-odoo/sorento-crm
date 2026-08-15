@@ -11,6 +11,7 @@ import {
   applySourceEdits,
   coverForLine,
   defaultSourceEdits,
+  maxSourceEdit,
   proposeCover,
   remainingFree,
   sourceEditsForTotal,
@@ -339,12 +340,12 @@ describe('the offered list is what the buyer may draw on', () => {
     ]);
   });
 
-  it('clamps to what the location HOLDS, not to what the proposal took from it', () => {
-    // 40 from a location the proposal only took 10 from is legitimate: it holds 50.
-    const applied = applySourceEdits(gapOf10(), { 'wh-BRW-IB': 40 });
-    expect(applied.coverQty).toBe(40);
-    // 60 is not: it holds 50.
-    expect(applySourceEdits(gapOf10(), { 'wh-BRW-IB': 60 }).coverQty).toBe(50);
+  it('clamps to what the location HOLDS and to what the ROW still needs', () => {
+    // The proposal took 10 of the 50 BRW-IB holds, so a bigger draw from it is legitimate in
+    // principle - but only up to the row's own gap. Reserving 40 for a row short of 10 is
+    // stock taken off every other row of this product for nothing (review finding 2).
+    expect(applySourceEdits(gapOf10(), { 'wh-BRW-IB': 40 }).coverQty).toBe(10);
+    expect(applySourceEdits(gapOf10(), { 'wh-BRW-IB': 60 }).coverQty).toBe(10);
   });
 
   it('spends a single total across the offered list, front first', () => {
@@ -385,5 +386,81 @@ describe('the offered list is what the buyer may draw on', () => {
     );
     expect(p.offered.map((s) => s.qty)).toEqual([5]);
     expect(applySourceEdits(p, { 'wh-BRW-IB': 50 }).coverQty).toBe(5);
+  });
+});
+
+/**
+ * The cover a row records can never exceed the row's OWN gap (review finding 2, round 2).
+ *
+ * Each source was clamped to its own free stock and nothing clamped the total, so a buyer who
+ * typed 40 into a location holding 50 recorded a cover of 40 against a shortage of 10. The
+ * extra 30 was then subtracted from every other row of that product (`takenByProduct`),
+ * starving rows that genuinely needed it of stock this row never did.
+ *
+ * The chosen behaviour is a per-input cap: a source may be set to at most what it holds free
+ * AND at most what the row still needs once the OTHER sources are counted. The field refuses
+ * the excess as it is typed, and a figure the buyer set on another location is never silently
+ * rewritten to make room - a value moving in a field nobody touched is the worse surprise.
+ */
+describe('the cover is capped by the row own gap', () => {
+  const gapOf10 = () =>
+    proposeCover(10, 'wh-BRW-BB', 'project', [
+      { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50 },
+      { warehouse_id: 'wh-BRW-NTC', warehouse_code: 'BRW-NTC', segment: 'project', qty: 30 },
+    ]);
+
+  it('records the gap, not the typed figure, when a source is over-typed', () => {
+    const applied = applySourceEdits(gapOf10(), { 'wh-BRW-IB': 40 });
+    expect(applied).toMatchObject({ coverQty: 10, buyQty: 0 });
+    expect(applied.sources.map((s) => [s.warehouse_code, s.qty])).toEqual([['BRW-IB', 10]]);
+  });
+
+  it('gives a later source nothing once the gap is already met', () => {
+    const applied = applySourceEdits(gapOf10(), { 'wh-BRW-IB': 10, 'wh-BRW-NTC': 6 });
+    expect(applied.coverQty).toBe(10);
+    expect(applied.sources.map((s) => s.warehouse_code)).toEqual(['BRW-IB']);
+  });
+
+  it('still lets the buyer spread the gap across locations', () => {
+    const applied = applySourceEdits(gapOf10(), { 'wh-BRW-IB': 4, 'wh-BRW-NTC': 6 });
+    expect(applied).toMatchObject({ coverQty: 10, buyQty: 0 });
+    expect(applied.sources.map((s) => [s.warehouse_code, s.qty])).toEqual([
+      ['BRW-IB', 4],
+      ['BRW-NTC', 6],
+    ]);
+  });
+
+  it('caps one input at the row gap less what the other locations already take', () => {
+    const p = gapOf10();
+    // Nothing else taken: the whole gap is available, though the location holds 50.
+    expect(maxSourceEdit(p, 'wh-BRW-IB', {})).toBe(10);
+    // 6 already set on the other location leaves 4.
+    expect(maxSourceEdit(p, 'wh-BRW-IB', { 'wh-BRW-NTC': 6 })).toBe(4);
+    // Its own current value is not counted against itself.
+    expect(maxSourceEdit(p, 'wh-BRW-IB', { 'wh-BRW-IB': 10 })).toBe(10);
+  });
+
+  it('caps at what the location holds when that is the smaller of the two', () => {
+    const wideGap = proposeCover(100, 'wh-BRW-BB', 'project', [
+      { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50 },
+    ]);
+    expect(maxSourceEdit(wideGap, 'wh-BRW-IB', {})).toBe(50);
+  });
+
+  it('offers nothing for a location the row was never offered', () => {
+    expect(maxSourceEdit(gapOf10(), 'wh-SOMEWHERE', {})).toBe(0);
+  });
+
+  it('caps a covered-by-stock row at its committed demand, not at what the pool holds', () => {
+    const covered: CoverableLine = {
+      order_qty: 15,
+      warehouse: 'BRW',
+      warehouse_id: 'wh-BRW',
+      status: 'covered_by_stock',
+      rec: { segment: 'project', warehouse_code: 'BRW', covered_committed: 15, covered_available: 150 },
+    };
+    const p = coverForLine(covered, []);
+    expect(maxSourceEdit(p, 'wh-BRW', {})).toBe(15);
+    expect(applySourceEdits(p, { 'wh-BRW': 150 }).coverQty).toBe(15);
   });
 });

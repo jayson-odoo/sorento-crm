@@ -262,6 +262,12 @@ export function coverForLine(
  * offered is ignored outright rather than invented. The buy is the rest of the SAME shortage
  * the proposal was built for (`coverQty + buyQty`), floored at 0 - a buyer who covers more
  * than the gap is not owed a negative order.
+ *
+ * The TOTAL is clamped to that same gap as well, not just each source to its own free stock.
+ * Without it a buyer who typed 40 into a location holding 50, on a row short of 10, recorded
+ * a cover of 40: the buy was floored at 0 so the row itself looked right, but `takenByProduct`
+ * then withdrew 40 units from every other row of that product and starved rows that genuinely
+ * needed the 30 this one never could use.
  */
 export interface CoverEdit {
   coverQty: number;
@@ -272,21 +278,56 @@ export interface CoverEdit {
 export type SourceEdits = Readonly<Record<string, number>>;
 
 export function applySourceEdits(proposal: CoverProposal, edits: SourceEdits): CoverEdit {
-  const gap = proposal.coverQty + proposal.buyQty;
+  const gap = coverGap(proposal);
   const sources: CoverSourceUse[] = [];
   let coverQty = 0;
+  let budget = gap;
   // OFFERED, not `sources`: the buyer may take from a location the proposal never needed,
   // and up to what that location actually holds. Floored to whole units here rather than at
   // each call site, so no surface can record a fraction of a unit.
   for (const s of proposal.offered) {
-    const raw = edits[s.warehouse_id];
-    const wanted = Number.isFinite(raw) ? Math.floor(raw as number) : 0;
-    const qty = Math.max(0, Math.min(s.qty, wanted));
+    const qty = Math.min(s.qty, wholeUnits(edits[s.warehouse_id]), budget);
     if (qty <= 0) continue;
     sources.push({ ...s, qty });
     coverQty += qty;
+    budget -= qty;
   }
   return { coverQty, buyQty: Math.max(0, gap - coverQty), sources };
+}
+
+/** The whole shortage a proposal was built for: what it covers plus what it leaves to buy. */
+export function coverGap(proposal: CoverProposal): number {
+  return proposal.coverQty + proposal.buyQty;
+}
+
+/** A typed figure as units: whole, never negative, never NaN. */
+function wholeUnits(raw: number | undefined): number {
+  return Number.isFinite(raw) ? Math.max(0, Math.floor(raw as number)) : 0;
+}
+
+/**
+ * The most one location may be set to right now: what it holds free, AND what the row still
+ * needs once the OTHER locations are counted.
+ *
+ * The editing surfaces cap their input with this rather than letting `applySourceEdits` trim
+ * the total afterwards, so what the buyer sees in the field is what gets recorded. The cap
+ * lands on the field being typed into and never rewrites a figure the buyer set somewhere
+ * else: a number moving in a field nobody touched is the more alarming surprise, and freeing
+ * a location up by zeroing it first is already the normal way to move units between bins.
+ */
+export function maxSourceEdit(
+  proposal: CoverProposal,
+  warehouseId: string,
+  edits: SourceEdits,
+): number {
+  const offered = proposal.offered.find((s) => s.warehouse_id === warehouseId);
+  if (!offered) return 0;
+  let others = 0;
+  for (const s of proposal.offered) {
+    if (s.warehouse_id === warehouseId) continue;
+    others += Math.min(s.qty, wholeUnits(edits[s.warehouse_id]));
+  }
+  return Math.max(0, Math.min(offered.qty, coverGap(proposal) - others));
 }
 
 /**

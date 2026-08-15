@@ -10,6 +10,7 @@ import type { PlanDecision } from '../lib/planDecisions';
 import {
   applySourceEdits,
   defaultSourceEdits,
+  maxSourceEdit,
   type CoverProposal,
   type SourceEdits,
 } from '../lib/coverPlan';
@@ -185,11 +186,15 @@ function ForecastAddOnLine({
 function CoverSourceLine({
   code,
   free,
+  max,
   qty,
   onQtyChange,
 }: {
   code: string;
+  /** What the location holds - a fact about the location, stated as such. */
   free: number;
+  /** What this field may actually be set to: `free`, capped by what the row still needs. */
+  max: number;
   qty: number;
   onQtyChange: (value: number) => void;
 }) {
@@ -205,7 +210,7 @@ function CoverSourceLine({
         type="number"
         variant="sm"
         min={0}
-        max={free}
+        max={max}
         step={1}
         value={qty}
         onChange={(e) => onQtyChange(e.target.valueAsNumber)}
@@ -501,8 +506,10 @@ export function OrderQtyLedger({
   // Editing a location re-applies immediately, exactly as the forecast input does: the
   // input IS the edit, there is no separate Record step in this ledger (UAC B4).
   const changeSourceQty = (warehouseId: string, raw: number) => {
-    // What the LOCATION holds free, not what the proposal happened to take from it.
-    const max = cover.offered.find((s) => s.warehouse_id === warehouseId)?.qty ?? 0;
+    // What the LOCATION holds free, and what the ROW still needs once the other locations are
+    // counted - the second half was missing, so 40 could be typed against a gap of 10 and the
+    // 30 units this row could never use were withdrawn from every other row of the product.
+    const max = maxSourceEdit(cover, warehouseId, sourceEdits);
     const clamped = Number.isFinite(raw) ? Math.max(0, Math.min(max, Math.floor(raw))) : 0;
     const edits = { ...sourceEdits, [warehouseId]: clamped };
     setSourceEdits(edits);
@@ -610,6 +617,7 @@ export function OrderQtyLedger({
                             key={s.warehouse_id}
                             code={s.warehouse_code}
                             free={s.qty}
+                            max={maxSourceEdit(cover, s.warehouse_id, sourceEdits)}
                             qty={sourceEdits[s.warehouse_id] ?? 0}
                             onQtyChange={(v) => changeSourceQty(s.warehouse_id, v)}
                           />

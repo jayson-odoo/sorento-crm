@@ -654,15 +654,36 @@ describe('order-qty ledger - the offered locations, at what they hold', () => {
     expect(last.buy).toBeUndefined(); // the whole gap is covered
   });
 
-  it('clamps to what the location holds, not to what the proposal took', () => {
+  it('refuses more than the row needs, however much the location holds', () => {
+    // Review finding 2, round 2: the input was clamped to the location's free stock alone, so
+    // 40 could be typed against a gap of 10 - and the 30 units this row never needed were
+    // then subtracted from every other row of the product.
     const l = gapLine();
-    renderLedger({ line: l, cover: coverForLine(l, bigSources) });
+    const { onDecide } = renderLedger({ line: l, cover: coverForLine(l, bigSources) });
 
     const ib = screen.getByLabelText('Use from BRW-IB');
     fireEvent.change(ib, { target: { value: '40' } });
-    expect(ib).toHaveValue(40); // 40 of the 50 it holds - allowed
-    fireEvent.change(ib, { target: { value: '60' } });
-    expect(ib).toHaveValue(50); // 60 is not
+
+    expect(ib).toHaveValue(10);
+    const last = onDecide.mock.calls.at(-1)![0];
+    expect(last.stock.qty).toBe(10);
+    expect(last.buy).toBeUndefined();
+  });
+
+  it('caps a location at the gap less what the other location already takes', () => {
+    const l = gapLine();
+    renderLedger({ line: l, cover: coverForLine(l, bigSources) });
+
+    // BRW-IB starts on the proposal's own 10, so the second location has nothing left to take
+    // until the buyer frees some up. Nothing they typed elsewhere is rewritten for them.
+    const ntc = screen.getByLabelText('Use from BRW-NTC');
+    fireEvent.change(ntc, { target: { value: '6' } });
+    expect(ntc).toHaveValue(0);
+    expect(screen.getByLabelText('Use from BRW-IB')).toHaveValue(10);
+
+    fireEvent.change(screen.getByLabelText('Use from BRW-IB'), { target: { value: '4' } });
+    fireEvent.change(ntc, { target: { value: '6' } });
+    expect(ntc).toHaveValue(6);
   });
 
   it('keeps the inputs mounted when the buyer zeroes every location', () => {
