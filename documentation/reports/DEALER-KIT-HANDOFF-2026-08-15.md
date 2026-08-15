@@ -19,6 +19,7 @@ fix wave, all committed and test-verified, NOT yet pushed:
 | `84b461f0f` | Docs honesty pass, 7 edits (AC-B5 superseded, AC-L2/G5/H3 corrected, design-doc destaled, ledger jsdom excuse killed, B2 caveat into the edition plan) |
 | `0ad01fee1` | FE mechanical: artboard pulled from palette, buildDataGridParams in brochureImageService, search on TileDesignsList + BundlesList, SearchableSelect in RoomDesigner |
 | `d1862211d` | AC-L11: Edition transitions audited, plus two pre-existing shared `audit_service` defects fixed (non-idempotent listener registration; no-op guard that could drop a real change's row) |
+| `7ce4a734a` | Sidebar duplicate: the b2ba383d4 merge kept both sides' Dealer Kit menu block, so the group rendered twice (second copy expanded to nothing). Deleted the duplicate; config test pins one-group + no-duplicate-titles invariants. Found live during the agent-browser verification pass. |
 
 Verification evidence lives in each commit message. Totals across the wave: 85 edition +
 22 audit + 61 resolution-family + 24 resolution + 55 selection/pricing backend tests
@@ -27,16 +28,13 @@ mutation-tested with the failing assertion named.
 
 ## Blocked or open, in order
 
-1. **Prod rebuild of :3040 + browser check.** The FE changed, so the running prod build
-   is stale and :3040 is currently DOWN (old server killed pre-build; three build
-   attempts were killed by machine-wide background-task reaping under load 30-130 from
-   other sessions). When the machine is quiet:
-   `cd sorento_crm_frontend && npm run build && PORT=3040 npm start`
-   Then verify with agent-browser (Chrome is uninstalled; Playwright MCP banned):
-   `npx -y agent-browser open http://localhost:3040` -> sidebar -> Dealer Kit ->
-   check: block palette has no Artboard; Tile Designs list has a search box; Bundles
-   list has a search box; brochure-images list still paginates. `agent-browser close`
-   when done.
+1. **Prod rebuild of :3040 + browser check - DONE 2026-08-15.** Built and served on
+   :3040 (prod build), verified via agent-browser through the sidebar: block palette
+   offers Heading/Text/Image/Products/Bundle and NO Artboard; Tile Designs has a
+   working search box (non-match shows the empty state); Bundles has a search box;
+   Brochure Images paginates (page 2 shows different rows). The pass also caught a
+   live bug: duplicate Dealer Kit sidebar group from the merge - fixed in `7ce4a734a`,
+   rebuilt, re-verified (exactly one group). :3040 and :8040 are UP.
 2. **Container PDF-export smoke test** (audit blocker AC-I8, pre-deploy gate).
    `CONTAINER-PDF-EXPORT-RUNBOOK.md` names the exact two compose changes: a
    `sorento_network` alias for `frontend_blue`, and `DEALER_KIT_PRINT_BASE_URL` on the
