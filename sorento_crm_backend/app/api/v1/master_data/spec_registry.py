@@ -42,6 +42,7 @@ from app.services.product_spec_registry import (
     find_similar_value,
     merged_allowed_values,
     merged_synonyms,
+    normalise_vocabulary,
     seed_search_policy,
 )
 
@@ -828,14 +829,27 @@ async def update_spec_key(
             present = {str(v) for v in merged_allowed_values(row)} | {
                 str(v) for v in (row.user_values or [])
             }
+            accepted: list[str] = []
             for proposed in fields["user_values"] or []:
-                if proposed in present:
+                if proposed in present or proposed in accepted:
                     continue
                 match = find_similar_value(row, proposed)
+                if match is None:
+                    needle = normalise_vocabulary(proposed)
+                    earlier = next(
+                        (v for v in accepted if normalise_vocabulary(v) == needle), None
+                    )
+                    if earlier is not None:
+                        match = {
+                            "value": earlier,
+                            "matched_on": "value",
+                            "matched_text": earlier,
+                        }
                 if match:
                     return _similar_refusal(
                         f"\"{proposed}\" is already {match['value']} on {row.label}.", match
                     )
+                accepted.append(proposed)
 
         if "allowed_values" in fields:
             if (row.source or "seed") == "seed":
