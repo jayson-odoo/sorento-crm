@@ -19,6 +19,16 @@ select count(*) from information_schema.tables where table_schema = 'projects';
 select count(*) from information_schema.tables
  where table_schema = 'public' and table_name like 'project\_%';   -- 0
 
+-- the 13 that never carried the prefix have to be checked BY NAME: a partially applied
+-- 354 that left one of them behind passes the LIKE above, because there is no prefix in
+-- it to match. Expect 0.
+select table_name from information_schema.tables
+ where table_schema = 'public' and table_name in (
+   'projects', 'price_floor_rules', 'quotation_templates', 'quotation_signatures',
+   'delivery_schedules', 'delivery_schedule_versions', 'delivery_schedule_cells',
+   'customer_item_code_map', 'so_draft_findings', 'order_change_notices',
+   'so_amendments', 'so_line_allocations', 'allocation_claims');
+
 -- the two core-to-module foreign keys followed the table across the boundary
 select con.conname, n.nspname || '.' || c.relname as on_table
   from pg_constraint con
@@ -30,8 +40,23 @@ select con.conname, n.nspname || '.' || c.relname as on_table
 -- expect complaints_project_id_fkey and purchase_requests_project_id_fkey
 ```
 
-Index and constraint names deliberately keep their `project_` prefix inside the schema
-(`projects.parties` carries `ix_project_parties_*`). That is expected, not drift.
+The same revision unifies the DERIVED index and constraint names, so a migrated database and
+one built from zero carry the same identifiers: `ix_project_leads_company_id` becomes
+`ix_projects_leads_company_id` (SQLAlchemy folds the schema into the name it derives) and
+`project_brands_pkey` becomes `brands_pkey` (Postgres derives that one from the table name).
+Names the models spell out by hand keep their `project_` prefix - `projects.parties` still
+carries `ix_project_parties_name` - and that is expected, not drift. A third check:
+
+```sql
+-- 0 rows: no derived index name still names a pre-move table
+select indexname from pg_indexes
+ where schemaname = 'projects' and indexname in (
+   'ix_project_leads_company_id', 'ix_projects_company_id', 'ix_project_tasks_company_id');
+select conname from pg_constraint con
+  join pg_class c on c.oid = con.conrelid
+  join pg_namespace n on n.oid = c.relnamespace
+ where n.nspname = 'projects' and conname like 'project\_%\_pkey';
+```
 
 A database built from zero rather than migrated - a fresh CI or disaster-recovery instance -
 gets the schema from `scripts/bootstrap_env.py`, because `create_all` emits

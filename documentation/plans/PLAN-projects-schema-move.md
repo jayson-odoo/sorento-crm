@@ -577,23 +577,39 @@ reproduces on a developer machine where the dev DB already has the schema from m
 
 ## Deviations from this plan, as built
 
-Four, all found while building and all recorded here so the plan and the code agree.
+Five, all recorded here so the plan and the code agree. The first two supersede what S1 said
+about index and constraint names; they were found in review, after the first four.
 
-1. **`downgrade()` restores auto-DERIVED constraint and index names; S1 said rename nothing.**
-   Index names are unique per SCHEMA. A database built by `create_all` from the post-move
-   models calls the key of `projects.brands` `brands_pkey`, and CORE `public.brands` already
-   owns that name, so `SET SCHEMA` back into the default schema is refused outright - five of
-   the seven colliding tables hit it, and the S4 test found it on the first run. `downgrade()`
-   now renames a derived name to the form Postgres would have derived from the PRE-move table
-   name (`brands_pkey` -> `project_brands_pkey`) before moving the table. It restores rather
-   than invents, and it is a no-op on a database this revision actually migrated, where those
-   names already carry the prefix. `upgrade()` still renames nothing, exactly as planned. See
-   `alembic/versions/354_projects_schema_move.py:_restore_derived_names`.
-2. **S4 test 3 asserts the round trip modulo that restoration**, not an exact snapshot: since
-   the up direction deliberately does not undo it, a `create_all` schema taken down and back
-   ends with the prefixed names - which is what a migrated database has always had.
-   `_with_derived_names_restored` in `tests/test_migration_354_projects_schema_move.py` states
-   the rule mechanically.
+1. **BOTH directions rename the DERIVED index and constraint names; S1 said rename nothing.**
+   S1's "they ride with the table, renaming 200-odd live objects is risk spent on cosmetics"
+   was wrong on the facts, in two ways.
+   - **SQLAlchemy's convention name folds the SCHEMA in.** An index with no name of its own
+     is `ix_%(column_0_label)s`, and `column_0_label` for a schema-qualified table is
+     `schema_table_column`. So declaring `schema="projects"` renamed
+     `ix_project_leads_company_id` to `ix_projects_leads_company_id` IN THE METADATA, and
+     `ix_projects_company_id` (on the table `projects`) to `ix_projects_projects_company_id`,
+     while every migrated database kept the old name. 46 indexes. Alembic compares indexes BY
+     NAME, so this is not cosmetic and it is not a one-off: it is a permanent autogenerate
+     diff on every migrated database, and a CI or disaster-recovery database built by
+     `scripts/bootstrap_env.py` disagrees with production - which is precisely the
+     fresh-versus-migrated divergence migration 353 existed to remove.
+   - **Postgres-default names diverge the same way.** `project_brands_pkey` on a migrated
+     database, `brands_pkey` on a bootstrapped one.
+   `upgrade()` now renames both families to the form `Base.metadata` produces, and
+   `downgrade()` renames both back, each step guarded on "the source is there and the
+   destination is not" so the revision stays repeatable and no-ops on a `create_all` database.
+   The index map is an explicit constant (`DERIVED_INDEXES`), not a pattern, because a
+   hand-named index has the SAME shape in the catalog - `ix_project_parties_name` is a
+   single-column index called `ix_<pre-move table>_<column>` and must NOT be renamed - and
+   only the models can tell the two apart. A test regenerates the map from `Base.metadata`
+   and fails when they drift. Postgres-default names ARE read from the catalog, because a
+   name Postgres derived necessarily starts with the table name and nothing hand-named does.
+   Hazard H9 is therefore closed rather than accepted.
+2. **S4 test 3 asserts an EXACT catalog snapshot round trip.** With both directions renaming,
+   a `create_all` schema taken down and brought back is the same catalog it started as, so
+   the earlier `_with_derived_names_restored` tolerance is gone. Two further tests pin the
+   point directly: the rename map against `Base.metadata`, and "after `upgrade()` on a
+   migrated database the index names are the ones `create_all` writes".
 3. **The 353 test rewinds through 354 rather than having its helpers re-pointed.** The plan
    proposed pointing `_tables()`/`_indexes()`/`_constraints()` at the scratch projects schema.
    Running 354's own `downgrade()` first is truer: 353 operates on `current_schema()` because

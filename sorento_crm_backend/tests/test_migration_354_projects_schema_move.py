@@ -163,28 +163,51 @@ def _snapshot(db):
     return (_tables(db), _indexes(db), _constraints(db))
 
 
-def _with_derived_names_restored(names: set[str]) -> set[str]:
-    """Apply the down-direction rule to a set of qualified constraint / index names.
+def _metadata_index_names() -> set[str]:
+    """Every index name ``Base.metadata`` declares for the 47 moved tables.
 
-    A name Postgres DERIVED from the post-move table name (`brands_pkey`) becomes the name
-    it would have derived from the pre-move one (`project_brands_pkey`). ``downgrade()``
-    does this because index names are unique per schema and `brands_pkey` is already taken
-    in the default schema by CORE `brands`; ``upgrade()`` deliberately does not undo it,
-    since renaming 200-odd live objects would be risk spent on cosmetics (ADR-0011).
-
-    So a create_all schema that has been round-tripped down and back carries the prefixed
-    names - which is exactly what a database migrated by this revision has always carried.
+    This is what ``create_all`` writes, and therefore what a bootstrapped CI or
+    disaster-recovery database carries. A migrated database has to end up with the same
+    set, or every autogenerate run afterwards reports the difference as drift.
     """
-    mapping = {new: old for old, new in _module().TABLES if old != new}
-    out = set()
-    for qualified in names:
-        head, _, name = qualified.rpartition(".")
-        for new, old in mapping.items():
-            if name.startswith(f"{new}_"):
-                name = f"{old}{name[len(new):]}"
-                break
-        out.add(f"{head}.{name}")
-    return out
+    from app import models  # noqa: F401  register every model
+
+    return {
+        index.name
+        for table in Base.metadata.tables.values()
+        if table.schema == "projects"
+        for index in table.indexes
+    }
+
+
+def _derived_index_map_from_metadata() -> set[tuple[str, str]]:
+    """Rebuild the revision's index-rename map from the models.
+
+    SQLAlchemy names an unnamed index `ix_%(column_0_label)s`, and a schema-qualified
+    table folds its SCHEMA into that label - so declaring `schema="projects"` silently
+    renamed `ix_project_leads_company_id` to `ix_projects_leads_company_id` in the metadata
+    while the database kept the old name. An index the model names explicitly
+    (`ix_project_parties_name`) is unaffected and must NOT be renamed, and the two are
+    indistinguishable in the catalog: both are a single-column index called
+    `ix_<pre-move table>_<column>`. So the map is a constant inside the revision, and this
+    rebuilds it from the only source that can tell the two apart.
+    """
+    from app import models  # noqa: F401  register every model
+
+    old_by_new = {new: old for old, new in _module().TABLES}
+    pairs: set[tuple[str, str]] = set()
+    for table in Base.metadata.tables.values():
+        if table.schema != "projects":
+            continue
+        old = old_by_new[table.name]
+        for index in table.indexes:
+            columns = list(index.columns)
+            if len(columns) != 1:
+                continue  # a multi-column index is never convention-named
+            if index.name != f"ix_{columns[0]._ddl_label}":
+                continue  # named by hand in the model; the move did not touch it
+            pairs.add((f"ix_{old}_{columns[0].name}", index.name))
+    return pairs
 
 
 # --------------------------------------------------------------------------- #
@@ -261,15 +284,11 @@ def test_upgrade_moves_and_renames_when_the_tables_are_in_the_default_schema(db)
 
     _run(db, "upgrade")
 
-    tables, indexes, constraints = _snapshot(db)
-    # Every table is back where create_all put it, under the name create_all gave it.
-    assert tables == expected[0]
-    # Indexes and constraints are asserted too, because they ride along with SET SCHEMA
-    # and a stray rename in either direction would show here. The one expected change is
-    # the derived-name restoration the downgrade had to perform and the upgrade
-    # deliberately does not undo.
-    assert indexes == _with_derived_names_restored(expected[1])
-    assert constraints == _with_derived_names_restored(expected[2])
+    # EXACT, not modulo anything. Both directions rename the derived index and constraint
+    # names, so a create_all schema taken down and brought back is the same catalog it
+    # started as - which is the whole point: a bootstrapped database and a migrated one
+    # must not disagree about a single identifier.
+    assert _snapshot(db) == expected
 
 
 def test_downgrade_moves_a_colliding_table_back_beside_its_core_namesake(db):
@@ -301,16 +320,114 @@ def test_downgrade_moves_a_colliding_table_back_beside_its_core_namesake(db):
     )
 
 
-def test_index_names_keep_the_project_prefix_inside_the_projects_schema(db):
-    """Deliberate, per ADR-0011: `projects.parties` carries `ix_project_parties_*`.
+def test_an_index_the_model_names_by_hand_is_left_alone(db):
+    """Only convention-derived names move. A hand-written one is already agreed on.
 
-    Pinned rather than left implicit because it reads as drift to the next person to run
-    autogenerate, and the cost of "tidying" it is 200-odd renames of live objects.
+    `ix_project_parties_name` and `uq_projects_company_developer_title` are spelled out in
+    `__table_args__`, so the metadata and the catalog have always said the same thing about
+    them and there is nothing to unify. Pinned because the pre-move shape of a
+    CONVENTION-derived name is `ix_<pre-move table>_<column>`, which is exactly the shape
+    of these two - a rename rule inferred from the catalog rather than from the models
+    would take them with it.
     """
     target = _scratch_projects_schema()
 
     assert f"{target}.ix_project_parties_name" in _indexes(db)
     assert f"{target}.uq_projects_company_developer_title" in _indexes(db)
+
+    _run(db, "downgrade")
+    _run(db, "upgrade")
+
+    assert f"{target}.ix_project_parties_name" in _indexes(db)
+    assert f"{target}.uq_projects_company_developer_title" in _indexes(db)
+
+
+# --------------------------------------------------------------------------- #
+# the derived names - the reason a bootstrapped database and a migrated one agree
+# --------------------------------------------------------------------------- #
+
+def test_the_index_rename_map_is_the_one_the_models_derive():
+    """The constant in the revision, regenerated from `Base.metadata`.
+
+    The map has to be a constant (the catalog cannot distinguish a convention-derived name
+    from a hand-written one), so this is the guard that keeps it honest: add a column with
+    `index=True` to a projects model, or drop one, and this fails until the revision is
+    updated to match.
+    """
+    module = _module()
+
+    assert set(module.DERIVED_INDEXES) == _derived_index_map_from_metadata()
+    assert len(module.DERIVED_INDEXES) == len(set(module.DERIVED_INDEXES))
+
+
+def test_no_renamed_identifier_exceeds_the_postgres_limit():
+    """Postgres truncates an identifier past 63 bytes, silently, at both ends of a rename.
+
+    A truncated name would neither match the metadata nor round-trip, and the failure would
+    only ever show on a real database. Cheaper to assert here.
+    """
+    module = _module()
+
+    too_long = [
+        name
+        for pair in module.DERIVED_INDEXES
+        for name in pair
+        if len(name.encode("utf-8")) > 63
+    ]
+    assert not too_long, too_long
+
+
+def test_a_migrated_database_ends_with_the_names_create_all_writes(db):
+    """The MUST-FIX: bootstrapped and migrated databases must agree, identifier for
+    identifier.
+
+    `scripts/bootstrap_env.py` + `create_all` is how CI and a disaster-recovery instance
+    are built; `alembic upgrade head` is how production and every developer machine got
+    there. Alembic compares indexes BY NAME, so one convention-derived name that differs
+    between the two is permanent autogenerate churn on one of them.
+
+    The scratch pair here is a create_all schema, so `downgrade()` builds the pre-354
+    database and `upgrade()` has to land back on exactly the create_all names.
+    """
+    target = _scratch_projects_schema()
+    declared = _metadata_index_names()
+
+    _run(db, "downgrade")
+
+    after_down = {name.rpartition(".")[2] for name in _indexes(db)}
+    assert "ix_project_leads_company_id" in after_down, (
+        "the pre-354 database is the one that carries the unqualified derived name"
+    )
+    assert "ix_projects_leads_company_id" not in after_down
+
+    _run(db, "upgrade")
+
+    present = {
+        name.rpartition(".")[2]
+        for name in _indexes(db)
+        if name.startswith(f"{target}.")
+    }
+    assert declared <= present, sorted(declared - present)
+
+
+def test_a_postgres_default_constraint_name_follows_the_table(db):
+    """`project_brands_pkey` becomes `brands_pkey`, which is what create_all calls it.
+
+    Postgres derives a primary key name from the table name at CREATE time and never
+    revisits it, so a migrated database keeps `project_brands_pkey` inside the `projects`
+    schema while a bootstrapped one says `brands_pkey`. `\\d` disagreeing between the two
+    is the readable half of the same problem the index names cause for autogenerate.
+    """
+    target = _scratch_projects_schema()
+
+    _run(db, "downgrade")
+    assert f"{target}.project_brands_pkey" not in _indexes(db)  # it moved out with its table
+
+    _run(db, "upgrade")
+
+    names = {name.rpartition(".")[2] for name in _indexes(db) if name.startswith(f"{target}.")}
+    assert "brands_pkey" in names
+    assert "project_brands_pkey" not in names
 
 
 def test_rows_travel_with_the_tables(db):

@@ -81,17 +81,29 @@ never blocks on them.
 ## Consequences
 
 - One new revision, `354_projects_schema_move`, creates the schema and performs 47 guarded
-  `SET SCHEMA` plus 34 guarded `RENAME TO` steps, with a symmetric downgrade. Every step is
+  `SET SCHEMA` plus 34 guarded `RENAME TO` steps, the derived-name renames below, and a
+  guarded rewrite of `lookup_bindings.table_name`, with a symmetric downgrade. Every step is
   guarded on "the source exists and the destination does not", so the revision no-ops on a
   database built from the current models and does the work on one built before the move -
   the same dual-path shape as migration 353, and pinned by the same kind of test.
 - **Migrations 309 through 353 are not touched.** They created and altered these tables in
   `public`, which is where the tables are when those revisions run. Rewriting history would
   be the expensive change ADR-0009 warned about; not rewriting it is what makes this cheap.
-- **Index and constraint names keep their `project_` prefix.** `ALTER TABLE ... SET SCHEMA`
-  carries them along unchanged, and renaming 200-odd of them would add risk for cosmetics. So
-  `projects.parties` carries indexes named `ix_project_parties_*`. That is expected, not
-  drift.
+- **Derived index and constraint names are unified by the same revision.** `ALTER TABLE ...
+  SET SCHEMA` carries them along unchanged, and two families of name were derived from where
+  the table used to be, so leaving them would make a MIGRATED database disagree with a
+  BOOTSTRAPPED one about identifiers alembic compares by name. (1) SQLAlchemy names an
+  unnamed index `ix_%(column_0_label)s`, and a schema-qualified table folds its SCHEMA into
+  that label, so declaring `schema="projects"` renamed `ix_project_leads_company_id` to
+  `ix_projects_leads_company_id` in the metadata while the database kept the old name - 46
+  of them, and alembic compares indexes BY NAME, so each one is permanent autogenerate churn
+  on every migrated database. (2) Postgres derives `<table>_pkey` and friends at CREATE time,
+  so a bootstrapped database calls the key of `projects.brands` `brands_pkey` while a
+  migrated one still says `project_brands_pkey`. Migration 354 renames both families in both
+  directions, guarded, so `alembic upgrade head` and `scripts/bootstrap_env.py` produce the
+  same catalog. Names the models spell out by hand (`ix_project_parties_name`) keep their
+  `project_` prefix: the metadata and the catalog have always agreed about those, and there
+  is nothing to unify. That is expected, not drift.
 - **Seven of the stripped names now exist twice in the database**: `brands`,
   `purchase_orders`, `purchase_order_lines`, `sales_orders`, `sales_order_lines`,
   `quotations` and `quotation_lines` each exist as a core `public` table AND as a
