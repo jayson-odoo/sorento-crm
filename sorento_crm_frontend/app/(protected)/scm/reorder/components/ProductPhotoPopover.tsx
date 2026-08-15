@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Image as ImageIcon } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
@@ -44,6 +44,11 @@ function ProductPhotoBody({
   // A signed URL that expired between the fetch and the render comes back 403, and the
   // browser reports it only through the image's own error event.
   const [broken, setBroken] = useState(false);
+  // The failure belonged to the URL that produced it. A re-signed one is a new attempt, so
+  // without this the buyer keeps reading "Failed to load the photo" over a photo that now
+  // loads - the exact case this flag exists to cover (an expiry) is the case that refreshes
+  // the URL.
+  useEffect(() => setBroken(false), [data?.url]);
 
   // An answer we HOLD beats an error about fetching it again: react-query keeps the last
   // good response through a failed background refetch, so checking `isError` first turned a

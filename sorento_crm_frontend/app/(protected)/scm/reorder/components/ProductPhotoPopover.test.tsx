@@ -155,6 +155,29 @@ describe('ProductPhotoPopover', () => {
     expect(screen.getByText(/failed to load the photo/i)).toBeInTheDocument();
   });
 
+  it('shows the photo again once a fresh url replaces the expired one', async () => {
+    photo({ url: 'https://cdn.test.invalid/products/a.jpg?Signature=expired', is_primary: true });
+    const { rerender } = render(
+      <ProductPhotoPopover runId="run-1" productId="p1" sku="SRTWCY8840" hasPhoto status="ready" />,
+    );
+    await open();
+    fireEvent.error(screen.getByRole('img', { name: 'SRTWCY8840' }));
+    expect(screen.getByText(/failed to load the photo/i)).toBeInTheDocument();
+
+    // The failure belonged to the OLD url. A re-signed one is a new attempt, so latching the
+    // failure would show "failed to load" over a photo that loads perfectly well.
+    photo({ url: 'https://cdn.test.invalid/products/a.jpg?Signature=fresh', is_primary: true });
+    rerender(
+      <ProductPhotoPopover runId="run-1" productId="p1" sku="SRTWCY8840" hasPhoto status="ready" />,
+    );
+
+    expect(screen.getByRole('img', { name: 'SRTWCY8840' })).toHaveAttribute(
+      'src',
+      'https://cdn.test.invalid/products/a.jpg?Signature=fresh',
+    );
+    expect(screen.queryByText(/failed to load the photo/i)).not.toBeInTheDocument();
+  });
+
   it('dims the icon only once we KNOW the product has no photo', () => {
     const { rerender } = render(<ProductPhotoPopover sku="SRTWCY8840" status="idle" />);
     expect(screen.getByRole('button', { name: /product photo/i }).className).not.toContain(
