@@ -231,9 +231,17 @@ against this).**
   `comment.created` webhooks to a new ingest route; dedupe by (contact, created_at,
   text) since Respond gives no comment id in the webhook (verify payload at build time).
 
-BUILT 2026-08-15. The as-built wire contract, and the four places it deviates from the
-sketch above, are written under AC-L3 in the UAC file (that is the contract; this bullet
-is the design note). Summary of the deviations: the table is
+**n8n half of L3 is UNBUILT (verified by the n8n session 2026-08-15: no Respond
+`comment.created` trigger exists on the instance, no workflow references
+`POST /api/v1/external/chat-history/comments`).** It is its own future n8n slice
+(plan -> build -> test -> promote, user-gated), NOT part of the S3.2 flip: dedicated
+small workflow, first step = verify the comment event's exact trigger-enum name on this
+instance (names differ from Respond's docs). CRM half is shipped: `comment_id` REQUIRED
+as the idempotency key, X-API-Key, contact_id (respond_io_id) or phone_number.
+
+BUILT 2026-08-15 (CRM half). The as-built wire contract, and the four places it deviates
+from the sketch above, are written under AC-L3 in the UAC file (that is the contract;
+this bullet is the design note). Summary of the deviations: the table is
 `conversation_ticket_comments` with a NULLABLE `tracking_id` because Respond comments are
 contact-scoped; dedupe keys on Respond's own `comment_id` rather than
 (contact, created_at, text), and that key is REQUIRED (Phase-3 review, 2026-08-15:
