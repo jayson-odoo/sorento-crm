@@ -15,6 +15,8 @@
  * owning the tone of a screen it cannot see.
  */
 
+import { fmtSupplierCost } from '../../lib/format';
+
 export interface PricePurchase {
   po_number: string | null;
   issue_date: string | null;
@@ -117,12 +119,9 @@ export function humanAge(days: number | null): string | null {
   return rem > 0 ? `${years} years ${rem} months ago` : `${years} years ago`;
 }
 
+/** One money format on this screen: `RM 105.00`, or the supplier's own code. */
 function money(amount: number, currency: string | null): string {
-  const n = amount.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return currency ? `${currency} ${n}` : n;
+  return fmtSupplierCost(amount, currency);
 }
 
 /** "USD 20.37 on 202012-S0048, 2020-12-15" - the fact, with its receipt. Popup only. */

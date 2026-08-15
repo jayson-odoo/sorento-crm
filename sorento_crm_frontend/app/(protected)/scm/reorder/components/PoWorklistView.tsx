@@ -23,7 +23,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
-import { EM_DASH, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtMoneyIn, fmtSupplierCost } from '../../lib/format';
 import { computedAtLabel, dayLabel } from '../lib/coverageTimeline';
 import { usePoWorklist, useSetKeyedStatus } from '../hooks/usePoWorklist';
 import {
@@ -285,8 +285,10 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
             );
           }
           return (
-            <span title={`${fmtInt(r.chosen_qty)} at ${r.last_po_cost} ${r.last_po_currency}`}>
-              {r.last_po_currency} {r.cash_committed.toLocaleString('en-MY')}
+            <span
+              title={`${fmtInt(r.chosen_qty)} at ${fmtSupplierCost(r.last_po_cost, r.last_po_currency)}`}
+            >
+              {fmtMoneyIn(r.cash_committed, r.last_po_currency)}
             </span>
           );
         },

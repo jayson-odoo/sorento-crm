@@ -49,6 +49,7 @@ import {
   fmtMoney,
   fmtPct,
   fmtSupplierCost,
+  fmtTrimmedDecimal,
 } from '../../lib/format';
 import { ConfidenceBadge } from '../../components/HealthIndicators';
 import type {
@@ -70,8 +71,7 @@ import type {
 
 /** Compact number for the arithmetic - trims trailing zeros so 11.0 reads "11". */
 function dec(v: number | null | undefined): string {
-  if (v === null || v === undefined) return EM_DASH;
-  return Number(v.toFixed(2)).toLocaleString('en-MY', { maximumFractionDigits: 2 });
+  return fmtTrimmedDecimal(v, 2);
 }
 
 const REASON_NOUN: Record<string, string> = {

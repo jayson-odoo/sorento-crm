@@ -19,7 +19,7 @@
  *
  * Survives Phase 2. Only `summaryOrderMockStore.ts` is deleted.
  */
-import { fmtSupplierCost } from '../../lib/format';
+import { fmtDecimal, fmtSupplierCost } from '../../lib/format';
 import type { OrderSummaryRow, SupplierCandidate } from '../types/summaryOrder.types';
 
 /** Days per month used to turn a daily demand rate into months of cover. */
@@ -149,17 +149,11 @@ export function fmtVariance(value: number | null | undefined, currency: string |
 /** Cubic metres, to one decimal. */
 export function fmtCbm(value: number | null | undefined): string {
   if (value === null || value === undefined) return '';
-  return `${value.toLocaleString('en-MY', {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  })} m3`;
+  return `${fmtDecimal(value, 1)} m3`;
 }
 
 /** Months of cover, to one decimal. */
 export function fmtMonths(value: number | null | undefined): string {
   if (value === null || value === undefined) return '';
-  return `${value.toLocaleString('en-MY', {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  })} months`;
+  return `${fmtDecimal(value, 1)} months`;
 }
