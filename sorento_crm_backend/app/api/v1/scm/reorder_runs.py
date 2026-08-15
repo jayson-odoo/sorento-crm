@@ -122,7 +122,8 @@ def list_reorder_runs(
     code_by_id: dict[str, str] = {}
     if all_ids:
         for wr in db.execute(text(
-            "SELECT id::text AS id, warehouse_code FROM warehouses WHERE id::text = ANY(:ids)"
+            "SELECT id::text AS id, warehouse_code FROM warehouses "
+            "WHERE id = ANY(CAST(:ids AS uuid[]))"
         ), {"ids": list(all_ids)}).mappings().all():
             code_by_id[wr["id"]] = wr["warehouse_code"]
 
@@ -138,12 +139,20 @@ def _costed_buy_counts(db: Session, run_ids: list[str]) -> dict[str, int]:
     """Live count of ORDERABLE buys (unit_cost present) per run, from the frozen
     recommendations. Overrides the run_log's ``buy`` tally so runs generated before
     the uncosted-exclusion fix still report the orderable count, keeping the Buy tile
-    consistent with the plan grid (which parks uncosted buys in the needs-cost banner)."""
+    consistent with the plan grid (which parks uncosted buys in the needs-cost banner).
+
+    The cast sits on the PARAMETER, never on ``run_id``. Putting ``::text`` on the column
+    instead makes ``ix_scm_reorder_recommendation_rec_type`` unusable and turns this into a
+    parallel sequential scan of every recommendation ever written: measured on the prod
+    copy (396,601 rows), 4,629 ms against 81 ms. It is on the critical path three times
+    over - ``/reorder-runs/today`` gates the whole plan screen, and run-status and the
+    history panel call it as well."""
     if not run_ids:
         return {}
     rows = db.execute(text(
         "SELECT run_id::text AS run_id, count(*) AS n FROM scm.reorder_recommendation "
-        "WHERE run_id::text = ANY(:ids) AND rec_type = 'buy' AND unit_cost IS NOT NULL "
+        "WHERE run_id = ANY(CAST(:ids AS uuid[])) AND rec_type = 'buy' "
+        "  AND unit_cost IS NOT NULL "
         "GROUP BY run_id"
     ), {"ids": run_ids}).mappings().all()
     return {r["run_id"]: int(r["n"]) for r in rows}
@@ -205,7 +214,8 @@ def get_today_reorder_run(
     ids = [str(w) for w in (row["warehouse_ids"] or [])]
     if ids:
         for wr in db.execute(text(
-            "SELECT id::text AS id, warehouse_code FROM warehouses WHERE id::text = ANY(:ids)"
+            "SELECT id::text AS id, warehouse_code FROM warehouses "
+            "WHERE id = ANY(CAST(:ids AS uuid[]))"
         ), {"ids": ids}).mappings().all():
             code_by_id[wr["id"]] = wr["warehouse_code"]
     item = _list_item(row, code_by_id, _costed_buy_counts(db, [str(row["id"])]))
@@ -320,7 +330,8 @@ def list_cover_sources(
         for r in db.execute(
             text(
                 "SELECT DISTINCT product_id::text FROM scm.reorder_recommendation "
-                "WHERE run_id::text = :run AND rec_type IN ('buy', 'needs_level')"
+                "WHERE run_id = CAST(:run AS uuid) "
+                "  AND rec_type IN ('buy', 'needs_level')"
             ),
             {"run": run_id},
         ).fetchall()

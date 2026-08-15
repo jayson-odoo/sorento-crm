@@ -72,7 +72,7 @@ WITH plan_demand AS (
            MAX(COALESCE((r.inputs ->> 'committed')::numeric, 0)) AS demand,  -- the API calls this outstanding_sales
            MAX(COALESCE((r.inputs ->> 'on_hand')::numeric, 0))           AS plan_on_hand
     FROM scm.reorder_recommendation r
-    WHERE r.run_id::text = :run_id
+    WHERE r.run_id = CAST(:run_id AS uuid)
     GROUP BY r.product_id, r.warehouse_id
 )
 SELECT s.product_id::text                         AS product_id,
@@ -87,8 +87,11 @@ LEFT JOIN plan_demand d
        ON d.product_id = s.product_id AND d.warehouse_id = s.warehouse_id
 WHERE s.quantity_on_hand > 0
   AND w.counts_as_available
-  -- ::text on BOTH sides: a bare uuid = ANY(text[]) is 'operator does not exist'
-  AND s.product_id::text = ANY(:product_ids)
+  -- The cast goes on the PARAMETER. `uuid = ANY(text[])` is 'operator does not exist',
+  -- which is what the ::text-on-both-sides version was working around, but casting the
+  -- COLUMN also costs `stock` its index on product_id. Casting the bound array instead
+  -- satisfies the operator and leaves the index usable.
+  AND s.product_id = ANY(CAST(:product_ids AS uuid[]))
 """
 
 
