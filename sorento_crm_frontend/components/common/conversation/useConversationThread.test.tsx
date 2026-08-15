@@ -354,6 +354,184 @@ describe('useConversationThread', () => {
     expect(result.current.search.open).toBe(false);
   });
 
+  it('releases the older-page flag even when a jump supersedes it', async () => {
+    // FINDING 1: the busy flag was cleared inside the sequence guard, so a
+    // superseded older page left `isLoadingOlder` true forever - scroll-back
+    // silently dead for the rest of the drawer's life.
+    searchMessages.mockResolvedValue(matches);
+    let resolveOlder: (p: ConversationThreadPage) => void = () => {};
+    let resolveJump: (p: ConversationThreadPage) => void = () => {};
+    loadPage
+      .mockReturnValueOnce(
+        new Promise<ConversationThreadPage>((resolve) => {
+          resolveOlder = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise<ConversationThreadPage>((resolve) => {
+          resolveJump = resolve;
+        }),
+      );
+    const { result } = setup();
+
+    act(() => result.current.loadOlder());
+    expect(result.current.isLoadingOlder).toBe(true);
+
+    act(() => result.current.search.openSearch());
+    act(() => result.current.search.setQuery('needle'));
+    await waitFor(() => expect(result.current.search.matchCount).toBe(2));
+    act(() => result.current.search.next());
+    await waitFor(() => expect(result.current.search.isJumping).toBe(true));
+
+    await act(async () => {
+      resolveOlder(page([msg(0)]));
+    });
+    expect(result.current.isLoadingOlder).toBe(false);
+
+    await act(async () => {
+      resolveJump(page([msg(1), msg(2), msg(3)]));
+    });
+    await waitFor(() => expect(result.current.search.isJumping).toBe(false));
+
+    loadPage.mockResolvedValueOnce(page([msg(0)]));
+    act(() => result.current.loadOlder());
+    expect(loadPage).toHaveBeenCalledTimes(3);
+  });
+
+  it('releases the jumping flag even when the jump is superseded', async () => {
+    searchMessages.mockResolvedValue(matches);
+    let resolveJump: (p: ConversationThreadPage) => void = () => {};
+    loadPage.mockReturnValueOnce(
+      new Promise<ConversationThreadPage>((resolve) => {
+        resolveJump = resolve;
+      }),
+    );
+    const { result } = setup();
+
+    act(() => result.current.search.openSearch());
+    act(() => result.current.search.setQuery('needle'));
+    await waitFor(() => expect(result.current.search.matchCount).toBe(2));
+    act(() => result.current.search.next());
+    await waitFor(() => expect(result.current.search.isJumping).toBe(true));
+
+    // Anything that moves the window on (here: another older page) bumps the
+    // sequence; the jump landing afterwards must still stop the spinner.
+    loadPage.mockResolvedValueOnce(page([msg(6), msg(7)]));
+    act(() => result.current.loadOlder());
+    await act(async () => {
+      resolveJump(page([msg(1), msg(2)]));
+    });
+
+    expect(result.current.search.isJumping).toBe(false);
+  });
+
+  // ---- detached window: paging forward and the way back (FINDING 3) -------
+
+  /** Search-jump into the past, leaving the window detached from the tail. */
+  const jumpIntoThePast = async (
+    around: ConversationThreadPage = page([msg(1), msg(2), msg(3)], { has_more_newer: true }),
+  ) => {
+    searchMessages.mockResolvedValue(matches);
+    loadPage.mockResolvedValueOnce(around);
+    const rendered = setup();
+    act(() => rendered.result.current.search.openSearch());
+    act(() => rendered.result.current.search.setQuery('needle'));
+    await waitFor(() => expect(rendered.result.current.search.matchCount).toBe(2));
+    act(() => rendered.result.current.search.next());
+    await waitFor(() => expect(rendered.result.current.isDetached).toBe(true));
+    return rendered;
+  };
+
+  it('pages forward from a detached window with the newest loaded id', async () => {
+    const { result } = await jumpIntoThePast();
+    expect(result.current.hasMoreNewer).toBe(true);
+
+    loadPage.mockResolvedValueOnce(
+      page([msg(4), msg(5)], { has_more_older: true, has_more_newer: true }),
+    );
+    act(() => result.current.loadNewer());
+
+    await waitFor(() => expect(result.current.isLoadingNewer).toBe(false));
+    expect(loadPage).toHaveBeenLastCalledWith({ after: String(BASE_US + 3_000_000), limit: 50 });
+    expect(result.current.items.map((m) => m.messageId)).toEqual([
+      BASE_US + 1_000_000,
+      BASE_US + 2_000_000,
+      BASE_US + 3_000_000,
+      BASE_US + 4_000_000,
+      BASE_US + 5_000_000,
+    ]);
+    // Still detached: the live tail is NOT merged until we have caught up.
+    expect(result.current.isDetached).toBe(true);
+  });
+
+  it('rejoins the live tail once a forward page reports nothing newer', async () => {
+    const { result } = await jumpIntoThePast();
+
+    loadPage.mockResolvedValueOnce(
+      page([msg(4), msg(5)], { has_more_older: true, has_more_newer: false }),
+    );
+    act(() => result.current.loadNewer());
+
+    await waitFor(() => expect(result.current.isDetached).toBe(false));
+    expect(result.current.hasMoreNewer).toBe(false);
+    // Everything paged through is kept, and the live window is merged back in.
+    expect(result.current.items.map((m) => m.messageId)).toEqual([
+      BASE_US + 1_000_000,
+      BASE_US + 2_000_000,
+      BASE_US + 3_000_000,
+      BASE_US + 4_000_000,
+      BASE_US + 5_000_000,
+      BASE_US + 8_000_000,
+      BASE_US + 9_000_000,
+    ]);
+  });
+
+  it('counts the live messages the detached reader cannot see', async () => {
+    const { result, rerender } = await jumpIntoThePast();
+    expect(result.current.newerUnseenCount).toBe(2);
+
+    rerender({ liveItems: [msg(8), msg(9), msg(10)] });
+    expect(result.current.newerUnseenCount).toBe(3);
+  });
+
+  it('jump to latest puts the reader back on the live tail', async () => {
+    const { result } = await jumpIntoThePast();
+
+    act(() => result.current.jumpToLatest());
+
+    expect(result.current.isDetached).toBe(false);
+    expect(result.current.newerUnseenCount).toBe(0);
+    expect(result.current.search.activeMessageId).toBeNull();
+    expect(result.current.items.map((m) => m.messageId)).toEqual([
+      BASE_US + 8_000_000,
+      BASE_US + 9_000_000,
+    ]);
+    // The search bar stays open with its matches; only the cursor is dropped.
+    expect(result.current.search.open).toBe(true);
+    expect(result.current.search.matchCount).toBe(2);
+  });
+
+  it('does not re-fetch a jump whose page never contained the anchor', async () => {
+    // FINDING 6: the around page can come back without the match (a purged or
+    // out-of-scope message). Keying the bail on "is it loaded" refetched on
+    // every poll tick, forever.
+    searchMessages.mockResolvedValue(matches);
+    loadPage.mockResolvedValue(page([msg(4), msg(5)]));
+    const { result, rerender } = setup();
+
+    act(() => result.current.search.openSearch());
+    act(() => result.current.search.setQuery('needle'));
+    await waitFor(() => expect(result.current.search.matchCount).toBe(2));
+    act(() => result.current.search.next());
+    await waitFor(() => expect(result.current.search.isJumping).toBe(false));
+    expect(loadPage).toHaveBeenCalledTimes(1);
+
+    rerender({ liveItems: [msg(8), msg(9), msg(10)] });
+    rerender({ liveItems: [msg(8), msg(9), msg(10), msg(11)] });
+
+    expect(loadPage).toHaveBeenCalledTimes(1);
+  });
+
   it('holds nothing when disabled', () => {
     const { result } = renderHook(() =>
       useConversationThread({

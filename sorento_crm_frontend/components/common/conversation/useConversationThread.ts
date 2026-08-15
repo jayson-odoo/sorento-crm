@@ -17,9 +17,12 @@
  *   while the reader is scrolled up.
  * - `detached`: the reader jumped to a search match somewhere in the past. Live
  *   items are deliberately NOT merged - appending the newest messages to a
- *   window that ends in 2026-05 would look like the thread teleported. The
- *   window returns to `tail` when the reader has paged forward to the end, or
- *   when search closes.
+ *   window that ends in 2026-05 would look like the thread teleported. Instead
+ *   `newerUnseenCount` says how many live messages the reader cannot currently
+ *   see, and there are two ways back: `loadNewer()` pages forward one page at a
+ *   time (the window rejoins the tail by itself once a page reports nothing
+ *   newer), and `jumpToLatest()` drops the window and lands on the live tail in
+ *   one step. Closing search also returns to `tail`.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -92,6 +95,15 @@ export interface ConversationThread {
   isLoadingOlder: boolean;
   loadOlder: () => void;
   atConversationStart: boolean;
+  /** True while the window sits in the past instead of on the live tail. */
+  isDetached: boolean;
+  hasMoreNewer: boolean;
+  isLoadingNewer: boolean;
+  loadNewer: () => void;
+  /** Drop the detached window and land back on the live tail. */
+  jumpToLatest: () => void;
+  /** Live messages the detached window is hiding. 0 in tail mode. */
+  newerUnseenCount: number;
   /** The term to `<mark>` inside bubbles (empty when search is closed). */
   highlightTerm: string;
   search: ConversationSearchController;
@@ -157,7 +169,9 @@ export function useConversationThread({
   const [olderItems, setOlderItems] = useState<RespondMessageRenderable[]>([]);
   const [detachedItems, setDetachedItems] = useState<RespondMessageRenderable[] | null>(null);
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const [hasMoreNewer, setHasMoreNewer] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [isLoadingNewer, setIsLoadingNewer] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -171,21 +185,51 @@ export function useConversationThread({
 
   // Every async result is stamped with the sequence it was requested under. A
   // slow older-page landing after a jump must not resurrect the window it was
-  // asked for - the guard is on the setState, not on the request.
+  // asked for - the guard is on the DATA SETTERS only. Whether a lane is busy is
+  // a separate question, owned per lane by the token refs below: a superseded
+  // request still has to put its own spinner away, or the reader is left with a
+  // scroll-back that never fires again.
   const fetchSeq = useRef(0);
   const searchSeq = useRef(0);
+  // Per-lane in-flight token. Null = idle, which is also the guard against a
+  // second request: `isLoadingOlder` is state, and a burst of scroll events in
+  // one frame all read it from the render they were queued in.
+  const olderToken = useRef<number | null>(null);
+  const newerToken = useRef<number | null>(null);
+  const jumpToken = useRef<number | null>(null);
+  const tokenCounter = useRef(0);
+  const nextToken = () => (tokenCounter.current += 1);
+  // The detached window, readable at promise-resolution time. The state copy is
+  // a render behind, and both page lanes merge into whatever the window holds
+  // NOW - an older page landing while a newer one is in flight must not be lost.
+  const detachedRef = useRef<RespondMessageRenderable[] | null>(null);
+  const setDetached = useCallback((next: RespondMessageRenderable[] | null) => {
+    detachedRef.current = next;
+    setDetachedItems(next);
+  }, []);
+  // The match we have already fetched a page for. Keyed on the match id, NOT on
+  // "is it loaded": an around-page that comes back without its anchor (purged
+  // message, scope change) would otherwise be re-requested on every poll tick.
+  const jumpedTo = useRef<string | null>(null);
 
   const reset = useCallback(() => {
     fetchSeq.current += 1;
+    olderToken.current = null;
+    newerToken.current = null;
     setOlderItems([]);
-    setDetachedItems(null);
+    setDetached(null);
     setHasMoreOlder(true);
+    setHasMoreNewer(false);
     setIsLoadingOlder(false);
+    setIsLoadingNewer(false);
     setPageError(null);
-  }, []);
+  }, [setDetached]);
 
   const resetSearch = useCallback(() => {
     searchSeq.current += 1;
+    fetchSeq.current += 1;
+    jumpToken.current = null;
+    jumpedTo.current = null;
     setQueryState('');
     setAppliedQuery('');
     setMatches([]);
@@ -225,20 +269,27 @@ export function useConversationThread({
     return null;
   }, [items]);
 
+  const newestLoadedId = useMemo(() => {
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      if (items[i].messageId != null) return String(items[i].messageId);
+    }
+    return null;
+  }, [items]);
+
   const loadOlder = useCallback(() => {
-    if (!enabled || isLoadingOlder || !hasMoreOlder) return;
+    if (!enabled || olderToken.current !== null || !hasMoreOlder) return;
     const before = oldestLoadedId;
     if (!before) return;
+    const token = nextToken();
+    olderToken.current = token;
     const seq = (fetchSeq.current += 1);
     setIsLoadingOlder(true);
     setPageError(null);
     void loadPage({ before, limit: pageSize })
       .then((page) => {
         if (seq !== fetchSeq.current) return;
-        if (detachedItems) {
-          setDetachedItems((current) =>
-            current ? mergeThreadItems(page.items, current) : page.items,
-          );
+        if (detachedRef.current) {
+          setDetached(mergeThreadItems(page.items, detachedRef.current));
         } else {
           setOlderItems((current) => mergeThreadItems(page.items, current));
         }
@@ -249,18 +300,52 @@ export function useConversationThread({
         setPageError(error instanceof Error ? error.message : 'Failed to load older messages.');
       })
       .finally(() => {
-        if (seq !== fetchSeq.current) return;
+        // The flag belongs to THIS request, never to the sequence: a superseded
+        // page still has to put the spinner away. A reset drops the token, so a
+        // straggler cannot clear a flag a newer request has already raised.
+        if (olderToken.current !== token) return;
+        olderToken.current = null;
         setIsLoadingOlder(false);
       });
-  }, [
-    enabled,
-    isLoadingOlder,
-    hasMoreOlder,
-    oldestLoadedId,
-    loadPage,
-    pageSize,
-    detachedItems,
-  ]);
+  }, [enabled, hasMoreOlder, oldestLoadedId, loadPage, pageSize, setDetached]);
+
+  /**
+   * Page forward out of a detached window. Once a page reports nothing newer
+   * the window rejoins the tail: everything paged through is kept, and live
+   * items merge again so inbound messages appear on their own after that.
+   */
+  const loadNewer = useCallback(() => {
+    if (!enabled || newerToken.current !== null || !hasMoreNewer) return;
+    if (!detachedRef.current) return;
+    const after = newestLoadedId;
+    if (!after) return;
+    const token = nextToken();
+    newerToken.current = token;
+    const seq = (fetchSeq.current += 1);
+    setIsLoadingNewer(true);
+    setPageError(null);
+    void loadPage({ after, limit: pageSize })
+      .then((page) => {
+        if (seq !== fetchSeq.current) return;
+        const merged = mergeThreadItems(detachedRef.current ?? [], page.items);
+        if (page.has_more_newer) {
+          setDetached(merged);
+        } else {
+          setOlderItems(merged);
+          setDetached(null);
+        }
+        setHasMoreNewer(Boolean(page.has_more_newer));
+      })
+      .catch((error: unknown) => {
+        if (seq !== fetchSeq.current) return;
+        setPageError(error instanceof Error ? error.message : 'Failed to load newer messages.');
+      })
+      .finally(() => {
+        if (newerToken.current !== token) return;
+        newerToken.current = null;
+        setIsLoadingNewer(false);
+      });
+  }, [enabled, hasMoreNewer, newestLoadedId, loadPage, pageSize, setDetached]);
 
   // ---- search ------------------------------------------------------------
 
@@ -315,6 +400,18 @@ export function useConversationThread({
     [items],
   );
 
+  // What the detached window is hiding: live messages that are not in it. The
+  // reader gets a count, not a silent gap.
+  const newerUnseenCount = useMemo(() => {
+    if (!detachedItems) return 0;
+    let unseen = 0;
+    for (const item of liveItems) {
+      if (item.messageId == null) continue;
+      if (!loadedIds.has(String(item.messageId))) unseen += 1;
+    }
+    return unseen;
+  }, [detachedItems, liveItems, loadedIds]);
+
   const activeMessageId = activeIndex >= 0 ? (matches[activeIndex]?.message_id ?? null) : null;
 
   // Jump: an already-rendered match only needs the scroll (RespondChatList owns
@@ -323,25 +420,49 @@ export function useConversationThread({
   // middle would render as a silent gap in the conversation.
   useEffect(() => {
     if (!enabled || !activeMessageId) return;
-    if (loadedIds.has(activeMessageId)) return;
+    if (jumpedTo.current === activeMessageId) return;
+    if (loadedIds.has(activeMessageId)) {
+      jumpedTo.current = activeMessageId;
+      return;
+    }
+    // Marked BEFORE the request and left marked on failure: a page that comes
+    // back without the anchor must not be asked for again on the next tick.
+    jumpedTo.current = activeMessageId;
+    const token = nextToken();
+    jumpToken.current = token;
     const seq = (fetchSeq.current += 1);
     setIsJumping(true);
     void loadPage({ around: activeMessageId, limit: pageSize })
       .then((page) => {
         if (seq !== fetchSeq.current) return;
-        setDetachedItems(page.items);
+        setDetached(page.items);
         setOlderItems([]);
         setHasMoreOlder(Boolean(page.has_more_older));
+        setHasMoreNewer(Boolean(page.has_more_newer));
       })
       .catch((error: unknown) => {
         if (seq !== fetchSeq.current) return;
         setSearchError(error instanceof Error ? error.message : 'Could not open that message.');
       })
       .finally(() => {
-        if (seq !== fetchSeq.current) return;
+        if (jumpToken.current !== token) return;
+        jumpToken.current = null;
         setIsJumping(false);
       });
-  }, [activeMessageId, loadedIds, enabled, loadPage, pageSize]);
+  }, [activeMessageId, loadedIds, enabled, loadPage, pageSize, setDetached]);
+
+  /**
+   * Straight back to the live tail from a detached window. The search bar stays
+   * open with its matches - only the cursor is dropped, so the jump effect does
+   * not immediately pull the reader back into the past.
+   */
+  const jumpToLatest = useCallback(() => {
+    reset();
+    jumpToken.current = null;
+    jumpedTo.current = null;
+    setActiveIndex(-1);
+    setIsJumping(false);
+  }, [reset]);
 
   const openSearch = useCallback(() => setSearchOpen(true), []);
 
@@ -375,6 +496,12 @@ export function useConversationThread({
     isLoadingOlder,
     loadOlder,
     atConversationStart: !hasMoreOlder && items.length > 0,
+    isDetached: detachedItems !== null,
+    hasMoreNewer: enabled && hasMoreNewer,
+    isLoadingNewer,
+    loadNewer,
+    jumpToLatest,
+    newerUnseenCount,
     highlightTerm: searchOpen ? appliedQuery : '',
     error: pageError,
     search: {
