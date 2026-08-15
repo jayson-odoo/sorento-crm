@@ -837,6 +837,28 @@ against the code before acting:
   data, one spare round-trip in a rare case; the "next only when page full" rule is
   deliberate (inherited from the reference design). Revisit only if it shows in use.
 
+### Main merged in (2026-08-16) - single alembic head restored
+
+The PR merge commit was failing CI at the `bootstrap_env` stamp step with
+"Multiple heads are present": the branch was 182 commits behind main, and main's
+`358_scm_po_spo_history_aliases` and this lane's `330_conversations_inbox` are
+independent heads. `git merge origin/main` produced exactly ONE textual conflict
+(two added imports in sla_service.py, both kept) and `359_merge_tickets_main`
+joins the two lineages (no DDL). Heads after merge: 1.
+
+Codex reviewed the merge commit and raised 4 findings, all the same class and all
+REFUTED with evidence rather than patched: main's new `voided_at` / `open_tracker_scope()`
+invariant ("unresolved no longer means open") does not reach the conversation lane,
+because the sole writer of `ConversationSLATracking.voided_at` is form_sla_service
+pinned to FORM_SLA_TYPES through the negated conversation scope (UAC F4b), and the
+open-ticket unique index predicate carries the conversation scope too. The invariant
+is now documented at `conversation_tracking_scope()` so the next reviewer reads it
+instead of re-deriving it. If anything ever voids a conversation row, every caller of
+that helper needs `open_tracker_scope()` beside it.
+
+Post-merge verification: backend Phase-4 scope 527 passed; full vitest 420 files /
+3743 passed; app imports clean.
+
 ### Phase 4 execution order (user-approved 2026-08-14)
 
 S4.1 and S4.2 first (they close the two live operational gaps: bot does not pause, thread

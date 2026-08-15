@@ -617,6 +617,18 @@ def conversation_tracking_scope():
     conversation side must apply this filter or it can falsely match a form
     row (e.g. the source_message_id idempotency check, thread-assignee
     lookups).
+    Conversation rows are never voided, so a query already carrying this scope
+    reads `is_resolved = false` as "open" correctly and does NOT also need
+    `sla_scope.not_voided()` / `open_tracker_scope()`. The only writer of
+    `ConversationSLATracking.voided_at` is `form_sla_service` (one assignment,
+    inside a loop over `_open_form_trackers`, which pins to FORM_SLA_TYPES and
+    passes through the NEGATED conversation scope - UAC F4b, "conversation SLA
+    is never touched"). The open-ticket unique index carries the same scope in
+    its predicate. Reviewers keep flagging the conversation lane for a missing
+    not_voided(); it is a no-op there by construction, and this note exists so
+    the check is a read rather than a re-derivation. It stops being true the
+    day something voids a conversation row - then every caller of this helper
+    needs open_tracker_scope() beside it.
     """
     from app.services.form_sla_service import FORM_SLA_TYPES
 
