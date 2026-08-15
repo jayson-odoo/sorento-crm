@@ -19,6 +19,11 @@ from typing import Literal, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.scm.cover_service import (
+    COVER_SCOPES,
+    DEFAULT_COVER_SCOPE,
+)
+
 # Engine default fallback when no global policy row carries a value.
 DEFAULT_DEAD_STOCK_DAYS = 180
 # Days-of-cover ceiling above which a SKU reads as overstock (M2). Engine default
@@ -38,9 +43,12 @@ def global_policy_row(db: Session):
 
     Active rows win over inactive ones; among ties the oldest (``created_at ASC``)
     wins — deterministic, and stable as new duplicates get appended.
+
+    Columns are appended, never reordered: callers read this by index.
     """
     return db.execute(text(
-        "SELECT id, dead_stock_days, overstock_days, policy_type FROM scm.reorder_policy "
+        "SELECT id, dead_stock_days, overstock_days, policy_type, cover_scope "
+        "FROM scm.reorder_policy "
         "WHERE scope_type = 'global' ORDER BY is_active DESC, created_at ASC LIMIT 1"
     )).fetchone()
 
@@ -64,6 +72,17 @@ def resolve_global_planning_mode(db: Session) -> PlanningMode:
     """The mode the NEXT reorder run will use, derived from the global row."""
     row = global_policy_row(db)
     return planning_mode_from_policy_type(row[3] if row else None)
+
+
+def resolve_global_cover_scope(db: Session) -> str:
+    """Where "use stock" may draw from, per the canonical global row.
+
+    An unset value resolves to ``own_pool`` (the captain's answer: "either I use stock from
+    BRW, or buy"), so a row that predates the column never silently offers the whole network.
+    """
+    row = global_policy_row(db)
+    value = row[4] if row else None
+    return value if value in COVER_SCOPES else DEFAULT_COVER_SCOPE
 
 
 def resolve_global_dead_stock_days(db: Session) -> Optional[int]:

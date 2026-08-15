@@ -531,3 +531,63 @@ def test_resolve_product_and_warehouse_labels(scm_app):
     assert res["product"]["product_code"] == code
     assert res["warehouse"]["warehouse_code"] == wcode
     assert "affected_sku_count" not in res  # AC-PREV-5 deferred
+
+
+# --- cover scope on the policy row (AC-3.2) ---------------------------------
+#
+# The knob has a dedicated quick setting on the global row (`/config/cover-scope`), but the
+# CRUD surface has to carry it too: a column the policy screen cannot read is a column that
+# silently disagrees with what the plan does.
+
+def test_cover_scope_round_trips_through_policy_crud(scm_app):
+    app, db = _client(scm_app, "purchasing")
+    pid, _code, _cat = _a_product(db)
+    with TestClient(app) as c:
+        created = c.post(BASE, json=_write(scope_type="sku", scope_ref=pid,
+                                           cover_scope="all_locations"))
+        assert created.status_code == 201, created.text
+        assert created.json()["cover_scope"] == "all_locations"
+
+        row_id = created.json()["id"]
+        updated = c.put(f"{BASE}/{row_id}", json=_write(scope_type="sku", scope_ref=pid,
+                                                        cover_scope="own_pool"))
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["cover_scope"] == "own_pool"
+
+    assert db.execute(text("SELECT cover_scope FROM scm.reorder_policy WHERE id = :id"),
+                      {"id": row_id}).scalar() == "own_pool"
+
+
+def test_cover_scope_defaults_to_own_pool_when_the_payload_omits_it(scm_app):
+    """The captain's answer is the default everywhere, not just on the quick setting."""
+    app, db = _client(scm_app, "purchasing")
+    pid, _code, _cat = _a_product(db)
+    body = _write(scope_type="sku", scope_ref=pid)
+    body.pop("cover_scope", None)
+    with TestClient(app) as c:
+        created = c.post(BASE, json=body)
+    assert created.status_code == 201, created.text
+    assert created.json()["cover_scope"] == "own_pool"
+
+
+def test_an_unknown_cover_scope_is_rejected(scm_app):
+    app, db = _client(scm_app, "purchasing")
+    pid, _code, _cat = _a_product(db)
+    with TestClient(app) as c:
+        res = c.post(BASE, json=_write(scope_type="sku", scope_ref=pid,
+                                       cover_scope="anywhere_i_like"))
+    assert res.status_code == 422, res.text
+
+
+def test_a_legacy_row_with_no_cover_scope_reads_as_own_pool(scm_app):
+    """A row written before the column existed must not read as "the whole network"."""
+    app, db = _client(scm_app, "purchasing")
+    pid, _code, _cat = _a_product(db)
+    with TestClient(app) as c:
+        created = c.post(BASE, json=_write(scope_type="sku", scope_ref=pid)).json()
+        db.execute(text("UPDATE scm.reorder_policy SET cover_scope = NULL WHERE id = :id"),
+                   {"id": created["id"]})
+        db.flush()
+        listed = c.get(f"{BASE}?page=1&limit=200").json()
+    mine = [r for r in listed["data"] if r["id"] == created["id"]]
+    assert mine and mine[0]["cover_scope"] == "own_pool"

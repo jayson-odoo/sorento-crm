@@ -41,6 +41,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.scm.cover_service import DEFAULT_COVER_SCOPE
 from app.services.scm.money import BASE_CURRENCY, Rate, load_rates, to_base
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
@@ -558,14 +559,14 @@ def ensure_reorder_policy_defaults(db: Session) -> None:
         "(id, scope_type, scope_ref, policy_type, service_level, safety_stock_method, "
         " safety_days, review_period_days, forecast_window_days, baseline_source, "
         " spike_handling, buy_scope, dead_stock_days, overstock_days, factor_toggles, "
-        " is_active, priority, source_system, source_ref, created_at, updated_at) "
+        " cover_scope, is_active, priority, source_system, source_ref, created_at, updated_at) "
         "VALUES (:id, 'global', NULL, 'reorder_point', :sl, 'fixed_days', :sd, :rp, :fw, "
         " 'continuous_only', 'committed_only', 'network', :dsd, :osd, "
-        " CAST(:toggles AS jsonb), true, 0, :src, 'defaults', now(), now())"
+        " CAST(:toggles AS jsonb), :cover, true, 0, :src, 'defaults', now(), now())"
     ), {"id": str(uuid.uuid4()), "sl": DEFAULT_SERVICE_LEVEL, "sd": DEFAULT_SAFETY_DAYS,
         "rp": DEFAULT_REVIEW_PERIOD_DAYS, "fw": DEFAULT_FORECAST_WINDOW_DAYS,
         "dsd": DEFAULT_DEAD_STOCK_DAYS, "osd": DEFAULT_OVERSTOCK_DAYS,
-        "toggles": toggles, "src": _SEED})
+        "toggles": toggles, "cover": DEFAULT_COVER_SCOPE, "src": _SEED})
 
 
 # ===========================================================================
@@ -578,7 +579,7 @@ def load_policies(db: Session) -> list[dict]:
         "SELECT id, scope_type, scope_ref, policy_type, service_level, safety_stock_method, "
         "safety_days, review_period_days, forecast_window_days, spike_handling, buy_scope, "
         "dead_stock_days, overstock_days, min_override, max_override, factor_toggles, "
-        "pool_netting, level_study_months, level_cover_months, "
+        "pool_netting, cover_scope, level_study_months, level_cover_months, "
         "is_active, priority FROM scm.reorder_policy WHERE is_active = true"
     )).mappings().all()
     return [dict(r) for r in rows]

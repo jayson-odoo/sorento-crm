@@ -42,6 +42,7 @@ from app.services.scm.analytics_service import (
     _supplier_policy,
     ensure_policy_defaults,
 )
+from app.services.scm.cover_service import DEFAULT_COVER_SCOPE
 from app.services.scm.reorder_engine import (
     DEFAULT_LEAD_TIME_DAYS,
     DEFAULT_SUPPLIER_SELECTION,
@@ -83,7 +84,7 @@ _ROW_SELECT = """
            rp.dead_stock_days, rp.overstock_days, rp.min_override, rp.max_override,
            rp.factor_toggles, rp.is_active, rp.priority,
            rp.trajectory_window_retail_months, rp.trajectory_window_project_months,
-           rp.price_stale_after_days, rp.price_movement_threshold_pct,
+           rp.price_stale_after_days, rp.price_movement_threshold_pct, rp.cover_scope,
            p.product_code, p.product_name, pc.category_name, pc.category_code
     FROM scm.reorder_policy rp
     LEFT JOIN products p
@@ -147,6 +148,9 @@ def _serialize(m) -> dict:
         "trajectory_window_project_months": _i(m["trajectory_window_project_months"]),
         "price_stale_after_days": _i(m["price_stale_after_days"]),
         "price_movement_threshold_pct": _f(m["price_movement_threshold_pct"]),
+        # A row written before the column existed reads as the row's own site. NULL must
+        # never surface as "the whole network" - that is the behaviour the knob ends.
+        "cover_scope": m["cover_scope"] or DEFAULT_COVER_SCOPE,
     }
 
 
@@ -259,6 +263,7 @@ def _insert_params(body: ReorderPolicyWrite) -> dict:
         "trajectory_window_project_months": body.trajectory_window_project_months,
         "price_stale_after_days": body.price_stale_after_days,
         "price_movement_threshold_pct": body.price_movement_threshold_pct,
+        "cover_scope": body.cover_scope,
     }
 
 
@@ -276,14 +281,14 @@ def create_policy(db: Session, body: ReorderPolicyWrite) -> dict:
         " spike_handling, buy_scope, dead_stock_days, overstock_days, min_override, "
         " max_override, factor_toggles, is_active, priority, "
         " trajectory_window_retail_months, trajectory_window_project_months, "
-        " price_stale_after_days, price_movement_threshold_pct, "
+        " price_stale_after_days, price_movement_threshold_pct, cover_scope, "
         " source_system, source_ref, created_at, updated_at) "
         "VALUES (:id, :scope_type, :scope_ref, :policy_type, :service_level, "
         " :safety_stock_method, :safety_days, :review_period_days, :forecast_window_days, "
         " :baseline_source, :spike_handling, :buy_scope, :dead_stock_days, :overstock_days, "
         " :min_override, :max_override, CAST(:toggles AS jsonb), :is_active, :priority, "
         " :trajectory_window_retail_months, :trajectory_window_project_months, "
-        " :price_stale_after_days, :price_movement_threshold_pct, "
+        " :price_stale_after_days, :price_movement_threshold_pct, :cover_scope, "
         " 'manual', 'ui', now(), now())"
     ), params)
     db.commit()
@@ -321,6 +326,7 @@ def update_policy(db: Session, policy_id: str, body: ReorderPolicyWrite) -> dict
         "trajectory_window_project_months=:trajectory_window_project_months, "
         "price_stale_after_days=:price_stale_after_days, "
         "price_movement_threshold_pct=:price_movement_threshold_pct, "
+        "cover_scope=:cover_scope, "
         "updated_at=now() WHERE id=:id"
     ), params)
     db.commit()

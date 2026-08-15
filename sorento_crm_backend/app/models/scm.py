@@ -77,6 +77,12 @@ class ReorderPolicy(Base):
     # May a sibling bin's surplus cover another bin's shortage? OFF: this phase does not
     # propose transfers, so it must not assume one. Both behaviours stay in the engine.
     pool_netting = Column(Boolean, nullable=True, server_default=text("false"))
+    # Where "use stock" may draw from before buying. `own_pool` (the default) keeps a row's
+    # cover inside its own site - the warehouses sharing its pool; `all_locations` offers
+    # every location holding spare stock, which is the behaviour that shipped first.
+    # Captain: "why am I allowed to use stock from other locations? It is either I use stock
+    # from BRW, or buy."
+    cover_scope = Column(String(16), nullable=True, server_default=text("'own_pool'"))
     level_study_months = Column(Integer, nullable=True, server_default=text("3"))
     level_cover_months = Column(Numeric(6, 2), nullable=True, server_default=text("2"))
     # S13d trajectory windows: how many months of orders decide sustaining vs dying off.

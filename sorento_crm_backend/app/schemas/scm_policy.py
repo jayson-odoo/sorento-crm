@@ -25,6 +25,9 @@ ScopeType = Literal["sku", "product_class", "abc_xyz_cell", "global"]
 PolicyType = Literal["reorder_point", "periodic_review", "min_max"]
 SafetyStockMethod = Literal["fixed_days", "statistical", "manual"]
 SupplierSelection = Literal["primary", "best_score", "lowest_cost"]
+# Where a plan row may cover a shortage from before it buys. `own_pool` is the default
+# everywhere (captain: "either I use stock from BRW, or buy"); anything else is a 422.
+CoverScope = Literal["own_pool", "all_locations"]
 ResolutionReason = Literal["most-specific-active", "priority-tiebreak", "no-match", "inactive"]
 
 
@@ -58,6 +61,9 @@ class ReorderPolicyWrite(BaseModel):
     # S13e price-advice thresholds. None = code default (180 days, 5%).
     price_stale_after_days: Optional[int] = None
     price_movement_threshold_pct: Optional[float] = None
+    # Where "use stock" may draw from before buying. Defaulted rather than optional: a
+    # missing value must read as the row's own site, never as the whole network.
+    cover_scope: CoverScope = "own_pool"
 
     @model_validator(mode="after")
     def _coherence(self) -> "ReorderPolicyWrite":
