@@ -226,6 +226,16 @@ def test_the_windows_come_from_the_policy_not_a_constant(db_world):
     assert out["windows"]["project_months"] >= 1
 
 
+def test_the_response_states_how_far_back_the_series_reaches(db_world):
+    """The trend popover's empty state prints this number, and a copy of it on the screen
+    would be free to disagree with the window the query actually read."""
+    from app.services.scm.trajectory_service import SERIES_MONTHS, trajectory_for_run
+
+    out = trajectory_for_run(db_world["db"], db_world["run_id"], as_of=AS_OF)
+
+    assert out["series_months"] == SERIES_MONTHS
+
+
 @pytest.fixture()
 def db_world():
     """One product at a project warehouse, orders in the last two months, a run naming it."""
