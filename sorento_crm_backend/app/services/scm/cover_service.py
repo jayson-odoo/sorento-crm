@@ -88,9 +88,15 @@ LEFT JOIN plan_demand d
 WHERE s.quantity_on_hand > 0
   AND w.counts_as_available
   -- The cast goes on the PARAMETER. `uuid = ANY(text[])` is 'operator does not exist',
-  -- which is what the ::text-on-both-sides version was working around, but casting the
-  -- COLUMN also costs `stock` its index on product_id. Casting the bound array instead
-  -- satisfies the operator and leaves the index usable.
+  -- which is what the ::text-on-both-sides version was working around; casting the bound
+  -- array instead satisfies the operator without casting the column.
+  --
+  -- Consistency, not a measured win. The list here is the run's whole product scope
+  -- (2,581 ids against 13,039 stock rows on the prod copy), and at that width Postgres
+  -- rightly prefers a sequential scan whichever side carries the cast. What this buys is
+  -- that the cast is no longer the thing DECIDING that: the planner is free to use the
+  -- index the day a caller passes a short list. The predicate that genuinely needed the
+  -- index is `run_id` above, which selects 4,634 rows out of 396,601.
   AND s.product_id = ANY(CAST(:product_ids AS uuid[]))
 """
 

@@ -538,8 +538,17 @@ def list_recommendations(
     ), params).scalar() or 0
 
     sort_expr = _SORT.get(sort or "", None)
-    order_by = (f"{sort_expr} {'DESC' if dir.lower() == 'desc' else 'ASC'} NULLS LAST"
-                if sort_expr else "rr.rec_type ASC, p.product_code ASC")
+    # `rr.id` last, always: without a unique tie-breaker LIMIT/OFFSET paging is not stable.
+    # Neither the default order (rec_type, product_code - one product is planned at several
+    # warehouses) nor any sortable column is unique, so rows that tie can be returned in a
+    # different sequence on each execution and a row can appear on two pages or on none.
+    # Observed on the live run: two identical fetches of disposition page 3 returned the
+    # same 92 rows in a different order. Fetching the pages concurrently makes it likelier
+    # still, since they no longer run one after another against the same warm cache.
+    # This orders ties deterministically; it changes no row's values and no page's contents
+    # beyond making them repeatable.
+    order_by = (f"{sort_expr} {'DESC' if dir.lower() == 'desc' else 'ASC'} NULLS LAST, rr.id ASC"
+                if sort_expr else "rr.rec_type ASC, p.product_code ASC, rr.id ASC")
     params["limit"] = limit
     params["offset"] = (page - 1) * limit
     rows = db.execute(text(f"""

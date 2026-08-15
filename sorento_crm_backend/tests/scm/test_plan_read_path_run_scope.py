@@ -128,6 +128,18 @@ def _warehouse(db) -> str:
     return wid
 
 
+def _mid_last_month() -> date:
+    """The 15th of the previous month.
+
+    Not `today - N days`: the trend readers bucket by calendar month and exclude the
+    current, incomplete one, so a date a fortnight back sits inside the window on most
+    days and outside it in the first half of a month. That is a test that passes until
+    the date rolls over, which is exactly what it did.
+    """
+    first_of_this = date.today().replace(day=1)
+    return (first_of_this - timedelta(days=1)).replace(day=15)
+
+
 def _purchase(db, tag: str, pid: str, supplier: str) -> None:
     poid = _u()
     db.execute(
@@ -135,7 +147,7 @@ def _purchase(db, tag: str, pid: str, supplier: str) -> None:
             "INSERT INTO purchase_orders (id, po_number, supplier_id, status, issue_date, "
             "currency) VALUES (:id, :n, :s, 'issued', :d, 'MYR')"
         ),
-        {"id": poid, "n": f"{MARKER}-PO{tag}", "s": supplier, "d": date.today() - timedelta(days=30)},
+        {"id": poid, "n": f"{MARKER}-PO{tag}", "s": supplier, "d": _mid_last_month()},
     )
     db.execute(
         text(
@@ -154,7 +166,7 @@ def _sale(db, tag: str, pid: str, wh: str) -> None:
             "INSERT INTO sales_orders (id, so_number, status, order_date) "
             "VALUES (:id, :n, 'open', :d)"
         ),
-        {"id": soid, "n": f"{MARKER}-SO{tag}", "d": date.today() - timedelta(days=15)},
+        {"id": soid, "n": f"{MARKER}-SO{tag}", "d": _mid_last_month()},
     )
     db.execute(
         text(
@@ -420,3 +432,50 @@ def test_an_empty_id_list_matches_nothing_rather_than_everything():
 
         assert get_levels(db, []) == {}
         assert supplier_constraints(db, []) == {}
+
+
+# --------------------------------------------------------------------------- #
+# paging is repeatable
+# --------------------------------------------------------------------------- #
+
+def test_two_identical_page_fetches_return_the_same_rows_in_the_same_order():
+    """LIMIT/OFFSET needs a unique tie-breaker or a page is not a stable thing.
+
+    The default order is `(rec_type, product_code)` and neither is unique - one product is
+    planned at several warehouses - so tied rows could come back in a different sequence on
+    each execution, which lets a row appear on two pages or on none. Seeded here as the
+    worst case: one product, one rec_type, many warehouses, so EVERY row is a tie.
+    """
+    from app.api.v1.scm.reorder_runs import list_recommendations
+
+    with pg_session() as db:
+        w = _world(db)
+        run_id, pid = w["A"]["run_id"], w["A"]["product_id"]
+        for i in range(12):
+            wh = _u()
+            db.execute(
+                text(
+                    "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+                    "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'project')"
+                ),
+                {"id": wh, "c": f"{MARKER}-TIE{i:02d}"},
+            )
+            db.execute(
+                text(
+                    "INSERT INTO scm.reorder_recommendation "
+                    "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status) "
+                    "VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed')"
+                ),
+                {"id": _u(), "r": run_id, "p": pid, "w": wh},
+            )
+        db.flush()
+
+        def page(n):
+            out = list_recommendations(run_id, n, 5, None, "asc", None, "buy", None, db, {})
+            return [r["id"] for r in out["data"]]
+
+        first, second = page(1), page(1)
+        assert first == second
+        # And the pages partition the set rather than overlapping it.
+        assert not set(page(1)) & set(page(2))
+        assert len(set(page(1)) | set(page(2)) | set(page(3))) == 13
