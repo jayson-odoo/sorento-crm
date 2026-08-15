@@ -45,51 +45,60 @@ function ProductPhotoBody({
   // browser reports it only through the image's own error event.
   const [broken, setBroken] = useState(false);
 
-  if (data?.url && !broken) {
+  // An answer we HOLD beats an error about fetching it again: react-query keeps the last
+  // good response through a failed background refetch, so checking `isError` first turned a
+  // true statement about the product ("nobody has given it a photo") into a false one ("we
+  // could not load its photo") on a blip the buyer never saw. Same order the run-wide map
+  // uses in `usePlanLines`.
+  if (data) {
+    if (data.url && !broken) {
+      return (
+        <div className="space-y-2">
+          {/* A plain <img>: the src is a signed, expiring S3/R2 URL, so next/image would
+              need every storage host whitelisted and would re-proxy a link that is
+              already thumbnail-sized and short-lived. */}
+          <img
+            src={data.url}
+            alt={productName || sku}
+            onError={() => setBroken(true)}
+            className="mx-auto max-h-[320px] w-auto max-w-full rounded object-contain"
+          />
+          {/* Most products have never been nominated, so this is the picture the catalogue
+              falls back to. Saying where the choice is made keeps the loop open. */}
+          {data.is_primary ? null : (
+            <Link
+              href="/dealer-kit/brochure-images"
+              className="block text-2xs text-primary hover:underline"
+            >
+              Choose the primary photo in Dealer Kit -&gt; Brochure images
+            </Link>
+          )}
+        </div>
+      );
+    }
+    if (data.url) {
+      return <p className="text-2xs text-muted-foreground">Failed to load the photo.</p>;
+    }
+    // Reached with a LIT icon too, and that is deliberate. The run-wide map says a live
+    // image row exists; this call says the row is servable, and the backend signs strictly,
+    // so a photo it cannot sign comes back as no photo. Signability is a property of the
+    // storage backend rather than a column, so the map cannot know it without buying a
+    // signature per row. This state therefore reads identically whichever way the buyer got
+    // here, and a lit icon opening onto it is not an error. Do NOT "fix" one side to match
+    // the other.
     return (
-      <div className="space-y-2">
-        {/* A plain <img>: the src is a signed, expiring S3/R2 URL, so next/image would
-            need every storage host whitelisted and would re-proxy a link that is
-            already thumbnail-sized and short-lived. */}
-        <img
-          src={data.url}
-          alt={productName || sku}
-          onError={() => setBroken(true)}
-          className="mx-auto max-h-[320px] w-auto max-w-full rounded object-contain"
-        />
-        {/* Most products have never been nominated, so this is the picture the catalogue
-            falls back to. Saying where the choice is made keeps the loop open. */}
-        {data.is_primary ? null : (
-          <Link
-            href="/dealer-kit/brochure-images"
-            className="block text-2xs text-primary hover:underline"
-          >
-            Choose the primary photo in Dealer Kit -&gt; Brochure images
-          </Link>
-        )}
+      <div className="space-y-1">
+        <p className="text-xs">No primary photo yet</p>
+        <Link href="/dealer-kit/brochure-images" className="text-2xs text-primary hover:underline">
+          Choose one in Dealer Kit -&gt; Brochure images
+        </Link>
       </div>
     );
   }
-  if (isError || broken) {
+  if (isError) {
     return <p className="text-2xs text-muted-foreground">Failed to load the photo.</p>;
   }
-  if (!data) {
-    return <Skeleton className="h-40 w-full" data-testid="product-photo-skeleton" />;
-  }
-  // Reached with a LIT icon too, and that is deliberate. The run-wide map says a live image
-  // row exists; this call says the row is servable, and the backend signs strictly, so a
-  // photo it cannot sign comes back as no photo. Signability is a property of the storage
-  // backend rather than a column, so the map cannot know it without buying a signature per
-  // row. This state therefore reads identically whichever way the buyer got here, and a lit
-  // icon opening onto it is not an error. Do NOT "fix" one side to match the other.
-  return (
-    <div className="space-y-1">
-      <p className="text-xs">No primary photo yet</p>
-      <Link href="/dealer-kit/brochure-images" className="text-2xs text-primary hover:underline">
-        Choose one in Dealer Kit -&gt; Brochure images
-      </Link>
-    </div>
-  );
+  return <Skeleton className="h-40 w-full" data-testid="product-photo-skeleton" />;
 }
 
 export function ProductPhotoPopover({

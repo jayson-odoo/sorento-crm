@@ -109,6 +109,26 @@ describe('ProductPhotoPopover', () => {
     );
   });
 
+  it('keeps the answer it already has when a background refetch fails', async () => {
+    photo({ url: null, is_primary: false });
+    const { rerender } = render(
+      <ProductPhotoPopover runId="run-1" productId="p1" sku="SRTWCY8840" status="ready" />,
+    );
+    await open();
+    expect(screen.getByText('No primary photo yet')).toBeInTheDocument();
+
+    // react-query holds the last good answer through a failed refetch. Reading the error
+    // first turned a true statement about the product ("nobody has given it a photo") into
+    // a false one ("we could not load its photo"), on a network blip the buyer never saw.
+    photo({ url: null, is_primary: false }, { isError: true });
+    rerender(
+      <ProductPhotoPopover runId="run-1" productId="p1" sku="SRTWCY8840" status="ready" />,
+    );
+
+    expect(screen.getByText('No primary photo yet')).toBeInTheDocument();
+    expect(screen.queryByText(/failed to load the photo/i)).not.toBeInTheDocument();
+  });
+
   it('says the photo failed rather than pretending the product has none', async () => {
     photo(undefined, { isError: true });
     render(
