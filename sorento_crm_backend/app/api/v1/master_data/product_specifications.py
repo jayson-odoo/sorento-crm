@@ -33,7 +33,6 @@ from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error, handle_not_found
 from app.services.product_class_signal import explain_code
 from app.services.product_spec_search import RELEVANCE_FLOOR, search_specs
-from app.services.product_spec_understanding import understand_phrase
 
 router = APIRouter()
 
@@ -519,24 +518,20 @@ def preview_spec_search(
     fix as the portal ai-extract route and PR #164.
     """
     try:
-        specs = list(payload.specs)
-        free_terms = list(payload.free_terms)
-        exclusions: list[dict] = []
-        understanding = None
+        # The same helper the resolve endpoint calls, so the two readings of one
+        # sentence cannot drift apart again (see derive_search_inputs).
+        from app.services import product_spec_understanding
 
-        if payload.phrase and payload.phrase.strip():
-            understanding = understand_phrase(
+        specs, free_terms, exclusions, understanding = (
+            product_spec_understanding.derive_search_inputs(
                 db,
                 payload.phrase,
-                user_id=current_user.get("id"),
+                specs=list(payload.specs),
+                free_terms=list(payload.free_terms),
                 allow_model=payload.understand,
+                user_id=current_user.get("id"),
             )
-            # A spec the caller pinned by hand always wins: they are looking at the
-            # screen, the model is guessing from one sentence.
-            pinned = {str(e.get("key")) for e in specs if e.get("key")}
-            specs = specs + [e for e in understanding.specs if e["key"] not in pinned]
-            free_terms = free_terms + [t for t in understanding.free_terms if t not in free_terms]
-            exclusions = list(understanding.exclusions)
+        )
 
         result = search_specs(
             db,

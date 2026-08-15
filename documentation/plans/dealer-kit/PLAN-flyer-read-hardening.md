@@ -142,7 +142,7 @@ assumed, to be threadpooled by FastAPI. No other change is needed there.
 Out of scope by instruction: `ai_extract.py`, filed separately as
 `ai-extract-blocking-loop` and since fixed (plain `def`, no streaming ceiling
 to keep) in `documentation/plans/ai-extract/PLAN-ai-extract-off-the-loop.md`,
-whose Sweep section and BL-008 record the rest of the class.
+whose Sweep section and BL-009 record the rest of the class.
 
 ---
 

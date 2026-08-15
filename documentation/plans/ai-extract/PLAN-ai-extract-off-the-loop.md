@@ -89,7 +89,7 @@ was excluded from the count.
 - The multimodal CRM media endpoint - out of scope of this task by instruction
   (and its router is plain `def`).
 
-### Bigger, reported not fixed (see BL-008)
+### Bigger, reported not fixed (see BL-009)
 
 About 40 `async def` handlers do heavy synchronous work on the loop. They fall
 in five families, each a change to a shared helper or a whole router rather than

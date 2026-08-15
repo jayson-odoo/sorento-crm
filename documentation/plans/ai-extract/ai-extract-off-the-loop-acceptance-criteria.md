@@ -61,4 +61,4 @@ filenames.
 **Then** identical instances (LLM call in an `async def` with no awaits) are
 fixed on this branch, and the bigger families (storage uploads, inline Excel
 parsing, sync Respond.io HTTP, module zip install) are recorded in the plan's
-Sweep section and as `BL-008` in `documentation/backlogs/backlog.md`.
+Sweep section and as `BL-009` in `documentation/backlogs/backlog.md`.

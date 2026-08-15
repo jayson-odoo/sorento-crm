@@ -306,7 +306,7 @@ async def update_user_daily_sla_summary_subscription(
 
 @router.get("/respond-users", status_code=status.HTTP_200_OK)
 async def get_respond_users(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.users.view")),
     db: Session = Depends(get_db)
 ):
     """Get list of Respond.io users for dropdown selection."""
@@ -656,7 +656,7 @@ class SyncRespondRequest(BaseModel):
 async def sync_respond_user(
     user_id: str,
     request_data: Optional[SyncRespondRequest] = Body(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.users.edit")),
     db: Session = Depends(get_db)
 ):
     """Sync a user with Respond.io."""

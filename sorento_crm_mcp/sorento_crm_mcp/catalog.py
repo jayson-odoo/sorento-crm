@@ -55,6 +55,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "ATTACHMENTS: pass `attachment_type_ids` (canonical AttachmentType UUIDs, csv / JSON / repeated) "
             "to nest each product's files of those types under `attachments[]` (e.g. Product Photos, "
             "Technical Specifications). Omit it for a plain price/spec listing with NO attachments.\n\n"
+            "DERIVED SPECIFICATIONS: pass `include_specifications=true` to add `specifications` to every "
+            "row - `values` (the spec block as key -> value, e.g. thickness 1.2), `rendered_text` (the "
+            "spec sentence) and `sources` (per key: derived | flyer | human | category, i.e. where the "
+            "value came from). Null on a product with no derived specs, which means 'not recorded', never "
+            "'does not have it'. Default false; omit it for a plain price/dimension listing.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -66,6 +71,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "length_min", "length_max", "width_min", "width_max",
             "height_min", "height_max", "any_dimension_min", "any_dimension_max",
             "attachment_type_ids",
+            # Declared, not passed through: the compiled tool builds its signature
+            # from THIS tuple, so a param missing here never reaches the backend
+            # however well the description documents it.
+            "include_specifications",
             "sort", "dir",
             "contact_id", "space_id",
         ),

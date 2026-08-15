@@ -38,7 +38,7 @@ from app.models.product import Product, ProductAttachment
 from app.models.product_spec import ProductSpecifications
 from app.models.resources import Attachment, AttachmentType
 from app.services.error_handler import AppException
-from app.services.product_spec_search import filter_specs, search_specs
+from app.services.product_spec_search import filter_specs, search_specs, values_only
 
 
 class _UnrecognizedLabel(Exception):
@@ -252,26 +252,53 @@ def resolve_product_set(
             # require-only ("what products have certs"): nothing to rank BY, so
             # the shortlist is deterministic — one row per family, by code.
             rows = (
-                _base(db.query(Product.product_code, Product.product_name, family.label("family")))
+                _base(
+                    db.query(
+                        Product.id,
+                        Product.product_code,
+                        Product.product_name,
+                        family.label("family"),
+                    )
+                )
                 .order_by(family, Product.product_code)
                 .distinct(family)
                 .limit(limit or 15)
                 .all()
             )
-            candidates = [
-                {
-                    "product_id": str(
-                        db.query(Product.id).filter(Product.product_code == code).scalar()
-                    ),
-                    "product_code": code,
-                    "summary": name,
-                    "class": None,
-                    "matched_specs": [],
-                    "score": 0.0,
-                    "is_discontinued": False,
-                }
-                for code, name, _family in rows
-            ]
+            # The spec block for the rows actually shown, in ONE query. A row that
+            # reached the customer through a predicate rather than a description
+            # is still a product they will ask questions about, and answering
+            # "here are five with certs" with no values to tell them apart is the
+            # same dead end `display.specifications` exists to close.
+            spec_rows = (
+                db.query(ProductSpecifications)
+                .filter(ProductSpecifications.product_id.in_([str(r[0]) for r in rows]))
+                .all()
+                if rows
+                else []
+            )
+            spec_by_product = {str(row.product_id): row for row in spec_rows}
+            candidates = []
+            for product_id, code, name, _family in rows:
+                spec_row = spec_by_product.get(str(product_id))
+                values = spec_row.values if spec_row is not None else None
+                candidates.append(
+                    {
+                        "product_id": str(product_id),
+                        "product_code": code,
+                        "summary": name,
+                        "class": ((values or {}).get("class") or {}).get("value"),
+                        # None, never {}: nothing was recorded for this product, and
+                        # an empty block would read as "recorded, and empty".
+                        "specifications": values_only(values) if values is not None else None,
+                        "matched_specs": [],
+                        # No customer words were scored here, so nothing was
+                        # preferred either. Present so the shape matches a ranked row.
+                        "preferred_specs": [],
+                        "score": 0.0,
+                        "is_discontinued": False,
+                    }
+                )
 
     return {
         "candidates": candidates,
