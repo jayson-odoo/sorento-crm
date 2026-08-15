@@ -1,14 +1,15 @@
 # PLAN - From a lodged retail complaint to a technician at the door
 
-**Status:** Phase A (S7a) IMPLEMENTED 2026-08-08, migration 330. **Phase B (S7b) IN BUILD from
-2026-08-09.** Phases C (S8) and D (S9) pre-code.
+**Status:** Phase A (S7a) IMPLEMENTED 2026-08-08, migration 330. **Phase B (S7b) BUILT 2026-08-15
+(commits `5a2d15da8`, `a1bb28454`), in Phase 3 review.** Phases C (S8) and D (S9) pre-code.
 **UAC (the contract this fulfils):** `retail-complaint-to-visit-acceptance-criteria.md` - every
 section below cites the ACs it satisfies.
 **Parent:** `PLAN-after-sales-warranty.md` (S1 to S6 built). This plan covers what happens AFTER a
 retail complaint lands, up to a technician being sent.
 **Decisions:** `adr/0009` Service Job is requester-agnostic - `adr/0010` Warranty Terms scope to
 Kind - `adr/0001` status engine is core.
-**Branch:** `worktree-after-sales-warranty`. **Ports:** FE 3050, BE 8050.
+**Branch:** `worktree-after-sales-warranty`. **Ports:** BE 8050; FE 3051 (3050 was taken by another
+session's dev server, and taking a port someone else is serving on is not a thing to do quietly).
 
 > **Written late, and that is the finding.** S7a shipped against the UAC alone, with no companion
 > plan, because the UAC's rulings were complete enough to build from. The repo requires a plan
@@ -275,4 +276,51 @@ AC-D1 to AC-D6.
 
 ## Next step
 
-S7b Phase 2c - the FE off its mocks, vitest and Playwright, then Phase 3 review.
+Phase 3 - code review, then the DoD gate, then the PR.
+
+### Phase 2c - what shipped, and how it was verified (2026-08-15)
+
+Commits `5a2d15da8` (backend) and `a1bb28454` (frontend). The FE runs on the live backend;
+`lib/warrantyConfigMock.ts` and its flag are deleted. 74 vitest across 13 files, 311 pytest across
+every warranty suite, the 79-test engine regression net unedited. Every gate was written by a
+different agent than the one that implemented it, which is what surfaced most of the findings below.
+
+Verified in a browser against the real backend on a prod build, reached by clicking through the
+sidebar rather than deep-linking:
+
+- the policies list reads its 41 terms from the database, and `GET /policies` answers 200
+- the Version header now issues `sort=version&dir=asc` and refetches - **that sort had never worked
+  once**, because `usePolicies` left `sorting` out of its react-query key
+- the Terms header issues no request at all, the backend having no such sort to give
+- Kinds shows **"29 of 31 have no rule"** - the measurement this whole slice exists to surface
+- the tester resolves `SRTMCB8071-BL` to Mirror Cabinet and names the deciding rule
+- `?group_by=kind` answers **200, not the 500** the audit flagged as possible: the route's
+  `Union[TermsGroupedResponse, List[TermResponse]]` response_model does resolve deterministically
+- the supersede dialog states **"v15 closes 1999-12-31; v16 runs from 2000-01-01."** and recomputes
+  live as the date is edited - AC-P26's prevention clause, which had never been built
+- a refused create renders the house envelope cleanly: *"Effective range overlaps policy v15
+  (2000-01-01 onwards). A complaint is judged against the version in force on its purchase date, so
+  two candidates make that answer arbitrary."* - no `"Value error, "` prefix reaching the admin
+
+Nothing was written during verification: the supersede dialog was cancelled rather than published,
+and the only two writes attempted were refusals. The database still holds exactly one policy.
+
+**Deviation from this plan's Phase 2 wording, recorded rather than left to disagree.** The plan says
+"Playwright for the config-to-verdict round trip". The standing instruction for this repo is
+agent-browser for UI verification, with the existing `e2e/` specs kept but no new ones authored. The
+round trip above was therefore exercised with agent-browser in an isolated session (so a browser
+another session owned was never disturbed), not a new Playwright spec.
+
+### Still open after Phase 2c
+
+- **A `null` in a CREATE body is still a raw Pydantic envelope** while the same null on PATCH is now
+  the house envelope. It is a type refusal, which this module assigns to the schemas as shape, so
+  closing it means making the create schemas' scalars Optional and letting the service answer - a
+  contract change, deliberately not taken unilaterally. `max_length` overflow is the same story,
+  though at least consistent across both verbs.
+- **`components/ui/data-grid-table-dnd.tsx` never sets `data-group-label`** on its divider row,
+  unlike the non-DnD variant - and the DnD one is what renders, since `columnsDraggable` defaults to
+  true. So a test asserting on that attribute silently tests nothing. Shared infrastructure, not this
+  slice's code; flagged, not fixed.
+- **The FE types still declare `created_at?: string`** on the term and rule types, now that the
+  backend declares it required. Harmless in that direction, worth tightening next time.
