@@ -233,7 +233,13 @@ export default function PromotionTypesList() {
         onDelete={async () => {
           if (pendingDelete) await deleteMutation.mutateAsync(pendingDelete.id);
         }}
-        successMessage="Promotion type deleted"
+        successMessage={
+          (pendingDelete?.promotions_count ?? 0) > 0
+            ? `Promotion type deleted. ${pendingDelete?.promotions_count} promotion${
+                pendingDelete?.promotions_count === 1 ? '' : 's'
+              } now unclassified.`
+            : 'Promotion type deleted'
+        }
       />
     </DataGrid>
   );

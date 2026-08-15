@@ -106,11 +106,17 @@ def upgrade():
         sa.Column("match_priority", sa.Integer(), nullable=False, server_default="100"),
         sa.Column("is_default", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("sort_order", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("company_id", UUID(as_uuid=False), nullable=True),
+        sa.Column(
+            "company_id",
+            UUID(as_uuid=False),
+            sa.ForeignKey("companies.id", name="fk_promotion_types_company_id"),
+            nullable=True,
+        ),
         sa.Column("created_at", sa.DateTime(timezone=False), nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=False), nullable=False, server_default=sa.text("now()")),
     )
     op.create_index("ix_promotion_types_match_priority", "promotion_types", ["match_priority"])
+    op.create_index("ix_promotion_types_company_id", "promotion_types", ["company_id"])
     # One default type, enforced by the database rather than by whoever edits next.
     op.create_index(
         "uq_promotion_types_single_default",
@@ -261,5 +267,6 @@ def downgrade():
     op.drop_column("promotions", "promotion_type_source")
     op.drop_column("promotions", "promotion_type_id")
     op.drop_index("uq_promotion_types_single_default", table_name="promotion_types")
+    op.drop_index("ix_promotion_types_company_id", table_name="promotion_types")
     op.drop_index("ix_promotion_types_match_priority", table_name="promotion_types")
     op.drop_table("promotion_types")

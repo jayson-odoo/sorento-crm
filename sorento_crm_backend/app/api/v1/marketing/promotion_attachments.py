@@ -8,8 +8,13 @@ from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import PromotionAttachmentService
 from app.services.uuid_list_param import parse_uuid_list
-from app.schemas.marketing import PromotionAttachmentCreate, PromotionAttachmentUpdate, PromotionAttachmentResponse
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.marketing import (
+    PromotionAttachmentCreate,
+    PromotionAttachmentUpdate,
+    PromotionAttachmentResponse,
+    PromotionServingListResponse,
+)
+from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -21,7 +26,7 @@ def _promotion_attachment_to_response(pa: Any) -> dict:
     return data
 
 
-@router.get("/", response_model=ListResponse[PromotionAttachmentResponse])
+@router.get("/", response_model=PromotionServingListResponse[PromotionAttachmentResponse])
 async def get_promotion_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),

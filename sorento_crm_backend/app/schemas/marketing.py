@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
-from typing import Optional
+from typing import Generic, Optional, TypeVar
 from datetime import date, datetime
+
+from app.schemas.common import ListResponse
 
 from app.schemas.promotion_dates import (
     normalize_promotion_start_end_optional,
@@ -11,6 +13,9 @@ from app.schemas.promotion_dates import (
 )
 from decimal import Decimal
 import uuid
+
+
+T = TypeVar("T")
 
 
 def _normalize_promotion_markers(v) -> list[str]:
@@ -25,6 +30,16 @@ def _normalize_promotion_markers(v) -> list[str]:
         if text and text not in out:
             out.append(text)
     return out
+
+
+class PromotionServingListResponse(ListResponse[T], Generic[T]):
+    """List payload for the three endpoints that accept `serving_policy=true`.
+
+    `serving_policy_applied` says the rows were picked by the per-type promotion
+    policy rather than the plain active gate. It lives here and not on the generic
+    `ListResponse` so orders, stock and users don't carry a marketing concern.
+    """
+    serving_policy_applied: Optional[bool] = None
 
 
 class PromotionTypeBase(BaseModel):

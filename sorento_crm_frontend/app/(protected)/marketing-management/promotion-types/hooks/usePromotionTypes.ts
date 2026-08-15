@@ -59,20 +59,15 @@ export function useUpdatePromotionType() {
   });
 }
 
+// Delete is driven from ConfirmDeleteDialog, which owns the success/error toast.
+// Toasting here too would show the user two of each for one delete.
 export function useDeletePromotionType() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => deletePromotionType(id),
-    onSuccess: (result) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['promotion-types'] });
       queryClient.invalidateQueries({ queryKey: ['promotions'] });
-      const affected = result?.promotions_unclassified ?? 0;
-      toast.success(
-        affected > 0
-          ? `Promotion type deleted. ${affected} promotion${affected === 1 ? '' : 's'} now unclassified.`
-          : 'Promotion type deleted',
-      );
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete promotion type'),
   });
 }

@@ -21,8 +21,8 @@ from app.schemas.marketing import (
     PromotionProductCreate,
     PromotionProductUpdate,
     PromotionProductResponse,
+    PromotionServingListResponse,
 )
-from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -41,7 +41,7 @@ class BulkUpdateAccessLevelsRequest(BaseModel):
     access_levels: list[str]
 
 
-@router.get("/", response_model=ListResponse[PromotionListItemResponse])
+@router.get("/", response_model=PromotionServingListResponse[PromotionListItemResponse])
 async def get_promotions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),

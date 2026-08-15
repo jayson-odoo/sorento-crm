@@ -990,10 +990,17 @@ class PromotionService:
             )
 
         if "promotion_type_id" in update_data:
-            if update_data["promotion_type_id"]:
-                self._assert_promotion_type_exists(update_data["promotion_type_id"])
-            # Whoever retyped the promotion outranks the classifier from here on.
-            update_data["promotion_type_source"] = "manual"
+            incoming_type_id = update_data["promotion_type_id"]
+            if incoming_type_id:
+                self._assert_promotion_type_exists(incoming_type_id)
+            # Whoever RETYPED the promotion outranks the classifier from here on.
+            # The edit form re-sends the current type with every save, so only a
+            # value that actually differs (including a clear of a set type) is a
+            # human decision; an unchanged echo must leave an auto classification
+            # alone or the next re-send of the file could never reclassify it.
+            current_type_id = str(promotion.promotion_type_id) if promotion.promotion_type_id else None
+            if (str(incoming_type_id) if incoming_type_id else None) != current_type_id:
+                update_data["promotion_type_source"] = "manual"
 
         for key, value in update_data.items():
             setattr(promotion, key, value)
@@ -1839,7 +1846,17 @@ class PromotionTypeService:
             raise handle_conflict(
                 "This is the default promotion type. Make another type the default before deleting it."
             )
-        affected = self._counts_by_type().get(str(promo_type.id), 0)
+        # Unclassify the promotions here rather than leaning on the FK's SET NULL:
+        # the source has to go with the type, or a `manual` row would keep a
+        # classification nobody can see and the re-send path would never retype it.
+        affected = (
+            self.db.query(Promotion)
+            .filter(Promotion.promotion_type_id == str(promo_type.id))
+            .update(
+                {"promotion_type_id": None, "promotion_type_source": None},
+                synchronize_session=False,
+            )
+        )
         self.db.delete(promo_type)
         self.db.commit()
         return {

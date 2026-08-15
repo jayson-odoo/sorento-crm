@@ -326,3 +326,64 @@ def test_update_leaves_the_type_alone_when_the_field_is_omitted():
 
         assert updated.promotion_type_id == str(special.id)
         assert updated.promotion_type_source == "auto"
+
+
+def test_resending_the_same_type_with_another_edit_keeps_the_auto_classification():
+    """The edit form posts the current type on every save.
+
+    Treating that echo as a retype would flip every auto row to manual on an
+    unrelated edit, and the re-send path never reclassifies a manual row again.
+    """
+    from app.schemas.marketing import PromotionUpdate
+    from app.services.marketing_service import PromotionService
+
+    module = _load_migration()
+    with blank_session() as db:
+        _run_seed(db, module)
+        special = db.query(PromotionType).filter(PromotionType.type_code == "special").one()
+        promo = Promotion(
+            id=str(uuid.uuid4()),
+            description="ZZT SPECIAL",
+            access_levels=["dealer"],
+            promotion_type_id=special.id,
+            promotion_type_source="auto",
+        )
+        db.add(promo)
+        db.commit()
+
+        updated = PromotionService(db).update_promotion(
+            str(promo.id),
+            PromotionUpdate.model_validate(
+                {
+                    "description": "ZZT SPECIAL renamed",
+                    "promotion_type_id": str(special.id),
+                }
+            ),
+        )
+
+        assert updated.promotion_type_id == str(special.id)
+        assert updated.promotion_type_source == "auto"
+
+
+def test_deleting_a_type_clears_the_source_with_the_classification():
+    """An unclassified promotion with `manual` left behind is invisible to both
+    the re-send classifier and the UI's "from the file name" cue."""
+    with blank_session() as db:
+        created = _create(db)
+        promo = Promotion(
+            id=str(uuid.uuid4()),
+            description="ZZT clearance promo",
+            access_levels=["dealer"],
+            promotion_type_id=created.id,
+            promotion_type_source="manual",
+        )
+        db.add(promo)
+        db.commit()
+
+        result = _service(db).delete_promotion_type(created.id)
+
+        assert result["promotions_unclassified"] == 1
+        db.expire_all()
+        row = db.query(Promotion).one()
+        assert row.promotion_type_id is None
+        assert row.promotion_type_source is None
