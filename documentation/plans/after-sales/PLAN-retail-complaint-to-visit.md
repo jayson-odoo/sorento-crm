@@ -194,6 +194,70 @@ Sidebar: `config/menu.config.tsx` (**the tree is duplicated - edit both copies**
 - **`covered_defect_type_ids` is a `uuid[]` with no FK** (AC-D18). The Term editor can offer a
   defect-type picker but cannot stop a later delete narrowing a Term's scope silently.
 
+### Phase 2c contract audit - decided 2026-08-15
+
+The FE prototype pinned its expected contract in a header comment during Phase 1; the backend was
+built afterwards by a different agent. Before flipping the FE off its mocks, both sides were read
+against each other. All 21 routes, every envelope, every request-body key and all six load-bearing
+response fields (`term_count`, `source_attachment_name`, `assessment_count`, `has_no_rules` /
+`has_no_terms`, the `?group_by=kind` envelope, nullable `deciding_rule.id`) match. Thirteen
+disagreements were found; the rulings:
+
+**The AC wins, so the FE doc was wrong and is corrected (no behaviour change):**
+
+- The house error envelope is a top-level `{message, detail, code}`, not a string `detail`.
+  `extractApiError` already recovers it through its `error.message` branch. The pinned comment
+  claiming a string `detail` was wrong and would have misled the next reader.
+- The overlap message tells the user to **delete the successor first**, not to supersede - which is
+  what **AC-P26** actually ruled. The FE comment quoted the pre-AC-P26 wording.
+- `POST /kind-rules/test` is a **200**, not a 201. It creates nothing; AC-P15's "POST 201" governs
+  creating POSTs only.
+- Unknown `match_type` values render a readable fallback rather than `undefined`, per **AC-P24**
+  ("strict at write, tolerant at read"). Latent today: all live rules are `model_list` or `series`.
+
+**Real defects, fixed in this phase:**
+
+- **The policies grid's sort was dead.** `usePolicies` left `sorting` out of its react-query key, so
+  no column header ever refetched. Every header, including the three the backend does support.
+- **`term_count` was sortable but the backend's whitelist is `{version, effective_from,
+  effective_to, created_at}`**, so that click silently did nothing. The column is no longer sortable;
+  a control that does nothing is worse than an absent one.
+- **AC-P26's prevention clause was never built.** The AC requires the Supersede dialog to state the
+  resulting window for BOTH policies before the user confirms ("Version 15 closes 2026-08-31;
+  Version 16 runs from 2026-09-01"). The dialog said only "Replacing v15". Since AC-P26 also rules
+  out an undo, the confirmation IS the safety mechanism, so this was the one finding that mattered
+  most.
+- **The create path and the update path rejected the same input with different bodies.** Inverted
+  window, blank version and blank part name are Pydantic validators on create (surfacing as
+  `"Value error, ..."` in the modal) but `AppException`s on update (clean). Moved to the service so
+  one rule produces one message. The same move covers every other caller-facing rule that lived on
+  a schema - an unknown `match_type`, an empty `match_value`, and the rule tester's "nothing to
+  test" - because leaving half of them behind would have the SAME route answer two adjacent field
+  errors with two different envelopes. `warranty_config_service` now owns them all in one
+  `_required_text` / `_assert_window_not_inverted` / `_validated_match_*` set that create, update,
+  supersede and the tester all call. The schemas keep SHAPE only, so `min_length=1` came off
+  `version` and `part_name` too - it would have answered `""` with Pydantic's stock message while
+  `"   "` fell through to the service's sentence. `max_length` stays: that is the column's width,
+  a different fact.
+- **`PolicyResponse.created_at` was declared `Optional[datetime] = None`** while the column is
+  `nullable=False, server_default=now()`. The declaration lied to every consumer of the schema. Now
+  a required `datetime`, matching the FE's `WarrantyPolicyRow.created_at: string`.
+- **`PolicyResponse.source_attachment_id` put a raw UUID on the wire that nothing consumed.**
+  Removed. `source_attachment_name` (resolved from the attachment's `original_filename`, `null`
+  when nothing is linked) is what the screen renders and stays. `PolicyCreate` / `PolicyUpdate`
+  keep `source_attachment_id` as a WRITE field - linking a document is what a write does - so the
+  deferred item below stays reachable the day a writer is built for it.
+
+**Deferred, recorded so it is not mistaken for an oversight:**
+
+- **A policy's source document has no writer.** The detail page renders a "Source document" card
+  whose empty state offers an "Edit policy" CTA, but `WarrantyPolicyWrite` has no
+  `source_attachment_id` field and the form never sends one, so the CTA could not lead anywhere.
+  (`PolicyCreate` / `PolicyUpdate` DO accept the id - it is only the form that cannot supply it.) The AC does not ask for
+  the warranty PDF to be attached at all - `policy_text` already holds the terms - so rather than
+  widen the slice, the false CTA is removed and the card keeps an honest empty state. Attaching the
+  source PDF is a later slice if Sorento wants it.
+
 ---
 
 ## Phase C - Propose a date, and let the consumer answer (S8) - PRE-CODE
@@ -211,4 +275,4 @@ AC-D1 to AC-D6.
 
 ## Next step
 
-S7b Phase 1.
+S7b Phase 2c - the FE off its mocks, vitest and Playwright, then Phase 3 review.

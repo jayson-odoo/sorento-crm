@@ -35,6 +35,16 @@ policy document. A POLICY delete does cascade its Terms, because a Term has no
 life apart from the Policy that dates it, and the count travels on the row so the
 confirmation can say so.
 
+**Every caller-facing rule has exactly ONE home here, and both verbs call it**
+(AC-P22). A rule left on the create schema as a Pydantic validator answers with
+`{"detail":[{"msg":"Value error, <sentence>"}]}` while its PATCH twin answers with
+the house `{message, detail, code}` - the same fact, two envelopes and two strings,
+chosen by nothing but the verb the admin used. So "a version is required", "the
+window is not inverted", "a part name is required" and "match_type is one of the
+four" live in the `_require_*` / `_validated_*` helpers below, and `create_*`,
+`update_*`, `supersede_policy` and the rule tester all go through them. The schemas
+keep SHAPE only (types, `max_length`).
+
 **Terms are loaded through their Policy, never by id alone** (AC-P9).
 `WarrantyTerm` is deliberately not company-scoped - it is only ever reachable
 through `policy_id` - which makes an unguarded nested route hand another company's
@@ -51,7 +61,7 @@ from datetime import date, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence
 
 from fastapi import status
-from sqlalchemy import func, or_
+from sqlalchemy import func, inspect as sa_inspect, or_
 from sqlalchemy.orm import Session
 
 from app.models.lookup import LookupOption, LookupSet
@@ -75,12 +85,18 @@ from app.schemas.warranty_config import (
     TermUpdate,
 )
 from app.services.error_handler import AppException
-from app.services.warranty_service import rank_kind_matches
+from app.services.warranty_service import KIND_RULE_MATCH_TYPES, rank_kind_matches
 
 # The lookup set `covered_defect_type_ids` points into. Named once: the Term editor
 # and the label resolver must agree, or a picker offers options the labels cannot
 # resolve.
 DEFECT_TYPE_SET_KEY = "complaints_defect_type"
+
+# One rule, one sentence, both verbs (AC-P22). Named rather than repeated, because
+# `create_kind` and `update_kind` disagreeing by a word is the same failure as them
+# disagreeing by an envelope - it just takes longer to notice.
+KIND_CODE_REQUIRED = "A product kind code is required."
+KIND_NAME_REQUIRED = "A product kind name is required."
 
 # Postgres has no `infinity` for the `date` type in a plain comparison here, and a
 # NULL `effective_to` means open-ended. `date.max` is the comparison stand-in and
@@ -104,6 +120,94 @@ def _not_found(message: str) -> AppException:
     return AppException(
         status_code=status.HTTP_404_NOT_FOUND, message=message, code="NOT_FOUND"
     )
+
+
+def _required_text(value: Optional[str], message: str) -> str:
+    """A field that must carry something, trimmed to what it carries.
+
+    Whitespace-only is blank: `"   "` is stored, listed, searched for and never
+    found. Returning the CLEANED value is half the point - the callers write what
+    this returns, so `" V15 "` and `"V15"` cannot become two policies.
+    """
+    cleaned = (value or "").strip()
+    if not cleaned:
+        raise _unprocessable(message)
+    return cleaned
+
+
+def _assert_no_null_over_not_null(model, changes: Dict[str, object]) -> None:
+    """A PATCH may leave a field alone; it may never NULL a NOT NULL column.
+
+    Every `*Update` schema HAS to declare its fields Optional - that is how
+    `exclude_unset` tells "set this to null" apart from "did not mention it", and
+    AC-P26's recovery path depends on the first of those being expressible. The
+    cost is that an explicit `{"field": null}` arrives looking exactly like a
+    legitimate clear, reaches `setattr`, and blows up as an `IntegrityError` at
+    `commit()` - which is not an `AppException`, so it surfaces as a 500. A crash,
+    not a refusal, for a payload the admin typed.
+
+    This is checked ONCE, from the model's own `nullable` flags, rather than as an
+    `if x is None` per field: a hand-written list is a second copy of the schema
+    that only ever covers the columns somebody remembered, and seven columns
+    across four entities reached `setattr` unguarded - six of them with no check
+    at all. Reading the column means a NOT NULL column added tomorrow is covered
+    the day it is added.
+
+    It runs FIRST in every `update_*`, before any other rule reads the value,
+    because a `None` reaches some crashes earlier than it reaches the constraint:
+    `_overlapping_policy` builds `WarrantyPolicy.effective_to >= None`, which
+    SQLAlchemy refuses outright with `ArgumentError` long before Postgres is
+    consulted.
+
+    `changes` is always `model_dump(exclude_unset=True)`, so an ABSENT key is not
+    in it at all - only an EXPLICIT null can be seen here, and partial-update
+    semantics are untouched.
+    """
+    columns = sa_inspect(model).columns
+    for field, value in changes.items():
+        if value is not None:
+            continue
+        column = columns.get(field)
+        if column is None or column.nullable:
+            continue
+        raise _unprocessable(
+            f"{field} cannot be set to null. Leave it out of the update to keep "
+            "its current value."
+        )
+
+
+def _assert_window_not_inverted(
+    effective_from: Optional[date], effective_to: Optional[date]
+) -> None:
+    """A window that ends before it starts matches nothing and reads as a typo
+    nowhere. It is also invisible to the overlap guard, because an inverted range
+    overlaps no range at all - so this has to be its own check, not a side effect."""
+    if effective_to is not None and effective_from is not None and effective_to < effective_from:
+        raise _unprocessable(
+            "The effective-to date cannot be before the effective-from date."
+        )
+
+
+def _validated_match_type(value: Optional[str]) -> str:
+    """AC-P24: an undeclared match type is refused at WRITE time.
+
+    The engine keeps its tolerant READ behaviour (log a warning, match nothing) and
+    that split is deliberate: bad data must never stop a complaint being judged,
+    and a rule that can never fire must never be creatable - it is saved, listed,
+    inert and invisible, which is exactly the dead end AC-P7 exists to surface.
+    """
+    cleaned = (value or "").strip().lower()
+    if cleaned not in KIND_RULE_MATCH_TYPES:
+        raise _unprocessable(
+            "match_type must be one of: " + ", ".join(KIND_RULE_MATCH_TYPES) + "."
+        )
+    return cleaned
+
+
+def _validated_match_value(value: Optional[str]) -> str:
+    # An empty match value matches NOTHING in the engine, so a saved one is a row
+    # that can never fire and never explains itself.
+    return _required_text(value, "A match value is required.")
 
 
 def _window(policy: WarrantyPolicy) -> str:
@@ -176,7 +280,9 @@ class WarrantyConfigService:
             "version": policy.version,
             "effective_from": policy.effective_from,
             "effective_to": policy.effective_to,
-            "source_attachment_id": policy.source_attachment_id,
+            # The id resolves to a filename and never travels itself (cursor rule:
+            # no UUIDs in the UI). `source_attachment_id` stays a WRITE field -
+            # linking a document is what a write does.
             "source_attachment_name": names.get(str(policy.source_attachment_id or "")),
             "policy_text": policy.policy_text,
             "term_count": counts.get(str(policy.id), 0),
@@ -296,12 +402,14 @@ class WarrantyConfigService:
         raise _conflict(message)
 
     def create_policy(self, payload: PolicyCreate) -> dict:
-        self._assert_version_free(payload.version)
+        version = _required_text(payload.version, "A policy version is required.")
+        _assert_window_not_inverted(payload.effective_from, payload.effective_to)
+        self._assert_version_free(version)
         self._assert_no_overlap(
             effective_from=payload.effective_from, effective_to=payload.effective_to
         )
         row = WarrantyPolicy(
-            version=payload.version,
+            version=version,
             effective_from=payload.effective_from,
             effective_to=payload.effective_to,
             source_attachment_id=payload.source_attachment_id,
@@ -319,17 +427,23 @@ class WarrantyConfigService:
         # reopening a mis-superseded policy - is not expressible at all, while every
         # other test still passes.
         changes = payload.model_dump(exclude_unset=True)
+        # Before anything reads a value: `effective_from` is NOT NULL, and an
+        # explicit null does not even reach the constraint - `_overlapping_policy`
+        # would build `effective_to >= None` and SQLAlchemy refuses that outright.
+        _assert_no_null_over_not_null(WarrantyPolicy, changes)
 
+        if "version" in changes:
+            # Cleaned back INTO `changes`, because `changes` is what gets written.
+            changes["version"] = _required_text(
+                changes["version"], "A policy version is required."
+            )
         version = changes.get("version", policy.version)
         effective_from = changes.get("effective_from", policy.effective_from)
         effective_to = (
             changes["effective_to"] if "effective_to" in changes else policy.effective_to
         )
 
-        if effective_to is not None and effective_from is not None and effective_to < effective_from:
-            raise _unprocessable(
-                "The effective-to date cannot be before the effective-from date."
-            )
+        _assert_window_not_inverted(effective_from, effective_to)
         if version != policy.version:
             self._assert_version_free(version, exclude_id=policy.id)
         self._assert_no_overlap(
@@ -379,6 +493,11 @@ class WarrantyConfigService:
         and a hole is an `unknown` verdict handed to a customer for no reason.
         """
         incumbent = self._policy_or_404(policy_id)
+        # Supersede takes the SAME payload as create, so it answers the same two
+        # input rules with the same two sentences - a third verb cannot be the one
+        # that lets a blank version or an inverted window through.
+        version = _required_text(payload.version, "A policy version is required.")
+        _assert_window_not_inverted(payload.effective_from, payload.effective_to)
 
         if incumbent.effective_to is not None:
             # AC-P21. Superseding a CLOSED policy either rewrites a closed window or
@@ -407,7 +526,7 @@ class WarrantyConfigService:
                 f"({incumbent.effective_from.isoformat()})."
             )
 
-        self._assert_version_free(payload.version)
+        self._assert_version_free(version)
         # The incumbent is about to be closed the day before the new start, so by
         # construction it cannot overlap the new window - exclude it rather than
         # mutate first and check afterwards.
@@ -420,7 +539,7 @@ class WarrantyConfigService:
         try:
             incumbent.effective_to = payload.effective_from - timedelta(days=1)
             created = WarrantyPolicy(
-                version=payload.version,
+                version=version,
                 effective_from=payload.effective_from,
                 effective_to=payload.effective_to,
                 source_attachment_id=payload.source_attachment_id,
@@ -600,16 +719,17 @@ class WarrantyConfigService:
     def create_term(self, policy_id: str, payload: TermCreate) -> dict:
         policy = self._policy_or_404(policy_id)
         kind = self._kind_or_404(payload.kind_id)
+        part_name = _required_text(payload.part_name, "A part name is required.")
         self._assert_term_shape(
             duration_months=payload.duration_months, is_lifetime=payload.is_lifetime
         )
         self._assert_part_free(
-            policy_id=policy.id, kind_id=kind.id, part_name=payload.part_name
+            policy_id=policy.id, kind_id=kind.id, part_name=part_name
         )
         row = WarrantyTerm(
             policy_id=policy.id,
             kind_id=kind.id,
-            part_name=payload.part_name,
+            part_name=part_name,
             duration_months=payload.duration_months,
             is_lifetime=payload.is_lifetime,
             covered_defect_type_ids=payload.covered_defect_type_ids,
@@ -641,7 +761,16 @@ class WarrantyConfigService:
         policy = self._policy_or_404(policy_id)
         term = self._term_or_404(policy, term_id)
         changes = payload.model_dump(exclude_unset=True)
+        # `is_lifetime` and `installation_included` are both NOT NULL. The shape
+        # check below reads a `bool(...)`-coerced LOCAL, so a raw `None` passed it
+        # and then got written verbatim by the `setattr` loop.
+        _assert_no_null_over_not_null(WarrantyTerm, changes)
 
+        if "part_name" in changes:
+            # Cleaned back INTO `changes`, because `changes` is what gets written.
+            changes["part_name"] = _required_text(
+                changes["part_name"], "A part name is required."
+            )
         kind_id = changes.get("kind_id", term.kind_id)
         kind = self._kind_or_404(kind_id)
         duration_months = (
@@ -793,10 +922,16 @@ class WarrantyConfigService:
         )
 
     def create_kind(self, payload: KindCreate) -> dict:
-        self._assert_kind_code_free(payload.code)
+        # The blank rules live HERE, not on `KindCreate`, so create and update
+        # answer the same sentence in the same house envelope (AC-P22). As a
+        # Pydantic validator this was a `RequestValidationError` on POST and the
+        # AppException envelope on PATCH - one fact, two shapes.
+        code = _required_text(payload.code, KIND_CODE_REQUIRED)
+        name = _required_text(payload.name, KIND_NAME_REQUIRED)
+        self._assert_kind_code_free(code)
         row = WarrantyProductKind(
-            code=payload.code,
-            name=payload.name,
+            code=code,
+            name=name,
             consumer_label=payload.consumer_label,
             consumer_icon=payload.consumer_icon,
             sort_order=payload.sort_order,
@@ -810,6 +945,15 @@ class WarrantyConfigService:
     def update_kind(self, kind_id: str, payload: KindUpdate) -> dict:
         kind = self._kind_or_404(kind_id)
         changes = payload.model_dump(exclude_unset=True)
+        # `code`, `name` and `sort_order` are all NOT NULL, and the validator this
+        # replaced explicitly let `None` through (`if value is None: return None`).
+        _assert_no_null_over_not_null(WarrantyProductKind, changes)
+
+        # Cleaned back INTO `changes`, because `changes` is what gets written.
+        if "code" in changes:
+            changes["code"] = _required_text(changes["code"], KIND_CODE_REQUIRED)
+        if "name" in changes:
+            changes["name"] = _required_text(changes["name"], KIND_NAME_REQUIRED)
         code = changes.get("code", kind.code)
         if code != kind.code:
             self._assert_kind_code_free(code, exclude_id=kind.id)
@@ -877,8 +1021,8 @@ class WarrantyConfigService:
         kind = self._kind_or_404(payload.kind_id)
         row = WarrantyKindRule(
             kind_id=kind.id,
-            match_type=payload.match_type,
-            match_value=payload.match_value,
+            match_type=_validated_match_type(payload.match_type),
+            match_value=_validated_match_value(payload.match_value),
             priority=payload.priority,
         )
         self.db.add(row)
@@ -895,6 +1039,14 @@ class WarrantyConfigService:
     def update_kind_rule(self, rule_id: str, payload: KindRuleUpdate) -> dict:
         rule = self._rule_or_404(rule_id)
         changes = payload.model_dump(exclude_unset=True)
+        # `priority` is NOT NULL and nothing validated it before `setattr`.
+        _assert_no_null_over_not_null(WarrantyKindRule, changes)
+        # Same helpers the create path calls, and cleaned back INTO `changes`
+        # because `changes` is what gets written.
+        if "match_type" in changes:
+            changes["match_type"] = _validated_match_type(changes["match_type"])
+        if "match_value" in changes:
+            changes["match_value"] = _validated_match_value(changes["match_value"])
         kind = self._kind_or_404(changes.get("kind_id", rule.kind_id))
         for field, value in changes.items():
             setattr(rule, field, value)
@@ -920,12 +1072,24 @@ class WarrantyConfigService:
         session, and it is recognised in the result BY IDENTITY, so no marker column
         and no extra field on `_RuleMatch` is needed.
         """
+        if not any(
+            (value or "").strip()
+            for value in (payload.product_code, payload.category_code, payload.product_name)
+        ):
+            # A tester called with nothing to test answers "no match" for every
+            # product, which reads as a broken mapping rather than as a blank form.
+            raise _unprocessable(
+                "Enter a product code, a category code or a product name to test."
+            )
+
         candidate = None
         if payload.candidate_rule is not None:
+            # Validated through the SAME helpers the create route calls, or the
+            # tester happily reports that a rule which can never be saved would win.
             candidate = WarrantyKindRule(
                 kind_id=payload.candidate_rule.kind_id,
-                match_type=payload.candidate_rule.match_type,
-                match_value=payload.candidate_rule.match_value,
+                match_type=_validated_match_type(payload.candidate_rule.match_type),
+                match_value=_validated_match_value(payload.candidate_rule.match_value),
                 priority=payload.candidate_rule.priority,
             )
 

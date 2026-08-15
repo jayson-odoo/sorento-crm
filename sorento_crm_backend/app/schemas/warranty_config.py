@@ -28,15 +28,23 @@ Update schemas are all-Optional and read with `model_dump(exclude_unset=True)`, 
 "set this to null" and "did not mention it" are distinguishable. That is what makes
 AC-P26's recovery path (reopen a mis-superseded policy by PATCHing `effective_to`
 to null) expressible at all.
+
+**These schemas carry SHAPE, not caller-facing RULES.** Anything an admin can be
+told about in a sentence - a blank version, an inverted window, an unknown match
+type - is checked in `warranty_config_service`, not here. A Pydantic failure is a
+`RequestValidationError`, which this app renders as
+``{"detail":[{"msg":"Value error, <sentence>"}]}``; an `AppException` is rendered as
+the house ``{message, detail, code}``. Keeping one rule on the create schema and its
+twin in the service's PATCH path is how the same fact ends up with two envelopes and
+two strings depending only on the verb the admin used - so each rule has exactly one
+home, and both verbs call it.
 """
 from __future__ import annotations
 
 from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-from app.services.warranty_service import KIND_RULE_MATCH_TYPES
+from pydantic import BaseModel, ConfigDict, Field
 
 # ------------------------------------------------------------------ shared bits
 
@@ -53,57 +61,29 @@ class WarrantyKindRef(BaseModel):
     name: str
 
 
-def _clean(value: Optional[str]) -> Optional[str]:
-    if value is None:
-        return None
-    cleaned = value.strip()
-    return cleaned or None
-
-
 # ---------------------------------------------------------------------- policies
+#
+# `min_length` is deliberately NOT declared on `version` (nor on a Term's
+# `part_name`): "this field is required" is one rule, and `min_length` would answer
+# `""` with Pydantic's stock message while a whitespace-only string fell through to
+# the service's own sentence. `max_length` stays - that is a storage bound, a
+# different fact, and it is the column's own width.
 
 
 class PolicyCreate(BaseModel):
-    version: str = Field(..., min_length=1, max_length=32)
+    version: str = Field(..., max_length=32)
     effective_from: date
     effective_to: Optional[date] = None
     source_attachment_id: Optional[str] = None
     policy_text: Optional[str] = None
 
-    @field_validator("version")
-    @classmethod
-    def _version_not_blank(cls, value: str) -> str:
-        cleaned = (value or "").strip()
-        if not cleaned:
-            raise ValueError("A policy version is required.")
-        return cleaned
-
-    @model_validator(mode="after")
-    def _window_is_not_inverted(self):
-        if self.effective_to is not None and self.effective_to < self.effective_from:
-            # A window that ends before it starts matches nothing and reads as a typo
-            # nowhere. It is also invisible to the overlap guard, because an inverted
-            # range overlaps no range at all.
-            raise ValueError("The effective-to date cannot be before the effective-from date.")
-        return self
-
 
 class PolicyUpdate(BaseModel):
-    version: Optional[str] = Field(None, min_length=1, max_length=32)
+    version: Optional[str] = Field(None, max_length=32)
     effective_from: Optional[date] = None
     effective_to: Optional[date] = None
     source_attachment_id: Optional[str] = None
     policy_text: Optional[str] = None
-
-    @field_validator("version")
-    @classmethod
-    def _version_not_blank(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        cleaned = value.strip()
-        if not cleaned:
-            raise ValueError("A policy version is required.")
-        return cleaned
 
 
 class PolicyResponse(BaseModel):
@@ -113,13 +93,18 @@ class PolicyResponse(BaseModel):
     version: str
     effective_from: date
     effective_to: Optional[date] = None
-    source_attachment_id: Optional[str] = None
-    # Resolved so the screen never prints the id (cursor rule).
+    # The source document travels ONLY as its filename. `source_attachment_id` is a
+    # raw UUID the screen must never print (cursor rule) and nothing reads - the
+    # write schemas still accept the id, because linking a document is what a write
+    # does.
     source_attachment_name: Optional[str] = None
     policy_text: Optional[str] = None
     # AC-P13 / AC-P16: how many Terms a delete would take with it, on the LIST row.
     term_count: int = 0
-    created_at: Optional[datetime] = None
+    # `warranty_policies.created_at` is NOT NULL with a server default, so it can
+    # never be absent. Declaring it optional would tell every consumer to defend
+    # against a null that cannot occur.
+    created_at: datetime
     updated_at: Optional[datetime] = None
 
 
@@ -137,7 +122,7 @@ class SupersedeResponse(BaseModel):
 
 class TermCreate(BaseModel):
     kind_id: str
-    part_name: str = Field(..., min_length=1, max_length=120)
+    part_name: str = Field(..., max_length=120)
     duration_months: Optional[int] = None
     is_lifetime: bool = False
     covered_defect_type_ids: Optional[List[str]] = None
@@ -146,18 +131,10 @@ class TermCreate(BaseModel):
     qualifications: Optional[str] = None
     exclusions: Optional[str] = None
 
-    @field_validator("part_name")
-    @classmethod
-    def _part_not_blank(cls, value: str) -> str:
-        cleaned = (value or "").strip()
-        if not cleaned:
-            raise ValueError("A part name is required.")
-        return cleaned
-
 
 class TermUpdate(BaseModel):
     kind_id: Optional[str] = None
-    part_name: Optional[str] = Field(None, min_length=1, max_length=120)
+    part_name: Optional[str] = Field(None, max_length=120)
     duration_months: Optional[int] = None
     is_lifetime: Optional[bool] = None
     covered_defect_type_ids: Optional[List[str]] = None
@@ -165,16 +142,6 @@ class TermUpdate(BaseModel):
     registration_bonus_months: Optional[int] = None
     qualifications: Optional[str] = None
     exclusions: Optional[str] = None
-
-    @field_validator("part_name")
-    @classmethod
-    def _part_not_blank(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        cleaned = value.strip()
-        if not cleaned:
-            raise ValueError("A part name is required.")
-        return cleaned
 
 
 class TermResponse(BaseModel):
@@ -200,7 +167,10 @@ class TermResponse(BaseModel):
     # at this Term. They SURVIVE the delete (term_id is ON DELETE SET NULL); the
     # count is what makes that a considered decision rather than a discovered one.
     assessment_count: int = 0
-    created_at: Optional[datetime] = None
+    # `warranty_terms.created_at` is NOT NULL with a server default, same as the
+    # policy's - so it is required here too. `updated_at` IS genuinely nullable in
+    # the model (it is only stamped on an edit), and stays optional.
+    created_at: datetime
     updated_at: Optional[datetime] = None
 
 
@@ -222,40 +192,31 @@ class TermsGroupedResponse(BaseModel):
 # ------------------------------------------------------------------------- kinds
 
 
+# `min_length` is deliberately NOT declared on `code` or `name`, for the same
+# reason it is absent from a Policy's `version`: "this field is required" is ONE
+# rule with ONE home, and it lives in `warranty_config_service._required_text`.
+# Leaving `min_length=1` here would send `""` down Pydantic's stock message while
+# `"   "` fell through to the service's own sentence - the same fact answering with
+# two envelopes and two strings, chosen by nothing but which flavour of blank the
+# admin typed. `max_length` stays: that is the column's own width.
+
+
 class KindCreate(BaseModel):
-    code: str = Field(..., min_length=1, max_length=64)
-    name: str = Field(..., min_length=1, max_length=255)
+    code: str = Field(..., max_length=64)
+    name: str = Field(..., max_length=255)
     consumer_label: Optional[str] = Field(None, max_length=120)
     consumer_icon: Optional[str] = Field(None, max_length=64)
     sort_order: int = 0
     is_active: bool = True
 
-    @field_validator("code", "name")
-    @classmethod
-    def _not_blank(cls, value: str) -> str:
-        cleaned = (value or "").strip()
-        if not cleaned:
-            raise ValueError("This field is required.")
-        return cleaned
-
 
 class KindUpdate(BaseModel):
-    code: Optional[str] = Field(None, min_length=1, max_length=64)
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    code: Optional[str] = Field(None, max_length=64)
+    name: Optional[str] = Field(None, max_length=255)
     consumer_label: Optional[str] = Field(None, max_length=120)
     consumer_icon: Optional[str] = Field(None, max_length=64)
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
-
-    @field_validator("code", "name")
-    @classmethod
-    def _not_blank(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        cleaned = value.strip()
-        if not cleaned:
-            raise ValueError("This field is required.")
-        return cleaned
 
 
 class KindResponse(BaseModel):
@@ -280,46 +241,11 @@ class KindResponse(BaseModel):
 # -------------------------------------------------------------------- kind rules
 
 
-def _validated_match_type(value: Optional[str]) -> str:
-    """AC-P24: an undeclared match type is refused at WRITE time.
-
-    The engine keeps its tolerant READ behaviour (log a warning, match nothing) and
-    that split is deliberate: bad data must never stop a complaint being judged,
-    and a rule that can never fire must never be creatable - it is saved, listed,
-    inert and invisible, which is exactly the dead end AC-P7 exists to surface.
-    """
-    cleaned = (value or "").strip().lower()
-    if cleaned not in KIND_RULE_MATCH_TYPES:
-        raise ValueError(
-            "match_type must be one of: " + ", ".join(KIND_RULE_MATCH_TYPES) + "."
-        )
-    return cleaned
-
-
-def _validated_match_value(value: Optional[str]) -> str:
-    cleaned = (value or "").strip()
-    if not cleaned:
-        # An empty match value matches NOTHING in the engine, so a saved one is a row
-        # that can never fire and never explains itself.
-        raise ValueError("A match value is required.")
-    return cleaned
-
-
 class KindRuleCreate(BaseModel):
     kind_id: str
     match_type: str
     match_value: str
     priority: int = 0
-
-    @field_validator("match_type")
-    @classmethod
-    def _match_type(cls, value: str) -> str:
-        return _validated_match_type(value)
-
-    @field_validator("match_value")
-    @classmethod
-    def _match_value(cls, value: str) -> str:
-        return _validated_match_value(value)
 
 
 class KindRuleUpdate(BaseModel):
@@ -327,16 +253,6 @@ class KindRuleUpdate(BaseModel):
     match_type: Optional[str] = None
     match_value: Optional[str] = None
     priority: Optional[int] = None
-
-    @field_validator("match_type")
-    @classmethod
-    def _match_type(cls, value: Optional[str]) -> Optional[str]:
-        return None if value is None else _validated_match_type(value)
-
-    @field_validator("match_value")
-    @classmethod
-    def _match_value(cls, value: Optional[str]) -> Optional[str]:
-        return None if value is None else _validated_match_value(value)
 
 
 class KindRuleResponse(BaseModel):
@@ -350,7 +266,9 @@ class KindRuleResponse(BaseModel):
     match_value: str
     # Higher wins, and it is consulted BEFORE match-type specificity (AC-D20).
     priority: int = 0
-    created_at: Optional[datetime] = None
+    # `warranty_kind_rules.created_at` is NOT NULL with a server default; only
+    # `updated_at` can legitimately be absent.
+    created_at: datetime
     updated_at: Optional[datetime] = None
 
 
@@ -360,8 +278,9 @@ class KindRuleResponse(BaseModel):
 class KindRuleCandidate(BaseModel):
     """An unsaved rule the admin is about to write (AC-P6b).
 
-    Validated exactly like `KindRuleCreate`, or the tester would happily report
-    that a rule which can never be saved would win.
+    Validated by the service exactly like `KindRuleCreate` - through the same
+    helper - or the tester would happily report that a rule which can never be
+    saved would win.
     """
 
     kind_id: str
@@ -369,35 +288,12 @@ class KindRuleCandidate(BaseModel):
     match_value: str
     priority: int = 0
 
-    @field_validator("match_type")
-    @classmethod
-    def _match_type(cls, value: str) -> str:
-        return _validated_match_type(value)
-
-    @field_validator("match_value")
-    @classmethod
-    def _match_value(cls, value: str) -> str:
-        return _validated_match_value(value)
-
 
 class KindRuleTestRequest(BaseModel):
     product_code: Optional[str] = None
     category_code: Optional[str] = None
     product_name: Optional[str] = None
     candidate_rule: Optional[KindRuleCandidate] = None
-
-    @model_validator(mode="after")
-    def _something_to_test(self):
-        if not any(
-            _clean(value)
-            for value in (self.product_code, self.category_code, self.product_name)
-        ):
-            # A tester called with nothing to test answers "no match" for every
-            # product, which reads as a broken mapping rather than as a blank form.
-            raise ValueError(
-                "Enter a product code, a category code or a product name to test."
-            )
-        return self
 
 
 class TestedRule(BaseModel):
