@@ -91,6 +91,45 @@ def test_filename_beats_description():
         assert result.type_code == "special"
 
 
+def test_filename_marker_beats_a_conflicting_description_marker():
+    """Filename precedence holds even when the description names a stricter type."""
+    with blank_session() as db:
+        _seed_types(db)
+        result = classify_promotion_type(
+            db,
+            description="SORENTO SPECIAL PROMO_22052026.pdf",
+            filename="SORENTO PP PROMO COMBINE_08072026.pdf",
+        )
+        assert result.type_code == "pp"
+
+
+def test_marker_less_filename_falls_back_to_the_description():
+    """A generic first attachment must not bury the marker n8n posted.
+
+    The first linked file can be a re-saved / renamed document or a T&C page, so
+    a name with no marker is "nothing said", not "standard".
+    """
+    with blank_session() as db:
+        _seed_types(db)
+        result = classify_promotion_type(
+            db,
+            description="SORENTO SPECIAL PROMO_22052026.pdf",
+            filename="document_2026_final_compressed.pdf",
+        )
+        assert result.type_code == "special"
+
+
+def test_neither_name_carrying_a_marker_still_yields_the_default_type():
+    with blank_session() as db:
+        _seed_types(db)
+        result = classify_promotion_type(
+            db,
+            description="CABANA SHELF PROMO 31032026 (DEALER USE).pdf",
+            filename="document_2026_final_compressed.pdf",
+        )
+        assert result.type_code == "standard"
+
+
 def test_markers_come_from_the_database_not_from_code():
     """C6: adding a marker to a row changes the verdict with no code change."""
     with blank_session() as db:

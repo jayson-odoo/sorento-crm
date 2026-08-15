@@ -69,6 +69,30 @@ def default_type(types: Iterable[PromotionType]) -> Optional[PromotionType]:
     return None
 
 
+def match_marker_type(
+    text: Optional[str], types: Iterable[PromotionType]
+) -> Optional[PromotionType]:
+    """The type whose marker *text* carries, or None when it carries none.
+
+    Separate from `classify_text` because "this name says nothing" and "this name
+    says standard" are different answers: only the first one lets a caller go
+    look somewhere else before settling for the default.
+    """
+    normalized = _normalize(text)
+    if not normalized:
+        return None
+    for promo_type in sorted(
+        list(types), key=lambda t: (t.match_priority or 100, t.type_code or "")
+    ):
+        markers = promo_type.match_markers or []
+        if not isinstance(markers, list):
+            continue
+        for marker in markers:
+            if isinstance(marker, str) and _marker_matches(normalized, marker):
+                return promo_type
+    return None
+
+
 def classify_text(text: Optional[str], types: Iterable[PromotionType]) -> Optional[PromotionType]:
     """The type *text* names, or the default type, or None when no types exist.
 
@@ -79,18 +103,7 @@ def classify_text(text: Optional[str], types: Iterable[PromotionType]) -> Option
     type_list = list(types)
     if not type_list:
         return None
-    normalized = _normalize(text)
-    if normalized:
-        for promo_type in sorted(
-            type_list, key=lambda t: (t.match_priority or 100, t.type_code or "")
-        ):
-            markers = promo_type.match_markers or []
-            if not isinstance(markers, list):
-                continue
-            for marker in markers:
-                if isinstance(marker, str) and _marker_matches(normalized, marker):
-                    return promo_type
-    return default_type(type_list)
+    return match_marker_type(text, type_list) or default_type(type_list)
 
 
 def classify_promotion_type(
@@ -99,10 +112,25 @@ def classify_promotion_type(
     description: Optional[str] = None,
     filename: Optional[str] = None,
 ) -> Optional[PromotionType]:
-    """Classify one promotion from the name we were given.
+    """Classify one promotion from the two names we were given.
 
-    *filename* wins when present: the upload path runs the original name through
-    `sanitize_storage_filename`, so the attachment's `original_filename` is the
-    closest thing to what marketing actually typed.
+    *filename* is consulted first and wins outright when it carries a marker: the
+    upload path runs the original name through `sanitize_storage_filename`, so
+    the attachment's `original_filename` is the closest thing to what marketing
+    actually typed.
+
+    A filename carrying NO marker is not an answer, though -- the first
+    attachment on the request can be a re-saved, renamed or generic document
+    (a T&C page ahead of the flyer), and the marker is then still sitting in the
+    posted description. So the description is read before falling back to the
+    default type: defaulting a "SPECIAL" upload to standard makes it usable after
+    its end date, which is the one mistake this module exists to avoid.
     """
-    return classify_text(filename or description, list_types_for_matching(db))
+    types = list_types_for_matching(db)
+    if not types:
+        return None
+    return (
+        match_marker_type(filename, types)
+        or match_marker_type(description, types)
+        or default_type(types)
+    )
