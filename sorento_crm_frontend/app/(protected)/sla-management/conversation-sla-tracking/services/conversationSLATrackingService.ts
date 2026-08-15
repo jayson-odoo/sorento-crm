@@ -1,6 +1,10 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { RespondConversationResponse } from '@/app/(protected)/procurement-management/stock-inquiries/services/stockInquiryService';
+import type {
+  ConversationSearchMatch,
+  ConversationThreadPage,
+} from '@/components/common/conversation/useConversationThread';
 import type { ConversationSLATracking, ConversationSLATrackingDetail, ConversationSLAEventLog, SLATrackingDashboardMetrics } from '../types/conversationSLATracking.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
@@ -331,6 +335,55 @@ export async function getSlaTrackingConversation(
     throw new Error(await extractApiError(response, 'Failed to load conversation'));
   }
   return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Thread scroll-back + in-thread search (UAC AC-L7 / AC-L8)
+//
+// Backend contract (GET .../{tracking_id}/conversation/page):
+//   query: before | after | around (at most ONE, each a Respond message id) + limit (1..200)
+//   body : { items, has_more_older, has_more_newer, oldest_message_id,
+//            newest_message_id, anchor_message_id, source, backfilled, error }
+//   items are ALWAYS oldest-to-newest, whichever direction was requested.
+//
+// GET .../{tracking_id}/conversation/search?q=&limit=
+//   body : { items: [{ message_id, sent_at, direction, snippet }], total,
+//            truncated, query } newest-first.
+// ---------------------------------------------------------------------------
+
+export async function getSlaTrackingConversationPage(
+  trackingId: string,
+  params: { before?: string; after?: string; around?: string; limit?: number },
+): Promise<ConversationThreadPage> {
+  const sp = new URLSearchParams();
+  if (params.before) sp.set('before', params.before);
+  if (params.after) sp.set('after', params.after);
+  if (params.around) sp.set('around', params.around);
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${trackingId}/conversation/page${qs ? `?${qs}` : ''}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load earlier messages'));
+  }
+  return response.json();
+}
+
+export async function searchSlaTrackingConversation(
+  trackingId: string,
+  query: string,
+  limit = 100,
+): Promise<ConversationSearchMatch[]> {
+  const sp = new URLSearchParams({ q: query, limit: String(limit) });
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${trackingId}/conversation/search?${sp.toString()}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Search failed'));
+  }
+  const body = (await response.json()) as { items?: ConversationSearchMatch[] };
+  return body.items ?? [];
 }
 
 // ---------------------------------------------------------------------------

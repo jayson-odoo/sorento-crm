@@ -284,12 +284,47 @@ Built 2026-08-15 (code + tests; awaiting tester/review):
 ### S4.8 Thread scroll-back + message search (UAC L7-L8) [BE coder + FE coder]
 (added 2026-08-15 from captain hands-on testing)
 
-- L7: cursor pagination on scroll-up - local `chat_histories` first, Respond
-  `list_messages` cursor backfill for pre-ingest history; prepend with scroll anchoring,
-  dedupe on message_id.
+- L7: cursor pagination on scroll-up; prepend with scroll anchoring, dedupe on
+  message_id.
 - L8: server-side search over `chat_histories` (ILIKE v1), match list + jump-to-message
   + up/down navigation + highlight. Reference: foundryx-shared-service
   `service_backend/modules/omnichannel` chat search (studied before building).
+
+Built 2026-08-15 (code + tests; awaiting tester/review):
+
+- **Lane order flipped vs the original bullet** (see the revision note on AC-L7).
+  Respond.io's `cursorId` walk is the primary pagination lane because it is the
+  system of record AND returns the full message object, so a scrolled-back page
+  renders exactly like the live window; `chat_histories` is the fallback lane and
+  the search substrate. Verified against the live API 2026-08-15: `cursorId=<id>`
+  returns OLDER messages newest-first, `cursorId=-<id>` returns NEWER messages
+  oldest-first, and `GET /message/{id}` supplies the anchor for an `around` jump.
+- BE `app/services/conversation_thread_service.py`: `fetch_thread_page`
+  (before / after / around + limit, **items always oldest-to-newest**,
+  `has_more_older` = "the page came back full") and `search_thread`. The local lane
+  is keyset on `(sent_at, id)`, NOT `created_at`: `created_at` is ingest order, so a
+  backfilled 2026-05 message written today would sort as the newest thing in the
+  thread. Every Respond page is written into `chat_histories` best-effort (explicit
+  "which ids do we already hold" probe first, because the dedupe unique index is
+  PARTIAL on `created_at >= 2026-08-14` and a pre-cutover row is invisible to
+  `ON CONFLICT`). The read marks nothing seen and touches no window cache.
+- Routes: `GET .../{tracking_id}/conversation/page` and `.../conversation/search`.
+  Migration 327 adds `CREATE EXTENSION IF NOT EXISTS pg_trgm` + a
+  `gin (message gin_trgm_ops)` index so the leading-wildcard ILIKE is indexable.
+- FE lives in the SHARED layer, not the drawer: `useConversationThread`
+  (window + dedupe + fetch-sequence guard + search cursor + around-jump) and
+  `ConversationSearchBar`, both under `components/common/conversation/`, plus new
+  optional props on the shared `RespondChatList` (`onLoadOlder` / `hasMoreOlder` /
+  `isLoadingOlder` / `atConversationStart` / `searchController` / `highlightTerm`).
+  The chat list owns the scroll container, so the top-threshold trigger, the
+  scroll-anchored prepend (`useLayoutEffect`, `scrollTop += growth`), the bubble ref
+  map and the pin-to-bottom suppression live there. Complaint / stock-inquiry / PR
+  panels inherit the feature by passing the same loaders; passing none leaves them
+  byte-for-byte as they were.
+- A search jump to an unloaded message REPLACES the window with the `around` page
+  (a spliced window would render a silent gap), and `resetKey` discards the window
+  when the drawer swaps tickets in place, so one contact's history can never leak
+  into another's thread.
 
 ### Phase 4 execution order (user-approved 2026-08-14)
 

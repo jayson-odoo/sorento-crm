@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, MessageSquareQuote, Users } from 'lucide-react';
 
 import {
@@ -25,9 +25,14 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import RespondChatList from '@/components/common/RespondChatList';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
+import { useConversationThread } from '@/components/common/conversation/useConversationThread';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 
+import {
+  getSlaTrackingConversationPage,
+  searchSlaTrackingConversation,
+} from '../services/conversationSLATrackingService';
 import { useSlaTrackingConversation } from '../hooks/useConversationSLATracking';
 import {
   useInterventionTicket,
@@ -100,7 +105,27 @@ export default function InterventionTicketDrawer({
   }, [ticketId]);
 
   const ticket = ticketQuery.data;
-  const messages = threadQuery.data?.items ?? [];
+  const liveMessages = threadQuery.data?.items ?? [];
+
+  // AC-L7 / AC-L8: scroll-back and search live in the SHARED thread hook, so the
+  // SLA detail panel and the complaint / stock-inquiry / PR chat panels inherit
+  // them by passing the same loaders - nothing here is drawer-specific.
+  const loadPage = useCallback(
+    (params: { before?: string; after?: string; around?: string; limit?: number }) =>
+      getSlaTrackingConversationPage(ticketId ?? '', params),
+    [ticketId],
+  );
+  const searchMessages = useCallback(
+    (query: string) => searchSlaTrackingConversation(ticketId ?? '', query),
+    [ticketId],
+  );
+  const thread = useConversationThread({
+    liveItems: liveMessages,
+    loadPage,
+    searchMessages,
+    enabled: open && !!ticketId,
+    resetKey: ticketId,
+  });
 
   const handleResolve = () => {
     if (!ticketId) return;
@@ -216,14 +241,21 @@ export default function InterventionTicketDrawer({
                 {threadQuery.data?.error && (
                   <p className="text-xs text-muted-foreground">{threadQuery.data.error}</p>
                 )}
+                {thread.error && <p className="text-xs text-destructive">{thread.error}</p>}
                 <RespondChatList
-                  items={messages}
+                  items={thread.items}
                   contactName={ticket?.contact_name}
                   contactPhone={ticket?.contact_phone}
                   emptyHint="No messages in this conversation yet."
                   maxHeightClass="max-h-[45vh]"
                   highlightMessageId={ticket?.source_message_id}
                   highlightLabel="This enquiry"
+                  onLoadOlder={thread.loadOlder}
+                  hasMoreOlder={thread.hasMoreOlder}
+                  isLoadingOlder={thread.isLoadingOlder}
+                  atConversationStart={thread.atConversationStart}
+                  searchController={thread.search}
+                  highlightTerm={thread.highlightTerm}
                   onReply={(item) =>
                     setReplyTo({ messageId: item.messageId ?? null, excerpt: excerptOf(item) })
                   }

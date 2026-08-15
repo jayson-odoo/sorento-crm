@@ -372,11 +372,23 @@ channel - quote-prefix emulation stays), sticker sends.
   (read-side parity even though outbound quoting stays emulation).
 - **AC-L7 [BE][FE][T]** (added 2026-08-15, captain dogfooding: "i scoll up already then
   can't find any older") Given a thread longer than one page, When the assignee scrolls
-  to the top, Then older messages load automatically (cursor pagination - local
-  `chat_histories` first, Respond `list_messages` cursor as fallback/backfill for
-  history predating our ingest) until the true start of the conversation, matching
-  Respond's own scroll-back. Loading indicator at the top; scroll position preserved
-  after prepend; no duplicate bubbles (dedupe by message_id).
+  to the top, Then older messages load automatically (cursor pagination) until the true
+  start of the conversation, matching Respond's own scroll-back. Loading indicator at
+  the top; scroll position preserved after prepend; no duplicate bubbles (dedupe by
+  message_id).
+  **Lane order REVISED during build 2026-08-15 (was "local `chat_histories` first,
+  Respond as fallback"; now Respond first, local as fallback).** Two findings forced
+  it: (1) `chat_histories` stores TEXT ONLY, so a locally-served scroll-back page
+  loses the attachments, delivery receipts and sender source that the live window
+  shows - the thread would visibly degrade the moment the reader scrolled up, which
+  also contradicts the AC-D5/D6 work that just shipped; (2) local coverage is only
+  whatever n8n mirrored, so it cannot be trusted to reach the true start, whereas
+  Respond IS the system of record and its `cursorId` walk provably does
+  (`cursorId=<id>` older, `cursorId=-<id>` newer - verified live 2026-08-15).
+  `chat_histories` keeps both of its jobs: the fallback lane when Respond is
+  unavailable, and the search substrate for AC-L8 - and every Respond page fetched is
+  written back into it (idempotent, best-effort) so search coverage grows over history
+  that predates our ingest.
 - **AC-L8 [BE][FE][T]** (added 2026-08-15, captain dogfooding) Given the ticket thread,
   When the assignee opens message search (icon in the drawer header), Then they can
   type a query and get matches within THIS contact's conversation "just like WhatsApp":
@@ -385,6 +397,14 @@ channel - quote-prefix emulation stays), sticker sends.
   navigation between matches. Search runs server-side over `chat_histories` (ILIKE
   v1). Reference implementation: foundryx-shared-service
   `service_backend/modules/omnichannel` chat search - study it before building.
+  Build notes 2026-08-15: search is `ILIKE` over `chat_histories.message` (the body
+  only - contact name/phone are not part of an IN-THREAD search), scoped to one
+  contact, newest-first, capped at 100, with `%`, `_` and `\` in the user's query
+  treated as literals. Matches with no `message_id` are skipped: the jump is
+  addressed by message id, so a match the thread cannot open is not a result.
+  Coverage caveat (accepted for v1): search sees what is in `chat_histories` - the
+  live ingest plus every page a reader has already scrolled through. History that
+  predates the ingest becomes searchable as it is scrolled in.
 
 ### M. Post-resolve reassurance + Respond close semantics (Journey step 7b) - added 2026-08-14
 

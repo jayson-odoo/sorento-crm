@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   CheckCheck,
@@ -10,8 +10,10 @@ import {
   FileText,
   Headphones,
   Image as ImageIcon,
+  Loader2,
   MapPin,
   Paperclip,
+  Search,
   Smile,
   Video,
 } from 'lucide-react';
@@ -34,6 +36,12 @@ import {
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
+import ConversationSearchBar from '@/components/common/conversation/ConversationSearchBar';
+import type { ConversationSearchController } from '@/components/common/conversation/useConversationThread';
+import { splitHighlightSegments } from '@/lib/textHighlight';
+
+/** Distance from the top that starts the next older page (AC-L7). */
+const LOAD_OLDER_THRESHOLD_PX = 80;
 
 interface RespondChatListProps {
   items: RespondMessageRenderable[];
@@ -58,6 +66,42 @@ interface RespondChatListProps {
    * as before.
    */
   onReply?: (item: RespondMessageRenderable) => void;
+  /**
+   * Scroll-back (AC-L7). Supplied together: reaching the top of the scroll
+   * container calls `onLoadOlder`, and the prepended page is scroll-anchored so
+   * the reader keeps their place. Surfaces that pass none of these behave
+   * exactly as before (one page, no top spinner, no start marker).
+   */
+  onLoadOlder?: () => void;
+  hasMoreOlder?: boolean;
+  isLoadingOlder?: boolean;
+  /** Renders the "beginning of the conversation" marker once nothing is older. */
+  atConversationStart?: boolean;
+  /**
+   * In-thread search (AC-L8). Passing a controller adds the search icon to the
+   * chat header and the search bar under it; the active match gets a ring and
+   * is scrolled into view, and `highlightTerm` is `<mark>`ed inside bubbles.
+   */
+  searchController?: ConversationSearchController;
+  highlightTerm?: string;
+}
+
+/** Message text with the searched term marked. Escaping lives in the helper. */
+function HighlightedText({ text, term }: { text: string; term: string }) {
+  if (!term.trim()) return <>{text}</>;
+  return (
+    <>
+      {splitHighlightSegments(text, term).map((segment, i) =>
+        segment.match ? (
+          <mark key={i} className="rounded-sm bg-amber-300 px-0.5 text-zinc-900">
+            {segment.text}
+          </mark>
+        ) : (
+          <span key={i}>{segment.text}</span>
+        ),
+      )}
+    </>
+  );
 }
 
 function AttachmentIcon({ kind }: { kind: MessageAttachmentDescriptor['kind'] }) {
@@ -139,9 +183,24 @@ export default function RespondChatList({
   highlightMessageId = null,
   highlightLabel = 'Ticket based on this message',
   onReply,
+  onLoadOlder,
+  hasMoreOlder = false,
+  isLoadingOlder = false,
+  atConversationStart = false,
+  searchController,
+  highlightTerm = '',
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Populated by ref callbacks so a search jump can reach a bubble that is
+  // already rendered without re-querying the DOM. Entries delete on unmount, so
+  // a replaced window never leaves a stale node behind.
+  const bubbleRefs = useRef(new Map<string, HTMLDivElement>());
+  // Scroll metrics captured at the instant an older page was requested. The
+  // correction has to run BEFORE paint (useLayoutEffect) or the viewport
+  // visibly jumps to the top as the prepended messages push everything down.
+  const prependAnchor = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
 
   // AC-D6: attachment bubbles open the SAME preview surface the rest of the CRM
   // uses (image/video/pdf inline, spreadsheets via its Excel slide, everything
@@ -184,13 +243,62 @@ export default function RespondChatList({
     });
   }, [items]);
 
+  const activeMatchId = searchController?.activeMessageId ?? null;
+  // Pinning to the newest message is right while reading the live tail and
+  // wrong the moment the reader is looking at something specific: a search
+  // jump, or a pending one, would be yanked back to the bottom.
+  const pinToBottom = !searchController?.open && !activeMatchId;
+
   useEffect(() => {
+    if (activeMatchId) return;
     if (normalizedHighlightId && highlightRef.current) {
       highlightRef.current.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
       return;
     }
+    if (!pinToBottom) return;
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
-  }, [sortedItems.length, normalizedHighlightId]);
+  }, [sortedItems.length, normalizedHighlightId, activeMatchId, pinToBottom]);
+
+  // Scroll anchoring: restore the reader's distance from the OLD top edge.
+  useLayoutEffect(() => {
+    const anchor = prependAnchor.current;
+    const node = scrollRef.current;
+    if (!anchor || !node) return;
+    const grew = node.scrollHeight - anchor.scrollHeight;
+    if (grew <= 0) return;
+    node.scrollTop = anchor.scrollTop + grew;
+    prependAnchor.current = null;
+  }, [sortedItems.length]);
+
+  // A page request that came back empty (or failed) must release the anchor, or
+  // the next genuine prepend would be corrected against stale metrics.
+  useEffect(() => {
+    if (!isLoadingOlder) prependAnchor.current = null;
+  }, [isLoadingOlder]);
+
+  useEffect(() => {
+    if (!activeMatchId) return;
+    bubbleRefs.current.get(activeMatchId)?.scrollIntoView?.({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  }, [activeMatchId, sortedItems.length]);
+
+  const handleScroll = useCallback(() => {
+    const node = scrollRef.current;
+    if (!node || !onLoadOlder || !hasMoreOlder || isLoadingOlder) return;
+    if (node.scrollTop > LOAD_OLDER_THRESHOLD_PX) return;
+    prependAnchor.current = { scrollHeight: node.scrollHeight, scrollTop: node.scrollTop };
+    onLoadOlder();
+  }, [onLoadOlder, hasMoreOlder, isLoadingOlder]);
+
+  const registerBubble = useCallback(
+    (id: string) => (node: HTMLDivElement | null) => {
+      if (node) bubbleRefs.current.set(id, node);
+      else bubbleRefs.current.delete(id);
+    },
+    [],
+  );
 
   const contactInitial = (contactName?.trim()?.charAt(0) || '?').toUpperCase();
   const headerName = contactName?.trim() || 'Unknown contact';
@@ -212,11 +320,43 @@ export default function RespondChatList({
             <div className="truncate text-xs text-zinc-500 dark:text-zinc-400">{headerPhone}</div>
           )}
         </div>
+        {searchController && !searchController.open && (
+          <button
+            type="button"
+            aria-label="Search messages"
+            onClick={searchController.openSearch}
+            className="ms-auto shrink-0 rounded p-1.5 text-zinc-600 hover:bg-black/5 dark:text-zinc-300 dark:hover:bg-white/10"
+          >
+            <Search className="size-4" />
+          </button>
+        )}
       </div>
 
+      {searchController && <ConversationSearchBar controller={searchController} />}
+
       <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        data-testid="chat-scroll-container"
         className={`flex flex-col gap-2 overflow-y-auto rounded-b-md border bg-[#efeae2] dark:bg-[#0b141a] p-3 ${maxHeightClass}`}
       >
+        {isLoadingOlder && (
+          <div
+            data-testid="chat-older-loading"
+            className="flex items-center justify-center gap-2 py-2 text-xs text-zinc-500 dark:text-zinc-400"
+          >
+            <Loader2 className="size-3.5 animate-spin" />
+            Loading earlier messages
+          </div>
+        )}
+        {!isLoadingOlder && atConversationStart && (
+          <p
+            data-testid="chat-conversation-start"
+            className="py-1 text-center text-[11px] text-zinc-500 dark:text-zinc-400"
+          >
+            Beginning of this conversation
+          </p>
+        )}
         {sortedItems.length === 0 && (
           <p className="py-4 text-center text-sm text-zinc-500 dark:text-zinc-400">{emptyHint}</p>
         )}
@@ -245,9 +385,17 @@ export default function RespondChatList({
           const tier = getReceiptTier(item);
           const isHighlighted =
             normalizedHighlightId != null && String(item.messageId ?? '') === normalizedHighlightId;
+          const isActiveMatch = activeMatchId != null && String(item.messageId ?? '') === activeMatchId;
 
           return (
-            <div key={key} ref={isHighlighted ? highlightRef : undefined}>
+            <div
+              key={key}
+              data-message-id={item.messageId != null ? String(item.messageId) : undefined}
+              ref={(node) => {
+                if (isHighlighted) highlightRef.current = node;
+                if (item.messageId != null) registerBubble(String(item.messageId))(node);
+              }}
+            >
               {dividerLabel && (
                 <div className="sticky top-0 z-10 my-2 flex justify-center">
                   <span className="rounded-md bg-[#e1f3fb] dark:bg-[#1d282f] px-3 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 shadow-sm">
@@ -264,9 +412,10 @@ export default function RespondChatList({
               )}
               <div className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
                 <div
+                  data-active-match={isActiveMatch ? 'true' : undefined}
                   className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm shadow-sm ${bubbleClass}${
                     isHighlighted ? ' ring-2 ring-amber-400 dark:ring-amber-500' : ''
-                  }`}
+                  }${isActiveMatch ? ' ring-2 ring-sky-500 dark:ring-sky-400' : ''}`}
                 >
                   <div className="mb-0.5 flex items-center gap-2">
                     <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
@@ -297,7 +446,9 @@ export default function RespondChatList({
                     />
                   ))}
                   {text && (
-                    <div className="whitespace-pre-wrap break-words leading-snug">{text}</div>
+                    <div className="whitespace-pre-wrap break-words leading-snug">
+                      <HighlightedText text={text} term={highlightTerm} />
+                    </div>
                   )}
                   {options.length > 0 && (
                     <div className="mt-2 flex flex-col divide-y divide-zinc-200 overflow-hidden rounded border border-zinc-200 bg-white/70 dark:divide-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/40">
