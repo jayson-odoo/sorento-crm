@@ -9,6 +9,7 @@ from app.api.v1.sla import (
     form_skip,
     sla_kpi,
     form_actions,
+    message_snippets,
 )
 
 router = APIRouter()
@@ -24,4 +25,9 @@ router.include_router(form_sla_tracking.router, prefix="/form-sla-tracking", tag
 router.include_router(form_skip.router, prefix="/form", tags=["form-skip"])
 router.include_router(sla_kpi.router, prefix="/kpi", tags=["sla-kpi"])
 router.include_router(form_actions.router, prefix="/form-actions", tags=["form-actions"])
+# Canned composer replies with $variables (UAC AC-L4, S4.4): admin CRUD + the
+# ticket composer's "/" picker.
+router.include_router(
+    message_snippets.router, prefix="/message-snippets", tags=["message-snippets"]
+)
 # Event logs are part of sla_tracking router, accessible at /conversation-sla-tracking/event-logs

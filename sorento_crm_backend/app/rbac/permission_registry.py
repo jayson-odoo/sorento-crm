@@ -111,6 +111,11 @@ PERMISSION_REGISTRY.extend([
     {"slug": "sla_management.conversation_sla_tracking.takeover", "name": "Takeover SLA task", "description": "Take over a teammate's conversation SLA task (and cancel/reject pending takeovers)."},
 ])
 PERMISSION_REGISTRY.extend(_crud("sla_management", "escalation_logs", "SLA Event Logs"))
+# Composer snippets (UAC AC-L4). `.view` is what the ticket composer's "/" picker
+# reads, so it is granted to everyone who works tickets (migration 329 copies the
+# grants from `sla_management.conversation_sla_tracking.view`); add/edit/delete
+# are the admin CRUD page.
+PERMISSION_REGISTRY.extend(_crud("sla_management", "message_snippets", "Message Snippets"))
 PERMISSION_REGISTRY.extend([
     {"slug": "sla_management.form_sla_config.view", "name": "View Form SLA Configurations", "description": "View per-form SLA stage configurations (start / respond / resolve trigger transitions, agent + chain)."},
     {"slug": "sla_management.form_sla_config.manage", "name": "Manage Form SLA Configurations", "description": "Create, update, delete per-form SLA stage configurations."},
