@@ -12,10 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from app.models.marketing import Promotion, PromotionType
+from app.models.marketing import Promotion, PromotionAttachment, PromotionType
+from app.models.resources import Attachment
 from app.schemas.marketing import PromotionTypeCreate, PromotionTypeUpdate
 from app.services.error_handler import AppException
 from app.services.marketing_service import PromotionTypeService
+from app.services.promotion_classifier import classify_promotion_type
 from tests._pg_fixture import blank_session
 
 
@@ -77,6 +79,102 @@ def test_migration_backfills_existing_promotions_from_their_names():  # T2
         assert got["SORENTO SPECIAL PROMO_01072026.pdf"] == ("special", "auto")
         assert got["_SORENTO A3 FLYER 2025-2026"] == ("a3_flyer", "auto")
         assert got["CABANA SHELF PROMO 31032026"] == ("standard", "auto")
+
+
+def _promo_with_file(db, description, filename, *, is_primary=True, sort_order=0):
+    """A promotion whose first linked attachment (LATERAL pick) is *filename*."""
+    promo = Promotion(id=str(uuid.uuid4()), description=description, access_levels=["dealer"])
+    db.add(promo)
+    db.flush()
+    if filename is not None:
+        attachment = Attachment(
+            id=str(uuid.uuid4()),
+            original_filename=filename,
+            stored_filename=filename,
+            file_path=f"https://cdn.invalid/{filename}",
+            access_levels=["dealer"],
+        )
+        db.add(attachment)
+        db.flush()
+        db.add(
+            PromotionAttachment(
+                id=str(uuid.uuid4()),
+                promotion_id=promo.id,
+                attachment_id=attachment.id,
+                is_primary=is_primary,
+                sort_order=sort_order,
+            )
+        )
+        db.flush()
+    return promo
+
+
+def test_backfill_reads_the_description_when_the_filename_carries_no_marker():
+    """A generic first attachment must not bury the marker in the description."""
+    module = _load_migration()
+    with blank_session() as db:
+        _run_seed(db, module)
+        promo = _promo_with_file(
+            db,
+            "SORENTO SPECIAL PROMO_22052026.pdf",
+            "document_2026_final_compressed.pdf",
+        )
+
+        module._backfill_promotion_types(db.connection())
+        db.expire_all()
+
+        assert db.query(Promotion).filter(Promotion.id == promo.id).one().promotion_type.type_code == "special"
+
+
+def test_backfill_lets_a_marker_bearing_filename_win_over_the_description():
+    module = _load_migration()
+    with blank_session() as db:
+        _run_seed(db, module)
+        promo = _promo_with_file(
+            db,
+            "SORENTO SPECIAL PROMO_22052026.pdf",
+            "SORENTO PP PROMO COMBINE_08072026.pdf",
+        )
+
+        module._backfill_promotion_types(db.connection())
+        db.expire_all()
+
+        assert db.query(Promotion).filter(Promotion.id == promo.id).one().promotion_type.type_code == "pp"
+
+
+BACKFILL_PARITY_CASES = [
+    ("SORENTO SPECIAL PROMO_22052026.pdf", "document_2026_final_compressed.pdf"),
+    ("SORENTO SPECIAL PROMO_22052026.pdf", "SORENTO PP PROMO COMBINE_08072026.pdf"),
+    ("CABANA SHELF PROMO 31032026.pdf", "document_2026_final_compressed.pdf"),
+    ("_SORENTO A3 FLYER 2025-2026", None),
+    ("SUPPLY PROMO 2026.pdf", "SPECIALIST TOOLS PROMO.pdf"),
+    ("SORENTO FOCUS ITEM JULY 2026.pdf", None),
+]
+
+
+def test_migrated_rows_get_the_same_type_the_runtime_classifier_would_give():
+    """The migration mirrors the classifier, so the two must never disagree.
+
+    A migrated database and a fresh one that received the same uploads through
+    the n8n endpoint have to answer a customer identically; the mirroring is only
+    safe while something fails when it drifts.
+    """
+    module = _load_migration()
+    with blank_session() as db:
+        _run_seed(db, module)
+        promos = [
+            _promo_with_file(db, description, filename)
+            for description, filename in BACKFILL_PARITY_CASES
+        ]
+
+        module._backfill_promotion_types(db.connection())
+        db.expire_all()
+
+        for promo, (description, filename) in zip(promos, BACKFILL_PARITY_CASES):
+            migrated = db.query(Promotion).filter(Promotion.id == promo.id).one()
+            runtime = classify_promotion_type(db, description=description, filename=filename)
+            assert migrated.promotion_type.type_code == runtime.type_code, (description, filename)
+            assert migrated.promotion_type_source == "auto"
 
 
 def test_backfill_leaves_a_manual_classification_alone():  # C5 (migration half)

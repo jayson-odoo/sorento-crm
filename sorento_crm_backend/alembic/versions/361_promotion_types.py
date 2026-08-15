@@ -192,12 +192,71 @@ def _json(value) -> str:
     return json.dumps(value)
 
 
-def _backfill_promotion_types(conn):
-    """Classify the promotions already in the table from their descriptions.
+def _normalize(text):
+    """Uppercase, every non-alphanumeric run collapsed to one space.
 
-    Runs the same word-boundary marker rule the runtime classifier uses, in SQL,
-    so a fresh install and a migrated one agree. Rows a human has already typed
-    (`promotion_type_source = 'manual'`) are left alone.
+    Mirrors `app.services.promotion_classifier._normalize`. Mirrored rather than
+    imported: a migration that calls into app code classifies with whatever that
+    code says years later, not with what it said at this revision.
+    """
+    import re
+
+    if not text:
+        return ""
+    return re.sub(r"[^A-Za-z0-9]+", " ", text).upper().strip()
+
+
+def _marker_type_id(text, rows):
+    """The id of the type whose marker *text* carries, or None when it carries none.
+
+    Mirrors `promotion_classifier.match_marker_type`, including the distinction
+    that makes the two-stage rule below possible: "this name says nothing" is not
+    "this name says the default type".
+    """
+    import re
+
+    normalized = _normalize(text)
+    if not normalized:
+        return None
+    for row in rows:
+        markers = row[2] or []
+        if not isinstance(markers, list):
+            continue
+        for marker in markers:
+            if not isinstance(marker, str):
+                continue
+            marker_norm = _normalize(marker)
+            if not marker_norm:
+                continue
+            pattern = r"(?<![A-Z0-9])" + re.escape(marker_norm) + r"(?![A-Z0-9])"
+            if re.search(pattern, normalized):
+                return row[0]
+    return None
+
+
+def _classified_type_id(description, filename, rows, default_row):
+    """Filename marker, else description marker, else the default type.
+
+    Mirrors `promotion_classifier.classify_promotion_type`. A filename with no
+    marker (a re-saved, renamed or T&C document linked ahead of the flyer) must
+    not bury a marker sitting in the description: stamping a SPECIAL as standard
+    makes it usable after its end date, which is the outcome the type system
+    exists to prevent.
+    """
+    return (
+        _marker_type_id(filename, rows)
+        or _marker_type_id(description, rows)
+        or (default_row[0] if default_row else None)
+    )
+
+
+def _backfill_promotion_types(conn):
+    """Classify the promotions already in the table from their names.
+
+    Runs the same word-boundary marker rule and the same filename-then-description
+    precedence the runtime classifier uses, so a fresh install and a migrated one
+    agree. Rows a human has already typed (`promotion_type_source = 'manual'`) are
+    left alone.
     """
     rows = conn.execute(
         sa.text(
@@ -225,33 +284,8 @@ def _backfill_promotion_types(conn):
         )
     ).fetchall()
 
-    import re
-
-    def normalize(text):
-        if not text:
-            return ""
-        return re.sub(r"[^A-Za-z0-9]+", " ", text).upper().strip()
-
-    def classify(text):
-        normalized = normalize(text)
-        if normalized:
-            for row in rows:
-                markers = row[2] or []
-                if not isinstance(markers, list):
-                    continue
-                for marker in markers:
-                    if not isinstance(marker, str):
-                        continue
-                    marker_norm = normalize(marker)
-                    if not marker_norm:
-                        continue
-                    pattern = r"(?<![A-Z0-9])" + re.escape(marker_norm) + r"(?![A-Z0-9])"
-                    if re.search(pattern, normalized):
-                        return row[0]
-        return default_row[0] if default_row else None
-
     for promo_id, description, filename in promos:
-        type_id = classify(filename or description)
+        type_id = _classified_type_id(description, filename, rows, default_row)
         if type_id is None:
             continue
         conn.execute(
