@@ -254,7 +254,8 @@ describe('IntakeScreen', () => {
     });
 
     renderScreen();
-    expect(await screen.findByText(/1 people submitted for review/)).toBeInTheDocument();
+    // "1 person", not "1 people": one name on the sheet is an ordinary batch.
+    expect(await screen.findByText(/1 person submitted for review/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Submit for review/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Add a person/ })).not.toBeInTheDocument();
     // Her rows are still on screen - the link is a status page, not a dead end.

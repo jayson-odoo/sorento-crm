@@ -106,7 +106,9 @@ export function IntakeScreen({ token }: { token: string }) {
     onSuccess: (result) => {
       setPeople(result.people);
       setSubmitted(true);
-      toast.success(`${result.people.length} people submitted for review.`);
+      toast.success(
+        `${result.people.length} ${people_(result.people.length)} submitted for review.`,
+      );
     },
     onError: (e) => toast.error(e.message),
   });
@@ -169,7 +171,9 @@ export function IntakeScreen({ token }: { token: string }) {
       {!editable ? (
         <Alert>
           <AlertIcon />
-          <AlertTitle>{rows.length} people submitted for review.</AlertTitle>
+          <AlertTitle>
+            {rows.length} {people_(rows.length)} submitted for review.
+          </AlertTitle>
         </Alert>
       ) : (
         <Card>
