@@ -170,8 +170,9 @@ Quotation is won. Real money arriving.
 
 > ⚠ Not the same thing as `purchase_orders`, which is the **outgoing** SCM supply PO issued
 > to a supplier and is wired into on-order supply maths. A Project PO lives in
-> `project_purchase_orders`. The UI says "PO" for both because that is the client's word;
-> the tables must never merge.
+> `projects.purchase_orders`. The UI says "PO" for both because that is the client's word;
+> the tables must never merge. Same bare name, two schemas, two different things
+> (ADR-0002, ADR-0011).
 
 Validation against the bound Quotation Version: model must match, unit price must match the
 initial quotation, quantity may differ freely, and the issuing party need not be whoever was

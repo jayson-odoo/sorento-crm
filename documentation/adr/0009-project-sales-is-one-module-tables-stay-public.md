@@ -1,7 +1,14 @@
 # 9. Project Sales is one module; its tables stay in public
 
 Date: 2026-08-13
-Status: accepted
+Status: accepted; superseded in part by ADR-0011
+
+> **The schema clause below is superseded.** On 2026-08-15 the client reversed it: the 47
+> tables move into a dedicated `projects` Postgres schema and drop the `project_` prefix. See
+> [ADR-0011](0011-project-sales-tables-live-in-the-projects-schema.md). Everything else in
+> this ADR stands - Project Sales is still ONE module keyed `projects`, the two core-to-module
+> foreign keys are still accepted as named, ownership is still declared by the module's model
+> files, and purge is still a row-level delete that never issues `DROP SCHEMA`.
 
 ## Context
 
@@ -56,7 +63,8 @@ That is the deliberate price of a reportable link instead of a typed-in project 
   `customer_item_code_map`, `quotation_templates`, `quotation_signatures`, `price_floor_rules`.
   Reading the prefix as the membership test would leave all 12 out of an uninstall, which is
   why `tests/test_projects_module_purge_invariants.py` derives the purge list from the model
-  files instead.
+  files instead. (ADR-0011 drops the prefix entirely: the `projects` schema is now the
+  ownership marker. The model files remain the membership test.)
 - **Purge deletes across ALL companies.** The company-scope filter is injected into SELECTs
   only, so the `DELETE FROM <table>` each purge step issues is not partitioned by company.
   That is correct for what uninstall means today - a tenant-wide removal of the module - and
@@ -64,4 +72,5 @@ That is the deliberate price of a reportable link instead of a typed-in project 
   exist. Making uninstall per-company would mean adding an explicit company predicate to every
   statement in the handler, and deciding what to do with rows shared across companies.
 - Reopening the schema question later means a data migration on live rows, and it has to be
-  argued as one.
+  argued as one. (It was reopened on 2026-08-15 and argued as one, while production still had
+  zero project rows: ADR-0011.)

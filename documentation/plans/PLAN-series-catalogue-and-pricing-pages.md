@@ -1,5 +1,13 @@
 # PLAN - Series catalogue and pricing, as pages
 
+> **Table names in this document predate the schema move.** On 2026-08-15 the projects
+> module's 47 tables moved into a dedicated `projects` Postgres schema and the 34 that
+> carried a `project_` prefix dropped it: `project_leads` is now `projects.leads`,
+> `project_quotation_lines` is `projects.quotation_lines`, and so on. The 13 unprefixed
+> ones only changed schema. Nothing else in this document changes. See
+> [ADR-0011](../adr/0011-project-sales-tables-live-in-the-projects-schema.md) and
+> `documentation/plans/PLAN-projects-schema-move.md` for the full mapping.
+
 **Status:** written 2026-08-10, approved and **T1-T7 implemented the same day**.
 
 ## T7 - the 2026-08-10 review round

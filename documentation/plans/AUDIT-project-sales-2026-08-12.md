@@ -1,5 +1,13 @@
 # AUDIT - Project Sales vs the Sorento Process Flow spec
 
+> **Table names in this document predate the schema move.** On 2026-08-15 the projects
+> module's 47 tables moved into a dedicated `projects` Postgres schema and the 34 that
+> carried a `project_` prefix dropped it: `project_leads` is now `projects.leads`,
+> `project_quotation_lines` is `projects.quotation_lines`, and so on. The 13 unprefixed
+> ones only changed schema. Nothing else in this document changes. See
+> [ADR-0011](../adr/0011-project-sales-tables-live-in-the-projects-schema.md) and
+> `documentation/plans/PLAN-projects-schema-move.md` for the full mapping.
+
 **Date:** 2026-08-12. **Auditor:** Fable, at the client's request, after the main merge.
 **Inputs:** `Sorento Project Management Process Flow.pdf` (6 pages, read in full),
 `products template( sanitaryware).xlsx`, `Cabana Elmina- nadi cergas R2.xlsx`, the code on

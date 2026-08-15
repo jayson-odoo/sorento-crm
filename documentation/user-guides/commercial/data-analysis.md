@@ -62,7 +62,7 @@ The delivery container under a lead; owned by a **developer** customer and group
 | `title` | Project title. |
 | `developer_customer_id` → customer | The developer (required). |
 | `owner_user_id`, `project_owner_user_ids` (JSON) | Owner + additional owners. |
-| `lead_id` (+ linked `project_leads`) | Originating lead and any additionally linked leads. |
+| `lead_id` (+ linked `projects.leads`) | Originating lead and any additionally linked leads. |
 | `project_stage_id` → stage | Project workflow stage (shown as **Status**). |
 | `status` | Free-text lifecycle string (default `active`). |
 | address fields | `address_line_1/2`, `postcode`, `city`, `state`, `country`. |

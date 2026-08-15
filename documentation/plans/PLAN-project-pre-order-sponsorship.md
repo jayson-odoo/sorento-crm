@@ -1,5 +1,13 @@
 # PLAN - Pre-order and sponsorship paths (slice P12, module `projects`)
 
+> **Table names in this document predate the schema move.** On 2026-08-15 the projects
+> module's 47 tables moved into a dedicated `projects` Postgres schema and the 34 that
+> carried a `project_` prefix dropped it: `project_leads` is now `projects.leads`,
+> `project_quotation_lines` is `projects.quotation_lines`, and so on. The 13 unprefixed
+> ones only changed schema. Nothing else in this document changes. See
+> [ADR-0011](../adr/0011-project-sales-tables-live-in-the-projects-schema.md) and
+> `documentation/plans/PLAN-projects-schema-move.md` for the full mapping.
+
 **Status:** Decisions D26-D29 answered by the client 2026-08-03 (section 4). **Group J is out
 of scope: no pre-order sales order.** Scope is now Group K only: AC-K4 pinned, AC-K5 built in
 phase 1, AC-K1/K2/K3 are the build.

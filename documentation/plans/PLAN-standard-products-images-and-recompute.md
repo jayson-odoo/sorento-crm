@@ -1,5 +1,13 @@
 # PLAN - Standard products by list, quotation images, recompute, and stranded extractions
 
+> **Table names in this document predate the schema move.** On 2026-08-15 the projects
+> module's 47 tables moved into a dedicated `projects` Postgres schema and the 34 that
+> carried a `project_` prefix dropped it: `project_leads` is now `projects.leads`,
+> `project_quotation_lines` is `projects.quotation_lines`, and so on. The 13 unprefixed
+> ones only changed schema. Nothing else in this document changes. See
+> [ADR-0011](../adr/0011-project-sales-tables-live-in-the-projects-schema.md) and
+> `documentation/plans/PLAN-projects-schema-move.md` for the full mapping.
+
 **Status:** written 2026-08-08. **All four slices implemented.** S18 and S19 on 2026-08-08
 (migration `331_project_series_products`, applied to the shared dev DB via an Operations
 context). S21 on 2026-08-08. S20 on 2026-08-08 (migration `332_extraction_job_tracking`),

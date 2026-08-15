@@ -1,5 +1,13 @@
 # UAC - Lead to Sales Order (module `projects`, phase 2)
 
+> **Table names in this document predate the schema move.** On 2026-08-15 the projects
+> module's 47 tables moved into a dedicated `projects` Postgres schema and the 34 that
+> carried a `project_` prefix dropped it: `project_leads` is now `projects.leads`,
+> `project_quotation_lines` is `projects.quotation_lines`, and so on. The 13 unprefixed
+> ones only changed schema. Nothing else in this document changes. See
+> [ADR-0011](../adr/0011-project-sales-tables-live-in-the-projects-schema.md) and
+> `documentation/plans/PLAN-projects-schema-move.md` for the full mapping.
+
 **Status:** Groups A-G and M ACCEPTED against the client's own artefacts (2026-08-02/03).
 Groups H, I, J, K and N remain unbuilt, matching the slices deferred in PLAN section 4.
 Grilled 2026-08-01 against the client's own artefacts.

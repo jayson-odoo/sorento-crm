@@ -191,7 +191,7 @@ engine by repointing pool membership on the warehouse screen. No code change, no
 
 **AC-B1b** Each demand line resolves against a source preference: its own customer bin, then the
 same-site shared pool, then another customer's bin behind an allocation claim, then a purchase.
-These are the existing `so_line_allocations.source_type` values `own`, `brw`, `other_project`,
+These are the existing `projects.so_line_allocations.source_type` values `own`, `brw`, `other_project`,
 `order`.
 
 **AC-B1c** A purchase is recommended only when no existing source covers the line. The regression

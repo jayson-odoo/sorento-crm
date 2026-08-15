@@ -1,5 +1,13 @@
 # PLAN - Divergence reconciliation (slice P8a, module `projects`)
 
+> **Table names in this document predate the schema move.** On 2026-08-15 the projects
+> module's 47 tables moved into a dedicated `projects` Postgres schema and the 34 that
+> carried a `project_` prefix dropped it: `project_leads` is now `projects.leads`,
+> `project_quotation_lines` is `projects.quotation_lines`, and so on. The 13 unprefixed
+> ones only changed schema. Nothing else in this document changes. See
+> [ADR-0011](../adr/0011-project-sales-tables-live-in-the-projects-schema.md) and
+> `documentation/plans/PLAN-projects-schema-move.md` for the full mapping.
+
 **Status:** In build, 2026-08-03. Slice P8a of `PLAN-project-lead-to-so.md`.
 **Acceptance criteria:** `UAC-project-lead-to-so.md` Group N (AC-N1..N7), plus AC-F11 and
 AC-F11a, which turn out to be unbuilt: `project_sales_orders.autocount_doc_no` and `.so_id`

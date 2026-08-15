@@ -15,6 +15,16 @@ present and the new one is not", so this revision no-ops on CI and does the work
 development database. Postgres renames neither indexes nor constraints along with the
 table, so each one is renamed explicitly or the next autogenerate would try to fix it.
 
+**Superseded as a convention by 354** (ADR-0011): the client reversed the schema clause of
+ADR-0009 two days later, so the module's tables now live in a `projects` schema and the
+`project_` prefix this revision applied is dropped again there - `project_order_inquiries`
+becomes `projects.order_inquiries`. This revision is nonetheless still correct and stays
+exactly as it is: it ran when the tables were in the default schema, which is true at the
+moment it executes, and it is what made the shared development database and a fresh one
+agree on a single name before 354 moved them. Rewriting it would be the expensive kind of
+change ADR-0009 warned about, and 354 would then have two different starting names to
+guard against instead of one.
+
 Revision ID: 353_project_order_inquiry_rename
 Revises: dcb151730340
 """
