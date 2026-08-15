@@ -224,7 +224,12 @@ def embed_products_inline(product_ids: set[str]) -> None:
                 for product_id in sorted(product_ids):
                     try:
                         enqueue_spec_embedding(db, product_id)
-                    except Exception:  # pragma: no cover - defensive by design
+                    except Exception:  # pragma: no cover - backstop, see below
+                        # `enqueue_spec_embedding` already swallows its own failures, so
+                        # nothing should arrive here. It is caught anyway because the
+                        # cost of being wrong is the rest of the batch: this loop is the
+                        # only thing standing between one bad id and every other
+                        # product's index entry staying stale.
                         logger.warning(
                             "spec embedding enqueue failed for %s", product_id, exc_info=True
                         )

@@ -233,6 +233,74 @@ def test_a_spec_row_with_no_sentence_queues_nothing(db):
 
 
 # --------------------------------------------------------------------------- #
+# S3 - containment. A post-commit side effect that raises would 500 an operation
+# that already succeeded, and the retry takes the idempotent path without ever
+# backfilling the work it missed.
+# --------------------------------------------------------------------------- #
+def _three_derived_products(db, stem: str) -> list[str]:
+    ids = []
+    for index in range(3):
+        code = f"ZZT-EP-{stem}-{index}"
+        ids.append(_product(db, code).id)
+        derive_for_code(db, code)
+    return sorted(ids)
+
+
+def test_a_failing_enqueue_neither_fails_the_commit_nor_loses_the_others(db, monkeypatch):
+    """AC3. The write that triggered this has already committed, so the only thing
+    left to decide is whether the caller hears about a failure they cannot act on."""
+    ids = _three_derived_products(db, "BOOM")
+    doomed = ids[0]
+    original = embedding_service.EmbeddingEventService.queue_event
+
+    def _boom_for_one(self, *, source_id, **kwargs):
+        if source_id == doomed:
+            raise RuntimeError("simulated queue_event failure")
+        return original(self, source_id=source_id, **kwargs)
+
+    monkeypatch.setattr(embedding_service.EmbeddingEventService, "queue_event", _boom_for_one)
+
+    db.commit()  # must not raise
+
+    assert _queued_ids(db) == ids[1:], "one id failing must not take the rest of the batch with it"
+
+
+def test_a_half_written_enqueue_is_discarded_rather_than_carried(db, monkeypatch):
+    """`queue_event` adds and flushes before it can fail, and the drain reuses one
+    session for the batch. Without the rollback between products, that half-finished
+    row would be committed by the NEXT product's `queue_event` - a queue row with no
+    RQ job behind it, which nothing would ever process or clean up. The doomed id is
+    the FIRST in the drain's order so there is a later commit to carry it."""
+    ids = _three_derived_products(db, "HALF")
+    doomed = ids[0]
+    original = embedding_service.EmbeddingEventService.queue_event
+
+    def _flush_then_boom(self, *, source_type, source_id, event_type, **kwargs):
+        if source_id == doomed:
+            self.db.add(
+                EmbeddingQueue(
+                    source_type=source_type,
+                    source_id=source_id,
+                    event_type=event_type,
+                    event_version=1,
+                    payload={},
+                    status="pending",
+                )
+            )
+            self.db.flush()
+            raise RuntimeError("simulated failure after the flush")
+        return original(
+            self, source_type=source_type, source_id=source_id, event_type=event_type, **kwargs
+        )
+
+    monkeypatch.setattr(embedding_service.EmbeddingEventService, "queue_event", _flush_then_boom)
+
+    db.commit()
+
+    assert _queued_ids(db) == ids[1:]
+
+
+# --------------------------------------------------------------------------- #
 # S2 - the volume split, mirroring the re-derive twin in
 # tests/test_product_spec_change_listener.py
 # --------------------------------------------------------------------------- #
@@ -359,7 +427,7 @@ def test_the_task_enqueues_in_chunks(monkeypatch):
     assert sessions == [1, 1, 1], "10 ids at a chunk of 4 is three chunks, so three sessions"
     assert len(enqueued) == 10, "chunking must not lose an id"
     assert result["products"] == 10
-    assert result["queued"] == 10
+    assert result["attempted"] == 10
 
 
 def test_the_task_does_not_let_one_bad_id_lose_the_rest(monkeypatch):
@@ -389,7 +457,7 @@ def test_the_task_does_not_let_one_bad_id_lose_the_rest(monkeypatch):
     )
 
     assert len(enqueued) == 4
-    assert result["queued"] == 4
+    assert result["attempted"] == 4
     assert result["failed"] == 1
 
 

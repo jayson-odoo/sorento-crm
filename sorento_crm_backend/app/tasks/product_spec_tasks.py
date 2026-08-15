@@ -63,6 +63,10 @@ def enqueue_spec_embeddings(
     Best-effort per id, like everything else on this path: one product whose enqueue
     fails is reported in the result and does not take the rest of the batch with it.
     `run_label` is only for log correlation.
+
+    `attempted` is deliberately not called "queued": `enqueue_spec_embedding` is
+    best-effort by design and skips a row with no sentence without saying so, so this
+    counts calls that did not raise, not queue rows written.
     """
     ids = [str(product_id) for product_id in (product_ids or [])]
     logger.info(
@@ -72,7 +76,7 @@ def enqueue_spec_embeddings(
         run_label,
     )
 
-    queued = failed = 0
+    attempted = failed = 0
     for start in range(0, len(ids), max(1, chunk_size)):
         with SessionLocal() as db:
             # None = every company, exactly as the embedding worker runs: a spec row
@@ -81,7 +85,7 @@ def enqueue_spec_embeddings(
                 for product_id in ids[start : start + max(1, chunk_size)]:
                     try:
                         enqueue_spec_embedding(db, product_id)
-                        queued += 1
+                        attempted += 1
                     except Exception:
                         failed += 1
                         logger.warning(
@@ -93,7 +97,7 @@ def enqueue_spec_embeddings(
                         # next product's commit.
                         db.rollback()
 
-    result = {"products": len(ids), "queued": queued, "failed": failed}
+    result = {"products": len(ids), "attempted": attempted, "failed": failed}
     logger.info("spec embedding enqueue finished: %s run=%s", result, run_label)
     return result
 
