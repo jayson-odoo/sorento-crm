@@ -250,3 +250,77 @@ Code review of 90f922af8..5357442d7 raised ten gaps. All ten are fixed test-firs
 
 Regression at the time of the fix (the twelve feature files plus the new one):
 **253 passed, 1 skipped, 0 failed.**
+
+## Contract corrections (post-merge, measured by the n8n lane)
+
+Four statements about this endpoint's wire contract that the n8n renderer was written
+against and that were wrong, or too thin to build on. Each is what the code does today.
+Correction 4 changes the wire (the new `spec_top_score`); 1 to 3 correct the description,
+not the behaviour.
+
+### 1. `class` and `brand` are rendered VERBATIM, never humanised
+
+The earlier note said an enum token could be humanised blind - underscore to space, title
+case - for every key. That is true of every key EXCEPT `class` and `brand`. Their values
+are human labels the catalogue already owns: `Kitchen Sink`, `SORENTO`, `BRAVAT`,
+`NO LOGO`, `American Standard`. Humanised blind they come out as "Sorento" and "No Logo",
+a different spelling of the brand from the one every other surface shows.
+
+The corrected rule, in three lines:
+
+- `class` - render verbatim.
+- `brand` - render verbatim.
+- every other enum value matches `^[a-z0-9]+(_[a-z0-9]+)*$` and is safe to humanise blind.
+
+Those are exactly the two keys the write-path token-format pin exempts, for the same
+reason (`tests/test_spec_values_on_rows.py::test_every_enum_token_is_lowercase_underscore_separated`,
+PR #160). And the CRM will not normalise catalogue brand spelling on its way to the wire:
+those strings are the `brands` table's own, and rewriting them for the renderer would make
+the CRM disagree with every other surface that shows a brand.
+
+### 2. The canonical carrier is `resolutions[].matches[]`, not `spec_candidates`
+
+Build on `resolutions[].matches[]` where `match_tier == "spec_search"` (plus `intersection`
+and `by_entity_type` in the AND shape). Top-level `spec_candidates` is a mirror of the
+ranker's own view, kept for inspection; it is not the surface to build on.
+
+`_emit_spec_matches` already records why: `spec_candidates` alone was a dead end, because
+every existing consumer - the n8n spine's resolve-entity, and get-results behind it -
+reads `resolutions[].matches`, found nothing there, and treated the turn as unresolved.
+Describing a product well enough to find it only counts if the thing that asks can then
+use it.
+
+### 3. `preferred_specs` is always present on a spec_search match, and absent means empty
+
+Every `match_tier: "spec_search"` row's `display` carries `preferred_specs`, defaulting to
+`[]` (`candidate.get("preferred_specs", [])` in `_emit_spec_matches`). If the key is absent
+from a response, that response contained no spec_search matches at all. A consumer should
+treat absent as empty; a spec_search row with no `preferred_specs` key is a defect, not a
+shape to code around.
+
+It is a separate channel from `matched_specs` on purpose: a renderer reading "matched:
+brand" cannot tell "you asked for Sorento" from "we like Sorento", and told the customer
+they had asked for something they never said.
+
+### 4. `floor_missed` semantics, and the new `spec_top_score`
+
+`floor_missed` is true when nothing survived scoring OR when the best EVIDENCE is below the
+relevance floor, and when it is true the candidate list is emptied. Evidence deliberately
+excludes the house preference: measured on the total, a standing brand preference of 8.0
+sat above a floor of 1.5 on its own, so the answer to "is there anything here" was
+permanently yes and a greeting came back as five arbitrary products.
+
+Because the bool collapses those two cases into one answer, and empties the list that
+would otherwise show the difference, `spec_top_score` (this branch) carries the evidence
+quantity itself:
+
+- `0.0` on a true-zero turn - nothing scored, so there is nothing to be near;
+- non-zero when candidates existed and none cleared the floor.
+
+A consumer can then separate "there is nothing" from "nothing cleared the bar" and word
+the two turns differently, instead of printing the near-miss sentence on a turn where
+there were no misses to be near. It is the evidence and never the total (`top_score`,
+which is unchanged and still carries the preference), so a product riding a house
+preference alone reports `0.0`. Pinned at the endpoint in
+`tests/test_resolve_raw_text.py`, including the preference-only case, because a later
+refactor swapping the total back in would otherwise pass every other test in that file.
