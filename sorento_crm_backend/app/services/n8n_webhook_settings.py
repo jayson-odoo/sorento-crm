@@ -77,6 +77,22 @@ def crm_webhook_auth_headers() -> dict[str, str]:
     return {CRM_WEBHOOK_SECRET_HEADER: secret}
 
 
+def get_n8n_close_convo_webhook_url() -> str:
+    """Direct ``respond-close-convo`` webhook the CRM calls on a resolve (AC-M3).
+
+    Env / settings only, same family as the shared secret: it is deployment
+    wiring for a specific n8n workflow, not an operator-editable business
+    setting. An empty value means "not wired yet" and the caller skips the call
+    with a warning - a resolve must never depend on it.
+    """
+    from app.config import settings
+
+    configured = (getattr(settings, "n8n_close_convo_webhook_url", None) or "").strip()
+    if not configured:
+        configured = os.getenv("N8N_CLOSE_CONVO_WEBHOOK_URL", "").strip()
+    return _normalize_webhook_url(configured) if configured else ""
+
+
 def get_n8n_stock_inquiry_revise_webhook_url(db: Session) -> str:
     """Public stock inquiry revise requests: system_settings only (no env default)."""
     row = db.query(SystemSetting).first()

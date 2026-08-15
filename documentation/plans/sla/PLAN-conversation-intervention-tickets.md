@@ -278,6 +278,94 @@ a dependency, behind `next/dynamic` with `ssr: false`.
   literal-"undefined" resolved_by risk by construction.
 - AC-M4 DECIDED: keep the contact-facing close message, gated on no-open-tickets.
 
+Built 2026-08-15 (code + tests; awaiting tester/review). **As-built wire contract -
+the n8n peer builds the receiving lane from THIS text.**
+
+- **Trigger URL**: backend env `N8N_CLOSE_CONVO_WEBHOOK_URL` (settings field
+  `n8n_close_convo_webhook_url`, env fallback; NOT a `system_settings` column - it is
+  deployment wiring, same family as the secret). Unset = the call is skipped with a
+  warning and the resolve is unaffected.
+- **Method / headers**: `POST`, `Content-Type: application/json`, plus
+  `X-CRM-Webhook-Secret: <N8N_CRM_WEBHOOK_SECRET>` - the SAME secret machinery as S4.1
+  (AC-J6): resolved at send time, never persisted on the log row, absent (with a
+  warning) when the env is unset so the n8n gate stays closed rather than the resolve
+  being blocked.
+- **When**: post-commit on a CRM resolve of a CONVERSATION-scope tracker, gated on
+  "the contact has no other OPEN conversation-scope ticket" (the same
+  `_has_other_open_conversation_siblings` gate the pre-existing RQ Respond close
+  uses). Form-SLA rows never fire it. An already-resolved re-resolve short-circuits
+  before it, so a retry cannot re-announce a close. Best-effort: any failure logs and
+  never fails the resolve.
+- **Body** (a single JSON OBJECT, not an array - this lane is ours, not a Respond
+  webhook mirror):
+
+  ```json
+  {
+    "event": "ticket_resolved",
+    "event_id": "<uuid5(NAMESPACE_URL, '<tracking_id>:<resolved_at>')>",
+    "source": "User",
+    "closedBySource": "crm",
+    "tracking_id": "<conversation_sla_tracking.id>",
+    "contact": { "respond_io_id": "10025531", "phone": "+60123456789" },
+    "resolved_by": {
+      "respond_user_id": "971724",
+      "crm_user_id": "<users.id>",
+      "name": "Agent One",
+      "display_name": "Agent One"
+    },
+    "resolved_at": "2026-08-15T09:00:00Z",
+    "team_name": "Customer Service - Tier 1",
+    "category": "Resolved",
+    "summary": "Resolved from Sorento CRM SLA tracking.",
+    "open_ticket_count": 0,
+    "crm": { "business_table": "conversation_sla_tracking", "business_id": "<tracking_id>" }
+  }
+  ```
+
+  - `event_id` is the idempotency key (hardening 1): identical across retries of the
+    same resolve. The n8n lane must be safe to receive it twice.
+  - `closedBySource` is a closed enum (`"crm" | "user" | "api"`); the CRM only ever
+    emits `"crm"`. The Respond-trigger lane's gate fails CLOSED on unknown values
+    (hardening 2).
+  - `resolved_by.respond_user_id` is `null` when the CRM user has no Respond mapping,
+    or when the mapping was filled with a CRM `users.id` UUID (never leaked as a
+    Respond user id). `display_name` is ALWAYS a readable string for the
+    contact-facing message: resolver name -> team name -> `"Customer Service"`
+    (hardening 3). `team_name` is snapshotted BEFORE the resolve blanks
+    `agent_id` / `team_set_code`.
+  - `resolved_at` is aware UTC ISO-8601 with `Z` (transport clock, not a domain naive
+    datetime).
+- **Outbox**: every attempt writes an `integration_log` with
+  `integration_channel = "n8n_crm_close_convo"`, `business_table =
+  "conversation_sla_tracking"`, `business_id = <tracking_id>`,
+  `external_reference = <respond_io_id>`. Delivered = `sent`; a transport failure
+  parks it back on `pending` with `error_message` + `next_retry_at` (shared
+  `IntegrationLogService` vocabulary).
+- The pre-existing best-effort RQ Respond conversation-close job is UNCHANGED and
+  still fires on the same gate: the webhook is additive (transport tidy-up stays,
+  the flow signal is new).
+
+Deviations from the bullets above, and why:
+
+1. **The "recently resolved" filter keys on `resolved_by`, not the assignee.** A
+   conversation resolve NULLs `assigned_to` / `assigned_to_id` by design, so an
+   assignee-filtered "what I resolved" link returns an empty list (pinned by test).
+   The listing gained three server-side params instead:
+   `contact` (Respond.io id / CRM respond_contacts.id / phone, resolved through the
+   existing `resolve_internal_respond_contact_id`), `is_resolved` (bool) and
+   `resolved_by` (users.id / respond_user_id / email / the literal `me`, expanded to
+   the caller in the route so no UUID rides in a user-visible URL). All three also
+   feed `/neighbours`, so the detail pager walks the same filtered set. An
+   unresolvable `contact` or `resolved_by` returns an EMPTY set, never the unfiltered
+   one.
+2. **No "today" boundary on the widget link.** It is `is_resolved=true&resolved_by=me`
+   sorted `resolved_at desc`, so the most recent resolution is the first row. A hard
+   day boundary would hide a ticket resolved at 23:50 the moment the clock rolls, for
+   no gain over ordering.
+3. **The drawer's "View history" carries the Respond.io contact id** (phone as the
+   fallback), never the CRM `respond_contacts.id` UUID - the drawer already holds the
+   former, and a UUID in a visible URL is what the no-UUIDs rule forbids.
+
 ### S4.6 Inbound quote rendering (UAC L6) [FE coder]
 
 - `message.received` webhook `replyTo` object -> ingest stores quoted context -> thread

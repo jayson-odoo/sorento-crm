@@ -47,6 +47,11 @@ export type ConversationSLATrackingListParams = DataGridApiFetchParams & {
   policy_id?: string;
   status?: string;
   assigned_to?: string;
+  /** AC-M2 history links. Respond.io contact id / phone - never the CRM UUID. */
+  contact?: string;
+  is_resolved?: boolean;
+  /** users.id, respond_user_id, email, or the literal 'me' (expanded server-side). */
+  resolved_by?: string;
 };
 
 /**
@@ -68,7 +73,18 @@ export const CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH =
   '/api/v1/sla-management/conversation-sla-tracking/neighbours';
 
 export async function getConversationSLATracking(params: ConversationSLATrackingListParams): Promise<DataGridApiResponse<ConversationSLATracking>> {
-  const { pageIndex, pageSize, sorting, searchQuery, policy_id, status, assigned_to } = params;
+  const {
+    pageIndex,
+    pageSize,
+    sorting,
+    searchQuery,
+    policy_id,
+    status,
+    assigned_to,
+    contact,
+    is_resolved,
+    resolved_by,
+  } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -79,6 +95,9 @@ export async function getConversationSLATracking(params: ConversationSLATracking
     ...(policy_id ? { policy_id } : {}),
     ...(status ? { status } : {}),
     ...(assigned_to ? { assigned_to } : {}),
+    ...(contact ? { contact } : {}),
+    ...(is_resolved !== undefined ? { is_resolved: String(is_resolved) } : {}),
+    ...(resolved_by ? { resolved_by } : {}),
   });
   const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch conversation SLA tracking');

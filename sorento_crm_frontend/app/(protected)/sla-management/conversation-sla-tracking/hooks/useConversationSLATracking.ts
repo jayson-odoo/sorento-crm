@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { buildDataGridParams } from '@/lib/api-client';
 import {
   useRecordNeighbours,
@@ -38,6 +37,12 @@ export function useConversationSLATrackingNeighbours(
   const params = buildDataGridParams(listParams, {
     policy_id: listParams.policy_id,
     assigned_to: listParams.assigned_to,
+    // AC-M2: the pager must walk the same pre-filtered history set the user
+    // landed on, or "next" silently leaves it.
+    contact: listParams.contact,
+    is_resolved:
+      listParams.is_resolved === undefined ? undefined : String(listParams.is_resolved),
+    resolved_by: listParams.resolved_by,
   });
   return useRecordNeighbours(
     CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH,
@@ -46,9 +51,23 @@ export function useConversationSLATrackingNeighbours(
   );
 }
 
-export function useConversationSLATracking(params: DataGridApiFetchParams & { policy_id?: string; status?: string; assigned_to?: string }) {
+export function useConversationSLATracking(params: ConversationSLATrackingListParams) {
   return useQuery({
-    queryKey: ['conversation-sla-tracking', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.policy_id, params.status, params.assigned_to],
+    queryKey: [
+      'conversation-sla-tracking',
+      params.pageIndex,
+      params.pageSize,
+      params.sorting,
+      params.searchQuery,
+      params.policy_id,
+      params.status,
+      params.assigned_to,
+      // AC-M2 deep-link filters: part of the key, or a "View history" landing
+      // renders the previously cached unfiltered page.
+      params.contact,
+      params.is_resolved,
+      params.resolved_by,
+    ],
     queryFn: () => getConversationSLATracking(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

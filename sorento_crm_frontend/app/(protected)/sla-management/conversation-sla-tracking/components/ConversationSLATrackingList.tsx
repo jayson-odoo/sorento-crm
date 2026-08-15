@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -35,12 +35,31 @@ import type { ConversationSLATracking } from '../types/conversationSLATracking.t
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import { apiFetch } from '@/lib/api';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { CONVERSATION_SLA_TRACKING_PATH } from '../lib/historyLinks';
 
 export default function ConversationSLATrackingList() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  // AC-M2 history deep links: the drawer's "View history" (one contact) and the
+  // worklist's "Recently resolved" (what I resolved) land here pre-filtered. The
+  // filters are applied by the SAME server-side list query as every other filter
+  // - nothing is sliced in the browser.
+  const searchParams = useSearchParams();
+  const contactFilter = searchParams.get('contact') ?? undefined;
+  const resolvedParam = searchParams.get('is_resolved');
+  const resolvedFilter =
+    resolvedParam === 'true' ? true : resolvedParam === 'false' ? false : undefined;
+  const resolvedByFilter = searchParams.get('resolved_by') ?? undefined;
+  const sortParam = searchParams.get('sort');
+  const dirParam = searchParams.get('dir');
+  const hasDeepLinkFilters = Boolean(contactFilter || resolvedParam || resolvedByFilter);
+
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
+  const [sorting, setSorting] = useState<SortingState>(
+    sortParam
+      ? [{ id: sortParam, desc: (dirParam ?? 'desc') !== 'asc' }]
+      : [{ id: 'created_at', desc: true }],
+  );
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
     agent_code: false,
     team_set_code: false,
@@ -51,7 +70,7 @@ export default function ConversationSLATrackingList() {
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [searchQuery, assignedToFilter]);
+  }, [searchQuery, assignedToFilter, contactFilter, resolvedParam, resolvedByFilter]);
 
   const { data, isLoading, isFetching } = useConversationSLATracking({
     pageIndex: pagination.pageIndex,
@@ -59,6 +78,9 @@ export default function ConversationSLATrackingList() {
     sorting,
     searchQuery,
     assigned_to: assignedToFilter && assignedToFilter !== '__all__' ? assignedToFilter : undefined,
+    contact: contactFilter,
+    is_resolved: resolvedFilter,
+    resolved_by: resolvedByFilter,
   });
 
   const { data: respondUsers } = useQuery({
@@ -96,6 +118,9 @@ export default function ConversationSLATrackingList() {
           assignedToFilter && assignedToFilter !== '__all__'
             ? assignedToFilter
             : undefined,
+        contact: contactFilter,
+        is_resolved: resolvedParam ?? undefined,
+        resolved_by: resolvedByFilter,
       },
     );
     router.push(
@@ -471,11 +496,34 @@ export default function ConversationSLATrackingList() {
     manualFiltering: true,
   });
 
-  const hasActiveFilters = Boolean(assignedToFilter && assignedToFilter !== '__all__');
+  const hasAssigneeFilter = Boolean(assignedToFilter && assignedToFilter !== '__all__');
+  const hasActiveFilters = hasAssigneeFilter || hasDeepLinkFilters;
+  const activeFilterCount =
+    (hasAssigneeFilter ? 1 : 0) +
+    (contactFilter ? 1 : 0) +
+    (resolvedParam ? 1 : 0) +
+    (resolvedByFilter ? 1 : 0);
+
+  // The deep-link filters are not represented in the filter popover, so say them
+  // out loud: a listing that is silently showing a subset is a listing nobody can
+  // trust. The contact is named from the rows when there are any; the raw ref is
+  // an id or a phone, which is what the link had to carry.
+  const deepLinkSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (contactFilter) {
+      const name = data?.data?.[0]?.contact_name || data?.data?.[0]?.contact_phone;
+      parts.push(name ? `Contact: ${name}` : 'One contact');
+    }
+    if (resolvedParam === 'true') parts.push('Resolved only');
+    if (resolvedParam === 'false') parts.push('Open only');
+    if (resolvedByFilter) parts.push(resolvedByFilter === 'me' ? 'Resolved by you' : 'One resolver');
+    return parts.join(' · ');
+  }, [contactFilter, resolvedParam, resolvedByFilter, data]);
 
   const handleClearFilters = () => {
     setAssignedToFilter('__all__');
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+    if (hasDeepLinkFilters) router.replace(CONVERSATION_SLA_TRACKING_PATH, { scroll: false });
   };
 
   return (
@@ -518,7 +566,7 @@ export default function ConversationSLATrackingList() {
             filters={{
               kind: 'custom',
               active: hasActiveFilters,
-              activeCount: hasActiveFilters ? 1 : 0,
+              activeCount: activeFilterCount,
               content: (
                 <div className="space-y-3">
                   <h4 className="font-medium text-sm">Filters</h4>
@@ -550,6 +598,24 @@ export default function ConversationSLATrackingList() {
             onRefresh={handleRefresh}
             isRefreshing={isFetching && !isLoading}
           />
+          {hasDeepLinkFilters && (
+            <div
+              data-testid="history-filter-summary"
+              className="mt-3 flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-xs"
+            >
+              <span className="text-muted-foreground">Showing</span>
+              <span className="font-medium">{deepLinkSummary}</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ms-auto h-6"
+                onClick={handleClearFilters}
+              >
+                <X className="size-3.5" />
+                Show all
+              </Button>
+            </div>
+          )}
         </CardHeader>
         <CardTable>
           <ScrollArea>

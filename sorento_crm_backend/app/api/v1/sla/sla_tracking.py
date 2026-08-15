@@ -116,6 +116,24 @@ class TicketAIDraftBody(BaseModel):
     )
 
 
+def _resolved_by_param(value: Optional[str], current_user: dict) -> Optional[str]:
+    """Expand the ``resolved_by=me`` sentinel to the caller's users.id (AC-M2).
+
+    The widget's "Recently resolved" link is "what I resolved", and a UUID in a
+    URL the user can see is exactly what the no-UUIDs-in-the-UI rule forbids.
+    Anything else is passed through untouched (users.id / respond_user_id / email).
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if raw.lower() != "me":
+        return raw
+    uid = (current_user or {}).get("id")
+    # An api-key principal with no acting user has no "me": filter to nothing
+    # rather than silently widening to everyone's resolutions.
+    return str(uid).strip() if uid and str(uid).strip() else "__no_such_user__"
+
+
 def _sla_reply_respond_user_id(current_user: dict) -> str:
     rid = (current_user or {}).get("respond_user_id") or (current_user or {}).get("respondUserId")
     if rid and str(rid).strip():
@@ -765,6 +783,23 @@ async def get_sla_tracking(
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
+    contact: Optional[str] = Query(
+        None,
+        description=(
+            "Filter to ONE contact's conversation tickets. Accepts the Respond.io "
+            "contact id, the CRM respond_contacts.id or a phone number (AC-M2)."
+        ),
+    ),
+    is_resolved: Optional[bool] = Query(
+        None, description="true = resolved only, false = open only, omitted = both (AC-M2)."
+    ),
+    resolved_by: Optional[str] = Query(
+        None,
+        description=(
+            "Filter to tickets resolved by one person: users.id, respond_user_id, "
+            "email, or the literal 'me' for the caller (AC-M2)."
+        ),
+    ),
     scope: str = Query("conversation", description="conversation (contact-keyed) or form (per-entity stage rows)"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -782,6 +817,9 @@ async def get_sla_tracking(
             sort_dir=dir or "desc",
             assigned_to=assigned_to,
             scope="form" if scope == "form" else "conversation",
+            contact=contact,
+            is_resolved=is_resolved,
+            resolved_by=_resolved_by_param(resolved_by, current_user),
         )
         return result
     except Exception as e:
@@ -805,6 +843,9 @@ async def get_sla_tracking_neighbours(
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
+    contact: Optional[str] = Query(None),
+    is_resolved: Optional[bool] = Query(None),
+    resolved_by: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -828,6 +869,9 @@ async def get_sla_tracking_neighbours(
             sort_field=sort or "created_at",
             sort_dir=dir or "desc",
             assigned_to=assigned_to,
+            contact=contact,
+            is_resolved=is_resolved,
+            resolved_by=_resolved_by_param(resolved_by, current_user),
         )
     except HTTPException:
         raise

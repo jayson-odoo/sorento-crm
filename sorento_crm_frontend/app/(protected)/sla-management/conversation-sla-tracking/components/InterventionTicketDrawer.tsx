@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, CheckCircle2, MessageSquareQuote, Users } from 'lucide-react';
+import Link from 'next/link';
+import { AlertCircle, CheckCircle2, History, MessageSquareQuote, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 import {
@@ -14,6 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -43,6 +45,7 @@ import {
   useSendInterventionTicketMessage,
 } from '../hooks/useInterventionTickets';
 import { useCreateTicketComment, useTicketComments } from '../hooks/useTicketComments';
+import { contactHistoryHref } from '../lib/historyLinks';
 import TicketSlaChips from './TicketSlaChips';
 
 interface InterventionTicketDrawerProps {
@@ -144,11 +147,20 @@ export default function InterventionTicketDrawer({
     resolveMutation.mutate(ticketId, {
       onSuccess: () => {
         setConfirmResolve(false);
-        onOpenChange(false);
+        // AC-M1: the drawer STAYS OPEN in a Resolved state. Closing it here (what
+        // it used to do) yanked the conversation away mid-thought, right when the
+        // assignee wants to re-read what they just agreed to. Refetching the
+        // ticket is what flips it into that state: Resolved badge, disabled
+        // composer with the reason on it, thread and notes still readable.
+        void ticketQuery.refetch();
+        // The worklist behind it drops the row as usual - it is no longer pending.
         onResolved?.();
       },
     });
   };
+
+  const isResolved = !!ticket?.is_resolved;
+  const historyHref = contactHistoryHref(ticket?.respond_io_id ?? ticket?.contact_phone);
 
   return (
     <>
@@ -158,9 +170,22 @@ export default function InterventionTicketDrawer({
           className="flex w-full flex-col gap-3 overflow-y-auto p-4 sm:max-w-xl sm:p-6"
         >
           <SheetHeader className="pe-8">
-            <SheetTitle className="break-words">
-              {ticket?.contact_name ?? (ticketQuery.isLoading ? 'Loading enquiry…' : 'Enquiry')}
-            </SheetTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <SheetTitle className="min-w-0 break-words">
+                {ticket?.contact_name ?? (ticketQuery.isLoading ? 'Loading enquiry…' : 'Enquiry')}
+              </SheetTitle>
+              {isResolved && (
+                <Badge
+                  variant="success"
+                  appearance="light"
+                  size="sm"
+                  data-testid="ticket-resolved-badge"
+                >
+                  <CheckCircle2 className="size-3" />
+                  Resolved
+                </Badge>
+              )}
+            </div>
             <SheetDescription className="text-xs">
               {ticket?.contact_phone ?? 'Enquiry'}
             </SheetDescription>
@@ -370,10 +395,28 @@ export default function InterventionTicketDrawer({
             )}
           </SheetBody>
 
-          <div className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+          <div className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-center sm:justify-end">
+            {isResolved && (
+              <p
+                className="me-auto text-xs text-muted-foreground"
+                data-testid="ticket-resolved-at"
+              >
+                Resolved {ticket?.resolved_at ? formatDateTimeInMalaysia(ticket.resolved_at) : ''}
+              </p>
+            )}
+            {/* AC-M2: the one-click path back to the full trail for this contact,
+                offered exactly when the ticket has just left the pending list. */}
+            {isResolved && (
+              <Button variant="outline" asChild data-testid="ticket-history-link">
+                <Link href={historyHref}>
+                  <History className="size-4" />
+                  View history
+                </Link>
+              </Button>
+            )}
             <Button
               variant="outline"
-              disabled={!ticket?.can_resolve || ticket?.is_resolved}
+              disabled={!ticket?.can_resolve || isResolved}
               onClick={() => setConfirmResolve(true)}
             >
               <CheckCircle2 className="size-4" />

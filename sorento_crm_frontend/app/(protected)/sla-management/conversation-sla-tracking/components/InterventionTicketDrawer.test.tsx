@@ -337,7 +337,8 @@ describe('InterventionTicketDrawer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^Confirm$/i }));
     expect(resolveMutate).toHaveBeenCalledWith('t1', expect.any(Object));
-    expect(onOpenChange).toHaveBeenCalledWith(false);
+    // AC-M1: the drawer does NOT close itself - only the user closes it.
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
     expect(onResolved).toHaveBeenCalled();
   });
 
@@ -464,5 +465,106 @@ describe('InterventionTicketDrawer composer parity (AC-L4 / AC-L5)', () => {
         instruction: 'offer Tuesday delivery',
       }),
     );
+  });
+});
+
+// ------------------------------------------------ post-resolve reassurance
+// UAC AC-M1 / AC-M2, slice S4.5. Resolving used to close the drawer, which
+// yanked the conversation away at exactly the moment the assignee wants to
+// re-read what they just agreed to.
+
+describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
+  it('stays open after a resolve and refetches the ticket into its Resolved state', async () => {
+    const refetch = vi.fn();
+    useInterventionTicket.mockReturnValue({ ...mockQuery(makeTicket()), refetch });
+    const { onOpenChange, onResolved } = renderDrawer();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Resolve ticket/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Confirm$/i }));
+
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(refetch).toHaveBeenCalled();
+    // The worklist behind it still drops the row: it is no longer pending.
+    expect(onResolved).toHaveBeenCalled();
+  });
+
+  it('shows a Resolved badge in the header once resolved', async () => {
+    useInterventionTicket.mockReturnValue(
+      mockQuery(makeTicket({ is_resolved: true, can_resolve: false, can_send: false })),
+    );
+    renderDrawer();
+
+    expect(await screen.findByTestId('ticket-resolved-badge')).toHaveTextContent('Resolved');
+  });
+
+  it('keeps the thread and the notes readable while the composer is disabled with its reason', async () => {
+    useInterventionTicket.mockReturnValue(
+      mockQuery(makeTicket({ is_resolved: true, can_resolve: false, can_send: false })),
+    );
+    useTicketComments.mockReturnValue(
+      mockQuery([
+        {
+          id: 'c1',
+          tracking_id: 't1',
+          body: 'Waiting on the warehouse.',
+          author_name: 'Agent One',
+          mentioned_names: [],
+          source: 'crm',
+          created_at: '2026-08-15T02:00:00',
+        },
+      ]),
+    );
+    renderDrawer();
+
+    // Thread still rendered, notes still merged into it.
+    expect(await screen.findByTestId('chat-list')).toHaveTextContent('1 message(s)');
+    expect(screen.getByTestId('chat-list')).toHaveAttribute('data-notes', '1');
+    // The reason is visible, not hidden behind a vanished composer.
+    expect(screen.getByTestId('composer-unavailable')).toHaveTextContent(
+      'This ticket is resolved.',
+    );
+    expect(screen.getByRole('button', { name: /Resolve ticket/i })).toBeDisabled();
+  });
+
+  it('offers View history to the SLA listing filtered to THIS contact', async () => {
+    useInterventionTicket.mockReturnValue(
+      mockQuery(makeTicket({ is_resolved: true, can_resolve: false, can_send: false })),
+    );
+    renderDrawer();
+
+    const link = await screen.findByTestId('ticket-history-link');
+    // The Respond.io contact id, never the CRM UUID.
+    expect(link.querySelector('a') ?? link).toHaveAttribute(
+      'href',
+      '/sla-management/conversation-sla-tracking?contact=10025531',
+    );
+  });
+
+  it('falls back to the phone number when the contact has no Respond id', async () => {
+    useInterventionTicket.mockReturnValue(
+      mockQuery(
+        makeTicket({
+          is_resolved: true,
+          can_resolve: false,
+          can_send: false,
+          respond_io_id: null,
+        }),
+      ),
+    );
+    renderDrawer();
+
+    const link = await screen.findByTestId('ticket-history-link');
+    expect((link.querySelector('a') ?? link).getAttribute('href')).toBe(
+      `/sla-management/conversation-sla-tracking?contact=${encodeURIComponent('+60 12-334 5566')}`,
+    );
+  });
+
+  it('offers no history link while the ticket is still open - there is nothing to look back on yet', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    await screen.findByTestId('composer-send');
+    expect(screen.queryByTestId('ticket-history-link')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ticket-resolved-badge')).not.toBeInTheDocument();
   });
 });

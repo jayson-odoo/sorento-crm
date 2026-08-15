@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -11,6 +12,7 @@ import {
   ChevronRight,
   Clock,
   ExternalLink,
+  History,
   Search,
   TrendingUp,
   UserRoundCog,
@@ -65,6 +67,7 @@ import type { InterventionTicketListItem } from '../services/interventionTicketS
 import ReassignDialog from './ReassignDialog';
 import { TakeoverCountdown } from './TakeoverCountdown';
 import ExtendDueButton from './ExtendDueButton';
+import { myResolvedHistoryHref } from '../lib/historyLinks';
 import InterventionTicketDrawer from './InterventionTicketDrawer';
 import TicketSlaChips from './TicketSlaChips';
 import { CoverageManager } from '@/app/(protected)/account/notifications/components';
@@ -765,6 +768,18 @@ export default function MyPendingSLAWidget() {
           <Badge variant="secondary" className="ml-1">
             {teamItems.length}
           </Badge>
+        )}
+        {/* AC-M2: a resolved row leaves this list, which is right - but the trail
+            must stay one click away, or "where did it go" is the next question. */}
+        {mode === 'mine' && (
+          <Link
+            href={myResolvedHistoryHref()}
+            data-testid="recently-resolved-link"
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            <History className="size-3.5" />
+            Recently resolved
+          </Link>
         )}
         <div className="ml-auto inline-flex rounded-md border p-0.5">
           <Button

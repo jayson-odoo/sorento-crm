@@ -521,9 +521,43 @@ closes, so it WILL fire on our close once live. Two consequences need explicit h
 - **AC-M1 [FE][T]** Given the assignee resolves from the drawer, When the resolve succeeds,
   Then the drawer stays open showing a Resolved state (badge, disabled composer, thread
   still readable) until the user closes it - it never vanishes mid-thought.
+
+  **As built (slice S4.5, 2026-08-15).** The resolve handler no longer calls
+  `onOpenChange(false)`; it refetches the ticket, which flips the drawer into the
+  Resolved state: a green "Resolved" badge beside the contact name, the resolved
+  timestamp in the footer, the composer replaced by its disabled state carrying the
+  reason ("This ticket is resolved.") in BOTH Reply and Comment modes, and the thread
+  plus internal notes still rendered and scrollable. `onResolved` still fires, so the
+  worklist behind the drawer drops the row as before.
 - **AC-M2 [FE][T]** Given a just-resolved ticket, When the pending-tasks widget refreshes,
   Then the row leaves the pending list but a "recently resolved" affordance (drawer link
   to the SLA tracking listing filtered to this contact) gives the one-click history path.
+
+  **As built (slice S4.5, 2026-08-15).** Two links, both honoured SERVER-side by the
+  existing conversation list query (never a client-side slice), and both also fed into
+  `/neighbours` so the detail pager walks the same filtered set:
+  - drawer, Resolved state: `?contact=<respond_io_id>` (phone as the fallback).
+  - worklist header, My Pending: `?is_resolved=true&resolved_by=me&sort=resolved_at&dir=desc`.
+
+  New list params on `GET /api/v1/sla-management/conversation-sla-tracking`:
+  `contact` (Respond.io id / CRM respond_contacts.id / phone), `is_resolved` (bool),
+  `resolved_by` (users.id / respond_user_id / email / literal `me`). An unresolvable
+  `contact` or `resolved_by` returns an EMPTY set - a "this contact" link that silently
+  widens to everyone is the worse failure. The listing states the active subset in a
+  banner with a "Show all" escape.
+
+  Deviations from the wording above, and why:
+  1. **"Resolved by me" keys on `resolved_by`, not the assignee.** Resolving a
+     conversation ticket NULLs `assigned_to` / `assigned_to_id` by design, so an
+     assignee-filtered link would always be empty (pinned by test). `resolved_by` is a
+     new list param; `me` is expanded to the caller in the route so no UUID rides in a
+     URL the user can see.
+  2. **No "today" boundary.** The link is "what I resolved, newest first"
+     (`sort=resolved_at&dir=desc`). A hard day boundary hides a ticket resolved at 23:50
+     the moment the clock rolls, and buys nothing over ordering.
+  3. **The contact ref in the URL is the Respond.io id (or the phone), never the CRM
+     `respond_contacts.id` UUID** - the drawer already holds the former, and the backend
+     resolves all three shapes.
 - **AC-M3 [BE][T]** (REVISED 2026-08-14, user direction: "use same method as
   respond-send-user") Given the assignee resolves in the CRM, When the resolve commits
   (and the contact has no other open ticket), Then the CRM calls a NEW direct webhook on
@@ -543,9 +577,30 @@ closes, so it WILL fire on our close once live. Two consequences need explicit h
   `resolved_by.respond_user_id` is null, the contact-facing close message renders a
   defined neutral fallback (team name), never a blank or "undefined"; (4) the webhook
   call carries the same shared-secret header as AC-J6.
+  **As built (slice S4.5, 2026-08-15).** The full wire contract (URL env var, header,
+  body, outbox channel, firing gate) is written under S4.5 in the PLAN - that text is
+  what the n8n peer builds the receiving lane from. CRM-side summary: a new
+  `notify_ticket_resolved_close` mirrors `notify_human_ticket_send` exactly (same
+  `X-CRM-Webhook-Secret` machinery resolved at send time, same
+  `integration_log`-as-outbox on success AND failure, same daemon-thread POST), fires
+  from `update_tracking` behind the SAME "no other open sibling" gate as the
+  pre-existing RQ Respond close, and is best-effort at every level: an unconfigured
+  URL, an unmapped contact or an exploding notifier all leave the resolve untouched.
+  Deviation: the body is a single JSON OBJECT, not the single-element array the send
+  lane uses - that array exists only to mimic Respond's own webhook shape, which this
+  lane does not mirror.
+
 - **AC-M4 [DECIDED 2026-08-14: KEEP]** The contact-facing "your conversation is marked as
   closed and resolved" message stays, gated on "contact has no open tickets" (already the
   CRM close gate). It now reaches the contact for CRM resolves too, via the webhook lane.
+
+  **CRM side as built (S4.5, 2026-08-15).** The gate IS the CRM close gate: the webhook
+  only fires when the resolve emptied the contact's open conversation-scope set, and the
+  payload states it (`open_ticket_count: 0`) so the n8n lane does not have to re-derive
+  it. `resolved_by.display_name` is guaranteed non-empty (resolver name -> team name ->
+  "Customer Service"), which is what makes a blank / "undefined" close message
+  structurally impossible on this lane. The message copy itself and its rendering stay
+  n8n-side (nothing CRM-side to build there).
 
 ### B-additions (widget actions on ticket rows) - added 2026-08-14
 

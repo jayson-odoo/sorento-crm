@@ -676,6 +676,9 @@ class ConversationSLATrackingService:
         sort_dir: str = "desc",
         assigned_to: Optional[str] = None,
         tracking_ids: Optional[list[str]] = None,
+        contact: Optional[str] = None,
+        is_resolved: Optional[bool] = None,
+        resolved_by: Optional[str] = None,
     ):
         """Apply the conversation-scope filters + sort shared by ``list_tracking``
         (scope="conversation") and ``neighbours`` so the two can never drift.
@@ -686,14 +689,51 @@ class ConversationSLATrackingService:
         so neighbours can never bleed into form SLA rows. The ORDER BY always appends
         ``ConversationSLATracking.id`` as a deterministic tie-breaker so offset position
         and prev/next neighbours are unambiguous when the sort column has equal values.
+
+        ``contact`` / ``is_resolved`` / ``resolved_by`` back the AC-M2 history links
+        (the drawer's "View history" for one contact, the widget's "Recently
+        resolved" for one resolver). ``contact`` accepts whatever identifies a
+        contact elsewhere in this service - CRM id, Respond.io id or phone - and an
+        UNRESOLVABLE one filters the set to empty rather than being ignored: a link
+        that silently shows every contact's tickets is worse than one that shows none.
         """
-        from sqlalchemy import asc, desc
+        from sqlalchemy import asc, desc, false
         from app.models.user import User
 
         q = base_query.filter(conversation_tracking_scope())
 
         if policy_id:
             q = q.filter(ConversationSLATracking.policy_id == policy_id)
+
+        if contact and str(contact).strip():
+            internal_contact_id = self.resolve_internal_respond_contact_id(str(contact).strip())
+            if not internal_contact_id:
+                return q.filter(false())
+            q = q.filter(
+                ConversationSLATracking.respond_contact_id == internal_contact_id
+            )
+
+        if is_resolved is not None:
+            q = q.filter(ConversationSLATracking.is_resolved.is_(bool(is_resolved)))
+
+        if resolved_by and str(resolved_by).strip():
+            resolver_val = str(resolved_by).strip()
+            resolver = (
+                self.db.query(User)
+                .filter(
+                    or_(
+                        User.id == resolver_val,
+                        User.respond_user_id == resolver_val,
+                        User.email == resolver_val,
+                    )
+                )
+                .first()
+            )
+            if resolver is None:
+                return q.filter(false())
+            # resolved_by stores users.id (update_tracking normalizes it), so a
+            # single equality is the honest predicate - no OR over stale shapes.
+            q = q.filter(ConversationSLATracking.resolved_by == str(resolver.id))
 
         if tracking_ids is not None:
             q = q.filter(ConversationSLATracking.id.in_(tracking_ids))
@@ -737,6 +777,9 @@ class ConversationSLATrackingService:
         sort_dir: str = "desc",
         assigned_to: Optional[str] = None,
         tracking_ids: Optional[list[str]] = None,
+        contact: Optional[str] = None,
+        is_resolved: Optional[bool] = None,
+        resolved_by: Optional[str] = None,
     ) -> dict:
         """Resolve prev/next neighbours for ``tracking_id`` within the active
         conversation-SLA list query.
@@ -761,6 +804,9 @@ class ConversationSLATrackingService:
             sort_dir=sort_dir,
             assigned_to=assigned_to,
             tracking_ids=tracking_ids,
+            contact=contact,
+            is_resolved=is_resolved,
+            resolved_by=resolved_by,
         )
         result = compute_neighbours(_ordered_ids(filtered_q), tracking_id)
         if result["index"] is not None:
@@ -784,6 +830,9 @@ class ConversationSLATrackingService:
         assigned_to: Optional[str] = None,
         tracking_ids: Optional[list[str]] = None,
         scope: str = "conversation",
+        contact: Optional[str] = None,
+        is_resolved: Optional[bool] = None,
+        resolved_by: Optional[str] = None,
     ):
         """List SLA tracking records. query filters by contact phone or contact name.
 
@@ -846,6 +895,9 @@ class ConversationSLATrackingService:
                 sort_dir=sort_dir,
                 assigned_to=assigned_to,
                 tracking_ids=tracking_ids,
+                contact=contact,
+                is_resolved=is_resolved,
+                resolved_by=resolved_by,
             )
 
         ref_map: dict = {}
@@ -4366,6 +4418,10 @@ class ConversationSLATrackingService:
         
         # Smart handling for is_resolved (same pattern: resolved_at, resolution_duration, resolved_by as user UUID)
         resolved_in_this_request = False
+        # AC-M3: the close webhook names the team as the contact-facing fallback
+        # when the resolver has no Respond mapping. Snapshot it BEFORE the resolve
+        # blanks agent_id / team_set_code below - after the commit it is gone.
+        close_team_label: Optional[str] = None
         if is_resolved:
             # Short-circuit above already returned for already-resolved case.
             resolved_in_this_request = True
@@ -4384,6 +4440,9 @@ class ConversationSLATrackingService:
                 getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES
             )
             if not _is_form_tracker:
+                close_team_label = (self._ticket_team_labels([tracking]) or {}).get(
+                    str(tracking.id)
+                )
                 update_data["assigned_to"] = None
                 update_data["assigned_to_id"] = None
                 update_data["agent_id"] = None
@@ -4492,6 +4551,11 @@ class ConversationSLATrackingService:
         ):
             if not self._has_other_open_conversation_siblings(tracking):
                 self._close_respond_conversation_best_effort(tracking)
+                # AC-M3: and tell n8n directly, so respond-close-convo runs with
+                # a real resolver identity instead of inferring one from an API
+                # close. Additive to the RQ job above, which stays as the
+                # transport tidy-up.
+                self._notify_close_convo_webhook_best_effort(tracking, close_team_label)
 
         # FINDING 5: caller-visible marker, set only once every other field
         # this call touched (assignment, tier, resolve, ...) has been applied
@@ -4536,6 +4600,45 @@ class ConversationSLATrackingService:
             .first()
             is not None
         )
+
+    def _notify_close_convo_webhook_best_effort(
+        self, tracking: ConversationSLATracking, team_name: Optional[str] = None
+    ) -> None:
+        """Fire the direct ``respond-close-convo`` webhook for a resolved ticket
+        (UAC AC-M3). Same gate as the RQ close above: only when this was the
+        contact's LAST open conversation-scope ticket.
+
+        Post-commit side effect - the notify function already swallows its own
+        failures, and this wrapper catches anything it cannot (an import error,
+        a dead session) so a resolve that succeeded never reports a 500."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+        try:
+            from app.services.crm_close_convo_webhook import notify_ticket_resolved_close
+
+            notify_ticket_resolved_close(
+                self.db,
+                tracking_id=str(tracking.id),
+                respond_contact_id=(
+                    str(tracking.respond_contact_id)
+                    if getattr(tracking, "respond_contact_id", None)
+                    else None
+                ),
+                resolved_by_user_id=(
+                    str(tracking.resolved_by)
+                    if getattr(tracking, "resolved_by", None)
+                    else None
+                ),
+                resolved_at=getattr(tracking, "resolved_at", None),
+                team_name=team_name,
+            )
+        except Exception as exc:  # noqa: BLE001 - the resolve already committed
+            logger.warning(
+                "Resolve: respond-close-convo webhook failed for tracking %s: %s",
+                getattr(tracking, "id", None),
+                exc,
+            )
 
     def _close_respond_conversation_best_effort(
         self, tracking: ConversationSLATracking

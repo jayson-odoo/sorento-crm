@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     # (UAC AC-J6).
     n8n_crm_webhook_secret: str | None = None
 
+    # Direct webhook the CRM calls when a resolve closes the contact's LAST open
+    # intervention ticket (UAC AC-M3). N8N_CLOSE_CONVO_WEBHOOK_URL. Unset = the
+    # call is skipped with a warning and the resolve is unaffected.
+    n8n_close_convo_webhook_url: str | None = None
+
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints
     # When set, X-API-Key auth resolves RBAC as this users row (required for MCP/n8n read tools).

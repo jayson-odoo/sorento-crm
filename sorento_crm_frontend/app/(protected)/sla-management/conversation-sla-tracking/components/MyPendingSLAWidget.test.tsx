@@ -739,3 +739,57 @@ describe('MyPendingSLAWidget clickable rows', () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/', { scroll: false }));
   });
 });
+
+// ------------------------------------------------- AC-M2: recently resolved
+// A resolved row leaves the pending list (right), so the trail has to stay one
+// click away (also right). The link is honest: it carries the filter the SLA
+// listing applies server-side, not a client-side slice.
+
+describe('MyPendingSLAWidget recently-resolved affordance (AC-M2)', () => {
+  beforeEach(() => {
+    getMyPendingSLA.mockReset();
+    getTeamPendingSLA.mockReset();
+    getVisibleUsers.mockReset();
+    getTakeoverState.mockReset();
+    push.mockReset();
+    replace.mockReset();
+    searchParam = null;
+    extraParams = {};
+    deniedSlugs = new Set();
+    getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
+    getVisibleUsers.mockResolvedValue([]);
+    getTakeoverState.mockResolvedValue({});
+  });
+
+  it('links to the SLA listing filtered to what I resolved, newest first', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    renderWidget();
+
+    const link = await screen.findByTestId('recently-resolved-link');
+    expect(link).toHaveAttribute(
+      'href',
+      '/sla-management/conversation-sla-tracking?is_resolved=true&resolved_by=me&sort=resolved_at&dir=desc',
+    );
+    expect(link).toHaveTextContent(/Recently resolved/i);
+  });
+
+  it('shows on an empty pending list too - that is exactly when it is asked for', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    renderWidget();
+
+    await screen.findByText(/all caught up/i);
+    expect(screen.getByTestId('recently-resolved-link')).toBeInTheDocument();
+  });
+
+  it('is a My Pending affordance only, not a My Team one', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    renderWidget();
+    await screen.findByTestId('recently-resolved-link');
+
+    fireEvent.click(screen.getByRole('button', { name: 'My Team' }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('recently-resolved-link')).not.toBeInTheDocument(),
+    );
+  });
+});
