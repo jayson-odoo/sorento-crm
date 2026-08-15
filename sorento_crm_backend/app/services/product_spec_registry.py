@@ -1328,6 +1328,8 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
     Keeping this in one place rather than two is the point: change the rule in
     derivation and the picker changes with it.
     """
+    from sqlalchemy import func
+
     from app.models.base import company_scope
     from app.models.product import Product
     from app.models.product_spec import ProductSpecifications
@@ -1339,7 +1341,13 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
     # than of one company's copy of it, so which copy the caller can see must not change
     # which keys the picker offers.
     with company_scope(db, None):
-        product = db.query(Product).filter(Product.product_code == code).first()
+        # Case-insensitively, like every other code lookup in this module: a product
+        # code is a filing label, and a caller who types one in a different case is
+        # asking about the same product. An exact match would 404 and the picker would
+        # read that as "this product may carry nothing".
+        product = (
+            db.query(Product).filter(func.upper(Product.product_code) == code.upper()).first()
+        )
         if product is None:
             # Not an empty list. An empty list reads as "this product may carry
             # nothing", which is a sentence about the product rather than about the

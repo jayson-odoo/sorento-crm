@@ -189,6 +189,19 @@ def test_a_product_with_no_spec_row_still_gets_the_whole_registry(db):
     assert keys["zzt_finish"]["held"] is False
 
 
+def test_the_code_is_matched_whatever_case_it_arrives_in(db):
+    """A code is a filing label, and every other lookup here reads it that way.
+
+    An exact match 404s a caller who typed the same product in another case, and the
+    picker renders that as "this product may carry nothing" rather than as a bad code.
+    """
+    _key(db, "zzt_finish", allowed_values=["chrome"])
+    _product(db, "ZZT-AK-0014")
+
+    keys = {row["spec_key"]: row for row in applicable_keys_for_code(db, "zzt-ak-0014")}
+    assert keys["zzt_finish"]["applicable"] is True
+
+
 def test_inactive_keys_are_left_out(db):
     _key(db, "zzt_retired", is_active=False)
     product = _product(db, "ZZT-AK-0009")
