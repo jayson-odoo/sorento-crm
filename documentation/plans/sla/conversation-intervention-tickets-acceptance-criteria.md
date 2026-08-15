@@ -262,11 +262,14 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
   <link>", no clock statement) Given a ticket created OUT of working hours, When the
   assignment notification is built, Then its body TELLS the human that the response
   clock only starts at the next working window, with the specific times in Malaysia
-  time: "Clock starts <window open, e.g. Mon 09:00> · respond by <due_at, e.g. Mon
-  10:00>". In-hours tickets state "Respond by <due_at MYT>". The SAME line is carried by
-  in-app, email AND WhatsApp (one body builder - email is what people forward, WhatsApp
-  is what they read). Reassign/escalate/takeover notifications carry the same "respond
-  by" line for the current clock.
+  time WITH THE ZONE STATED: "Clock starts Mon 18 Aug 09:00 MYT · respond by Mon 18 Aug
+  10:00 MYT" (staff read this at 22:00 and the deadline is tomorrow - the zone and the
+  day are the whole point). The in-hours variant is UNCONDITIONAL, never absent:
+  "Respond by <due_at MYT>" - a missing line can never be misread as "no clock". The
+  SAME line is carried by in-app, email AND WhatsApp (one body builder - email is what
+  people forward, WhatsApp is what they read). Reassign/escalate/takeover notifications
+  carry the same "Respond by" line for the current clock. Test fixture: Sat 09:25 MYT
+  request -> Mon 09:00 MYT clock start (crosses a weekend, not just a night).
 
 ### J. Human-send signal to n8n (Journey step 5b) - added 2026-08-14
 
