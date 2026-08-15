@@ -9,7 +9,7 @@
  * Survives Phase 2. Only `coverageMockStore.ts` is deleted.
  */
 import type { CoverageRow, CoverageShortfall } from '../types/coverage.types';
-import { DATE_LOCALE, DATE_PARTS, fmtInt } from '../../lib/format';
+import { DATE_LOCALE, DATE_PARTS, fmtInt, fmtTrimmedDecimal } from '../../lib/format';
 
 /** One month heading plus the rows underneath it. `key` is null for the opening row. */
 export interface CoverageMonthGroup {
@@ -197,7 +197,11 @@ export function coverVerdict(
       note: null,
     };
   }
-  return { tone: 'buy', headline: `Buy ${fmtInt(buyQty)}`, note: null };
+  // Not `fmtInt`: `buy_qty` is the timeline's peak deficit (floor minus balance, rounded
+  // to 4 places server-side) and both sides of that subtraction can be fractional - a
+  // reorder level of 49.33, a part-delivered line. Rounding it here restates the engine's
+  // answer on the one line the planner acts on.
+  return { tone: 'buy', headline: `Buy ${fmtTrimmedDecimal(buyQty, 2)}`, note: null };
 }
 
 /**
