@@ -156,8 +156,8 @@ def test_purge_empties_every_module_owned_table(db):
     db.commit()
     db.expire_all()
 
-    left = {m.__tablename__: db.query(m).count() for m in PURGE_ORDER}
-    assert left == {m.__tablename__: 0 for m in PURGE_ORDER}
+    left = {m.__table__.fullname: db.query(m).count() for m in PURGE_ORDER}
+    assert left == {m.__table__.fullname: 0 for m in PURGE_ORDER}
 
 
 def test_purge_counts_name_the_tables_it_emptied(db):
@@ -168,21 +168,25 @@ def test_purge_counts_name_the_tables_it_emptied(db):
     counts = purge(db)
     db.commit()
 
-    # One entry per module-owned table, keyed by the physical table name, as the
-    # existing handlers in module_purge_service return.
-    assert set(counts) == {m.__tablename__ for m in PURGE_ORDER}
-    assert counts[Project.__tablename__] == 1
-    assert counts[ProjectLead.__tablename__] == 1
-    assert counts[ProjectQuotationDocument.__tablename__] == 1
-    assert counts[ProjectQuotation.__tablename__] == 1
-    assert counts[ProjectQuotationVersion.__tablename__] == 1
-    assert counts[ProjectQuotationLine.__tablename__] == 1
-    assert counts[ProjectSalesOrder.__tablename__] == 1
-    assert counts[ProjectSalesOrderLine.__tablename__] == 1
-    assert counts[OrderInquiry.__tablename__] == 1
-    assert counts[OrderInquiryRow.__tablename__] == 1
+    # One entry per module-owned table, keyed by the SCHEMA-QUALIFIED physical name
+    # (ADR-0011). Seven of these bare names are also core tables the purge leaves
+    # alone, and an operator reading `sales_orders: 1` could not tell which book was
+    # emptied.
+    assert set(counts) == {m.__table__.fullname for m in PURGE_ORDER}
+    assert counts[Project.__table__.fullname] == 1
+    assert counts[ProjectLead.__table__.fullname] == 1
+    assert counts[ProjectQuotationDocument.__table__.fullname] == 1
+    assert counts[ProjectQuotation.__table__.fullname] == 1
+    assert counts[ProjectQuotationVersion.__table__.fullname] == 1
+    assert counts[ProjectQuotationLine.__table__.fullname] == 1
+    assert counts[ProjectSalesOrder.__table__.fullname] == 1
+    assert counts[ProjectSalesOrderLine.__table__.fullname] == 1
+    assert counts[OrderInquiry.__table__.fullname] == 1
+    assert counts[OrderInquiryRow.__table__.fullname] == 1
     # Untouched tables still report, as zero: the operator sees what was considered.
-    assert counts["project_parties"] == 0
+    # Keys are schema-qualified so `projects.sales_orders` above cannot be read as
+    # core's order book (ADR-0011).
+    assert counts["projects.parties"] == 0
 
 
 def test_purge_keeps_the_complaint_and_nulls_its_project_id(db):
@@ -215,5 +219,5 @@ def test_discovery_wires_the_handler_onto_the_projects_module_key(db):
     counts = module_purge_service.purge_module_data(db, "projects")
     db.commit()
 
-    assert counts[Project.__tablename__] == 1
+    assert counts[Project.__table__.fullname] == 1
     assert db.query(Project).count() == 0

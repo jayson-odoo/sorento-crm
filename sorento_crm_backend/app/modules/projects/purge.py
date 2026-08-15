@@ -6,28 +6,32 @@ and ``app.services.module_purge_service`` merges it onto the key ``projects`` ad
 is no line to add to the hardcoded ``MODULE_PURGE_HANDLERS`` dict, which is the point: the
 module carries its own uninstall story.
 
-Two rules govern what is in here, both from ADR-0009:
+Three rules govern what is in here:
 
-* **Module-owned tables only, and the model file is what says so.** 35 of the 47 tables carry
-  the ``project_`` prefix; the other 12 predate the convention and are just as owned:
-  ``so_amendments``, ``order_change_notices``, ``so_draft_findings``, ``so_line_allocations``,
-  ``allocation_claims``, ``delivery_schedules``, ``delivery_schedule_versions``,
-  ``delivery_schedule_cells``, ``customer_item_code_map``, ``quotation_templates``,
-  ``quotation_signatures`` and ``price_floor_rules``. Ownership is therefore "declared in
-  ``app/models/projects.py`` or ``app/models/project_so.py``" - which is exactly what
-  ``tests/test_projects_module_purge_invariants.py`` asserts - and the prefix is the naming
-  convention for NEW tables, not the membership test. Nothing outside the module reads any
-  of them.
-* **Core rows are never touched.** The ``sales_orders`` the demand feed created stay, and so
-  do complaints, purchase requests, customers, attachments and statuses. The two core-to-module
-  foreign keys (``complaints.project_id``, ``purchase_requests.project_id``) go NULL through
+* **Module-owned tables only, and the model file is what says so.** All 47 live in the
+  ``projects`` Postgres schema (ADR-0011), which is a second, mechanically checkable
+  expression of the same fact - but ownership is still "declared in
+  ``app/models/projects.py`` or ``app/models/project_so.py``", which is exactly what
+  ``tests/test_projects_module_purge_invariants.py`` asserts. Nothing outside the module
+  reads any of them.
+* **Core rows are never touched.** The ``public.sales_orders`` the demand feed created stay,
+  and so do complaints, purchase requests, customers, attachments and statuses. Seven of the
+  module's bare names also exist as CORE tables (``brands``, ``purchase_orders``,
+  ``purchase_order_lines``, ``sales_orders``, ``sales_order_lines``, ``quotations``,
+  ``quotation_lines``); the deletes below name MODEL CLASSES, which carry their schema, so
+  there is no way for one of them to land on core's copy. The two core-to-module foreign keys
+  (``complaints.project_id``, ``purchase_requests.project_id``) go NULL through
   ``ON DELETE SET NULL`` when the project row dies. That is the mechanism; purge does not
   reach across the boundary to do it by hand.
+* **Purge never issues ``DROP SCHEMA``.** It empties tables an operator explicitly consented
+  to empty and leaves the (now empty) ``projects`` schema, and every table in it, in place.
+  A schema is a namespace here, not a lifetime: signed quotations, customer POs and the sales
+  orders behind them are system of record, and an uninstall is not a licence to drop the
+  structure that held them.
 
 Deletes go through the ORM model classes rather than raw table names, so a table rename moves
-both sides at once. ``project_order_inquiries`` was ``order_inquiries`` until recently and the
-Python names (``OrderInquiry`` / ``OrderInquiryRow``) did not move with it, which is exactly the
-kind of drift a hardcoded string list absorbs silently.
+both sides at once. Every one of the 34 prefixed names moved in migration 354 and this file
+needed no edit, which is the argument for the pattern.
 
 ``PURGE_ORDER`` is children-first over the REAL foreign key graph, not alphabetical. Most of
 those FKs are ``CASCADE`` and would take the children anyway, but every table gets its own
@@ -168,17 +172,21 @@ PURGE_ORDER: List[Type] = [
 
 
 def _count_deleted(db: Session, model: Type) -> int:
-    label = model.__tablename__
+    label = model.__table__.fullname
     n = db.query(model).delete(synchronize_session=False)
     logger.info("Purge %s: deleted %s rows", label, n)
     return n
 
 
 def purge(db: Session) -> Dict[str, int]:
-    """Empty every module-owned table. Returns ``{table_name: rows_deleted}``.
+    """Empty every module-owned table. Returns ``{schema.table: rows_deleted}``.
+
+    Keyed on ``__table__.fullname``, not ``__tablename__``, so the operator reads
+    ``projects.sales_orders`` and cannot mistake it for core's ``sales_orders`` - which the
+    purge does not touch and which is where the company's real order book lives.
 
     Tables that were already empty report zero rather than being omitted: an operator reading
     the uninstall result needs to see what was CONSIDERED, not only what happened to be there.
     The caller commits.
     """
-    return {model.__tablename__: _count_deleted(db, model) for model in PURGE_ORDER}
+    return {model.__table__.fullname: _count_deleted(db, model) for model in PURGE_ORDER}

@@ -146,7 +146,10 @@ def test_the_frontend_purge_manifest_matches_purge_order_exactly():
     manifest = json.loads(FE_PURGE_MANIFEST.read_text())
 
     assert manifest["moduleKey"] == "projects"
-    assert manifest["tables"] == [model.__tablename__ for model in PURGE_ORDER], (
+    # Schema-qualified on both sides (ADR-0011): `__table__.fullname` renders
+    # `projects.parties`, and the dialog shows exactly that, so seven bare names that are
+    # also core tables cannot be read as a promise to empty core.
+    assert manifest["tables"] == [model.__table__.fullname for model in PURGE_ORDER], (
         "the frontend purge manifest and PURGE_ORDER have drifted. Update "
         f"{FE_PURGE_MANIFEST.name} to match app/modules/projects/purge.py, in order."
     )
@@ -164,14 +167,18 @@ def test_children_are_deleted_before_their_parents():
     """
     from app.modules.projects.purge import PURGE_ORDER
 
-    position = {model.__tablename__: index for index, model in enumerate(PURGE_ORDER)}
+    # Keyed on the SCHEMA-QUALIFIED name. Seven module tables share a bare name with a
+    # core one, and `ProjectSalesOrder.so_id` points at CORE `sales_orders` - keyed on the
+    # bare name that edge would be read as pointing at the module's own table and reported
+    # as a violation that is not there.
+    position = {model.__table__.fullname: index for index, model in enumerate(PURGE_ORDER)}
 
     violations: list[str] = []
     for index, model in enumerate(PURGE_ORDER):
         table = model.__table__
         for constraint in table.foreign_key_constraints:
-            target = list(constraint.elements)[0].column.table.name
-            if target == table.name or target not in position:
+            target = list(constraint.elements)[0].column.table.fullname
+            if target == table.fullname or target not in position:
                 # Self-references resolve within one statement; targets outside the module
                 # are core tables purge never deletes, so their order here is irrelevant.
                 continue
@@ -179,7 +186,7 @@ def test_children_are_deleted_before_their_parents():
                 continue
             if index > position[target]:
                 violations.append(
-                    f"{table.name} (#{index}) has a "
+                    f"{table.fullname} (#{index}) has a "
                     f"{constraint.ondelete or 'RESTRICT'} foreign key to {target} "
                     f"(#{position[target]}), so the parent is deleted first and the "
                     "uninstall fails part-way through"
@@ -261,4 +268,4 @@ def test_purge_on_an_empty_database_reports_zero_everywhere(db):
 
     # Every table still reports, at zero. An operator reading the uninstall result needs to
     # see what was CONSIDERED, not only what happened to be there.
-    assert counts == {model.__tablename__: 0 for model in PURGE_ORDER}
+    assert counts == {model.__table__.fullname: 0 for model in PURGE_ORDER}
