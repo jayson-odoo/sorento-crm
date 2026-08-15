@@ -280,10 +280,10 @@ export default function SharedConversationComposer({
         toast.error('The assistant returned an empty draft.');
         return;
       }
-      // Replaces the box: anything typed was the STEERING for this draft, not
-      // part of the reply, so leaving it above the draft would send the
-      // instruction to the customer.
-      setReplyText(text);
+      // The draft lands UNDER whatever was already typed, separated by a blank
+      // line. That text steered the draft, but it is the author's - deleting it
+      // to make room is not ours to do, and they can cut it in one gesture.
+      setReplyText(instruction ? `${instruction}\n\n${text}` : text);
       if (sendError) setSendError(null);
       queueMicrotask(() => replyTextareaRef.current?.focus());
     } catch (err) {
@@ -303,6 +303,11 @@ export default function SharedConversationComposer({
     const value = event.target.value;
     onDraftChange(value);
     if (!snippetsEnabled) return;
+    // A picker opened from the BUTTON has no "/query" to track, so nothing ever
+    // closed it: it stayed over the box while a message was written, and Enter
+    // inserted a snippet instead of sending. Typing dismisses it; a "/" at the
+    // start of the input re-opens it through the fragment below.
+    if (snippetMenuOpen) setSnippetMenuOpen(false);
     setSlashFragment(
       activeSlashFragment(value, event.target.selectionStart ?? value.length),
     );

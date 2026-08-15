@@ -244,6 +244,36 @@ describe('SharedConversationComposer - snippets (AC-L4)', () => {
     await waitFor(() => expect(useMessageSnippetOptions).toHaveBeenLastCalledWith('t1', true));
   });
 
+  it('closes a button-opened picker the moment the typist carries on', async () => {
+    // FINDING 4: the button-opened picker had no typing dismissal, so it stayed
+    // over the box while a message was written.
+    renderComposer({ snippetsEnabled: true, snippetTrackingId: 't1' });
+    await waitFor(() => expect(input()).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('snippet-button'));
+    await screen.findByTestId('snippet-picker');
+
+    typeInto('hello');
+
+    await waitFor(() => expect(screen.queryByTestId('snippet-picker')).not.toBeInTheDocument());
+  });
+
+  it('Enter sends the typed message, it does not insert a snippet behind the typist', async () => {
+    const sendAdapter = vi.fn().mockResolvedValue({ sent_as: 'text' as const });
+    renderComposer({ snippetsEnabled: true, snippetTrackingId: 't1', sendAdapter });
+    await waitFor(() => expect(input()).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('snippet-button'));
+    await screen.findByTestId('snippet-picker');
+    typeInto('hello');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(sendAdapter).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello' })),
+    );
+    expect(input().value).not.toContain('checking stock');
+  });
+
   it('says so when the snippets fail to load', async () => {
     useMessageSnippetOptions.mockReturnValue(
       snippetQuery({ data: [], isError: true, error: new Error('Failed to load snippets') }),
@@ -296,7 +326,7 @@ describe('SharedConversationComposer - AI assist (AC-L5)', () => {
     expect(onAiAssist).toHaveBeenCalledWith({});
   });
 
-  it('treats anything already typed as the instruction, and replaces it', async () => {
+  it('treats anything already typed as the instruction, and keeps it above the draft', async () => {
     const onAiAssist = vi.fn().mockResolvedValue('Sorry for the wait - Tuesday works.');
     renderComposer({ onAiAssist });
     await waitFor(() => expect(input()).toBeInTheDocument());
@@ -307,8 +337,11 @@ describe('SharedConversationComposer - AI assist (AC-L5)', () => {
     await waitFor(() =>
       expect(onAiAssist).toHaveBeenCalledWith({ instruction: 'offer Tuesday delivery' }),
     );
-    // The instruction must NOT survive into the message the customer reads.
-    await waitFor(() => expect(input()).toHaveValue('Sorry for the wait - Tuesday works.'));
+    // Whatever was typed is the author's, not ours to delete - the draft lands
+    // under it and they edit from there.
+    await waitFor(() =>
+      expect(input()).toHaveValue('offer Tuesday delivery\n\nSorry for the wait - Tuesday works.'),
+    );
   });
 
   it('shows a loading state and refuses a second click while drafting', async () => {
