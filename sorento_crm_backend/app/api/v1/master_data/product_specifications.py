@@ -503,7 +503,7 @@ async def set_flyer_text(
 
 
 @router.post("/preview-search")
-async def preview_spec_search(
+def preview_spec_search(
     payload: SpecPreviewRequest,
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
     db: Session = Depends(get_db),
@@ -512,6 +512,10 @@ async def preview_spec_search(
 
     Returns the score and the matched keys per candidate so a reviewer can see WHY a
     result placed where it did, rather than only that it did.
+
+    Plain ``def``, so FastAPI runs it in a thread: ``understand_phrase`` does a
+    blocking LLM round trip, which on the event loop froze the whole worker. Same
+    fix as the portal ai-extract route and PR #164.
     """
     try:
         # The same helper the resolve endpoint calls, so the two readings of one
