@@ -320,6 +320,61 @@ def test_one_planned_bin_in_a_pool_is_scoped_as_the_warehouse_it_is(scm_app):
     assert out["committed_total"] == float(rec["inputs"]["committed"]) == 60.0
 
 
+# --- the scope is the RUN's, so a later policy edit cannot move it ----------------
+
+def test_a_pooled_row_keeps_its_pool_after_pooled_netting_is_turned_off(scm_app):
+    """The row was planned under pooled netting, and a config change is not retroactive.
+
+    Reading `pool_netting` at popover time described this row by a rule it was never
+    planned under: the same recommendation reported a pool one day and a single bin the
+    next, while its own frozen numbers had not moved. The run says what it netted, so the
+    run is what is read.
+
+    The header total stays the pool's, which is the quantity the buy was sized against;
+    each pooled row's own `committed` is its share of it (`_emit_pool` copies the member's
+    figure onto the member's row).
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    _root, _bin, pid = _two_bin_pool(db, "SCOPE6")
+    rec = _rec_row(db, _run(db, ["ZZTW-SCOPE6-R", "ZZTW-SCOPE6-B"]), pid)
+
+    # The buyer turns pooled netting off the day after the run.
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    out = dbs.demand_for_recommendation(db, str(rec["id"]))
+
+    assert out["scope"] == "pool"
+    assert out["pool_code"] == "ZZTW-SCOPE6-R"
+    assert sorted(l["so_number"] for l in out["lines"]) == [
+        "ZZTSO-SCOPE6-B", "ZZTSO-SCOPE6-R",
+    ]
+    assert out["committed_total"] == 100.0
+
+
+def test_a_per_warehouse_row_keeps_its_own_bin_after_pooled_netting_is_turned_on(scm_app):
+    """The mirror: a row netted per location does not acquire its siblings' orders.
+
+    This is the direction that bites, because pooled netting is off by default and almost
+    every warehouse carries a pool pointer - turning the switch on would otherwise have
+    re-described every past row as a pool and printed a total larger than the SO figure on
+    the row itself.
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    root, _bin, pid = _two_bin_pool(db, "SCOPE7")
+    rec = _rec_row(db, _run(db, ["ZZTW-SCOPE7-R", "ZZTW-SCOPE7-B"]), pid, wid=root)
+
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    out = dbs.demand_for_recommendation(db, str(rec["id"]))
+
+    assert out["scope"] == "warehouse"
+    assert out["pool_code"] is None
+    assert [l["so_number"] for l in out["lines"]] == ["ZZTSO-SCOPE7-R"]
+    assert out["committed_total"] == float(rec["inputs"]["committed"]) == 40.0
+
+
 # --- who ordered it, and at what price (AC-1.4 / AC-4.2) --------------------------
 
 def test_every_line_names_who_ordered_it_however_little_the_order_says(scm_app):
