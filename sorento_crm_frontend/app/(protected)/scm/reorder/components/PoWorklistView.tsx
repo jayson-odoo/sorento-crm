@@ -274,7 +274,10 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
         ),
         cell: ({ row }) => {
           const r = row.original;
-          if (r.cash_committed === null || !r.last_po_currency) {
+          // The COST decides whether there is anything to show. A missing currency does
+          // not: a blank code means the base currency, so gating on it hid a real
+          // committed figure behind "no cost recorded".
+          if (r.cash_committed === null) {
             return (
               <span
                 className="text-2xs text-muted-foreground"

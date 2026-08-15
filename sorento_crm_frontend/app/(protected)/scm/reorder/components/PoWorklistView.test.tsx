@@ -158,6 +158,24 @@ describe('PoWorklistView - committed cash reads like money everywhere else (AC-2
     expect(within(r).getByText('RM 226,464.50')).toBeInTheDocument();
   });
 
+  it('reads a cost with no currency on file as ringgit, not as "no cost recorded"', () => {
+    // The row guard used to treat a missing currency as a missing cost. Under the shared
+    // formatter a blank currency means base, so a real committed figure was being hidden
+    // behind "no cost recorded" - the one thing this column exists to show.
+    renderView(
+      state({
+        data: {
+          run_id: 'run-2026-w32',
+          as_of: '2026-08-04',
+          rows: [row({ cash_committed: 226464.5, last_po_currency: null })],
+        },
+      }),
+    );
+    const r = rowFor('SRTWC8613-RL');
+    expect(within(r).getByText('RM 226,464.50')).toBeInTheDocument();
+    expect(within(r).queryByText('no cost recorded')).not.toBeInTheDocument();
+  });
+
   it('says no cost is recorded rather than printing a zero', () => {
     renderView(
       state({
