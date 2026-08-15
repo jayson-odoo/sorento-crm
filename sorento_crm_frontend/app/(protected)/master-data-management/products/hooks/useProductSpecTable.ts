@@ -178,7 +178,11 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     applicableKeys,
     otherKeys,
     isLoading: detailQuery.isPending || (Boolean(productCode) && keysQuery.isPending),
-    error: detailQuery.error ? (detailQuery.error as Error).message : null,
+    error: detailQuery.error
+      ? (detailQuery.error as Error).message
+      : keysQuery.error
+        ? (keysQuery.error as Error).message
+        : null,
     refetch: () => {
       void detailQuery.refetch();
       void keysQuery.refetch();

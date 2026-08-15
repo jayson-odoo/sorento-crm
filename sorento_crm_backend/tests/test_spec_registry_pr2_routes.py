@@ -472,6 +472,23 @@ def test_a_resend_does_not_smuggle_a_near_duplicate_past_the_guard(api):
     assert response.json()["match"]["value"] == "chrome"
 
 
+def test_two_spellings_of_one_new_word_in_a_single_payload_are_refused(api):
+    """The guard compares each proposal against the ones accepted earlier in the same
+    payload, not just the stored row - otherwise one PATCH carrying "Brushed Brass"
+    and "brushed-brass" stores both and splits the vocabulary."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"], source="user")
+
+    response = client.patch(
+        f"{_BASE}/zzt_finish",
+        json={"user_values": ["Brushed Brass", "brushed-brass"]},
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["match"]["value"] == "Brushed Brass"
+
+
 def test_a_merchandiser_may_add_a_value_without_the_registry_edit_grant(api):
     """Journey A step 3. The merchandiser holds products.edit and nothing else."""
     db, _as = api

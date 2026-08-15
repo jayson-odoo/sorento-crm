@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -141,6 +142,12 @@ export function AddSpecificationDialog({
       const found = await onCheckSimilar(label);
       setMatch(found);
       if (found) return;
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Could not check for an existing specification',
+        { duration: 10_000 },
+      );
+      return;
     } finally {
       setChecking(false);
     }

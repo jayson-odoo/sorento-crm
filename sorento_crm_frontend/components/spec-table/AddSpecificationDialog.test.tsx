@@ -9,6 +9,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+}));
+
+import { toast } from 'sonner';
+
 import { AddSpecificationDialog, toSpecKey } from './AddSpecificationDialog';
 import type { SpecKeyDefinition } from './types';
 
@@ -137,6 +143,20 @@ describe('creating a key', () => {
     renderDialog();
     fireEvent.click(screen.getByText('None of these — create a new specification'));
     expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
+  });
+
+  it('toasts when the duplicate check itself fails, rather than resetting silently', async () => {
+    const { props } = renderDialog({
+      onCheckSimilar: vi.fn().mockRejectedValue(new Error('Network down')),
+    });
+    fireEvent.click(screen.getByText('None of these — create a new specification'));
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Seat hinge type' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Network down', { duration: 10_000 }),
+    );
+    expect(props.onCreateKey).not.toHaveBeenCalled();
   });
 });
 
