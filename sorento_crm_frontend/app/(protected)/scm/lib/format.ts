@@ -36,11 +36,23 @@ export function fmtSigned(value: number | null | undefined): string {
  */
 export const BASE_CURRENCY = 'MYR';
 
+/**
+ * Is this figure already in the currency everything is reported in?
+ *
+ * A missing code counts as base: a row predating the book having more than one currency
+ * already meant ringgit. Exported so a caller can decide whether restating a price in base
+ * adds anything, without restating the "blank means base" rule for itself.
+ */
+export function isBaseCurrency(currency: string | null | undefined): boolean {
+  const code = (currency || '').trim().toUpperCase();
+  return code === '' || code === BASE_CURRENCY;
+}
+
 /** The glyph a currency code is written with. Base currency reads `RM`, anything else
  *  reads its own code, so a figure never claims a currency it is not in. */
 function currencyLabel(currency: string | null | undefined): string {
-  const code = (currency || '').trim().toUpperCase() || BASE_CURRENCY;
-  return code === BASE_CURRENCY ? 'RM' : code;
+  if (isBaseCurrency(currency)) return 'RM';
+  return (currency || '').trim().toUpperCase();
 }
 
 /** Currency valuation, in the base currency. Deferred/uncosted (null) → em dash. */
