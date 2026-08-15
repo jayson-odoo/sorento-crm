@@ -6,8 +6,8 @@
  * real catalogue holds and each was got wrong at least once by something upstream:
  *
  *  - a derived value, a flyer value, a category value and an authored one
- *  - a tombstoned key, which exists ONLY in `provenance` and is the row a
- *    values-driven table renders as nothing at all
+ *  - a removed key, which exists ONLY in `provenance` and must produce NO row -
+ *    the tombstone is the server's, so re-derivation will not refill it
  *  - an open `human_override_conflict`
  *  - an enum key, a numeric key with a unit, a boolean, and a free-text key,
  *    which are the four editors

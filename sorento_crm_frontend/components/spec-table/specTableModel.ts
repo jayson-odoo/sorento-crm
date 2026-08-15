@@ -4,12 +4,10 @@ import type { SpecKeyDefinition, SpecScalar, SpecTableRow } from './types';
 /**
  * Turn one product's stored specs into the rows a person reads.
  *
- * The load-bearing part is that the row set is the **union** of two things, not one:
- * the keys in `values`, and the keys whose only trace is a provenance entry carrying
- * `absent: true`. A tombstone - "this product does not have this spec" - lives in
- * `provenance` alone, by design, so a table built from `values` renders nothing at all
- * where a person made a deliberate statement of fact. It reads as the setting having
- * been lost.
+ * A row is a key with a value, and nothing else. A removed key keeps a tombstone in
+ * `provenance` (`absent: true`) so re-derivation will not fill it back in, but that is
+ * the server's business: on screen, removed means gone (captain's call). The way back
+ * is the add picker, and setting a value there replaces the tombstone wholesale.
  */
 
 /** The stored shape of one value. `unit` is the registry's, copied at write time. */
@@ -23,7 +21,7 @@ export interface StoredSpecProvenance {
   source?: string;
   confidence?: number;
   evidence?: string;
-  /** The tombstone flag. Present and true means the value was removed on purpose. */
+  /** The tombstone flag. Present and true means the key was removed on purpose. */
   absent?: boolean;
 }
 
@@ -53,30 +51,23 @@ export function buildSpecTableRows(input: {
       .map((row) => [row.spec_key, row]),
   );
 
-  const keys = new Set<string>(Object.keys(values ?? {}));
-  for (const [key, entry] of Object.entries(provenance ?? {})) {
-    if (entry?.absent) keys.add(key);
-  }
-
   const rows: SpecTableRow[] = [];
-  for (const specKey of keys) {
+  for (const [specKey, stored] of Object.entries(values ?? {})) {
     const definition = byKey.get(specKey);
-    const stored = values?.[specKey];
     const stamp = provenance?.[specKey];
     const conflict = conflicts.get(specKey);
 
     rows.push({
       specKey,
       label: definition?.label || readable(specKey),
-      value: stored ? stored.value : null,
+      value: stored.value,
       // The registry's unit wins over the stored copy: a unit the registry has since
       // changed is a re-verification problem, not a reason to render the old suffix.
-      unit: definition?.unit ?? stored?.unit ?? null,
+      unit: definition?.unit ?? stored.unit ?? null,
       dataType: definition?.data_type ?? 'text',
       options: definition?.allowed_values ?? [],
       source: stamp?.source ?? null,
       evidence: stamp?.evidence ?? null,
-      tombstoned: Boolean(stamp?.absent),
       unknownKey: !definition,
       conflict: conflict
         ? {

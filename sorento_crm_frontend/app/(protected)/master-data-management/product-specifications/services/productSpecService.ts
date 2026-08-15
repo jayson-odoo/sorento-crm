@@ -10,11 +10,12 @@
  * READS
  *
  *   GET /api/v1/master-data/product-specifications/by-product/{productId}
- *     -> ProductSpecDetail. `spec.values` and `spec.provenance` are the table's
- *        model, and they are a UNION: a tombstoned key appears ONLY in
- *        `provenance`, carrying `{source: 'human', absent: true}` and no entry in
- *        `values`. A table built from `values` alone renders nothing where a
- *        person made a deliberate statement of fact.
+ *     -> ProductSpecDetail. `spec.values` is the table's row set; `spec.provenance`
+ *        stamps each row with its source. A removed key appears ONLY in
+ *        `provenance`, as `{source: 'human', absent: true}` with no entry in
+ *        `values` - that tombstone is what stops re-derivation refilling it, and
+ *        the table deliberately renders no row for it (removed means gone). The
+ *        add picker offers it again; setting a value replaces the stamp.
  *     -> `exceptions[]` carries `reason: 'human_override_conflict'` with
  *        `proposed` = what the rules now read. Answered by SETTING THE VALUE;
  *        there is no resolve endpoint and there is not meant to be one (D9).

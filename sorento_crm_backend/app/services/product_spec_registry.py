@@ -1360,12 +1360,10 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
     values = (spec.values if spec else None) or {}
     provenance = (spec.provenance if spec else None) or {}
 
-    # A tombstone lives only in `provenance`, so a held-set built from `values` alone
-    # would offer "This product does not have an overflow" back in the add picker, and
-    # the key would end up on the table twice.
-    held = set(values) | {
-        key for key, entry in provenance.items() if (entry or {}).get("absent")
-    }
+    # Held is "has a value" and nothing else. A removed key keeps its tombstone in
+    # `provenance` so re-derivation will not refill it, but it is off the table, and
+    # the picker is the one way back on: setting a value replaces the stamp wholesale.
+    held = set(values)
 
     out: list[dict] = []
     for row in active_registry(db):

@@ -28,26 +28,24 @@ export interface SpecKeyDefinition {
 }
 
 /**
- * One row of the table: a key this product carries, or one it was told it does not.
+ * One row of the table: a key this product carries.
  *
- * Built by `buildSpecTableRows` rather than by the caller, because the union of
- * `values` and the tombstones hiding in `provenance` is the part everybody gets wrong.
+ * Built by `buildSpecTableRows` rather than by the caller, so the label, unit and
+ * vocabulary lookups against the registry live in one place.
  */
 export interface SpecTableRow {
   specKey: string;
   label: string;
-  /** Null when the row is a tombstone: there is no value, and that is the point. */
+  /** Null only on the draft row a just-picked key gets before its first value is saved. */
   value: SpecScalar | null;
   unit: string | null;
   dataType: string;
-  /** Merged vocabulary. Empty means this key takes free text. */
+  /** Merged vocabulary. Empty on a fresh dropdown key, or a key that takes free text. */
   options: string[];
   /** derived | flyer | code | category | human | supplier, or null when unstamped. */
   source: string | null;
   /** The exact words the value was read from, or the audit stamp for an authored one. */
   evidence: string | null;
-  /** The person said this product does not have this spec. Survives re-derivation. */
-  tombstoned: boolean;
   /** Stored on the row but no longer in the registry: shown, never edited. */
   unknownKey: boolean;
   /**
@@ -62,7 +60,7 @@ export interface SpecTableRow {
 export interface SpecTableCallbacks {
   /** Save a value as authored. Rejecting the promise leaves the row in edit. */
   onSetValue: (specKey: string, value: SpecScalar) => Promise<void>;
-  /** "Remove" - a durable absence that survives re-derivation. */
+  /** "Remove" - the row goes, and re-derivation will not put it back. */
   onTombstone: (specKey: string) => Promise<void>;
   /** "Reset" - hand the key back to derivation. */
   onRevert: (specKey: string) => Promise<void>;
