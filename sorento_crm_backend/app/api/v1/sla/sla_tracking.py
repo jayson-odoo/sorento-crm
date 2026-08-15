@@ -99,6 +99,23 @@ class SlaTrackingConversationReplyBody(BaseModel):
     message: str = Field(..., min_length=1)
 
 
+class TicketAIDraftBody(BaseModel):
+    """AI assist request (UAC AC-L5).
+
+    Everything is optional: the useful call is an empty body. The thread is read
+    server-side, so the browser never posts the conversation back to us.
+    """
+
+    instruction: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="What the agent wants the draft to do ('offer Tuesday delivery').",
+    )
+    tail: Optional[int] = Field(
+        default=None, ge=1, le=50, description="How many recent messages to ground on."
+    )
+
+
 def _sla_reply_respond_user_id(current_user: dict) -> str:
     rid = (current_user or {}).get("respond_user_id") or (current_user or {}).get("respondUserId")
     if rid and str(rid).strip():
@@ -1335,6 +1352,50 @@ async def get_intervention_ticket(
         viewer_user_id=current_user["id"],
         sender_name=sender_name,
     )
+
+
+@router.post("/{tracking_id}/ai-draft")
+async def draft_intervention_ticket_reply(
+    tracking_id: str,
+    body: TicketAIDraftBody,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Draft a reply INTO the composer using the existing CRM AI assistant (AC-L5).
+
+    Never sends: the answer is text the assignee reads, edits and then sends
+    themselves, so this route touches no Respond path at all. The thread tail is
+    fetched server-side (one less contract surface than posting it up, and a
+    client cannot ask for a draft grounded on a conversation it is not looking
+    at). Assignee-or-manager scoped like every sibling ticket route - an
+    outsider gets a 404 BEFORE any model call, so a stranger cannot spend our
+    tokens by guessing ids.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from app.services import conversation_reply_draft_service as draft_service
+
+    service = ConversationSLATrackingService(db)
+    tracking = service.get_tracking(tracking_id, load_event_logs=False)
+    if not tracking:
+        raise handle_not_found("Conversation SLA tracking", tracking_id)
+    if not service.can_user_act_on_tracking(current_user["id"], tracking):
+        raise handle_not_found("Conversation SLA tracking", tracking_id)
+
+    result = await run_in_threadpool(
+        draft_service.draft_reply,
+        db,
+        tracking,
+        instruction=body.instruction,
+        tail=body.tail or draft_service.DEFAULT_TAIL,
+        user_id=current_user.get("id"),
+    )
+    return {
+        "draft": result.draft,
+        "model": result.model,
+        "grounded_on": result.grounded_on,
+        "elapsed_ms": result.elapsed_ms,
+    }
 
 
 @router.post("/{tracking_id}/ticket/send")
