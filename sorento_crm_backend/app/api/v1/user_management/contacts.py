@@ -217,6 +217,9 @@ async def update_contact(
         raise handle_internal_error(str(e))
 
 
+# No permission dependency by design: the gate is in the handler body, which calls
+# `_require_superadmin(db, current_user)` before reading anything. See
+# `documentation/plans/security/PLAN-user-management-read-gates.md`.
 @router.get("/{contact_id}/companies")
 async def get_contact_companies(
     contact_id: str,

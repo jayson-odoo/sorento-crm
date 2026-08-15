@@ -36,13 +36,27 @@ def db():
 
 
 @pytest.fixture
-def client(db):
-    """A caller authenticated against the same session the assertions read."""
+def client(db, monkeypatch):
+    """A caller authenticated against the same session the assertions read.
+
+    GET .../field-access now requires user_management.access_agents.view
+    (PLAN-user-management-read-gates.md row 10). Grant it here so this file keeps
+    testing the field-access feature rather than re-deriving the permission gate
+    on every test - the gate itself has its own dedicated tests in
+    tests/test_user_management_read_gates.py.
+    """
+    from app.services.user_service import UserPermissionService
+
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: {
         "id": str(uuid.uuid4()),
         "email": "zzt-admin@example.com",
     }
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug == "user_management.access_agents.view",
+    )
     try:
         yield TestClient(app)
     finally:

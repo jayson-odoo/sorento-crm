@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.schemas.user import (
     ContactAccessTypeCreate,
     ContactAccessTypeUpdate,
@@ -20,6 +20,12 @@ def _service(db: Session) -> ContactAccessTypeService:
     return ContactAccessTypeService(db)
 
 
+# Deliberately stays on `get_current_user`, unlike the admin reads below. This is a
+# cross-module reference catalog: ~10 screens outside user-management (marketing
+# promotions, forms, resource-management files/trash/attachments, master-data brands
+# and products) read it under roles that hold zero `user_management.*` grants, so any
+# `user_management.*` slug here breaks them. Pending a decision - see Q3 in
+# `documentation/plans/security/PLAN-user-management-read-gates.md`. Do not "fix".
 @router.get("/", response_model=list)
 async def list_contact_access_types(
     current_user: dict = Depends(get_current_user),
@@ -38,7 +44,7 @@ async def list_contact_access_types(
 
 @router.get("/all", response_model=list[ContactAccessTypeResponse])
 async def list_all_contact_access_types(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db),
 ):
     """List all contact access types (including inactive) for admin UI."""
@@ -53,7 +59,7 @@ async def list_all_contact_access_types(
 @router.get("/{code}", response_model=ContactAccessTypeResponse)
 async def get_contact_access_type(
     code: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db),
 ):
     """Get a single contact access type by code."""

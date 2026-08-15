@@ -355,7 +355,21 @@ def test_contact_segment_assignment_endpoints(client, db):
     assert r.status_code == 200 and r.json()["codes"] == []
 
 
-def test_member_segment_assignment_endpoints(client, db):
+def test_member_segment_assignment_endpoints(client, db, monkeypatch):
+    # GET .../teams/{team_id}/members/{user_id}/market-segments now requires
+    # user_management.teams.view (PLAN-user-management-read-gates.md row 4). The
+    # sibling PUT is out of scope for that PR (writes are not gated) and stays on
+    # get_current_user, so only the permission check needs stubbing here. Scoped to
+    # this test via the function-scoped monkeypatch fixture, not the shared `client`
+    # fixture, so it does not mask the pre-existing external-router failures below.
+    from app.services.user_service import UserPermissionService
+
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug == "user_management.teams.view",
+    )
+
     _, team_id, m = _scenario(db, {"A": []})
     uid = m["A"]
     r = client.get(f"/api/v1/user-management/teams/{team_id}/members/{uid}/market-segments")
