@@ -147,6 +147,10 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 PERMISSION_REGISTRY.extend(_with_import_export("master_data", "certificates", "Certificates"))
+# The salesperson master. `.edit` gates the annotation (who a code belongs to, and what
+# its orders count as); there is no add/delete surface, but the four slugs ship together
+# so the slug set matches the AutoCount branch's mirror pages exactly.
+PERMISSION_REGISTRY.extend(_crud("master_data", "sales_agents", "Sales Agents"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_root_causes", "Complaint Root Causes"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Complaint Resolutions"))
 

@@ -1,8 +1,9 @@
 # PLAN - SCM order imports: agents, duplicates, async, standard modal
 
 **Status:** S1 + S2 built (branch `feat/scm-order-import-feedback`, PR #143). S3 + S4 built
-(branch `feat/scm-import-async`, stacked on that one). S5 not started. S6 planned, captain's
-go pending. Contract: `UAC-scm-order-import-feedback.md` (same directory). Captain feedback
+(branch `feat/scm-import-async`, stacked on that one). S5 not started. S6 built (branch
+`feat/scm-agent-master-ui`, stacked on `feat/scm-import-async`); browser verification
+outstanding. Contract: `UAC-scm-order-import-feedback.md` (same directory). Captain feedback
 sections 1-6 in `firstmate/data/so-import-feedback/captain-feedback.md`.
 
 **Amendments made while building S3 + S4** (each one is a place the plan as written could not
@@ -59,6 +60,74 @@ the contract disagreed, recorded so they agree again).
    than one company, so an all-companies read binds a line to the wrong company's product and
    shows a diff apply would never make. Precedent: the customer importer refuses both modes
    for the same reason (`order_management/customers.py`).
+
+**Amendments made while building S6** (same rule: each is a place the built code and the
+plan as written disagree, recorded so they agree again).
+
+10. **List + edit modal only; no `[id]` detail page.** The AutoCount mirror surface is a list
+    AND a detail page, and S6 item 2 asks for a modal, so the two cannot both be reproduced.
+    The modal wins (it is what the plan specifies, and two annotation fields do not justify a
+    page). Nothing under `master-data-management/sales-agents/[id]/` is touched, so that
+    branch's detail page merges in as an addition rather than a conflict, and it will find
+    both new columns already on `SalesAgentResponse`. Consequence for the list: the mirror's
+    per-row chevron-to-detail becomes a per-row Edit (pencil) that opens the modal.
+    **What that page imports must therefore still exist here**, or "merges as an addition"
+    is false and the next build breaks: `useSalesAgent` (hooks), `getSalesAgent` (service)
+    and the type name `MirrorAnnotationPayload` are all kept, unused by this slice, for
+    exactly that reason. `SalesAgentAnnotationPayload` is an alias of the same type, so both
+    spellings resolve and no call site has to be renamed on merge. The only edit the merger
+    makes to that page is none: it should compile as it stands.
+11. **Three files are created here that the AutoCount branch also creates**, at the same
+    paths and with the same class names. Two are safe to take either copy of:
+    `app/services/autocount_mirror_service.py` (copied VERBATIM, so it cannot drift) and
+    `app/schemas/autocount_mirror.py` (only the sales-agent classes, since this chain has no
+    other mirror table) - resolve by taking that branch's copy plus the extensions S6 item 3
+    names, all already made here: `person_label` (bounded `max_length=100`, the column's own
+    width) + `demand_class` on `MirrorAnnotationUpdate` AND on `SalesAgentResponse`, and
+    `source` widened to accept `import`. The third is
+    `app/api/v1/master_data/sales_agents.py`, and it is **NOT verbatim**: the docstring is
+    rewritten for the annotation surface and the PATCH handler calls
+    `sales_agent_service.annotate` before the mirror annotate. Take THIS branch's copy of
+    that file; the other differs only in lacking those two things.
+12. **The frontend service uses `buildDataGridParams` + `extractApiError`**, where the mirror
+    page hand-rolls a `URLSearchParams` and throws a bare `Error`. The repo rule
+    (ARCHITECTURE-RULES, and a code-review hard-fail) outranks faithfulness to that file.
+    Same reason the source column renders a plain `Badge` off a label map rather than
+    `AutoCountSourceBadge`, which does not exist on this chain: on merge it becomes a
+    one-line swap to that component. The toolbar's Export is switched OFF rather than
+    carried over: it is selection-gated and this list has no selection column, so the
+    mirror page's `exportConfig` renders a button that can never be pressed.
+13. **`demand_class` is typed as a plain string in the PATCH body, not a `Literal`.** A
+    Literal would answer a word outside the vocabulary with FastAPI's field error, and the
+    thing an admin needs to read is the service's message naming the words the fulfilment
+    policy can weigh. So the body is permissive, `sales_agent_service.assert_demand_class`
+    is the only judge (S6 item 4), and a bad word is a 400 carrying that message. The route's
+    own `MirrorAnnotationUpdate` keeps `extra="forbid"`, so an unknown KEY is still a 422.
+14. **List search is the mirror's two columns (code + description), not widened to
+    `person_label`.** The plan asks for search on the code; keeping the mirror's exact
+    search set is what makes the two branches one page rather than two that look alike.
+15. **The screen's class write does NOT go through `set_demand_class`,** which S6 item 2
+    asked for. That function resolves the agent by CODE, with a `.first()` and no ORDER BY,
+    and the code is unique only PER COMPANY: a shared row (`company_id IS NULL`) and a
+    company-owned row may both spell `SEAN III`, so classifying the row the user clicked
+    could flush the class onto the other one and change the wrong salesperson's whole book.
+    The screen writes the class onto the row it fetched by id. The closed vocabulary still
+    has exactly one judge, `assert_demand_class`, called by both paths;
+    `set_demand_class` remains the code-keyed path importers use. Pinned by
+    `test_the_class_lands_on_the_clicked_row_not_a_namesake`.
+16. **Duplicate-hunk merges with the AutoCount branch: menu keeps THIS branch's entry,
+    registry and router keep one line either way.** The captain ruled (2026-08-15) that
+    Sales Agents lives under **User Management** (after Market Segments), not Product
+    Management, so this branch's menu entry in both arrays of
+    `sorento_crm_frontend/config/menu.config.tsx` is the one to keep; DROP autocount's
+    Product Management placement on merge. The `_crud("master_data", "sales_agents", ...)`
+    line in `app/rbac/permission_registry.py` and the `include_router(sales_agents.router,
+    ...)` line in `app/api/v1/master_data/__init__.py` are identical in both branches: keep
+    one copy of each. A duplicated menu entry renders the page twice in the sidebar; a
+    duplicated `_crud` line seeds nothing twice (the sync is idempotent) but reads as a
+    mistake; a duplicated `include_router` mounts the same routes twice and the second
+    silently shadows the first. The URL stays `/master-data-management/sales-agents` (the
+    merged-surface contract); only the sidebar group moved.
 
 **S1 + S2 ship the agent data with NO surface on it.** `unmapped_agents` is on both the
 preview and the apply response, and nothing renders it: the FE `OutstandingPreview` type does
@@ -192,9 +261,9 @@ IB From SOKey, Import Post, Desc2, Width, Standard Price, FromSODocList`
 3. pytest: real-shaped fixture with both families; the 10 flag-disagreeing rows follow the
    prefix; totals reconcile (13,641 + 13,550 + header = 27,192).
 
-### S6 - The agent master gets a screen (backend + frontend). PLANNED, NOT STARTED
+### S6 - The agent master gets a screen (backend + frontend). BUILT, except the browser pass
 
-Captain's go pending. Everything above assumes the client fills in `demand_class` on 38 rows,
+Everything above assumes the client fills in `demand_class` on 38 rows,
 and today the only way to do that is `sales_agent_service.set_demand_class` from a Python
 shell. So the classification the whole of AC-3 is built on cannot actually be entered, and
 S1's honest report ("this agent carries no demand class") points the operator at a screen that
@@ -230,6 +299,18 @@ Deliberately MINIMAL - a list and an edit of the two annotation columns, not a C
    a `source='import'` row serialises. vitest: the select offers exactly the two classes plus
    clear, and saving invalidates the list.
 
+**What shipped.** Backend: `app/api/v1/master_data/sales_agents.py` (list, detail,
+`PATCH /{id}/annotation`) mounted at `/api/v1/master-data/sales-agents` in
+`app/api/v1/master_data/__init__.py`, gated `master_data.sales_agents.view` / `.edit` (four
+slugs added to `app/rbac/permission_registry.py`, created by the startup `sync_permissions`);
+`app/schemas/autocount_mirror.py`, `app/services/autocount_mirror_service.py`, and
+`sales_agent_service.annotate`, which writes the class (guarded by `assert_demand_class`)
+and the label onto the fetched row in the same transaction. Frontend:
+`app/(protected)/master-data-management/sales-agents/` (page, list, edit modal, hook,
+service, demand-class vocabulary) plus the sidebar entry under Product Management in both
+menu blocks. Tests: `tests/test_sales_agents_master_api.py` (16) and three vitest files (16).
+Still open: the Playwright/browser pass, which needs a running stack.
+
 ## Sequencing note
 
 S1 and S2 are one PR (agent + classification are the same story). S3 + S4 are one PR (async
@@ -248,3 +329,9 @@ Each PR: tests in-phase, browser verification for S4, `/code-review` before hand
   in the allowlist; acceptable for a master table, recorded in the migration docstring.
 - The demand-class map ships empty: until the captain fills it, SO375073-class documents keep
   reporting unclassified. That is the designed behaviour, not a failure.
+- **S6's list is unscoped by company.** Correct today (every row is `company_id IS NULL`, a
+  shared master, and `sales_agents` is deliberately not `CompanyScopedMixin` - the mixin's
+  auto-filter would hide the whole master). The day a company-OWNED row exists, this page is
+  where cross-company visibility first appears: one company's admin would see, and be able to
+  classify, another's agent. The route is the place to add the scope filter, and the namesake
+  test (amendment 15) is the seam that already builds such a row.

@@ -339,6 +339,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/user-management/market-segments',
       },
       {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
+      },
+      {
         title: 'Account',
         path: '/user-management/account',
         permission: 'user_management.account.view',
@@ -1319,6 +1324,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Market Segments',
         path: '/user-management/market-segments',
+      },
+      {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
       },
       {
         title: 'Account',

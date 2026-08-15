@@ -136,3 +136,37 @@ def set_demand_class(db: Session, code: str, demand_class: Optional[str]) -> Sal
     agent.demand_class = demand_class
     db.flush()
     return agent
+
+
+def annotate(
+    db: Session,
+    agent: SalesAgent,
+    *,
+    person_label: Optional[str] = None,
+    write_person_label: bool = False,
+    demand_class: Optional[str] = None,
+    write_demand_class: bool = False,
+) -> SalesAgent:
+    """Apply the master screen's two annotations to an already-resolved agent.
+
+    The `write_*` flags distinguish "field omitted" from "field set to nothing", so a
+    save that touches only the class cannot wipe a label the captain typed last week.
+
+    The class is written onto THIS row, not looked up again by code. `set_demand_class`
+    is the code-keyed path importers use, and its lookup is a `.first()` over a code that
+    is unique only PER COMPANY: a shared row (`company_id IS NULL`) and a company-owned
+    row may both spell `SEAN III`, so re-resolving the code from a row the user clicked
+    could flush the class onto the OTHER one. The vocabulary still has exactly one judge,
+    `assert_demand_class`, which both paths call.
+
+    Flushes but does not commit: the caller (the annotation route) writes the two mirror
+    columns in the same transaction, so a rejected class leaves the note unwritten too.
+    """
+    if write_demand_class:
+        assert_demand_class(demand_class)
+        agent.demand_class = demand_class
+    if write_person_label:
+        cleaned = (person_label or "").strip()
+        agent.person_label = cleaned or None
+    db.flush()
+    return agent
