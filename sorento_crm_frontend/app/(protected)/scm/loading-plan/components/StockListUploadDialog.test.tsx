@@ -74,12 +74,20 @@ function openDialog() {
   );
 }
 
+/**
+ * Pick the file AND press Test.
+ *
+ * Picking alone reads nothing: every SCM upload dialog shares one flow, and that flow
+ * stopped firing a request on drop. Test is the explicit read, and it runs the preview this
+ * screen renders as well as the `validate_only` verdict.
+ */
 async function pickFile() {
   const input = document.querySelector('input[type="file"]') as HTMLInputElement;
   const file = new File([new Uint8Array([1, 2, 3])], 'stock.xlsx', {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
   fireEvent.change(input, { target: { files: [file] } });
+  fireEvent.click(screen.getByRole('button', { name: /^Test$/i }));
   return file;
 }
 

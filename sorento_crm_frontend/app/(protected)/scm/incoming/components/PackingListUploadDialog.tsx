@@ -191,20 +191,18 @@ export function PackingListUploadDialog({
         </DialogBody>
 
         <DialogFooter>
-          {upload.runTest ? (
-            <Button
-              variant="outline"
-              onClick={() => void upload.runTest?.()}
-              disabled={!upload.file || upload.testing || upload.applying}
-            >
-              {upload.testing ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <TestTube className="size-4" />
-              )}
-              Test
-            </Button>
-          ) : null}
+          <Button
+            variant="outline"
+            onClick={() => void upload.runTest()}
+            disabled={!upload.file || upload.testing || upload.applying}
+          >
+            {upload.testing ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <TestTube className="size-4" />
+            )}
+            Test
+          </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {result ? 'Close' : 'Cancel'}
           </Button>

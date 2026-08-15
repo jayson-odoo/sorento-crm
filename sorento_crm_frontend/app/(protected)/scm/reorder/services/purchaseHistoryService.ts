@@ -7,16 +7,23 @@
  * ── BACKEND CONTRACT (app/api/v1/scm/purchase_history.py) ──────────────────
  *
  *  1) POST /api/v1/scm/purchase-history/preview  -> 200 PurchaseHistoryPreview
- *     POST /api/v1/scm/purchase-history/apply    -> 200 PurchaseHistoryResult
- *  2) POST /api/v1/scm/order-inquiry/preview     -> 200 OrderInquiryPreview
- *     POST /api/v1/scm/order-inquiry/apply       -> 200 OrderInquiryResult
+ *     POST /api/v1/scm/sales-history/preview     -> 200 SalesHistoryPreview
+ *     POST /api/v1/scm/order-inquiry/preview     -> 200 OrderInquiryPreview
+ *  2) POST /api/v1/scm/{channel}/apply           -> 202 ImportQueuedResult
  *  3) GET  /api/v1/scm/order-links/open          -> 200 OpenOrderLinks
  *
  *  multipart body, single field named exactly "file". Auth: `scm.reorder.run`.
  *
  *  Preview returns 200 even for a file it could not read, carrying `ok: false`
  *  and `problems` - the screen has to say WHICH part failed, and an error body
- *  would lose it. Apply refuses the same file with a 400.
+ *  would lose it.
+ *
+ *  Apply QUEUES the write and answers 202 with the job to watch. What it did -
+ *  counts, the SO<->PO links it resolved, a per-row outcome for every row - lands
+ *  on that job, because the worker has not started when the request answers. A
+ *  file the reader cannot use FAILS THE JOB with its problems on it; the only 400
+ *  left is "no single active company", which is refused before any job row exists
+ *  (these feeds write owned tables).
  *
  * Two calls on purpose: nothing is written from a single click.
  *
@@ -32,19 +39,11 @@
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
 import type { UploadTestResult } from '../components/UploadTestVerdict';
 
 /** Which of the two feeds a dialog is driving. */
 export type HistoryImportKind = 'purchase-history' | 'order-inquiry' | 'sales-history';
-
-/** What the resolver did after an apply - the pairing may have been claimed months ago. */
-export interface OrderLinkResolution {
-  examined: number;
-  resolved: number;
-  so_side: number;
-  po_side: number;
-  still_open: number;
-}
 
 export interface PurchaseHistoryPreview {
   ok: boolean;
@@ -63,12 +62,6 @@ export interface PurchaseHistoryPreview {
   /** ISO dates (YYYY-MM-DD), null when the file carried no dated order. */
   date_from: string | null;
   date_to: string | null;
-}
-
-export interface PurchaseHistoryResult extends PurchaseHistoryPreview {
-  orders_created: number;
-  lines_created: number;
-  links: OrderLinkResolution;
 }
 
 export interface OrderInquiryPreview {
@@ -95,16 +88,6 @@ export interface OrderInquiryPreview {
   po_claims: number;
   /** Rows whose remark is the literal `ORDER`: nothing placed yet, not a parse failure. */
   not_ordered: number;
-}
-
-export interface OrderInquiryResult extends OrderInquiryPreview {
-  locations_written: number;
-  claims_written: number;
-  lines_created: number;
-  lines_refreshed: number;
-  /** Instalments this feed had written that the sheet no longer states. */
-  lines_withdrawn: number;
-  links: OrderLinkResolution;
 }
 
 /** Pairings still waiting for one side to be uploaded. */
@@ -137,7 +120,8 @@ export function previewPurchaseHistory(file: File): Promise<PurchaseHistoryPrevi
  * Test the order book: writes nothing, returns `{valid, errors, warnings, summary}`.
  *
  * Same `?validate_only=true` parameter and same shape as `import-tracking` and the GRN
- * import, so a Test means the same thing wherever somebody presses it.
+ * import, so a Test means the same thing wherever somebody presses it. Still synchronous
+ * after the apply went to the queue: it writes nothing and the operator is waiting for it.
  */
 export function testPurchaseHistory(file: File): Promise<UploadTestResult> {
   return post(
@@ -152,9 +136,9 @@ export function testOrderInquiry(file: File): Promise<UploadTestResult> {
   );
 }
 
-/** Write the order book. Idempotent on the document number, so a re-upload is safe. */
-export function applyPurchaseHistory(file: File): Promise<PurchaseHistoryResult> {
-  return post('/api/v1/scm/purchase-history/apply', file, 'Failed to apply the upload');
+/** Queue the order book. Idempotent on the document number, so a re-upload is safe. */
+export function applyPurchaseHistory(file: File): Promise<ImportQueuedResult> {
+  return post('/api/v1/scm/purchase-history/apply', file, 'Failed to queue the upload');
 }
 
 /**
@@ -187,33 +171,14 @@ export interface SalesHistoryPreview {
   date_to: string | null;
 }
 
-export interface SalesHistoryResult extends SalesHistoryPreview {
-  orders_created: number;
-  orders_updated: number;
-  orders_unchanged: number;
-  lines_created: number;
-  lines_updated: number;
-  lines_unchanged: number;
-  /** Documents this upload settled that still had quantity owed. Never silent. */
-  orders_with_open_lines_closed: number;
-  /**
-   * Documents another feed already owns lines on, so two AutoCount exports disagree about
-   * them. Left completely untouched and named here, because which export is current is a
-   * question about the client's data rather than something an upload should answer by
-   * arriving second.
-   */
-  conflicted_orders: string[];
-  conflicted_order_count: number;
-}
-
 /** What this sales book WOULD absorb. Writes nothing. */
 export function previewSalesHistory(file: File): Promise<SalesHistoryPreview> {
   return post('/api/v1/scm/sales-history/preview', file, 'Failed to read the file');
 }
 
-/** Absorb the sales book. Same -> skip, different -> update, new -> create. */
-export function applySalesHistory(file: File): Promise<SalesHistoryResult> {
-  return post('/api/v1/scm/sales-history/apply', file, 'Failed to apply the upload');
+/** Queue the sales book. Same -> skip, different -> update, new -> create. */
+export function applySalesHistory(file: File): Promise<ImportQueuedResult> {
+  return post('/api/v1/scm/sales-history/apply', file, 'Failed to queue the upload');
 }
 
 /** What this sheet WOULD write. Writes nothing. */
@@ -221,9 +186,9 @@ export function previewOrderInquiry(file: File): Promise<OrderInquiryPreview> {
   return post('/api/v1/scm/order-inquiry/preview', file, 'Failed to read the file');
 }
 
-/** Write the stock locations and claim the purchase-order links. */
-export function applyOrderInquiry(file: File): Promise<OrderInquiryResult> {
-  return post('/api/v1/scm/order-inquiry/apply', file, 'Failed to apply the upload');
+/** Queue the sheet: project demand, stock locations, and the purchase-order claims. */
+export function applyOrderInquiry(file: File): Promise<ImportQueuedResult> {
+  return post('/api/v1/scm/order-inquiry/apply', file, 'Failed to queue the upload');
 }
 
 /**

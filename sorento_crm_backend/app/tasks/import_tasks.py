@@ -136,7 +136,7 @@ def _write_import_audit(
     *,
     entity_type: str,
     label: str,
-    row_count: int,
+    row_count,
     user_id: Optional[str],
     entity_id: Optional[str],
     status: str = "success",
@@ -148,10 +148,18 @@ def _write_import_audit(
     row an import job produces. Commits the audit row on the same session AFTER
     the import data (and the ImportJob status) have already committed.
 
+    ``row_count`` may be an int OR a zero-argument callable that computes one. The
+    callable form exists because computing the figure is itself part of the side
+    effect: evaluated at the call site it runs OUTSIDE this guard, so a caller whose
+    result dict is shaped unexpectedly raises AFTER ``complete_job`` has committed -
+    and the enclosing handler then FAILS a job that actually succeeded. Inside the
+    try it costs a warning, which is what a best-effort side effect is supposed to
+    cost.
+
     ``details_builder`` produces the row's ``new_values``: what the run did, plus
     the import job id that reaches the per-row outcomes in ``import_job_rows``.
-    A CALLABLE, not a dict, so that building it happens INSIDE the guard below.
-    Built at the call site it would run after the import has already committed
+    A CALLABLE, not a dict, for the same reason as the callable ``row_count``:
+    built at the call site it would run after the import has already committed
     and outside this try, where a stale attribute read (the job row is expired by
     that commit) would escape into the task's own except clause and mark a
     finished import FAILED."""
@@ -160,7 +168,7 @@ def _write_import_audit(
             db,
             entity_type=entity_type,
             label=label,
-            row_count=row_count,
+            row_count=row_count() if callable(row_count) else row_count,
             user_id=user_id,
             entity_id=entity_id,
             status=status,
@@ -3447,3 +3455,248 @@ def process_customer_import(db_job_id: str, file_data: bytes, filename: str, use
         )
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# SCM upload channels
+# ---------------------------------------------------------------------------
+#
+# Five files feed the reorder plan: the outstanding sales-order and purchase-order books,
+# purchase and sales history, and the Order Inquiry sheet. They ran INLINE in the request
+# until the sales book (72,000 lines) timed the gateway out mid-write, which is the failure
+# mode this queue exists to prevent. They now go through exactly the machinery every other
+# importer uses - job row, company snapshot, retained source file, per-row outcomes - so the
+# operator watches them in the upload drawer and reads what happened on the job page.
+#
+# One runner rather than five copies of the same seventy lines. The five differ ONLY in which
+# service they call and how that service words "I could not read this file"; everything else
+# (scope, the row recorder, the three exit paths, the audit row) is identical, and five copies
+# of it is how one of them quietly stops flushing its rows on failure.
+
+
+def _run_scm_upload_job(
+    db_job_id: str,
+    filename: str,
+    user_id: str,
+    *,
+    job_label: str,
+    entity_type: str,
+    apply_fn,
+    unreadable_message,
+    written_rows,
+    total_rows_of,
+):
+    """Run one queued SCM upload: apply the file, then terminate the job honestly.
+
+    ``apply_fn(db, outcome, on_total_rows) -> dict`` does the write. ``unreadable_message``
+    turns that dict into the reason the FILE could not be read, or None when it could - this
+    is where the old routes' `400 unreadable` semantics land now: the JOB fails, carrying the
+    problems, rather than the HTTP request the operator has already walked away from.
+    """
+    from rq import get_current_job
+
+    db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
+    job_service = JobService(db)
+
+    rq_job = get_current_job()
+    rq_job_id = rq_job.id if rq_job else None
+    job = job_service.get_job_by_db_id(db_job_id) if db_job_id else None
+    if not job and rq_job_id:
+        job = job_service.get_job(rq_job_id)
+    if not job:
+        logger.error("%s job not found: db_job_id=%s", job_label, db_job_id)
+        db.close()
+        return
+
+    job_id_str = str(job.job_id)
+    label = f"{job_label} {filename or ''}".strip()
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
+    try:
+        job_service.start_job(job_id_str)
+        result = apply_fn(
+            db,
+            outcome,
+            # Publish the row total the moment the file is read. Without it `total_rows`
+            # first appears in `complete_job` and the drawer shows 0/0 for the whole run,
+            # which reads as stuck.
+            lambda total: job_service.update_job_progress(
+                job_id_str, total_rows=total, processed_rows=0
+            ),
+        )
+
+        problem = unreadable_message(result)
+        if problem:
+            # Not this kind of file at all. The job FAILS with the reason rather than
+            # importing zero rows and reporting success.
+            db.rollback()
+            outcome.flush()
+            job_service.fail_job(job_id_str, problem)
+            _write_import_audit(db, entity_type=entity_type, label=label, row_count=0,
+                                user_id=user_id, entity_id=job_id_str, status="failed")
+            return
+
+        db.commit()
+        total = int(total_rows_of(result) or 0)
+        job_service.complete_job(
+            job_id=job_id_str,
+            # The channel's own answer goes under ONE key rather than spread across the
+            # envelope. Its shape is unchanged - `counts`, `applied`, `links`,
+            # `unmapped_agents` all read exactly as the synchronous response did - and
+            # nesting is what keeps its `counts` (the diff: added / closed / unchanged) from
+            # overwriting the envelope's `counts` (the row totals every job page reads).
+            result=outcome.finalize(f"{job_label} completed", total_rows=total,
+                                    upload=result),
+            **outcome.completion_counts(total_rows=total),
+        )
+        _write_import_audit(
+            # Passed as a builder, not a value: the job is COMPLETE and committed by now, so
+            # a `written_rows` that raises here must cost a warning rather than flip a
+            # finished job to failed through the handler below.
+            db, entity_type=entity_type, label=label,
+            row_count=lambda: written_rows(result),
+            user_id=user_id, entity_id=job_id_str,
+            status="partial" if (outcome.failed or outcome.skipped) else "success",
+        )
+    except Exception as exc:  # noqa: BLE001 - the job must record why it died
+        logger.exception("%s job %s failed", job_label, job_id_str)
+        db.rollback()
+        # The recorder writes on its own session, so the rows it already classified survive
+        # this rollback.
+        outcome.flush()
+        job_service.fail_job(job_id_str, str(exc))
+        _write_import_audit(db, entity_type=entity_type, label=label, row_count=0,
+                            user_id=user_id, entity_id=job_id_str, status="failed")
+    finally:
+        db.close()
+
+
+def _missing_columns_message(result: dict) -> Optional[str]:
+    """The outstanding books' way of saying "this is not the file you think it is"."""
+    if result.get("ok"):
+        return None
+    missing = ", ".join(c.replace("_", " ") for c in result.get("missing_columns") or [])
+    return (f"The file is missing required columns: {missing}." if missing
+            else "The file could not be read.")
+
+
+def _problems_message(result: dict) -> Optional[str]:
+    """The history and inquiry channels' way of saying the same thing."""
+    if result.get("ok"):
+        return None
+    problems = result.get("problems") or ["This file could not be read."]
+    return "; ".join(str(p) for p in problems)
+
+
+def process_outstanding_import(db_job_id: str, file_data: bytes, filename: str,
+                               user_id: str, doc_type: str):
+    """Import an outstanding order book (sales or purchase) for the job's company.
+
+    The diff is computed against what we already hold and applied line by line: added,
+    quantity or date changed, unchanged, and CLOSED - a line we hold that the file no longer
+    carries. Every one of those is recorded per source row, closures included, because
+    closing is the destructive half and the job detail is the only place it can be found
+    afterwards.
+    """
+    from app.services.scm import outstanding_import_service
+
+    _run_scm_upload_job(
+        db_job_id, filename, user_id,
+        job_label=("Outstanding sales order import" if doc_type == "outstanding_so"
+                   else "Outstanding purchase order import"),
+        entity_type="sales_order" if doc_type == "outstanding_so" else "purchase_order",
+        apply_fn=lambda db, outcome, on_total: outstanding_import_service.apply(
+            db, file_data, doc_type, actor=user_id, outcome=outcome,
+            on_total_rows=on_total,
+        ),
+        unreadable_message=_missing_columns_message,
+        written_rows=lambda r: sum(
+            int(r.get("applied", {}).get(k, 0)) for k in ("added", "updated", "closed")
+        ),
+        # The file's rows PLUS the lines it closed by absence: a closure carries an outcome
+        # and no source row, and the file's own count alone would put processed past the
+        # total. `file_rows` is still on the result as the operator's own number.
+        total_rows_of=lambda r: r.get("total_rows", 0),
+    )
+
+
+def process_po_history_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
+    """Import the purchase-order listing as HISTORY, then resolve the SO<->PO claims.
+
+    History is written closed and fully received, so it can never read as incoming supply.
+    The link resolve runs inside the job because the notes in this file name sales orders, so
+    an upload can complete a pairing the other side claimed months ago.
+    """
+    from app.services.scm import order_link_service, po_history_service
+
+    def _apply(db, outcome, on_total):
+        result = po_history_service.apply(db, file_data, actor=user_id, outcome=outcome,
+                                          on_total_rows=on_total)
+        if result.get("ok"):
+            result["links"] = order_link_service.resolve(db)
+        return result
+
+    _run_scm_upload_job(
+        db_job_id, filename, user_id,
+        job_label="Purchase history import",
+        entity_type="purchase_order",
+        apply_fn=_apply,
+        unreadable_message=_problems_message,
+        written_rows=lambda r: int(r.get("lines_created", 0)),
+        # The rows of the file, not its purchase lines: this is a banded report and most of
+        # it - headers, SO notes, spacers - was never a line. Each of those carries its own
+        # `not_a_line` outcome, so the total is the source rows and processed reaches it.
+        total_rows_of=lambda r: r.get("total_rows", 0),
+    )
+
+
+def process_sales_history_import(db_job_id: str, file_data: bytes, filename: str,
+                                 user_id: str):
+    """Absorb the sales-order listing as HISTORY for the job's company.
+
+    The channel that timed out: 11,275 documents and 81,361 lines in the client's own export.
+    Every line lands closed and fully delivered, so absorbed history contributes nothing to
+    committed demand.
+    """
+    from app.services.scm import so_history_service
+
+    _run_scm_upload_job(
+        db_job_id, filename, user_id,
+        job_label="Sales history import",
+        entity_type="sales_order",
+        apply_fn=lambda db, outcome, on_total: so_history_service.apply(
+            db, file_data, actor=user_id, outcome=outcome, on_total_rows=on_total,
+        ),
+        unreadable_message=_problems_message,
+        written_rows=lambda r: int(r.get("lines_created", 0)) + int(r.get("lines_updated", 0)),
+        # Every non-blank row, the 9,144 package captions included: each carries its own
+        # `not_a_line` outcome, so a total that counts them is still reachable.
+        total_rows_of=lambda r: r.get("total_rows", 0),
+    )
+
+
+def process_order_inquiry_import(db_job_id: str, file_data: bytes, filename: str,
+                                 user_id: str):
+    """Import the Order Inquiry sheet: project demand, stock locations, and PO claims."""
+    from app.services.scm import order_inquiry_service, order_link_service
+
+    def _apply(db, outcome, on_total):
+        result = order_inquiry_service.apply(db, file_data, actor=user_id, outcome=outcome,
+                                             on_total_rows=on_total)
+        if result.get("ok"):
+            result["links"] = order_link_service.resolve(db)
+        return result
+
+    _run_scm_upload_job(
+        db_job_id, filename, user_id,
+        job_label="Order inquiry import",
+        entity_type="sales_order",
+        apply_fn=_apply,
+        unreadable_message=_problems_message,
+        written_rows=lambda r: int(r.get("lines_created", 0))
+        + int(r.get("lines_refreshed", 0)),
+        # The sheet's rows PLUS the instalments it withdrew: a withdrawal is reached by the
+        # sheet's silence, so it carries an outcome and no row, and `rows` alone would put
+        # processed past the total. `rows` is still on the result as the file's own count.
+        total_rows_of=lambda r: r.get("total_rows", r.get("rows", 0)),
+    )

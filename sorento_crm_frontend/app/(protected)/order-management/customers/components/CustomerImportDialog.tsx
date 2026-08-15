@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/dialog';
 import { CountTile } from '@/components/common/CountTile';
 import { FileDropzone } from '@/components/common/FileDropzone';
+import { ImportFeedbackSections } from '@/components/common/ImportFeedbackSections';
 import type {
   CustomerImportQueuedResult,
   CustomerImportValidateResult,
@@ -34,8 +35,6 @@ import type {
 
 const ACCEPT = '.xlsx,.xls,.xlsm';
 const MAX_SIZE_MB = 25;
-/** Problems shown before the show-all toggle. */
-const PREVIEW_LIMIT = 8;
 
 interface CustomerImportDialogProps {
   open: boolean;
@@ -44,36 +43,25 @@ interface CustomerImportDialogProps {
   onUpload: (file: File) => Promise<CustomerImportQueuedResult>;
 }
 
-function TestResultPanel({
-  result,
-  showAll,
-  onToggleShowAll,
-}: {
-  result: CustomerImportValidateResult;
-  showAll: boolean;
-  onToggleShowAll: (next: boolean) => void;
-}) {
+/**
+ * What the Test found.
+ *
+ * The counts are this importer's own - "new customers" is not a phrase any other channel
+ * uses - but everything below them (the unrecognised columns, the skipped rows, the
+ * show-all toggle) is the SHARED `ImportFeedbackSections`, the same rendering the SCM
+ * upload dialogs use. It was extracted from this panel: the skip-count rule below is the
+ * reason this one won.
+ */
+function TestResultPanel({ result }: { result: CustomerImportValidateResult }) {
   const summary = result.summary;
 
   if (!result.valid || !summary) {
     return (
-      <Alert variant="destructive" appearance="light">
-        <AlertDescription>
-          <p className="font-medium">Nothing would be imported.</p>
-          <ul className="mt-1 list-disc space-y-0.5 ps-4">
-            {(result.errors.length ? result.errors : ['The file could not be read.']).map(
-              (error, index) => (
-                <li key={`${index}-${error}`}>{error}</li>
-              ),
-            )}
-          </ul>
-        </AlertDescription>
-      </Alert>
+      <ImportFeedbackSections
+        errors={result.errors.length ? result.errors : ['The file could not be read.']}
+      />
     );
   }
-
-  const problems = summary.problems ?? [];
-  const shown = showAll ? problems : problems.slice(0, PREVIEW_LIMIT);
 
   return (
     <div className="space-y-3">
@@ -92,42 +80,15 @@ function TestResultPanel({
         </div>
       ) : null}
 
-      {summary.unmapped_headers.length ? (
-        <div className="rounded-lg border p-3 text-sm">
-          <p className="font-medium">
-            {summary.unmapped_headers.length} column
-            {summary.unmapped_headers.length === 1 ? '' : 's'} not recognised:
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {summary.unmapped_headers.join(', ')}
-          </p>
-        </div>
-      ) : null}
-
-      {problems.length ? (
-        <div className="rounded-lg border p-3 text-sm">
-          <p className="font-medium">
-            {summary.would_skip.toLocaleString()} row
-            {summary.would_skip === 1 ? '' : 's'} skipped:
-          </p>
-          <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-            {shown.map((problem, index) => (
-              <li key={`${problem.row}-${index}`}>
-                Row {problem.row}: {problem.reason}
-              </li>
-            ))}
-          </ul>
-          {problems.length > PREVIEW_LIMIT ? (
-            <button
-              type="button"
-              className="mt-1 text-xs underline"
-              onClick={() => onToggleShowAll(!showAll)}
-            >
-              {showAll ? 'Show less' : `Show all ${problems.length}`}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      <ImportFeedbackSections
+        unrecognisedColumns={summary.unmapped_headers}
+        rejectedRows={(summary.problems ?? []).map((problem) => ({
+          row: problem.row,
+          reason: problem.reason,
+        }))}
+        // The REAL skip count, never the length of a list that mixes four kinds of thing.
+        skippedCount={summary.would_skip}
+      />
     </div>
   );
 }
@@ -157,7 +118,6 @@ export function CustomerImportDialog({
   const [isTesting, setIsTesting] = useState(false);
   const [isQueueing, setIsQueueing] = useState(false);
   const [warnConfirmOpen, setWarnConfirmOpen] = useState(false);
-  const [showAllProblems, setShowAllProblems] = useState(false);
 
   const file = files[0] ?? null;
   const busy = isTesting || isQueueing;
@@ -166,7 +126,6 @@ export function CustomerImportDialog({
     setFiles([]);
     setTestResult(null);
     setError(null);
-    setShowAllProblems(false);
   };
 
   const handleOpenChange = (next: boolean) => {
@@ -178,7 +137,6 @@ export function CustomerImportDialog({
     setFiles(next.slice(0, 1));
     setTestResult(null);
     setError(null);
-    setShowAllProblems(false);
   };
 
   const runTest = async (current: File): Promise<CustomerImportValidateResult | null> => {
@@ -199,7 +157,6 @@ export function CustomerImportDialog({
   const handleTest = async () => {
     if (!file) return;
     setIsTesting(true);
-    setShowAllProblems(false);
     const result = await runTest(file);
     setIsTesting(false);
     if (!result) return;
@@ -317,13 +274,7 @@ export function CustomerImportDialog({
             </div>
           ) : null}
 
-          {!isTesting && testResult ? (
-            <TestResultPanel
-              result={testResult}
-              showAll={showAllProblems}
-              onToggleShowAll={setShowAllProblems}
-            />
-          ) : null}
+          {!isTesting && testResult ? <TestResultPanel result={testResult} /> : null}
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)}>

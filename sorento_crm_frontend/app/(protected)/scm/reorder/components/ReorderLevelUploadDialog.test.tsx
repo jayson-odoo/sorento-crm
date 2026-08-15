@@ -49,6 +49,18 @@ function pickFile() {
   fireEvent.change(input, { target: { files: [file] } });
 }
 
+/**
+ * Pick the file AND press Test.
+ *
+ * Picking alone reads nothing now: every SCM upload dialog shares one flow, and that flow
+ * stopped firing a request on drop (the captain's own complaint about these dialogs). Test
+ * is the explicit read.
+ */
+function pickAndTest() {
+  pickFile();
+  fireEvent.click(screen.getByRole('button', { name: /^Test$/i }));
+}
+
 beforeEach(() => {
   previewLevelImport.mockReset();
   applyLevelImport.mockReset();
@@ -59,7 +71,7 @@ describe('ReorderLevelUploadDialog', () => {
     previewLevelImport.mockResolvedValue(outcome());
     render(<ReorderLevelUploadDialog open onOpenChange={() => {}} />);
 
-    pickFile();
+    pickAndTest();
 
     await waitFor(() => expect(screen.getByText('New levels')).toBeInTheDocument());
     expect(applyLevelImport).not.toHaveBeenCalled();
@@ -76,7 +88,7 @@ describe('ReorderLevelUploadDialog', () => {
     );
     render(<ReorderLevelUploadDialog open onOpenChange={() => {}} />);
 
-    pickFile();
+    pickAndTest();
 
     await waitFor(() => expect(screen.getByText(/will be kept/)).toBeInTheDocument());
     expect(screen.getByText(/MWC7624 at BRW: yours 200, file 120/)).toBeInTheDocument();
@@ -88,7 +100,7 @@ describe('ReorderLevelUploadDialog', () => {
     );
     render(<ReorderLevelUploadDialog open onOpenChange={() => {}} />);
 
-    pickFile();
+    pickAndTest();
 
     await waitFor(() => expect(screen.getByText(/missing reorder level/i)).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /confirm upload/i })).toBeDisabled();
@@ -99,7 +111,7 @@ describe('ReorderLevelUploadDialog', () => {
     applyLevelImport.mockResolvedValue(outcome({ created: 1, updated: 1 }));
     render(<ReorderLevelUploadDialog open onOpenChange={() => {}} />);
 
-    pickFile();
+    pickAndTest();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /confirm upload/i })).toBeEnabled(),
     );
