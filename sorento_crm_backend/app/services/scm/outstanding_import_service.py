@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Callable, Optional
 
 import sqlalchemy as sa
@@ -88,8 +89,7 @@ class _Binding:
     # so the diff saw a document with no lines and inserted them all again, doubling on-order.
     write_status: str
     live_statuses: tuple[str, ...]
-    # Line columns fed from the file's money columns, when it has any. Empty for the sales
-    # book, whose extract carries no price at all.
+    # Line columns fed from the file's money columns, when it has any.
     money_cols: tuple[tuple[str, str], ...] = ()
     # Header columns fed from the file, per document. Same (column, extras key) shape.
     header_cols: tuple[tuple[str, str], ...] = ()
@@ -136,6 +136,12 @@ _BINDINGS: dict[str, _Binding] = {
         # `scm.committed_v` counts exactly one sales-order status, so writing and reading are
         # the same value here.
         write_status="open", live_statuses=("open",),
+        # What the customer pays. The extract has stated it since migration 338 seeded the
+        # `UNIT PRICE` alias, and nothing on this channel wrote it - so the demand popover,
+        # whose whole job is "who ordered it and at what price", quoted a blank on every real
+        # row. Same shape and same rule as the PO side's cost: an absent price stays NULL
+        # rather than becoming a 0 that reads as goods given away.
+        money_cols=(("unit_price", "unit_price"),),
         # OPTIONAL in the file and FILL-only on the header: no export carries an order type
         # today, so this is the column that lets a differently-worded export classify its own
         # documents the day it does, without a release. A value already on the header wins,
@@ -438,7 +444,8 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
 
 
 def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
-                    fulfilled_into: Optional[dict[str, float]] = None) -> list[Line]:
+                    fulfilled_into: Optional[dict[str, float]] = None,
+                    money_into: Optional[dict[str, dict]] = None) -> list[Line]:
     """Current outstanding lines for the documents named in the file, as diff Lines.
 
     `row_ref` carries the DB line id so apply() can update in place rather than matching
@@ -448,6 +455,10 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
     delivered/received quantity. The diff has no place for it (it is deliberately
     document-agnostic and compares OUTSTANDING figures) but the honesty checks need it, and a
     caller that only wants the diff should not have to unpack a pair to get it.
+
+    `money_into` is the same idea for the money columns, and it is read for every line the
+    file restates unchanged - so it comes out of THIS query rather than a lookup per row. On
+    the client's 4,349-row book that is one statement instead of four thousand.
     """
     if not docs:
         return []
@@ -456,6 +467,7 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
     # by it.
     line, header = bind.line, bind.header
     fulfilled = getattr(line, bind.fulfilled)
+    money = [getattr(line, col) for col, _key in bind.money_cols]
     rows = (
         db.query(
             line.id,
@@ -465,6 +477,7 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
             (line.qty_ordered - fulfilled).label("outstanding"),
             getattr(line, bind.date),
             fulfilled,
+            *money,
         )
         .join(header, header.id == getattr(line, bind.header_fk))
         .join(Product, Product.id == line.product_id)
@@ -484,6 +497,11 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
     )
     if fulfilled_into is not None:
         fulfilled_into.update({str(r[0]): float(r[6] or 0) for r in rows})
+    if money_into is not None:
+        money_into.update({
+            str(r[0]): {col: r[7 + i] for i, (col, _key) in enumerate(bind.money_cols)}
+            for r in rows
+        })
     return [
         Line(doc_number=r[1], item_code=r[2], location=r[3] or "",
              qty=float(r[4] or 0), required_date=r[5], row_ref=str(r[0]))
@@ -784,6 +802,10 @@ class _Plan:
     # Agent codes in the file that can classify nothing yet. Master-data gaps, not row
     # failures, so they travel separately.
     agent_notices: list[AgentNotice] = field(default_factory=list)
+    # DB line id -> the money columns that line currently holds, read alongside the lines
+    # themselves. It is what lets the write path tell a line the file merely restates from
+    # one whose PRICE moved, without a lookup per unchanged row.
+    money_by_line: dict[str, dict] = field(default_factory=dict)
 
 
 def _build(db: Session, file_data: bytes, doc_type: str,
@@ -800,8 +822,9 @@ def _build(db: Session, file_data: bytes, doc_type: str,
         return _Plan(read=read)
     resolved = _resolve(db, read, bind)
     fulfilled: dict[str, float] = {}
+    money: dict[str, dict] = {}
     existing = _existing_lines(db, {l.doc_number for l in resolved.lines}, bind,
-                               fulfilled_into=fulfilled)
+                               fulfilled_into=fulfilled, money_into=money)
     diff = diff_lines(existing, resolved.lines)
     header_state = _header_state(db, diff.scope_documents, bind)
     agent_classes, agent_notices = _agent_state(db, resolved, bind)
@@ -818,6 +841,7 @@ def _build(db: Session, file_data: bytes, doc_type: str,
         demand=demand,
         problems=demand_problems,
         agent_notices=agent_notices,
+        money_by_line=money,
     )
 
 
@@ -905,6 +929,47 @@ def _closed_line(db: Session, bind: _Binding, header_id: str, product_id: Option
     dated = getattr(line, bind.date)
     q = q.filter(dated.is_(None) if when is None else dated == when)
     return q.order_by(line.created_at).first()
+
+
+#: Both money columns on both books are stored at 2 decimal places, so that is the precision
+#: a comparison between the file and the database can honestly be made at. A sheet stating
+#: 0.945 comes back out of the column as 0.95, and comparing the raw figures would call that
+#: a price change on every single re-upload, for ever.
+_MONEY_PLACES = Decimal("0.01")
+
+
+def _money_2dp(value) -> Optional[Decimal]:
+    """`value` as the column would store it, or None when it is not a number at all."""
+    if value is None or value == "":
+        return None
+    try:
+        # ROUND_HALF_UP, which is how Postgres rounds into NUMERIC(_, 2). A different
+        # rounding here would disagree with the value it just wrote.
+        return Decimal(str(value)).quantize(_MONEY_PLACES, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _money_differs(held: dict, extra: dict, bind: _Binding) -> bool:
+    """Whether this extract states money that is not what the line already holds.
+
+    Only what the file STATES counts: an absent value is not a disagreement, for the same
+    reason `_refresh_money` never blanks a figure the file omits.
+    """
+    for col, key in bind.money_cols:
+        stated = extra.get(key)
+        if stated is None:
+            continue
+        stored = held.get(col)
+        a, b = _money_2dp(stated), _money_2dp(stored)
+        if a is not None and b is not None:
+            if a != b:
+                return True
+            continue
+        # A currency code, or a price arriving where the column was empty.
+        if str(stated).strip() != str(stored if stored is not None else "").strip():
+            return True
+    return False
 
 
 def _refresh_money(line, extra: dict, bind: _Binding) -> None:
@@ -1179,6 +1244,21 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             continue
 
         if c.kind == "unchanged":
+            # Unchanged is about the QUANTITY and the DATE, which is what the diff compares.
+            # The same line can still be repriced, and nothing else on either channel ever
+            # revisits that column, so a line left alone here quotes last week's money for
+            # ever. Compared at the 2 decimals the column stores, so a sheet that states a
+            # third one cannot report an update on every re-upload.
+            extra = read.extras.get(str(c.after.row_ref), {})
+            if _money_differs(plan.money_by_line.get(str(c.before.row_ref), {}), extra, bind):
+                line = (db.query(bind.line)
+                        .filter(bind.line.id == c.before.row_ref).one_or_none())
+                if line is not None:
+                    _refresh_money(line, extra, bind)
+                    applied["updated"] += 1
+                    outcome.updated(row=source_row, identity=identity, value=c.doc_number,
+                                    entity_type="order_line", entity_id=line.id)
+                    continue
             applied["unchanged"] += 1
             outcome.unchanged(row=source_row, identity=identity, value=c.doc_number)
             continue
