@@ -166,6 +166,29 @@ describe('InternalCommentComposer', () => {
     expect(screen.getByTestId('internal-comment-input')).toHaveValue('keep me');
   });
 
+  it('opens the typeahead upward, so a drawer at phone width does not clip it', async () => {
+    // FINDING 10: it opened DOWNWARD (translate-y-full) from a composer that
+    // sits at the bottom of the drawer, so the suggestions fell off the screen.
+    renderComposer();
+    type('@Te');
+
+    const menu = await screen.findByTestId('mention-typeahead');
+    expect(menu.className).toContain('bottom-full');
+    expect(menu.className).not.toContain('translate-y-full');
+  });
+
+  it('error state: says the people lookup failed instead of vanishing', async () => {
+    // FINDING 12: a failed lookup closed the typeahead with no explanation, so
+    // "@" simply stopped working.
+    getUsersSelect.mockRejectedValue(new Error('Failed to load users'));
+    renderComposer();
+    type('@Te');
+
+    expect(await screen.findByTestId('mention-typeahead-error')).toHaveTextContent(
+      'Failed to load users',
+    );
+  });
+
   it('Escape closes the typeahead without touching the draft', async () => {
     renderComposer();
     const input = type('@Te');

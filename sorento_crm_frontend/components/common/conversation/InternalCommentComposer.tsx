@@ -92,7 +92,12 @@ export default function InternalCommentComposer({
   }, [fragment]);
 
   // The ONE user-select service (ARCHITECTURE-RULES): no per-feature user fetch.
-  const { data: candidates = [], isFetching } = useQuery({
+  const {
+    data: candidates = [],
+    isFetching,
+    isError: lookupFailed,
+    error: lookupError,
+  } = useQuery({
     queryKey: ['comment-mention-users', debouncedQuery],
     queryFn: () => getUsersSelect({ query: debouncedQuery || undefined, status: 'ACTIVE' }),
     enabled: debouncedQuery !== null,
@@ -100,7 +105,10 @@ export default function InternalCommentComposer({
   });
 
   const suggestions = useMemo(() => candidates.slice(0, 8), [candidates]);
-  const typeaheadOpen = fragment !== null && (isFetching || suggestions.length > 0);
+  // A failed lookup stays OPEN with its reason (same as the snippet picker):
+  // silently closing reads as "@ does not work here".
+  const typeaheadOpen =
+    fragment !== null && (isFetching || lookupFailed || suggestions.length > 0);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -226,12 +234,22 @@ export default function InternalCommentComposer({
           <div
             data-testid="mention-typeahead"
             role="listbox"
-            className="absolute inset-x-2 bottom-2 z-20 max-h-48 translate-y-full overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
+            // Opens UPWARD, like the snippet picker: this composer sits at the
+            // bottom of the drawer, and downward is off the screen at 375px.
+            className="absolute inset-x-2 bottom-full z-20 mb-1 max-h-48 overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
           >
             {isFetching && suggestions.length === 0 && (
               <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
                 <Loader2 className="size-3.5 animate-spin" />
                 Searching people
+              </div>
+            )}
+            {!isFetching && lookupFailed && (
+              <div
+                className="px-2 py-1.5 text-xs text-destructive"
+                data-testid="mention-typeahead-error"
+              >
+                {lookupError instanceof Error ? lookupError.message : 'Failed to load people'}
               </div>
             )}
             {suggestions.map((user, index) => (

@@ -75,13 +75,24 @@ def events():
 
 
 @pytest.fixture
-def signed_in():
-    """Authenticated as ME, with no database behind it: the stream reads none.
+def signed_in(monkeypatch):
+    """Authenticated as ME, with no database behind it: once running, the stream
+    reads none.
 
     Both principals are overridden because the whole sla-management router is
     mounted behind the module guard, which resolves its own
     ``get_current_user_or_api_key``.
+
+    ``entitled_contacts`` is the one thing on this path that DOES need a
+    session (it drops ``?contacts=`` ids the caller has no ticket standing for).
+    Its own suite is tests/test_conversation_events_contact_scope.py; here it is
+    stubbed to a pass-through so these tests stay about the transport.
     """
+    from app.api.v1.sla import conversation_events
+
+    monkeypatch.setattr(
+        conversation_events, "entitled_contacts", lambda _db, _uid, requested: requested
+    )
     me = {"id": ME, "email": "me@test.com"}
     app.dependency_overrides[get_current_user] = lambda: me
     app.dependency_overrides[get_current_user_or_api_key] = lambda: me

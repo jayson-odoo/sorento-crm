@@ -31,7 +31,8 @@ export default function ConversationSearchBar({
   const noMatches = hasQuery && !busy && controller.matchCount === 0;
 
   return (
-    <div className="flex items-center gap-2 border-x border-b bg-[#f0f2f5] px-3 py-2 dark:bg-[#202c33]">
+    <div className="border-x border-b bg-[#f0f2f5] px-3 py-2 dark:bg-[#202c33]">
+      <div className="flex items-center gap-2" data-testid="conversation-search-controls">
       <Search className="size-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
       <input
         ref={inputRef}

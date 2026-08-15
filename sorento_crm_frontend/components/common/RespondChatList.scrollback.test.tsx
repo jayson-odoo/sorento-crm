@@ -391,6 +391,22 @@ describe('RespondChatList in-thread search (AC-L8)', () => {
     expect(controller.closeSearch).toHaveBeenCalled();
   });
 
+  it('puts a search failure on its own line, so the bar cannot overflow at 375px', () => {
+    // FINDING 15: the error sat in the non-wrapping control row as a shrink-0
+    // span, pushing the bar wider than the drawer.
+    render(
+      <RespondChatList
+        items={[msg(1)]}
+        searchController={searchController({ open: true, query: 'x', error: 'Search failed' })}
+      />,
+    );
+
+    const error = screen.getByTestId('conversation-search-error');
+    expect(error).toHaveTextContent('Search failed');
+    expect(error.className).not.toContain('shrink-0');
+    expect(error.closest('[data-testid="conversation-search-controls"]')).toBeNull();
+  });
+
   it('marks the searched term inside the bubble', () => {
     render(
       <RespondChatList
