@@ -367,22 +367,37 @@ export async function getRecommendations(
 export async function getAllDispositionRecommendations(
   runId: string,
 ): Promise<ReorderRecommendation[]> {
+  return fetchEveryPage(runId, 'disposition');
+}
+
+/**
+ * Every page of one recommendation type, in run order, with pages 2..N fetched TOGETHER.
+ *
+ * Page 1 is awaited alone because it is what reports `total_pages` - there is no way to know
+ * how many pages exist without it. Every remaining page is then requested in parallel, which
+ * is the whole point: they have no dependency on each other, and awaiting them one at a time
+ * turned a plan into a staircase of round trips. Measured on the live 4,634-row run (2,150
+ * buy + 2,092 disposition, so three pages of each), the six recommendation requests finished
+ * in sequence at 6.0 / 6.6 / 11.5 / 11.6 / 13.7 / 16.3 s - the grid could not render until
+ * the last of them landed. The cost grows with the plan: a 10,000-row set is ten pages, so
+ * ten serial round trips per type.
+ *
+ * Order is preserved (`Promise.all` resolves positionally), so the merged list is identical
+ * to what the serial loop produced - this changes when the rows arrive, never which rows or
+ * in what order.
+ */
+async function fetchEveryPage(
+  runId: string,
+  type: 'buy' | 'covered' | 'disposition' | 'needs_level',
+): Promise<ReorderRecommendation[]> {
   const PAGE = 1000; // endpoint's max `limit`
-  const first = await getRecommendations(runId, {
-    pageIndex: 0,
-    pageSize: PAGE,
-    type: 'disposition',
-  });
-  const out = [...first.data];
+  const first = await getRecommendations(runId, { pageIndex: 0, pageSize: PAGE, type });
+  const rest: Promise<RecommendationPage>[] = [];
   for (let page = 1; page < first.pagination.total_pages; page += 1) {
-    const next = await getRecommendations(runId, {
-      pageIndex: page,
-      pageSize: PAGE,
-      type: 'disposition',
-    });
-    out.push(...next.data);
+    rest.push(getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type }));
   }
-  return out;
+  const pages = await Promise.all(rest);
+  return [...first.data, ...pages.flatMap((p) => p.data)];
 }
 
 /** Newest-first paginated run history (drives the Run history panel). */
@@ -449,14 +464,7 @@ export async function getBuyRecommendationsForCash(
   // Σ of all costed buys, so a truncated set would cap the slider well below the
   // plan's true cash impact. Page past the endpoint's 1000-row limit like the
   // disposition set does.
-  const PAGE = 1000; // endpoint's max `limit`
-  const first = await getRecommendations(runId, { pageIndex: 0, pageSize: PAGE, type: 'buy' });
-  const out = [...first.data];
-  for (let page = 1; page < first.pagination.total_pages; page += 1) {
-    const next = await getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type: 'buy' });
-    out.push(...next.data);
-  }
-  return out;
+  return fetchEveryPage(runId, 'buy');
 }
 
 /** Every `covered` row for a run: demand the location's own stock already covers.
@@ -467,14 +475,7 @@ export async function getBuyRecommendationsForCash(
 export async function getCoveredRecommendations(
   runId: string,
 ): Promise<ReorderRecommendation[]> {
-  const PAGE = 1000;
-  const first = await getRecommendations(runId, { pageIndex: 0, pageSize: PAGE, type: 'covered' });
-  const out = [...first.data];
-  for (let page = 1; page < first.pagination.total_pages; page += 1) {
-    const next = await getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type: 'covered' });
-    out.push(...next.data);
-  }
-  return out;
+  return fetchEveryPage(runId, 'covered');
 }
 
 /** Resolve a covered-by-stock row: keep the stock, or turn it into a purchase.
@@ -569,22 +570,7 @@ export async function applyBudget(runId: string, budget: number): Promise<ApplyB
 export async function getNeedsLevelRecommendations(
   runId: string,
 ): Promise<ReorderRecommendation[]> {
-  const PAGE = 1000;
-  const first = await getRecommendations(runId, {
-    pageIndex: 0,
-    pageSize: PAGE,
-    type: 'needs_level',
-  });
-  const out = [...first.data];
-  for (let page = 1; page < first.pagination.total_pages; page += 1) {
-    const next = await getRecommendations(runId, {
-      pageIndex: page,
-      pageSize: PAGE,
-      type: 'needs_level',
-    });
-    out.push(...next.data);
-  }
-  return out;
+  return fetchEveryPage(runId, 'needs_level');
 }
 
 /** Take our suggested level as the buyer's own, for one (product, location).

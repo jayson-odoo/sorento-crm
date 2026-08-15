@@ -5,6 +5,8 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 import {
   createReorderRun,
+  getBuyRecommendationsForCash,
+  getCoveredRecommendations,
   getReorderRun,
   getRecommendations,
   listReorderRuns,
@@ -178,5 +180,64 @@ describe('reorderRunService - listReorderRuns', () => {
     expect(page.data[0].run_id).toBe('run-b');
     expect(page.data[0].warehouse_codes).toEqual(['WH-KL', 'WH-JB']);
     expect(page.data[0].summary?.recommendation_count).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// paging the whole set: same rows, same order, without the staircase
+// ---------------------------------------------------------------------------
+
+/** A page of `n` rows whose ids name the page they came from. */
+function page(pageNo: number, n: number, totalPages: number) {
+  return ok({
+    data: Array.from({ length: n }, (_, i) => ({ id: `p${pageNo}-r${i}` })),
+    pagination: { page: pageNo, limit: 1000, total: totalPages * n, total_pages: totalPages },
+  });
+}
+
+describe('reorderRunService - fetching every page of a plan', () => {
+  it('returns the pages in order, so the merged list matches the serial loop', async () => {
+    apiFetch
+      .mockResolvedValueOnce(page(1, 2, 3))
+      .mockResolvedValueOnce(page(2, 2, 3))
+      .mockResolvedValueOnce(page(3, 2, 3));
+
+    const rows = await getBuyRecommendationsForCash('run-1');
+
+    expect(rows.map((r) => r.id)).toEqual([
+      'p1-r0', 'p1-r1', 'p2-r0', 'p2-r1', 'p3-r0', 'p3-r1',
+    ]);
+  });
+
+  it('asks for pages 2..N together rather than one after the other', async () => {
+    // Page 1 has to be awaited alone - it is what reports total_pages. Everything after it
+    // is independent, and issuing those serially is what made a big plan a staircase of
+    // round trips. Proven by holding page 2 open: page 3 must already have been requested.
+    let releasePage2: (v: unknown) => void = () => {};
+    const page2 = new Promise((res) => {
+      releasePage2 = res;
+    });
+    apiFetch
+      .mockResolvedValueOnce(page(1, 1, 3))
+      .mockImplementationOnce(() => page2)
+      .mockResolvedValueOnce(page(3, 1, 3));
+
+    const pending = getBuyRecommendationsForCash('run-1');
+    // Page 2 is deliberately still unresolved here. If pages were fetched serially the
+    // count would sit at 2 forever and this would time out.
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
+
+    releasePage2(page(2, 1, 3));
+    const rows = await pending;
+    expect(rows.map((r) => r.id)).toEqual(['p1-r0', 'p2-r0', 'p3-r0']);
+  });
+
+  it('a single-page plan makes exactly one request', async () => {
+    apiFetch.mockResolvedValueOnce(page(1, 3, 1));
+
+    const rows = await getCoveredRecommendations('run-1');
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(rows).toHaveLength(3);
   });
 });
