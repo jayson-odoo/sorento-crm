@@ -19,6 +19,8 @@ fix wave, all committed and test-verified, NOT yet pushed:
 | `84b461f0f` | Docs honesty pass, 7 edits (AC-B5 superseded, AC-L2/G5/H3 corrected, design-doc destaled, ledger jsdom excuse killed, B2 caveat into the edition plan) |
 | `0ad01fee1` | FE mechanical: artboard pulled from palette, buildDataGridParams in brochureImageService, search on TileDesignsList + BundlesList, SearchableSelect in RoomDesigner |
 | `d1862211d` | AC-L11: Edition transitions audited, plus two pre-existing shared `audit_service` defects fixed (non-idempotent listener registration; no-op guard that could drop a real change's row) |
+| `3fe87b281` | Phase 3 review follow-ups, FE: audit-log filter knows Dealer Kit Edition; whitespace-only search shows the plain empty state (Tile Designs / Bundles / Collections); WallPicker extracted + tested; design-doc risk 5 attributed to PR #57. Reviewer's page-reset finding refuted (tanstack autoResetPageIndex is on by default). |
+| `6e9a13908` | Phase 3 review follow-ups, BE (BLOCKER fixed): a "dealer" export is every brand's dealer tier read from `contact_access_types` (`audience_access_codes(db)`), not the bare Sorento `dealer` code, which combined with the G3 filter had silently dropped every CABANA/MOCHA tile from dealer PDFs; brand `[]`/NULL levels = public; audit guard counts many-to-one relationship reassignment; docstring's autoflush claim corrected; AC-G3 scope recorded honestly (bundle/selection paths not gated). |
 | `7ce4a734a` | Sidebar duplicate: the b2ba383d4 merge kept both sides' Dealer Kit menu block, so the group rendered twice (second copy expanded to nothing). Deleted the duplicate; config test pins one-group + no-duplicate-titles invariants. Found live during the agent-browser verification pass. |
 
 Verification evidence lives in each commit message. Totals across the wave: 85 edition +
@@ -43,8 +45,12 @@ mutation-tested with the failing assertion named.
    `CONTAINER-PDF-EXPORT-RUNBOOK.md` names the exact two compose changes: a
    `sorento_network` alias for `frontend_blue`, and `DEALER_KIT_PRINT_BASE_URL` on the
    worker. The image itself is proven; the running-stack path is not.
-3. **Push + follow-up PR.** Branch is local-only. The captain gates pushes/PRs
-   (never merge to main directly - merge is the deploy trigger).
+3. **Push + follow-up PR - DONE 2026-08-15: PR #162** (`feat/dealer-kit-audit-fixes`,
+   pushed from this worktree's local `feat/dealer-kit-hardening`; the remote branch of
+   that name is PR #57's merged head and was left untouched). Phase 3 review ran
+   first (reviewer agent, 11 findings, all addressed or refuted with evidence - see
+   `3fe87b281` / `6e9a13908`). NEVER merge - merge to main is the deploy trigger,
+   the captain's call.
 4. **Captain decisions outstanding** (from the audit): build-or-descope on
    certification badges (Group E, schema-only), asset library UI (Group D), floor-plan
    upload/tracing (AC-R3/R4); the quote handoff (design doc §7.1); whether to converge
