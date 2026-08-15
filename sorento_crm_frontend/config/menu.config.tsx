@@ -448,6 +448,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sla-management/sla-policies',
       },
       {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
+      },
+      {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
@@ -1326,6 +1331,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'SLA Policies',
         path: '/sla-management/sla-policies',
+      },
+      {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
       },
       {
         title: 'Conversation SLA Tracking',
