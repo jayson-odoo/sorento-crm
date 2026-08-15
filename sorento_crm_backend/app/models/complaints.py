@@ -41,7 +41,7 @@ class Complaint(Base):
     # because a complaint is a customer's problem and a legal record that must outlive the
     # pursuit it was attached to.
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="SET NULL"), nullable=True
     )
     contact_id = Column(Text, nullable=True)
     space_id = Column(Text, nullable=True)

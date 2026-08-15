@@ -1,0 +1,105 @@
+"""The projects module's audit entity types are pinned to the PRE-move table names.
+
+``audit_service._audit_entity_type`` derives ``audit_log.entity_type`` from
+``__tablename__`` unless the model overrides it. Migration 354 renamed 34 tables, so
+without an override two things break at once and neither raises:
+
+* every audit row already written for `project_leads` is orphaned, because new rows arrive
+  as `leads` and nothing joins the two;
+* the module starts writing `entity_type='brands'`, `'purchase_orders'`,
+  `'sales_orders'`, which core `app.models.product` and `app.models.procurement` already
+  use, so a "who changed this brand" query returns another module's history.
+
+Both failures are silent - the write succeeds, the report is wrong - which is exactly the
+kind of thing that has to be pinned by a test rather than by a convention. Two services
+also hardcode the old strings (`project_lead_service.LEAD_AUDIT_ENTITY_TYPE`,
+`project_task_service`'s `AuditLog.entity_type == "project_tasks"` filter), and they are
+correct only while this holds.
+
+The pre-move names come from migration 354's own table list, so the migration and the
+models cannot drift apart on the question of what a table used to be called.
+"""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+from app import models  # noqa: F401  register every model
+from app.database import Base
+from app.services.audit_service import _audit_entity_type
+
+MIGRATION = (
+    Path(__file__).resolve().parents[1]
+    / "alembic"
+    / "versions"
+    / "354_projects_schema_move.py"
+)
+
+
+def _pre_move_names() -> dict[str, str]:
+    """new bare name -> the name the table carried before migration 354."""
+    spec = importlib.util.spec_from_file_location("m354_names", MIGRATION)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return {new: old for old, new in module.TABLES}
+
+
+def _mapped_classes():
+    return [
+        mapper.class_
+        for mapper in Base.registry.mappers
+        if getattr(mapper.class_, "__table__", None) is not None
+    ]
+
+
+def _projects_classes():
+    return [cls for cls in _mapped_classes() if cls.__table__.schema == "projects"]
+
+
+def test_every_renamed_model_pins_its_pre_move_audit_entity_type():
+    pre_move = _pre_move_names()
+    checked = 0
+
+    for cls in _projects_classes():
+        name = cls.__tablename__
+        old = pre_move[name]
+        if old == name:
+            continue  # never carried the prefix; its entity type did not change
+        assert _audit_entity_type(cls) == old, (
+            f"{cls.__name__} writes audit rows as {_audit_entity_type(cls)!r}; "
+            f"they were written as {old!r} before the schema move"
+        )
+        checked += 1
+
+    assert checked == 34, f"expected 34 renamed models, pinned {checked}"
+
+
+def test_models_that_kept_their_name_keep_their_audit_entity_type():
+    """The other 13 changed schema only, so their entity type must not have moved either."""
+    pre_move = _pre_move_names()
+    checked = 0
+
+    for cls in _projects_classes():
+        name = cls.__tablename__
+        if pre_move[name] != name:
+            continue
+        assert _audit_entity_type(cls) == name
+        checked += 1
+
+    assert checked == 13
+
+
+def test_no_projects_entity_type_collides_with_a_core_one():
+    """Seven bare names now exist in both schemas. The audit trail must not conflate them."""
+    core = {
+        _audit_entity_type(cls): cls.__name__
+        for cls in _mapped_classes()
+        if cls.__table__.schema is None
+    }
+
+    for cls in _projects_classes():
+        entity_type = _audit_entity_type(cls)
+        assert entity_type not in core, (
+            f"{cls.__name__} audits as {entity_type!r}, which core {core[entity_type]} "
+            f"already uses"
+        )

@@ -642,7 +642,7 @@ class PurchaseRequestHeader(Base):
     # without one. project_title stays as the display fallback (AC-F6) -- the ~28 real
     # rows are linked by hand, and no fuzzy backfill writes a link nobody checked.
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="SET NULL"), nullable=True
     )
     purpose = Column(Text, nullable=True)
     delivery_address = Column(Text, nullable=True)  # sponsorship form

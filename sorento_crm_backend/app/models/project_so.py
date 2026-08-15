@@ -1,9 +1,15 @@
 """Customer PO to Sales Order (phase 2 of the `projects` module).
 
-Every table here is MODULE side. `sales_orders` / `sales_order_lines` are CORE and SCM
+Every table here is MODULE side and lives in the `projects` schema (ADR-0011; see the
+header of ``app.models.projects`` for the full rules on qualified FKs, pinned audit entity
+types and raw SQL). `public.sales_orders` / `public.sales_order_lines` are CORE and SCM
 owns them: they learn nothing about projects (finding G5). The link runs the other way,
-from `project_sales_orders.so_id`, and committed demand still reaches the reorder engine
+from `projects.sales_orders.so_id`, and committed demand still reaches the reorder engine
 through the core lines exactly as it does today.
+
+**`projects.sales_orders` and `public.sales_orders` are different tables with the same bare
+name.** So is the `_lines` pair. `ForeignKey("sales_orders.id")` below is the CORE one,
+unqualified on purpose; every FK naming a module table is written `projects.<table>.<col>`.
 
 Three ideas shape the whole file:
 
@@ -69,12 +75,14 @@ ANNOTATION_REJECTED = "rejected"
 class ProjectPOVersion(Base, CompanyScopedMixin):
     """One uploaded document. Immutable once confirmed: a revision is a NEW version."""
 
-    __tablename__ = "project_po_versions"
+    __tablename__ = "po_versions"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_po_versions"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     purchase_order_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_purchase_orders.id", ondelete="CASCADE"),
+        ForeignKey("projects.purchase_orders.id", ondelete="CASCADE"),
         nullable=False,
     )
     version_no = Column(Integer, nullable=False)
@@ -119,6 +127,7 @@ class ProjectPOVersion(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("purchase_order_id", "version_no", name="uq_project_po_versions_no"),
+        {"schema": "projects"},
     )
 
 
@@ -130,11 +139,13 @@ class ProjectPOLine(Base, CompanyScopedMixin):
     recovered from the description into ``resolved_product_id`` (AC-M1b, measured).
     """
 
-    __tablename__ = "project_po_lines"
+    __tablename__ = "po_lines"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_po_lines"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     po_version_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_po_versions.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.po_versions.id", ondelete="CASCADE"), nullable=False
     )
     line_no = Column(Integer, nullable=False)
     stock_code_raw = Column(String(180), nullable=True)
@@ -156,6 +167,7 @@ class ProjectPOLine(Base, CompanyScopedMixin):
     __table_args__ = (
         UniqueConstraint("po_version_id", "line_no", name="uq_project_po_lines_no"),
         Index("ix_project_po_lines_version", "po_version_id"),
+        {"schema": "projects"},
     )
 
 
@@ -166,11 +178,13 @@ class ProjectPOAnnotation(Base, CompanyScopedMixin):
     on a later scan is the SAME annotation and must not be proposed twice.
     """
 
-    __tablename__ = "project_po_annotations"
+    __tablename__ = "po_annotations"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_po_annotations"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     po_version_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_po_versions.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.po_versions.id", ondelete="CASCADE"), nullable=False
     )
     dedup_key = Column(String(180), nullable=False)
     page_no = Column(Integer, nullable=True)
@@ -191,6 +205,7 @@ class ProjectPOAnnotation(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("po_version_id", "dedup_key", name="uq_po_annotations_dedup"),
+        {"schema": "projects"},
     )
 
 
@@ -208,20 +223,23 @@ class DeliverySchedule(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     purchase_order_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_purchase_orders.id", ondelete="CASCADE"),
+        ForeignKey("projects.purchase_orders.id", ondelete="CASCADE"),
         nullable=False,
     )
     issuer_party_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
     label = Column(String(180), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
-    __table_args__ = (Index("ix_delivery_schedules_po", "purchase_order_id"),)
+    __table_args__ = (
+        Index("ix_delivery_schedules_po", "purchase_order_id"),
+        {"schema": "projects"},
+    )
 
 
 class DeliveryScheduleVersion(Base, CompanyScopedMixin):
@@ -236,12 +254,12 @@ class DeliveryScheduleVersion(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     delivery_schedule_id = Column(
-        UUID(as_uuid=False), ForeignKey("delivery_schedules.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.delivery_schedules.id", ondelete="CASCADE"), nullable=False
     )
     version_no = Column(Integer, nullable=False)
     revision_label = Column(String(80), nullable=True)  # "REVISED 1 - 23/7/2026"
     po_version_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_po_versions.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.po_versions.id", ondelete="SET NULL"), nullable=True
     )
     attachment_id = Column(
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
@@ -270,6 +288,7 @@ class DeliveryScheduleVersion(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("delivery_schedule_id", "version_no", name="uq_schedule_versions_no"),
+        {"schema": "projects"},
     )
 
 
@@ -281,18 +300,20 @@ class ProjectDeliveryPhase(Base, CompanyScopedMixin):
     (finding G6, confirmed by measurement).
     """
 
-    __tablename__ = "project_delivery_phases"
+    __tablename__ = "delivery_phases"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_delivery_phases"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     area_group = Column(String(80), nullable=False)  # TOWER | COMMON AREA | ...
     sequence = Column(Integer, nullable=False)
     label = Column(String(180), nullable=True)
     delivery_date = Column(Date, nullable=True)
     source_version_id = Column(
-        UUID(as_uuid=False), ForeignKey("delivery_schedule_versions.id", ondelete="SET NULL"),
+        UUID(as_uuid=False), ForeignKey("projects.delivery_schedule_versions.id", ondelete="SET NULL"),
         nullable=True,
     )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -303,6 +324,7 @@ class ProjectDeliveryPhase(Base, CompanyScopedMixin):
     __table_args__ = (
         UniqueConstraint("project_id", "area_group", "sequence", name="uq_delivery_phase_identity"),
         Index("ix_delivery_phases_project", "project_id"),
+        {"schema": "projects"},
     )
 
 
@@ -313,11 +335,11 @@ class DeliveryScheduleCell(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     version_id = Column(
-        UUID(as_uuid=False), ForeignKey("delivery_schedule_versions.id", ondelete="CASCADE"),
+        UUID(as_uuid=False), ForeignKey("projects.delivery_schedule_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
     phase_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_delivery_phases.id", ondelete="CASCADE"),
+        UUID(as_uuid=False), ForeignKey("projects.delivery_phases.id", ondelete="CASCADE"),
         nullable=False,
     )
     product_id = Column(
@@ -330,6 +352,7 @@ class DeliveryScheduleCell(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_schedule_cells_version", "version_id"),
         Index("ix_schedule_cells_phase", "phase_id"),
+        {"schema": "projects"},
     )
 
 
@@ -351,6 +374,7 @@ class CustomerItemCodeMap(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("company_id", "customer_id", "customer_code", name="uq_customer_code_map"),
+        {"schema": "projects"},
     )
 
 
@@ -379,20 +403,22 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
     stays ignorant of the module (finding G5).
     """
 
-    __tablename__ = "project_sales_orders"
+    __tablename__ = "sales_orders"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_sales_orders"
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="RESTRICT"), nullable=False
     )
     purchase_order_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_purchase_orders.id", ondelete="SET NULL"),
+        ForeignKey("projects.purchase_orders.id", ondelete="SET NULL"),
         nullable=True,
     )
     schedule_version_id = Column(
-        UUID(as_uuid=False), ForeignKey("delivery_schedule_versions.id", ondelete="SET NULL"),
+        UUID(as_uuid=False), ForeignKey("projects.delivery_schedule_versions.id", ondelete="SET NULL"),
         nullable=True,
     )
     so_id = Column(
@@ -426,6 +452,7 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
         UniqueConstraint("company_id", "provisional_ref", name="uq_project_so_provisional_ref"),
         Index("ix_project_so_project", "project_id"),
         Index("ix_project_so_status", "status"),
+        {"schema": "projects"},
     )
 
 
@@ -436,11 +463,13 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
     three of them at 0.00, exactly as the quotation and the real SO are written.
     """
 
-    __tablename__ = "project_sales_order_lines"
+    __tablename__ = "sales_order_lines"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_sales_order_lines"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_sales_orders.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
     )
     line_no = Column(Integer, nullable=False)
     product_id = Column(
@@ -454,15 +483,15 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
     delivery_date = Column(Date, nullable=True)
 
     phase_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_delivery_phases.id", ondelete="SET NULL"),
+        UUID(as_uuid=False), ForeignKey("projects.delivery_phases.id", ondelete="SET NULL"),
         nullable=True,
     )
     source_po_line_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_po_lines.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.po_lines.id", ondelete="SET NULL"), nullable=True
     )
     # Which quotation line this consumed balance from, shown on screen always (G3).
     quotation_line_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_quotation_lines.id", ondelete="SET NULL"),
+        UUID(as_uuid=False), ForeignKey("projects.quotation_lines.id", ondelete="SET NULL"),
         nullable=True,
     )
     # Where the stock is coming from, once Eling confirms (D17).
@@ -472,6 +501,7 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_project_so_lines_order", "project_sales_order_id"),
+        {"schema": "projects"},
     )
 
 
@@ -482,10 +512,10 @@ class SODraftFinding(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_sales_orders.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
     )
     line_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_sales_order_lines.id", ondelete="CASCADE"),
+        UUID(as_uuid=False), ForeignKey("projects.sales_order_lines.id", ondelete="CASCADE"),
         nullable=True,
     )
     severity = Column(String(8), nullable=False)  # hard | warn | info
@@ -500,6 +530,7 @@ class SODraftFinding(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_so_findings_order", "project_sales_order_id"),
         Index("ix_so_findings_severity", "severity"),
+        {"schema": "projects"},
     )
 
 
@@ -533,15 +564,15 @@ class OrderChangeNotice(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     ocn_number = Column(String(64), nullable=False)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     purchase_order_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_purchase_orders.id", ondelete="SET NULL"),
+        ForeignKey("projects.purchase_orders.id", ondelete="SET NULL"),
         nullable=True,
     )
     project_sales_order_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_sales_orders.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="SET NULL"), nullable=True
     )
     reason = Column(Text, nullable=True)
     source_document_kind = Column(String(32), nullable=True)  # revised_po | revised_schedule | none
@@ -554,6 +585,7 @@ class OrderChangeNotice(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("company_id", "ocn_number", name="uq_ocn_number"),
+        {"schema": "projects"},
     )
 
 
@@ -564,10 +596,10 @@ class SOAmendment(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_sales_orders.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
     )
     ocn_id = Column(
-        UUID(as_uuid=False), ForeignKey("order_change_notices.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.order_change_notices.id", ondelete="SET NULL"), nullable=True
     )
     from_version_kind = Column(String(32), nullable=True)  # po | schedule
     from_version_id = Column(UUID(as_uuid=False), nullable=True)
@@ -578,7 +610,10 @@ class SOAmendment(Base, CompanyScopedMixin):
     published_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
-    __table_args__ = (Index("ix_so_amendments_order", "project_sales_order_id"),)
+    __table_args__ = (
+        Index("ix_so_amendments_order", "project_sales_order_id"),
+        {"schema": "projects"},
+    )
 
 
 # --------------------------------------------------------------------- order inquiry
@@ -603,14 +638,16 @@ class OrderInquiry(Base, CompanyScopedMixin):
     Never a second source of demand: committed quantity stays on `sales_order_lines`.
     """
 
-    __tablename__ = "project_order_inquiries"
+    __tablename__ = "order_inquiries"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_order_inquiries"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_sales_orders.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
     )
     amendment_id = Column(
-        UUID(as_uuid=False), ForeignKey("so_amendments.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.so_amendments.id", ondelete="SET NULL"), nullable=True
     )
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
     raised_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -634,6 +671,7 @@ class OrderInquiry(Base, CompanyScopedMixin):
             unique=True,
             postgresql_where=text("amendment_id IS NOT NULL"),
         ),
+        {"schema": "projects"},
     )
 
 
@@ -649,14 +687,16 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     explanation are separate fields because they answer separate questions.
     """
 
-    __tablename__ = "project_order_inquiry_rows"
+    __tablename__ = "order_inquiry_rows"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_order_inquiry_rows"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     order_inquiry_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_order_inquiries.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.order_inquiries.id", ondelete="CASCADE"), nullable=False
     )
     so_line_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_sales_order_lines.id", ondelete="SET NULL"),
+        UUID(as_uuid=False), ForeignKey("projects.sales_order_lines.id", ondelete="SET NULL"),
         nullable=True,
     )
     item_code = Column(String(120), nullable=True)
@@ -677,6 +717,7 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_order_inquiry_rows_inquiry", "order_inquiry_id"),
         Index("ix_project_order_inquiry_rows_state", "state"),
+        {"schema": "projects"},
     )
 
 
@@ -709,7 +750,7 @@ class SOLineAllocation(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     so_line_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_sales_order_lines.id", ondelete="CASCADE"),
+        ForeignKey("projects.sales_order_lines.id", ondelete="CASCADE"),
         nullable=False,
     )
     source_type = Column(String(16), nullable=False)
@@ -718,17 +759,20 @@ class SOLineAllocation(Base, CompanyScopedMixin):
     )
     # The project the stock is being taken FROM, when it is held for someone else.
     source_project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="SET NULL"), nullable=True
     )
     qty = Column(Numeric(15, 4), nullable=False)
     claim_id = Column(
-        UUID(as_uuid=False), ForeignKey("allocation_claims.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.allocation_claims.id", ondelete="SET NULL"), nullable=True
     )
     confirmed_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     confirmed_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
-    __table_args__ = (Index("ix_so_line_allocations_line", "so_line_id"),)
+    __table_args__ = (
+        Index("ix_so_line_allocations_line", "so_line_id"),
+        {"schema": "projects"},
+    )
 
 
 class AllocationClaim(Base, CompanyScopedMixin):
@@ -743,14 +787,14 @@ class AllocationClaim(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     from_project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     to_project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     so_line_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_sales_order_lines.id", ondelete="SET NULL"),
+        ForeignKey("projects.sales_order_lines.id", ondelete="SET NULL"),
         nullable=True,
     )
     product_id = Column(
@@ -770,6 +814,7 @@ class AllocationClaim(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_allocation_claims_to_project", "to_project_id", "state"),
         Index("ix_allocation_claims_line", "so_line_id"),
+        {"schema": "projects"},
     )
 
 
@@ -798,12 +843,14 @@ class ProjectSODivergence(Base, CompanyScopedMixin):
     uploading the same export twice gets one reconciliation, recomputed, not a stack.
     """
 
-    __tablename__ = "project_so_divergences"
+    __tablename__ = "so_divergences"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_so_divergences"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_sales_orders.id", ondelete="CASCADE"),
+        ForeignKey("projects.sales_orders.id", ondelete="CASCADE"),
         nullable=False,
     )
     autocount_doc_no = Column(String(80), nullable=True)
@@ -831,6 +878,7 @@ class ProjectSODivergence(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_so_divergences_order", "project_sales_order_id"),
         Index("ix_project_so_divergences_status", "status", "detected_at"),
+        {"schema": "projects"},
     )
 
 
@@ -845,19 +893,21 @@ class ProjectSODivergenceLine(Base, CompanyScopedMixin):
     than re-deriving it from rows that may since have moved.
     """
 
-    __tablename__ = "project_so_divergence_lines"
+    __tablename__ = "so_divergence_lines"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_so_divergence_lines"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     divergence_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_so_divergences.id", ondelete="CASCADE"),
+        ForeignKey("projects.so_divergences.id", ondelete="CASCADE"),
         nullable=False,
     )
     scope = Column(String(8), nullable=False)  # header | line
     presence = Column(String(16), nullable=False)  # both | ours_only | theirs_only
     so_line_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_sales_order_lines.id", ondelete="SET NULL"),
+        ForeignKey("projects.sales_order_lines.id", ondelete="SET NULL"),
         nullable=True,
     )
     line_no = Column(Integer, nullable=True)
@@ -875,4 +925,5 @@ class ProjectSODivergenceLine(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_so_divergence_lines_divergence", "divergence_id"),
         Index("ix_project_so_divergence_lines_so_line", "so_line_id"),
+        {"schema": "projects"},
     )

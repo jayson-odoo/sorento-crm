@@ -1,12 +1,30 @@
 """Project Sales module models (ADR-0003, ADR-0004).
 
+**Every table here lives in the `projects` Postgres schema** (ADR-0011), which is the
+module key, exactly as SCM's tables live in `scm`. The old `project_` name prefix is gone:
+the schema says which module owns the table, and saying it twice would give
+`projects.project_quotation_lines`. Three things follow, and all three are load-bearing:
+
+- Foreign keys BETWEEN module tables are written `ForeignKey("projects.<table>.<col>")`.
+  Foreign keys to CORE tables (``customers``, ``users``, ``products``, ``statuses``,
+  ``attachments``, ``brands``, ``warehouses``, ``product_categories``) stay UNQUALIFIED,
+  because an unqualified target resolves against the default schema, which is still
+  `public`. Seven of our bare names (``brands``, ``purchase_orders``,
+  ``purchase_order_lines``, ``sales_orders``, ``sales_order_lines``, ``quotations``,
+  ``quotation_lines``) now exist in both schemas, so the distinction is not cosmetic.
+- ``__audit_entity_type__`` is pinned to each table's PRE-move name. ``audit_log.entity_type``
+  is derived from ``__tablename__``, so a bare rename would orphan every existing audit row
+  and make this module write ``entity_type='brands'`` on top of core's.
+- Raw SQL naming one of these tables must be schema-qualified, or it silently reads the core
+  table of the same name. Prefer the ORM, which carries the schema for you.
+
 Two layers, shipped together and deliberately not separated:
 
 - **Generic skeleton**, mirroring ``dreamz_ems`` so the two products converge:
-  ``project_types``, ``project_templates`` (+ roles), ``projects``,
-  ``project_parties``, ``project_stakeholders``.
+  ``projects.types``, ``projects.templates`` (+ roles), ``projects.projects``,
+  ``projects.parties``, ``projects.stakeholders``.
 - **Sorento sales extension**, explicitly named and making no pretence of
-  generality: ``project_sales_profile``, ``project_brands``.
+  generality: ``projects.sales_profile``, ``projects.brands``.
 
 ADR-0003 exists because the previous attempt (``commercial_core``, commit
 c77560009, deleted unused in 7f0eb94f1) was a generic skeleton with nothing fitted
@@ -83,7 +101,9 @@ class ProjectParty(Base, CompanyScopedMixin):
     they must not live in ``customers``.
     """
 
-    __tablename__ = "project_parties"
+    __tablename__ = "parties"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_parties"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     party_type = Column(String(32), nullable=False, index=True)
@@ -106,6 +126,7 @@ class ProjectParty(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_parties_company_type", "company_id", "party_type"),
         Index("ix_project_parties_name", "name"),
+        {"schema": "projects"},
     )
 
 
@@ -117,7 +138,9 @@ class ProjectType(Base, CompanyScopedMixin):
     date to derive a delivery year from.
     """
 
-    __tablename__ = "project_types"
+    __tablename__ = "types"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_types"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     name = Column(String(120), nullable=False)
@@ -135,7 +158,10 @@ class ProjectType(Base, CompanyScopedMixin):
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    __table_args__ = (UniqueConstraint("company_id", "code", name="uq_project_types_company_code"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "code", name="uq_project_types_company_code"),
+        {"schema": "projects"},
+    )
 
 
 class ProjectTemplate(Base, CompanyScopedMixin):
@@ -146,11 +172,13 @@ class ProjectTemplate(Base, CompanyScopedMixin):
     ``project_templates``, where an Event is simply a Project of another type.
     """
 
-    __tablename__ = "project_templates"
+    __tablename__ = "templates"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_templates"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     type_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_types.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.types.id", ondelete="RESTRICT"), nullable=False
     )
     name = Column(String(120), nullable=False)
     description = Column(Text, nullable=True)
@@ -162,6 +190,7 @@ class ProjectTemplate(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("company_id", "type_id", "name", name="uq_project_templates_name"),
+        {"schema": "projects"},
     )
 
 
@@ -173,11 +202,13 @@ class ProjectTemplateRole(Base, CompanyScopedMixin):
     Architect.
     """
 
-    __tablename__ = "project_template_roles"
+    __tablename__ = "template_roles"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_template_roles"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     template_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_templates.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.templates.id", ondelete="CASCADE"), nullable=False
     )
     name = Column(String(120), nullable=False)
     sort_order = Column(Integer, nullable=False, server_default="0", default=0)
@@ -186,6 +217,7 @@ class ProjectTemplateRole(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("template_id", "name", name="uq_project_template_roles_name"),
+        {"schema": "projects"},
     )
 
 
@@ -212,20 +244,20 @@ class Project(Base, CompanyScopedMixin):
     normalised_title = Column(Text, nullable=False)
 
     developer_party_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="RESTRICT"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="RESTRICT"), nullable=True
     )
     type_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_types.id", ondelete="RESTRICT"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.types.id", ondelete="RESTRICT"), nullable=True
     )
     template_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_templates.id", ondelete="RESTRICT"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.templates.id", ondelete="RESTRICT"), nullable=True
     )
     # Where this pursuit came from, when it came from a lead (AC-O10). Nullable
     # because a project may be registered directly -- a tender notice arrives and is
     # claimed the same hour, with no prior sighting. SET NULL rather than CASCADE: a
     # deleted lead must never take a live registration with it.
     lead_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_leads.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.leads.id", ondelete="SET NULL"), nullable=True
     )
 
     # Funnel position, on the status engine (entity #1). Nullable so a row can be
@@ -288,6 +320,7 @@ class Project(Base, CompanyScopedMixin):
         Index("ix_projects_company_outcome", "company_id", "outcome"),
         Index("ix_projects_status", "status_id"),
         Index("ix_projects_lead", "lead_id"),
+        {"schema": "projects"},
     )
 
 
@@ -298,10 +331,13 @@ class ProjectSalesProfile(Base):
     portable to EMS. One row per project.
     """
 
-    __tablename__ = "project_sales_profile"
+    __tablename__ = "sales_profile"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_sales_profile"
+    __table_args__ = {"schema": "projects"}
 
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), primary_key=True
     )
     # The legal entity for THIS development, typically a project-specific SPV and
     # usually unknown at registration. Free text: it is an identity, not a buyer.
@@ -309,10 +345,10 @@ class ProjectSalesProfile(Base):
     location = Column(Text, nullable=True)
     address = Column(Text, nullable=True)
     architect_party_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
     main_contractor_party_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
     estimated_sales_value = Column(Numeric(15, 2), nullable=True)
     launch_date = Column(Date, nullable=True)
@@ -334,11 +370,17 @@ class ProjectBrand(Base):
     unrelated uses of the name.
     """
 
-    __tablename__ = "project_brands"
+    __tablename__ = "brands"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_brands"
+    __table_args__ = {"schema": "projects"}
 
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), primary_key=True
     )
+    # NOT a self-reference, despite this table now being `projects.brands`. Unqualified
+    # resolves against the default schema, so the target is CORE `public.brands`. Leave it
+    # unqualified: qualifying it as `projects.brands` would point the link at itself.
     brand_id = Column(
         UUID(as_uuid=False), ForeignKey("brands.id", ondelete="CASCADE"), primary_key=True
     )
@@ -354,18 +396,20 @@ class ProjectStakeholder(Base, CompanyScopedMixin):
     ``party_id`` (their firm) is optional, so a lone informant with no firm records.
     """
 
-    __tablename__ = "project_stakeholders"
+    __tablename__ = "stakeholders"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_stakeholders"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     party_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
     role_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_template_roles.id", ondelete="RESTRICT"),
+        ForeignKey("projects.template_roles.id", ondelete="RESTRICT"),
         nullable=True,
     )
     person_name = Column(String(255), nullable=False)
@@ -380,16 +424,22 @@ class ProjectStakeholder(Base, CompanyScopedMixin):
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    __table_args__ = (Index("ix_project_stakeholders_project", "project_id"),)
+    __table_args__ = (
+        Index("ix_project_stakeholders_project", "project_id"),
+        {"schema": "projects"},
+    )
 
 
 class ProjectCollaborator(Base):
     """A non-owner granted edit rights, via an approved request-to-join."""
 
-    __tablename__ = "project_collaborators"
+    __tablename__ = "collaborators"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_collaborators"
+    __table_args__ = {"schema": "projects"}
 
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), primary_key=True
     )
     user_id = Column(
         String(100), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
@@ -406,11 +456,13 @@ class ProjectTakeoverRequest(Base):
     for collaborator rights; ``kind='dispute'`` asks a manager for the project.
     """
 
-    __tablename__ = "project_takeover_requests"
+    __tablename__ = "takeover_requests"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_takeover_requests"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     requester_user_id = Column(
         String(100), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
@@ -425,6 +477,7 @@ class ProjectTakeoverRequest(Base):
 
     __table_args__ = (
         Index("ix_project_takeover_requests_project", "project_id", "status"),
+        {"schema": "projects"},
     )
 
 
@@ -461,11 +514,13 @@ class ProjectTemplateTask(Base, CompanyScopedMixin):
     adds no new generic concept.
     """
 
-    __tablename__ = "project_template_tasks"
+    __tablename__ = "template_tasks"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_template_tasks"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     template_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_templates.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.templates.id", ondelete="CASCADE"), nullable=False
     )
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -488,6 +543,7 @@ class ProjectTemplateTask(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_project_template_tasks_template", "template_id", "sort_order"),
+        {"schema": "projects"},
     )
 
 
@@ -503,7 +559,9 @@ class ProjectTask(Base, CompanyScopedMixin):
     promise drift apart.
     """
 
-    __tablename__ = "project_tasks"
+    __tablename__ = "tasks"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_tasks"
     # AC-N7: the per-task history timeline is delivered FROM the audit trail, which
     # already captures per-field diffs with an actor. A dedicated history table would
     # be a second store to keep in sync, and the one nobody writes to is the one the
@@ -512,7 +570,7 @@ class ProjectTask(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -543,7 +601,7 @@ class ProjectTask(Base, CompanyScopedMixin):
 
     source_template_task_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_template_tasks.id", ondelete="SET NULL"),
+        ForeignKey("projects.template_tasks.id", ondelete="SET NULL"),
         nullable=True,
     )
     # Loose pair, not a FK: quotation versions, samples and POs arrive in later
@@ -563,6 +621,7 @@ class ProjectTask(Base, CompanyScopedMixin):
         # "My Tasks" reads open tasks for one user across every project, ordered by
         # due date, so it is worth an index of its own (AC-N9).
         Index("ix_project_tasks_assignee_due", "assignee_user_id", "due_date"),
+        {"schema": "projects"},
     )
 
 
@@ -611,7 +670,9 @@ class ProjectLead(Base, CompanyScopedMixin):
     into a separate registration per phase (AC-O5).
     """
 
-    __tablename__ = "project_leads"
+    __tablename__ = "leads"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_leads"
     # Qualify, disqualify and reassignment are exactly the decisions people dispute,
     # same reasoning as `projects`.
     __audit_track__ = True
@@ -634,7 +695,7 @@ class ProjectLead(Base, CompanyScopedMixin):
     )
     # Optional: at sighting time the developer is frequently the unknown.
     developer_party_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="RESTRICT"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="RESTRICT"), nullable=True
     )
 
     title = Column(Text, nullable=False)
@@ -671,7 +732,7 @@ class ProjectLead(Base, CompanyScopedMixin):
     informant_source = Column(String(32), nullable=True)  # bci | referral | walk_in | ...
     informant_ref = Column(String(180), nullable=True)  # their reference, e.g. a BCI job id
     informant_party_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
     # A lone informant with no firm on record is normal, so the name stands on its own.
     informant_contact_name = Column(String(180), nullable=True)
@@ -699,6 +760,7 @@ class ProjectLead(Base, CompanyScopedMixin):
         Index("ix_project_leads_status", "status_id"),
         # The near-duplicate hint scans normalised titles within a company.
         Index("ix_project_leads_company_normalised", "company_id", "normalised_title"),
+        {"schema": "projects"},
     )
 
 
@@ -750,10 +812,14 @@ class ProjectSeries(Base, CompanyScopedMixin):
     version that goes stale the week after it is written.
     """
 
-    __tablename__ = "project_series"
+    __tablename__ = "series"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_series"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     name = Column(String(150), nullable=False)
+    # CORE `public.brands`, not the module's `projects.brands` link table. Unqualified on
+    # purpose: see the note on ``ProjectBrand.brand_id``.
     brand_id = Column(
         UUID(as_uuid=False), ForeignKey("brands.id", ondelete="SET NULL"), nullable=True
     )
@@ -766,6 +832,7 @@ class ProjectSeries(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("company_id", "name", name="uq_project_series_company_name"),
+        {"schema": "projects"},
     )
 
 
@@ -773,11 +840,14 @@ class ProjectSeriesCategory(Base):
     """One nominated category. Keyed by (series, category) so nominating twice is a
     no-op rather than a duplicate row."""
 
-    __tablename__ = "project_series_categories"
+    __tablename__ = "series_categories"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_series_categories"
+    __table_args__ = {"schema": "projects"}
 
     series_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_series.id", ondelete="CASCADE"),
+        ForeignKey("projects.series.id", ondelete="CASCADE"),
         primary_key=True,
     )
     category_id = Column(
@@ -805,11 +875,14 @@ class ProjectSeriesProduct(Base):
     the same shape, and the same reason, as the category link above it.
     """
 
-    __tablename__ = "project_series_products"
+    __tablename__ = "series_products"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_series_products"
+    __table_args__ = {"schema": "projects"}
 
     series_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_series.id", ondelete="CASCADE"),
+        ForeignKey("projects.series.id", ondelete="CASCADE"),
         primary_key=True,
     )
     product_id = Column(
@@ -884,6 +957,7 @@ class PriceFloorRule(Base, CompanyScopedMixin):
             unique=True,
             postgresql_nulls_not_distinct=True,
         ),
+        {"schema": "projects"},
     )
 
 
@@ -906,12 +980,14 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     ``ProjectQuotationLine`` already applies to product facts.
     """
 
-    __tablename__ = "project_quotation_documents"
+    __tablename__ = "quotation_documents"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_quotation_documents"
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     # Claimed from `document_numbering_rules` (doc_type `project_quotation`) at create, and never
     # changed afterwards: the customer quotes it back at us. The revision is appended by the
@@ -921,7 +997,7 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     doc_date = Column(Date, nullable=True)
 
     recipient_party_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
     recipient_name_snapshot = Column(String(200), nullable=True)
     recipient_address_snapshot = Column(Text, nullable=True)
@@ -940,7 +1016,7 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     # signs once, then issues. Copied onto the issue at issue time, never referenced from it, so a
     # later re-sign cannot rewrite what an already-issued revision carried.
     signatory_signature_id = Column(
-        UUID(as_uuid=False), ForeignKey("quotation_signatures.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.quotation_signatures.id", ondelete="SET NULL"), nullable=True
     )
 
     # ---- the price-floor approval gate (S14-S16) ----
@@ -972,6 +1048,7 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
         Index("ix_project_quotation_documents_project", "project_id"),
         Index("ix_project_quotation_documents_approval_status", "approval_status_id"),
         UniqueConstraint("company_id", "document_no", name="uq_project_quotation_documents_no"),
+        {"schema": "projects"},
     )
 
 
@@ -1022,6 +1099,7 @@ class QuotationTemplate(Base, CompanyScopedMixin):
             postgresql_where=text("is_active"),
         ),
         Index("ix_quotation_templates_company_kind", "company_id", "kind"),
+        {"schema": "projects"},
     )
 
 
@@ -1041,13 +1119,15 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
     ``ProjectQuotationVersion`` states, for the same reason.
     """
 
-    __tablename__ = "project_quotation_issues"
+    __tablename__ = "quotation_issues"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_quotation_issues"
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     document_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_quotation_documents.id", ondelete="CASCADE"),
+        ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
         nullable=False,
     )
     issue_no = Column(Integer, nullable=False)
@@ -1071,12 +1151,12 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     # Sorento's side. Required to issue, so an unsigned quotation never circulates.
     sorento_signature_id = Column(
-        UUID(as_uuid=False), ForeignKey("quotation_signatures.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.quotation_signatures.id", ondelete="SET NULL"), nullable=True
     )
     # The customer's counter-signature, and the moment it landed. Null is a legitimate resting
     # state, not an error: plenty of quotations are simply never signed back.
     customer_signature_id = Column(
-        UUID(as_uuid=False), ForeignKey("quotation_signatures.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.quotation_signatures.id", ondelete="SET NULL"), nullable=True
     )
     accepted_at = Column(DateTime(timezone=False), nullable=True)
     # The other answer a customer can give: "not as it stands". Kept HERE, beside the acceptance,
@@ -1111,6 +1191,7 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("document_id", "issue_no", name="uq_project_quotation_issues_no"),
+        {"schema": "projects"},
     )
 
 
@@ -1156,7 +1237,10 @@ class QuotationSignature(Base, CompanyScopedMixin):
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
-    __table_args__ = (Index("ix_quotation_signatures_user", "user_id", "owner_kind"),)
+    __table_args__ = (
+        Index("ix_quotation_signatures_user", "user_id", "owner_kind"),
+        {"schema": "projects"},
+    )
 
 
 class ProjectQuotationIssueScope(Base, CompanyScopedMixin):
@@ -1168,22 +1252,24 @@ class ProjectQuotationIssueScope(Base, CompanyScopedMixin):
     the reader revises, so the rows an issue claims to hold can never be rewritten under it.
     """
 
-    __tablename__ = "project_quotation_issue_scopes"
+    __tablename__ = "quotation_issue_scopes"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_quotation_issue_scopes"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     issue_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_quotation_issues.id", ondelete="CASCADE"),
+        ForeignKey("projects.quotation_issues.id", ondelete="CASCADE"),
         nullable=False,
     )
     quotation_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_quotations.id", ondelete="CASCADE"),
+        ForeignKey("projects.quotations.id", ondelete="CASCADE"),
         nullable=False,
     )
     version_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_quotation_versions.id", ondelete="CASCADE"),
+        ForeignKey("projects.quotation_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
     sort_order = Column(Integer, nullable=False, server_default="0", default=0)
@@ -1196,6 +1282,7 @@ class ProjectQuotationIssueScope(Base, CompanyScopedMixin):
             "issue_id", "quotation_id", name="uq_project_quotation_issue_scopes_scope"
         ),
         Index("ix_project_quotation_issue_scopes_version", "version_id"),
+        {"schema": "projects"},
     )
 
 
@@ -1208,12 +1295,14 @@ class ProjectQuotation(Base, CompanyScopedMixin):
     scope is still live.
     """
 
-    __tablename__ = "project_quotations"
+    __tablename__ = "quotations"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_quotations"
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     # NOT NULL, matching what migration 327 leaves in Postgres after the backfill. Declared here
     # too on purpose: while the model said nullable and the column said NOT NULL, a service could
@@ -1221,14 +1310,14 @@ class ProjectQuotation(Base, CompanyScopedMixin):
     # the real database. That drift is a known way this codebase has broken production before.
     document_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_quotation_documents.id", ondelete="CASCADE"),
+        ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
         nullable=False,
     )
     # Tab order on screen, band order in the printed document.
     sort_order = Column(Integer, nullable=False, server_default="0", default=0)
     scope_label = Column(String(150), nullable=False)
     series_id = Column(
-        UUID(as_uuid=False), ForeignKey("project_series.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("projects.series.id", ondelete="SET NULL"), nullable=True
     )
     notes = Column(Text, nullable=True)
 
@@ -1251,6 +1340,7 @@ class ProjectQuotation(Base, CompanyScopedMixin):
         Index("ix_project_quotations_project", "project_id"),
         Index("ix_project_quotations_outcome", "company_id", "outcome"),
         Index("ix_project_quotations_document", "document_id", "sort_order"),
+        {"schema": "projects"},
     )
 
 
@@ -1263,13 +1353,15 @@ class ProjectQuotationVersion(Base, CompanyScopedMixin):
     write half-fails, and then nobody can say which version the customer holds.
     """
 
-    __tablename__ = "project_quotation_versions"
+    __tablename__ = "quotation_versions"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_quotation_versions"
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     quotation_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_quotations.id", ondelete="CASCADE"),
+        ForeignKey("projects.quotations.id", ondelete="CASCADE"),
         nullable=False,
     )
     version_no = Column(Integer, nullable=False)
@@ -1292,6 +1384,7 @@ class ProjectQuotationVersion(Base, CompanyScopedMixin):
         UniqueConstraint(
             "quotation_id", "version_no", name="uq_project_quotation_versions_no"
         ),
+        {"schema": "projects"},
     )
 
 
@@ -1307,13 +1400,15 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
     description fix -- would otherwise leave no trail at all.
     """
 
-    __tablename__ = "project_quotation_lines"
+    __tablename__ = "quotation_lines"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_quotation_lines"
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     version_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_quotation_versions.id", ondelete="CASCADE"),
+        ForeignKey("projects.quotation_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
     # Nullable: an off-catalog line is legitimate (a bespoke item, or something not yet
@@ -1367,6 +1462,7 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_quotation_lines_version", "version_id", "sort_order"),
         Index("ix_project_quotation_lines_flags", "version_id", "is_below_floor"),
+        {"schema": "projects"},
     )
 
 
@@ -1391,16 +1487,18 @@ class ProjectSample(Base, CompanyScopedMixin):
     thing the sample exists to capture.
     """
 
-    __tablename__ = "project_samples"
+    __tablename__ = "samples"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_samples"
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     quotation_version_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_quotation_versions.id", ondelete="CASCADE"),
+        ForeignKey("projects.quotation_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
     submitted_on = Column(Date, nullable=True)
@@ -1416,6 +1514,7 @@ class ProjectSample(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_samples_project", "project_id"),
         Index("ix_project_samples_version", "quotation_version_id"),
+        {"schema": "projects"},
     )
 
 
@@ -1434,16 +1533,18 @@ class ProjectPurchaseOrder(Base, CompanyScopedMixin):
     recording it.
     """
 
-    __tablename__ = "project_purchase_orders"
+    __tablename__ = "purchase_orders"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_purchase_orders"
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
     )
     quotation_version_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_quotation_versions.id", ondelete="SET NULL"),
+        ForeignKey("projects.quotation_versions.id", ondelete="SET NULL"),
         nullable=True,
     )
     po_source = Column(String(24), nullable=False, server_default=PO_SOURCE_CONTRACTOR_DIRECT)
@@ -1451,7 +1552,7 @@ class ProjectPurchaseOrder(Base, CompanyScopedMixin):
     # the trading house here, and a contractor-direct PO names the contractor.
     issuing_party_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_parties.id", ondelete="SET NULL"),
+        ForeignKey("projects.parties.id", ondelete="SET NULL"),
         nullable=True,
     )
     po_number = Column(String(100), nullable=False)
@@ -1479,7 +1580,7 @@ class ProjectPurchaseOrder(Base, CompanyScopedMixin):
     supersedes_po_number = Column(String(120), nullable=True)
     superseded_by_po_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_purchase_orders.id", ondelete="SET NULL"),
+        ForeignKey("projects.purchase_orders.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -1504,6 +1605,7 @@ class ProjectPurchaseOrder(Base, CompanyScopedMixin):
         # the project instead: recording the same PO number twice on one project is the
         # actual mistake worth stopping.
         UniqueConstraint("project_id", "po_number", name="uq_project_purchase_orders_number"),
+        {"schema": "projects"},
     )
 
 
@@ -1520,12 +1622,14 @@ class ProjectPurchaseOrderLine(Base, CompanyScopedMixin):
     it matched.
     """
 
-    __tablename__ = "project_purchase_order_lines"
+    __tablename__ = "purchase_order_lines"
+    # Audit entity type pinned to the pre-move table name (ADR-0011).
+    __audit_entity_type__ = "project_purchase_order_lines"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     po_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("project_purchase_orders.id", ondelete="CASCADE"),
+        ForeignKey("projects.purchase_orders.id", ondelete="CASCADE"),
         nullable=False,
     )
     product_id = Column(
@@ -1552,4 +1656,7 @@ class ProjectPurchaseOrderLine(Base, CompanyScopedMixin):
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    __table_args__ = (Index("ix_project_po_lines_po", "po_id", "sort_order"),)
+    __table_args__ = (
+        Index("ix_project_po_lines_po", "po_id", "sort_order"),
+        {"schema": "projects"},
+    )
