@@ -55,6 +55,7 @@ npm run test                 # vitest run
 npm run test:watch
 npm run test:e2e             # playwright (e2e/, chromium, baseURL :3000)
 npm run format               # prettier --write .
+npm run format:check         # prettier --check . (currently red: 1743 files predate the config, see BL-008)
 
 npx prisma db push           # apply schema
 npx prisma generate          # regenerate client
