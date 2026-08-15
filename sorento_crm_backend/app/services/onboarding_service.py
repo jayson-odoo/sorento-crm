@@ -189,7 +189,15 @@ def _list_query(
     else:
         column = LIST_SORT_COLUMNS.get(sort_field or "", LIST_SORT_COLUMNS[DEFAULT_LIST_SORT])
 
-    ordering = column.desc() if (sort_dir or "").lower() == "desc" else column.asc()
+    # NULLS LAST in both directions. `submitted_at` is null until the requester
+    # sends her list back, and Postgres sorts nulls first on DESC - so "newest
+    # submissions first" opened on every draft that has never been submitted at
+    # all, burying the rows the reviewer came for.
+    ordering = (
+        column.desc().nullslast()
+        if (sort_dir or "").lower() == "desc"
+        else column.asc().nullslast()
+    )
     return q.order_by(ordering, OnboardingRequest.id.asc())
 
 

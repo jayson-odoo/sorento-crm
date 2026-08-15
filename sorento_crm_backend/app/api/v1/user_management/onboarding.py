@@ -36,6 +36,7 @@ from app.schemas.onboarding import (
     TemplateWriteIn,
 )
 from app.services import onboarding_service
+from app.services.error_handler import AppException
 from app.services.onboarding_serializers import (
     person_out,
     public_template_option,
@@ -329,6 +330,22 @@ def approve_request(
 # --- people -------------------------------------------------------------------
 
 
+def _request_owning(db: Session, request_id: str, person_id: str) -> OnboardingRequest:
+    """The request at `request_id`, once `person_id` is proven to belong to it.
+
+    Both ids come off the path and were trusted separately, so a write addressed
+    to request A but naming request B's person landed on B and then answered
+    with A's detail - the caller saw their own batch unchanged and never learnt
+    that somebody else's had been edited. A mismatch is a 404 rather than a 403
+    because a 403 would confirm the person exists somewhere.
+    """
+    request = onboarding_service.get_request(db, request_id)
+    person = onboarding_service.get_person(db, person_id)
+    if str(person.request_id) != str(request.id):
+        raise AppException(status_code=404, message="That person is not on this request")
+    return request
+
+
 @router.put("/requests/{request_id}/people/{person_id}", response_model=RequestDetailOut)
 def update_person(
     request_id: str,
@@ -337,7 +354,7 @@ def update_person(
     current_user: dict = Depends(require_permission("user_management.onboarding.edit")),
     db: Session = Depends(get_db),
 ):
-    request = onboarding_service.get_request(db, request_id)
+    request = _request_owning(db, request_id, person_id)
     onboarding_service.update_person(
         db, person_id, payload.model_dump(exclude_unset=True)
     )
@@ -352,7 +369,7 @@ def keep_person(
     current_user: dict = Depends(require_permission("user_management.onboarding.edit")),
     db: Session = Depends(get_db),
 ):
-    request = onboarding_service.get_request(db, request_id)
+    request = _request_owning(db, request_id, person_id)
     onboarding_service.set_person_verdict(db, person_id, verdict=REVIEW_APPROVED)
     db.refresh(request)
     return _detail(db, request)
@@ -365,7 +382,7 @@ def hold_person(
     current_user: dict = Depends(require_permission("user_management.onboarding.edit")),
     db: Session = Depends(get_db),
 ):
-    request = onboarding_service.get_request(db, request_id)
+    request = _request_owning(db, request_id, person_id)
     onboarding_service.set_person_verdict(db, person_id, verdict=REVIEW_ON_HOLD)
     db.refresh(request)
     return _detail(db, request)
@@ -380,7 +397,7 @@ def reject_person(
     db: Session = Depends(get_db),
 ):
     """A reason is required, and it is required HERE as well as in the dialog."""
-    request = onboarding_service.get_request(db, request_id)
+    request = _request_owning(db, request_id, person_id)
     onboarding_service.set_person_verdict(
         db, person_id, verdict=REVIEW_REJECTED, reason=payload.reason
     )

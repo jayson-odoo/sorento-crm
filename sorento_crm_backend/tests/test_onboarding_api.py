@@ -510,6 +510,97 @@ def test_neighbours_need_the_view_permission(client, db, sent_request):
     )
 
 
+def test_a_page_boundary_neither_drops_nor_repeats_a_row(client, db):
+    """Identical `created_at` values must still order deterministically.
+
+    Without the id tie-breaker Postgres is free to order the tied rows
+    differently per query, so the same request can appear on both pages while
+    another appears on neither - and the one that vanishes is simply never
+    reviewed.
+    """
+    marker = unique_code("batch")
+    made = _make_requests(db, [f"{marker} {i}" for i in range(6)])
+    same_moment = datetime(2026, 8, 15, 9, 0, 0)
+    for request in made:
+        request.created_at = same_moment
+    db.commit()
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    seen: list[str] = []
+    for page in (1, 2):
+        body = client.get(
+            f"{ADMIN}/requests",
+            params={"query": marker, "limit": 3, "page": page, "sort": "created_at"},
+        ).json()
+        assert body["pagination"]["total"] == 6
+        seen.extend(row["id"] for row in body["data"])
+
+    assert len(seen) == 6
+    assert len(set(seen)) == 6, "a row was served on two pages"
+    assert set(seen) == {str(r.id) for r in made}, "a row was served on neither page"
+
+
+def test_sorting_by_company_name_orders_by_the_company_name(client, db):
+    """The one sort that needs a join, so the one that can silently do nothing."""
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+    from app.services.company_scope_resolver import apply_company_scope
+
+    marker = unique_code("batch")
+    alpha = Company(id=str(uuid.uuid4()), name=f"{marker} Alpha Sdn Bhd", code=unique_code("A"))
+    zulu = Company(id=str(uuid.uuid4()), name=f"{marker} Zulu Sdn Bhd", code=unique_code("Z"))
+    db.add_all([alpha, zulu])
+    db.commit()
+
+    # Two companies means a caller who can see both, or the scope filter hides
+    # the very rows this sort is supposed to order.
+    scope = frozenset({SORENTO, alpha.id, zulu.id})
+
+    def _both_companies():
+        set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _both_companies
+    set_company_scope(db, scope)
+
+    for company in (zulu, alpha):
+        onboarding_service.create_request(
+            db,
+            company_id=company.id,
+            title=f"{marker} batch",
+            requester_name="Esther Lim",
+            requester_email=f"{unique_code('esther')}@mocha.com.my".lower(),
+        )
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    body = client.get(
+        f"{ADMIN}/requests",
+        params={"query": marker, "sort": "company_name", "dir": "asc"},
+    ).json()
+    names = [row["company_name"] for row in body["data"]]
+    assert names == [alpha.name, zulu.name]
+
+
+def test_a_draft_does_not_outrank_a_fresh_submission(client, db):
+    """`submitted_at` is null until she sends it back, and Postgres sorts nulls
+    first on DESC - so "newest submissions first" opened on drafts nobody had
+    submitted at all."""
+    marker = unique_code("batch")
+    made = _make_requests(db, [f"{marker} never submitted", f"{marker} just submitted"])
+    made[1].submitted_at = datetime(2026, 8, 15, 9, 0, 0)
+    db.commit()
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    body = client.get(
+        f"{ADMIN}/requests",
+        params={"query": marker, "sort": "submitted_at", "dir": "desc"},
+    ).json()
+    assert [row["title"] for row in body["data"]] == [
+        f"{marker} just submitted",
+        f"{marker} never submitted",
+    ]
+
+
 def test_creating_a_request_needs_the_add_permission(client, db):
     payload = {
         "company_id": SORENTO,
@@ -567,6 +658,65 @@ def test_approving_twice_is_refused_over_http(client, db, sent_request):
 
     assert client.post(f"{ADMIN}/requests/{sent_request.id}/approve").status_code == 200
     assert client.post(f"{ADMIN}/requests/{sent_request.id}/approve").status_code == 422
+
+
+def test_a_person_cannot_be_written_through_another_request(client, db, sent_request):
+    """Both ids come off the path, and both were trusted separately.
+
+    A write addressed to request A but naming request B's person landed on B and
+    then answered with A's detail: the caller saw their own batch unchanged and
+    never learnt that somebody else's had been edited.
+    """
+    other = onboarding_service.create_request(
+        db,
+        company_id=SORENTO,
+        title=unique_code("Other batch"),
+        requester_name="Someone Else",
+        requester_email=f"{unique_code('other')}@mocha.com.my".lower(),
+    )
+    onboarding_service.send_request(db, str(other.id))
+
+    # One person on each request, both submitted and in review.
+    for request in (sent_request, other):
+        client.put(
+            f"{PUBLIC}/rows", params={"token": request.token}, json={"rows": _rows(1)}
+        )
+        client.post(f"{PUBLIC}/submit", params={"token": request.token}, json={})
+
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+    client.post(f"{ADMIN}/requests/{sent_request.id}/start-review")
+    client.post(f"{ADMIN}/requests/{other.id}/start-review")
+
+    victim = client.get(f"{ADMIN}/requests/{other.id}").json()["people"][0]
+    assert victim["full_name"] == "Person 1"
+
+    # Every write route, addressed to the wrong parent.
+    assert (
+        client.put(
+            f"{ADMIN}/requests/{sent_request.id}/people/{victim['id']}",
+            json={"full_name": "Hijacked"},
+        ).status_code
+        == 404
+    )
+    for verb in ("keep", "hold"):
+        assert (
+            client.post(
+                f"{ADMIN}/requests/{sent_request.id}/people/{victim['id']}/{verb}"
+            ).status_code
+            == 404
+        )
+    assert (
+        client.post(
+            f"{ADMIN}/requests/{sent_request.id}/people/{victim['id']}/reject",
+            json={"reason": "Not mine to reject."},
+        ).status_code
+        == 404
+    )
+
+    # And the other request's person is untouched.
+    after = client.get(f"{ADMIN}/requests/{other.id}").json()["people"][0]
+    assert after["full_name"] == "Person 1"
+    assert after["review_status"] == "proposed"
 
 
 def test_rejecting_a_person_over_http_requires_a_reason(client, db, sent_request):
