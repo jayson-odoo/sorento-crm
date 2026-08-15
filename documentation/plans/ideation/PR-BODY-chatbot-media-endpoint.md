@@ -300,9 +300,68 @@ Two observations that are **not** this branch's doing, recorded because the sign
   `alembic_version` still reads `353_project_order_inquiry_rename`, so its schema was advanced
   without being stamped. Nothing was changed there to find this out.
 
+## Added on captain review (2026-08-15)
+
+Two requests came out of the captain's first look at the PR, both bundled here at their ask so the
+PR is reviewed once.
+
+### Google Gemini as a third provider (`5fef3c0e`)
+
+The captain will most likely run image processing on Gemini, and the provider list offered only
+OpenAI and Anthropic. Adding a menu entry alone would have let an operator pick Gemini and then
+fail every extraction, since `get_provider` raised for anything else. So this wires it at every
+layer the Anthropic key already touches: a `GeminiProvider` speaking the REST API over `httpx`
+(chat with images, tools, JSON mode; embed; connection test), migration `361_ai_config_gemini_key`
+adding the key column (additive, idempotent, real downgrade), the key on the schemas and settings
+service, a Gemini key field beside the Anthropic one under System Management -> AI Assistant, the
+model lists, and the media lane's key and default-model resolution.
+
+Two things worth reading in the commit message before changing them: Gemini 2.5 thinks by default
+and thinking tokens come out of the same output budget, so the provider sets an explicit thinking
+budget on top of the caller's `max_tokens` (a dense receipt would otherwise exhaust the budget before
+one answer token and every image job would fail); and the media lane resolves its Gemini key from its
+own column, then the generic assistant key only when the assistant is itself on Gemini, then the env,
+so an OpenAI key is never posted to Google.
+
+Review of the slice found the thinking-budget trap, two other callers that else-assumed the other
+provider when picking a default model (unified onto one table), and a handful of smaller items
+(reasoning tokens in the usage row, image placement relative to tool-result turns, tools plus JSON
+mode refused before the network call, the missing-key error naming its provider); all fixed. The
+embedding path stays on OpenAI by design and keeps choosing an OpenAI key, now pinned by a test.
+
+**Not verified against a live Gemini key.** None was available here; the request and response
+shapes are pinned by tests against the documented API. The first real extraction happens when a key
+is pasted into the settings form.
+
+### Contact detail page as route tabs (`8587e5ed`)
+
+The captain asked that the contact page follow the users form: tabs, related information grouped
+per tab, per the binding rule that read and edit views present the same layout. It is now a layout
+with four route tabs (Profile, Access, Routing, Chat) modelled on `users/[id]/layout.tsx`, owning
+the single contact fetch through a context so tabs never refetch, with prev/next keeping the open
+tab. Media Access moved to the Access tab beside Access Agents. The header strip carries only
+metadata with no edit counterpart (Respond.io ID, Created At, Updated At); Phone Number and
+Respond.io Workspace stayed in the Profile card because the edit dialog edits both.
+
+Review caught that first draft putting those two fields in the header only (fixed), the layout
+calling the network directly (moved into hooks over a service), a UUID that could reach the delete
+dialog, timestamp formatting, and an optional select that could not be cleared. 40 vitest cases
+cover the tab shell and the existing sections.
+
+**Browser walk of the four tab routes: partially done, honestly.** On a dev server the Profile tab
+was confirmed rendering with the four tabs, the header strip, phone first and workspace last in the
+card, and Media Access absent from Profile. Clicking into Access, Routing and Chat did not complete
+before this write-up because the machine was at load 120+ with thirteen concurrent dev servers and
+the browser tooling stalled; the URL never changed because the dev route compile never returned,
+not because of a handler defect (the handler is byte-for-byte the users layout's). To be finished
+when the machine is quiet, and stated here rather than implied.
+
 ## Known unmet, stated rather than papered over
 
-- **A persisted Playwright spec for these two surfaces.** The interactive sign-off above covers the
-  flows; a committed regression spec does not exist yet.
+- **A persisted Playwright spec for the operator surfaces**, now including the four contact tab
+  routes. The interactive sign-off covers the settings and media panels; a committed regression spec
+  does not exist yet.
+- **Browser walk of the Access / Routing / Chat tabs**, per the section above.
+- **A live Gemini call**, per the section above.
 - **RQ worker end-to-end against the `queue_service` socket-timeout change** is unverified.
 - **No corpus re-run through the changed voice path** after the voice-quota fix.

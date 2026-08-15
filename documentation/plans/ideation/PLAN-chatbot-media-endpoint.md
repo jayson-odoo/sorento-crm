@@ -1523,3 +1523,59 @@ loop: a hundred concurrent media turns cost sleeping coroutines and a handful of
 reads, not blocked workers, which is exactly the property that makes it safe to hold
 `lock:{contact}` across the wait (section 1.1) rather than reproducing the portal's known blocking
 defect (`app/api/v1/public/ai_extract.py:116`).
+
+---
+
+## 17. Added on captain review (2026-08-15)
+
+Two additions the captain asked for on first review of the PR, bundled into the same PR at their
+request. Neither changes the endpoint contract in section 3; both change what surrounds it.
+
+### 17.1 Google Gemini as a third provider
+
+**Decision.** The image lane's provider list offered only OpenAI and Anthropic, and the captain will
+most likely run image processing on Gemini. A dropdown entry alone would have been a trap:
+`get_provider` raised "Unsupported provider" for anything else, so an operator could pick Gemini and
+fail every extraction. Gemini is therefore wired at every layer the Anthropic key already touches
+(commit `5fef3c0e`): `GeminiProvider` over the REST API with `httpx`, migration
+`361_ai_config_gemini_key`, the key column on model, schemas and settings service, the key field in
+the AI Assistant settings form, the model lists, and this lane's key and default-model resolution.
+
+**Two things future changes must respect.**
+
+- Gemini 2.5 thinks by default and thinking tokens come out of `maxOutputTokens`. The provider sets
+  an explicit thinking budget (0 for flash, a small fixed budget for pro, which cannot go to 0) and
+  adds it on top of the caller's `max_tokens`. Without that, `VISION_MAX_TOKENS` on a dense receipt
+  is spent thinking and the candidate comes back with no parts, which this lane reads as a failed
+  job. `test_connection` lists models for the same reason.
+- The lane's Gemini key resolves from its own column, then the generic assistant key only when the
+  assistant itself is on Gemini, then the env. Unconditional fallback to the generic key (as the
+  Anthropic branch does) would post an OpenAI key to Google.
+
+The default-model choice for a provider now lives in one table in `llm_provider`
+(`default_model_for`), used by this lane and by the two other callers that previously else-assumed
+Anthropic. Embeddings stay on OpenAI by design because the stored vectors are OpenAI's; that path
+keeps choosing an OpenAI key and a test pins it.
+
+**Not verified live.** No Gemini key was available in this environment. Shapes are pinned by tests
+against the documented API; the first real extraction happens when a key is pasted in.
+
+### 17.2 Contact detail page as route tabs
+
+**Decision.** The captain asked that the contact page follow the users form (`users/[id]/layout.tsx`):
+tabs, related information grouped per tab, per the binding "view and edit are the same layout" rule.
+Commit `8587e5ed` makes it a layout with four route tabs, Profile / Access / Routing / Chat, owning
+the single contact fetch through a context so tabs never refetch, prev/next keeping the open tab.
+S1-01..S1-03's Media Access panel now lives on the Access tab beside Access Agents; the panel itself
+is unchanged.
+
+**One rule the first draft broke, and how it was settled.** The header strip may carry only
+metadata that has no edit counterpart (Respond.io ID, Created At, Updated At, with the phone echoed
+as identity). Phone Number and Respond.io Workspace are edited by the contact dialog, so they stay in
+the Profile card; a value the card never showed reads as data loss the moment the pencil opens.
+
+**Verification state.** 40 vitest cases over the tab shell and sections. Browser walk on a dev
+server confirmed the Profile tab (four tabs, header strip, phone first and workspace last, Media
+Access absent from Profile); the click into Access / Routing / Chat did not complete before write-up
+because the machine was at load 120+ and the dev route compile never returned. Owed, and stated in
+the PR rather than implied.
