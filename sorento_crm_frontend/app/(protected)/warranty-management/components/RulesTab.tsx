@@ -30,10 +30,10 @@ import {
   useKindRules,
   useUpdateKindRule,
 } from '../hooks/useWarrantyConfig';
-import {
-  KIND_RULE_MATCH_TYPE_LABEL,
-  type WarrantyKindRuleRow,
-  type WarrantyKindRuleWrite,
+import { formatMatchTypeLabel } from '../lib/warrantyLabels';
+import type {
+  WarrantyKindRuleRow,
+  WarrantyKindRuleUpdate,
 } from '../types/warranty-config.types';
 import { KindRuleFormDialog } from './KindRuleFormDialog';
 import { RuleTesterCard } from './RuleTesterCard';
@@ -63,13 +63,18 @@ export function RulesTab() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [kindFilter]);
 
-  const submit = async (body: WarrantyKindRuleWrite) => {
+  const submit = async (body: WarrantyKindRuleUpdate) => {
     setFormError(null);
     try {
       if (editing) {
+        // PATCH is partial: an edit that never touched the match type omits the
+        // key, so a stored value the picker does not know survives (AC-P24).
         await updateRule.mutateAsync({ id: editing.id, body });
       } else {
-        await createRule.mutateAsync(body);
+        // Create is strict - the dialog always sends a match type when there is
+        // no incumbent row to preserve.
+        if (!body.match_type) throw new Error('Select a match type');
+        await createRule.mutateAsync({ ...body, match_type: body.match_type });
       }
       setFormOpen(false);
       setEditing(null);
@@ -100,7 +105,7 @@ export function RulesTab() {
         meta: { headerTitle: 'Match type' },
         cell: ({ row }) => (
           <Badge variant="info" appearance="light" size="md">
-            {KIND_RULE_MATCH_TYPE_LABEL[row.original.match_type]}
+            {formatMatchTypeLabel(row.original.match_type)}
           </Badge>
         ),
       },
@@ -289,7 +294,7 @@ export function RulesTab() {
           <>
             This action cannot be undone. The{' '}
             <strong>
-              {deleteTarget ? KIND_RULE_MATCH_TYPE_LABEL[deleteTarget.match_type] : ''}
+              {deleteTarget ? formatMatchTypeLabel(deleteTarget.match_type) : ''}
             </strong>{' '}
             rule <strong>{deleteTarget?.match_value}</strong> for{' '}
             <strong>{deleteTarget?.kind_name}</strong> will be permanently removed.

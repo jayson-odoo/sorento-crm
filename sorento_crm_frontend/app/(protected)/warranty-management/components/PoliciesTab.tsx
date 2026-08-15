@@ -167,6 +167,11 @@ export function PoliciesTab() {
         accessorFn: (row) => row.term_count,
         header: ({ column }) => <DataGridColumnHeader title="Terms" column={column} />,
         size: 110,
+        // The backend sorts by `{version, effective_from, effective_to,
+        // created_at}` only; anything else falls back to `effective_from DESC`.
+        // A header that looks sortable and silently reorders nothing is worse
+        // than no header control at all.
+        enableSorting: false,
         meta: { headerTitle: 'Terms', headerClassName: 'text-right', cellClassName: 'text-right' },
         cell: ({ row }) =>
           row.original.term_count === 0 ? (

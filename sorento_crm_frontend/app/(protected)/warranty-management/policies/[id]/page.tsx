@@ -171,24 +171,16 @@ export default function WarrantyPolicyDetailPage({
           <CardTitle>Source document</CardTitle>
         </CardHeader>
         <CardContent>
+          {/* No CTA on the empty state: nothing in this slice can attach a
+              document (the write payload carries no attachment, and the terms
+              themselves live in Policy text), so an "Edit policy" button here
+              would be a promise the app cannot keep. */}
           {data.source_attachment_name ? (
             <p className="font-medium break-words">{data.source_attachment_name}</p>
           ) : (
-            <div className="flex flex-col items-start gap-2">
-              <p className="text-sm text-muted-foreground">
-                No source document attached to this policy.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setFormError(null);
-                  setDialogMode('edit');
-                }}
-              >
-                Edit policy
-              </Button>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              No source document attached to this policy.
+            </p>
           )}
         </CardContent>
       </Card>

@@ -5,14 +5,7 @@
  * Layering: UI -> hooks (`useWarrantyConfig`) -> THIS service -> lib/api-client
  * -> FastAPI. No component fetches directly.
  *
- * ── PHASE-1 / PHASE-2 SWAP ──────────────────────────────────────────────────
- * `USE_WARRANTY_CONFIG_MOCKS` is the single flag that toggles the whole feature
- * between the deterministic prototype store (`lib/warrantyConfigMock.ts`) and
- * the live backend. Phase 1 = true. Phase 2 flips it to false and deletes the
- * mock import; every function below already carries its real `apiFetch`
- * counterpart wired to the contract, so nothing above this file moves.
- *
- * ── PHASE-2 BACKEND CONTRACT ────────────────────────────────────────────────
+ * ── BACKEND CONTRACT ────────────────────────────────────────────────────────
  * Mounted in `app/api/v1/__init__.py` under
  * `Depends(require_module_enabled_with_api_key("warranty"))`, prefix
  * `/warranty-management`. Reads take `require_permission_with_api_key`, writes
@@ -22,6 +15,9 @@
  * Status codes (AC-P15): POST 201 with the row, PATCH 200 with the row, DELETE
  * 200 (NOT 204) - `complaints/complaint_root_causes.py` is the precedent. Update
  * semantics are PATCH, never PUT: every `XUpdate` schema here is all-Optional.
+ * ONE exception to "POST 201": `POST /kind-rules/test` answers **200**. It is a
+ * read wearing a POST (the payload is the question), and it creates nothing -
+ * treating a 201 as its success code would be asserting a row that never exists.
  *
  * Envelope (AC-P14): policies are `ListResponse[T]` =
  * `{data, pagination:{total,page,limit}, empty}`, which is the FE's own
@@ -54,7 +50,7 @@
  *  POST   /api/v1/warranty-management/kind-rules                    RuleCreate -> RuleResponse (201)
  *  PATCH  /api/v1/warranty-management/kind-rules/{id}               RuleUpdate -> RuleResponse (200)
  *  DELETE /api/v1/warranty-management/kind-rules/{id}               200
- *  POST   /api/v1/warranty-management/kind-rules/test               -> TestResponse (AC-P6, P6b, P6c)
+ *  POST   /api/v1/warranty-management/kind-rules/test               -> TestResponse, 200 (AC-P6, P6b, P6c)
  *
  *  GET    /api/v1/warranty-management/defect-types                  -> {id, label}[] (AC-P18)
  *
@@ -73,12 +69,33 @@
  *      not the shape; pinned here as `{groups: [{kind, terms}], total}`
  *  · `deciding_rule.id` is NULLABLE - an unsaved candidate rule (AC-P6b) has no id.
  *
- * ── ERROR MESSAGES THE SCREENS RELY ON (string `detail`, read by extractApiError) ──
+ * ── THE ERROR ENVELOPE ──────────────────────────────────────────────────────
+ * `AppException` serializes to a TOP-LEVEL `{message, detail, code}` (see
+ * `app/main.py`'s `app_exception_handler`, which returns `exc.detail` as the
+ * whole body). So `body.detail` is the OPTIONAL second-line elaboration and is
+ * `null` for every warranty refusal below - the sentence an admin reads is
+ * `body.message`. `extractApiError` recovers it through its `error.message`
+ * branch, after the string/array `detail` branches fall through. Never reach
+ * for `body.detail` here; it is not where the message lives.
+ *
+ * ── ERROR MESSAGES THE SCREENS RELY ON (quoted from warranty_config_service.py) ──
  *  · Policy overlap (AC-P2, AC-P2b) - names the other version AND its range:
- *      "Effective range overlaps policy v15 (2000-01-01 onwards). Supersede v15
- *       instead, or change the dates."
- *  · Kind delete refusal (AC-P12) - names BOTH counts:
- *      "Mirror Cabinet is still referenced by 3 terms and 1 rule. Remove those first."
+ *      "Effective range overlaps policy v15 (2000-01-01 onwards). A complaint is
+ *       judged against the version in force on its purchase date, so two
+ *       candidates make that answer arbitrary."
+ *    When the conflicting policy STARTS LATER (the mis-dated-supersede shape),
+ *    one more sentence is appended - and it says DELETE THE SUCCESSOR, not
+ *    "supersede that version instead", because AC-P26 ruled recovery is two
+ *    supported steps (delete the successor, then reopen the incumbent) and there
+ *    is no undo endpoint:
+ *      " Delete policy v16 first, or change the dates."
+ *  · Kind delete refusal (AC-P12) - names BOTH counts, with `(s)` plurals:
+ *      "Mirror Cabinet is still referenced by 3 term(s) and 1 rule(s). Remove
+ *       those first - deleting this kind would take the terms with it."
+ *    `KindsTab` pre-empts this refusal client-side from the row's
+ *    `has_no_terms` / `has_no_rules` flags and states the same two counts
+ *    (`term_count` / `rule_count`) itself, so the server sentence is the
+ *    BACKSTOP for a stale grid, not the primary path.
  * ============================================================================
  */
 import type { SortingState } from '@tanstack/react-table';
@@ -92,6 +109,7 @@ import type {
   WarrantyKindRef,
   WarrantyKindRow,
   WarrantyKindRuleRow,
+  WarrantyKindRuleUpdate,
   WarrantyKindRuleWrite,
   WarrantyKindWrite,
   WarrantyPolicyPage,
@@ -101,35 +119,6 @@ import type {
   WarrantyTermWrite,
   WarrantyTermsGrouped,
 } from '../types/warranty-config.types';
-import {
-  mockCreateKind,
-  mockCreateKindRule,
-  mockCreatePolicy,
-  mockCreateTerm,
-  mockDeleteKind,
-  mockDeleteKindRule,
-  mockDeletePolicy,
-  mockDeleteTerm,
-  mockGetPolicy,
-  mockListDefectTypes,
-  mockListKindOptions,
-  mockListKindRules,
-  mockListKinds,
-  mockListPolicies,
-  mockListTermsGrouped,
-  mockSettle,
-  mockSupersedePolicy,
-  mockTestKindRules,
-  mockUpdateKind,
-  mockUpdateKindRule,
-  mockUpdatePolicy,
-  mockUpdateTerm,
-} from '../lib/warrantyConfigMock';
-
-/** Phase-1 flag - true = deterministic mock store, false = live backend.
- *  Typed `boolean` on purpose so TS does not narrow the literal and mark the
- *  real `apiFetch` branches unreachable while the flag is still on. */
-export const USE_WARRANTY_CONFIG_MOCKS: boolean = true;
 
 const BASE = '/api/v1/warranty-management';
 
@@ -143,18 +132,6 @@ export interface PolicyListQuery {
 // ── Policies ────────────────────────────────────────────────────────────────
 
 export async function listPolicies(q: PolicyListQuery): Promise<WarrantyPolicyPage> {
-  if (USE_WARRANTY_CONFIG_MOCKS) {
-    return mockSettle(() => {
-      const rows = mockListPolicies(q.searchQuery ?? '');
-      const start = q.pageIndex * q.pageSize;
-      const page = rows.slice(start, start + q.pageSize);
-      return {
-        data: page,
-        empty: rows.length === 0,
-        pagination: { total: rows.length, page: q.pageIndex + 1, limit: q.pageSize },
-      };
-    });
-  }
   const params = buildDataGridParams({
     pageIndex: q.pageIndex,
     pageSize: q.pageSize,
@@ -167,14 +144,12 @@ export async function listPolicies(q: PolicyListQuery): Promise<WarrantyPolicyPa
 }
 
 export async function getPolicy(id: string): Promise<WarrantyPolicyRow> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockGetPolicy(id));
   const res = await apiFetch(`${BASE}/policies/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load warranty policy'));
   return (await res.json()) as WarrantyPolicyRow;
 }
 
 export async function createPolicy(body: WarrantyPolicyWrite): Promise<WarrantyPolicyRow> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockCreatePolicy(body));
   const res = await apiFetch(`${BASE}/policies`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -188,7 +163,6 @@ export async function updatePolicy(
   id: string,
   body: WarrantyPolicyWrite,
 ): Promise<WarrantyPolicyRow> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockUpdatePolicy(id, body));
   const res = await apiFetch(`${BASE}/policies/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -199,10 +173,6 @@ export async function updatePolicy(
 }
 
 export async function deletePolicy(id: string): Promise<void> {
-  if (USE_WARRANTY_CONFIG_MOCKS) {
-    await mockSettle(() => mockDeletePolicy(id));
-    return;
-  }
   const res = await apiFetch(`${BASE}/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete warranty policy'));
 }
@@ -211,7 +181,6 @@ export async function supersedePolicy(
   id: string,
   body: WarrantyPolicyWrite,
 ): Promise<SupersedeResult> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockSupersedePolicy(id, body));
   const res = await apiFetch(`${BASE}/policies/${encodeURIComponent(id)}/supersede`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -224,7 +193,6 @@ export async function supersedePolicy(
 // ── Terms ───────────────────────────────────────────────────────────────────
 
 export async function listTermsGroupedByKind(policyId: string): Promise<WarrantyTermsGrouped> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockListTermsGrouped(policyId));
   const res = await apiFetch(
     `${BASE}/policies/${encodeURIComponent(policyId)}/terms?group_by=kind`,
   );
@@ -236,7 +204,6 @@ export async function createTerm(
   policyId: string,
   body: WarrantyTermWrite,
 ): Promise<WarrantyTermRow> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockCreateTerm(policyId, body));
   const res = await apiFetch(`${BASE}/policies/${encodeURIComponent(policyId)}/terms`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -251,7 +218,6 @@ export async function updateTerm(
   termId: string,
   body: WarrantyTermWrite,
 ): Promise<WarrantyTermRow> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockUpdateTerm(policyId, termId, body));
   const res = await apiFetch(
     `${BASE}/policies/${encodeURIComponent(policyId)}/terms/${encodeURIComponent(termId)}`,
     {
@@ -265,10 +231,6 @@ export async function updateTerm(
 }
 
 export async function deleteTerm(policyId: string, termId: string): Promise<void> {
-  if (USE_WARRANTY_CONFIG_MOCKS) {
-    await mockSettle(() => mockDeleteTerm(policyId, termId));
-    return;
-  }
   const res = await apiFetch(
     `${BASE}/policies/${encodeURIComponent(policyId)}/terms/${encodeURIComponent(termId)}`,
     { method: 'DELETE' },
@@ -279,7 +241,6 @@ export async function deleteTerm(policyId: string, termId: string): Promise<void
 // ── Kinds ───────────────────────────────────────────────────────────────────
 
 export async function listKinds(searchQuery = ''): Promise<WarrantyKindRow[]> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockListKinds(searchQuery));
   const qs = searchQuery ? `?query=${encodeURIComponent(searchQuery)}` : '';
   const res = await apiFetch(`${BASE}/kinds${qs}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load product kinds'));
@@ -287,14 +248,12 @@ export async function listKinds(searchQuery = ''): Promise<WarrantyKindRow[]> {
 }
 
 export async function listKindOptions(): Promise<WarrantyKindRef[]> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockListKindOptions());
   const res = await apiFetch(`${BASE}/kinds/select`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load product kinds'));
   return (await res.json()) as WarrantyKindRef[];
 }
 
 export async function createKind(body: WarrantyKindWrite): Promise<WarrantyKindRow> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockCreateKind(body));
   const res = await apiFetch(`${BASE}/kinds`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -305,7 +264,6 @@ export async function createKind(body: WarrantyKindWrite): Promise<WarrantyKindR
 }
 
 export async function updateKind(id: string, body: WarrantyKindWrite): Promise<WarrantyKindRow> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockUpdateKind(id, body));
   const res = await apiFetch(`${BASE}/kinds/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -316,10 +274,6 @@ export async function updateKind(id: string, body: WarrantyKindWrite): Promise<W
 }
 
 export async function deleteKind(id: string): Promise<void> {
-  if (USE_WARRANTY_CONFIG_MOCKS) {
-    await mockSettle(() => mockDeleteKind(id));
-    return;
-  }
   const res = await apiFetch(`${BASE}/kinds/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete product kind'));
 }
@@ -327,7 +281,6 @@ export async function deleteKind(id: string): Promise<void> {
 // ── Kind rules ──────────────────────────────────────────────────────────────
 
 export async function listKindRules(kindId: string | null = null): Promise<WarrantyKindRuleRow[]> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockListKindRules(kindId));
   const qs = kindId ? `?kind_id=${encodeURIComponent(kindId)}` : '';
   const res = await apiFetch(`${BASE}/kind-rules${qs}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load kind rules'));
@@ -335,7 +288,6 @@ export async function listKindRules(kindId: string | null = null): Promise<Warra
 }
 
 export async function createKindRule(body: WarrantyKindRuleWrite): Promise<WarrantyKindRuleRow> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockCreateKindRule(body));
   const res = await apiFetch(`${BASE}/kind-rules`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -345,11 +297,15 @@ export async function createKindRule(body: WarrantyKindRuleWrite): Promise<Warra
   return (await res.json()) as WarrantyKindRuleRow;
 }
 
+/**
+ * PATCH is partial: keys the caller omits are left untouched server-side. That
+ * is how an edit to a legacy rule's priority avoids rewriting a `match_type`
+ * the picker never offered (AC-P24, tolerant at read / strict at write).
+ */
 export async function updateKindRule(
   id: string,
-  body: WarrantyKindRuleWrite,
+  body: WarrantyKindRuleUpdate,
 ): Promise<WarrantyKindRuleRow> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockUpdateKindRule(id, body));
   const res = await apiFetch(`${BASE}/kind-rules/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -360,16 +316,11 @@ export async function updateKindRule(
 }
 
 export async function deleteKindRule(id: string): Promise<void> {
-  if (USE_WARRANTY_CONFIG_MOCKS) {
-    await mockSettle(() => mockDeleteKindRule(id));
-    return;
-  }
   const res = await apiFetch(`${BASE}/kind-rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete kind rule'));
 }
 
 export async function testKindRules(body: KindRuleTestRequest): Promise<KindRuleTestResponse> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockTestKindRules(body));
   const res = await apiFetch(`${BASE}/kind-rules/test`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -382,7 +333,6 @@ export async function testKindRules(body: KindRuleTestRequest): Promise<KindRule
 // ── Defect types ────────────────────────────────────────────────────────────
 
 export async function listDefectTypes(): Promise<DefectTypeOption[]> {
-  if (USE_WARRANTY_CONFIG_MOCKS) return mockSettle(() => mockListDefectTypes());
   const res = await apiFetch(`${BASE}/defect-types`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load defect types'));
   return (await res.json()) as DefectTypeOption[];

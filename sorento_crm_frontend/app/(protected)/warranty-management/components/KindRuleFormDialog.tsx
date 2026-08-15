@@ -1,18 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FormDialogScaffold } from '@/components/common/FormDialogScaffold';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { formatMatchTypeLabel } from '../lib/warrantyLabels';
 import {
   KIND_RULE_MATCH_TYPES,
   KIND_RULE_MATCH_TYPE_LABEL,
   type KindRuleMatchType,
   type WarrantyKindRef,
   type WarrantyKindRuleRow,
-  type WarrantyKindRuleWrite,
+  type WarrantyKindRuleUpdate,
 } from '../types/warranty-config.types';
 
 const VALUE_PLACEHOLDER: Record<KindRuleMatchType, string> = {
@@ -37,18 +38,27 @@ export function KindRuleFormDialog({
   initial: WarrantyKindRuleRow | null;
   kinds: WarrantyKindRef[];
   defaultKindId: string;
-  onSubmit: (body: WarrantyKindRuleWrite) => Promise<void>;
+  onSubmit: (body: WarrantyKindRuleUpdate) => Promise<void>;
   isSubmitting: boolean;
   error: string | null;
 }) {
   const isEdit = !!initial;
   const [kindId, setKindId] = useState('');
-  const [matchType, setMatchType] = useState<KindRuleMatchType>('model_prefix');
+  // Held as a RAW string, not `KindRuleMatchType`: AC-P24 is tolerant at read,
+  // so an existing row may carry a match type outside the four this screen
+  // knows, and the admin has to SEE it before deciding whether to touch it.
+  const [matchType, setMatchType] = useState<string>('model_prefix');
+  // Whether the admin actually chose a match type in THIS dialog session. On an
+  // edit, an untouched field is left out of the PATCH entirely (partial
+  // semantics) so the stored value cannot be silently rewritten by a picker the
+  // admin never opened. Create always sends it - the field is required there.
+  const [matchTypeTouched, setMatchTypeTouched] = useState(false);
   const [matchValue, setMatchValue] = useState('');
   const [priority, setPriority] = useState('0');
 
   useEffect(() => {
     if (!open) return;
+    setMatchTypeTouched(false);
     if (initial) {
       setKindId(initial.kind_id);
       setMatchType(initial.match_type);
@@ -61,6 +71,28 @@ export function KindRuleFormDialog({
       setPriority('0');
     }
   }, [open, initial, defaultKindId]);
+
+  const isKnownMatchType = (KIND_RULE_MATCH_TYPES as string[]).includes(matchType);
+
+  /**
+   * The four known types, plus - only while it IS the current value - the raw
+   * stored one, so the trigger resolves to something the admin can read instead
+   * of falling back to the placeholder. `formatMatchTypeLabel` prints the raw
+   * value for an unknown type by design; nothing is invented here.
+   */
+  const matchTypeOptions = useMemo(() => {
+    const known = KIND_RULE_MATCH_TYPES.map((t) => ({
+      value: t as string,
+      label: KIND_RULE_MATCH_TYPE_LABEL[t],
+    }));
+    if (matchType && !isKnownMatchType) {
+      return [{ value: matchType, label: formatMatchTypeLabel(matchType) }, ...known];
+    }
+    return known;
+  }, [matchType, isKnownMatchType]);
+
+  // No example to show for a match type this screen does not know.
+  const valuePlaceholder = VALUE_PLACEHOLDER[matchType as KindRuleMatchType] ?? undefined;
 
   const canSubmit = kindId.length > 0 && matchValue.trim().length > 0;
 
@@ -75,12 +107,17 @@ export function KindRuleFormDialog({
       onSubmit={async (e) => {
         e.preventDefault();
         if (!canSubmit) return;
-        await onSubmit({
+        const body: WarrantyKindRuleUpdate = {
           kind_id: kindId,
-          match_type: matchType,
           match_value: matchValue.trim(),
           priority: Number(priority) || 0,
-        });
+        };
+        // Create is strict (the field is required); an edit sends it only when
+        // the admin actually chose one.
+        if (!isEdit || matchTypeTouched) {
+          body.match_type = matchType as KindRuleMatchType;
+        }
+        await onSubmit(body);
       }}
     >
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -99,11 +136,12 @@ export function KindRuleFormDialog({
           <SearchableSelect
             id="rule-match-type"
             value={matchType}
-            onChange={(v) => setMatchType(v as KindRuleMatchType)}
-            options={KIND_RULE_MATCH_TYPES.map((t) => ({
-              value: t,
-              label: KIND_RULE_MATCH_TYPE_LABEL[t],
-            }))}
+            onChange={(v) => {
+              if (v === matchType) return;
+              setMatchType(v);
+              setMatchTypeTouched(true);
+            }}
+            options={matchTypeOptions}
           />
         </div>
         <div className="space-y-1.5">
@@ -122,7 +160,7 @@ export function KindRuleFormDialog({
               id="rule-value"
               value={matchValue}
               onChange={(e) => setMatchValue(e.target.value)}
-              placeholder={VALUE_PLACEHOLDER[matchType]}
+              placeholder={valuePlaceholder}
               rows={3}
             />
           ) : (
@@ -130,7 +168,7 @@ export function KindRuleFormDialog({
               id="rule-value"
               value={matchValue}
               onChange={(e) => setMatchValue(e.target.value)}
-              placeholder={VALUE_PLACEHOLDER[matchType]}
+              placeholder={valuePlaceholder}
               autoComplete="off"
             />
           )}

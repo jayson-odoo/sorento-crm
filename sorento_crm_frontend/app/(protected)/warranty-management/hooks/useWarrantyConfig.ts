@@ -36,6 +36,7 @@ import {
 } from '../services/warrantyConfigService';
 import type {
   KindRuleTestRequest,
+  WarrantyKindRuleUpdate,
   WarrantyKindRuleWrite,
   WarrantyKindWrite,
   WarrantyPolicyWrite,
@@ -58,9 +59,20 @@ function useInvalidator() {
 
 // ── Policies ────────────────────────────────────────────────────────────────
 
+/** `sorting` is part of the key, not just of the request: react-query serves the
+ *  cached page whenever the key is unchanged, so a key without it makes every
+ *  column header on the grid a no-op click. The array is safe to key on directly
+ *  (the repo's convention everywhere else) - the default key hash is structural,
+ *  so a new array with the same contents does not refetch. */
 export function usePolicies(params: PolicyListQuery) {
   return useQuery({
-    queryKey: [...WARRANTY_POLICIES_KEY, params.pageIndex, params.pageSize, params.searchQuery],
+    queryKey: [
+      ...WARRANTY_POLICIES_KEY,
+      params.pageIndex,
+      params.pageSize,
+      params.searchQuery,
+      params.sorting,
+    ],
     queryFn: () => listPolicies(params),
     retry: RETRY,
   });
@@ -245,7 +257,7 @@ export function useCreateKindRule() {
 export function useUpdateKindRule() {
   const invalidate = useInvalidator();
   return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: WarrantyKindRuleWrite }) =>
+    mutationFn: ({ id, body }: { id: string; body: WarrantyKindRuleUpdate }) =>
       updateKindRule(id, body),
     onSuccess: () => {
       invalidate([WARRANTY_KIND_RULES_KEY, WARRANTY_KINDS_KEY]);

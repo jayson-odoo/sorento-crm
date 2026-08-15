@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useTestKindRules } from '../hooks/useWarrantyConfig';
+import { formatMatchTypeLabel } from '../lib/warrantyLabels';
 import {
   KIND_RULE_MATCH_TYPES,
   KIND_RULE_MATCH_TYPE_LABEL,
@@ -205,7 +206,7 @@ export function RuleTesterCard({ kinds }: { kinds: WarrantyKindRef[] }) {
                   <div className="mt-2 text-sm">
                     <span className="text-muted-foreground">Deciding rule</span>{' '}
                     <span className="font-medium">
-                      {KIND_RULE_MATCH_TYPE_LABEL[result.deciding_rule.match_type]}
+                      {formatMatchTypeLabel(result.deciding_rule.match_type)}
                     </span>{' '}
                     <span className="font-mono text-xs break-all">
                       {result.deciding_rule.match_value}
@@ -244,7 +245,7 @@ export function RuleTesterCard({ kinds }: { kinds: WarrantyKindRef[] }) {
                       </Badge>
                       <span className="font-medium">{m.kind.name}</span>
                       <span className="text-muted-foreground">
-                        {KIND_RULE_MATCH_TYPE_LABEL[m.rule.match_type]}
+                        {formatMatchTypeLabel(m.rule.match_type)}
                       </span>
                       <span className="font-mono text-xs break-all" title={m.rule.match_value}>
                         {m.rule.match_value}

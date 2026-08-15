@@ -178,6 +178,19 @@ export interface WarrantyKindRuleWrite {
   priority: number;
 }
 
+/**
+ * The EDIT body. `KindRuleUpdate` is all-Optional server-side, and AC-P24 is
+ * "strict at write, tolerant at read": a row may already hold a `match_type`
+ * outside the four the frontend knows. Sending the field back on every PATCH
+ * would rewrite that stored value from a picker the admin never touched - so
+ * `match_type` is omitted entirely unless the admin actually chose one, and the
+ * untouched legacy row survives an edit to its other fields.
+ *
+ * Create stays STRICT: `WarrantyKindRuleWrite` still requires the field.
+ */
+export type WarrantyKindRuleUpdate = Omit<WarrantyKindRuleWrite, 'match_type'> &
+  Partial<Pick<WarrantyKindRuleWrite, 'match_type'>>;
+
 // ── The tester (AC-P6, P6b, P6c) ────────────────────────────────────────────
 
 /** An unsaved rule the admin is about to write, ranked alongside the saved ones. */

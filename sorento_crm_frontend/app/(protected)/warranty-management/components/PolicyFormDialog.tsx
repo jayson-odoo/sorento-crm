@@ -5,6 +5,7 @@ import { FormDialogScaffold } from '@/components/common/FormDialogScaffold';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { previousCivilDay } from '../lib/warrantyLabels';
 import type { WarrantyPolicyRow, WarrantyPolicyWrite } from '../types/warranty-config.types';
 
 export type PolicyDialogMode = 'create' | 'edit' | 'supersede';
@@ -70,6 +71,23 @@ export function PolicyFormDialog({
 
   const canSubmit = version.trim().length > 0 && effectiveFrom.length > 0;
 
+  /**
+   * AC-P26: Supersede has no undo, so the confirmation IS the safety mechanism.
+   * The dialog states the resulting window for BOTH policies before Publish -
+   * the incumbent closes the day before the successor starts - and it recomputes
+   * as the date is edited. A mis-dated supersede is a dialog that did not show
+   * its own arithmetic.
+   *
+   * An incumbent that ALREADY has an end date is not moved by this write (the
+   * server refuses to supersede a closed policy), so its existing end is stated
+   * as-is rather than a close date it will never take.
+   */
+  const successorLabel = version.trim() || 'the new version';
+  const incumbentAlreadyClosed = !!incumbent?.effective_to;
+  const incumbentEnd = incumbent?.effective_to ?? previousCivilDay(effectiveFrom);
+  const showResultingWindow =
+    mode === 'supersede' && !!incumbent && !!effectiveFrom && !!incumbentEnd;
+
   return (
     <FormDialogScaffold
       open={open}
@@ -90,9 +108,27 @@ export function PolicyFormDialog({
       }}
     >
       {mode === 'supersede' && incumbent ? (
-        <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
-          <span className="text-muted-foreground">Replacing</span>{' '}
-          <span className="font-medium">{incumbent.version}</span>
+        <div className="space-y-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+          <div>
+            <span className="text-muted-foreground">Replacing</span>{' '}
+            <span className="font-medium">{incumbent.version}</span>
+          </div>
+          {showResultingWindow ? (
+            <div>
+              <span className="font-medium">{incumbent.version}</span>{' '}
+              {incumbentAlreadyClosed ? 'already ends' : 'closes'}{' '}
+              <span className="font-medium tabular-nums">{incumbentEnd}</span>;{' '}
+              <span className="font-medium">{successorLabel}</span> runs from{' '}
+              <span className="font-medium tabular-nums">{effectiveFrom}</span>
+              {effectiveTo ? (
+                <>
+                  {' '}
+                  to <span className="font-medium tabular-nums">{effectiveTo}</span>
+                </>
+              ) : null}
+              .
+            </div>
+          ) : null}
         </div>
       ) : null}
 

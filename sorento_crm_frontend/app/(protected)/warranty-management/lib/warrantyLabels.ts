@@ -7,7 +7,28 @@
  * and renders as the previous day anywhere west of Greenwich, which would put a
  * policy window off by one for a reader in another timezone.
  */
-import type { WarrantyPolicyRow, WarrantyTermRow } from '../types/warranty-config.types';
+import {
+  KIND_RULE_MATCH_TYPE_LABEL,
+  type WarrantyPolicyRow,
+  type WarrantyTermRow,
+} from '../types/warranty-config.types';
+
+/**
+ * AC-P24 is "strict at write, tolerant at read": a `match_type` the frontend has
+ * no label for is refused at 422 on write, but a row that already holds one -
+ * written before the frontend knew about it, or by a migration - must still be
+ * readable. Indexing the label map bare returns `undefined`, which JSX renders
+ * as NOTHING: an invisible gap where the rule's match type should be, which
+ * looks like a rendering bug rather than unfamiliar data.
+ *
+ * The fallback is the RAW stored value, not an invented label like "Unknown":
+ * an admin looking at a legacy row needs to see what is actually in the column.
+ */
+export function formatMatchTypeLabel(matchType: string): string {
+  return (
+    KIND_RULE_MATCH_TYPE_LABEL[matchType as keyof typeof KIND_RULE_MATCH_TYPE_LABEL] ?? matchType
+  );
+}
 
 const MONTHS = [
   'Jan',
@@ -31,6 +52,23 @@ export function formatCivilDate(iso: string | null | undefined): string {
   if (!m) return iso;
   const [, y, mo, d] = m;
   return `${d} ${MONTHS[Number(mo) - 1] ?? mo} ${y}`;
+}
+
+/**
+ * The civil day BEFORE `iso` (`2026-09-01` -> `2026-08-31`), or null when the
+ * input is not a civil date. This is the arithmetic Supersede performs on the
+ * incumbent (AC-P26): the outgoing policy closes the day before the successor
+ * starts, because both ends of a window are inclusive (AC-P2b) and one day can
+ * only belong to one version. Done in UTC so no local timezone can move it.
+ */
+export function previousCivilDay(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  const prev = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)) - 24 * 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${prev.getUTCFullYear()}-${pad(prev.getUTCMonth() + 1)}-${pad(prev.getUTCDate())}`;
 }
 
 /** The policy window, both ends inclusive, open-ended when there is no end. */
