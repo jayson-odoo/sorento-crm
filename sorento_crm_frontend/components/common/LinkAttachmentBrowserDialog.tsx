@@ -449,8 +449,18 @@ export default function LinkAttachmentBrowserDialog({
                   )}
                 </div>
               </div>
-              <ScrollArea className="flex-1 min-h-0">
-                <div className="p-2">
+              {/*
+                Radix sizes the viewport's content wrapper with an inline
+                `display: table`, which is shrink-to-fit on its MAX-content: a
+                long filename makes that wrapper wider than the panel, so the
+                name never reaches its `truncate` and the viewport hard-cuts it
+                mid-word instead (measured 431px of content in a 258px viewport
+                at 375px wide). Forcing the wrapper back to a block keeps it at
+                the panel width, so long names ellipsis with the full value on
+                hover, per the repo's long-text rule.
+              */}
+              <ScrollArea className="flex-1 min-h-0" viewportClassName="[&>div]:block!">
+                <div className="p-2 min-w-0">
                   {isLoadingAttachments ? (
                     <div className="flex items-center justify-center py-8 text-muted-foreground text-sm">
                       <LoaderCircleIcon className="size-5 animate-spin mr-2" />
@@ -468,7 +478,7 @@ export default function LinkAttachmentBrowserDialog({
                         <li
                           key={att.id}
                           className={cn(
-                            'flex items-center gap-2 rounded-md px-2 py-2 cursor-pointer hover:bg-accent/50',
+                            'flex items-center gap-2 rounded-md px-2 py-2 cursor-pointer hover:bg-accent/50 min-w-0',
                             selectedIds.has(att.id) && 'bg-accent/70'
                           )}
                           onClick={() => toggleSelection(att)}
@@ -479,7 +489,7 @@ export default function LinkAttachmentBrowserDialog({
                             onClick={(e) => e.stopPropagation()}
                           />
                           <FileText className="size-4 text-muted-foreground shrink-0" />
-                          <span className="truncate text-sm flex-1" title={attachmentDisplayName(att)}>
+                          <span className="truncate text-sm flex-1 min-w-0" title={attachmentDisplayName(att)}>
                             {attachmentDisplayName(att)}
                           </span>
                         </li>

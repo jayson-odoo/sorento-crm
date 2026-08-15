@@ -276,3 +276,35 @@ describe('the original link flow (unchanged without onConfirm)', () => {
     expect(confirmButton).toBeDisabled();
   });
 });
+
+describe('long filenames degrade to an ellipsis, never a hard cut', () => {
+  const LONG = 'SORENTO A3 Flyer 2025-2026 Season Catalogue.pdf';
+
+  it('renders the name as a shrinkable, truncating span carrying the full name as its title', async () => {
+    mockAttachments.mockResolvedValue(respond([attachment('att-long', LONG)]));
+    renderDialog({ onConfirm: vi.fn(), maxSelections: 1 });
+
+    const name = await screen.findByTitle(LONG);
+    expect(name).toHaveTextContent(LONG);
+    // `truncate` alone is not enough: a flex item defaults to min-width:auto and
+    // refuses to shrink below its text, so the row grows and the panel clips it
+    // mid-word instead. Both classes together are what produces the ellipsis.
+    expect(name.className).toContain('truncate');
+    expect(name.className).toContain('min-w-0');
+    expect(name.closest('li')?.className).toContain('min-w-0');
+  });
+
+  it('does not let the scroll viewport size itself to the longest filename', async () => {
+    mockAttachments.mockResolvedValue(respond([attachment('att-long', LONG)]));
+    renderDialog({ onConfirm: vi.fn(), maxSelections: 1 });
+
+    const name = await screen.findByTitle(LONG);
+    const viewport = name.closest('[data-radix-scroll-area-viewport]');
+    // Radix wraps viewport content in an inline `display: table` div, which is
+    // shrink-to-fit on its MAX-content - measured 431px of content inside a
+    // 258px panel at 375px wide, which is what hard-cut the names. jsdom has no
+    // layout, so what is pinned here is the override that keeps that wrapper at
+    // the panel width; the widths themselves were measured in a real browser.
+    expect(viewport?.className).toContain('[&>div]:block!');
+  });
+});
