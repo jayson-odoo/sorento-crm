@@ -6,6 +6,7 @@ import type { InterventionTicketDetail } from '../services/interventionTicketSer
 
 const useInterventionTicket = vi.fn();
 const useSlaTrackingConversation = vi.fn();
+const useSlaTrackingThreadLoaders = vi.fn();
 const useResolveInterventionTicket = vi.fn();
 const useSendInterventionTicketMessage = vi.fn();
 const useTicketComments = vi.fn();
@@ -25,9 +26,12 @@ vi.mock('../hooks/useTicketComments', () => ({
 }));
 
 // FINDING 9: the thread is the SHARED conversation query (one key with the SLA
-// detail page's panel), not a private copy.
+// detail page's panel), not a private copy. The scroll-back / search loaders
+// come through a hook too (layering: UI -> hook -> service), never as direct
+// service imports in the component.
 vi.mock('../hooks/useConversationSLATracking', () => ({
   useSlaTrackingConversation: (...a: unknown[]) => useSlaTrackingConversation(...a),
+  useSlaTrackingThreadLoaders: (...a: unknown[]) => useSlaTrackingThreadLoaders(...a),
 }));
 
 // jsdom does not implement scrollIntoView; guarded in the real component with
@@ -177,6 +181,17 @@ let aiDraftMutateAsync: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   useInterventionTicket.mockReset();
   useSlaTrackingConversation.mockReset();
+  useSlaTrackingThreadLoaders.mockReset();
+  useSlaTrackingThreadLoaders.mockReturnValue({
+    loadPage: vi.fn().mockResolvedValue({
+      items: [],
+      has_more_older: false,
+      has_more_newer: false,
+      oldest_message_id: null,
+      newest_message_id: null,
+    }),
+    searchMessages: vi.fn().mockResolvedValue([]),
+  });
   useResolveInterventionTicket.mockReset();
   useSendInterventionTicketMessage.mockReset();
   useTicketComments.mockReset();
@@ -258,6 +273,13 @@ describe('InterventionTicketDrawer', () => {
       't1',
       expect.objectContaining({ limit: 50 }),
     );
+  });
+
+  it('FINDING 14: the scroll-back and search loaders come from a hook, keyed on the ticket', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+    await waitFor(() => expect(screen.getByTestId('chat-list')).toBeInTheDocument());
+    expect(useSlaTrackingThreadLoaders).toHaveBeenCalledWith('t1');
   });
 
   it('an open drawer polls the thread, so a contact reply appears on its own', async () => {

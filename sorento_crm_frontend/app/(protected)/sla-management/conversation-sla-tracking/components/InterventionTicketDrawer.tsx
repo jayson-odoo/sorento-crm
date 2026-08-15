@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, CheckCircle2, History, MessageSquareQuote, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -34,10 +34,9 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 
 import {
-  getSlaTrackingConversationPage,
-  searchSlaTrackingConversation,
-} from '../services/conversationSLATrackingService';
-import { useSlaTrackingConversation } from '../hooks/useConversationSLATracking';
+  useSlaTrackingConversation,
+  useSlaTrackingThreadLoaders,
+} from '../hooks/useConversationSLATracking';
 import {
   useDraftInterventionTicketReply,
   useInterventionTicket,
@@ -125,15 +124,7 @@ export default function InterventionTicketDrawer({
   // AC-L7 / AC-L8: scroll-back and search live in the SHARED thread hook, so the
   // SLA detail panel and the complaint / stock-inquiry / PR chat panels inherit
   // them by passing the same loaders - nothing here is drawer-specific.
-  const loadPage = useCallback(
-    (params: { before?: string; after?: string; around?: string; limit?: number }) =>
-      getSlaTrackingConversationPage(ticketId ?? '', params),
-    [ticketId],
-  );
-  const searchMessages = useCallback(
-    (query: string) => searchSlaTrackingConversation(ticketId ?? '', query),
-    [ticketId],
-  );
+  const { loadPage, searchMessages } = useSlaTrackingThreadLoaders(ticketId);
   const thread = useConversationThread({
     liveItems: liveMessages,
     loadPage,

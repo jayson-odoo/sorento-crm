@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
@@ -16,6 +17,8 @@ import {
   syncAssigneeFromRespond,
   postConversationSLATestOverrides,
   getSlaTrackingConversation,
+  getSlaTrackingConversationPage,
+  searchSlaTrackingConversation,
   postSlaTrackingConversationReply,
   CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH,
   type ConversationSLATestOverridesBody,
@@ -185,6 +188,28 @@ export function useSlaTrackingConversation(
     refetchInterval: options?.refetchIntervalMs ?? false,
     refetchIntervalInBackground: false,
   });
+}
+
+/**
+ * The two loaders `useConversationThread` needs for scroll-back and in-thread
+ * search (AC-L7 / AC-L8), memoised on the ticket id.
+ *
+ * A hook rather than two service imports in the component: the layering rule is
+ * UI -> hook -> service, and the thread hook re-runs its effects whenever a
+ * loader identity changes, so where the `useCallback` lives is behaviour, not
+ * tidiness.
+ */
+export function useSlaTrackingThreadLoaders(trackingId: string | null) {
+  const loadPage = useCallback(
+    (params: { before?: string; after?: string; around?: string; limit?: number }) =>
+      getSlaTrackingConversationPage(trackingId ?? '', params),
+    [trackingId],
+  );
+  const searchMessages = useCallback(
+    (query: string) => searchSlaTrackingConversation(trackingId ?? '', query),
+    [trackingId],
+  );
+  return { loadPage, searchMessages };
 }
 
 export function useSlaTrackingConversationReply(trackingId: string) {
