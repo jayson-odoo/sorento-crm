@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BASE_CURRENCY,
   EM_DASH,
+  fmtDate,
   fmtDateTime,
   fmtMoney,
   fmtMoneyIn,
@@ -111,10 +112,17 @@ describe('fmtTrimmedDecimal', () => {
 });
 
 describe('fmtDateTime', () => {
-  it('carries the time, because two runs on one day are otherwise the same stamp', () => {
-    const shown = fmtDateTime('2026-08-15T09:28:00');
-    expect(shown).toContain('2026');
-    expect(shown).toMatch(/\d{1,2}:\d{2}/);
+  it('writes the date half exactly the way fmtDate writes it', () => {
+    // One date shape in this product, `dd/mm/yyyy`. A stamp that reads "15 Aug 2026"
+    // beside a column of "15/08/2026" looks like a deliberate distinction and is not one.
+    // (Both halves parse and format in local time, so this is stable wherever it runs.)
+    const iso = '2026-08-15T09:28:00';
+    expect(fmtDateTime(iso).startsWith(fmtDate(iso))).toBe(true);
+    expect(fmtDateTime(iso)).toBe('15/08/2026, 09:28');
+  });
+
+  it('keeps the hour, because two runs on one day are otherwise the same stamp', () => {
+    expect(fmtDateTime('2026-08-15T21:05:00')).toBe('15/08/2026, 21:05');
   });
 
   it('shows an em dash for an absent or unreadable stamp', () => {

@@ -190,13 +190,25 @@ export function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleDateString(DATE_LOCALE, DATE_PARTS);
 }
 
+/** 24-hour, both parts padded: `21:05`, and `09:28` rather than `9:28`. No am/pm to
+ *  misread, and the same 2-digit reasoning as `DATE_PARTS`. */
+export const TIME_PARTS = {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+} as const;
+
 /**
  * A date WITH its time, for the stamps where the hour matters (when a simulation last ran,
  * when a baseline was blessed). Two runs on the same day are otherwise indistinguishable.
+ *
+ * The date half is `fmtDate`'s, part for part: this product writes a date one way, and a
+ * stamp reading `15 Aug 2026` beside a column of `15/08/2026` looks like a deliberate
+ * distinction that nobody made.
  */
 export function fmtDateTime(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return EM_DASH;
-  return d.toLocaleString('en-MY', { dateStyle: 'medium', timeStyle: 'short' });
+  return `${d.toLocaleDateString(DATE_LOCALE, DATE_PARTS)}, ${d.toLocaleTimeString(DATE_LOCALE, TIME_PARTS)}`;
 }
