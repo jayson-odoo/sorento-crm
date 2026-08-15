@@ -152,7 +152,7 @@ export function PlanTrendPopover({
                       <td className="max-w-40 truncate py-0.5" title={c.customer_name}>
                         {c.customer_name}
                       </td>
-                      <td className="py-0.5 text-right tabular-nums">{c.qty.toLocaleString()}</td>
+                      <td className="py-0.5 text-right tabular-nums">{fmtInt(c.qty)}</td>
                       <td className="py-0.5 text-right tabular-nums">{fmtDate(c.last_order_date)}</td>
                     </tr>
                   ))}

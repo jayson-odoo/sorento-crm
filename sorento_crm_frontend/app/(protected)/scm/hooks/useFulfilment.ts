@@ -17,6 +17,7 @@ import {
   type LoadingPlan,
   type LoadingPlanRequest,
 } from '../services/fulfilmentService';
+import { fmtTrimmedDecimal } from '../lib/format';
 
 const KEY = ['scm', 'fulfilment'] as const;
 
@@ -87,7 +88,7 @@ export function useBuildLoadingPlan() {
     onSuccess: (plan: LoadingPlan) => {
       invalidate(plan.supplier_id);
       toast.success(
-        `Planned ${plan.planned_cbm.toLocaleString()} of ${plan.capacity_cbm.toLocaleString()} cbm.`,
+        `Planned ${fmtTrimmedDecimal(plan.planned_cbm, 2)} of ${fmtTrimmedDecimal(plan.capacity_cbm, 2)} cbm.`,
       );
     },
     onError: (e: Error) => toast.error(e.message),

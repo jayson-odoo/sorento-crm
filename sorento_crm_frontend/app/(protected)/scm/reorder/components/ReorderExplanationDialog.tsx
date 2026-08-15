@@ -45,6 +45,7 @@ import {
   BASE_CURRENCY,
   EM_DASH,
   fmtDate,
+  fmtDecimal,
   fmtInt,
   fmtMoney,
   fmtPct,
@@ -180,7 +181,7 @@ function RankExplanation({ rec }: { rec: ReorderRecommendation }) {
         <span className="text-muted-foreground">
           {isNeedsCost
             ? "Can't be cash-ranked or funded until a supplier cost is added."
-            : `Score ${rec.rank_score != null ? rec.rank_score.toFixed(2) : EM_DASH} · cash impact ${
+            : `Score ${fmtDecimal(rec.rank_score, 2)} · cash impact ${
                 rec.cash_impact != null ? fmtMoney(rec.cash_impact) : 'unknown (uncosted)'
               }`}
         </span>

@@ -24,7 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
-import { EM_DASH, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtTrimmedDecimal } from '../../lib/format';
 import {
   useBuildLoadingPlan,
   useContainerSizes,
@@ -100,7 +100,7 @@ function fillLabel(rate: number): string {
 }
 
 function cbm(value: number | null | undefined): string {
-  return value === null || value === undefined ? EM_DASH : `${value.toLocaleString()} cbm`;
+  return value === null || value === undefined ? EM_DASH : `${fmtTrimmedDecimal(value, 2)} cbm`;
 }
 
 export function LoadingPlanView() {
