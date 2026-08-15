@@ -133,11 +133,17 @@ they set themselves, and confidence in what the product is.
 
 - **AC-7.1** The product cell carries a photo icon. Click opens a popover with the product's
   primary photo (`product_attachments.is_primary`, the same flag Dealer Kit -> Brochure
-  images sets), served through the existing signed-URL reader. Icon is dimmed when the
-  product has no primary photo; the popover then reads `No primary photo yet` with a link
-  to Dealer Kit -> Brochure images.
-- **AC-7.2** One request per run (`GET /reorder-runs/{run}/product-images` -> `{product_id:
-  url}`), fetched lazily on first icon open, not per row.
+  images sets), falling back to the product's first catalogue image when none is flagged
+  (the same reader and order the catalogue tile uses; on the live run 744 of 762 imaged
+  products have no flag, so a literal `is_primary` rule would blank them). Icon is dimmed
+  when the product has no image at all; the popover then reads `No primary photo yet` with
+  a link to Dealer Kit -> Brochure images. When a fallback image is shown the popover keeps
+  a one-line footer link to that page, so the "choose the primary" loop still exists.
+- **AC-7.2** One cheap request per run for the icon state (`GET
+  /reorder-runs/{run}/product-images` -> `{has_image: {product_id: true}}`, no signing),
+  fetched lazily on first icon open; the signed URL is fetched per product on popover open
+  (`GET /reorder-runs/{run}/product-images/{product_id}` -> `{url, is_primary}`), never
+  hundreds of signatures in one request.
 - **AC-7.3** Dealer Kit -> Brochure images is where "mark as primary" lives today (that page's
   chosen image IS `is_primary`); its page title/help copy says so in one line so the buyer
   knows where to go. No new dealer-kit surface.
