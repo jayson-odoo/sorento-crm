@@ -46,6 +46,14 @@ export type SearchableMultiSelectProps = {
   selectedOptions?: SearchableMultiSelectOption[];
   /** Trigger size — shared with Radix SelectTrigger. Default `md`. */
   size?: SelectTriggerSize;
+  /**
+   * Size the menu to its options and WRAP a long label instead of truncating it.
+   * Same contract as `SearchableSelect.wrapOptions`, kept in step so the two
+   * halves of one standard cannot behave differently.
+   */
+  wrapOptions?: boolean;
+  /** Forwarded to the trigger so a <Label htmlFor> can point at it, as SearchableSelect does. */
+  id?: string;
   placeholder?: string;
   emptyMessage?: string;
   disabled?: boolean;
@@ -79,6 +87,8 @@ export function SearchableMultiSelect({
   fetchOptions,
   selectedOptions,
   size,
+  wrapOptions = false,
+  id,
   placeholder = 'Select...',
   emptyMessage = 'No results found.',
   disabled = false,
@@ -229,6 +239,7 @@ export function SearchableMultiSelect({
         <button
           type="button"
           disabled={isDisabled}
+          id={id}
           data-slot="searchable-multi-select-trigger"
           // Radix SelectTrigger exposes role=combobox; keep parity so callers and tests
           // can find the trigger by role, and screen readers announce expanded state.
@@ -279,7 +290,12 @@ export function SearchableMultiSelect({
       <PopoverContent className={cn(
             // Cap to the space Radix measured, or a long list makes the menu taller than
             // the viewport and the search box gets pushed off-screen on short windows.
-            'w-(--radix-popper-anchor-width) max-h-(--radix-popper-available-height) flex flex-col p-0',
+            'max-h-(--radix-popper-available-height) flex flex-col p-0',
+            wrapOptions
+              ? // Grow to the widest option, never past the viewport, and never
+                // narrower than the control it hangs off.
+                'w-auto min-w-(--radix-popper-anchor-width) max-w-[min(28rem,calc(100vw-2rem))]'
+              : 'w-(--radix-popper-anchor-width)',
             className,
           )} align="start">
         <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">
@@ -327,9 +343,11 @@ export function SearchableMultiSelect({
                       {renderOption ? (
                         renderOption(opt)
                       ) : (
-                      <div className="flex flex-1 flex-col">
+                      <div className="flex flex-1 flex-col min-w-0">
                         <div className="flex items-center gap-2">
-                          <span>{opt.label}</span>
+                          <span className={wrapOptions ? 'break-words' : undefined}>
+                            {opt.label}
+                          </span>
                           {opt.badgeText ? (
                             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900">
                               {opt.badgeText}
@@ -337,7 +355,13 @@ export function SearchableMultiSelect({
                           ) : null}
                         </div>
                         {opt.description ? (
-                          <span className="truncate text-xs text-muted-foreground" title={opt.description}>
+                          <span
+                            className={cn(
+                              'text-xs text-muted-foreground',
+                              wrapOptions ? 'break-words' : 'truncate',
+                            )}
+                            title={opt.description}
+                          >
                             {opt.description}
                           </span>
                         ) : null}
