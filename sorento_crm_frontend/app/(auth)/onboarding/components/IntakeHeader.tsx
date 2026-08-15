@@ -13,18 +13,12 @@ import type {
   OnboardingIntakeContext,
   OnboardingRequestStatus,
 } from '@/components/common/onboarding/types';
-import { ONBOARDING_STATUS_LABELS } from '@/components/common/onboarding/types';
+import {
+  ONBOARDING_STATUS_LABELS,
+  ONBOARDING_STATUS_PILL_CODES,
+} from '@/components/common/onboarding/types';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
-
-function formatDay(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
 
 export function IntakeHeader({ context }: { context: OnboardingIntakeContext }) {
   const status: OnboardingRequestStatus = context.status;
@@ -33,12 +27,11 @@ export function IntakeHeader({ context }: { context: OnboardingIntakeContext }) 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold break-words">{context.title}</h1>
-          <p className="text-sm text-muted-foreground break-words">
-            Sorento asks you to submit your team for onboarding.
-          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`${STATUS_PILL_BASE} ${statusPillClass(status)}`}>
+          <span
+            className={`${STATUS_PILL_BASE} ${statusPillClass(ONBOARDING_STATUS_PILL_CODES[status])}`}
+          >
             {ONBOARDING_STATUS_LABELS[status]}
           </span>
         </div>
@@ -62,7 +55,9 @@ export function IntakeHeader({ context }: { context: OnboardingIntakeContext }) 
         <div className="flex items-center gap-2 min-w-0">
           <CalendarClock className="size-4 text-muted-foreground shrink-0" />
           <dt className="sr-only">Link expires</dt>
-          <dd className="truncate">Link valid until {formatDay(context.expires_at)}</dd>
+          <dd className="truncate">
+            Link valid until {formatDateInMalaysia(context.expires_at)}
+          </dd>
         </div>
       </dl>
     </header>

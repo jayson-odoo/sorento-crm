@@ -17,6 +17,17 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+vi.mock('sonner', () => ({
+  toast: {
+    success: (...args: unknown[]) => toastSuccess(...args),
+    error: (...args: unknown[]) => toastError(...args),
+    warning: vi.fn(),
+    custom: vi.fn(),
+  },
+}));
+
 const fetchIntakeContext = vi.fn();
 const parseSheet = vi.fn();
 const saveRows = vi.fn();
@@ -153,7 +164,56 @@ describe('IntakeScreen', () => {
     expect(await screen.findByText('1 person ready to submit.')).toBeInTheDocument();
     // Still blocked: an unnamed row cannot be submitted.
     expect(screen.getByRole('button', { name: /Submit for review/ })).toBeDisabled();
-    expect(screen.getByText(/Every row needs a name/)).toBeInTheDocument();
+    expect(screen.getByText('Every person needs a name.')).toBeInTheDocument();
+  });
+
+  it('groups the journey into named cards rather than numbered steps', async () => {
+    fetchIntakeContext.mockResolvedValue(CONTEXT);
+    renderScreen();
+    // Sections, not a wizard: "1. Give us the people" told her which step she
+    // was on, which is the one thing a one-screen form already shows her.
+    expect(await screen.findByText('People')).toBeInTheDocument();
+    expect(screen.getByText('Access')).toBeInTheDocument();
+    expect(screen.getAllByText('Notes').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/1\. Give us the people/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/2\. Say what each person needs/)).not.toBeInTheDocument();
+  });
+
+  it('says what the workbook read, including the rows that need a look', async () => {
+    fetchIntakeContext.mockResolvedValue(CONTEXT);
+    parseSheet.mockResolvedValue({
+      rows: [
+        {
+          row_number: 1,
+          full_name: 'Nurul Aisyah',
+          nick_name: null,
+          phone_raw: null,
+          email_raw: null,
+          section_label: null,
+          problems: ['no email'],
+        },
+      ],
+      problems: [],
+      unmapped_headers: [],
+      missing_columns: [],
+      total_rows: 1,
+      sections: [],
+    });
+
+    const { container } = renderScreen();
+    await screen.findByText('MOCHA staff onboarding');
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['x'], 'PHONE LIST.xlsx', {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          }),
+        ],
+      },
+    });
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Read 1 people, 1 with issues.'));
   });
 
   it('turns into a read-only status page once submitted', async () => {

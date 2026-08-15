@@ -10,11 +10,11 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
 import { Loader2, Plus, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -25,14 +25,8 @@ import type {
   OnboardingPersonPatch,
 } from '@/components/common/onboarding/types';
 import { IntakeHeader } from './IntakeHeader';
-import {
-  applyPersonPatch,
-  fetchIntakeContext,
-  parseSheet,
-  saveRows,
-  submitIntake,
-  toDraftRow,
-} from '../lib/onboarding-client';
+import { applyPersonPatch, toDraftRow } from '../lib/onboarding-client';
+import { useIntakeContext, useParseSheet, useSubmitIntake } from '../hooks/useIntake';
 
 const ACCEPTED = '.xlsx,.xlsm,.xls';
 
@@ -72,11 +66,7 @@ export function IntakeScreen({ token }: { token: string }) {
   const [note, setNote] = useState('');
   const [submitted, setSubmitted] = useState(false);
 
-  const contextQuery = useQuery({
-    queryKey: ['onboarding-intake', token],
-    queryFn: () => fetchIntakeContext(token),
-    retry: false,
-  });
+  const contextQuery = useIntakeContext(token);
 
   const context = contextQuery.data;
   // The server's rows are the starting point; local edits take over once the
@@ -84,8 +74,7 @@ export function IntakeScreen({ token }: { token: string }) {
   const rows = people ?? context?.people ?? [];
   const editable = Boolean(context?.editable) && !submitted;
 
-  const parseMutation = useMutation({
-    mutationFn: (file: File) => parseSheet(token, file),
+  const parseMutation = useParseSheet(token, {
     onSuccess: (result) => {
       const parsed = result.rows.map((row, index) => ({
         ...blankPerson(index + 1, row.section_label),
@@ -102,24 +91,20 @@ export function IntakeScreen({ token }: { token: string }) {
       const problemCount = parsed.filter((p) => p.problems.length).length;
       toast.success(
         problemCount
-          ? `Read ${parsed.length} people. ${problemCount} need a look before you submit.`
+          ? `Read ${parsed.length} people, ${problemCount} with issues.`
           : `Read ${parsed.length} people.`,
       );
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e) => toast.error(e.message),
   });
 
-  const submitMutation = useMutation({
-    mutationFn: async () => {
-      await saveRows(token, rows.map(toDraftRow));
-      return submitIntake(token, note.trim() || null);
-    },
+  const submitMutation = useSubmitIntake(token, {
     onSuccess: (result) => {
       setPeople(result.people);
       setSubmitted(true);
       toast.success(`${result.people.length} people submitted for review.`);
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e) => toast.error(e.message),
   });
 
   const patchPerson = useCallback((personId: string, patch: OnboardingPersonPatch) => {
@@ -129,7 +114,6 @@ export function IntakeScreen({ token }: { token: string }) {
     });
     // `rows` is read through the setter's closure on purpose: the state may be
     // null on the first edit, in which case the server's rows are the base.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
 
   const removePerson = useCallback(
@@ -181,122 +165,110 @@ export function IntakeScreen({ token }: { token: string }) {
       {!editable ? (
         <Alert>
           <AlertIcon />
-          <AlertTitle>
-            {rows.length} people submitted for review. This page now shows their status; it is
-            no longer editable.
-          </AlertTitle>
+          <AlertTitle>{rows.length} people submitted for review.</AlertTitle>
         </Alert>
       ) : (
-        <section className="flex flex-col gap-3">
-          <div>
-            <h2 className="text-base font-medium">1. Give us the people</h2>
-            <p className="text-sm text-muted-foreground">
-              Upload the list you already have, or add rows by hand.
-            </p>
-          </div>
-          <FileDropzone
-            accept={ACCEPTED}
-            files={files}
-            maxSizeMb={10}
-            disabled={parseMutation.isPending}
-            onFilesChange={(next) => {
-              setFiles(next);
-              if (next[0]) parseMutation.mutate(next[0]);
-            }}
-            onReject={(file, reason) =>
-              toast.error(
-                reason === 'size'
-                  ? `${file.name} is too large.`
-                  : reason === 'type'
-                    ? `${file.name} is not an Excel workbook.`
-                    : `Only one workbook at a time - ${file.name} was ignored.`,
-              )
-            }
-          />
-          {parseMutation.isPending ? (
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              Reading the workbook...
-            </p>
-          ) : null}
-          {parseMutation.isError ? (
-            <Alert variant="destructive">
-              <AlertIcon />
-              <AlertTitle>{(parseMutation.error as Error).message}</AlertTitle>
-            </Alert>
-          ) : null}
-        </section>
+        <Card>
+          <CardHeader>
+            <CardHeading>
+              <CardTitle>People</CardTitle>
+            </CardHeading>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <FileDropzone
+              accept={ACCEPTED}
+              files={files}
+              maxSizeMb={10}
+              disabled={parseMutation.isPending}
+              onFilesChange={(next) => {
+                setFiles(next);
+                if (next[0]) parseMutation.mutate(next[0]);
+              }}
+              onReject={(file, reason) =>
+                toast.error(
+                  reason === 'size'
+                    ? `${file.name} is too large.`
+                    : reason === 'type'
+                      ? `${file.name} is not an Excel workbook.`
+                      : `${file.name} was ignored - one workbook at a time.`,
+                )
+              }
+            />
+            {parseMutation.isPending ? (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Reading the workbook...
+              </p>
+            ) : null}
+            {parseMutation.isError ? (
+              <Alert variant="destructive">
+                <AlertIcon />
+                <AlertTitle>{(parseMutation.error as Error).message}</AlertTitle>
+              </Alert>
+            ) : null}
+          </CardContent>
+        </Card>
       )}
 
-      <section className="flex flex-col gap-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-base font-medium">
-              {editable ? '2. Say what each person needs' : 'People submitted'}
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              {editable
-                ? 'Pick an access template per person, then confirm what they need.'
-                : 'What you sent, and where each person has got to.'}
-            </p>
-          </div>
-          {editable ? (
-            <Button variant="outline" onClick={addRow} className="self-start">
-              <Plus className="size-4 mr-2" />
+      <PeopleGrid
+        mode={editable ? 'intake' : 'readonly'}
+        people={rows}
+        templates={context.templates}
+        title={editable ? 'Access' : 'People'}
+        actions={
+          editable ? (
+            <Button variant="outline" onClick={addRow}>
+              <Plus className="size-4" />
               Add a person
             </Button>
-          ) : null}
-        </div>
-
-        <PeopleGrid
-          mode={editable ? 'intake' : 'readonly'}
-          people={rows}
-          templates={context.templates}
-          onPatchPerson={patchPerson}
-          onRemovePerson={editable ? removePerson : undefined}
-          emptyMessage={
-            editable
-              ? 'No people yet. Upload your sheet above, or add a person.'
-              : 'Nothing was submitted.'
-          }
-        />
-      </section>
+          ) : null
+        }
+        onPatchPerson={patchPerson}
+        onRemovePerson={editable ? removePerson : undefined}
+        emptyMessage={
+          editable ? 'No people yet. Upload a sheet or add a person.' : 'Nothing was submitted.'
+        }
+      />
 
       {editable ? (
-        <section className="flex flex-col gap-3">
-          <div>
-            <h2 className="text-base font-medium">3. Anything we should know</h2>
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="requester-note">Notes for the reviewer</Label>
-            <Textarea
-              id="requester-note"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="e.g. Zul starts next month - no rush on his account."
-              rows={3}
-            />
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-muted-foreground">
-              {rows.length} {rows.length === 1 ? 'person' : 'people'} ready to submit.
-            </p>
-            <Button
-              onClick={() => submitMutation.mutate()}
-              disabled={!readyToSubmit || submitMutation.isPending}
-            >
-              {submitMutation.isPending ? (
-                <Loader2 className="size-4 mr-2 animate-spin" />
-              ) : (
-                <Upload className="size-4 mr-2" />
-              )}
-              Submit for review
-            </Button>
-          </div>
-          {!readyToSubmit && rows.length > 0 ? (
-            <p className="text-sm text-amber-700">Every row needs a name before you can submit.</p>
-          ) : null}
-        </section>
+        <Card>
+          <CardHeader>
+            <CardHeading>
+              <CardTitle>Notes</CardTitle>
+            </CardHeading>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="requester-note">Notes</Label>
+              <Textarea
+                id="requester-note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Optional"
+                rows={3}
+              />
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-muted-foreground">
+                {rows.length} {rows.length === 1 ? 'person' : 'people'} ready to submit.
+              </p>
+              <Button
+                onClick={() => submitMutation.mutate({ rows: rows.map(toDraftRow), note: note.trim() || null })}
+                disabled={!readyToSubmit || submitMutation.isPending}
+              >
+                {submitMutation.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Upload className="size-4" />
+                )}
+                Submit for review
+              </Button>
+            </div>
+            {!readyToSubmit && rows.length > 0 ? (
+              <p className="text-sm text-amber-700">Every person needs a name.</p>
+            ) : null}
+          </CardContent>
+        </Card>
       ) : null}
     </div>
   );
