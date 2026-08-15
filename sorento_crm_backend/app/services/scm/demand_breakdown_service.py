@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm import reorder_engine as eng
-from app.services.scm.customer_label import CUSTOMER_LABEL_SQL
+from app.services.scm.customer_label import CUSTOMER_JOIN_ON, CUSTOMER_LABEL_SQL
 from app.services.scm.demand import PLAN_DEMAND_ORDER_SQL
 
 # One screen's worth. A pool with thousands of lines is a reading problem, not a listing
@@ -45,6 +45,13 @@ def _scope_for(db: Session, rec) -> tuple[list[str], str, Optional[str]]:
     (`reorder_run_service._pool_netting_enabled`, resolved per product), and per LOCATION
     otherwise. This reads the same switch the same way, so the list under the row is the
     set the row was actually planned against.
+
+    And it is the planned set, not the pool as `warehouses` describes it. The engine groups
+    the rows it PLANNED (`_plan_per_warehouse`), so a run scoped to two bins of a three-bin
+    site netted two - while the pool read off the master data has three. The extra bin's
+    orders would then be listed under a row that was never sized against them, and the
+    total under the header would exceed the row's own SO figure: the "why so many" the
+    popover exists to answer, reintroduced by the explanation.
 
     The policy is resolved as it stands NOW, not as it stood when the run was built - the
     run does not record it. A policy flipped between the run and the reading would describe
@@ -65,20 +72,35 @@ def _scope_for(db: Session, rec) -> tuple[list[str], str, Optional[str]]:
     # resolved FROM it: root first, then every member. Reading the row's own id as the pool
     # returned nothing for a bin, and the breakdown came back empty for exactly the rows
     # that most need explaining.
+    #
+    # Company-scoped by hand, because this is raw SQL and the isolation filter runs on ORM
+    # execution ONLY (same reason as `reorder_run_service._planning_rows`): another
+    # company's warehouse sharing this pool would put its orders under this row.
+    co, co_params = company_sql_predicate(db, "w.company_id", param_prefix="dbs")
     rows = db.execute(text(
-        "SELECT id::text AS id, warehouse_code, "
-        "       COALESCE(pool_warehouse_id, id)::text AS pool_id "
-        "FROM warehouses WHERE COALESCE(pool_warehouse_id, id) = ("
+        "SELECT w.id::text AS id, w.warehouse_code, "
+        "       COALESCE(w.pool_warehouse_id, w.id)::text AS pool_id "
+        "FROM warehouses w "
+        "WHERE COALESCE(w.pool_warehouse_id, w.id) = ("
         "  SELECT COALESCE(pool_warehouse_id, id) FROM warehouses WHERE id::text = :wid"
-        ")"
-    ), {"wid": wid}).mappings().all()
-    members = [r["id"] for r in rows]
+        ") " + (f"AND {co}" if co else "")
+    ), {"wid": wid, **co_params}).mappings().all()
     pool_id = next((r["pool_id"] for r in rows), None)
     pool_code = next((r["warehouse_code"] for r in rows if r["id"] == pool_id), None)
+
+    # What the run actually planned for this product, which is what the engine grouped.
+    planned = {
+        r[0] for r in db.execute(text(
+            "SELECT DISTINCT warehouse_id::text FROM scm.reorder_recommendation "
+            "WHERE run_id = :run AND product_id = :pid AND warehouse_id IS NOT NULL"
+        ), {"run": rec["run_id"], "pid": rec["product_id"]}).fetchall()
+    }
+    members = [r["id"] for r in rows if r["id"] in planned]
     # A pool of one is the row's own warehouse under another name, and calling that "pool"
-    # in the header would invent a netting decision that never happened.
+    # in the header would invent a netting decision that never happened. Mirrors the
+    # engine's own `len(members) == 1` branch.
     if len(members) <= 1:
-        return ([wid] if not members else members), "warehouse", None
+        return [wid], "warehouse", None
     return members, "pool", pool_code
 
 
@@ -86,8 +108,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
                               limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
     """Open demand behind one recommendation, newest-needed first."""
     rec = db.execute(text(
-        "SELECT product_id::text AS product_id, warehouse_id::text AS warehouse_id, "
-        "       rec_type, inputs "
+        "SELECT run_id::text AS run_id, product_id::text AS product_id, "
+        "       warehouse_id::text AS warehouse_id, rec_type, inputs "
         "FROM scm.reorder_recommendation WHERE id = :id"
     ), {"id": rec_id}).mappings().first()
     if rec is None:
@@ -118,7 +140,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
         FROM sales_order_lines sol
         JOIN sales_orders so ON so.id = sol.sales_order_id
         LEFT JOIN warehouses w ON w.id = sol.warehouse_id
-        LEFT JOIN customers c ON c.id = so.customer_id
+        LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
         WHERE sol.product_id::text = :pid
           AND so.status = 'open' AND sol.line_status = 'open'
           AND sol.purchasing_status <> 'covered'

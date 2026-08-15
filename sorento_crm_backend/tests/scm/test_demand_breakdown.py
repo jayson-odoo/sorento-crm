@@ -44,13 +44,30 @@ def _so(db, pid, wid, qty, *, order_type="project", number=None,
     ), {"i": str(uuid.uuid4()), "so": soid, "p": pid, "w": wid, "q": qty, "up": unit_price})
 
 
-def _customer(db, code, name):
+def _customer(db, code, name, company_id=None):
     cid = str(uuid.uuid4())
-    db.execute(text(
-        "INSERT INTO customers (id, customer_code, customer_name, is_active, "
-        "created_at, updated_at) VALUES (:i, :c, :n, true, now(), now())"
-    ), {"i": cid, "c": code, "n": name})
+    if company_id is None:
+        db.execute(text(
+            "INSERT INTO customers (id, customer_code, customer_name, is_active, "
+            "created_at, updated_at) VALUES (:i, :c, :n, true, now(), now())"
+        ), {"i": cid, "c": code, "n": name})
+    else:
+        db.execute(text(
+            "INSERT INTO customers (id, customer_code, customer_name, is_active, "
+            "company_id, created_at, updated_at) "
+            "VALUES (:i, :c, :n, true, :co, now(), now())"
+        ), {"i": cid, "c": code, "n": name, "co": company_id})
     return cid
+
+
+def _company(db, name):
+    """Another company, so a cross-company `customer_id` can be built at all."""
+    coid = str(uuid.uuid4())
+    db.execute(text(
+        "INSERT INTO companies (id, name, code, is_active, created_at) "
+        "VALUES (:i, :n, :c, true, now())"
+    ), {"i": coid, "n": name, "c": f"ZZTCO-{coid[:8]}"})
+    return coid
 
 
 def _run(db, codes):
@@ -229,6 +246,80 @@ def test_the_row_carrying_unlocated_demand_still_lists_it(scm_app):
         == [True]
 
 
+def _three_bin_pool(db, tag):
+    """Three locations in one pool, one product, open demand at each.
+
+    Returned in the order the run is asked to plan them, so a test can plan two and leave
+    the third out of the run entirely.
+    """
+    root = _mk_warehouse(db, f"ZZTW-{tag}-R")
+    bin_ = _mk_warehouse(db, f"ZZTW-{tag}-B")
+    spare = _mk_warehouse(db, f"ZZTW-{tag}-X")
+    db.execute(text("UPDATE warehouses SET pool_warehouse_id = :r WHERE id IN (:b, :x)"),
+               {"r": root, "b": bin_, "x": spare})
+    pid = _mk_product(db, f"ZZTP-{tag}-{uuid.uuid4().hex[:6]}")
+    for wid in (root, bin_, spare):
+        _mk_stock(db, pid, wid, 0)
+        _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, root, 40, number=f"ZZTSO-{tag}-R")
+    _so(db, pid, bin_, 60, number=f"ZZTSO-{tag}-B")
+    _so(db, pid, spare, 25, number=f"ZZTSO-{tag}-X")
+    _link(db, pid, _mk_supplier(db, f"ZZT {tag} Supplier"), moq=None, mult=None)
+    db.flush()
+    return root, bin_, spare, pid
+
+
+def test_the_pool_listed_is_the_part_of_it_the_run_actually_planned(scm_app):
+    """AC-1.2: the members are the ones the ENGINE netted, not every sibling on the site.
+
+    The engine groups the rows it planned; a run scoped to two bins nets those two. Reading
+    the pool off `warehouses` instead adds a location the run never looked at, so the total
+    under the header exceeds the demand the buy was sized against - the same "why so many"
+    the popover exists to answer, reintroduced by the explanation itself.
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    root, bin_, _spare, pid = _three_bin_pool(db, "SCOPE4")
+
+    run_id = _run(db, ["ZZTW-SCOPE4-R", "ZZTW-SCOPE4-B"])
+    rec = _rec_row(db, run_id, pid)
+    out = dbs.demand_for_recommendation(db, str(rec["id"]))
+
+    assert out["scope"] == "pool"
+    assert sorted(l["so_number"] for l in out["lines"]) == [
+        "ZZTSO-SCOPE4-B", "ZZTSO-SCOPE4-R",
+    ], "the bin the run never planned is not part of this row's demand"
+    assert out["locations"] == ["ZZTW-SCOPE4-B", "ZZTW-SCOPE4-R"]
+    planned_committed = db.execute(text(
+        "SELECT COALESCE(SUM((inputs->>'committed')::numeric), 0) "
+        "FROM scm.reorder_recommendation "
+        "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
+    ), {"r": run_id, "p": pid}).scalar()
+    assert out["committed_total"] == float(planned_committed) == 100.0
+
+
+def test_one_planned_bin_in_a_pool_is_scoped_as_the_warehouse_it_is(scm_app):
+    """The engine's own `len(members) == 1` branch: a pool of one is not a pool.
+
+    With a single planned location there is nothing to net against, so calling the scope
+    "pool" would claim a netting decision that never happened and would list a sibling's
+    orders under a row that was sized without them.
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    _root, bin_, _spare, pid = _three_bin_pool(db, "SCOPE5")
+
+    rec = _rec_row(db, _run(db, ["ZZTW-SCOPE5-B"]), pid, wid=bin_)
+    out = dbs.demand_for_recommendation(db, str(rec["id"]))
+
+    assert out["scope"] == "warehouse"
+    assert out["pool_code"] is None
+    assert [l["so_number"] for l in out["lines"]] == ["ZZTSO-SCOPE5-B"]
+    assert out["committed_total"] == float(rec["inputs"]["committed"]) == 60.0
+
+
 # --- who ordered it, and at what price (AC-1.4 / AC-4.2) --------------------------
 
 def test_every_line_names_who_ordered_it_however_little_the_order_says(scm_app):
@@ -261,3 +352,30 @@ def test_every_line_names_who_ordered_it_however_little_the_order_says(scm_app):
     assert label["ZZTSO-WHO-NOBODY"] == "No customer on order"
     assert price["ZZTSO-WHO-NAMED"] == 94.5
     assert price["ZZTSO-WHO-DEBTOR"] is None, "a line with no price says nothing, not 0"
+
+
+def test_a_customer_row_of_another_company_never_names_this_order(scm_app):
+    """The label join is a raw `LEFT JOIN customers`, so it crosses the company boundary
+    unless the join says otherwise - and naming another company's buyer on this company's
+    order is a disclosure, not a display bug. The honest answer is the code the document
+    printed."""
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    wid = _mk_warehouse(db, "ZZTW-XCO")
+    pid = _mk_product(db, f"ZZTP-XCO-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    foreign = _customer(db, "ZZT-XCO1", "Other Company Sdn Bhd",
+                        company_id=_company(db, "ZZT Other Co"))
+    _so(db, pid, wid, 5, number="ZZTSO-XCO", customer_id=foreign,
+        debtor_code="ZZT-XCO1")
+    _so(db, pid, wid, 6, number="ZZTSO-XCO-BARE", customer_id=foreign)
+    _link(db, pid, _mk_supplier(db, "ZZT Xco Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-XCO"], pid))
+    label = {l["so_number"]: l["customer_label"] for l in out["lines"]}
+
+    assert label["ZZTSO-XCO"] == "Debtor ZZT-XCO1"
+    assert label["ZZTSO-XCO-BARE"] == "No customer on order"
