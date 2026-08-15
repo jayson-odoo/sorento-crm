@@ -1,7 +1,7 @@
 # PLAN - SCM order imports: agents, duplicates, async, standard modal
 
 **Status:** S1 to S4 merged to main (PR #143, which absorbed #147). S6 merged to main (PR
-#154, branch `feat/scm-agent-master-ui`); its browser pass is still outstanding. S5 is THIS
+#154, branch `feat/scm-agent-master-ui`); browser pass done. S5 is THIS
 PR - branch `feat/scm-po-spo-history-main`, PR #161; developed stacked on S3 + S4, then
 carried onto main so it stands alone; backend only, pytest green, no browser pass needed -
 the channel has no new screen. Contract: `UAC-scm-order-import-feedback.md` (same
@@ -432,9 +432,11 @@ slugs added to `app/rbac/permission_registry.py`, created by the startup `sync_p
 `sales_agent_service.annotate`, which writes the class (guarded by `assert_demand_class`)
 and the label onto the fetched row in the same transaction. Frontend:
 `app/(protected)/master-data-management/sales-agents/` (page, list, edit modal, hook,
-service, demand-class vocabulary) plus the sidebar entry under Product Management in both
-menu blocks. Tests: `tests/test_sales_agents_master_api.py` (16) and three vitest files (16).
-Still open: the Playwright/browser pass, which needs a running stack.
+service, demand-class vocabulary) plus the sidebar entry under User Management in both
+menu blocks (moved there from Product Management on the captain's call, amendment 16).
+Tests: `tests/test_sales_agents_master_api.py` (16) and three vitest files (16). Browser
+pass done with agent-browser on a prod build: sidebar entry between Market Segments and
+Account, list of 40 rows, modal save and clear both round-trip to the DB.
 
 ## Sequencing note
 
