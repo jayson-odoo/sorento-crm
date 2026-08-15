@@ -400,12 +400,55 @@ into it.
   message, Then the thread shows it within a few seconds without tab refocus. Mechanism:
   Respond `message.received` -> n8n (already wired) -> CRM ingest -> server push to the FE
   (SSE), with the drawer's slow poll (10-15s) kept as fallback when the stream is down.
+
+  **As built (2026-08-15, frontend; the backend half shipped the same day).** The
+  subscriber is `components/common/conversation/useConversationEvents` over
+  `services/conversationEventsService`, and it reads the stream with **`fetch` +
+  `ReadableStream`, not `EventSource`**. That is forced, not preferred: the route
+  authenticates on the `Authorization: Bearer` header (`get_current_user` ->
+  `oauth2_scheme` / `extract_token_from_request`, which returns None for cookies and
+  has no `?token=` param), and `EventSource` cannot set headers - it would 401
+  forever. Going through `apiFetch` also inherits the cached JWT mint, the base-URL
+  rewriting and the session-revoked interceptor instead of re-implementing them.
+  Both subscribing surfaces (the ticket drawer on its ticket's `respond_io_id`, the
+  inbox thread pane on the selected contact) turn a poke into `invalidateQueries` and
+  render nothing off the wire, which is AC-K4 by construction. `ready` counts as a
+  poke - a reconnect may have missed events. The poll is the fallback lane and
+  relaxes from 10s to 60s while the stream is connected rather than being switched
+  off, so a stream that dies quietly degrades to exactly the pre-stream behaviour.
+  Reconnect doubles 1s -> 30s and each `ready` resets it. One deviation from the
+  slice brief: it expected `comment.*` event types, but a note is published as
+  `EVENT_MESSAGE` (`ticket_comment_service._publish`), so a `message` event refreshes
+  the NOTES query as well as the thread and there is no comment type to branch on.
 - **AC-K2 [FE][T]** Given the drawer is closed, When events arrive for that contact, Then
   the FE holds no open stream for it and schedules no polling - liveness costs nothing
   when nothing is open.
+
+  **As built (2026-08-15, frontend).** The hook takes `enabled` plus the contact set
+  and opens nothing when either is empty; the drawer passes `open && !!ticketId` and
+  the inbox pane passes the selected contact. Teardown aborts the fetch on unmount,
+  on close and on a contact change (the effect is keyed on the sorted contact string,
+  so a re-render that rebuilds the array does NOT churn the connection, but a real
+  contact change does reopen). Pinned by tests for each of those four cases.
 - **AC-K3 [BE][T]** Given the pending-tasks widget is visible, When a new ticket is created
   or an open ticket's clocks change, Then the widget reflects it within the same few
   seconds (same event channel, not a separate poller).
+
+  **As built (2026-08-15): the backend publishes, the widget does NOT subscribe -
+  it stays on polling.** The stream filters server-side on `?contacts=` and caps
+  that list at 25, but the worklist spans every pending ticket the user holds
+  across an unbounded number of contacts, so subscribing it would either truncate
+  silently or need a user-keyed subscription this component cannot express. What
+  the AC actually protects is covered another way: the `ticket_created` /
+  `ticket_updated` pokes DO reach the open drawer (which is where a ticket's
+  clocks are read), and the drawer's `onSent` / `onResolved` / `onReassigned`
+  callbacks already reload the list after every action taken from it. The
+  remaining gap is a ticket created for this user while they stare at the
+  worklist and touch nothing, which the existing refresh covers. Recorded as a
+  deliberate deviation from "same event channel, not a separate poller", with
+  the reason restated at the poll site in `MyPendingSLAWidget` so it is not
+  "fixed" later. Revisit if a user-keyed (no `?contacts=`) subscription is added
+  to the endpoint.
 - **AC-K4 [BE][T]** Given Respond or n8n replays/duplicates an event, When it reaches the
   ingest, Then downstream pushes are idempotent - the drawer never renders a duplicate
   message (pairs with AC-J5).
@@ -977,9 +1020,17 @@ Journey addition:
   Respond id, and the only question it asks is answered by the same
   `usable_respond_user_id()` the send path uses - so a CRM `users.id` parked in
   `respond_user_id` reads as UNLINKED and the badge can never promise a linkage the
-  send would find unusable. FE follow-up: drop the second, `user_management.users.
-  view`-gated call, so the badge and the filter work for every holder of the picker
-  rather than degrading away for exactly the agents who need it.
+  send would find unusable. ~~FE follow-up: drop the second, `user_management.users.
+  view`-gated call.~~
+
+  **FE follow-up done (2026-08-15).** `VisibleUser` carries `respond_linked`,
+  `ReassignDialog` reads it off its own rows, and `hooks/useRespondLinkedUsers.ts`
+  is DELETED (it had exactly one importer). The badge and the Respond-linked-only
+  filter are now unconditional on BOTH surfaces that use the dialog: there is no
+  "linkage unknown" state left to degrade into, so a workspace where nobody is
+  linked shows the filter emptying the list ("No Respond-linked colleagues.")
+  rather than the toggle hiding itself. The drop-the-hidden-selection rule is
+  unchanged.
 - **AC-N8 [FE][T]** Given the SLA-tracking detail page, When "Chat Records" is opened,
   Then it renders the SAME shared thread panel (scroll-back, search, preview, notes,
   quoted context) the drawer uses - the legacy `SlaTrackingConversationPanel` sheet is
@@ -1008,22 +1059,37 @@ Journey addition:
   tab. Right pane = the shared thread with contact-keyed loaders + contact-keyed
   notes + contact media proxy. Three FE deviations, each forced by a missing
   backend piece and each recorded as a follow-up. **All three backend pieces
-  landed on 2026-08-15** (see the AC-N3 gap-closure note and PLAN S4.9): the FE
-  compromises below are now removable and are the next FE slice, not the
-  shipped behaviour's justification.
-  (1) **Note mode is offered only when the viewer holds exactly one open enquiry for
-  the contact** and posts via the ticket-keyed `POST .../{tracking_id}/comments` -
-  there is no contact-keyed note CREATE (the AC only specified the contact-keyed
-  LIST). Without one the tab is disabled with a reason on hover rather than hidden.
-  (2) **No 24h-window read is contact-keyed**, so the composer runs with
-  `windowStateOverride={{closed:false}}` and no "Send template" button: the backend
-  still smart-sends the template out of window, but the inbox cannot render it
-  inline the way the drawer does. (3) **`POST /{ref}/reply` takes no
-  `reply_to_message_id` / `reply_to_excerpt`**, so the inbox thread deliberately
-  offers no per-bubble Reply-quote affordance (the drawer keeps it). Liveness is the
-  30s list interval plus the thread's existing 10s poll: the S4.2 SSE subscriber is
-  a BACKEND-ONLY slice today (no FE `EventSource` hook exists anywhere in the repo),
-  so there is nothing to subscribe the open thread to yet.
+  landed on 2026-08-15, and the FE picked all three up the same day** - the
+  compromises below are history, kept so the decision trail reads straight.
+  (1) ~~**Note mode is offered only when the viewer holds exactly one open enquiry
+  for the contact**~~, posting via the ticket-keyed
+  `POST .../{tracking_id}/comments`, because there was no contact-keyed note
+  CREATE (the AC only specified the contact-keyed LIST).
+  (2) ~~**No 24h-window read is contact-keyed**~~, so the composer ran with
+  `windowStateOverride={{closed:false}}` and no "Send template" button.
+  (3) ~~**`POST /{ref}/reply` takes no `reply_to_message_id` /
+  `reply_to_excerpt`**~~, so the inbox thread offered no per-bubble Reply-quote.
+
+  **FE gap closure, as built (2026-08-15).** (1) Note is unconditional, posting
+  to `POST /conversations/{ref}/comments`: no disabled state, no reason-on-hover,
+  and a viewer who cannot REPLY can still annotate (reading is the only gate).
+  The row's `my_open_ticket_id` is still read, but only for snippet `$variables`,
+  which genuinely need a ticket to resolve against. (2) `GET /{ref}/window` feeds
+  `windowStateOverride` and Send template is back, routed through a new optional
+  `sendAdapter` on `SendTemplateDialog` (surfaced as `templateSendAdapter` on
+  `SharedConversationComposer`) rather than a fork - the dialog's default path
+  posts to `chatBase(entityType)`, which THROWS for a contact-keyed surface.
+  Until the live Respond read lands the composer assumes the window is OPEN:
+  making an in-window operator fill a template for nothing is worse than one
+  message the backend was going to smart-send anyway. (3) Per-bubble Reply is
+  offered whenever the viewer can reply, quoting through the same
+  `excerptOfMessage` helper the drawer uses - extracted to
+  `components/common/conversation/quotedReply.ts` so the two surfaces cannot
+  quote the same attachment differently; the `reply_to_*` pair rides both the
+  JSON and the multipart lane (empty ones OMITTED from the form, or the backend
+  reads them as the literal ""). `?contact=` is honoured on load. Liveness is now
+  the S4.2 stream on the OPEN thread (see AC-K1 / AC-K2) with the 30s list
+  interval and a 60s thread poll behind it.
 
 ## No-regression strategy
 

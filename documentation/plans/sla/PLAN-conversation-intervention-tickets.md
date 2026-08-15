@@ -218,6 +218,47 @@ against this).**
   applying, because resolving a conversation ticket unsets `assigned_to_id`. Form-SLA
   rows never reach the channel (AC-F3).
 
+**FE half BUILT 2026-08-15. Status: DONE (AC-K1, AC-K2), vitest green, no browser
+verification yet.**
+
+- **Transport: `fetch` + `ReadableStream`, NOT `EventSource`.** The route authenticates
+  with `Depends(get_current_user)`, whose token comes from `oauth2_scheme` or
+  `extract_token_from_request` - and that helper reads the `Authorization: Bearer`
+  header ONLY (it returns None for cookies, no route accepts a `?token=` query param,
+  and the NextAuth session cookie is an encrypted JWE FastAPI cannot read anyway).
+  `EventSource` cannot set request headers, so it would hit this endpoint
+  unauthenticated and take a 401 forever. Reading the stream through `apiFetch` is
+  therefore the only way in, and it keeps the surface on the normal layering: the
+  cached/deduped JWT mint, the base-URL rewriting and the session-revoked interceptor
+  all come for free. The cost is parsing the wire format ourselves, which is ~30 lines
+  with its own unit tests. Recorded here because "why not EventSource" is the first
+  question any reader will have. If the backend ever grows a `?token=` param or a
+  readable cookie, `EventSource` becomes viable and this can be revisited - nothing
+  above the service module would change.
+- Shape: `services/conversationEventsService.ts` (frame parser + stream pump, contacts
+  capped at the backend's 25, `ready` handled separately from data frames) ->
+  `components/common/conversation/useConversationEvents.ts` (one stream per surface,
+  contact set keyed on sorted contents so a re-render does not reopen it, callbacks in
+  refs, 1s..30s doubling reconnect backoff reset by each `ready`, `connected` flag).
+- Subscribers: the ticket drawer (`ticket.respond_io_id`, enabled only while open) and
+  the inbox `ConversationThreadPane` (the selected contact). Both turn a poke into
+  `invalidateQueries` and nothing else. `ready` is treated as a poke too, since a
+  reconnect may have missed events. The poll stays as the fallback lane and relaxes
+  from 10s to 60s while `connected` (belt and braces, not the mechanism).
+- **A NOTE is poked as `message`**, not as a comment type: `ticket_comment_service._publish`
+  publishes `EVENT_MESSAGE`. So a `message` event refreshes the notes query as well as
+  the thread. There is no `comment.*` type on the wire and the FE must not wait for one.
+- The inbox LIST is refreshed by a poke for the selected contact (its snippet and ticket
+  counts just moved) but is not itself subscribed - see AC-K3 below.
+- **AC-K3: the pending-tasks widget stays on polling, deliberately.** The stream filters
+  server-side on `?contacts=` and caps that list at 25, while the worklist spans every
+  pending ticket the user holds across an unbounded number of contacts - subscribing it
+  would either truncate silently or need a user-keyed subscription the component cannot
+  express. The ticket pokes it would want (`ticket_created` / `ticket_updated`) DO reach
+  the open drawer, and the drawer's `onSent` / `onResolved` / `onReassigned` callbacks
+  already reload the list after every action taken from it. Reason is restated in the
+  code at the poll site so nobody "fixes" it later.
+
 ### S4.3 Internal comments with @mention (UAC L1-L3) [BE coder + FE coder]
 
 - Model: `conversation_ticket_comments` (id, tracking_id FK, author_id, body,
@@ -672,10 +713,11 @@ choice):
    linkage.**~~ **CLOSED 2026-08-15 (backend)** - the badge read the shared
    user-select endpoint, gated by `user_management.users.view`, and degraded to
    no-badge-no-filter when that 403'd.
-5. **The S4.2 SSE subscriber is still backend-only.** No `EventSource` hook exists in
-   the FE, so inbox liveness is a bounded 30s list interval plus the thread's existing
-   10s poll. When the subscriber lands, the open thread subscribes with `?contacts=`
-   and both become fallbacks.
+5. ~~**The S4.2 SSE subscriber is still backend-only.**~~ **CLOSED 2026-08-15
+   (frontend)** - see the S4.2 "FE half BUILT" note. The open thread now subscribes
+   with `?contacts=<respond_io_id>` and both polls became fallbacks (30s list
+   unchanged, thread 10s -> 60s while connected). The transport is fetch +
+   ReadableStream, not `EventSource`, because the endpoint takes a Bearer header.
 6. **Complaint / stock-inquiry / purchase-request "Chat Records" are separate
    components** (`ComplaintConversationPanel`, `StockInquiryConversationPanel`,
    `PurchaseRequestConversationPanel`) and still render the legacy bubble list. Moving
@@ -707,9 +749,18 @@ total) and `tests/test_sla_takeover_reassign.py` (17 total).
    with `create_comment`. The only difference is the mention deep link: a drawer
    note links to its ticket (`/?ticket=<id>`), a contact note links to
    `/sla-management/conversations?contact=<contact_ref>` with
-   `source_entity_type="respond_contacts"`. **FE follow-up:** the inbox page does
-   not read that query param yet, so the notification currently lands on the
-   inbox with nothing selected - honour `?contact=` when wiring Note mode.
+   `source_entity_type="respond_contacts"`. ~~**FE follow-up:** the inbox page does
+   not read that query param yet.~~ **DONE 2026-08-15 (frontend).** The inbox reads
+   `?contact=` ONCE on mount (a landing instruction, not live state - re-reading it
+   would fight the user's next click) and opens the thread on that ref immediately,
+   since the ref is all any contact-keyed endpoint needs. The list row replaces the
+   stub when the page carrying it arrives, and only ever replaces a STUB - the list
+   re-reads every 30s and swapping a user-picked selection on each of those would
+   churn the thread pane for nothing. Landing tab is Mentioned: that tab is
+   newest-NOTE first, so the contact the notification names is on page 1, which is
+   what makes the upgrade actually happen. An unresolvable / off-page ref still
+   opens the thread, it just keeps the stub (no name, no Respond id, so no live
+   stream until it upgrades). Note mode itself is now unconditional.
 2. **`POST /conversations/{contact_ref}/reply`** now also accepts
    `reply_to_message_id` and `reply_to_excerpt`, on BOTH the JSON body and the
    multipart form, exactly like `POST /conversation-sla-tracking/{id}/ticket/send`.
@@ -730,6 +781,11 @@ total) and `tests/test_sla_takeover_reassign.py` (17 total).
    `SharedConversationComposer`'s `windowStateOverride` as
    `{closed: !window.open, template: chat_template}` and drop the
    `{closed:false}` hard-code. NOT DB-only: the window is a live Respond call.
+   **DONE 2026-08-15 (frontend)**, with one judgement call worth naming: until
+   that live read lands the composer assumes the window is OPEN, because
+   showing the template form to someone who is in fact in-window makes them fill
+   a template for nothing, whereas the reverse costs one smart-sent message the
+   backend was going to convert anyway.
    **`POST /conversations/{contact_ref}/template-message`** - permission
    `.reply`, body `{"template_id": "<uuid>", "params": {"1": "...", ...}}` (the
    entity routes' body; a `tracking_id` in the body is ignored here because the
@@ -746,17 +802,26 @@ total) and `tests/test_sla_takeover_reassign.py` (17 total).
    refusal -> 502 with the outbox row still written and NO response stamp.
    Delivery goes through the new shared
    `respond_chat_template_service.deliver_manual_template_now`, which the entity
-   chat panels' ticket lane now calls too.
+   chat panels' ticket lane now calls too. **FE DONE 2026-08-15:**
+   `SendTemplateDialog` grew an optional `sendAdapter` (surfaced on
+   `SharedConversationComposer` as `templateSendAdapter`) instead of being
+   forked - its default path posts to the ENTITY chat route via
+   `chatBase(entityType)`, which throws outright for a contact-keyed surface.
+   Every existing caller is untouched.
 4. **`GET /conversation-sla-tracking/visible-users`** rows gain
    `respond_linked: boolean` (additive; the route has no `response_model`, and a
    route-level test pins that the field reaches the wire). True when the user
    carries a REAL Respond mapping, resolved by the same
    `usable_respond_user_id()` the send path uses - so a CRM `users.id` parked in
    `respond_user_id` reads as UNLINKED, and the badge can never promise a linkage
-   the send would find unusable. **FE follow-up:** drop the `ReassignDialog`'s
+   the send would find unusable. ~~**FE follow-up:** drop the `ReassignDialog`'s
    second, best-effort call to the `user_management.users.view`-gated user-select
-   endpoint; the badge and the Respond-linked-only filter now work for every
-   holder of the picker.
+   endpoint.~~ **DONE 2026-08-15 (frontend).** `VisibleUser` carries
+   `respond_linked`, the dialog reads it off its own rows, and
+   `hooks/useRespondLinkedUsers.ts` is DELETED (it had exactly one importer).
+   The badge and the filter are now unconditional - there is no longer a
+   "linkage unknown" state to degrade into, so a workspace where nobody is
+   linked shows the filter emptying the list rather than hiding itself.
 
 ### Phase 4 execution order (user-approved 2026-08-14)
 
