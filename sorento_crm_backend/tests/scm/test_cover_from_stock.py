@@ -220,3 +220,149 @@ def db_free_world():
 
         free = free_stock_by_product(db, run_id, [str(product.id)]).get(str(product.id), [])
         yield {"free": free, "product": product, "wh_ids": wh_ids}
+
+
+# --------------------------------------------------------------------------- #
+# cover scope: the row's own site, or anywhere
+# --------------------------------------------------------------------------- #
+#
+# > "why am I allowed to use stock from other locations? It is either I use stock from BRW,
+# >  or buy."
+#
+# Three warehouses: A and B share pool A (one site), C is its own site. A row sitting at A
+# may take from B under `own_pool`, and from B or C under `all_locations`.
+
+def scoped(code: str, qty: float, pool: str, segment: str = "project") -> CoverSource:
+    return CoverSource(
+        warehouse_id=f"wh-{code}",
+        warehouse_code=code,
+        segment=segment,
+        qty=qty,
+        cross_segment=False,
+        pool_warehouse_id=pool,
+    )
+
+
+def test_own_pool_offers_only_the_rows_own_site():
+    free = [scoped("B", 5, "wh-A"), scoped("C", 50, "wh-C")]
+
+    p = propose_cover(60, "wh-A", "project", free,
+                      cover_scope="own_pool", line_pool_warehouse_id="wh-A")
+
+    assert [s.warehouse_code for s in p.sources] == ["B"]
+    assert p.cover_qty == 5
+    assert p.buy_qty == 55
+
+
+def test_all_locations_offers_every_site():
+    free = [scoped("B", 5, "wh-A"), scoped("C", 50, "wh-C")]
+
+    p = propose_cover(60, "wh-A", "project", free,
+                      cover_scope="all_locations", line_pool_warehouse_id="wh-A")
+
+    assert [s.warehouse_code for s in p.sources] == ["C", "B"]
+    assert p.cover_qty == 55
+    assert p.buy_qty == 5
+
+
+def test_a_source_with_no_pool_of_its_own_is_its_own_pool():
+    loose = CoverSource(warehouse_id="wh-D", warehouse_code="D", segment="project",
+                        qty=9, cross_segment=False)
+
+    assert propose_cover(9, "wh-A", "project", [loose],
+                         cover_scope="own_pool",
+                         line_pool_warehouse_id="wh-A").sources == []
+    assert propose_cover(9, "wh-A", "project", [loose],
+                         cover_scope="own_pool",
+                         line_pool_warehouse_id="wh-D").cover_qty == 9
+
+
+def test_a_row_with_no_pool_is_not_scoped_to_nothing():
+    """A network row carries no warehouse, so there is no pool to compare against. Filtering
+    it to nothing would silently withdraw every option rather than narrow them."""
+    free = [scoped("B", 5, "wh-A"), scoped("C", 50, "wh-C")]
+
+    p = propose_cover(60, None, "project", free,
+                      cover_scope="own_pool", line_pool_warehouse_id=None)
+
+    assert [s.warehouse_code for s in p.sources] == ["C", "B"]
+
+
+def test_the_default_scope_is_todays_behaviour():
+    free = [scoped("B", 5, "wh-A"), scoped("C", 50, "wh-C")]
+    p = propose_cover(60, "wh-A", "project", free)
+    assert [s.warehouse_code for s in p.sources] == ["C", "B"]
+
+
+def test_own_pool_still_excludes_the_lines_own_warehouse():
+    """Scope narrows the offer; it never re-admits the row's own stock, which is already
+    inside the net."""
+    free = [scoped("A", 100, "wh-A"), scoped("B", 5, "wh-A")]
+
+    p = propose_cover(60, "wh-A", "project", free,
+                      cover_scope="own_pool", line_pool_warehouse_id="wh-A")
+
+    assert [s.warehouse_code for s in p.sources] == ["B"]
+
+
+def test_free_stock_carries_the_pool_each_location_belongs_to(db_pooled_world):
+    """The endpoint is keyed by PRODUCT (the pool is shared), so each source has to say which
+    pool it sits in or a per-row scope filter is impossible."""
+    by_code = {s.warehouse_code: s for s in db_pooled_world["free"]}
+    ids = db_pooled_world["wh_ids"]
+
+    # B shares A's pool; C is its own.
+    assert by_code[f"{MARKER}-B"].pool_warehouse_id == ids[f"{MARKER}-A"]
+    assert by_code[f"{MARKER}-C"].pool_warehouse_id == ids[f"{MARKER}-C"]
+
+
+@pytest.fixture()
+def db_pooled_world():
+    """A product with free stock at two locations: one in the row's pool, one outside it."""
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from app.services.scm.cover_service import free_stock_by_product
+    from tests._pg_fixture import pg_session, unique_code
+
+    def _u() -> str:
+        return str(uuid.uuid4())
+
+    with pg_session() as db:
+        cat = ProductCategory(id=_u(), category_code=unique_code(MARKER),
+                              category_name=f"{MARKER} cat")
+        uom = UnitOfMeasure(id=_u(), uom_code=unique_code("U")[:20], uom_name=f"{MARKER} u")
+        db.add_all([cat, uom])
+        db.flush()
+        product = Product(id=_u(), product_code=unique_code("P"), product_name=f"{MARKER} p",
+                          category_id=cat.id, base_uom_id=uom.id, list_price=0,
+                          is_active=True, is_discontinued=False)
+        db.add(product)
+        db.flush()
+
+        from sqlalchemy import text as _t
+
+        run_id = _u()
+        db.execute(_t(
+            "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
+            "VALUES (:id, 'complete', false, now())"), {"id": run_id})
+
+        wh_ids: dict[str, str] = {}
+        # A is the pool root; B points at it; C is its own site.
+        for code in (f"{MARKER}-A", f"{MARKER}-B", f"{MARKER}-C"):
+            wid = _u()
+            wh_ids[code] = wid
+            db.execute(_t(
+                "INSERT INTO warehouses (id, warehouse_code, warehouse_name, "
+                "is_active, counts_as_available, segment) "
+                "VALUES (:id, :c, :c, true, true, 'project')"),
+                {"id": wid, "c": code})
+        db.execute(_t("UPDATE warehouses SET pool_warehouse_id = :root WHERE id = :id"),
+                   {"root": wh_ids[f"{MARKER}-A"], "id": wh_ids[f"{MARKER}-B"]})
+        for code, on_hand in ((f"{MARKER}-B", 5), (f"{MARKER}-C", 50)):
+            db.execute(_t(
+                "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand, "
+                "synced_to_excel) VALUES (:id, :p, :w, :q, false)"),
+                {"id": _u(), "p": product.id, "w": wh_ids[code], "q": on_hand})
+        db.flush()
+
+        free = free_stock_by_product(db, run_id, [str(product.id)]).get(str(product.id), [])
+        yield {"free": free, "product": product, "wh_ids": wh_ids, "run_id": run_id}
