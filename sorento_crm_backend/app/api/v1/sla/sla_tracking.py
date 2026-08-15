@@ -16,6 +16,7 @@ from app.services.sla_service import (
     event_log_assignee_fields,
 )
 from app.services.integration_service import IntegrationLogService
+from app.services.ticket_comment_service import TicketCommentService
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.sla import (
     ConversationSLATrackingCreate,
@@ -28,6 +29,7 @@ from app.schemas.sla import (
     ConversationSLATestOverrideRequest,
 )
 from app.schemas.integration import IntegrationLogCreate
+from app.schemas.ticket_comment import TicketCommentCreate, TicketCommentResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import (
     AppException,
@@ -2218,6 +2220,50 @@ async def post_sla_tracking_conversation_reply(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.get("/{tracking_id}/comments", response_model=list[TicketCommentResponse])
+async def list_ticket_comments(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Internal comments on this ticket, oldest first (UAC AC-L1).
+
+    Assignee-or-manager scoped, same as resolve/escalate/send: an out-of-scope
+    viewer gets a 404, never a 403 (no existence leak). The list also carries
+    the CONTACT-scoped comments ingested from Respond's own inbox (AC-L3),
+    which belong to every open ticket for that contact rather than to one.
+    """
+    return TicketCommentService(db).list_for_tracking(
+        tracking_id, viewer_user_id=current_user["id"]
+    )
+
+
+@router.post(
+    "/{tracking_id}/comments",
+    response_model=TicketCommentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_ticket_comment(
+    tracking_id: str,
+    payload: TicketCommentCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Write an internal note on this ticket (UAC AC-L1).
+
+    NEVER reaches the contact: this path touches no Respond send route at all.
+    The only outbound call is the AC-L2 comment mirror, which runs post-commit,
+    best-effort, against Respond's internal comment endpoint. Mentioned users
+    get an in-app notification with a deep link back to the ticket.
+    """
+    return TicketCommentService(db).create_comment(
+        tracking_id,
+        author_user_id=current_user["id"],
+        body=payload.body,
+        mentioned_user_ids=payload.mentioned_user_ids,
+    )
 
 
 @router.get("/{tracking_id}", response_model=ConversationSLATrackingResponse)

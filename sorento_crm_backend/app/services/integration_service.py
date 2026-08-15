@@ -319,6 +319,34 @@ class RespondClient:
                 raise
             return response.json() if response.content else {}
 
+    def create_comment(self, identifier: str, text: str) -> dict:
+        """Post an internal comment on a contact's conversation (UAC AC-L2).
+
+        POST /v2/contact/{identifier}/comment, body {text}. NOT a message: a
+        comment is internal to the Respond workspace and is never delivered to
+        the contact, which is why it does NOT go through
+        ``_post_contact_message`` (and is not subject to the per-contact
+        outbound switch - the same reasoning as ``close_conversation`` and
+        ``set_conversation_assignee``).
+
+        Mentions use Respond's own ``{{@user.<respond_user_id>}}`` token syntax;
+        the caller renders them (see ticket_comment_service.build_mirror_text).
+        Create-only: Respond has no comment read-back endpoint, so the CRM DB
+        stays the source of truth.
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}/comment"
+        with httpx.Client(timeout=15) as client:
+            response = client.post(url, headers=self._headers(), json={"text": text})
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                e.response = response
+                raise
+            return response.json() if response.content else {}
+
     def list_messages(
         self,
         identifier: str,
@@ -982,6 +1010,7 @@ def log_respond_send(
     request_payload: dict,
     response: Optional[object] = None,
     exc: Optional[BaseException] = None,
+    endpoint: Optional[str] = None,
 ) -> None:
     """Write one Respond.io outbox row for a send that did NOT go through
     ``respond_io_tasks._send_and_log``.
@@ -997,6 +1026,10 @@ def log_respond_send(
     attempted (``_attach_send_context`` stamps it on the exception) and capture
     Respond's real HTTP status and body so a 403 is diagnosable rather than just
     "403 Forbidden for url ...".
+
+    ``endpoint`` overrides the logged URL for Respond calls that are not a
+    message send (the AC-L2 comment mirror posts to ``/comment``); it defaults
+    to the contact message endpoint, which is what every other caller uses.
 
     Best-effort by construction: logging must never be the reason a send fails.
     """
@@ -1030,7 +1063,8 @@ def log_respond_send(
                 external_reference=identifier or "",
                 direction="outbound",
                 endpoint=(
-                    f"https://api.respond.io/v2/contact/id:{identifier or ''}/message"
+                    endpoint
+                    or f"https://api.respond.io/v2/contact/id:{identifier or ''}/message"
                 ),
                 http_method="POST",
                 status="failed" if exc is not None else "success",

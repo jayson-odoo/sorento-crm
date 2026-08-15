@@ -19,9 +19,15 @@ from app.schemas.external.chat_history import (
     ChatHistoryMessagesResponse,
 )
 from app.schemas.integration import IntegrationLogCreate
+from app.schemas.ticket_comment import (
+    TicketCommentIngestRequest,
+    TicketCommentIngestResponse,
+)
+from app.models.access import RespondContact
 from app.services import conversation_event_bus
 from app.services.chat_message_resolver import respond_ts_from_message_id
 from app.services.integration_service import IntegrationLogService
+from app.services.ticket_comment_service import TicketCommentService
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +212,74 @@ def ingest_chat_message(
     # create's `already_active` marker.
     return ChatHistoryMessageIngestResponse(
         id=message_id, status="duplicate" if already_existed else "created"
+    )
+
+
+@router.post(
+    "/comments",
+    response_model=TicketCommentIngestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def ingest_respond_comment(
+    payload: TicketCommentIngestRequest,
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """Ingest one comment made in Respond's own inbox (UAC AC-L3).
+
+    The CRM half of the n8n ``comment.created`` forward lane. Respond comments
+    are CONTACT-scoped, not ticket-scoped, so the stored row carries the contact
+    only and renders in every open ticket drawer for that contact.
+
+    Idempotent on Respond's own ``comment_id``: a replayed webhook answers with
+    the id of the row it already created and ``status: "duplicate"`` - a 201
+    either way, mirroring the message ingest, because the forwarder treats
+    anything else as a lane failure and retries.
+    """
+    _ = current_user
+    contact_ref = (payload.contact_id or "").strip()
+    phone = (payload.phone_number or "").strip()
+    if not contact_ref and not phone:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide contact_id (Respond contact id) or phone_number.",
+        )
+
+    contact = None
+    if contact_ref:
+        contact = (
+            db.query(RespondContact)
+            .filter(RespondContact.respond_io_id == contact_ref)
+            .first()
+        )
+    if contact is None and phone:
+        contact = (
+            db.query(RespondContact).filter(RespondContact.phone_number == phone).first()
+        )
+    if contact is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No CRM contact matches this Respond.io contact.",
+        )
+
+    comment, already_existed = TicketCommentService(db).ingest_respond_comment(
+        contact=contact,
+        body=payload.text,
+        respond_comment_id=(payload.comment_id or "").strip() or None,
+        author_respond_user_id=payload.author_respond_user_id,
+        author_name=payload.author_name,
+        created_at_ms=payload.created_at,
+    )
+
+    # AC-K1: poke every drawer open on this contact, but never on the replay
+    # path - the first lane already announced this comment.
+    if not already_existed and contact.respond_io_id:
+        conversation_event_bus.publish(
+            conversation_event_bus.EVENT_MESSAGE, contact_id=str(contact.respond_io_id)
+        )
+
+    return TicketCommentIngestResponse(
+        id=str(comment.id), status="duplicate" if already_existed else "created"
     )
 
 
