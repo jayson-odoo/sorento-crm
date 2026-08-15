@@ -275,6 +275,31 @@ describe('ContactMediaAccessSection - default hint and placeholder', () => {
   });
 });
 
+describe('ContactMediaAccessSection - limits dialog accessible description', () => {
+  it.each([
+    ['photos', /edit photos limits/i],
+    ['voice notes', /edit voice notes limits/i],
+  ])('gives the %s limits dialog an accessible description', async (_label, editLabel) => {
+    mockApi(
+      accessResponse([
+        item({ modality: 'image', effective_monthly_limit: 250 }),
+        item({ modality: 'voice', effective_monthly_limit: 100, effective_max_clip_seconds: 120 }),
+      ]),
+    );
+    renderWithClient();
+    await screen.findByText('Photos');
+
+    fireEvent.click(screen.getByLabelText(editLabel));
+
+    expect(
+      await screen.findByText('Overrides the system default for this contact.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveAccessibleDescription(
+      'Overrides the system default for this contact.',
+    );
+  });
+});
+
 describe('ContactMediaAccessSection - bounds', () => {
   it('bounds the monthly limit override, disables Save on invalid input, and a blank value submits null', async () => {
     mockApi(
