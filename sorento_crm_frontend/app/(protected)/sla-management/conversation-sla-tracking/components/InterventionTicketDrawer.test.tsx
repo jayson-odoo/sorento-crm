@@ -32,6 +32,8 @@ vi.mock('../hooks/useTicketComments', () => ({
 vi.mock('../hooks/useConversationSLATracking', () => ({
   useSlaTrackingConversation: (...a: unknown[]) => useSlaTrackingConversation(...a),
   useSlaTrackingThreadLoaders: (...a: unknown[]) => useSlaTrackingThreadLoaders(...a),
+  // AC-N4: the chat-media byte loader handed to RespondChatList (stubbed here).
+  useSlaTrackingMediaProxy: () => async () => new Response(),
 }));
 
 // jsdom does not implement scrollIntoView; guarded in the real component with
@@ -588,5 +590,42 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
     await screen.findByTestId('composer-send');
     expect(screen.queryByTestId('ticket-history-link')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ticket-resolved-badge')).not.toBeInTheDocument();
+  });
+
+  // AC-N5(a)/(b): the ticket actions live in the header action group. They used
+  // to sit in a footer under the composer, crowding its toolbar.
+  describe('header action group (AC-N5)', () => {
+    it('Resolve lives in the header group, above the composer', async () => {
+      useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+      renderDrawer();
+
+      const actions = await screen.findByTestId('ticket-header-actions');
+      const resolve = screen.getByRole('button', { name: /Resolve ticket/i });
+      expect(actions.contains(resolve)).toBe(true);
+
+      // Header group precedes the composer in document order.
+      const composer = screen.getByTestId('composer-send');
+      expect(
+        actions.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    it('the resolved-state affordances join the same group', async () => {
+      useInterventionTicket.mockReturnValue(
+        mockQuery(
+          makeTicket({
+            is_resolved: true,
+            can_resolve: false,
+            can_send: false,
+            resolved_at: '2026-08-12T04:00:00',
+          }),
+        ),
+      );
+      renderDrawer();
+
+      const actions = await screen.findByTestId('ticket-header-actions');
+      expect(actions.contains(screen.getByTestId('ticket-resolved-at'))).toBe(true);
+      expect(actions.contains(screen.getByTestId('ticket-history-link'))).toBe(true);
+    });
   });
 });

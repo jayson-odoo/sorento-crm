@@ -186,6 +186,45 @@ export default function InterventionTicketDrawer({
             </SheetDescription>
           </SheetHeader>
 
+          {/* ---- AC-N5: every ticket action lives here, in the header.
+                  They used to sit in a footer under the composer, where they
+                  crowded the toolbar and competed with the global assistant
+                  launcher for the same corner. Own row rather than beside the
+                  title: the sheet's close button owns the top-right corner. ---- */}
+          <div
+            data-testid="ticket-header-actions"
+            className="flex flex-wrap items-center gap-2 border-b pb-3"
+          >
+            {isResolved && (
+              <p
+                className="me-auto text-xs text-muted-foreground"
+                data-testid="ticket-resolved-at"
+              >
+                Resolved {ticket?.resolved_at ? formatDateTimeInMalaysia(ticket.resolved_at) : ''}
+              </p>
+            )}
+            {/* AC-M2: the one-click path back to the full trail for this contact,
+                offered exactly when the ticket has just left the pending list. */}
+            {isResolved && (
+              <Button variant="outline" size="sm" asChild data-testid="ticket-history-link">
+                <Link href={historyHref}>
+                  <History className="size-4" />
+                  View history
+                </Link>
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className={isResolved ? '' : 'ms-auto'}
+              disabled={!ticket?.can_resolve || isResolved}
+              onClick={() => setConfirmResolve(true)}
+            >
+              <CheckCircle2 className="size-4" />
+              Resolve ticket
+            </Button>
+          </div>
+
           <SheetBody className="flex min-h-0 flex-1 flex-col gap-3 py-0">
             {/* ---- Enquiry reference: what this ticket is actually about ---- */}
             {ticketQuery.isLoading ? (
@@ -396,35 +435,6 @@ export default function InterventionTicketDrawer({
               />
             )}
           </SheetBody>
-
-          <div className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-center sm:justify-end">
-            {isResolved && (
-              <p
-                className="me-auto text-xs text-muted-foreground"
-                data-testid="ticket-resolved-at"
-              >
-                Resolved {ticket?.resolved_at ? formatDateTimeInMalaysia(ticket.resolved_at) : ''}
-              </p>
-            )}
-            {/* AC-M2: the one-click path back to the full trail for this contact,
-                offered exactly when the ticket has just left the pending list. */}
-            {isResolved && (
-              <Button variant="outline" asChild data-testid="ticket-history-link">
-                <Link href={historyHref}>
-                  <History className="size-4" />
-                  View history
-                </Link>
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              disabled={!ticket?.can_resolve || isResolved}
-              onClick={() => setConfirmResolve(true)}
-            >
-              <CheckCircle2 className="size-4" />
-              Resolve ticket
-            </Button>
-          </div>
         </SheetContent>
       </Sheet>
 
