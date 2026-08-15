@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { AddSpecificationDialog, SpecTable } from '@/components/spec-table';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useProductSpecTable } from '../../hooks/useProductSpecTable';
 import {
   rederiveProduct,
@@ -211,6 +212,16 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   const spec = useProductSpecTable(productId);
   const { detail, rows, registry, applicableKeys, otherKeys, isLoading, error } = spec;
 
+  // The server is the guard; these only decide what to SHOW. A user without the grant
+  // gets no affordance that would 403 at submit - the same rule the dialog's own
+  // denied state documents (AC-A.9). Slugs mirror the routes: the value writes need
+  // products.edit, add-a-value takes either grant, creating a key needs the add grant.
+  const { permissionSet } = usePermissions();
+  const canEdit = permissionSet.has('master_data.products.edit');
+  const canExtendVocabulary =
+    canEdit || permissionSet.has('master_data.spec_registry.edit');
+  const canCreateKey = permissionSet.has('master_data.spec_registry.add');
+
   const rederive = async () => {
     setBusy(true);
     try {
@@ -346,13 +357,14 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
             <SpecTable
               rows={rows}
               registry={registry}
+              canEdit={canEdit}
               openEditorFor={pendingKey}
               onEditorOpened={() => setPendingKey(null)}
               callbacks={{
                 onSetValue: spec.setValue,
                 onTombstone: spec.tombstone,
                 onRevert: spec.revert,
-                onAddValueToKey: spec.addValue,
+                onAddValueToKey: canExtendVocabulary ? spec.addValue : undefined,
                 onAddSpecification: () => setAdding(true),
               }}
             />
@@ -365,7 +377,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
         onOpenChange={setAdding}
         applicableKeys={applicableKeys}
         otherKeys={otherKeys}
-        canCreateKey
+        canCreateKey={canCreateKey}
         // Picking a key opens its editor on the row rather than writing a blank value:
         // an empty value is not a value, and the API refuses one for the same reason -
         // stored, it would raise the same conflict on every derivation run forever.

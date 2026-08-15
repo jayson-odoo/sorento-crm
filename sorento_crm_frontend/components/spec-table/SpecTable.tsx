@@ -256,16 +256,17 @@ export function SpecTable({
                     <MoreVertical className="size-4" />
                   </Button>
                 </DropdownMenuTrigger>
-                {/* The two intents by NAME, not "delete" (AC-A.4). They do opposite
-                    things: one is a statement of fact that survives the next
-                    catalogue run, the other hands the key back to the rules. A single
-                    "remove" would pick one of them on the user's behalf. */}
+                {/* Plain action names, captain's call: this page is the product
+                    editor, not a review surface. "Remove" still records the absence
+                    durably (the next catalogue run must not refill it - a removal
+                    that comes back is not a removal), and "Reset" hands the key back
+                    to the rules; the confirmation carries the consequence. */}
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem
                     onClick={() => setRemoving({ row: row.original, intent: 'absent' })}
                     disabled={row.original.tombstoned}
                   >
-                    This product does not have this spec
+                    Remove
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => setRemoving({ row: row.original, intent: 'revert' })}
@@ -350,15 +351,12 @@ export function SpecTable({
       <ConfirmDeleteDialog
         open={removing !== null}
         onOpenChange={(open) => !open && setRemoving(null)}
-        title={
-          removing?.intent === 'absent' ? 'This product does not have this spec' : 'Reset'
-        }
+        title={removing?.intent === 'absent' ? 'Confirm delete' : 'Reset'}
         description={
           removing?.intent === 'absent' ? (
             <>
-              <strong>{removing?.row.label}</strong> will be recorded as not applying to this
-              product, and the next catalogue run will not fill it in again. This action cannot be
-              undone.
+              <strong>{removing?.row.label}</strong> will be removed from this product and will
+              not be filled in again automatically. This action cannot be undone.
             </>
           ) : (
             <>
@@ -368,9 +366,7 @@ export function SpecTable({
           )
         }
         successMessage={
-          removing?.intent === 'absent'
-            ? 'Recorded as not on this product'
-            : 'Back to what the rules read'
+          removing?.intent === 'absent' ? 'Specification removed' : 'Back to what the rules read'
         }
         onDelete={async () => {
           if (!removing) return;
