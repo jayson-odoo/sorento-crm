@@ -170,10 +170,10 @@ export function CollectionsList() {
         <div className="py-8 text-center">
           <Layers className="mx-auto size-6 text-muted-foreground" />
           <p className="mt-3 text-sm font-medium text-foreground">
-            {search ? 'No collections match that search' : 'No reusable collections yet'}
+            {search.trim() ? 'No collections match that search' : 'No reusable collections yet'}
           </p>
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            {search
+            {search.trim()
               ? 'Try a different name.'
               : 'Start one with the button above, or pick products inside a page and save that set here. Editing it once updates every page that uses it.'}
           </p>

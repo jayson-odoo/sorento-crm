@@ -113,4 +113,16 @@ describe('BundlesList search', () => {
 
     expect(await screen.findByText(/no bundles match that search/i)).toBeInTheDocument();
   });
+
+  it('a whitespace-only search on a genuinely empty list shows the plain empty state', async () => {
+    listBundles.mockResolvedValue([]);
+
+    renderList();
+
+    await screen.findByText('No bundles yet');
+    fireEvent.change(screen.getByLabelText('Search bundles'), { target: { value: '   ' } });
+
+    expect(screen.getByText('No bundles yet')).toBeInTheDocument();
+    expect(screen.queryByText(/no bundles match that search/i)).toBeNull();
+  });
 });

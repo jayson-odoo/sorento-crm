@@ -90,6 +90,7 @@ import { clearPicks, readPicks } from '@/lib/dealer-kit/cataloguePicks';
 import { CollapsiblePanel, FocusShell, FocusToggle } from '../../components/FocusMode';
 import { RoomPlan } from './RoomPlan';
 import { DEFAULT_CEILING_MM, RoomScene } from './RoomScene';
+import { WallPicker } from './WallPicker';
 
 /**
  * The room designer: pick products, shape the room, place them, confirm.
@@ -982,18 +983,15 @@ export function RoomDesigner() {
                       <Label htmlFor="dk-opening-wall" className="text-xs">
                         Wall
                       </Label>
-                      <SearchableSelect
+                      <WallPicker
                         id="dk-opening-wall"
                         size="sm"
                         triggerClassName="w-32"
-                        value={String(selectedOpening.wallIndex)}
-                        onChange={(value) =>
-                          moveOpening(selectedOpening.id, selectedOpening.offsetMm, Number(value))
+                        walls={wallLengths(outline)}
+                        value={selectedOpening.wallIndex}
+                        onChange={(wallIndex) =>
+                          moveOpening(selectedOpening.id, selectedOpening.offsetMm, wallIndex)
                         }
-                        options={wallLengths(outline).map((length, index) => ({
-                          value: String(index),
-                          label: `${index + 1} (${Math.round(length)} mm)`,
-                        }))}
                       />
                     </div>
                     <div className="flex flex-col gap-1">

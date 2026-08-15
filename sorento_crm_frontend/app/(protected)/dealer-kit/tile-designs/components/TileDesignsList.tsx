@@ -173,14 +173,14 @@ export function TileDesignsList() {
         <div className="py-8 text-center">
           <LayoutTemplate className="mx-auto size-6 text-muted-foreground" />
           <p className="mt-3 text-sm font-medium text-foreground">
-            {search ? 'No tile designs match that search' : 'No tile designs yet'}
+            {search.trim() ? 'No tile designs match that search' : 'No tile designs yet'}
           </p>
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            {search
+            {search.trim()
               ? 'Try a different name.'
               : 'A tile design decides what each product card shows. Create one, then bind it to a products block on any page.'}
           </p>
-          {!search && (
+          {!search.trim() && (
             <Button
               className="mt-4"
               size="sm"

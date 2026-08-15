@@ -250,7 +250,7 @@ to work on a phone and on A4.
 | 2 | **Consumer cannot order directly** — a consumer confirming sends a request to the dealer, never an order. Assumed, needs confirming | Commercial | Rework if wrong |
 | 3 | ~~Merge is blocked behind the multi-company work~~ **RESOLVED 2026-08-14** (multi-company landed and PR #57 merged the Dealer Kit to `main`) | Engineering | none, closed |
 | 4 | **PDF export has never run in a production container** (verified on a developer machine only) | Engineering | Export could fail on first real deploy |
-| 5 | ~~Library collections cannot be edited from the library list~~ **RESOLVED on `feat/dealer-kit-hardening`** per the 2026-08-14 self-review (only created from inside a page, which undercuts the "edit once, every page follows" promise) | Product priority call | none, closed |
+| 5 | ~~Library collections cannot be edited from the library list (only created from inside a page, which undercut the "edit once, every page follows" promise)~~ **RESOLVED in PR #57** (`CollectionsList` + `CollectionDialog` on `main`, confirmed by the 2026-08-14 self-review) | Product priority call | none, closed |
 | 6 | **Photoreal rendering** — boxes today. Is that sellable? | Product + sales | Determines whether a model pipeline gets funded |
 
 ---

@@ -96,14 +96,14 @@ export function BundlesList() {
           <div className="py-10 text-center">
             <Package className="mx-auto size-6 text-muted-foreground" />
             <p className="mt-3 text-sm font-medium text-foreground">
-              {search ? 'No bundles match that search' : 'No bundles yet'}
+              {search.trim() ? 'No bundles match that search' : 'No bundles yet'}
             </p>
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              {search
+              {search.trim()
                 ? 'Try a different name.'
                 : 'A bundle sells several products together under one price. Create one, then drop a bundle block onto any catalogue page.'}
             </p>
-            {!search && (
+            {!search.trim() && (
               <Button className="mt-4" size="sm" onClick={() => setCreating(true)}>
                 <Plus className="size-4" />
                 New bundle
