@@ -91,17 +91,3 @@ export function buildSpecTableRows(input: {
   // sorting on `dim_height` puts Height between Finish and Length for no visible reason.
   return rows.sort((a, b) => a.label.localeCompare(b.label));
 }
-
-/**
- * Keys this product may carry and does not already hold, ready for the picker.
- *
- * A tombstoned key counts as held: it is on the table with a revert action, and
- * offering it again in "add a specification" would give the same key two places to be.
- */
-export function keysNotYetOnProduct(
-  registry: SpecKeyDefinition[],
-  rows: SpecTableRow[],
-): SpecKeyDefinition[] {
-  const held = new Set(rows.map((row) => row.specKey));
-  return registry.filter((key) => !held.has(key.spec_key));
-}

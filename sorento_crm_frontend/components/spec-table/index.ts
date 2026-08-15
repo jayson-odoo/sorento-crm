@@ -9,11 +9,7 @@ export { SpecValueCell } from './SpecValueCell';
 export { SpecSourceBadge, SOURCE_LABEL } from './SpecSourceBadge';
 export { AddSpecificationDialog, toSpecKey } from './AddSpecificationDialog';
 export type { SimilarKeyMatch, SpecDataType } from './AddSpecificationDialog';
-export {
-  buildSpecTableRows,
-  keysNotYetOnProduct,
-  CONFLICT_REASON,
-} from './specTableModel';
+export { buildSpecTableRows, CONFLICT_REASON } from './specTableModel';
 export type {
   StoredSpecProvenance,
   StoredSpecValue,

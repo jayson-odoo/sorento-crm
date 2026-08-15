@@ -75,6 +75,15 @@ export function SpecValueCell({
   const [draft, setDraft] = useState(() => toDraft(row.value));
   const [saving, setSaving] = useState(false);
 
+  // The cell stays mounted across edit sessions (stable getRowId), so the draft is
+  // re-seeded from the row each time the editor opens - a cancelled edit's leftovers,
+  // or a value refetched since mount, must not be what the next edit starts from.
+  const [wasEditing, setWasEditing] = useState(editing);
+  if (editing !== wasEditing) {
+    setWasEditing(editing);
+    if (editing) setDraft(toDraft(row.value));
+  }
+
   // A key the registry no longer defines is still stored on the row, and is still worth
   // showing - it just has no editor, because there is no data type, no vocabulary and
   // no unit to write it back with. Crashing on it, or hiding it, both lose the value.
@@ -120,7 +129,7 @@ export function SpecValueCell({
     if (value === null) return;
     setSaving(true);
     try {
-      await onSave(value);
+      await onSave(value).catch(() => {});
     } finally {
       setSaving(false);
     }
@@ -176,7 +185,9 @@ export function SpecValueCell({
                     },
                     onCreate: (query) => {
                       if (findVocabularyMatch(query, row.options, synonyms)) return;
-                      void onAddValueToKey(query).then(() => setDraft(query));
+                      void onAddValueToKey(query)
+                        .then(() => setDraft(query))
+                        .catch(() => {});
                     },
                   }
                 : undefined
