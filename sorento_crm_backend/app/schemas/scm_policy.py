@@ -61,9 +61,6 @@ class ReorderPolicyWrite(BaseModel):
     # S13e price-advice thresholds. None = code default (180 days, 5%).
     price_stale_after_days: Optional[int] = None
     price_movement_threshold_pct: Optional[float] = None
-    # Where "use stock" may draw from before buying. Defaulted rather than optional: a
-    # missing value must read as the row's own site, never as the whole network.
-    cover_scope: CoverScope = "own_pool"
 
     @model_validator(mode="after")
     def _coherence(self) -> "ReorderPolicyWrite":
@@ -98,6 +95,12 @@ class ReorderPolicyRow(ReorderPolicyWrite):
     """One reorder-policy row as returned by list / create / update / resolve."""
     id: str
     scope_label: str  # human-readable target, no UUID; "—" for global
+    # READ-ONLY here. `cover_scope` is a GLOBAL setting with exactly one writer
+    # (PUT /scm/config/cover-scope): it is deliberately absent from the write schema above,
+    # because a grid save that omitted it would otherwise reset the global value to the
+    # field default. Declared explicitly all the same - a field the response model does not
+    # declare is dropped, so inheriting it was never an option.
+    cover_scope: CoverScope = "own_pool"
 
 
 class ReorderPolicyPage(BaseModel):
