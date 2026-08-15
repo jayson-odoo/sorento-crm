@@ -122,8 +122,31 @@ class MediaExtractionOutcome:
     completion_tokens: int = 0
 
 
+def _too_large(size_bytes: int) -> MediaExtractionError:
+    return MediaExtractionError(
+        f"The media is {size_bytes // (1024 * 1024)}MB, over the "
+        f"{MAX_MEDIA_BYTES // (1024 * 1024)}MB limit."
+    )
+
+
+def _declared_length(header_value: Optional[str]) -> Optional[int]:
+    try:
+        return int(str(header_value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def fetch_media_bytes(url: str) -> tuple[bytes, Optional[str]]:
-    """Download the media. A module-level seam so tests never hit the network."""
+    """Download the media. A module-level seam so tests never hit the network.
+
+    Streamed, and abandoned the moment the accumulated body passes
+    `MAX_MEDIA_BYTES`, so the cap bounds what the work-horse ALLOCATES and not
+    just what is sent to the provider. Buffering first and measuring afterwards
+    let a hostile or misconfigured url (`follow_redirects=True`, so a redirect
+    chain counts) get the RQ work-horse OOM-killed instead of returning a clean
+    failed job. A `content-length` over the cap is refused before a byte of body
+    is read; a missing or lying header is caught by the running total.
+    """
     import httpx
 
     if not url:
@@ -132,19 +155,26 @@ def fetch_media_bytes(url: str) -> tuple[bytes, Optional[str]]:
         with httpx.Client(
             timeout=MEDIA_FETCH_TIMEOUT_SECONDS, follow_redirects=True
         ) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            data = response.content
-            content_type = response.headers.get("content-type")
+            with client.stream("GET", url) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("content-type")
+                declared = _declared_length(response.headers.get("content-length"))
+                if declared is not None and declared > MAX_MEDIA_BYTES:
+                    raise _too_large(declared)
+                chunks: list[bytes] = []
+                downloaded = 0
+                for chunk in response.iter_bytes():
+                    downloaded += len(chunk)
+                    if downloaded > MAX_MEDIA_BYTES:
+                        raise _too_large(downloaded)
+                    chunks.append(chunk)
+                data = b"".join(chunks)
+    except MediaExtractionError:
+        raise
     except Exception as exc:  # noqa: BLE001 - any download failure is a failed job
         raise MediaExtractionError(f"Could not download the media: {exc}") from exc
     if not data:
         raise MediaExtractionError("The media downloaded as zero bytes.")
-    if len(data) > MAX_MEDIA_BYTES:
-        raise MediaExtractionError(
-            f"The media is {len(data) // (1024 * 1024)}MB, over the "
-            f"{MAX_MEDIA_BYTES // (1024 * 1024)}MB limit."
-        )
     return data, content_type
 
 
@@ -393,24 +423,26 @@ class MediaExtractService:
         """The key for this provider, preferring the provider-specific column."""
         from app.config import settings as app_settings
 
+        # The generic key column only counts when the assistant itself runs on
+        # the provider being asked for - otherwise it holds someone else's key,
+        # and sending it produces a 401/400 that reads like that provider being
+        # down rather than "no key configured".
+        def generic_key() -> str:
+            if not cfg or getattr(cfg, "provider", None) != provider_name:
+                return ""
+            return getattr(cfg, "api_key_ciphertext", None) or ""
+
         if provider_name == "anthropic":
             return (
                 (getattr(cfg, "anthropic_api_key_ciphertext", None) if cfg else "")
-                or (getattr(cfg, "api_key_ciphertext", None) if cfg else "")
+                or generic_key()
+                or app_settings.anthropic_api_key
                 or ""
             )
         if provider_name == "gemini":
-            # The generic key column only counts when the assistant itself runs
-            # on Gemini - otherwise it holds someone else's key and would be
-            # sent to Google as a 400 that reads like a Gemini outage.
-            generic = (
-                (getattr(cfg, "api_key_ciphertext", None) if cfg else "")
-                if (getattr(cfg, "provider", None) if cfg else None) == "gemini"
-                else ""
-            )
             return (
                 (getattr(cfg, "gemini_api_key_ciphertext", None) if cfg else "")
-                or generic
+                or generic_key()
                 or app_settings.gemini_api_key
                 or ""
             )

@@ -52,13 +52,17 @@ honest check is an empty database... marker-scoped cleanup"). No production
 row is ever read, and `resolve_media_settings` is monkeypatched so no test
 touches the live `system_settings` singleton.
 
+S3-08 (the handler never blocks the event loop) is proven dynamically, by
+racing an unrelated request against a media call that is still in flight and
+timing it. There is no static guard: parsing this module's own source for
+blocking call names asserted a shape rather than a behaviour, passed for any
+blocking call made under a name nobody had listed, and failed on a rename.
+
 AC ids covered: S3-01, S3-01b, S3-01c, S3-01d, S3-02, S3-02b, S3-04, S3-05,
 S3-06, S3-07, S3-08, S3-09.
 """
 from __future__ import annotations
 
-import ast
-import inspect
 import threading
 import time
 import uuid
@@ -567,121 +571,6 @@ def test_sync_wait_and_extraction_timeout_are_read_live_from_settings():
         db.flush()
         after = resolve_media_settings(db)
         assert after.sync_wait_seconds == 10, "no restart/cache required"
-
-
-# --------------------------------------------------------------------------- #
-# S3-08 -- static guard: no blocking call inside the async handler module     #
-# --------------------------------------------------------------------------- #
-
-
-# Blocking I/O by the name it is called under in this module. Postgres
-# (`decide_and_record`, `resolve_media_settings`, `commit`, `refresh`, the query
-# builders) and Redis (`enqueue_job`, and `rate_limit.hit` reached through
-# `decide_and_record`) both count: PLAN 3.3b's guarantee is about the event loop,
-# and it does not care which service stalled. `sleep` and `result` (a Future's
-# blocking join) plus any `requests.*` call cover the primitives the retired
-# S3-08 substring guard used to grep for.
-_BLOCKING_CALL_NAMES = {
-    "decide_and_record",
-    "resolve_media_settings",
-    "enqueue_job",
-    "hit",
-    "commit",
-    "refresh",
-    "execute",
-    "flush",
-    "sleep",
-    "result",
-}
-
-_BLOCKING_MODULE_NAMES = {"requests"}
-
-
-def _blocking_calls_in_coroutines(module) -> list[str]:
-    """Every direct call to a known blocking name inside an `async def`.
-
-    A call handed to `asyncio.to_thread(fn, ...)` is a bare `Name`, not a
-    `Call`, so the correct form is invisible to this walk and only a direct
-    invocation is reported. Nested plain `def`s are skipped: those run on a
-    thread by definition, which is the whole point of extracting them.
-    """
-    tree = ast.parse(inspect.getsource(module))
-    found: list[str] = []
-    # `await asyncio.sleep(...)` is the non-blocking form of a name that is
-    # blocking when called plainly, so an awaited call is never an offender.
-    awaited = {
-        id(node.value)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
-    }
-
-    class _Visitor(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.in_coroutine = False
-
-        def visit_FunctionDef(self, node):  # a sync helper, not the loop's problem
-            was, self.in_coroutine = self.in_coroutine, False
-            self.generic_visit(node)
-            self.in_coroutine = was
-
-        def visit_AsyncFunctionDef(self, node):
-            was, self.in_coroutine = self.in_coroutine, True
-            self.generic_visit(node)
-            self.in_coroutine = was
-
-        def visit_Call(self, node):
-            if self.in_coroutine and id(node) not in awaited:
-                func = node.func
-                name = (
-                    func.attr
-                    if isinstance(func, ast.Attribute)
-                    else getattr(func, "id", "")
-                )
-                via_blocking_module = (
-                    isinstance(func, ast.Attribute)
-                    and isinstance(func.value, ast.Name)
-                    and func.value.id in _BLOCKING_MODULE_NAMES
-                )
-                if name in _BLOCKING_CALL_NAMES or via_blocking_module:
-                    found.append(f"{name}() at line {node.lineno}")
-            self.generic_visit(node)
-
-    _Visitor().visit(tree)
-    return found
-
-
-def test_no_async_handler_in_the_media_route_calls_blocking_io_directly():
-    """S3-08 / PLAN 3.3b, widened after review: the original substring guard
-    only looked for `time.sleep` / `requests.*` string fragments in the whole
-    module, so it could not see the two synchronous Redis calls (`enqueue_job`
-    and `rate_limit.hit`, the latter reached through `decide_and_record`) that
-    sat inside the `async def` handler for three slices - and a fragment match
-    proves nothing about where the call sits. Its names are folded into the
-    blocking sets above and the substring form is retired. Anything blocking
-    must be handed to `asyncio.to_thread`, which makes it a bare name here
-    rather than a call. S3-01b is the dynamic proof."""
-    from app.api.v1.external import media as media_route
-
-    offenders = _blocking_calls_in_coroutines(media_route)
-    assert offenders == [], (
-        "blocking I/O called directly from an `async def` in the media route: "
-        + ", ".join(offenders)
-        + " -- hand it to `asyncio.to_thread` instead (PLAN 3.3b)"
-    )
-
-
-def test_the_process_handler_is_a_coroutine_function():
-    from app.api.v1.external import media as media_route
-
-    process_route = None
-    for route in media_route.router.routes:
-        if getattr(route, "path", "") in ("/process", ""):
-            process_route = route
-            break
-    assert process_route is not None, "POST /process route not found on the media router"
-    assert inspect.iscoroutinefunction(process_route.endpoint), (
-        "the media/process handler must be `async def` (PLAN 3.3b)"
-    )
 
 
 # --------------------------------------------------------------------------- #

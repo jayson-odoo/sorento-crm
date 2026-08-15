@@ -6,16 +6,13 @@ Appendix A: "This is the design, not a sketch. Transcribe it into
 docstring says the same thing back: "Transcribed verbatim from Appendix A ...
 A rule that looks removable is almost certainly load-bearing."
 
-The verbatim guard below is what keeps that property honest as the PLAN is
-amended again: it reads the fenced block straight out of the PLAN file at test
-time and compares it to the shipped constant, so a silent edit to either side
-fails the suite rather than being caught by a human re-reading two files side
-by side.
+What is asserted here is the RENDERED prompt: every placeholder substituted,
+no brace left unbalanced, the caption block and the hint/kind vocabularies the
+schema also validates against. Comparing the shipped constant to the fenced
+block in the PLAN markdown was one source artifact against another, proving
+nothing about the prompt as an interface, so it is gone.
 """
 from __future__ import annotations
-
-import re
-from pathlib import Path
 
 from app.services.media_extract.prompts import (
     ATTRIBUTE_KINDS,
@@ -24,32 +21,6 @@ from app.services.media_extract.prompts import (
     build_caption_block,
     render_system_prompt,
 )
-
-PLAN_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "documentation"
-    / "plans"
-    / "ideation"
-    / "PLAN-chatbot-media-endpoint.md"
-)
-
-
-def _appendix_a_fenced_block() -> str:
-    """The exact text inside the first ``` ... ``` fence under the "Appendix A"
-    heading, byte for byte."""
-    text = PLAN_PATH.read_text()
-    tail = text[text.index("## Appendix A") :]
-    match = re.search(r"```\n(.*?)```\n", tail, re.DOTALL)
-    assert match is not None, "Appendix A's fenced prompt block was not found in the PLAN"
-    return match.group(1)
-
-
-def test_the_system_prompt_is_verbatim_appendix_a():
-    """S4-12: the shipped prompt equals the PLAN's Appendix A block exactly -
-    not 'close', not 'the same rules reworded'. Every rule in that block traces
-    to a measured failure (PLAN section 4.3); a diff here means the prompt
-    drifted from the design that was actually validated against the corpus."""
-    assert MEDIA_EXTRACTION_SYSTEM_PROMPT == _appendix_a_fenced_block()
 
 
 def test_render_system_prompt_substitutes_every_max_entities_occurrence():

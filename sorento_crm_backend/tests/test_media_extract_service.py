@@ -978,3 +978,235 @@ def test_image_lane_default_model_per_provider_is_unchanged_for_openai_and_anthr
             service._resolve_image_provider(None, anthropic_settings)[2]
             == "claude-sonnet-4-6"
         )
+
+
+def test_image_lane_on_anthropic_never_sends_another_providers_key_to_anthropic(monkeypatch):
+    """The mirror of the Gemini guard, and it was missing: an OpenAI-configured
+    assistant with no Anthropic key anywhere must say "no key configured for
+    'anthropic'", not post the OpenAI key to Anthropic and surface the 401 as
+    an Anthropic outage."""
+    from app.config import settings as app_settings
+    from app.services.media_extract.service import MediaExtractionError
+
+    monkeypatch.setattr(app_settings, "anthropic_api_key", None, raising=False)
+    with blank_session() as db:
+        _seed_ai_config(db, provider="openai", api_key_ciphertext="ZZT-openai-key")
+
+        settings = _media_settings(
+            db, image_provider="anthropic", image_model=None, image_degraded_model=None
+        )
+        with pytest.raises(MediaExtractionError) as excinfo:
+            MediaExtractService(db)._resolve_image_provider(None, settings)
+
+        message = str(excinfo.value)
+        assert "'anthropic'" in message
+        assert "No API key is configured" in message
+        assert "ZZT-openai-key" not in message
+
+
+def test_image_lane_on_anthropic_borrows_the_primary_key_only_when_the_assistant_is_anthropic():
+    from app.services.llm_provider import AnthropicProvider
+
+    with blank_session() as db:
+        _seed_ai_config(
+            db, provider="anthropic", model="", api_key_ciphertext="ZZT-primary-key"
+        )
+
+        settings = _media_settings(
+            db, image_provider="anthropic", image_model=None, image_degraded_model=None
+        )
+        provider, _, _ = MediaExtractService(db)._resolve_image_provider(None, settings)
+
+        assert isinstance(provider, AnthropicProvider)
+        assert provider.api_key == "ZZT-primary-key"
+
+
+def test_image_lane_on_anthropic_falls_back_to_the_env_key(monkeypatch):
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(
+        app_settings, "anthropic_api_key", "ZZT-env-anthropic-key", raising=False
+    )
+    with blank_session() as db:
+        _seed_ai_config(db, provider="openai", api_key_ciphertext="ZZT-openai-key")
+
+        settings = _media_settings(
+            db, image_provider="anthropic", image_model=None, image_degraded_model=None
+        )
+        provider, _, _ = MediaExtractService(db)._resolve_image_provider(None, settings)
+
+        assert provider.api_key == "ZZT-env-anthropic-key"
+
+
+def test_image_lane_on_anthropic_prefers_its_dedicated_key_column():
+    with blank_session() as db:
+        _seed_ai_config(
+            db,
+            provider="anthropic",
+            model="",
+            api_key_ciphertext="ZZT-primary-key",
+            anthropic_api_key_ciphertext="ZZT-anthropic-key",
+        )
+
+        settings = _media_settings(
+            db, image_provider="anthropic", image_model=None, image_degraded_model=None
+        )
+        provider, _, _ = MediaExtractService(db)._resolve_image_provider(None, settings)
+
+        assert provider.api_key == "ZZT-anthropic-key"
+
+
+# --------------------------------------------------------------------------- #
+# The download is streamed and bounded, so an oversized body is a failed job   #
+# rather than an OOM-killed work-horse                                         #
+# --------------------------------------------------------------------------- #
+
+
+class _FakeStreamResponse:
+    """The slice of `httpx.Response` the streaming download uses."""
+
+    def __init__(self, chunks, headers=None):
+        self._chunks = chunks
+        self.headers = headers or {}
+        self.chunks_read = 0
+        self.closed = False
+
+    def raise_for_status(self):
+        return None
+
+    def iter_bytes(self):
+        for chunk in self._chunks:
+            self.chunks_read += 1
+            yield chunk
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.closed = True
+        return False
+
+
+class _FakeStreamingClient:
+    def __init__(self, response):
+        self._response = response
+
+    def stream(self, method, url):
+        assert method == "GET"
+        return self._response
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+def _install_streaming_client(monkeypatch, response):
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: _FakeStreamingClient(response))
+    return response
+
+
+def test_a_body_that_grows_past_the_cap_is_abandoned_mid_stream(monkeypatch):
+    """A url serving far more than the cap (directly or at the end of a redirect
+    chain) must fail the job with the size message, and must NOT be read to the
+    end first - buffering it whole is what gets the RQ work-horse OOM-killed."""
+    from app.services.media_extract.service import (
+        MAX_MEDIA_BYTES,
+        MediaExtractionError,
+        fetch_media_bytes,
+    )
+
+    one_mb = b"\0" * (1024 * 1024)
+    offered = (MAX_MEDIA_BYTES // len(one_mb)) * 4
+    response = _install_streaming_client(
+        monkeypatch, _FakeStreamResponse([one_mb] * offered)
+    )
+
+    with pytest.raises(MediaExtractionError) as excinfo:
+        fetch_media_bytes("https://cdn.example/huge.jpg")
+
+    assert "over the 25MB limit" in str(excinfo.value)
+    assert response.chunks_read <= (MAX_MEDIA_BYTES // len(one_mb)) + 1, (
+        "the download kept reading past the cap instead of abandoning the body"
+    )
+    assert response.chunks_read < offered
+    assert response.closed, "the streamed response must be closed on the way out"
+
+
+def test_a_content_length_over_the_cap_is_refused_before_a_byte_is_read(monkeypatch):
+    from app.services.media_extract.service import (
+        MAX_MEDIA_BYTES,
+        MediaExtractionError,
+        fetch_media_bytes,
+    )
+
+    response = _install_streaming_client(
+        monkeypatch,
+        _FakeStreamResponse(
+            [b"never-read"],
+            headers={
+                "content-length": str(MAX_MEDIA_BYTES * 40),
+                "content-type": "image/jpeg",
+            },
+        ),
+    )
+
+    with pytest.raises(MediaExtractionError) as excinfo:
+        fetch_media_bytes("https://cdn.example/huge.jpg")
+
+    assert "over the 25MB limit" in str(excinfo.value)
+    assert response.chunks_read == 0, "the body was read despite the declared size"
+
+
+def test_a_body_inside_the_cap_streams_through_with_its_content_type(monkeypatch):
+    from app.services.media_extract.service import fetch_media_bytes
+
+    _install_streaming_client(
+        monkeypatch,
+        _FakeStreamResponse(
+            [b"abc", b"def"],
+            headers={"content-length": "6", "content-type": "image/jpeg"},
+        ),
+    )
+
+    data, content_type = fetch_media_bytes("https://cdn.example/small.jpg")
+
+    assert data == b"abcdef"
+    assert content_type == "image/jpeg"
+
+
+def test_a_zero_byte_download_is_still_reported_as_zero_bytes(monkeypatch):
+    from app.services.media_extract.service import (
+        MediaExtractionError,
+        fetch_media_bytes,
+    )
+
+    _install_streaming_client(monkeypatch, _FakeStreamResponse([]))
+
+    with pytest.raises(MediaExtractionError) as excinfo:
+        fetch_media_bytes("https://cdn.example/empty.jpg")
+
+    assert "zero bytes" in str(excinfo.value)
+
+
+def test_a_transport_failure_is_reported_as_a_download_failure(monkeypatch):
+    import httpx
+
+    from app.services.media_extract.service import (
+        MediaExtractionError,
+        fetch_media_bytes,
+    )
+
+    class _Boom(_FakeStreamResponse):
+        def raise_for_status(self):
+            raise httpx.HTTPError("404 Not Found")
+
+    _install_streaming_client(monkeypatch, _Boom([]))
+
+    with pytest.raises(MediaExtractionError) as excinfo:
+        fetch_media_bytes("https://cdn.example/gone.jpg")
+
+    assert "Could not download the media" in str(excinfo.value)
