@@ -18,8 +18,12 @@ That second point is the point. The known live defect on the portal extract rout
 (`app/api/v1/public/ai_extract.py`) calls a synchronous multi-second function from
 inside an `async def` handler and freezes the whole backend for the duration. It
 is filed separately, it is not fixed here, and it is deliberately not copied -
-`tests/test_media_job_lifecycle.py` guards this module against regrowing it, both
-statically and by racing a second request against one in flight.
+`tests/test_media_job_lifecycle.py` guards this module against regrowing it by
+racing an unrelated request against a media call that is still in flight and
+timing it. That is a behavioural check, and it is the only one: it proves the
+loop stayed responsive on the paths those tests drive, and it proves nothing
+about a path they do not drive. There is no static or source-shape guard, by
+decision - one asserted a shape rather than a behaviour and was retired.
 
 Past `media_sync_wait_seconds` the endpoint stops waiting and returns
 `status: pending` with the `job_id`. The job keeps running and the result stays
@@ -202,7 +206,11 @@ async def process_media(
 
     Nothing in this coroutine blocks: the fast path (Postgres + the two Redis
     calls) runs through `asyncio.to_thread`, and the wait polls the job row the
-    same way. `tests/test_media_job_lifecycle.py` enforces that statically.
+    same way. `tests/test_media_job_lifecycle.py` checks that by racing an
+    unrelated request against a media call still in flight and asserting the
+    second one returns promptly. Any new blocking call added here has to be
+    handed to a thread too, and only a test that actually exercises its path
+    will catch it.
     """
     _ = current_user
 

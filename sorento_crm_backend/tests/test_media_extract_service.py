@@ -1111,8 +1111,13 @@ def _install_streaming_client(monkeypatch, response):
 
 def test_a_body_that_grows_past_the_cap_is_abandoned_mid_stream(monkeypatch):
     """A url serving far more than the cap (directly or at the end of a redirect
-    chain) must fail the job with the size message, and must NOT be read to the
-    end first - buffering it whole is what gets the RQ work-horse OOM-killed."""
+    chain) must fail the job with the oversize message, and must NOT be read to
+    the end first - buffering it whole is what gets the RQ work-horse OOM-killed.
+
+    The message must NOT name a size. The running total when the cap is crossed
+    is whatever chunk crossed it, which for network-sized chunks is always the
+    cap itself, so naming it prints "The media is 25MB, over the 25MB limit" for
+    a body that could be gigabytes."""
     from app.services.media_extract.service import (
         MAX_MEDIA_BYTES,
         MediaExtractionError,
@@ -1128,7 +1133,7 @@ def test_a_body_that_grows_past_the_cap_is_abandoned_mid_stream(monkeypatch):
     with pytest.raises(MediaExtractionError) as excinfo:
         fetch_media_bytes("https://cdn.example/huge.jpg")
 
-    assert "over the 25MB limit" in str(excinfo.value)
+    assert str(excinfo.value) == "The media is over the 25MB limit."
     assert response.chunks_read <= (MAX_MEDIA_BYTES // len(one_mb)) + 1, (
         "the download kept reading past the cap instead of abandoning the body"
     )
@@ -1137,6 +1142,8 @@ def test_a_body_that_grows_past_the_cap_is_abandoned_mid_stream(monkeypatch):
 
 
 def test_a_content_length_over_the_cap_is_refused_before_a_byte_is_read(monkeypatch):
+    """The declared size IS known here, so it is named: this is the one path
+    that can honestly tell an operator how far over the limit the media was."""
     from app.services.media_extract.service import (
         MAX_MEDIA_BYTES,
         MediaExtractionError,
@@ -1157,7 +1164,7 @@ def test_a_content_length_over_the_cap_is_refused_before_a_byte_is_read(monkeypa
     with pytest.raises(MediaExtractionError) as excinfo:
         fetch_media_bytes("https://cdn.example/huge.jpg")
 
-    assert "over the 25MB limit" in str(excinfo.value)
+    assert str(excinfo.value) == "The media is 1000MB, over the 25MB limit."
     assert response.chunks_read == 0, "the body was read despite the declared size"
 
 
@@ -1210,3 +1217,122 @@ def test_a_transport_failure_is_reported_as_a_download_failure(monkeypatch):
         fetch_media_bytes("https://cdn.example/gone.jpg")
 
     assert "Could not download the media" in str(excinfo.value)
+
+
+def test_the_voice_lane_never_posts_another_providers_key_to_openai(monkeypatch):
+    """Transcription is OpenAI-only, so the voice lane asks `_api_key` for an
+    OpenAI key on every note. With the assistant configured on Gemini, the
+    generic `api_key_ciphertext` column holds a GOOGLE key - posting it as
+    `Authorization: Bearer` to api.openai.com discloses a live credential to a
+    third-party vendor and returns a 401 that reads like an OpenAI outage."""
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "openai_api_key", "ZZT-env-openai-key", raising=False)
+
+    with blank_session() as db:
+        _seed_ai_config(db, provider="gemini", model="", api_key_ciphertext="ZZT-gemini-key")
+        usage = _seed_usage(db, "voice")
+
+        job = MediaJobInput(
+            job_id=str(uuid.uuid4()),
+            modality="voice",
+            tier=None,
+            media_url="https://cdn.respond.io/x.ogg",
+            mime_type="audio/ogg",
+            caption=None,
+            usage_id=usage.id,
+        )
+
+        monkeypatch.setattr(
+            "app.services.media_extract.service.fetch_media_bytes",
+            lambda url: (b"fake-audio-bytes", "audio/ogg"),
+        )
+        monkeypatch.setattr(
+            "app.services.media_access_service.resolve_media_settings",
+            lambda session: _voice_settings(),
+        )
+
+        captured = {}
+
+        def fake_post(data, *, filename, mime_type, fields, api_key, timeout):
+            captured["api_key"] = api_key
+            return {"text": "check stock please", "language": "en"}
+
+        monkeypatch.setattr(
+            "app.services.media_extract.transcribe._post_transcription", fake_post
+        )
+
+        MediaExtractService(db).extract(job)
+
+        assert captured["api_key"] == "ZZT-env-openai-key"
+        assert captured["api_key"] != "ZZT-gemini-key"
+
+
+def test_the_voice_lane_still_uses_the_primary_key_when_the_assistant_is_openai(
+    monkeypatch,
+):
+    """The guard must not break the ordinary install: an OpenAI assistant keeps
+    transcribing on the key in the generic column, ahead of any env value."""
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "openai_api_key", "ZZT-env-openai-key", raising=False)
+
+    with blank_session() as db:
+        _seed_ai_config(db, provider="openai", model="", api_key_ciphertext="ZZT-primary-key")
+        usage = _seed_usage(db, "voice")
+
+        job = MediaJobInput(
+            job_id=str(uuid.uuid4()),
+            modality="voice",
+            tier=None,
+            media_url="https://cdn.respond.io/x.ogg",
+            mime_type="audio/ogg",
+            caption=None,
+            usage_id=usage.id,
+        )
+
+        monkeypatch.setattr(
+            "app.services.media_extract.service.fetch_media_bytes",
+            lambda url: (b"fake-audio-bytes", "audio/ogg"),
+        )
+        monkeypatch.setattr(
+            "app.services.media_access_service.resolve_media_settings",
+            lambda session: _voice_settings(),
+        )
+
+        captured = {}
+
+        def fake_post(data, *, filename, mime_type, fields, api_key, timeout):
+            captured["api_key"] = api_key
+            return {"text": "check stock please", "language": "en"}
+
+        monkeypatch.setattr(
+            "app.services.media_extract.transcribe._post_transcription", fake_post
+        )
+
+        MediaExtractService(db).extract(job)
+
+        assert captured["api_key"] == "ZZT-primary-key"
+
+
+def test_the_image_lane_on_openai_never_borrows_a_gemini_assistants_key(monkeypatch):
+    """The image half of the same ladder: `media_image_provider='openai'` while
+    the assistant runs on Gemini must refuse by name rather than send the Google
+    key to OpenAI."""
+    from app.config import settings as app_settings
+    from app.services.media_extract.service import MediaExtractionError
+
+    monkeypatch.setattr(app_settings, "openai_api_key", None, raising=False)
+    with blank_session() as db:
+        _seed_ai_config(db, provider="gemini", model="", api_key_ciphertext="ZZT-gemini-key")
+
+        settings = _media_settings(
+            db, image_provider="openai", image_model=None, image_degraded_model=None
+        )
+        with pytest.raises(MediaExtractionError) as excinfo:
+            MediaExtractService(db)._resolve_image_provider(None, settings)
+
+        message = str(excinfo.value)
+        assert "'openai'" in message
+        assert "No API key is configured" in message
+        assert "ZZT-gemini-key" not in message

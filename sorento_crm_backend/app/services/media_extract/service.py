@@ -122,10 +122,20 @@ class MediaExtractionOutcome:
     completion_tokens: int = 0
 
 
-def _too_large(size_bytes: int) -> MediaExtractionError:
+def _too_large(size_bytes: Optional[int] = None) -> MediaExtractionError:
+    """The oversize failure, which becomes the job error n8n reads.
+
+    A size is named only where one is actually known - a `content-length`, or a
+    body that was read in full. On the streamed abort the running total is
+    whatever chunk happened to cross the cap, so naming it would print "The
+    media is 25MB, over the 25MB limit", which contradicts itself and understates
+    a body that could be gigabytes.
+    """
+    limit_mb = MAX_MEDIA_BYTES // (1024 * 1024)
+    if size_bytes is None:
+        return MediaExtractionError(f"The media is over the {limit_mb}MB limit.")
     return MediaExtractionError(
-        f"The media is {size_bytes // (1024 * 1024)}MB, over the "
-        f"{MAX_MEDIA_BYTES // (1024 * 1024)}MB limit."
+        f"The media is {size_bytes // (1024 * 1024)}MB, over the {limit_mb}MB limit."
     )
 
 
@@ -166,7 +176,7 @@ def fetch_media_bytes(url: str) -> tuple[bytes, Optional[str]]:
                 for chunk in response.iter_bytes():
                     downloaded += len(chunk)
                     if downloaded > MAX_MEDIA_BYTES:
-                        raise _too_large(downloaded)
+                        raise _too_large()
                     chunks.append(chunk)
                 data = b"".join(chunks)
     except MediaExtractionError:
@@ -446,11 +456,7 @@ class MediaExtractService:
                 or app_settings.gemini_api_key
                 or ""
             )
-        return (
-            (getattr(cfg, "api_key_ciphertext", None) if cfg else "")
-            or app_settings.openai_api_key
-            or ""
-        )
+        return generic_key() or app_settings.openai_api_key or ""
 
     # ----- Voice ------------------------------------------------------------
 
