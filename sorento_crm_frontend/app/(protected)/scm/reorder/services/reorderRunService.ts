@@ -392,12 +392,52 @@ async function fetchEveryPage(
 ): Promise<ReorderRecommendation[]> {
   const PAGE = 1000; // endpoint's max `limit`
   const first = await getRecommendations(runId, { pageIndex: 0, pageSize: PAGE, type });
-  const rest: Promise<RecommendationPage>[] = [];
-  for (let page = 1; page < first.pagination.total_pages; page += 1) {
-    rest.push(getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type }));
-  }
-  const pages = await Promise.all(rest);
-  return [...first.data, ...pages.flatMap((p) => p.data)];
+  const pageIndexes: number[] = [];
+  for (let page = 1; page < first.pagination.total_pages; page += 1) pageIndexes.push(page);
+
+  const rest = await inFlightAtMost(MAX_CONCURRENT_PAGES, pageIndexes, (page) =>
+    getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type }),
+  );
+  return [...first.data, ...rest.flatMap((p) => p.data)];
+}
+
+/**
+ * How many pages of ONE type may be in flight at once.
+ *
+ * Uncapped parallelism is not free on the server side. The four type queries run at the
+ * same time, so a ten-page plan would put roughly thirty-six requests on the wire together,
+ * and every one of them takes a database session for as long as it runs. The API pool is
+ * `pool_size=10, max_overflow=20`, so a single tab opening a single plan could exhaust it
+ * and make every other request on the instance queue behind it. Five per type keeps the
+ * round trips shallow (which is the whole point of fetching them together) while staying
+ * inside what the pool can serve.
+ */
+const MAX_CONCURRENT_PAGES = 5;
+
+/**
+ * Map over `items` with at most `limit` calls running at once, results in input order.
+ *
+ * A rejection rejects the whole call, exactly as `Promise.all` would: a plan missing one of
+ * its pages is not a smaller plan, it is a wrong one, and returning the pages that happened
+ * to succeed would quietly under-report the buyer's work.
+ */
+async function inFlightAtMost<T, R>(
+  limit: number,
+  items: T[],
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const mine = next;
+      next += 1;
+      if (mine >= items.length) return;
+      out[mine] = await run(items[mine]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 }
 
 /** Newest-first paginated run history (drives the Run history panel). */

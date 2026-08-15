@@ -241,3 +241,67 @@ describe('reorderRunService - fetching every page of a plan', () => {
     expect(rows).toHaveLength(3);
   });
 });
+
+describe('reorderRunService - the page fetch stays inside the API pool', () => {
+  /**
+   * Pages that resolve on a later tick, recording how many were in flight at once.
+   * `delay` is per page index, so a page can be made to finish out of turn.
+   */
+  function trackedPages(total: number, delay: (n: number) => number = () => 0) {
+    const seen = { now: 0, peak: 0, order: [] as number[] };
+    let asked = 0;
+    apiFetch.mockImplementation(() => {
+      asked += 1;
+      const n = asked;
+      seen.now += 1;
+      seen.peak = Math.max(seen.peak, seen.now);
+      return new Promise((res) => {
+        setTimeout(() => {
+          seen.now -= 1;
+          seen.order.push(n);
+          res(page(n, 1, total));
+        }, delay(n));
+      });
+    });
+    return seen;
+  }
+
+  it('never has more than five pages in flight at once', async () => {
+    // Ten pages. Uncapped this puts nine on the wire together, and with the four type
+    // queries running at the same time that is ~36 database sessions from a single tab
+    // against a pool of 10 + 20 overflow.
+    const seen = trackedPages(10);
+
+    const rows = await getBuyRecommendationsForCash('run-1');
+
+    expect(rows).toHaveLength(10);
+    expect(seen.peak).toBeLessThanOrEqual(5);
+    // And it does use the width it is allowed - a cap that serialised would be no better
+    // than the loop this replaced.
+    expect(seen.peak).toBeGreaterThan(1);
+  });
+
+  it('keeps the pages in order even though they finish out of order', async () => {
+    // Later pages finish FIRST: page 4 after 0ms, page 1 after 30ms.
+    const seen = trackedPages(4, (n) => (4 - n) * 10);
+
+    const rows = await getBuyRecommendationsForCash('run-1');
+
+    expect(rows.map((r) => r.id)).toEqual(['p1-r0', 'p2-r0', 'p3-r0', 'p4-r0']);
+    // The completion order really was not the request order.
+    expect(seen.order).not.toEqual([1, 2, 3, 4]);
+  });
+
+  it('one page failing fails the whole plan rather than returning a short list', async () => {
+    apiFetch
+      .mockResolvedValueOnce(page(1, 1, 3))
+      .mockResolvedValueOnce(page(2, 1, 3))
+      .mockResolvedValueOnce({
+        ok: false,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ detail: 'page 3 exploded' }),
+      } as unknown as Response);
+
+    await expect(getBuyRecommendationsForCash('run-1')).rejects.toThrow('page 3 exploded');
+  });
+});
