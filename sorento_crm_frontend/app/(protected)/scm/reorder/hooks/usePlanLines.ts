@@ -344,7 +344,6 @@ export function usePlanLines(runId: string | null, enabled = true) {
     levelSuggestions: levels.data?.suggestions ?? {},
     staleAfterDays: prices.data?.stale_after_days ?? 180,
     coverSources: cover.data?.sources ?? {},
-    coverScope,
     isLoading:
       buys.isLoading || covered.isLoading || needsLevel.isLoading || dispositions.isLoading,
     isError: buys.isError || covered.isError || needsLevel.isError || dispositions.isError,

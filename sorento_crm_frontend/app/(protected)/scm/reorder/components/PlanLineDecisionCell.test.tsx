@@ -129,6 +129,12 @@ describe('PlanLineDecisionCell - a decided row', () => {
     expect(screen.queryByText(/BRW-BB/)).not.toBeInTheDocument();
   });
 
+  it('the breakdown is reachable without a mouse, and the truncated text keeps its tooltip', () => {
+    renderCell({ decision: decided });
+    const trigger = screen.getByRole('button', { name: 'Stock 6 + Bought 182' });
+    expect(trigger).toHaveAttribute('title', 'Stock 6 + Bought 182');
+  });
+
   it('a skip says so and offers no breakdown to hover', () => {
     renderCell({ decision: { skip: true } });
     expect(screen.getByText('Skipped')).toBeInTheDocument();

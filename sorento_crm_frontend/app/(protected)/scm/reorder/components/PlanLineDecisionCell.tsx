@@ -131,10 +131,17 @@ export function PlanLineDecisionCell({
           </span>
         ) : (
           <HoverCard openDelay={120}>
+            {/* A button, not a span: a hover card is also a FOCUS card, and a decided row's
+                breakdown has to be reachable without a mouse. The `title` stays because the
+                text truncates - the tooltip is what a narrow column leaves the reader. */}
             <HoverCardTrigger asChild>
-              <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+              <button
+                type="button"
+                className="min-w-0 flex-1 truncate text-start text-sm text-muted-foreground"
+                title={summary(decision, true)}
+              >
                 {summary(decision, true)}
-              </span>
+              </button>
             </HoverCardTrigger>
             <HoverCardContent className="w-56 p-3" align="start">
               <CoverBreakdownTable
