@@ -1,10 +1,13 @@
 # PLAN - Chatbot media endpoint (voice transcription + image recognition)
 
-**Status:** S1/S2/S3 Phase 2 (backend) built against the RED pytest suite. S4/S5/S6 now fill the
-extraction seam (`app.tasks.media_tasks.run_media_extraction` -> `app/services/media_extract/`);
-tests for them are still owed, and the corpus run (S4-11) has not happened yet - no image has been
-put through the shipped prompt. See section 12 for the deviations each phase made from the design
-below - the design text is left as written so the change is visible rather than quietly rewritten.
+**Status:** built and reviewed on `fm/multimodal-crm-endpoint`. All slices (S1-S6) done with
+tests (pytest + vitest); the corpus run happened and its fixes are folded in (section 13); the
+Phase 3 review's three blockers are fixed (section 16); both operator surfaces are browser
+signed-off against a prod build (see the handoff). Still unmet, stated not papered over: a
+persisted Playwright spec, an RQ-worker end-to-end run against the `queue_service` socket-timeout
+change, and a corpus re-run through the changed voice path. Do not merge - merge authority is the
+captain's. See section 12 for the deviations each phase made from the design below - the design
+text is left as written so the change is visible rather than quietly rewritten.
 **UAC (the contract):** `documentation/plans/ideation/chatbot-media-endpoint-acceptance-criteria.md`
 **Classification:** **CORE**, `public` schema, normal FKs.
 Rationale: this extends the core chatbot/contact domain and references `respond_contacts` and
