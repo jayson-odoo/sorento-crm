@@ -220,3 +220,34 @@ def test_aliens_are_reported_in_sentence_order_once_each(db):
         "flurbish",
         "quixotic",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# negators: a refusal word names nothing about a product                        #
+# --------------------------------------------------------------------------- #
+# "not glass" is understood - it is the refusal half of a qualifier the sentence
+# DOES state. Reporting the negator back as "I don't know what 'not' means" is the
+# exact false flag this file exists to prevent, so every word the understanding
+# layer reads as a refusal has to be silent here too.
+_NEGATOR_SENTENCE_WORDS = ["not", "non", "bukan", "tanpa"]
+
+
+@pytest.mark.parametrize("negator", _NEGATOR_SENTENCE_WORDS)
+def test_a_negator_is_never_reported(db, negator):
+    assert unrecognized_words(db, f"double bowl kitchen sink {negator} glass") == []
+
+
+@pytest.mark.parametrize("negator", _NEGATOR_SENTENCE_WORDS)
+def test_a_negator_is_never_reported_by_the_endpoint(client, negator):
+    sentence = f"double bowl kitchen sink {negator} glass"
+    body = client.post(
+        RESOLVE,
+        json={"query": sentence, "tokens": [sentence], "spec_fallback": True},
+    ).json()
+    assert negator not in (body.get("unrecognized_terms") or [])
+
+
+def test_an_alien_word_beside_a_negator_is_still_reported(db):
+    # The silence is about negators, not about the sentence: suppressing everything
+    # would pass the tests above and lose the honesty channel entirely.
+    assert unrecognized_words(db, "double bowl kitchen sink not flurbish") == ["flurbish"]

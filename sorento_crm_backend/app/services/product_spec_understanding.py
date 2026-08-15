@@ -46,6 +46,7 @@ from app.services.product_spec_registry import (
     merged_synonyms,
 )
 from app.services.product_spec_search import (
+    NEGATOR_WORDS,
     SELF_SYNONYM_KEY,
     normalise_quantity,
     resolve_terms_to_specs_with_spans,
@@ -55,8 +56,15 @@ logger = logging.getLogger(__name__)
 
 # Words that turn the thing after them into a refusal, in the two languages the
 # catalogue's customers write in. Word-boundary matched, so "notch" and "nonstick"
-# are not refusals.
-_NEGATORS = re.compile(r"(?<!\w)(not|no|without|non|bukan|tanpa)(?!\w)")
+# are not refusals. The vocabulary itself is owned by `product_spec_search`, which
+# also keeps these words out of `unrecognized_terms`: a word we read as a refusal is
+# never a word we admit we did not understand. Longest first so "non" is preferred
+# over "no" when both could start a match.
+_NEGATORS = re.compile(
+    r"(?<!\w)("
+    + "|".join(sorted(NEGATOR_WORDS, key=lambda word: (-len(word), word)))
+    + r")(?!\w)"
+)
 
 # How far before a value's own words a negator may sit and still refuse it. Wide
 # enough for "kitchen sink, not the glass one", short enough that a "not" about

@@ -504,12 +504,20 @@ def resolve_terms_to_specs_with_spans(
     return resolved, spans, haystack
 
 
+# The words that turn the thing after them into a refusal, in the two languages the
+# catalogue's customers write in. Single source of truth: `product_spec_understanding`
+# compiles its `_NEGATORS` pattern from this set, and the set is also folded into the
+# stopwords below, so a word that layer READS as a refusal can never be reported back
+# as one we did not understand. It lives here because the import runs one way only
+# (understanding imports search, never the reverse).
+NEGATOR_WORDS: frozenset[str] = frozenset({"not", "no", "without", "non", "bukan", "tanpa"})
+
 # Words that name nothing about a product and are never reported. Small and inline
 # on purpose: this whole helper is precision-first, and the cost of the two errors
 # is nowhere near symmetric. Telling a customer "I don't know what 'kitchen' means"
 # destroys the conversation; missing one alien word costs a clarifying question we
 # were going to be able to answer anyway.
-_PHRASE_STOPWORDS: frozenset[str] = frozenset(
+_PHRASE_STOPWORDS: frozenset[str] = NEGATOR_WORDS | frozenset(
     {
         "the", "a", "an", "and", "or", "for", "in", "of", "to", "with", "without",
         "me", "my", "i", "we", "is", "are", "it", "this", "that", "there",
