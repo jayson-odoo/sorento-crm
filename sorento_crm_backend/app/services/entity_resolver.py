@@ -3709,6 +3709,20 @@ def _company_scope_sql(db: Session, column: str = "company_id") -> tuple[str, di
     Mirrors ``build_company_predicate`` for an OWNED table. Filtering in SQL (not
     on the result list) also keeps each probe's LIMIT honest: post-filtering lets
     out-of-scope rows eat the 15 trigram slots and starve the in-scope candidates.
+
+    LOCAL ON PURPOSE, not an oversight. ``app/services/company_scope_sql.py``
+    exposes ``company_sql_predicate`` for the same job, and this module does not
+    use it: that one emits a BARE boolean for callers that build their own WHERE,
+    while every probe here splices onto an existing WHERE and needs the leading
+    ``AND``. It also has a ``shared=`` mode no probe here wants. Keep both; check
+    all 7 splice sites before unifying.
+
+    If you arrived here from a grep for ``company_sql_predicate`` that came back
+    empty and concluded this file is unscoped, it is not, and that exact inference
+    has already produced one false live-leak report. The isolation added by
+    709ef9910 is here, plus the ``_attach_company_info`` Python backstop below for
+    probes that cannot carry a SQL clause (embedding hits, whose ``embedding_chunks``
+    source has no company column). Tests: ``tests/test_resolve_entity_company_scope.py``.
     """
     scope = get_company_scope(db)
     if scope is None:  # no contact identity → all companies (backward-compat)

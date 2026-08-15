@@ -13,6 +13,14 @@ the hand-written enforcement added for the paths that bypass it:
   - AC-I3: ``POST /lookup/resolve`` reads ``contact_id`` + ``space_id`` from the
     BODY (not query params) and pins the session scope to the contact's companies.
 
+NOT THE WHOLE RAW-SQL SURFACE. This module pins the paths listed above only. In
+particular the entity resolver's trigram / phrase probes are scoped by their own
+local ``_company_scope_sql`` (plus the ``_attach_company_info`` backstop) and are
+pinned by ``tests/test_resolve_entity_company_scope.py``, ``test_rag_company_scope.py``
+and ``test_embedding_company_scope.py``, NOT here. A reader who takes this file's
+"gap closure" framing as evidence that the resolver is still unscoped has already
+been wrong once, and filed a live-leak report for something fixed by 709ef9910.
+
 Live-DB tests run inside a rolled-back SAVEPOINT against the local Postgres dev DB
 and seed products/attachments via raw INSERT (bypassing ORM audit + auto-stamp) so
 seeding is scope-independent and never commits real data. All rows carry a
