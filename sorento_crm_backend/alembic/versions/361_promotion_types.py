@@ -11,7 +11,7 @@ skipping rows it already touched. It never overwrites a `manual` row -- a human
 correction outranks the classifier by definition.
 
 Revision ID: 361_promotion_types
-Revises: 357_merge_grn_spo_fm_heads
+Revises: 358_scm_po_spo_history_aliases
 Create Date: 2026-08-14
 """
 import sqlalchemy as sa
@@ -19,7 +19,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 revision = "361_promotion_types"
-down_revision = "357_merge_grn_spo_fm_heads"
+down_revision = "358_scm_po_spo_history_aliases"
 branch_labels = None
 depends_on = None
 

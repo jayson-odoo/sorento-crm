@@ -10,10 +10,21 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, PromotionType
+from app.models.marketing import (
+    Promotion,
+    PromotionAttachment,
+    PromotionGroup,
+    PromotionProduct,
+    PromotionType,
+)
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.resources import Attachment
 from app.services import promotion_serving
-from app.services.marketing_service import PromotionService
+from app.services.marketing_service import (
+    PromotionAttachmentService,
+    PromotionProductService,
+    PromotionService,
+)
 from tests._pg_fixture import blank_session, unique_code
 
 
@@ -340,3 +351,163 @@ def test_policy_result_is_paginated(served_fixture):
     assert len(page1["data"]) == 1
     assert len(page2["data"]) == 1
     assert page1["data"][0].id != page2["data"][0].id
+
+
+# --- the two child surfaces the chatbot actually reads (E1 on lines + flyers) --
+
+
+def _attach(db, promotion, filename):
+    attachment = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=filename,
+        stored_filename=filename,
+        file_path=f"https://cdn.invalid/{filename}",
+        access_levels=["dealer"],
+    )
+    db.add(attachment)
+    db.flush()
+    link = PromotionAttachment(
+        id=str(uuid.uuid4()),
+        promotion_id=promotion.id,
+        attachment_id=attachment.id,
+    )
+    db.add(link)
+    db.flush()
+    return link
+
+
+@pytest.fixture()
+def served_children_fixture():
+    """Same candidate set as `served_fixture`, with one line AND one flyer each."""
+    with blank_session() as db:
+        standard = _standard(db)
+        special = _type(db, "special", show_expired=False, match_priority=10)
+        flyer = _type(db, "a3_flyer", expired_max_age_days=180)
+
+        product = _product(db)
+        today = datetime.utcnow().date()
+        live_flyer = _promo(db, "ZZT flyer", start=today - timedelta(days=30), end=today + timedelta(days=60), promo_type=flyer)
+        expired_standard = _promo(db, "ZZT standard", start=today - timedelta(days=90), end=today - timedelta(days=14), promo_type=standard)
+        expired_special = _promo(db, "ZZT special", start=today - timedelta(days=90), end=today - timedelta(days=7), promo_type=special)
+        for promotion, label in (
+            (live_flyer, "flyer"),
+            (expired_standard, "standard"),
+            (expired_special, "special"),
+        ):
+            _link(db, promotion, product)
+            _attach(db, promotion, f"ZZT-{label}.pdf")
+
+        yield db, product, live_flyer, expired_standard, expired_special
+
+
+def test_list_promotion_products_serving_policy(served_children_fixture):
+    db, product, live_flyer, expired_standard, expired_special = served_children_fixture
+    result = PromotionProductService(db).list_promotion_products(
+        product_id=product.id, serving_policy=True, limit=50
+    )
+
+    by_pid = {str(row.promotion_id): row for row in result["data"]}
+    assert set(by_pid) == {str(live_flyer.id), str(expired_standard.id)}
+    assert str(expired_special.id) not in by_pid
+    assert result["serving_policy_applied"] is True
+    assert result["fallback_used"] is False
+    assert result["pagination"]["total"] == 2
+
+    assert by_pid[str(expired_standard.id)].is_expired is True
+    assert by_pid[str(expired_standard.id)].expired_but_usable is True
+    assert by_pid[str(expired_standard.id)].promotion_type_code == "standard"
+    assert by_pid[str(live_flyer.id)].is_expired is False
+    assert by_pid[str(live_flyer.id)].expired_but_usable is False
+    assert by_pid[str(live_flyer.id)].promotion_type_code == "a3_flyer"
+
+
+def test_list_promotion_products_without_policy_is_the_old_behaviour(served_children_fixture):
+    db, product, live_flyer, _expired_standard, _expired_special = served_children_fixture
+    result = PromotionProductService(db).list_promotion_products(
+        product_id=product.id, active=True, limit=50
+    )
+
+    assert {str(row.promotion_id) for row in result["data"]} == {str(live_flyer.id)}
+    assert result.get("serving_policy_applied") is None
+
+
+def test_list_promotion_products_policy_withholds_a_lone_expired_special():
+    with blank_session() as db:
+        _standard(db)
+        special = _type(db, "special", show_expired=False, match_priority=10)
+        product = _product(db)
+        today = datetime.utcnow().date()
+        expired_special = _promo(
+            db,
+            "ZZT lone special",
+            start=today - timedelta(days=90),
+            end=today - timedelta(days=7),
+            promo_type=special,
+        )
+        _link(db, expired_special, product)
+
+        result = PromotionProductService(db).list_promotion_products(
+            product_id=product.id, serving_policy=True, limit=50
+        )
+
+        assert result["data"] == []
+        assert result["pagination"]["total"] == 0
+        assert result["serving_policy_applied"] is True
+
+
+def test_list_promotion_attachments_serving_policy(served_children_fixture):
+    db, _product, live_flyer, expired_standard, expired_special = served_children_fixture
+    result = PromotionAttachmentService(db).list_promotion_attachments(
+        promotion_ids=[str(live_flyer.id), str(expired_standard.id), str(expired_special.id)],
+        serving_policy=True,
+        limit=50,
+    )
+
+    by_pid = {str(row.promotion_id): row for row in result["data"]}
+    assert set(by_pid) == {str(live_flyer.id), str(expired_standard.id)}
+    assert str(expired_special.id) not in by_pid
+    assert result["serving_policy_applied"] is True
+    assert result["fallback_used"] is False
+    assert result["pagination"].total == 2
+
+    assert by_pid[str(expired_standard.id)].is_expired is True
+    assert by_pid[str(expired_standard.id)].expired_but_usable is True
+    assert by_pid[str(expired_standard.id)].promotion_type_code == "standard"
+    assert by_pid[str(live_flyer.id)].is_expired is False
+    assert by_pid[str(live_flyer.id)].expired_but_usable is False
+    assert by_pid[str(live_flyer.id)].promotion_type_code == "a3_flyer"
+
+
+def test_list_promotion_attachments_without_policy_is_the_old_behaviour(served_children_fixture):
+    db, _product, live_flyer, expired_standard, expired_special = served_children_fixture
+    result = PromotionAttachmentService(db).list_promotion_attachments(
+        promotion_ids=[str(live_flyer.id), str(expired_standard.id), str(expired_special.id)],
+        active=True,
+        limit=50,
+    )
+
+    assert {str(row.promotion_id) for row in result["data"]} == {str(live_flyer.id)}
+    assert result.get("serving_policy_applied") is None
+
+
+def test_list_promotion_attachments_policy_withholds_a_lone_expired_special():
+    with blank_session() as db:
+        _standard(db)
+        special = _type(db, "special", show_expired=False, match_priority=10)
+        today = datetime.utcnow().date()
+        expired_special = _promo(
+            db,
+            "ZZT lone special",
+            start=today - timedelta(days=90),
+            end=today - timedelta(days=7),
+            promo_type=special,
+        )
+        _attach(db, expired_special, "ZZT-lone-special.pdf")
+
+        result = PromotionAttachmentService(db).list_promotion_attachments(
+            promotion_ids=[str(expired_special.id)], serving_policy=True, limit=50
+        )
+
+        assert result["data"] == []
+        assert result["pagination"].total == 0
+        assert result["serving_policy_applied"] is True
