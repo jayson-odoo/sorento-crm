@@ -59,9 +59,9 @@ def blank_schema_engine():
     empty database with every table present -- without sqlite's differences in
     typing, constraint enforcement and transaction semantics.
 
-    All 199 tables emit in well under a second, so the cost is paid once for the
-    whole session rather than per test. Data isolation is the caller's job: use
-    ``blank_session()``, which discards writes.
+    Every table on ``Base.metadata`` emits in well under a second, so the cost is
+    paid once for the whole session rather than per test. Data isolation is the
+    caller's job: use ``blank_session()``, which discards writes.
 
     ``scm`` and ``projects`` are translated alongside the default schema, so the
     models that declare a schema -- which could not be created on sqlite at all --

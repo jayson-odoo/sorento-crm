@@ -1,6 +1,8 @@
 # PLAN - move the Project Sales tables into a `projects` Postgres schema
 
-Status: implemented on `feat/project-lead-to-so` - awaiting tester gate
+Status: implemented on `feat/project-lead-to-so`, review findings addressed (two MUST-FIX:
+derived index and constraint names unified by 354, lookup bindings keyed schema-qualified -
+see Deviations 1, 2 and 5) - awaiting tester gate
 
 ## Decision
 

@@ -89,17 +89,46 @@ def test_models_that_kept_their_name_keep_their_audit_entity_type():
     assert checked == 13
 
 
-def test_no_projects_entity_type_collides_with_a_core_one():
-    """Seven bare names now exist in both schemas. The audit trail must not conflate them."""
-    core = {
+def test_no_projects_entity_type_collides_with_any_other_model():
+    """Seven bare names now exist in both schemas. The audit trail must not conflate them.
+
+    Every non-projects model counts, not just the default-schema ones: `audit_log.entity_type`
+    is one flat namespace with no schema in it, so an `scm` or `dealer_kit` model that audits
+    as `brands` conflates just as badly as a `public` one would.
+    """
+    others = {
         _audit_entity_type(cls): cls.__name__
         for cls in _mapped_classes()
-        if cls.__table__.schema is None
+        if cls.__table__.schema != "projects"
     }
 
     for cls in _projects_classes():
         entity_type = _audit_entity_type(cls)
-        assert entity_type not in core, (
-            f"{cls.__name__} audits as {entity_type!r}, which core {core[entity_type]} "
+        assert entity_type not in others, (
+            f"{cls.__name__} audits as {entity_type!r}, which {others[entity_type]} "
             f"already uses"
         )
+
+
+def test_the_two_services_that_hardcode_a_pre_move_entity_type_still_agree():
+    """Both read `audit_log` by a literal string, so a changed pin silently returns nothing.
+
+    `project_lead_service.LEAD_AUDIT_ENTITY_TYPE` and the `"project_tasks"` filter in
+    `project_task_service` are the reason the docstring above says the two services "are
+    correct only while this holds" - this is what makes that a test rather than a claim.
+    """
+    from app.models.projects import ProjectLead, ProjectTask
+    from app.services.project_lead_service import LEAD_AUDIT_ENTITY_TYPE
+
+    assert LEAD_AUDIT_ENTITY_TYPE == _audit_entity_type(ProjectLead) == "project_leads"
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "services"
+        / "project_task_service.py"
+    ).read_text()
+    assert 'AuditLog.entity_type == "project_tasks"' in source, (
+        "the literal this test pins moved or changed shape; re-point it"
+    )
+    assert _audit_entity_type(ProjectTask) == "project_tasks"

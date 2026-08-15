@@ -53,7 +53,7 @@ export const MODULE_REGISTRY: ModuleAsset[] = [
   //
   // `projects` ships purge tables only: its menu and routes are still declared the legacy
   // way in `menu.config.tsx`, and only the uninstall dialog needs the table list. The
-  // backend half is `app/modules/projects/purge.py` (ADR-0009), whose PURGE_ORDER this
+  // backend half is `app/modules/projects/purge.py` (ADR-0009, ADR-0011), whose PURGE_ORDER this
   // mirrors table for table, in order. Entries are SCHEMA-QUALIFIED (`projects.parties`,
   // ADR-0011): seven of the module's bare names are also core tables the purge does not
   // touch, so an operator consenting to it must not be shown `brands` or `sales_orders`

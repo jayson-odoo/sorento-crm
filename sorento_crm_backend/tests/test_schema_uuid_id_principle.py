@@ -53,7 +53,7 @@ EXEMPTIONS: dict[str, str] = {
     "projects.series_products": "JUNCTION (series_id + product_id)",
     # One row per project, keyed BY the project. A surrogate uuid would invite a
     # second row per project, which is exactly what the PK is there to prevent.
-    "projects.sales_profile": "JUNCTION — 1:1 extension, PK is project_id",
+    "projects.sales_profile": "JUNCTION - 1:1 extension, PK is project_id",
     # --- EXTERNAL (schema owned elsewhere) ---
     "verification_tokens": "EXTERNAL — NextAuth composite PK (identifier + token)",
     "chat_histories": "EXTERNAL — Respond/n8n ingest, BigInteger id by their design",
@@ -78,7 +78,7 @@ EXEMPTIONS: dict[str, str] = {
     # --- LEGACY: natural-key config lookups (candidates for the market_segments treatment) ---
     "contact_access_types": "LEGACY — code PK, small controlled vocabulary",
     "email_event_configs": "LEGACY — event_key PK, small controlled vocabulary",
-    "scm.currency_rate": "LEGACY — currency code PK, singleton row per currency (scm.CurrencyRate)",
+    "scm.currency_rate": "LEGACY - currency code PK, singleton row per currency (scm.CurrencyRate)",
 }
 
 
@@ -93,14 +93,18 @@ def _test_owned_table_names() -> set[str]:
     ``Base.metadata``, so once another test module is imported in a full-suite
     run they show up here — but they are not application tables and the uuid-id
     principle does not apply to them. Attribute each mapped table to its defining
-    module and drop the ones that live under ``tests``."""
+    module and drop the ones that live under ``tests``.
+
+    Keyed the same way as ``_non_compliant_tables`` (``Table.key``), so the two are
+    comparable: on the bare name a test model called `brands` would suppress
+    `projects.brands` as well."""
     names: set[str] = set()
     for mapper in Base.registry.mappers:
         module = (getattr(mapper.class_, "__module__", "") or "")
         if module.startswith("tests.") or module == "tests" or module.startswith("test_"):
             local = getattr(mapper, "local_table", None)
             if local is not None:
-                names.add(local.name)
+                names.add(local.key)
     return names
 
 
@@ -117,7 +121,7 @@ def _non_compliant_tables() -> list[str]:
     return [
         t.key
         for t in Base.metadata.tables.values()
-        if t.name not in ignore and not _has_uuid_id(t)
+        if t.key not in ignore and not _has_uuid_id(t)
     ]
 
 

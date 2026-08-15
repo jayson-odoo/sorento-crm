@@ -120,4 +120,5 @@ def _mark_failed(db, model, row_id: str, exc: Exception) -> None:
         )
         db.commit()
     except Exception:  # noqa: BLE001
-        logger.exception("could not mark %s %s as failed", model.__tablename__, row_id)
+        # Qualified, so the log line says which `purchase_orders` (ADR-0011).
+        logger.exception("could not mark %s %s as failed", model.__table__.fullname, row_id)

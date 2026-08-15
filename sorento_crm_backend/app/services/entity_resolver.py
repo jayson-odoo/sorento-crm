@@ -3790,7 +3790,11 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
             rows = db.execute(
                 text(
                     f"SELECT id::text AS id, company_id::text AS company_id "  # noqa: S608 - table name from the model registry
-                    f"FROM {model.__tablename__} WHERE id::text = ANY(:ids)"
+                    # `fullname`, not `__tablename__`: a schema-qualified model would
+                    # otherwise emit its bare name, and seven of those name a CORE table
+                    # too (ADR-0011). No projects model reaches here today; the day one
+                    # does, this reads the right rows rather than another module's.
+                    f"FROM {model.__table__.fullname} WHERE id::text = ANY(:ids)"
                 ),
                 {"ids": [str(m.uuid) for m in group]},
             ).all()
