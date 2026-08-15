@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from app.models.access import RespondContact
 from app.models.user import User
 from app.schemas.integration import IntegrationLogCreate
-from app.services.integration_service import IntegrationLogService
+from app.services.integration_service import IntegrationLogService, direct_send_retry_hold
 from app.services.n8n_webhook_settings import (
     crm_webhook_auth_headers,
     get_n8n_close_convo_webhook_url,
@@ -221,10 +221,13 @@ def notify_ticket_resolved_close(
                 http_method="POST",
                 status="pending",
                 # No auth header here on purpose: the AC-J6 secret is resolved
-                # at send time (send_crm_close_convo_webhook_for_log).
+                # at send time (send_webhook_for_log, from the row's channel).
                 created_by=(
                     str(resolved_by_user_id).strip() if resolved_by_user_id else None
                 ),
+                # Held back from the retry sweeper while the thread below has
+                # its turn at the POST.
+                next_retry_at=direct_send_retry_hold(),
             ),
             request_payload_dict=payload,
         )

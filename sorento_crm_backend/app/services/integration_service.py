@@ -1,7 +1,7 @@
 """Integration logging service for business logic."""
 from sqlalchemy.orm import Session
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import httpx
@@ -13,6 +13,40 @@ from app.services.respond_outbound_service import assert_outbound_enabled
 from app.services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
+
+# Channels whose outbound webhook must carry the AC-J6 shared secret. Resolved
+# from the ROW rather than only at the two direct call sites, because a failed
+# send is reset to `pending` and comes back through the scheduled sweeper or the
+# operator Retry button - lanes that know nothing about headers. Sending those
+# retries unauthenticated meant n8n's fail-closed gate refused exactly the calls
+# that needed a second chance.
+WEBHOOK_AUTH_HEADER_CHANNELS = frozenset({"n8n_crm_chat_outbound", "n8n_crm_close_convo"})
+
+# How long a row created by a direct-send lane is held back from the sweeper.
+# The direct lane commits the row `pending` and then POSTs it on a daemon
+# thread; a sweeper tick landing in that gap would send the same row a second
+# time. `next_retry_at` already means "not before this time", so holding it is
+# the state machine doing its own job rather than a new flag.
+DIRECT_SEND_HOLD_SECONDS = 120
+
+
+def direct_send_retry_hold() -> datetime:
+    """`next_retry_at` for a row a direct-send thread is about to POST itself."""
+    return datetime.utcnow() + timedelta(seconds=DIRECT_SEND_HOLD_SECONDS)
+
+
+def resolve_webhook_auth_headers(integration_channel: Optional[str]) -> Dict[str, str]:
+    """Auth headers a given integration channel's webhook call must carry.
+
+    Empty for every channel that has no shared-secret contract: handing a
+    credential to a lane that never asked for it widens the blast radius for
+    nothing.
+    """
+    if str(integration_channel or "").strip() not in WEBHOOK_AUTH_HEADER_CHANNELS:
+        return {}
+    from app.services.n8n_webhook_settings import crm_webhook_auth_headers
+
+    return crm_webhook_auth_headers() or {}
 
 
 def _decrypt_workspace_key(workspace) -> Optional[str]:
@@ -813,6 +847,10 @@ class IntegrationLogService:
                 integration logs, and would stay readable in history after a rotation.
                 Resolving it per send also means a resubmit uses the CURRENT secret
                 rather than replaying a stale one.
+                The AC-J6 shared secret does NOT need to be passed here: it is resolved
+                from the row's own `integration_channel` below, so every lane that
+                resends a row (sweeper, operator Retry) carries it too. `extra_headers`
+                stays an explicit override, merged last.
 
         Returns:
             Tuple of (success: bool, error_message: Optional[str])
@@ -854,8 +892,11 @@ class IntegrationLogService:
                 headers = json.loads(log.request_headers)
             except (json.JSONDecodeError, TypeError):
                 headers = None
-        if extra_headers:
-            headers = {**(headers or {}), **extra_headers}
+        # Resolved per send and never written back: the secret exists on the
+        # HTTP request and nowhere else (see resolve_webhook_auth_headers).
+        auth_headers = resolve_webhook_auth_headers(log.integration_channel)
+        if auth_headers or extra_headers:
+            headers = {**(headers or {}), **auth_headers, **(extra_headers or {})}
 
         # Send webhook
         success, status_code, response_data, error_code, error_message = self.webhook_service.send_webhook(

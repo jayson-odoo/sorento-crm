@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.access import RespondContact
 from app.models.user import User
 from app.schemas.integration import IntegrationLogCreate
-from app.services.integration_service import IntegrationLogService
+from app.services.integration_service import IntegrationLogService, direct_send_retry_hold
 from app.services.n8n_webhook_settings import (
     crm_webhook_auth_headers,
     get_n8n_crm_chat_outbound_webhook_url,
@@ -290,9 +290,12 @@ def enqueue_crm_chat_outbound_webhook(
             http_method="POST",
             status="pending",
             # No auth header here on purpose: the AC-J6 secret is resolved at send
-            # time (see send_crm_chat_outbound_webhook_for_log) so it never sits at
-            # rest in a table operators can read.
+            # time (send_webhook_for_log, from the row's channel) so it never sits
+            # at rest in a table operators can read.
             created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
+            # This row is about to be POSTed by the thread below - hold it back
+            # from the retry sweeper until that has had its turn.
+            next_retry_at=direct_send_retry_hold(),
         ),
         request_payload_dict=payload_list,
     )
