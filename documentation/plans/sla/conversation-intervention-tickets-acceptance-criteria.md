@@ -674,6 +674,75 @@ closes, so it WILL fire on our close once live. Two consequences need explicit h
   set), When the user has the extend permission, Then Extend renders and works exactly as
   on Ticket/Complaint rows.
 
+### N. Conversations inbox + drawer ergonomics (Journey steps 4/5/9b) - added 2026-08-15
+
+Grounding (captain dogfooding round 2): "after i reassign already, I can't see it anymore",
+"user will want to look into other people conversation, get involved a bit, especially
+when they are tagged", "what happen if there are 10000 contacts". Read access and act
+access are different things: today the drawer conflates them (a thread is visible only
+to whoever can act on the ticket). Section N separates them and adds the surface.
+
+Journey addition:
+
+9b. **Staff open the Conversations inbox** (sidebar, SLA Management) - a Respond-like
+    two-pane page: left, a paginated contact/thread list with tabs **Mine / Mentioned /
+    Unassigned / All** and a name-or-phone search; right, the SAME shared thread panel
+    the ticket drawer uses (scroll-back, search, preview, notes, quotes). They pick a
+    thread, read it, leave a note, or reply if they hold the reply permission. Their own
+    open ticket for that contact, when one exists, is what a reply stamps. Nobody has to
+    know Respond exists.
+
+- **AC-N1 [BE][FE][T]** Given the Conversations page, When it loads, Then the left list
+  is SERVER-paginated (default 30, keyset on last-message time desc), searchable by
+  contact name / phone, filterable by tab (Mine = contacts where I hold an open ticket;
+  Mentioned = contacts with a note that mentions me, newest first; Unassigned = contacts
+  with an open ticket and no assignee; All = every contact with any message). It never
+  loads a thread until one is selected. Works at 10 000+ contacts: no per-row thread
+  fetch, no client-side filtering over the full set, one list query per page.
+- **AC-N2 [BE][T]** Given a user, When they open a thread from the inbox, Then READ
+  access is granted by a new permission `sla_management.conversations.view` (granted to
+  every role that already holds `conversation_sla_tracking.view` via a grant sweep) -
+  NOT by ticket assignment. A reassigned-away previous assignee, a mentioned colleague,
+  a manager: all can read. ACT access (send/resolve/reassign on a ticket) keeps its
+  existing assignee-or-manager rule. Reply from the inbox requires
+  `sla_management.conversations.reply`; a reply is stamped onto the sender's own open
+  ticket for that contact when one exists, else it is an unstamped human send (still
+  fires the AC-J human-send signal, still logs the outbox).
+- **AC-N3 [BE][T]** Given the thread endpoints (page / search / media), When called by
+  contact reference instead of tracking id, Then contact-keyed variants exist
+  (`.../conversations/{contact_ref}/page|search|media`) with the SAME response shapes as
+  the ticket-keyed ones and the AC-N2 read gate; the ticket-keyed ones remain for the
+  drawer. Notes on a contact render in the inbox thread (contact-scoped ones always;
+  ticket-scoped ones too - a note is internal staff context, not ticket-private).
+- **AC-N4 [BE][FE][T]** (Excel/office preview: captain hit "No source available to load
+  this file" on an .xlsx) Given an attachment bubble whose bytes live on a host that
+  sends no CORS headers (R2 CDN, CloudFront, Respond media), When the viewer opens it,
+  Then the preview surface fetches the bytes through a viewer-scoped backend media proxy
+  (ticket- or contact-keyed, host ALLOWLISTED to our storage + Respond media domains,
+  never an open URL fetcher) so Excel/csv render inline exactly like the attachments
+  module, and Download works. Images/pdf keep direct URLs.
+- **AC-N5 [FE][T]** Given the ticket drawer, When it renders, Then: (a) the **Resolve**
+  action lives in the drawer HEADER (with Reassign and the overflow actions), not
+  floating over the composer; (b) the composer toolbar has no floating siblings; (c) the
+  global AI-assistant launcher renders as a slim edge tab ("envelope label") anchored to
+  the bottom-right screen edge instead of a round FAB, so it can never overlap a
+  drawer's bottom controls. Verified at 375px and 1280px.
+- **AC-N6 [FE][T]** Given the drawer header's quoted enquiry message, When clicked, Then
+  the thread scrolls to that message (loading the surrounding page via `around=` when it
+  is outside the loaded window) and flash-highlights it - same mechanism as a search
+  match.
+- **AC-N7 [FE][T]** Given the drawer, When the user has the reassign permission, Then a
+  Reassign action is in the drawer header; the assignee picker shows which users are
+  Respond-linked (a small badge / secondary text) and lets the user filter to
+  Respond-linked only, because a reply from an unlinked user cannot carry a real Respond
+  sender identity. Same dialog component as the widget (AC-B3), never a fork.
+- **AC-N8 [FE][T]** Given the SLA-tracking detail page, When "Chat Records" is opened,
+  Then it renders the SAME shared thread panel (scroll-back, search, preview, notes,
+  quoted context) the drawer uses - the legacy `SlaTrackingConversationPanel` sheet is
+  replaced, not duplicated. Complaint / stock-inquiry / PR "Chat Records" follow in the
+  same change if the panel is already the shared one; if their panel is a separate
+  component, they are listed as a follow-up in the PLAN, not silently skipped.
+
 ## No-regression strategy
 
 The blast radius is the shared `conversation_sla_tracking` table and the Respond send path.

@@ -477,6 +477,45 @@ Built 2026-08-15 (code + tests; awaiting tester/review):
   when the drawer swaps tickets in place, so one contact's history can never leak
   into another's thread.
 
+### S4.9 Conversations inbox + drawer ergonomics (UAC N1-N8) [BE coder, then FE coder]
+(added 2026-08-15 from captain dogfooding round 2; user direction: "fix my feedback and
+do whatever the reviewer flagged, then proceed with codex review, push and PR")
+
+Backend (first):
+- Permissions `sla_management.conversations.view` / `.reply` + grant sweep migration
+  (view <- every role holding `conversation_sla_tracking.view`; reply <- roles holding
+  the ticket send/reply-equivalent permission, else same set as view - decide from the
+  registry, record).
+- Inbox list endpoint: `GET /sla-management/conversations?tab=mine|mentioned|unassigned|
+  all&q=&cursor=&limit=` - keyset on (last_message_at desc, contact id) derived from
+  `chat_histories` MAX(sent_at) per contact (materialised as a lightweight query; if the
+  aggregate is too slow at scale, a `respond_contacts.last_message_at` column maintained
+  by the ingest is the follow-up, note it). Row = contact ref (respond_io_id, phone,
+  name), last message snippet + time, open ticket count, my-open-ticket id (for reply
+  stamping), unread not in v1.
+- Contact-keyed thread endpoints mirroring the ticket-keyed ones: page / search / media
+  under `.../conversations/{contact_ref}/...`, gated by the view permission (NOT
+  can_user_act). Ticket-keyed `.../{tracking_id}/media` proxy too (drawer). Media
+  proxy: allowlisted hosts only (R2 CDN, CloudFront domain, Respond media hosts),
+  streams bytes with content-type + content-disposition, viewer-scoped.
+- Inbox reply endpoint: `POST .../conversations/{contact_ref}/reply` (reply permission)
+  -> stamps sender's own open ticket if any (reuse send_ticket_message), else the
+  unstamped human send path (same webhook signal + outbox).
+- Notes list by contact for the inbox thread.
+
+Frontend (second, same worktree, after BE lands):
+- New page `sla-management/conversations`: two-pane, left list (tabs, search, cursor
+  "load more"), right = shared RespondChatList + composer (reply if permitted, notes
+  always). Sidebar entry. Reuses useConversationThread with contact-keyed loaders.
+- Drawer: Resolve + Reassign into the header action group; enquiry-quote click ->
+  scroll/around; Reassign dialog shows Respond-linked badge + filter.
+- Global AI-assistant launcher -> slim bottom-right edge tab (component under
+  components/common or wherever the FAB lives), no overlap with drawer controls.
+- AttachmentPreviewModal: `fetchBytes` override for URL items routed through the media
+  proxy (Excel inline + Download work).
+- "Chat Records" on the SLA-tracking detail replaced by the shared panel; complaint /
+  SI / PR listed as follow-up if their panel is separate.
+
 ### Phase 4 execution order (user-approved 2026-08-14)
 
 S4.1 and S4.2 first (they close the two live operational gaps: bot does not pause, thread
