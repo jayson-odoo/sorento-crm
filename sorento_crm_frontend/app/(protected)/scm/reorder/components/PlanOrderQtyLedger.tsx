@@ -7,7 +7,12 @@ import { EM_DASH, fmtDecimal, fmtInt, fmtSigned } from '../../lib/format';
 import { DrillHeader } from './PlanExplainDrills';
 import type { PlanLine } from '../lib/planLine';
 import type { PlanDecision } from '../lib/planDecisions';
-import type { CoverProposal } from '../lib/coverPlan';
+import {
+  applySourceEdits,
+  defaultSourceEdits,
+  type CoverProposal,
+  type SourceEdits,
+} from '../lib/coverPlan';
 import { describePoBook, type PoReceipt } from '../lib/poCover';
 import { moqGap, moqGapNote, type ProductEconomics } from '../lib/productHealth';
 import {
@@ -161,6 +166,52 @@ function ForecastAddOnLine({
         </div>
         <p className="text-2xs text-muted-foreground">{`(${detail})`}</p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * One offered location and how much of it to use.
+ *
+ * > "why am I allowed to use stock from other locations? ... use stock should behave like the
+ * >  top-up purchase control - a toggle, and when on, editable per-location quantities
+ * >  feeding the buy qty."
+ *
+ * The same two-control shape as `ForecastAddOnLine`, and for the same reason: the number is
+ * NOT inside a `<label>` wrapping a checkbox, so clicking into the input to edit it cannot
+ * toggle anything. What is free at that location sits beside the input rather than only in
+ * the `max` attribute, because a cap the buyer cannot see reads as the field being broken.
+ */
+function CoverSourceLine({
+  code,
+  free,
+  qty,
+  onQtyChange,
+}: {
+  code: string;
+  free: number;
+  qty: number;
+  onQtyChange: (value: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-xs">
+      <span className="min-w-0 flex-1 truncate" title={code}>
+        {code}
+      </span>
+      <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
+        {`${fmtInt(free)} free`}
+      </span>
+      <Input
+        type="number"
+        variant="sm"
+        min={0}
+        max={free}
+        step={1}
+        value={qty}
+        onChange={(e) => onQtyChange(e.target.valueAsNumber)}
+        className="h-6 w-20 shrink-0 tabular-nums"
+        aria-label={`Use from ${code}`}
+      />
     </div>
   );
 }
@@ -320,13 +371,28 @@ export function OrderQtyLedger({
   // suggested mixture otherwise - never a third guess (UAC B4).
   const stockOn = decision ? (decision.stock?.qty ?? 0) > 0 : cover.coverQty > 0;
   const poOn = decision ? (decision.po ?? 0) > 0 : poQty > 0;
+  // How much to take from EACH offered location. Seeded from the decision already taken, or
+  // from the engine's proposal (same-segment first) - so a buyer who never touches these
+  // inputs gets exactly today's answer (UAC AC-3.5).
+  const [sourceEdits, setSourceEdits] = useState<SourceEdits>(() => {
+    const taken = decision?.stock?.sources;
+    if (taken?.length) {
+      return Object.fromEntries(taken.map((s) => [s.warehouse_id, s.qty]));
+    }
+    return defaultSourceEdits(cover);
+  });
+  const edited = applySourceEdits(cover, sourceEdits);
   // The forecast add-on has no home in `PlanDecision` beyond the buy total it grows, so its
   // own on/off state is re-derived from the reason a previous toggle left behind (best
   // effort - a manual Adjust afterwards can still overwrite that reason, which is fine: the
   // add-on is offered fresh, never assumed).
   const [forecastOn, setForecastOn] = useState(() => Boolean(decision?.reason?.startsWith('Forecast:')));
 
-  const mixture = composeMixture(needed, cover, poQty, { stockOn, poOn });
+  const mixture = composeMixture(needed, cover, poQty, {
+    stockOn,
+    poOn,
+    stockQty: edited.coverQty,
+  });
   // The SAME trajectory verdict that drives the row's own Trend pill - a rising line never
   // sees a flat proposal here while its pill says "consider more" (S3 follow-up).
   const addOn = forecastAddOn(rec, trend);
@@ -357,8 +423,17 @@ export function OrderQtyLedger({
       a.trendNote ? `, ${a.trendNote}` : ''
     }`;
 
-  const commit = (next: { stockOn: boolean; poOn: boolean; forecastOn: boolean; forecastQty: number }) => {
-    const m = composeMixture(needed, cover, poQty, next);
+  const commit = (next: {
+    stockOn: boolean;
+    poOn: boolean;
+    forecastOn: boolean;
+    forecastQty: number;
+    edits: SourceEdits;
+  }) => {
+    // The per-location figures ARE the split that gets recorded - the ledger never writes
+    // the proposal's own sources back over an edit the buyer just made.
+    const stock = applySourceEdits(cover, next.edits);
+    const m = composeMixture(needed, cover, poQty, { ...next, stockQty: stock.coverQty });
     const d = next.forecastOn ? next.forecastQty : 0;
     const before = m.buy + d;
     const rounded = roundOrderQty(before, q.moq, q.order_multiple);
@@ -368,7 +443,7 @@ export function OrderQtyLedger({
         ? {
             stock: {
               qty: m.stockQty,
-              sources: cover.sources.map((s) => ({
+              sources: stock.sources.map((s) => ({
                 warehouse_id: s.warehouse_id,
                 warehouse_code: s.warehouse_code,
                 qty: s.qty,
@@ -383,19 +458,29 @@ export function OrderQtyLedger({
     });
   };
 
-  const toggleStock = () => commit({ stockOn: !stockOn, poOn, forecastOn, forecastQty });
-  const togglePo = () => commit({ stockOn, poOn: !poOn, forecastOn, forecastQty });
+  const toggleStock = () =>
+    commit({ stockOn: !stockOn, poOn, forecastOn, forecastQty, edits: sourceEdits });
+  const togglePo = () => commit({ stockOn, poOn: !poOn, forecastOn, forecastQty, edits: sourceEdits });
   const toggleForecast = () => {
     const next = !forecastOn;
     setForecastOn(next);
-    commit({ stockOn, poOn, forecastOn: next, forecastQty });
+    commit({ stockOn, poOn, forecastOn: next, forecastQty, edits: sourceEdits });
+  };
+  // Editing a location re-applies immediately, exactly as the forecast input does: the
+  // input IS the edit, there is no separate Record step in this ledger (UAC B4).
+  const changeSourceQty = (warehouseId: string, raw: number) => {
+    const max = cover.sources.find((s) => s.warehouse_id === warehouseId)?.qty ?? 0;
+    const clamped = Number.isFinite(raw) ? Math.max(0, Math.min(max, Math.floor(raw))) : 0;
+    const edits = { ...sourceEdits, [warehouseId]: clamped };
+    setSourceEdits(edits);
+    if (stockOn) commit({ stockOn, poOn, forecastOn, forecastQty, edits });
   };
   // Editing while ticked re-applies immediately - the input IS the edit, there is no
   // separate "Record" step (mirrors the ledger's own UAC B4 non-goal for the toggles).
   const changeForecastQty = (raw: number) => {
     const clamped = clampForecastQty(raw, forecastCap);
     setForecastQty(clamped);
-    if (forecastOn) commit({ stockOn, poOn, forecastOn, forecastQty: clamped });
+    if (forecastOn) commit({ stockOn, poOn, forecastOn, forecastQty: clamped, edits: sourceEdits });
   };
 
   const noCoverAvailable = cover.coverQty <= 0 && poQty <= 0;
@@ -470,14 +555,35 @@ export function OrderQtyLedger({
             ) : (
               <>
                 {cover.coverQty > 0 ? (
-                  <ToggleLine
-                    checked={stockOn}
-                    onToggle={toggleStock}
-                    label={`Use stock ${fmtInt(cover.coverQty)} (${cover.sources
-                      .map((s) => s.warehouse_code)
-                      .join(', ')})`}
-                    title={cover.sources.map((s) => `${fmtInt(s.qty)} from ${s.warehouse_code}`).join(', ')}
-                  />
+                  <div className="space-y-1.5">
+                    <ToggleLine
+                      checked={stockOn}
+                      onToggle={toggleStock}
+                      label={
+                        stockOn
+                          ? `Use stock ${fmtInt(edited.coverQty)}`
+                          : `Use stock ${fmtInt(cover.coverQty)} (${cover.sources
+                              .map((s) => s.warehouse_code)
+                              .join(', ')})`
+                      }
+                    />
+                    {/* On, the sources stop being a sentence and become the edit surface: one
+                        row per location the policy allows this row to draw on. Off, they are
+                        not offered at all - cover is 0 and the whole gap is bought. */}
+                    {stockOn ? (
+                      <div className="ms-6 space-y-1">
+                        {cover.sources.map((s) => (
+                          <CoverSourceLine
+                            key={s.warehouse_id}
+                            code={s.warehouse_code}
+                            free={s.qty}
+                            qty={sourceEdits[s.warehouse_id] ?? 0}
+                            onQtyChange={(v) => changeSourceQty(s.warehouse_id, v)}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
                 {poQty > 0 ? (
                   <ToggleLine

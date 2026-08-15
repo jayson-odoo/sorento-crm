@@ -488,3 +488,106 @@ describe('order-qty ledger - shaped fixtures render coherently', () => {
     expect(screen.getAllByText('134').length).toBeGreaterThan(0); // 164 - 30 PO
   });
 });
+
+/**
+ * COVER BEFORE BUYING as a toggle with editable per-location quantities (AC-3.4 / AC-3.5).
+ *
+ * > "use stock should behave like the top-up purchase control - a toggle, and when on,
+ * >  editable per-location quantities feeding the buy qty."
+ */
+describe('order-qty ledger - per-location use stock', () => {
+  const twoSources: CoverSource[] = [
+    { warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', segment: 'project', qty: 5 },
+    { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', segment: 'project', qty: 1 },
+  ];
+  const shortLine = () =>
+    line({ order_qty: 20, recommended_qty: 20, moq: null, order_multiple: null });
+
+  it('defaults every location to the engine proposal, so an untouched ledger is today answer', () => {
+    const l = shortLine();
+    renderLedger({ line: l, cover: coverForLine(l, twoSources) });
+
+    expect(screen.getByLabelText('Use from BRW-BB')).toHaveValue(5);
+    expect(screen.getByLabelText('Use from PJ-SR')).toHaveValue(1);
+    // 20 needed, 6 covered -> 14 to buy.
+    expect(screen.getAllByText('14').length).toBeGreaterThan(0);
+  });
+
+  it('states what is free at each location, not just a silent max', () => {
+    const l = shortLine();
+    renderLedger({ line: l, cover: coverForLine(l, twoSources) });
+    expect(screen.getByText('5 free')).toBeInTheDocument();
+    expect(screen.getByText('1 free')).toBeInTheDocument();
+  });
+
+  it('turning the toggle off withdraws the inputs and buys the whole shortage', () => {
+    const l = shortLine();
+    const { onDecide } = renderLedger({ line: l, cover: coverForLine(l, twoSources) });
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Use stock 6/ }));
+    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ buy: 20 }));
+    expect(onDecide.mock.calls[0][0].stock).toBeUndefined();
+  });
+
+  it('editing one location recomputes the buy by exactly that difference', () => {
+    const l = shortLine();
+    const { onDecide } = renderLedger({ line: l, cover: coverForLine(l, twoSources) });
+
+    fireEvent.change(screen.getByLabelText('Use from BRW-BB'), { target: { value: '2' } });
+
+    // 20 needed, 2 + 1 covered -> 17 to buy.
+    const last = onDecide.mock.calls.at(-1)![0];
+    expect(last.buy).toBe(17);
+    expect(last.stock.qty).toBe(3);
+  });
+
+  it('records WHICH locations the stock came from, at the edited quantities', () => {
+    const l = shortLine();
+    const { onDecide } = renderLedger({ line: l, cover: coverForLine(l, twoSources) });
+
+    fireEvent.change(screen.getByLabelText('Use from PJ-SR'), { target: { value: '0' } });
+
+    const last = onDecide.mock.calls.at(-1)![0];
+    expect(last.stock.sources).toEqual([
+      expect.objectContaining({ warehouse_code: 'BRW-BB', qty: 5 }),
+    ]);
+    expect(last.buy).toBe(15);
+  });
+
+  it('clamps a location above what it holds - the buy never goes below zero either', () => {
+    const l = shortLine();
+    const { onDecide } = renderLedger({ line: l, cover: coverForLine(l, twoSources) });
+
+    fireEvent.change(screen.getByLabelText('Use from BRW-BB'), { target: { value: '999' } });
+
+    expect(screen.getByLabelText('Use from BRW-BB')).toHaveValue(5);
+    const last = onDecide.mock.calls.at(-1)![0];
+    expect(last.stock.qty).toBe(6);
+    expect(last.buy).toBe(14);
+  });
+
+  it('seeds the inputs from the decision already taken, not from the proposal', () => {
+    const l = shortLine();
+    renderLedger({
+      line: l,
+      cover: coverForLine(l, twoSources),
+      decision: {
+        buy: 17,
+        stock: { qty: 3, sources: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 3 }] },
+      },
+    });
+    expect(screen.getByLabelText('Use from BRW-BB')).toHaveValue(3);
+    expect(screen.getByLabelText('Use from PJ-SR')).toHaveValue(0);
+  });
+
+  it('offers no inputs at all while the toggle is off', () => {
+    const l = shortLine();
+    renderLedger({
+      line: l,
+      cover: coverForLine(l, twoSources),
+      decision: { buy: 20 },
+    });
+    expect(screen.queryByLabelText('Use from BRW-BB')).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Use stock 6/ })).toBeInTheDocument();
+  });
+});
