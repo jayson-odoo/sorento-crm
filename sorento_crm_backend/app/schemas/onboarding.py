@@ -28,9 +28,11 @@ class PersonOut(BaseModel):
     row_number: int
     full_name: str
     nick_name: Optional[str] = None
+    #: Free text: what the requester says this person does. The reviewer turns it
+    #: into an access template; it is never a role id.
+    role_label: Optional[str] = None
     phone_raw: Optional[str] = None
     email_raw: Optional[str] = None
-    section_label: Optional[str] = None
     template_id: Optional[str] = None
     requester_note: Optional[str] = None
     reviewer_note: Optional[str] = None
@@ -39,9 +41,6 @@ class PersonOut(BaseModel):
     needs_agent_seat: bool
     review_status: str
     rejection_reason: Optional[str] = None
-    #: Recomputed on read from the normalised values, so a row the reviewer just
-    #: corrected stops complaining without a round trip through the parser.
-    problems: list[str] = Field(default_factory=list)
     collisions: list[CollisionOut] = Field(default_factory=list)
     user_step: str
     user_error: Optional[str] = None
@@ -71,9 +70,9 @@ class DraftRowIn(BaseModel):
     row_number: int = 0
     full_name: str
     nick_name: Optional[str] = None
+    role_label: Optional[str] = Field(default=None, max_length=120)
     phone_raw: Optional[str] = None
     email_raw: Optional[str] = None
-    section_label: Optional[str] = None
     template_id: Optional[str] = None
     requester_note: Optional[str] = None
     needs_system_account: bool = True
@@ -102,30 +101,6 @@ class IntakeContextOut(BaseModel):
     requester_note: Optional[str] = None
     templates: list[PublicTemplateOption] = Field(default_factory=list)
     people: list[PersonOut] = Field(default_factory=list)
-
-
-class ParsedRowOut(BaseModel):
-    row_number: int
-    full_name: str
-    nick_name: Optional[str] = None
-    phone_raw: Optional[str] = None
-    email_raw: Optional[str] = None
-    section_label: Optional[str] = None
-    problems: list[str] = Field(default_factory=list)
-
-
-class ParseProblemOut(BaseModel):
-    row: int
-    reason: str
-
-
-class ParseResultOut(BaseModel):
-    rows: list[ParsedRowOut] = Field(default_factory=list)
-    problems: list[ParseProblemOut] = Field(default_factory=list)
-    unmapped_headers: list[str] = Field(default_factory=list)
-    missing_columns: list[str] = Field(default_factory=list)
-    total_rows: int = 0
-    sections: list[str] = Field(default_factory=list)
 
 
 # --- admin --------------------------------------------------------------------
@@ -161,7 +136,6 @@ class RequestDetailOut(RequestSummaryOut):
     requester_note: Optional[str] = None
     reviewed_by_name: Optional[str] = None
     provisioned_at: Optional[datetime] = None
-    source_file_name: Optional[str] = None
     templates: list[PublicTemplateOption] = Field(default_factory=list)
     people: list[PersonOut] = Field(default_factory=list)
     #: Only ever returned to an authenticated reviewer, so the captain can copy
@@ -172,9 +146,9 @@ class RequestDetailOut(RequestSummaryOut):
 class PersonPatchIn(BaseModel):
     full_name: Optional[str] = None
     nick_name: Optional[str] = None
+    role_label: Optional[str] = Field(default=None, max_length=120)
     phone_raw: Optional[str] = None
     email_raw: Optional[str] = None
-    section_label: Optional[str] = None
     template_id: Optional[str] = None
     requester_note: Optional[str] = None
     reviewer_note: Optional[str] = None

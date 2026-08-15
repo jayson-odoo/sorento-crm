@@ -118,7 +118,6 @@ def _detail(db: Session, request: OnboardingRequest) -> RequestDetailOut:
         requester_note=request.requester_note,
         reviewed_by_name=reviewer,
         provisioned_at=request.provisioned_at,
-        source_file_name=request.source_file_name,
         templates=[
             public_template_option(t)
             for t in onboarding_service.list_templates(db, active_only=True)
@@ -482,7 +481,7 @@ def _email_intake_link(db: Session, request: OnboardingRequest) -> None:
     body_text = (
         f"Hello {request.requester_name},\n\n"
         "Sorento asks you to submit your team for onboarding. Open the link below, "
-        "upload your existing list or type the names in, and submit it once.\n\n"
+        "type the names in, and submit it once.\n\n"
         f"{url}\n\n"
         f"The link works until {expires} and you can come back to it as often as you like "
         "until you submit.\n\n"
@@ -491,7 +490,7 @@ def _email_intake_link(db: Session, request: OnboardingRequest) -> None:
     body_html = (
         f"<p>Hello {request.requester_name},</p>"
         "<p>Sorento asks you to submit your team for onboarding. Open the link below, "
-        "upload your existing list or type the names in, and submit it once.</p>"
+        "type the names in, and submit it once.</p>"
         f'<p><a href="{url}">{url}</a></p>'
         f"<p>The link works until {expires} and you can come back to it as often as you "
         "like until you submit.</p>"

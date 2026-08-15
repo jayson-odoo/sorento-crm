@@ -305,13 +305,12 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
               </CardHeading>
             </CardHeader>
             <CardContent>
-              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
                 <MetaItem label="Requester email" value={request.requester_email} />
                 <MetaItem label="Created" value={moment(request.created_at)} />
                 <MetaItem label="Submitted" value={moment(request.submitted_at)} />
                 <MetaItem label="Link expires" value={moment(request.expires_at)} />
                 <MetaItem label="Reviewed by" value={request.reviewed_by_name ?? '-'} />
-                <MetaItem label="Source file" value={request.source_file_name ?? 'Typed in'} />
               </dl>
             </CardContent>
           </Card>
@@ -382,7 +381,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
                 <span>·</span>
                 <span>Existing {counts.collisions}</span>
                 <span>·</span>
-                <span>Agent seats {counts.needsAgentSeat}</span>
+                <span>Respond.io accounts {counts.needsAgentSeat}</span>
                 {counts.failed ? (
                   <>
                     <span>·</span>

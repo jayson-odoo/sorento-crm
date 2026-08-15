@@ -13,13 +13,9 @@
  */
 
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type {
-  OnboardingIntakeContext,
-  OnboardingParseResult,
-} from '@/components/common/onboarding/types';
+import type { OnboardingIntakeContext } from '@/components/common/onboarding/types';
 import {
   fetchIntakeContext,
-  parseSheet,
   saveRows,
   submitIntake,
   type OnboardingDraftRow,
@@ -31,18 +27,6 @@ export function useIntakeContext(token: string) {
     queryKey: ['onboarding-intake', token],
     queryFn: () => fetchIntakeContext(token),
     retry: false,
-  });
-}
-
-/** Read a workbook into rows. Writes nothing, so a bad file costs a retry only. */
-export function useParseSheet(
-  token: string,
-  options: { onSuccess: (result: OnboardingParseResult) => void; onError: (error: Error) => void },
-) {
-  return useMutation({
-    mutationFn: (file: File) => parseSheet(token, file),
-    onSuccess: options.onSuccess,
-    onError: options.onError,
   });
 }
 

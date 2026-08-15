@@ -26,24 +26,6 @@ from app.schemas.onboarding import (
 from app.services.onboarding_service import Collision
 
 
-def row_problems(person: OnboardingPerson) -> list[str]:
-    """The row's complaints, recomputed from its current values.
-
-    Recomputed rather than stored so that a reviewer who fixes a phone number
-    sees the chip disappear on the next read. A stored problem list would keep
-    complaining about a value nobody can find fault with any more, which is the
-    fastest way to teach people to ignore the chips.
-    """
-    problems: list[str] = []
-    if not person.email:
-        problems.append("no email")
-    if person.phone_raw and not person.phone:
-        problems.append("phone not recognised")
-    if not person.phone_raw:
-        problems.append("no phone")
-    return problems
-
-
 def user_label(db: Session, person: OnboardingPerson) -> Optional[str]:
     """The name of the user this row produced or matched. Never an id."""
     if not person.user_id:
@@ -65,9 +47,9 @@ def person_out(
         row_number=person.row_number,
         full_name=person.full_name,
         nick_name=person.nick_name,
+        role_label=person.role_label,
         phone_raw=person.phone_raw,
         email_raw=person.email_raw,
-        section_label=person.section_label,
         template_id=str(person.template_id) if person.template_id else None,
         requester_note=person.requester_note,
         reviewer_note=person.reviewer_note,
@@ -76,7 +58,6 @@ def person_out(
         needs_agent_seat=person.needs_agent_seat,
         review_status=person.review_status,
         rejection_reason=person.rejection_reason,
-        problems=row_problems(person),
         collisions=[CollisionOut(kind=c.kind, label=c.label) for c in (collisions or [])],
         user_step=person.user_step,
         user_error=person.user_error,

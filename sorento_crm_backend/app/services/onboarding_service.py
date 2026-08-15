@@ -46,7 +46,7 @@ from app.models.user import User
 from app.services import status_service
 from app.services.crockford import crockford_token
 from app.services.error_handler import AppException
-from app.services.onboarding_reader import _plausible_msisdn
+from app.services.phone_utils import normalize_msisdn
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +121,36 @@ def _fold_email(value: Optional[str]) -> Optional[str]:
         return None
     folded = value.strip().lower()
     return folded or None
+
+
+#: A Malaysian MSISDN is `60` plus a 9- or 10-digit subscriber number, so the
+#: normalised form is 11 or 12 digits.
+_MSISDN_MIN_LEN = 11
+_MSISDN_MAX_LEN = 12
+
+
+def _plausible_msisdn(raw: Optional[str]) -> Optional[str]:
+    """The MSISDN for what somebody typed, or None when it is not a phone number.
+
+    Returns the same bare-digits form the rest of the system stores
+    (``60123456781``, no leading ``+``) so a value written here compares directly
+    against ``users.contact_number`` and ``respond_contacts.phone_number``.
+
+    The length judgement lives HERE rather than in ``normalize_msisdn``, which is
+    deliberately permissive because it is also the matcher that links an existing
+    user to an existing contact - refusing an odd-looking stored number there
+    would break a real link. Intake is the opposite situation: the number has
+    never been dialled, and ``01x-34567`` normalising to ``60134567`` would be
+    written to ``users.contact_number`` as though it were a phone number.
+    """
+    if not raw:
+        return None
+    normalised = normalize_msisdn(raw)
+    if not normalised or not normalised.isdigit():
+        return None
+    if not (_MSISDN_MIN_LEN <= len(normalised) <= _MSISDN_MAX_LEN):
+        return None
+    return normalised
 
 
 # --- requests -----------------------------------------------------------------
@@ -520,9 +550,9 @@ def finalise(db: Session, request: OnboardingRequest) -> OnboardingRequest:
 EDITABLE_PERSON_FIELDS = (
     "full_name",
     "nick_name",
+    "role_label",
     "phone_raw",
     "email_raw",
-    "section_label",
     "template_id",
     "requester_note",
     "reviewer_note",
@@ -756,7 +786,9 @@ def collisions_for(db: Session, request: OnboardingRequest) -> dict[str, list[Co
                 Collision(
                     kind="contact_phone",
                     label=(
-                        "Already a WhatsApp contact"
+                        # The captain's words for the respond-contact lane: what
+                        # this person already has is chatbot access.
+                        "Already has chatbot AI access"
                         + (f": {contact.name}" if getattr(contact, "name", None) else "")
                     ),
                 )

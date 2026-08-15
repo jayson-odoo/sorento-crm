@@ -205,6 +205,10 @@ class OnboardingPerson(Base, CompanyScopedMixin):
 
     full_name = Column(String(200), nullable=False)
     nick_name = Column(String(100), nullable=True)
+    #: What this person does, in the requester's own words ("Sales admin, KL").
+    #: Free text, not a role id: she is telling the reviewer what to grant, and
+    #: a picker here would expose the role list the templates exist to hide.
+    role_label = Column(String(120), nullable=True)
     phone_raw = Column(String(64), nullable=True)
     #: MSISDN-normalised. Null when the raw value could not be read - a warning
     #: on the row, never a rejected file.
@@ -213,8 +217,10 @@ class OnboardingPerson(Base, CompanyScopedMixin):
     #: `lower(btrim())`. Null when no email was supplied.
     email = Column(String(255), nullable=True)
 
-    #: The sheet's own section header ("SALES PERSON"). The only access signal a
-    #: phone list carries, and what a section-level template default keys on.
+    #: Retained, no longer collected. It carried the section heading the workbook
+    #: reader inferred, and that reader was withdrawn (captain decision,
+    #: 2026-08-15). Kept rather than dropped so the change needs no destructive
+    #: migration on a shared database; nothing reads or writes it.
     section_label = Column(String(120), nullable=True)
 
     template_id = Column(

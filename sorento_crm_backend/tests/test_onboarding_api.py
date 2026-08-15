@@ -17,7 +17,6 @@ from __future__ import annotations
 import importlib.util
 import uuid
 from datetime import datetime, timedelta
-from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -41,7 +40,6 @@ MIGRATION = (
     Path(__file__).resolve().parents[1] / "alembic" / "versions" / "360_onboarding_slice1.py"
 )
 SORENTO = "00000000-0000-0000-0000-000000000001"
-FIXTURE = Path(__file__).parent / "fixtures" / "onboarding_phone_list.xlsx"
 
 PUBLIC = "/api/v1/public/onboarding"
 ADMIN = "/api/v1/user-management/onboarding"
@@ -69,9 +67,6 @@ def db():
         module = _migration()
         module._seed_graph(session.connection())
         module._mark_system(session.connection())
-        # The reader resolves headers through `import_field_alias`, so the public
-        # parse endpoint needs the same aliases the migration seeds.
-        module._seed_aliases(session.connection())
         yield session
 
 
@@ -231,52 +226,6 @@ def test_the_requester_never_sees_a_role_id(client, sent_request, template):
     }
 
 
-# --- public: parse ------------------------------------------------------------
-
-
-def test_parse_reads_the_phone_list_shape(client, sent_request):
-    with FIXTURE.open("rb") as handle:
-        response = client.post(
-            f"{PUBLIC}/parse",
-            params={"token": sent_request.token},
-            files={"file": ("PHONE LIST.xlsx", handle.read(), "application/vnd.ms-excel")},
-        )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["total_rows"] == 18
-    assert len(body["rows"]) == 18
-    assert body["sections"][0] == "SALES PERSON"
-    # Warnings ride on the row rather than rejecting the file.
-    assert any(row["problems"] for row in body["rows"])
-
-
-def test_parse_refuses_a_non_workbook(client, sent_request):
-    response = client.post(
-        f"{PUBLIC}/parse",
-        params={"token": sent_request.token},
-        files={"file": ("notes.txt", b"hello", "text/plain")},
-    )
-    assert response.status_code == 422
-
-
-def test_parse_needs_a_token(client):
-    response = client.post(
-        f"{PUBLIC}/parse", files={"file": ("x.xlsx", b"whatever", "application/vnd.ms-excel")}
-    )
-    assert response.status_code == 401
-
-
-def test_parse_writes_nothing(client, db, sent_request):
-    with FIXTURE.open("rb") as handle:
-        client.post(
-            f"{PUBLIC}/parse",
-            params={"token": sent_request.token},
-            files={"file": ("PHONE LIST.xlsx", handle.read(), "application/vnd.ms-excel")},
-        )
-    db.refresh(sent_request)
-    assert sent_request.people == []
-
-
 # --- public: save and submit --------------------------------------------------
 
 
@@ -285,6 +234,7 @@ def _rows(count: int = 2) -> list[dict]:
         {
             "row_number": i,
             "full_name": f"Person {i}",
+            "role_label": "Sales admin",
             "email_raw": f"person{i}@mocha.com.my",
             "phone_raw": f"012-345678{i}",
             "needs_system_account": True,
@@ -332,6 +282,48 @@ def test_the_link_still_works_after_submission_but_read_only(client, sent_reques
         f"{PUBLIC}/rows", params={"token": sent_request.token}, json={"rows": _rows(5)}
     )
     assert refused.status_code == 409
+
+
+def test_the_role_the_requester_typed_survives_to_the_reviewer(client, db, sent_request):
+    """She says what somebody does; he decides what that grants.
+
+    Free text all the way through, so it has to make the round trip intact: saved
+    on her rows, readable on her own status page, editable by the reviewer, and
+    returned on the request detail he works from.
+    """
+    saved = client.put(
+        f"{PUBLIC}/rows", params={"token": sent_request.token}, json={"rows": _rows(1)}
+    )
+    assert saved.status_code == 200
+    assert saved.json()["people"][0]["role_label"] == "Sales admin"
+
+    client.post(f"{PUBLIC}/submit", params={"token": sent_request.token}, json={})
+
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+    detail = client.get(f"{ADMIN}/requests/{sent_request.id}").json()
+    person_id = detail["people"][0]["id"]
+    assert detail["people"][0]["role_label"] == "Sales admin"
+
+    patched = client.put(
+        f"{ADMIN}/requests/{sent_request.id}/people/{person_id}",
+        json={"role_label": "Sales admin, KL"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["people"][0]["role_label"] == "Sales admin, KL"
+
+    after = client.get(f"{ADMIN}/requests/{sent_request.id}").json()
+    assert after["people"][0]["role_label"] == "Sales admin, KL"
+
+
+def test_a_role_longer_than_the_column_is_refused_not_truncated(client, sent_request):
+    """122 characters would not fit `VARCHAR(120)`, and a silent truncation is a
+    value the requester never wrote."""
+    rows = _rows(1)
+    rows[0]["role_label"] = "x" * 121
+    response = client.put(
+        f"{PUBLIC}/rows", params={"token": sent_request.token}, json={"rows": rows}
+    )
+    assert response.status_code == 422
 
 
 def test_submitting_nothing_is_refused(client, sent_request):

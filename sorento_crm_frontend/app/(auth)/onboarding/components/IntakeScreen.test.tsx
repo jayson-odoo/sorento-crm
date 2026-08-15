@@ -29,7 +29,6 @@ vi.mock('sonner', () => ({
 }));
 
 const fetchIntakeContext = vi.fn();
-const parseSheet = vi.fn();
 const saveRows = vi.fn();
 const submitIntake = vi.fn();
 
@@ -40,7 +39,6 @@ vi.mock('../lib/onboarding-client', async () => {
   return {
     ...actual,
     fetchIntakeContext: (...args: unknown[]) => fetchIntakeContext(...args),
-    parseSheet: (...args: unknown[]) => parseSheet(...args),
     saveRows: (...args: unknown[]) => saveRows(...args),
     submitIntake: (...args: unknown[]) => submitIntake(...args),
   };
@@ -112,52 +110,7 @@ describe('IntakeScreen', () => {
     expect(submit).toBeDisabled();
   });
 
-  it('fills the grid from a parsed sheet and counts what it read', async () => {
-    fetchIntakeContext.mockResolvedValue(CONTEXT);
-    parseSheet.mockResolvedValue({
-      rows: [
-        {
-          row_number: 1,
-          full_name: 'Nurul Aisyah',
-          nick_name: 'Aisyah',
-          phone_raw: '012-3456781',
-          email_raw: 'aisyah@mocha.com.my',
-          section_label: 'SALES PERSON',
-          problems: [],
-        },
-        {
-          row_number: 2,
-          full_name: 'Ahmad Zulkifli',
-          nick_name: 'Zul',
-          phone_raw: '017-3456786',
-          email_raw: null,
-          section_label: 'SALES PERSON',
-          problems: ['no email'],
-        },
-      ],
-      problems: [],
-      unmapped_headers: [],
-      missing_columns: [],
-      total_rows: 2,
-      sections: ['SALES PERSON'],
-    });
-
-    const { container } = renderScreen();
-    await screen.findByText('MOCHA staff onboarding');
-
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(['x'], 'PHONE LIST.xlsx', {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    });
-    fireEvent.change(input, { target: { files: [file] } });
-
-    await waitFor(() => expect(parseSheet).toHaveBeenCalled());
-    expect(await screen.findByText('2 people ready to submit.')).toBeInTheDocument();
-    // A row the parser could not fully read is kept, with its complaint on it.
-    expect(screen.getAllByText('no email').length).toBeGreaterThan(0);
-  });
-
-  it('lets her add a person by hand without a spreadsheet', async () => {
+  it('lets her add a person, which is the only way a list is built', async () => {
     fetchIntakeContext.mockResolvedValue(CONTEXT);
     renderScreen();
     fireEvent.click(await screen.findByRole('button', { name: /Add a person/ }));
@@ -173,49 +126,18 @@ describe('IntakeScreen', () => {
     // Sections, not a wizard: "1. Give us the people" told her which step she
     // was on, which is the one thing a one-screen form already shows her.
     expect(await screen.findByText('People')).toBeInTheDocument();
-    expect(screen.getByText('Access')).toBeInTheDocument();
     expect(screen.getAllByText('Notes').length).toBeGreaterThan(0);
     expect(screen.queryByText(/1\. Give us the people/)).not.toBeInTheDocument();
     expect(screen.queryByText(/2\. Say what each person needs/)).not.toBeInTheDocument();
   });
 
-  it('says what the workbook read, including the rows that need a look', async () => {
+  it('offers no file upload, because rows are typed into the system', async () => {
     fetchIntakeContext.mockResolvedValue(CONTEXT);
-    parseSheet.mockResolvedValue({
-      rows: [
-        {
-          row_number: 1,
-          full_name: 'Nurul Aisyah',
-          nick_name: null,
-          phone_raw: null,
-          email_raw: null,
-          section_label: null,
-          problems: ['no email'],
-        },
-      ],
-      problems: [],
-      unmapped_headers: [],
-      missing_columns: [],
-      total_rows: 1,
-      sections: [],
-    });
-
     const { container } = renderScreen();
     await screen.findByText('MOCHA staff onboarding');
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
-    fireEvent.change(input, {
-      target: {
-        files: [
-          new File(['x'], 'PHONE LIST.xlsx', {
-            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          }),
-        ],
-      },
-    });
-
-    // "1 person", not "1 people": a one-row sheet is an ordinary sheet, so the
-    // toast would read wrong on a common case rather than a rare one.
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Read 1 person, 1 with issues.'));
+    // The workbook reader is gone (captain decision, 2026-08-15), so a dropzone
+    // here would offer a path the server no longer has.
+    expect(container.querySelector('input[type="file"]')).toBeNull();
   });
 
   it('turns into a read-only status page once submitted', async () => {
@@ -229,9 +151,9 @@ describe('IntakeScreen', () => {
           row_number: 1,
           full_name: 'Nurul Aisyah',
           nick_name: 'Aisyah',
+          role_label: 'Sales admin',
           phone_raw: '012-3456781',
           email_raw: 'aisyah@mocha.com.my',
-          section_label: 'SALES PERSON',
           template_id: 'tpl-sales',
           requester_note: null,
           reviewer_note: null,
@@ -240,7 +162,6 @@ describe('IntakeScreen', () => {
           needs_agent_seat: false,
           review_status: 'approved' as const,
           rejection_reason: null,
-          problems: [],
           collisions: [],
           user_step: 'done' as const,
           user_error: null,
@@ -254,7 +175,7 @@ describe('IntakeScreen', () => {
     });
 
     renderScreen();
-    // "1 person", not "1 people": one name on the sheet is an ordinary batch.
+    // "1 person", not "1 people": one name in the batch is an ordinary batch.
     expect(await screen.findByText(/1 person submitted for review/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Submit for review/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Add a person/ })).not.toBeInTheDocument();

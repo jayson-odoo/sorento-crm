@@ -116,6 +116,9 @@ export function NewOnboardingRequestDialog() {
               onChange={(value) => setValues((v) => ({ ...v, company_id: value }))}
               options={companyOptions}
               placeholder="Select a company"
+              // A company's registered name runs past the dialog width, and two
+              // companies in one group can differ only in the part that is cut.
+              wrapOptions
             />
           </div>
           <div className="flex flex-col gap-2">

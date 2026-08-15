@@ -13,10 +13,6 @@
  *            template LABELS (never roles), and the rows saved so far.
  *        401 unknown / expired / revoked token.
  *
- *   POST /api/v1/public/onboarding/parse        multipart { file }
- *        200 OnboardingParseResult - rows plus per-row problems. Writes nothing.
- *        422 not an Excel workbook.  429 per-IP rate limit.
- *
  *   PUT  /api/v1/public/onboarding/rows          { rows: OnboardingDraftRow[] }
  *        200 OnboardingIntakeContext - whole-list replace, keyed on row_number.
  *        409 once the request has left `sent`.
@@ -28,7 +24,6 @@
 
 import type {
   OnboardingIntakeContext,
-  OnboardingParseResult,
   OnboardingPerson,
   OnboardingPersonPatch,
 } from '@/components/common/onboarding/types';
@@ -40,9 +35,9 @@ export interface OnboardingDraftRow {
   row_number: number;
   full_name: string;
   nick_name: string | null;
+  role_label: string | null;
   phone_raw: string | null;
   email_raw: string | null;
-  section_label: string | null;
   template_id: string | null;
   requester_note: string | null;
   needs_system_account: boolean;
@@ -55,9 +50,9 @@ export function toDraftRow(person: OnboardingPerson): OnboardingDraftRow {
     row_number: person.row_number,
     full_name: person.full_name,
     nick_name: person.nick_name,
+    role_label: person.role_label,
     phone_raw: person.phone_raw,
     email_raw: person.email_raw,
-    section_label: person.section_label,
     template_id: person.template_id,
     requester_note: person.requester_note,
     needs_system_account: person.needs_system_account,
@@ -112,7 +107,7 @@ async function request<T>(
   if (!token) throw new Error('This link is missing its token.');
   const headers = new Headers(init.headers || {});
   headers.set('X-Onboarding-Token', token);
-  if (init.body && !(init.body instanceof FormData)) {
+  if (init.body) {
     headers.set('Content-Type', 'application/json');
   }
   const response = await fetch(url(path), { ...init, headers });
@@ -124,18 +119,6 @@ async function request<T>(
 
 export async function fetchIntakeContext(token: string): Promise<OnboardingIntakeContext> {
   return request(token, '/me', { method: 'GET' }, 'This link is no longer valid.');
-}
-
-export async function parseSheet(token: string, file: File): Promise<OnboardingParseResult> {
-  const form = new FormData();
-  form.append('file', file);
-  // No Content-Type header: fetch must set the multipart boundary itself.
-  return request(
-    token,
-    '/parse',
-    { method: 'POST', body: form },
-    'Could not read that workbook.',
-  );
 }
 
 export async function saveRows(

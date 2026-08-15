@@ -1,36 +1,20 @@
 'use client';
 
 /**
- * The three chip families the onboarding grid renders.
+ * The two chip families the onboarding grid renders.
  *
  * They answer different questions and a reader must not confuse them, so each
  * takes a different shared `Badge` variant rather than a hand-rolled pastel
  * class:
  *
- * - a **problem** is something the parser could not read (warning, the requester
- *   can fix it),
  * - a **collision** is something that already exists (info, nobody needs to fix
  *   it - the lane will be skipped),
  * - a **lane** is what provisioning did (success / destructive / secondary).
  */
 
-import { AlertTriangle, Check, Info, Loader, X } from 'lucide-react';
+import { Check, Info, Loader, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import type { OnboardingCollision, OnboardingLaneStep } from './types';
-
-export function ProblemChips({ problems }: { problems: string[] }) {
-  if (!problems.length) return null;
-  return (
-    <div className="flex flex-wrap gap-1">
-      {problems.map((problem) => (
-        <Badge key={problem} variant="warning" appearance="light" size="sm" title={problem}>
-          <AlertTriangle />
-          <span className="truncate max-w-[140px]">{problem}</span>
-        </Badge>
-      ))}
-    </div>
-  );
-}
 
 export function CollisionChips({ collisions }: { collisions: OnboardingCollision[] }) {
   if (!collisions.length) {

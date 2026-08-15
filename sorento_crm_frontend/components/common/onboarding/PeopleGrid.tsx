@@ -35,8 +35,8 @@ import {
   useReactTable,
   type ColumnDef,
 } from '@tanstack/react-table';
+import { Trash2 } from 'lucide-react';
 import { Card, CardHeader, CardHeading, CardTable, CardTitle, CardToolbar } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -45,8 +45,9 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { CollisionChips, LaneChip, ProblemChips, ReviewStatusBadge } from './OnboardingChips';
+import { CollisionChips, LaneChip, ReviewStatusBadge } from './OnboardingChips';
 import type {
   OnboardingPerson,
   OnboardingPersonPatch,
@@ -188,6 +189,9 @@ function TemplateSelect({
         // The template is optional, so it must be possible to unset it and not
         // only to change it (ADR: an optional select must be clearable).
         clearable
+        // A template label is longer than this cell, and a menu cut to the cell
+        // width can make two templates read the same.
+        wrapOptions
         value={value ?? ''}
         onChange={(next) => onChange(next || null)}
         options={templates.map((template) => ({
@@ -201,40 +205,85 @@ function TemplateSelect({
   );
 }
 
-function NeedsCheckboxes({
+/**
+ * The three things a person can be given, in the words the captain uses.
+ *
+ * Labels only: the columns behind them keep their original names
+ * (`needs_respond_contact`, `needs_agent_seat`), because renaming a column is a
+ * migration and this was a vocabulary decision.
+ */
+const NEED_FIELDS = [
+  'needs_system_account',
+  'needs_respond_contact',
+  'needs_agent_seat',
+] as const;
+
+type NeedField = (typeof NEED_FIELDS)[number];
+
+export const NEED_LABELS: Record<NeedField, string> = {
+  needs_system_account: 'System account',
+  needs_respond_contact: 'Access to chatbot AI',
+  needs_agent_seat: 'Respond.io account',
+};
+
+function selectedNeeds(person: OnboardingPerson): NeedField[] {
+  return NEED_FIELDS.filter((field) => person[field]);
+}
+
+/**
+ * What this person needs, as the standard multi-select every other picker in
+ * the app uses rather than a stack of checkboxes.
+ *
+ * Read-only modes render the same words as plain text, so the row says the same
+ * thing whether or not it can be edited.
+ */
+function NeedsSelect({
+  personId,
   person,
   disabled,
   onPatch,
-  idPrefix,
 }: {
+  personId: string;
   person: OnboardingPerson;
   disabled: boolean;
   onPatch: (patch: OnboardingPersonPatch) => void;
-  idPrefix: string;
 }) {
-  const items: Array<[keyof OnboardingPersonPatch, string, boolean]> = [
-    ['needs_system_account', 'System account', person.needs_system_account],
-    ['needs_respond_contact', 'WhatsApp contact', person.needs_respond_contact],
-    ['needs_agent_seat', 'Chat-agent seat', person.needs_agent_seat],
-  ];
+  const chosen = selectedNeeds(person);
+  if (disabled) {
+    return (
+      <span className="text-sm break-words">
+        {chosen.length ? chosen.map((field) => NEED_LABELS[field]).join(', ') : 'Nothing'}
+      </span>
+    );
+  }
+  const id = `people-grid-needs-${personId}`;
   return (
-    <div className="flex flex-col gap-1">
-      {items.map(([field, label, checked]) => (
-        <label
-          key={field}
-          htmlFor={`${idPrefix}-${field}`}
-          className="flex items-center gap-2 text-xs"
-        >
-          <Checkbox
-            id={`${idPrefix}-${field}`}
-            checked={checked}
-            disabled={disabled}
-            onCheckedChange={(v) => onPatch({ [field]: v === true } as OnboardingPersonPatch)}
-          />
-          <span>{label}</span>
-        </label>
-      ))}
-    </div>
+    <>
+      {/* The grid header is a column title, not a per-cell label. */}
+      <label htmlFor={id} className="sr-only">
+        Needs
+      </label>
+      <SearchableMultiSelect
+        id={id}
+        size="sm"
+        wrapOptions
+        triggerClassName="w-full"
+        value={chosen}
+        onChange={(next) => {
+          // Every flag is sent, not only the one that moved: the selection IS
+          // the answer, so an unticked option has to arrive as `false` rather
+          // than as an absent key the server would leave alone.
+          const set = new Set(next);
+          onPatch(
+            Object.fromEntries(
+              NEED_FIELDS.map((field) => [field, set.has(field)]),
+            ) as OnboardingPersonPatch,
+          );
+        }}
+        options={NEED_FIELDS.map((field) => ({ value: field, label: NEED_LABELS[field] }))}
+        placeholder="Nothing"
+      />
+    </>
   );
 }
 
@@ -242,13 +291,23 @@ function LaneLedger({ person }: { person: OnboardingPerson }) {
   return (
     <div className="flex flex-col gap-1">
       <LaneChip
-        label="System account"
+        label={NEED_LABELS.needs_system_account}
         step={person.user_step}
         error={person.user_error}
         note={person.user_label}
       />
-      <LaneChip label="WhatsApp contact" step={person.contact_step} error={person.contact_error} deferred />
-      <LaneChip label="Chat-agent seat" step={person.agent_step} error={person.agent_error} deferred />
+      <LaneChip
+        label={NEED_LABELS.needs_respond_contact}
+        step={person.contact_step}
+        error={person.contact_error}
+        deferred
+      />
+      <LaneChip
+        label={NEED_LABELS.needs_agent_seat}
+        step={person.agent_step}
+        error={person.agent_error}
+        deferred
+      />
     </div>
   );
 }
@@ -266,7 +325,7 @@ export function PeopleGrid({
   onRemovePerson,
   onApprovePerson,
   onRejectPerson,
-  emptyMessage = 'No people yet. Upload a sheet or add a person.',
+  emptyMessage = 'No people yet. Add a person.',
 }: PeopleGridProps) {
   const editable = mode !== 'readonly' && !locked;
   const isReview = mode === 'review';
@@ -300,19 +359,6 @@ export function PeopleGrid({
 
   const columns = useMemo<ColumnDef<OnboardingPerson>[]>(() => {
     const base: ColumnDef<OnboardingPerson>[] = [
-      {
-        id: 'section',
-        accessorFn: (row) => row.section_label ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Section" column={column} />,
-        size: 130,
-        enableSorting: false,
-        meta: { headerTitle: 'Section', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) => (
-          <span className="truncate block" title={row.original.section_label ?? undefined}>
-            {row.original.section_label ?? '-'}
-          </span>
-        ),
-      },
       {
         id: 'full_name',
         accessorFn: (row) => row.full_name,
@@ -352,6 +398,31 @@ export function PeopleGrid({
           ) : (
             <span className="truncate block" title={row.original.nick_name ?? undefined}>
               {row.original.nick_name ?? '-'}
+            </span>
+          ),
+      },
+      {
+        // Free text, not a picker: the requester knows what somebody does, and
+        // the reviewer is the one who turns that into a CRM role. Asking her to
+        // choose from a role list would leak the very list AC-5.4 hides.
+        id: 'role_label',
+        accessorFn: (row) => row.role_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Role" column={column} />,
+        size: 160,
+        enableSorting: false,
+        meta: { headerTitle: 'Role', skeleton: <Skeleton className="h-4 w-20" /> },
+        cell: ({ row }) =>
+          editable ? (
+            <BufferedInput
+              aria-label={`Role, row ${row.original.row_number}`}
+              className="h-8"
+              maxLength={120}
+              value={row.original.role_label ?? ''}
+              onCommit={(next) => patch(row.original.id, { role_label: next })}
+            />
+          ) : (
+            <span className="truncate block" title={row.original.role_label ?? undefined}>
+              {row.original.role_label ?? '-'}
             </span>
           ),
       },
@@ -433,31 +504,17 @@ export function PeopleGrid({
         id: 'needs',
         accessorFn: (row) => `${row.needs_system_account}`,
         header: ({ column }) => <DataGridColumnHeader title="Needs" column={column} />,
-        size: 160,
+        size: 240,
         enableSorting: false,
         meta: { headerTitle: 'Needs', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => (
-          <NeedsCheckboxes
+          <NeedsSelect
+            personId={row.original.id}
             person={row.original}
             disabled={!editable}
-            idPrefix={`grid-${row.original.id}`}
             onPatch={(next) => patch(row.original.id, next)}
           />
         ),
-      },
-      {
-        id: 'problems',
-        accessorFn: (row) => row.problems.join(', '),
-        header: ({ column }) => <DataGridColumnHeader title="Issues" column={column} />,
-        size: 180,
-        enableSorting: false,
-        meta: { headerTitle: 'Issues', skeleton: <Skeleton className="h-4 w-24" /> },
-        cell: ({ row }) =>
-          row.original.problems.length ? (
-            <ProblemChips problems={row.original.problems} />
-          ) : (
-            <span className="text-xs text-muted-foreground">None</span>
-          ),
       },
       {
         id: 'note',
@@ -559,17 +616,21 @@ export function PeopleGrid({
       base.push({
         id: 'actions',
         header: '',
-        size: 90,
+        size: 60,
         enableHiding: false,
         enableSorting: false,
         cell: ({ row }) => (
+          // The standard row-delete affordance: a ghost trash icon, the same one
+          // every other listing uses, rather than a word only this grid used.
           <Button
+            mode="icon"
+            variant="ghost"
             size="sm"
-            variant="outline"
-            className="h-7 px-2 text-xs"
+            aria-label="Remove"
+            title="Remove"
             onClick={() => setRemoving(row.original)}
           >
-            Remove
+            <Trash2 className="size-4 text-destructive" />
           </Button>
         ),
       });

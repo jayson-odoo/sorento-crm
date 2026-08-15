@@ -23,17 +23,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Optional
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    File,
-    Header,
-    HTTPException,
-    Query,
-    Request,
-    UploadFile,
-    status,
-)
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -42,9 +32,6 @@ from app.models.company import Company
 from app.models.onboarding import OnboardingRequest
 from app.schemas.onboarding import (
     IntakeContextOut,
-    ParseProblemOut,
-    ParsedRowOut,
-    ParseResultOut,
     PublicTemplateOption,
     SaveRowsIn,
     SubmitIn,
@@ -56,11 +43,6 @@ from app.services.onboarding_serializers import person_out, public_template_opti
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-#: Accepted upload shapes. `.xls` included because `sheet_rows` reads OLE2 too,
-#: and a department head's phone list is as likely to be a 2003 workbook as not.
-ALLOWED_EXTENSIONS = (".xlsx", ".xlsm", ".xls")
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 def get_onboarding_request(
@@ -139,82 +121,6 @@ def onboarding_templates(
             public_template_option(t)
             for t in onboarding_service.list_templates(db, active_only=True)
         ]
-
-
-@router.post("/parse", response_model=ParseResultOut)
-async def onboarding_parse(
-    http_request: Request,
-    file: UploadFile = File(...),
-    request: OnboardingRequest = Depends(get_onboarding_request),
-    db: Session = Depends(get_db),
-):
-    """Read a workbook into rows plus complaints. Writes nothing.
-
-    Rate-limited per IP. This is unauthenticated-by-account compute that opens a
-    spreadsheet, and the per-request token does not bound how often one link can
-    be used - it is multi-use by design. Fail-open, like the portal's OTP limit:
-    a broken limiter must not take the feature down.
-    """
-    from app.config import settings as app_settings
-    from app.services import rate_limit
-
-    ip = http_request.client.host if http_request.client else None
-    gate = rate_limit.hit(
-        "onboarding_parse",
-        ip,
-        limit=app_settings.rate_limit_onboarding_parse_max,
-        window_seconds=app_settings.rate_limit_onboarding_parse_window_seconds,
-    )
-    if not gate.allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many uploads. Please try again shortly.",
-            headers={
-                "Retry-After": str(
-                    gate.retry_after_seconds
-                    or app_settings.rate_limit_onboarding_parse_window_seconds
-                )
-            },
-        )
-
-    name = (file.filename or "").lower()
-    if not name.endswith(ALLOWED_EXTENSIONS):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Upload an Excel workbook (.xlsx, .xlsm or .xls).",
-        )
-
-    data = await file.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="That file is larger than 10 MB.",
-        )
-
-    from app.services import onboarding_reader
-
-    with company_scope(db, frozenset({str(request.company_id)})):
-        result = onboarding_reader.read_workbook(data, db=db)
-
-    return ParseResultOut(
-        rows=[
-            ParsedRowOut(
-                row_number=row.row_number,
-                full_name=row.full_name,
-                nick_name=row.nick_name,
-                phone_raw=row.phone_raw,
-                email_raw=row.email_raw,
-                section_label=row.section_label,
-                problems=row.problems,
-            )
-            for row in result.rows
-        ],
-        problems=[ParseProblemOut(row=p.row_number, reason=p.reason) for p in result.problems],
-        unmapped_headers=result.unmapped_headers,
-        missing_columns=result.missing_columns,
-        total_rows=result.total_rows,
-        sections=result.sections,
-    )
 
 
 @router.put("/rows", response_model=IntakeContextOut)

@@ -93,11 +93,6 @@ class Settings(BaseSettings):
     rate_limit_reset_window_seconds: int = 900
     rate_limit_portal_otp_max: int = 30        # portal OTP requests per window per IP
     rate_limit_portal_otp_window_seconds: int = 60
-    # Onboarding sheet parse: unauthenticated-by-account compute that opens a
-    # workbook. Generous enough that a requester correcting her file five times
-    # in a minute is never blocked.
-    rate_limit_onboarding_parse_max: int = 20
-    rate_limit_onboarding_parse_window_seconds: int = 60
 
     # Presigned-URL hardening (external API) — see PLAN-fix-security-cluster Sub-plan B.
     # When True, /external/presigned-url only signs a file_path that resolves to a

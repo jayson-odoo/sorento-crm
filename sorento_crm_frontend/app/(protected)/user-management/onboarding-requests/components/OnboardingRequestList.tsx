@@ -301,6 +301,9 @@ export function OnboardingRequestList() {
                       options={STATUS_OPTIONS}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
+                      // "Completed with failures" is wider than the filter
+                      // popover, and cut short it reads as plain "Completed".
+                      wrapOptions
                     />
                   </div>
                   {statusFilter !== 'all' ? (

@@ -110,7 +110,6 @@ function detail(overrides: Partial<Detail> = {}): Detail {
     requester_note: null,
     reviewed_by_name: null,
     provisioned_at: null,
-    source_file_name: 'PHONE LIST.xlsx',
     templates: [
       {
         id: 'tpl-sales',
@@ -127,9 +126,9 @@ function detail(overrides: Partial<Detail> = {}): Detail {
         row_number: 1,
         full_name: 'Nurul Aisyah',
         nick_name: 'Aisyah',
+        role_label: 'Sales admin',
         phone_raw: '012-3456781',
         email_raw: 'aisyah@mocha.com.my',
-        section_label: 'SALES PERSON',
         template_id: 'tpl-sales',
         requester_note: null,
         reviewer_note: null,
@@ -138,7 +137,6 @@ function detail(overrides: Partial<Detail> = {}): Detail {
         needs_agent_seat: false,
         review_status: 'proposed',
         rejection_reason: null,
-        problems: [],
         collisions: [],
         user_step: 'pending',
         user_error: null,
@@ -226,7 +224,10 @@ describe('OnboardingRequestDetail', () => {
     renderDetail();
     expect(await screen.findByText('Requester email')).toBeInTheDocument();
     expect(screen.getByText('Link expires')).toBeInTheDocument();
-    expect(screen.getByText('Source file')).toBeInTheDocument();
+    expect(screen.getByText('Reviewed by')).toBeInTheDocument();
+    // "Source file" went with the upload path: every batch is typed in now, so
+    // the field could only ever have said one thing.
+    expect(screen.queryByText('Source file')).not.toBeInTheDocument();
   });
 
   it('offers approve only while the request is in review', async () => {
@@ -313,7 +314,10 @@ describe('OnboardingRequestDetail', () => {
     expect(grid.queryByRole('textbox')).not.toBeInTheDocument();
     expect(grid.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
     expect(grid.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
-    grid.getAllByRole('checkbox').forEach((box) => expect(box).toBeDisabled());
+    // No pickers either: the template and the needs multi-select both fall back
+    // to plain text once the batch has left review.
+    expect(grid.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(grid.getAllByText(/System account, Access to chatbot AI/).length).toBeGreaterThan(0);
 
     // What a finished batch is FOR still renders: the verdict, what already
     // existed, and where each lane got to.
@@ -345,7 +349,7 @@ describe('OnboardingRequestDetail', () => {
     renderDetail();
     expect(await screen.findByText('Submitted 1')).toBeInTheDocument();
     expect(screen.getByText('Existing 1')).toBeInTheDocument();
-    expect(screen.getByText('Agent seats 1')).toBeInTheDocument();
+    expect(screen.getByText('Respond.io accounts 1')).toBeInTheDocument();
   });
 
   it('names the failures rather than only counting successes', async () => {

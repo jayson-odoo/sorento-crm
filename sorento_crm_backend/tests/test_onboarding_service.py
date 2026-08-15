@@ -204,6 +204,23 @@ def test_replace_people_is_a_whole_list_replace(db):
     assert [p.full_name for p in request.people] == ["Only one left"]
 
 
+def test_the_role_she_typed_is_saved_and_editable(db):
+    """Free text, kept as written. The reviewer maps it to access; nothing else
+    reads it, so nothing may normalise it either."""
+    request = _make_request(db)
+    onboarding_service.send_request(db, str(request.id))
+    onboarding_service.replace_people(
+        db, request, [{"full_name": "Aisyah", "role_label": "Sales admin, KL"}]
+    )
+    assert request.people[0].role_label == "Sales admin, KL"
+
+    onboarding_service.submit(db, request)
+    person = onboarding_service.update_person(
+        db, str(request.people[0].id), {"role_label": "Sales admin"}
+    )
+    assert person.role_label == "Sales admin"
+
+
 def test_blank_rows_are_dropped_not_refused(db):
     """A row she started and abandoned must not cost her a 30-person submission."""
     request = _make_request(db)

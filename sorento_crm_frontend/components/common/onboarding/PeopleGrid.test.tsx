@@ -47,9 +47,9 @@ function person(overrides: Partial<OnboardingPerson> = {}): OnboardingPerson {
     row_number: 1,
     full_name: 'Nurul Aisyah',
     nick_name: 'Aisyah',
+    role_label: 'Sales admin',
     phone_raw: '012-3456781',
     email_raw: 'aisyah@mocha.com.my',
-    section_label: 'SALES PERSON',
     template_id: 'tpl-sales',
     requester_note: null,
     reviewer_note: null,
@@ -58,7 +58,6 @@ function person(overrides: Partial<OnboardingPerson> = {}): OnboardingPerson {
     needs_agent_seat: false,
     review_status: 'proposed',
     rejection_reason: null,
-    problems: [],
     collisions: [],
     user_step: 'pending',
     user_error: null,
@@ -91,7 +90,7 @@ describe('PeopleGrid', () => {
         mode="intake"
         people={[]}
         templates={TEMPLATES}
-        emptyMessage="No people yet. Upload your sheet above."
+        emptyMessage="No people yet. Add a person."
       />,
     );
     expect(screen.getAllByText(/No people yet/i).length).toBeGreaterThan(0);
@@ -304,16 +303,63 @@ describe('PeopleGrid', () => {
     expect(onPatch).toHaveBeenCalledWith('p1', { template_id: null });
   });
 
-  it('shows per-row problems as chips', () => {
+  it('asks what each person needs with the standard multi-select', async () => {
+    const onPatch = vi.fn();
     render(
       <PeopleGrid
         mode="intake"
-        people={[person({ problems: ['no email', 'phone not recognised'] })]}
+        people={[person()]}
         templates={TEMPLATES}
+        onPatchPerson={onPatch}
       />,
     );
-    expect(screen.getAllByText('no email').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('phone not recognised').length).toBeGreaterThan(0);
+    // A stack of checkboxes was this grid's own invention; every other picker in
+    // the app is the shared multi-select, which exposes the combobox role.
+    const trigger = within(grid()).getByLabelText('Needs');
+    expect(trigger).toHaveAttribute('role', 'combobox');
+
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('option', { name: 'Respond.io account' }));
+    // Every flag rides on the patch, not only the one that moved: the selection
+    // IS the answer, so an unticked option has to arrive as `false`.
+    expect(onPatch).toHaveBeenCalledWith('p1', {
+      needs_system_account: true,
+      needs_respond_contact: true,
+      needs_agent_seat: true,
+    });
+  });
+
+  it('says what each person needs in words when the row cannot be edited', () => {
+    render(<PeopleGrid mode="readonly" people={[person()]} templates={TEMPLATES} />);
+    const cells = within(grid());
+    expect(cells.queryByLabelText('Needs')).not.toBeInTheDocument();
+    expect(cells.getAllByText(/System account, Access to chatbot AI/).length).toBeGreaterThan(0);
+  });
+
+  it('carries the role the requester typed, and lets it be corrected', () => {
+    const onPatch = vi.fn();
+    render(
+      <PeopleGrid
+        mode="review"
+        people={[person()]}
+        templates={TEMPLATES}
+        onPatchPerson={onPatch}
+      />,
+    );
+    const role = within(grid()).getByLabelText('Role, row 1');
+    expect(role).toHaveValue('Sales admin');
+    fireEvent.change(role, { target: { value: 'Sales admin, KL' } });
+    fireEvent.blur(role);
+    expect(onPatch).toHaveBeenCalledWith('p1', { role_label: 'Sales admin, KL' });
+  });
+
+  it('carries no parser leftovers, now that rows are typed in', () => {
+    // Issues and Section were both fed by the workbook reader, which is gone
+    // (captain decision, 2026-08-15). A column nothing can ever fill reads as a
+    // feature that is broken rather than one that was withdrawn.
+    render(<PeopleGrid mode="review" people={[person()]} templates={TEMPLATES} />);
+    expect(screen.queryByText('Issues')).not.toBeInTheDocument();
+    expect(screen.queryByText('Section')).not.toBeInTheDocument();
   });
 
   it('hides collisions and verdicts from the requester', () => {
@@ -342,9 +388,13 @@ describe('PeopleGrid', () => {
       />,
     );
     expect(screen.getAllByText('Already a user: Tan Wei Ming').length).toBeGreaterThan(0);
+    // The captain's words for the three lanes. "WhatsApp contact" and
+    // "Chat-agent seat" named the plumbing; these name what the person gets.
     expect(screen.getAllByText('System account').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('WhatsApp contact').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Chat-agent seat').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Access to chatbot AI').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Respond.io account').length).toBeGreaterThan(0);
+    expect(screen.queryByText('WhatsApp contact')).not.toBeInTheDocument();
+    expect(screen.queryByText('Chat-agent seat')).not.toBeInTheDocument();
   });
 
   it('labels a pending contact lane as not yet automated rather than in progress', () => {
@@ -438,7 +488,13 @@ describe('PeopleGrid', () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(within(grid()).getByRole('button', { name: 'Remove' }));
+    // The standard delete affordance: an icon button, not a word this grid
+    // alone used. It carries its own label, so the row is still readable.
+    const remove = within(grid()).getByRole('button', { name: 'Remove' });
+    expect(remove.querySelector('svg')).not.toBeNull();
+    expect(remove).not.toHaveTextContent('Remove');
+
+    fireEvent.click(remove);
     // Removing a row throws away what she typed, so it is confirmed in the
     // standard words rather than being one click.
     expect(await screen.findByText('Confirm delete')).toBeInTheDocument();

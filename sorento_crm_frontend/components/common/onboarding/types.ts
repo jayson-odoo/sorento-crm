@@ -96,11 +96,15 @@ export interface OnboardingPerson {
   row_number: number;
   full_name: string;
   nick_name: string | null;
-  /** What was typed or read off the sheet. The normalised form stays server-side. */
+  /**
+   * What this person does, in the requester's own words ("Sales admin, KL").
+   * Free text on purpose: she is telling the reviewer what to grant, and a role
+   * picker here would expose the role list AC-5.4 keeps from her.
+   */
+  role_label: string | null;
+  /** What was typed. The normalised form stays server-side. */
   phone_raw: string | null;
   email_raw: string | null;
-  /** The sheet's section header, e.g. "SALES PERSON". The only access signal it carries. */
-  section_label: string | null;
   template_id: string | null;
   requester_note: string | null;
   reviewer_note: string | null;
@@ -109,8 +113,6 @@ export interface OnboardingPerson {
   needs_agent_seat: boolean;
   review_status: OnboardingReviewStatus;
   rejection_reason: string | null;
-  /** Non-fatal parse complaints for this row, e.g. "phone not recognised". */
-  problems: string[];
   /** Review-time only; empty on the intake page. */
   collisions: OnboardingCollision[];
   user_step: OnboardingLaneStep;
@@ -121,27 +123,6 @@ export interface OnboardingPerson {
   contact_error: string | null;
   agent_step: OnboardingLaneStep;
   agent_error: string | null;
-}
-
-/** Row shape returned by the parse endpoint, before it becomes a person row. */
-export interface OnboardingParsedRow {
-  row_number: number;
-  full_name: string;
-  nick_name: string | null;
-  phone_raw: string | null;
-  email_raw: string | null;
-  section_label: string | null;
-  problems: string[];
-}
-
-export interface OnboardingParseResult {
-  rows: OnboardingParsedRow[];
-  /** Rows the reader could not turn into a person at all. */
-  problems: Array<{ row: number; reason: string }>;
-  unmapped_headers: string[];
-  missing_columns: string[];
-  total_rows: number;
-  sections: string[];
 }
 
 /** What the public intake page is handed for its whole session. */
@@ -182,7 +163,6 @@ export interface OnboardingRequestDetail extends OnboardingRequestSummary {
   requester_note: string | null;
   reviewed_by_name: string | null;
   provisioned_at: string | null;
-  source_file_name: string | null;
   templates: OnboardingTemplateOption[];
   people: OnboardingPerson[];
 }
@@ -193,6 +173,7 @@ export type OnboardingPersonPatch = Partial<
     OnboardingPerson,
     | 'full_name'
     | 'nick_name'
+    | 'role_label'
     | 'phone_raw'
     | 'email_raw'
     | 'template_id'
