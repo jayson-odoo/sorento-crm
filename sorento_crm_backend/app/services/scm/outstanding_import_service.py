@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import date
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -22,6 +22,8 @@ from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.inventory import Warehouse
 from app.models.product import Product
+from app.services import import_outcome_codes as oc
+from app.services.import_outcome import ImportOutcome
 from app.services.import_alias_service import AliasResolver
 from app.services.scm.outstanding_diff import (
     ADDED,
@@ -759,10 +761,16 @@ class _Plan:
     agent_notices: list[AgentNotice] = field(default_factory=list)
 
 
-def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
+def _build(db: Session, file_data: bytes, doc_type: str,
+           on_total_rows: Optional[Callable[[int], None]] = None) -> _Plan:
     bind = _binding(doc_type)
     resolver = AliasResolver.for_doc_type(db, doc_type)
     read = read_workbook(file_data, doc_type, resolver)
+    if on_total_rows is not None:
+        # Published the moment the sheet is read, before the diff. Without it `total_rows`
+        # first appears when the job completes and the upload drawer shows 0/0 for the whole
+        # run, which reads as stuck (the same lesson as the customer importer).
+        on_total_rows(read.total_rows)
     if not read.ok:
         return _Plan(read=read)
     resolved = _resolve(db, read, bind)
@@ -873,18 +881,82 @@ def _refresh_money(line, extra: dict, bind: _Binding) -> None:
             setattr(line, col, value)
 
 
+def _identity(doc_number: str, item_code: str, location: str) -> dict:
+    """What names a row in the job detail. No ids - the operator reads document numbers."""
+    return {"doc_no": doc_number, "item_code": item_code, "location": location or ""}
+
+
+def _record_rows_never_written(read: ReadResult, resolved: _Resolved,
+                               outcome: ImportOutcome) -> None:
+    """Record every source row that did NOT become a line, with the reason it did not.
+
+    Worked out STRUCTURALLY - which row numbers came out of the reader, and which of those
+    survived resolution - rather than by reading the wording of a problem. A row can carry a
+    problem and still be written (an unreadable date leaves the line dated null; a document
+    naming two agents keeps the first), so classifying by message would report rows as
+    skipped that are sitting in the database.
+    """
+    read_rows = {str(l.row_ref) for l in read.lines}
+    kept_rows = {str(l.row_ref) for l in resolved.lines}
+
+    for row_number in read.layout_row_numbers:
+        outcome.skip(row=row_number, code=oc.NOT_A_LINE)
+    for row_number in read.settled_row_numbers:
+        outcome.skip(row=row_number, code=oc.NOTHING_OUTSTANDING)
+
+    for problem in read.problems:
+        if str(problem.row_number) in read_rows:
+            continue  # reported, but the row IS a line - it is counted where it was written
+        outcome.skip(
+            row=problem.row_number or None,
+            code=oc.MISSING_REQUIRED_FIELD if problem.reason.startswith("missing")
+            else oc.ROW_ERROR,
+            message=problem.reason,
+            value=problem.value or None,
+        )
+
+    # The only two fields that DROP a row in `_resolve`. Every other issue it raises (an
+    # unknown creditor, two agents on one document) is reported while the line is written, so
+    # recording those here would count the row twice and claim a skip that never happened.
+    codes = {"item_code": oc.PRODUCT_NOT_FOUND, "stock_location": oc.WAREHOUSE_NOT_FOUND}
+    for issue in resolved.issues:
+        code = codes.get(issue.field)
+        if code is None or str(issue.row_number) in kept_rows:
+            continue
+        outcome.skip(row=issue.row_number or None, code=code, message=issue.reason,
+                     value=issue.value or None)
+
+
 def apply(db: Session, file_data: bytes, doc_type: str = SO,
-          actor: Optional[str] = None) -> dict:
+          actor: Optional[str] = None, outcome: Optional[ImportOutcome] = None,
+          on_total_rows: Optional[Callable[[int], None]] = None) -> dict:
     """Write the upload. Returns the same counts the preview showed.
 
     Closing is `line_status = 'closed'`, not a delete. The line existed and was planned
     against; erasing it would make last week's plan unexplainable, and `scm.committed_v`
     already excludes non-open lines (migration 311).
+
+    `outcome` records what happened to each SOURCE ROW for the job detail. Optional so a
+    direct caller (and every existing test) keeps the old signature; when absent a throwaway
+    non-persisting recorder stands in, so there is exactly one code path either way.
     """
-    plan = _build(db, file_data, doc_type)
+    outcome = outcome or ImportOutcome(None, persist=False)
+    plan = _build(db, file_data, doc_type, on_total_rows=on_total_rows)
     read, resolved, diff = plan.read, plan.resolved, plan.diff
     if diff is None or resolved is None:
         return {"ok": False, "missing_columns": read.missing_columns, "counts": {}}
+
+    _record_rows_never_written(read, resolved, outcome)
+
+    # What this JOB accounts for, which is more than the file states. A closed line is reached
+    # by its ABSENCE from the upload, so it carries an outcome and no source row: with the
+    # file's own row count as the total, a five-row file that closes one line finishes
+    # "6 / 5" with a progress bar past 100%. Published again here - the diff is known and
+    # nothing has been written yet - so the denominator is right before the first write.
+    closed_rows = sum(1 for c in diff.changes if c.kind == CLOSED)
+    total_rows = read.total_rows + closed_rows
+    if on_total_rows is not None:
+        on_total_rows(total_rows)
 
     # The BEFORE half of every Plan Exception (AC-D4), taken while the old position is still
     # the one in the database. Reconstructing it afterwards by inverting the deltas would be
@@ -998,6 +1070,9 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
 
     applied = {"added": 0, "updated": 0, "closed": 0, "unchanged": 0}
     for c in diff.changes:
+        source_row = (int(c.after.row_ref)
+                      if c.after is not None and (c.after.row_ref or "").isdigit() else None)
+        identity = _identity(c.doc_number, c.item_code, c.location)
         if c.kind == CLOSED:
             line = db.query(bind.line).filter(bind.line.id == c.before.row_ref).one_or_none()
             if line is not None:
@@ -1006,6 +1081,13 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 # lead-time measurement and the picking reconciliation.
                 line.line_status = "closed"
                 applied["closed"] += 1
+                # No source row on purpose: a closed line is reached by its ABSENCE from the
+                # file, so there is no row in the upload to point at. It is recorded all the
+                # same - it is the destructive half, and the job detail is where somebody
+                # goes to find out what an upload took away.
+                outcome.updated(code=oc.LINE_CLOSED, identity=identity,
+                                value=c.doc_number, entity_type="order_line",
+                                entity_id=c.before.row_ref)
             continue
 
         if c.kind == ADDED:
@@ -1027,6 +1109,9 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 setattr(revived, bind.date, c.after.required_date)
                 _refresh_money(revived, extra, bind)
                 applied["added"] += 1
+                outcome.success(row=source_row, code=oc.CREATED, identity=identity,
+                                value=c.doc_number, entity_type="order_line",
+                                entity_id=revived.id)
                 continue
             fields = {
                 bind.header_fk: order_ids[c.doc_number],
@@ -1041,15 +1126,23 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 fields[col] = extra.get(key)
             db.add(bind.line(**fields))
             applied["added"] += 1
+            outcome.success(row=source_row, code=oc.CREATED, identity=identity,
+                            value=c.doc_number)
             continue
 
         if c.kind == "unchanged":
             applied["unchanged"] += 1
+            outcome.unchanged(row=source_row, identity=identity, value=c.doc_number)
             continue
 
         # qty and/or date changed: update the row the diff paired, in place.
         line = db.query(bind.line).filter(bind.line.id == c.before.row_ref).one_or_none()
         if line is None:
+            # The line the diff paired against has gone since it was read. Nothing is
+            # written, so the row is a skip rather than a silent nothing.
+            outcome.skip(row=source_row, code=oc.ORDER_NOT_FOUND, identity=identity,
+                         value=c.doc_number,
+                         message="the line this row updates no longer exists")
             continue
         # The extract states what is OUTSTANDING, so ordered is outstanding plus whatever has
         # already been delivered or received. Writing the figure straight in would erase a
@@ -1059,6 +1152,8 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         setattr(line, bind.date, c.after.required_date)
         _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind)
         applied["updated"] += 1
+        outcome.updated(row=source_row, identity=identity, value=c.doc_number,
+                        entity_type="order_line", entity_id=line.id)
 
     db.flush()
 
@@ -1098,6 +1193,12 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     return {
         "ok": True,
         "exception_batch_id": exception_batch_id,
+        # Everything this upload accounted for: every non-blank row of the file, plus the
+        # lines it closed by absence. One outcome per unit, so processed reaches total exactly.
+        "total_rows": total_rows,
+        # The file's own row count, kept beside it: it is the number the operator sees at the
+        # top of their spreadsheet, and the two differing is the closures.
+        "file_rows": read.total_rows,
         "counts": diff.counts,
         "applied": applied,
         "scope_documents": list(diff.scope_documents),

@@ -14,16 +14,8 @@ import {
 import { HistoryUploadDialog } from './HistoryUploadDialog';
 import { OutstandingUploadDialog } from './OutstandingUploadDialog';
 import { ReorderLevelUploadDialog } from './ReorderLevelUploadDialog';
-import type {
-  OutstandingApplyResult,
-  OutstandingImportKind,
-} from '../services/outstandingImportService';
-import type {
-  HistoryImportKind,
-  OrderInquiryResult,
-  PurchaseHistoryResult,
-  SalesHistoryResult,
-} from '../services/purchaseHistoryService';
+import type { OutstandingImportKind } from '../services/outstandingImportService';
+import type { HistoryImportKind } from '../services/purchaseHistoryService';
 
 /**
  * SCM - every file the plan is fed from, behind one control.
@@ -67,16 +59,17 @@ function isHistoryChannel(channel: Channel): channel is HistoryImportKind {
 }
 
 export interface UploadDataMenuProps {
-  onOutstandingApplied?: (result: OutstandingApplyResult) => void;
-  onHistoryApplied?: (
-    result: PurchaseHistoryResult | OrderInquiryResult | SalesHistoryResult,
-  ) => void;
+  /**
+   * Fired once an order-book or history upload has been QUEUED.
+   *
+   * There is nothing to hand back but the job: the five feeds write on the worker now, so
+   * counts do not exist yet when this fires. The outcome is read on the job page, and the
+   * upload drawer is already following it.
+   */
+  onQueued?: () => void;
 }
 
-export function UploadDataMenu({
-  onOutstandingApplied,
-  onHistoryApplied,
-}: UploadDataMenuProps) {
+export function UploadDataMenu({ onQueued }: UploadDataMenuProps) {
   // Which channel's dialog is open, or null. One piece of state rather than four booleans,
   // so two dialogs can never be open at once.
   const [channel, setChannel] = useState<Channel | null>(null);
@@ -138,7 +131,7 @@ export function UploadDataMenu({
           open
           onOpenChange={(next) => !next && setChannel(null)}
           kind={channel}
-          onApplied={onOutstandingApplied}
+          onQueued={onQueued}
         />
       ) : null}
 
@@ -147,7 +140,7 @@ export function UploadDataMenu({
           open
           onOpenChange={(next) => !next && setChannel(null)}
           kind={channel}
-          onApplied={onHistoryApplied}
+          onQueued={onQueued}
         />
       ) : null}
     </>

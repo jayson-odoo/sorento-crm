@@ -35,15 +35,9 @@ import {
 import { useReorderPlan } from '../hooks/useReorderPlan';
 import { decisionsKey } from '../hooks/useDecisions';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
-import type { OutstandingApplyResult } from '../services/outstandingImportService';
 import { PlanLinesSection } from './PlanLinesSection';
 import type { PlanTotals } from '../lib/planDecisions';
 import { UploadDataMenu } from './UploadDataMenu';
-import type {
-  OrderInquiryResult,
-  PurchaseHistoryResult,
-  SalesHistoryResult,
-} from '../services/purchaseHistoryService';
 import { PlanAssistant } from './PlanAssistant';
 import { PlanMethodologySheet } from './PlanMethodologySheet';
 import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
@@ -207,45 +201,17 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
     }
   }, [manual.isComplete, manual.isFailed, manual.run?.run_id, manual.error, manual, queryClient]);
 
-  // The upload rewrites the demand the NEXT plan is computed from; today's snapshot is
-  // frozen, so refresh what the page reads and say what to do next.
-  const bookApplied = (result: OutstandingApplyResult) => {
-    void queryClient.invalidateQueries({ queryKey: todayRunKey });
-    void queryClient.invalidateQueries({ queryKey: runHistoryKey });
-    const changed = result.applied.added + result.applied.updated + result.applied.closed;
-    toast.success(
-      `Order book updated - ${changed} line${changed === 1 ? '' : 's'} changed. Generate a plan to use it.`,
-    );
-  };
-
   /**
-   * Purchase history and the order inquiry sheet.
+   * An upload has been QUEUED, not applied.
    *
-   * Neither changes what is on order - history lands closed and fully received - but both
-   * change what the NEXT plan reads: last cost and the ageing signal from the history, stock
-   * locations and the purchase-order pairing from the inquiry sheet. (Not supplier lead time:
-   * that is measured to the goods receipt, and the history file carries none.)
-   *
-   * The pairing is reported because it is the half nothing else would say: an upload can
-   * complete a claim made by a file somebody else uploaded weeks ago.
+   * The five order-book and history feeds write on the worker, so there is nothing to report
+   * here: the counts do not exist yet, the drawer is already following the job, and the
+   * dialog has already said "queued". What this can honestly do is drop what the page holds,
+   * so the moment the job lands a refetch reads the new position rather than the old one.
    */
-  const curationApplied = (
-    result: PurchaseHistoryResult | OrderInquiryResult | SalesHistoryResult,
-  ) => {
+  const uploadQueued = () => {
     void queryClient.invalidateQueries({ queryKey: todayRunKey });
     void queryClient.invalidateQueries({ queryKey: runHistoryKey });
-    const written =
-      'orders_created' in result
-        ? `${result.orders_created} order${result.orders_created === 1 ? '' : 's'} imported`
-        : `${result.locations_written} location${result.locations_written === 1 ? '' : 's'} written`;
-    // The sales book claims no order links - it is the demand record, not the pairing - so
-    // its result carries no `links` and the toast says only what was written.
-    const linked = 'links' in result ? result.links.resolved : 0;
-    toast.success(
-      linked
-        ? `${written}, ${linked} order link${linked === 1 ? '' : 's'} resolved.`
-        : `${written}.`,
-    );
   };
 
   const launch = (inputs: ManualPlanInputs) => {
@@ -331,10 +297,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             a single warehouse.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <UploadDataMenu
-              onOutstandingApplied={bookApplied}
-              onHistoryApplied={curationApplied}
-            />
+            <UploadDataMenu onQueued={uploadQueued} />
             <Button onClick={() => setModalOpen(true)}>
               <PlayCircle className="size-4" />
               Manual plan
@@ -403,10 +366,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
               <RotateCcw className="size-3.5" aria-hidden />
             </button>
           ) : null}
-          <UploadDataMenu
-            onOutstandingApplied={bookApplied}
-            onHistoryApplied={curationApplied}
-          />
+          <UploadDataMenu onQueued={uploadQueued} />
           <Button onClick={() => setModalOpen(true)}>
             <PlayCircle className="size-4" />
             Manual plan

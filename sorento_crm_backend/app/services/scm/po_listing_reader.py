@@ -164,6 +164,14 @@ class PoListingResult:
     problems: list[str] = field(default_factory=list)
     #: True once the `Doc Count:` marker was seen, i.e. the summary section was excluded.
     stopped_at_marker: bool = False
+    #: Every non-blank row this reader looked at, up to the stop marker. Rows below the marker
+    #: are the per-item summary repeating the file, so they are not rows of the book at all.
+    total_rows: int = 0
+    #: Which of those rows were never a LINE: the two band label rows, the report preamble,
+    #: each order's header row, the `**SO:174830**` notes and the numbered spacers. Row
+    #: numbers rather than a count, because a queued import records an outcome per source row
+    #: and `total_rows - line_count` rows with no outcome are rows the job cannot account for.
+    layout_row_numbers: list[int] = field(default_factory=list)
     #: Always True. Stated rather than implied: this file says what was ORDERED and cannot
     #: say what is still outstanding, and a caller must not read it as an on-order position.
     is_order_book: bool = True
@@ -269,17 +277,28 @@ def read_po_listing(file_data: bytes) -> PoListingResult:
             result.stopped_at_marker = True
             break
 
+        # A wholly empty row states nothing, so there is nothing to report about it and it is
+        # not counted. Every row that DOES state something is counted here and leaves this
+        # loop either as a line or on `layout_row_numbers` - one or the other, never neither.
+        if not any(c is not None and _text(c) for c in row):
+            continue
+        result.total_rows += 1
+
         if header_bands is None:
             found = _bands(row, _HEADER_LABELS)
             if found:
                 header_bands = found
+                result.layout_row_numbers.append(row_number)
                 continue
         if line_bands is None:
             found = _bands(row, _LINE_LABELS)
             if found:
                 line_bands = found
+                result.layout_row_numbers.append(row_number)
                 continue
         if header_bands is None or line_bands is None:
+            # The report preamble: title, company, date range. Never a line.
+            result.layout_row_numbers.append(row_number)
             continue
 
         # A header row starts with the document number; a line row starts with a line number.
@@ -296,10 +315,14 @@ def read_po_listing(file_data: bytes) -> PoListingResult:
                 source_row=row_number,
             )
             result.orders.append(current)
+            # The order it opens is written from this row, but the row itself is not a line -
+            # and lines are what this feed writes and counts.
+            result.layout_row_numbers.append(row_number)
             continue
 
         line_no = _number(row[0]) if row else None
         if line_no is None or current is None:
+            result.layout_row_numbers.append(row_number)
             continue
 
         # `Disc.` is the last label and is empty on every line in the real export, so the
@@ -325,6 +348,7 @@ def read_po_listing(file_data: bytes) -> PoListingResult:
                     )
                 )
             # A line number with nothing at all beside it is spacing in the report.
+            result.layout_row_numbers.append(row_number)
             continue
 
         amounts = [n for n in (_number(m) for m in money) if n is not None]

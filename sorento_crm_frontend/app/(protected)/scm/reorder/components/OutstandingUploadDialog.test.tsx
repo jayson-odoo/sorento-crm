@@ -10,8 +10,10 @@
  *
  * What is pinned here, and why each one matters:
  *
- *  1. TWO STEPS, NEVER ONE CLICK. Choosing a file previews; nothing is written
- *     until Confirm. `applyOutstandingImport` must not be called during preview.
+ *  1. TEST, THEN UPLOAD - and choosing a file does NOTHING. No fetch fires on
+ *     drop or pick; Test reads the file; Confirm queues the write. This is the
+ *     captain's own complaint ("we supposed to use test just like other import"),
+ *     so it is pinned on the fetch call log rather than on what renders.
  *  2. COUNTS FOR EVERY CHANGE KIND, INCLUDING `unchanged`. A diff that shows only
  *     changes is indistinguishable from one that silently failed to read the file.
  *  3. SAMPLE ROWS AS EVIDENCE. A date_moved sample shows the before date, the after
@@ -23,8 +25,13 @@
  *     unresolvable codes each render with the row number and the offending value,
  *     and none of them blocks a file that is otherwise usable.
  *  6. ok:false + missing_columns DISABLES Confirm and names the columns.
- *  7. Confirm applies and reports the applied counts; a failure surfaces the
- *     extracted backend message.
+ *  7. Confirm QUEUES: 202 -> `notifyImportQueued()` so the upload drawer opens and
+ *     follows the job, the dialog closes, and `onQueued` fires. No counts are shown
+ *     afterwards - the write happens on the worker, so there are none to show.
+ *  7b. `unmapped_agents` renders as its OWN section, worded as the backend words it
+ *     and never mixed into the rejected rows: nothing was skipped, so listing it
+ *     among the failures would make a clean file read as a broken one. An empty list
+ *     renders no section at all.
  *  8. The file surface is the SHARED FileDropzone (`@/components/common/FileDropzone`):
  *     a `role="button"` drop-and-click surface wrapping a hidden, aria-labelled
  *     `input[type=file]`. Asserted structurally so a hand-rolled input fails.
@@ -58,6 +65,15 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+const push = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+
+// The drawer bridge: what a queued import hands the watching over to.
+const notifyImportQueued = vi.fn();
+vi.mock('@/components/upload-activity/useImportJobDrawer', () => ({
+  useImportJobDrawer: () => ({ notifyImportQueued }),
+}));
+
 const previewOutstandingImport = vi.fn();
 const applyOutstandingImport = vi.fn();
 // Mocked too, and not optional: the dialog asks the server what it accepts as soon as it
@@ -71,11 +87,10 @@ vi.mock('../services/outstandingImportService', () => ({
   getOutstandingUploadConfig: (...a: unknown[]) => getOutstandingUploadConfig(...a),
 }));
 
+import { toast } from 'sonner';
 import { OutstandingUploadDialog } from './OutstandingUploadDialog';
-import type {
-  OutstandingApplyResult,
-  OutstandingPreview,
-} from '../services/outstandingImportService';
+import type { OutstandingPreview } from '../services/outstandingImportService';
+import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 // Every count is a DISTINCT number so a `getByText` on one can never accidentally
@@ -98,6 +113,7 @@ const PREVIEW: OutstandingPreview = {
   missing_columns: [],
   row_problems: [],
   resolution_issues: [],
+  unmapped_agents: [],
   samples: {
     date_moved: [
       {
@@ -139,13 +155,10 @@ const PREVIEW: OutstandingPreview = {
   },
 };
 
-const APPLY_RESULT: OutstandingApplyResult = {
-  ok: true,
-  counts: PREVIEW.counts,
-  applied: { added: 4, updated: 17, closed: 3, unchanged: 412 },
-  scope_documents: ['SO397450', 'SO397512'],
-  resolution_issues: [],
-  row_problems: [],
+const QUEUED: ImportQueuedResult = {
+  message: 'Order book upload queued.',
+  job_id: 'job-2026-07-16',
+  id: 'row-1',
 };
 
 function preview(over: Partial<OutstandingPreview> = {}): OutstandingPreview {
@@ -176,17 +189,21 @@ function renderDialog(
   over: Partial<React.ComponentProps<typeof OutstandingUploadDialog>> = {},
 ) {
   const onOpenChange = vi.fn();
-  const onApplied = vi.fn();
+  const onQueued = vi.fn();
   render(
     <OutstandingUploadDialog
       open
       onOpenChange={onOpenChange}
       kind="sales-orders"
-      onApplied={onApplied}
+      onQueued={onQueued}
       {...over}
     />,
   );
-  return { onOpenChange, onApplied };
+  return { onOpenChange, onQueued };
+}
+
+function testButton(): HTMLElement {
+  return screen.getByRole('button', { name: /^Test$/i });
 }
 
 /** The hidden input inside the shared FileDropzone. */
@@ -226,16 +243,25 @@ function expectCount(label: string, value: number) {
   expect(tile).toHaveTextContent(String(value));
 }
 
-/** Choose a file through the picker and wait for the preview render to settle. */
-async function chooseFile(file = xlsx()) {
+/** Pick a file. Deliberately does NOT read it - that is what Test is for. */
+function pickFile(file = xlsx()) {
   fireEvent.change(fileInput(), { target: { files: [file] } });
+  return file;
+}
+
+/** Pick a file AND press Test, which is what every assertion about the diff needs. */
+async function chooseFile(file = xlsx()) {
+  pickFile(file);
+  fireEvent.click(testButton());
   await waitFor(() => expect(previewOutstandingImport).toHaveBeenCalled());
   return file;
 }
 
 beforeEach(() => {
   previewOutstandingImport.mockReset().mockResolvedValue(preview());
-  applyOutstandingImport.mockReset().mockResolvedValue(APPLY_RESULT);
+  applyOutstandingImport.mockReset().mockResolvedValue(QUEUED);
+  notifyImportQueued.mockReset();
+  push.mockReset();
   getOutstandingUploadConfig
     .mockReset()
     .mockResolvedValue({ allowed_extensions: ['.xlsx', '.xlsm', '.xls'] });
@@ -253,6 +279,7 @@ describe('OutstandingUploadDialog - empty state', () => {
     expect(dropSurface()).toBeInTheDocument();
     expect(fileInput().accept).toContain('.xlsx');
     expect(confirmButton()).toBeDisabled();
+    expect(testButton()).toBeDisabled();
     expect(previewOutstandingImport).not.toHaveBeenCalled();
     expect(applyOutstandingImport).not.toHaveBeenCalled();
   });
@@ -265,24 +292,40 @@ describe('OutstandingUploadDialog - empty state', () => {
 
 // ── 2. two-step flow ────────────────────────────────────────────────────────
 
-describe('OutstandingUploadDialog - two steps, never one click', () => {
-  it('previews the chosen file and writes NOTHING until the user confirms', async () => {
+describe('OutstandingUploadDialog - test, then upload', () => {
+  it('reads NOTHING when a file is picked: no request until Test is pressed', async () => {
     renderDialog();
-    const file = await chooseFile();
+    pickFile();
 
-    expect(previewOutstandingImport).toHaveBeenCalledTimes(1);
-    expect(previewOutstandingImport).toHaveBeenCalledWith('sales-orders', file);
-    // The whole point of the split: preview must not touch apply.
+    // Deliberately given time to fire. `choose` calls no fetch synchronously, so an
+    // immediate assertion proves only that nothing happened in that tick - it would still
+    // pass against a dialog that kicked the preview off from an effect or a promise chain,
+    // which is a real way to reintroduce read-on-drop. Flushing a microtask first is what
+    // makes the claim "no request AT ALL" rather than "no request yet".
+    await Promise.resolve();
+    expect(previewOutstandingImport).not.toHaveBeenCalled();
     expect(applyOutstandingImport).not.toHaveBeenCalled();
+    expect(testButton()).toBeEnabled();
   });
 
-  it('previews a dropped file too, not only a picked one', async () => {
+  it('reads NOTHING when a file is DROPPED either', async () => {
     renderDialog();
     const file = xlsx('dragged.xlsx');
 
     fireEvent.drop(dropSurface(), { dataTransfer: { files: [file], types: ['Files'] } });
 
-    await waitFor(() => expect(previewOutstandingImport).toHaveBeenCalledWith('sales-orders', file));
+    await waitFor(() => expect(testButton()).toBeEnabled());
+    expect(previewOutstandingImport).not.toHaveBeenCalled();
+    expect(applyOutstandingImport).not.toHaveBeenCalled();
+  });
+
+  it('reads the file on Test, and Test writes nothing', async () => {
+    renderDialog();
+    const file = await chooseFile();
+
+    expect(previewOutstandingImport).toHaveBeenCalledTimes(1);
+    expect(previewOutstandingImport).toHaveBeenCalledWith('sales-orders', file);
+    // The whole point of the split: Test must not touch apply.
     expect(applyOutstandingImport).not.toHaveBeenCalled();
   });
 
@@ -309,7 +352,8 @@ describe('OutstandingUploadDialog - loading', () => {
     );
     renderDialog();
 
-    fireEvent.change(fileInput(), { target: { files: [xlsx()] } });
+    pickFile();
+    fireEvent.click(testButton());
 
     expect(await screen.findByText(/Reading the file/i)).toBeInTheDocument();
     expect(confirmButton()).toBeDisabled();
@@ -460,11 +504,19 @@ describe('OutstandingUploadDialog - problems are reported, not swallowed', () =>
   });
 
   it('reports each unreadable row with its row number, reason and offending value', async () => {
+    /**
+     * The heading is "Rows that need a look", NOT "N rows skipped". This channel's row list
+     * mixes rows the reader dropped with documents that imported perfectly well and only
+     * lack an order type, so a skip claim would be wrong for half of it. The shared section
+     * only makes that claim when it is handed a real skip count (the customer importer's B3
+     * lesson), and this caller deliberately does not have one.
+     */
     previewOutstandingImport.mockResolvedValue(PROBLEMATIC);
     renderDialog();
     await chooseFile();
 
-    expect(await screen.findByText(/Rows we could not read/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Rows that need a look/i)).toBeInTheDocument();
+    expect(screen.queryByText(/rows skipped/i)).toBeNull();
     const line = problemLine(/Row 42/);
     expect(line.textContent).toMatch(/quantity is not a number/);
     expect(line.textContent).toMatch(/N\/A/);
@@ -492,7 +544,7 @@ describe('OutstandingUploadDialog - problems are reported, not swallowed', () =>
     renderDialog();
     await chooseFile();
 
-    await screen.findByText(/Rows we could not read/i);
+    await screen.findByText(/Rows that need a look/i);
     expect(confirmButton()).toBeEnabled();
   });
 
@@ -502,7 +554,7 @@ describe('OutstandingUploadDialog - problems are reported, not swallowed', () =>
 
     await screen.findByText('Added');
     expect(screen.queryByText(/Columns we did not recognise/i)).toBeNull();
-    expect(screen.queryByText(/Rows we could not read/i)).toBeNull();
+    expect(screen.queryByText(/Rows that need a look/i)).toBeNull();
     expect(screen.queryByText(/Rows we could not match/i)).toBeNull();
   });
 });
@@ -578,10 +630,9 @@ describe('OutstandingUploadDialog - the wrong kind of file is refused here', () 
     fireEvent.change(fileInput(), { target: { files: [txt('notes.txt')] } });
     await screen.findByRole('alert');
 
-    await chooseFile();
+    pickFile();
 
-    await screen.findByText('Added');
-    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     expect(confirmButton()).toBeEnabled();
   });
 });
@@ -601,8 +652,9 @@ describe('OutstandingUploadDialog - preview error from the server', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Could not read the workbook: the file is corrupt.');
-    // There is no diff to confirm against, so nothing can be written.
-    expect(confirmButton()).toBeDisabled();
+    // Nothing was written by the Test itself. Confirm is not blocked on a failed READ -
+    // the same file may still queue, and the job reports what the worker makes of it -
+    // which is exactly how the GRN and customer importers behave.
     expect(applyOutstandingImport).not.toHaveBeenCalled();
   });
 
@@ -614,8 +666,8 @@ describe('OutstandingUploadDialog - preview error from the server', () => {
     await chooseFile(xlsx('corrupt.xlsx'));
     await screen.findByRole('alert');
 
-    // The next pick takes the default resolved preview from beforeEach.
-    fireEvent.change(fileInput(), { target: { files: [xlsx('outstanding-so.xlsx')] } });
+    // The next Test takes the default resolved preview from beforeEach.
+    await chooseFile(xlsx('outstanding-so.xlsx'));
 
     await screen.findByText('Added');
     expect(screen.queryByRole('alert')).toBeNull();
@@ -625,8 +677,8 @@ describe('OutstandingUploadDialog - preview error from the server', () => {
 
 // ── 11. confirm -> apply ────────────────────────────────────────────────────
 
-describe('OutstandingUploadDialog - confirm applies the upload', () => {
-  it('applies the SAME file the preview was taken from, exactly once', async () => {
+describe('OutstandingUploadDialog - confirm queues the upload', () => {
+  it('queues the SAME file that was tested, exactly once', async () => {
     renderDialog();
     const file = await chooseFile();
 
@@ -635,14 +687,53 @@ describe('OutstandingUploadDialog - confirm applies the upload', () => {
 
     await waitFor(() => expect(applyOutstandingImport).toHaveBeenCalledTimes(1));
     expect(applyOutstandingImport).toHaveBeenCalledWith('sales-orders', file);
-    // Preview is not re-run on confirm.
+    // Test is not re-run on confirm.
     expect(previewOutstandingImport).toHaveBeenCalledTimes(1);
   });
 
-  it('disables Confirm while the apply is in flight so it cannot be double-submitted', async () => {
-    let release!: (r: OutstandingApplyResult) => void;
+  it('queues a file that was never tested - Test is a tool, not a gate', async () => {
+    renderDialog();
+    const file = pickFile();
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyOutstandingImport).toHaveBeenCalledWith('sales-orders', file));
+    expect(previewOutstandingImport).not.toHaveBeenCalled();
+  });
+
+  it('opens the upload drawer, closes itself and notifies the page', async () => {
+    const { onOpenChange, onQueued } = renderDialog();
+    await chooseFile();
+
+    await screen.findByText('Added');
+    fireEvent.click(confirmButton());
+
+    // The drawer is what follows the job to completion; without this the operator is
+    // told "queued" and has nowhere to watch it.
+    await waitFor(() => expect(notifyImportQueued).toHaveBeenCalledTimes(1));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onQueued).toHaveBeenCalledWith(QUEUED);
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringMatching(/queued/i),
+      expect.objectContaining({ action: expect.objectContaining({ label: 'View job' }) }),
+    );
+  });
+
+  it('never claims counts it cannot have - the write happens on the worker', async () => {
+    renderDialog();
+    await chooseFile();
+
+    await screen.findByText('Added');
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(notifyImportQueued).toHaveBeenCalled());
+    expect(screen.queryByText(/Upload applied/i)).toBeNull();
+  });
+
+  it('disables Confirm while the queue call is in flight so it cannot be double-submitted', async () => {
+    let release!: (r: ImportQueuedResult) => void;
     applyOutstandingImport.mockReturnValue(
-      new Promise<OutstandingApplyResult>((resolve) => {
+      new Promise<ImportQueuedResult>((resolve) => {
         release = resolve;
       }),
     );
@@ -656,40 +747,81 @@ describe('OutstandingUploadDialog - confirm applies the upload', () => {
     fireEvent.click(confirmButton());
     expect(applyOutstandingImport).toHaveBeenCalledTimes(1);
 
-    release(APPLY_RESULT);
-    await screen.findByText(/Upload applied/i);
+    release(QUEUED);
+    await waitFor(() => expect(notifyImportQueued).toHaveBeenCalled());
   });
 
-  it('replaces the preview with the APPLIED counts and notifies the page', async () => {
-    const { onApplied } = renderDialog();
-    await chooseFile();
-
-    await screen.findByText('Added');
-    fireEvent.click(confirmButton());
-
-    expect(await screen.findByText(/Upload applied/i)).toBeInTheDocument();
-    expectCount('Added', 4);
-    expectCount('Updated', 17);
-    expectCount('Closed', 3);
-    expectCount('Unchanged', 412);
-    // The preview is gone - there is exactly one set of numbers on screen.
-    expect(screen.queryByText(/Orders not in this file are untouched/i)).toBeNull();
-    expect(onApplied).toHaveBeenCalledWith(APPLY_RESULT);
-  });
-
-  it('surfaces the extracted backend message when apply fails, and allows a retry', async () => {
+  it('surfaces the extracted backend message when queueing fails, and allows a retry', async () => {
     applyOutstandingImport.mockRejectedValue(
-      new Error('The file is missing required columns: required_date'),
+      new Error('Select a single company before uploading the order book.'),
     );
-    const { onApplied } = renderDialog();
+    const { onQueued } = renderDialog();
     await chooseFile();
 
     await screen.findByText('Added');
     fireEvent.click(confirmButton());
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('The file is missing required columns: required_date');
-    expect(onApplied).not.toHaveBeenCalled();
+    expect(alert).toHaveTextContent('Select a single company before uploading the order book.');
+    expect(onQueued).not.toHaveBeenCalled();
+    expect(notifyImportQueued).not.toHaveBeenCalled();
     await waitFor(() => expect(confirmButton()).toBeEnabled());
+  });
+});
+
+// ── 12. the agents this upload would create ─────────────────────────────────
+// AC-6.4 / AC-3.3. The backend has returned `unmapped_agents` on both responses since S2
+// and no screen read it, so an upload invented master rows the operator was never told
+// about. Its own section, never merged into the rejected rows.
+
+describe('OutstandingUploadDialog - agents with no demand class', () => {
+  const WITH_AGENTS = preview({
+    unmapped_agents: [
+      {
+        code: 'SEAN III',
+        is_new: true,
+        reason:
+          'new agent, unclassified: this upload is the first thing to name this agent code, ' +
+          'so the master row is being created with no demand class',
+      },
+      {
+        code: 'LCL',
+        is_new: false,
+        reason:
+          'this agent carries no demand class, so it cannot classify an order that states ' +
+          'nothing else',
+      },
+    ],
+  });
+
+  it('names each agent and says what is wrong with it, in the backend own words', async () => {
+    previewOutstandingImport.mockResolvedValue(WITH_AGENTS);
+    renderDialog();
+    await chooseFile();
+
+    expect(await screen.findByText(/Agents with no demand class/i)).toBeInTheDocument();
+    expect(screen.getByText('SEAN III')).toBeInTheDocument();
+    expect(screen.getByText('LCL')).toBeInTheDocument();
+    expect(screen.getByText(/new agent, unclassified/i)).toBeInTheDocument();
+  });
+
+  it('keeps them OUT of the rejected rows - nothing was skipped', async () => {
+    previewOutstandingImport.mockResolvedValue(WITH_AGENTS);
+    renderDialog();
+    await chooseFile();
+
+    await screen.findByText(/Agents with no demand class/i);
+    expect(screen.queryByText(/rows skipped/i)).toBeNull();
+    expect(screen.queryByText(/Rows that need a look/i)).toBeNull();
+    // A clean file with a new agent is still confirmable.
+    expect(confirmButton()).toBeEnabled();
+  });
+
+  it('renders no section at all when every agent carries a class', async () => {
+    renderDialog();
+    await chooseFile();
+
+    await screen.findByText('Added');
+    expect(screen.queryByText(/Agents with no demand class/i)).toBeNull();
   });
 });
