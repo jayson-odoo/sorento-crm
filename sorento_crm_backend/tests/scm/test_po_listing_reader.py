@@ -155,18 +155,23 @@ def test_the_sales_order_a_note_names_is_captured():
     assert _SO_NOTE.findall("MOCHA PAPER HOLDER M203") == []
 
 
-def test_the_sales_order_link_is_order_level_not_line_level(result):
-    """A note sits BETWEEN lines, and nothing in the file says which side it describes.
+def test_the_sales_order_link_is_order_level_in_this_report(result):
+    """A note sits BETWEEN lines, and nothing in THIS file says which side it describes.
 
     Guessing assigns one customer's stock to another customer's order. The pairing this
-    file supports is "this PO relates to that SO", which is true whichever lines the note
-    was written for; the per-line pairing comes from the Order Inquiry sheet, which states
-    it outright.
+    report supports is "this PO relates to that SO", which is true whichever lines the note
+    was written for; the per-line pairing comes from files that state it outright - the Order
+    Inquiry sheet, and (since S5) the structured PO + SPO extract's `FromSODocList` column.
+
+    The line type therefore HAS a `so_number` field, shared with that reader, and this report
+    must leave every one of them unset: the claim written from a note names no item
+    (`po_history_service._claim_so_link`), and a note guessed onto a line would be a
+    line-level claim this file cannot support.
     """
     order = next(o for o in result.orders if o.po_number == "202001-S0001")
     assert hasattr(order, "so_numbers")
     for line in order.lines:
-        assert not hasattr(line, "so_number")
+        assert line.so_number is None
 
 
 def test_a_charge_is_recognised_however_it_is_spelled():

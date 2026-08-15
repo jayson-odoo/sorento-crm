@@ -340,11 +340,23 @@ def seed_scm_module_data() -> None:
     module_357 = importlib.util.module_from_spec(spec_357)
     spec_357.loader.exec_module(module_357)
 
+    # 358 adds the `po_spo_history` doc type: the 27 headers of the captain's PO + SPO
+    # export. Same create_all gap again, and this one decides whether the file is READ at
+    # all - the purchase-history channel tells the two shapes apart by resolving `Doc No`,
+    # `Item Code` and `Qty` out of one header row, so with no aliases a structured export
+    # falls through to the banded reader and is rejected as "not a Purchase Order Listing".
+    spec_358 = importlib.util.spec_from_file_location(
+        "_scm_seed_358", versions / "358_scm_po_spo_history_aliases.py"
+    )
+    module_358 = importlib.util.module_from_spec(spec_358)
+    spec_358.loader.exec_module(module_358)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
         aliases += module_338.seed(conn)
         aliases += module_357.seed(conn)
+        aliases += module_358.seed(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "

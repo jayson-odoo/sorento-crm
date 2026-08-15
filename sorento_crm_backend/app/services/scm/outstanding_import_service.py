@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Callable, Optional
 
+import sqlalchemy as sa
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -43,6 +44,7 @@ from app.services.scm import sales_agent_service
 # `demand_class` column of its own: two modules now WRITE this value and one of them is a
 # check constraint, so a second copy of the word list would be a database that accepts what
 # the importer rejects.
+from app.services.scm.history_sources import HISTORY_SOURCE_SYSTEMS
 from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS
 from app.services.scm.demand_class import class_of as _class_of
 from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
@@ -849,6 +851,20 @@ def _closed_line(db: Session, bind: _Binding, header_id: str, product_id: Option
     An explicit lookup rather than widening `_existing_lines`: the diff must stay open-only,
     or a closed line simply absent from the next upload would be re-closed on every re-run
     and `applied.closed` would never settle at 0.
+
+    **A HISTORY line is never revived.** `po_history_service` writes into these same tables,
+    closed and fully received, precisely so `scm.on_order_v` and `scm.po_ordered_v` cannot
+    count it. Reviving one sets `line_status='open'` and adds the incoming quantity on top of
+    what was already received, which satisfies both views: a 2023 purchase that was delivered
+    years ago would read as stock on its way in, permanently, and re-uploading would never
+    correct it. The two feeds share the table and are told apart by the stamp
+    (`history_sources.HISTORY_SOURCE_SYSTEMS`) - so the outstanding book adds its own line for
+    that item instead, which is the truth: this document really is open again, and the closed
+    history row really did happen.
+
+    Only reachable since S5, which is what makes the guard necessary now: history lines used
+    to carry NULL `warehouse_id` and NULL `expected_date`, so the equality below could not
+    match a row that stated either. The structured PO + SPO export states both.
     """
     if product_id is None:
         return None
@@ -857,7 +873,9 @@ def _closed_line(db: Session, bind: _Binding, header_id: str, product_id: Option
         db.query(line)
         .filter(getattr(line, bind.header_fk) == header_id,
                 line.product_id == product_id,
-                line.line_status == "closed")
+                line.line_status == "closed",
+                sa.or_(line.source_system.is_(None),
+                       line.source_system.notin_(list(HISTORY_SOURCE_SYSTEMS))))
     )
     q = q.filter(line.warehouse_id.is_(None) if warehouse_id is None
                  else line.warehouse_id == warehouse_id)
