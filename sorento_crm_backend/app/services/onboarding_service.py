@@ -27,9 +27,10 @@ from typing import Iterable, Optional
 
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.access import RespondContact
+from app.models.company import Company
 from app.models.onboarding import (
     LANE_PENDING,
     REVIEW_APPROVED,
@@ -139,12 +140,35 @@ def get_request(db: Session, request_id: str) -> OnboardingRequest:
     return request
 
 
-def list_requests(
+#: The columns the queue may be ordered by, keyed by the `sort` the grid sends.
+#: Anything else falls back to `created_at`, so a stale bookmark cannot 500.
+LIST_SORT_COLUMNS = {
+    "title": OnboardingRequest.title,
+    "requester_name": OnboardingRequest.requester_name,
+    "status": OnboardingRequest.status_key,
+    "submitted_at": OnboardingRequest.submitted_at,
+    "expires_at": OnboardingRequest.expires_at,
+    "created_at": OnboardingRequest.created_at,
+}
+
+DEFAULT_LIST_SORT = "created_at"
+DEFAULT_LIST_DIR = "desc"
+
+
+def _list_query(
     db: Session,
     *,
     status_key: Optional[str] = None,
     query: Optional[str] = None,
-) -> list[OnboardingRequest]:
+    sort_field: str = DEFAULT_LIST_SORT,
+    sort_dir: str = DEFAULT_LIST_DIR,
+):
+    """The filtered + sorted queue query, shared by the list page and the pager.
+
+    Ordering always ends on `id` so two requests created in the same second keep
+    a stable relative position: without a tie-breaker the same row can appear on
+    two pages, or on none.
+    """
     q = db.query(OnboardingRequest)
     if status_key:
         q = q.filter(OnboardingRequest.status_key == status_key)
@@ -155,7 +179,87 @@ def list_requests(
             | func.lower(OnboardingRequest.requester_name).like(like)
             | func.lower(OnboardingRequest.requester_email).like(like)
         )
-    return q.order_by(OnboardingRequest.created_at.desc()).all()
+
+    if sort_field == "company_name":
+        # The name lives on `companies`, so this is the one sort that needs a
+        # join. Outer, because a request whose company row was deleted must
+        # still be listable rather than silently vanishing from the queue.
+        q = q.outerjoin(Company, Company.id == OnboardingRequest.company_id)
+        column = Company.name
+    else:
+        column = LIST_SORT_COLUMNS.get(sort_field or "", LIST_SORT_COLUMNS[DEFAULT_LIST_SORT])
+
+    ordering = column.desc() if (sort_dir or "").lower() == "desc" else column.asc()
+    return q.order_by(ordering, OnboardingRequest.id.asc())
+
+
+def list_requests(
+    db: Session,
+    *,
+    status_key: Optional[str] = None,
+    query: Optional[str] = None,
+    sort_field: str = DEFAULT_LIST_SORT,
+    sort_dir: str = DEFAULT_LIST_DIR,
+    page: int = 1,
+    limit: int = 50,
+) -> tuple[list[OnboardingRequest], int]:
+    """One page of the queue, plus the total size of the filtered set.
+
+    The total is counted server-side rather than inferred from the page, so the
+    pager reports how much work is waiting rather than how much was fetched.
+    """
+    q = _list_query(
+        db,
+        status_key=status_key,
+        query=query,
+        sort_field=sort_field,
+        sort_dir=sort_dir,
+    )
+    total = q.order_by(None).count()
+    page = max(1, page)
+    limit = max(1, limit)
+    # The summary counts people per row, so fetch them with the page instead of
+    # one lazy load per request.
+    rows = (
+        q.options(selectinload(OnboardingRequest.people))
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    return rows, total
+
+
+def request_neighbours(
+    db: Session,
+    request_id: str,
+    *,
+    status_key: Optional[str] = None,
+    query: Optional[str] = None,
+    sort_field: str = DEFAULT_LIST_SORT,
+    sort_dir: str = DEFAULT_LIST_DIR,
+) -> dict:
+    """Prev/next within the same filtered+sorted queue the reviewer came from.
+
+    Falls back to the unfiltered, default-sorted set when the request is not in
+    the filtered one (a deep link, or a row that left the filter after a
+    verdict), so the pager is never dead.
+    """
+    from app.services.record_navigation import compute_neighbours
+
+    def _ids(q) -> list[str]:
+        return [str(row[0]) for row in q.with_entities(OnboardingRequest.id).all()]
+
+    filtered = _list_query(
+        db,
+        status_key=status_key,
+        query=query,
+        sort_field=sort_field,
+        sort_dir=sort_dir,
+    )
+    result = compute_neighbours(_ids(filtered), request_id)
+    if result["index"] is not None:
+        return result
+    return compute_neighbours(_ids(_list_query(db)), request_id)
 
 
 def create_request(

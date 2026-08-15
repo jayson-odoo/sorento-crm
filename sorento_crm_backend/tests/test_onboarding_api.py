@@ -352,6 +352,164 @@ def test_listing_requests_needs_the_view_permission(client, db):
     assert client.get(f"{ADMIN}/requests").status_code == 200
 
 
+# --- admin: the queue is paged, sorted and searched server-side ---------------
+#
+# The reviewer works FROM this list, so "how many are waiting" has to be the
+# whole filtered set's answer. A client-side slice of a full-list fetch gets that
+# right only while the queue is small, and gets it wrong silently afterwards.
+
+
+def _make_requests(db, titles: list[str]) -> list:
+    """A queue of our own. CI's database is empty, so nothing may be borrowed."""
+    made = []
+    for title in titles:
+        made.append(
+            onboarding_service.create_request(
+                db,
+                company_id=SORENTO,
+                title=title,
+                requester_name="Esther Lim",
+                requester_email=f"{unique_code('esther')}@mocha.com.my".lower(),
+            )
+        )
+    return made
+
+
+def test_the_queue_comes_back_in_the_standard_grid_envelope(client, db):
+    marker = unique_code("batch")
+    _make_requests(db, [f"{marker} alpha", f"{marker} beta"])
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    body = client.get(f"{ADMIN}/requests", params={"query": marker}).json()
+    assert set(body) >= {"data", "pagination"}
+    assert body["pagination"]["total"] == 2
+    assert body["pagination"]["page"] == 1
+    assert {row["title"] for row in body["data"]} == {
+        f"{marker} alpha",
+        f"{marker} beta",
+    }
+
+
+def test_the_queue_pages_server_side(client, db):
+    marker = unique_code("batch")
+    _make_requests(db, [f"{marker} a", f"{marker} b", f"{marker} c"])
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    first = client.get(
+        f"{ADMIN}/requests",
+        params={"query": marker, "limit": 2, "page": 1, "sort": "title", "dir": "asc"},
+    ).json()
+    second = client.get(
+        f"{ADMIN}/requests",
+        params={"query": marker, "limit": 2, "page": 2, "sort": "title", "dir": "asc"},
+    ).json()
+
+    assert [r["title"] for r in first["data"]] == [f"{marker} a", f"{marker} b"]
+    assert [r["title"] for r in second["data"]] == [f"{marker} c"]
+    # The total is the filtered set, not the page: it is what the pager reports.
+    assert first["pagination"]["total"] == second["pagination"]["total"] == 3
+
+
+def test_the_queue_sorts_by_the_column_the_grid_asks_for(client, db):
+    marker = unique_code("batch")
+    _make_requests(db, [f"{marker} charlie", f"{marker} alpha", f"{marker} bravo"])
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    ascending = client.get(
+        f"{ADMIN}/requests", params={"query": marker, "sort": "title", "dir": "asc"}
+    ).json()
+    descending = client.get(
+        f"{ADMIN}/requests", params={"query": marker, "sort": "title", "dir": "desc"}
+    ).json()
+
+    titles = [r["title"] for r in ascending["data"]]
+    assert titles == sorted(titles)
+    assert [r["title"] for r in descending["data"]] == list(reversed(titles))
+
+
+def test_an_unknown_sort_column_falls_back_instead_of_failing(client, db):
+    """A stale bookmark naming a column that no longer exists must not 500."""
+    marker = unique_code("batch")
+    _make_requests(db, [f"{marker} only"])
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    response = client.get(
+        f"{ADMIN}/requests", params={"query": marker, "sort": "not_a_column"}
+    )
+    assert response.status_code == 200
+    assert response.json()["pagination"]["total"] == 1
+
+
+def test_filtering_by_status_narrows_the_whole_set(client, db):
+    marker = unique_code("batch")
+    made = _make_requests(db, [f"{marker} draft one", f"{marker} sent one"])
+    onboarding_service.send_request(db, str(made[1].id))
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    body = client.get(
+        f"{ADMIN}/requests", params={"query": marker, "status_key": "sent"}
+    ).json()
+    assert body["pagination"]["total"] == 1
+    assert body["data"][0]["title"] == f"{marker} sent one"
+
+
+def test_searching_narrows_the_total_not_only_the_page(client, db):
+    marker = unique_code("batch")
+    _make_requests(db, [f"{marker} findable", f"{marker} other"])
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    body = client.get(f"{ADMIN}/requests", params={"query": f"{marker} findable"}).json()
+    assert body["pagination"]["total"] == 1
+
+
+# --- admin: prev/next within the queue ----------------------------------------
+
+
+def test_neighbours_walk_the_filtered_set(client, db):
+    marker = unique_code("batch")
+    made = _make_requests(db, [f"{marker} a", f"{marker} b", f"{marker} c"])
+    ids = {r.title: str(r.id) for r in made}
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    body = client.get(
+        f"{ADMIN}/requests/neighbours",
+        params={
+            "id": ids[f"{marker} b"],
+            "query": marker,
+            "sort": "title",
+            "dir": "asc",
+        },
+    ).json()
+    assert body["total"] == 3
+    assert body["index"] == 2
+    assert body["prev_id"] == ids[f"{marker} a"]
+    assert body["next_id"] == ids[f"{marker} c"]
+
+
+def test_neighbours_fall_back_rather_than_going_dead(client, db):
+    """A request filtered out of the set still gets a working pager."""
+    marker = unique_code("batch")
+    made = _make_requests(db, [f"{marker} a", f"{marker} b"])
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+
+    body = client.get(
+        f"{ADMIN}/requests/neighbours",
+        params={"id": str(made[0].id), "query": unique_code("matches-nothing")},
+    ).json()
+    assert body["index"] is not None
+    assert body["total"] >= 2
+
+
+def test_neighbours_need_the_view_permission(client, db, sent_request):
+    _as(_make_user(db), db)
+    assert (
+        client.get(
+            f"{ADMIN}/requests/neighbours", params={"id": str(sent_request.id)}
+        ).status_code
+        == 403
+    )
+
+
 def test_creating_a_request_needs_the_add_permission(client, db):
     payload = {
         "company_id": SORENTO,

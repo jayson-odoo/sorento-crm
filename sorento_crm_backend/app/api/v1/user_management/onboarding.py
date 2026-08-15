@@ -23,6 +23,7 @@ from app.models.onboarding import REVIEW_APPROVED, REVIEW_ON_HOLD, REVIEW_REJECT
 from app.models.onboarding import OnboardingRequest
 from app.models.user import User
 from app.dependencies import require_permission
+from app.schemas.common import ListResponse, PaginationResponse, MAX_PAGE_LIMIT
 from app.schemas.onboarding import (
     ApproveResultOut,
     CaptureTemplateIn,
@@ -53,6 +54,15 @@ def _company_name(db: Session, company_id: Optional[str]) -> str:
     return getattr(company, "name", None) or ""
 
 
+def _company_names(db: Session, requests: list[OnboardingRequest]) -> dict[str, str]:
+    """Resolve every company name on a page in one query rather than per row."""
+    ids = {r.company_id for r in requests if r.company_id}
+    if not ids:
+        return {}
+    rows = db.query(Company.id, Company.name).filter(Company.id.in_(ids)).all()
+    return {str(cid): (name or "") for cid, name in rows}
+
+
 def _intake_url(request: OnboardingRequest) -> Optional[str]:
     """The link the captain copies into WhatsApp himself.
 
@@ -66,12 +76,20 @@ def _intake_url(request: OnboardingRequest) -> Optional[str]:
     return f"{base}/onboarding/{request.token}"
 
 
-def _summary(db: Session, request: OnboardingRequest) -> RequestSummaryOut:
+def _summary(
+    db: Session,
+    request: OnboardingRequest,
+    company_name: Optional[str] = None,
+) -> RequestSummaryOut:
     people = list(request.people)
     return RequestSummaryOut(
         id=str(request.id),
         title=request.title,
-        company_name=_company_name(db, request.company_id),
+        company_name=(
+            company_name
+            if company_name is not None
+            else _company_name(db, request.company_id)
+        ),
         requester_name=request.requester_name,
         requester_email=request.requester_email,
         status=request.status_key,
@@ -115,17 +133,38 @@ def _detail(db: Session, request: OnboardingRequest) -> RequestDetailOut:
 # --- requests -----------------------------------------------------------------
 
 
-@router.get("/requests", response_model=list[RequestSummaryOut])
+@router.get("/requests", response_model=ListResponse[RequestSummaryOut])
 def list_requests(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(default=None),
     status_key: Optional[str] = Query(default=None),
+    sort: Optional[str] = Query(default="created_at"),
+    dir: Optional[str] = Query(default="desc"),
     current_user: dict = Depends(require_permission("user_management.onboarding.view")),
     db: Session = Depends(get_db),
 ):
-    return [
-        _summary(db, r)
-        for r in onboarding_service.list_requests(db, status_key=status_key, query=query)
-    ]
+    """One page of the review queue, in the standard grid envelope.
+
+    Paged, sorted and searched server-side: the queue is what the reviewer works
+    from, so "how many are waiting" has to be the whole set's answer rather than
+    the current page's.
+    """
+    rows, total = onboarding_service.list_requests(
+        db,
+        status_key=status_key,
+        query=query,
+        sort_field=sort or "created_at",
+        sort_dir=dir or "desc",
+        page=page,
+        limit=limit,
+    )
+    names = _company_names(db, rows)
+    return ListResponse[RequestSummaryOut](
+        data=[_summary(db, r, names.get(str(r.company_id), "")) for r in rows],
+        pagination=PaginationResponse(total=total, page=page, limit=limit),
+        empty=total == 0,
+    )
 
 
 @router.post("/requests", response_model=RequestDetailOut, status_code=201)
@@ -145,6 +184,31 @@ def create_request(
         user_id=current_user["id"],
     )
     return _detail(db, request)
+
+
+@router.get("/requests/neighbours")
+def request_neighbours(
+    id: str = Query(..., description="Onboarding request id to resolve neighbours for"),
+    query: Optional[str] = Query(default=None),
+    status_key: Optional[str] = Query(default=None),
+    sort: Optional[str] = Query(default="created_at"),
+    dir: Optional[str] = Query(default="desc"),
+    current_user: dict = Depends(require_permission("user_management.onboarding.view")),
+    db: Session = Depends(get_db),
+):
+    """Prev/next within the active queue query, for the detail page's pager.
+
+    Declared before `/requests/{request_id}` on purpose: FastAPI matches in
+    declaration order, so the other way round "neighbours" is read as an id.
+    """
+    return onboarding_service.request_neighbours(
+        db,
+        id,
+        status_key=status_key,
+        query=query,
+        sort_field=sort or "created_at",
+        sort_dir=dir or "desc",
+    )
 
 
 @router.get("/requests/{request_id}", response_model=RequestDetailOut)
