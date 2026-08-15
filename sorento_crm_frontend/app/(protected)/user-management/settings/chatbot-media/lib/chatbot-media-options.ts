@@ -1,5 +1,8 @@
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { MODEL_OPTIONS } from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
+import {
+  MODEL_OPTIONS,
+  providerLabel,
+} from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
 
 /**
  * Option lists for the chatbot media settings page.
@@ -19,7 +22,7 @@ export function imageModelOptions(provider: string): SearchableSelectOption[] {
   const forProvider = MODEL_OPTIONS[provider];
   if (forProvider) return forProvider;
   return Object.entries(MODEL_OPTIONS).flatMap(([key, models]) =>
-    models.map((model) => ({ ...model, group: key === 'openai' ? 'OpenAI' : 'Anthropic' })),
+    models.map((model) => ({ ...model, group: providerLabel(key) })),
   );
 }
 

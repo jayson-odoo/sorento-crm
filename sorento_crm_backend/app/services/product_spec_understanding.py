@@ -39,7 +39,7 @@ from app.config import settings
 from app.models.ai_assistant import AIAssistantUsageLog
 from app.models.product_spec import ProductSpecifications
 from app.services.ai_prompt_registry import agent_model, get_prompt
-from app.services.llm_provider import get_provider
+from app.services.llm_provider import default_model_for, get_provider
 from app.services.product_spec_registry import (
     active_registry,
     merged_allowed_values,
@@ -327,7 +327,7 @@ def _resolve_provider(db: Session):
         return None, provider_name, model_name
 
     if not model_name:
-        model_name = "gpt-4o" if provider_name == "openai" else "claude-sonnet-4-6"
+        model_name = default_model_for(provider_name)
     try:
         return get_provider(provider_name, api_key, model=model_name), provider_name, model_name
     except ValueError:

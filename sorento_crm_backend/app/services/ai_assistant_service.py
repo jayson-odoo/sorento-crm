@@ -414,6 +414,8 @@ class AIAssistantConfigService:
             row.api_key_ciphertext = data.api_key.strip()
         if data.anthropic_api_key is not None and data.anthropic_api_key.strip():
             row.anthropic_api_key_ciphertext = data.anthropic_api_key.strip()
+        if data.gemini_api_key is not None and data.gemini_api_key.strip():
+            row.gemini_api_key_ciphertext = data.gemini_api_key.strip()
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -427,6 +429,7 @@ class AIAssistantConfigService:
             "system_prompt": row.system_prompt,
             "api_key_masked": _mask_key(row.api_key_ciphertext),
             "anthropic_api_key_masked": _mask_key(row.anthropic_api_key_ciphertext),
+            "gemini_api_key_masked": _mask_key(row.gemini_api_key_ciphertext),
             "enabled_tools": list(row.enabled_tools or []),
             "rag_enabled": bool(row.rag_enabled),
             "is_enabled": bool(row.is_enabled),
@@ -3107,9 +3110,15 @@ class AIAssistantChatService:
         return redacted
 
     def _embed_query(self, query: str) -> list[float]:
-        # Embeddings always go via OpenAI for now (Anthropic does not expose
-        # an embeddings API as of this writing). The provider abstraction's
-        # embed() falls back to OpenAI when configured, so we delegate.
+        # Embeddings always go via OpenAI: the stored vectors were written by
+        # that model, and a vector from another one is not comparable to them
+        # whatever its dimensionality. So this builds `OpenAIProvider` below
+        # unconditionally, and the key it needs is deliberately NOT read the way
+        # the chat call sites read theirs. `api_key_ciphertext` holds the key
+        # for whichever provider the assistant is configured on, so a
+        # Gemini- or Anthropic-configured assistant would post that vendor's key
+        # to OpenAI; a non-OpenAI configuration therefore falls through to the
+        # env key, which is the only one known to belong to OpenAI.
         config = self.cfg.get()
         api_key = config.api_key_ciphertext if config.provider == "openai" else settings.openai_api_key
         if not api_key:

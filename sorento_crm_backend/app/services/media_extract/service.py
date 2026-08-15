@@ -68,6 +68,12 @@ MAX_MEDIA_BYTES = 25 * 1024 * 1024  # the transcription API's own ceiling
 # dozen entities and stops a rambling model from spending the whole budget.
 VISION_MAX_TOKENS = 2048
 
+# The last-resort model per provider (used only when neither the media settings
+# nor the `AIAssistantConfig` row names one) lives with the providers themselves
+# as `llm_provider.DEFAULT_MODELS`, so this lane, `ai_extract` and the spec
+# understander all agree on it. Each is that provider's cheap-but-capable model,
+# matching what migration 358 seeded for OpenAI.
+
 
 class MediaExtractionError(RuntimeError):
     """Extraction could not be produced. Becomes the job's `error` and the
@@ -350,7 +356,7 @@ class MediaExtractService:
         a degrade, so a degraded tier only reaches here while a model is named.
         """
         from app.models.ai_assistant import AIAssistantConfig
-        from app.services.llm_provider import get_provider
+        from app.services.llm_provider import default_model_for, get_provider
 
         cfg = (
             self.db.query(AIAssistantConfig)
@@ -365,13 +371,16 @@ class MediaExtractService:
         else:
             model_name = settings.image_model or (cfg.model if cfg else "") or ""
         if not model_name:
-            model_name = "gpt-4o" if provider_name == "openai" else "claude-sonnet-4-6"
+            model_name = default_model_for(provider_name)
 
         api_key = self._api_key(cfg, provider_name)
         if not api_key:
+            # Naming the provider is the whole message: the lane can run on a
+            # different provider than the assistant, so "no key configured" on
+            # its own sends an admin to look at a key that is already set.
             raise MediaExtractionError(
-                "No AI provider API key is configured. Set it in System > AI "
-                "Assistant Settings."
+                f"No API key is configured for the '{provider_name}' image "
+                "provider. Set it in System > AI Assistant."
             )
         try:
             provider = get_provider(provider_name, api_key, model=model_name)
@@ -388,6 +397,21 @@ class MediaExtractService:
             return (
                 (getattr(cfg, "anthropic_api_key_ciphertext", None) if cfg else "")
                 or (getattr(cfg, "api_key_ciphertext", None) if cfg else "")
+                or ""
+            )
+        if provider_name == "gemini":
+            # The generic key column only counts when the assistant itself runs
+            # on Gemini - otherwise it holds someone else's key and would be
+            # sent to Google as a 400 that reads like a Gemini outage.
+            generic = (
+                (getattr(cfg, "api_key_ciphertext", None) if cfg else "")
+                if (getattr(cfg, "provider", None) if cfg else None) == "gemini"
+                else ""
+            )
+            return (
+                (getattr(cfg, "gemini_api_key_ciphertext", None) if cfg else "")
+                or generic
+                or app_settings.gemini_api_key
                 or ""
             )
         return (

@@ -559,3 +559,27 @@ def test_validate_drops_empty_and_blank_fields():
 # Playwright e2e spec at sorento_crm_frontend/e2e/portal-ai-extract.spec.ts.
 # Keeping that path here would require Postgres-only tables (JSONB) which the
 # unit suite does not stand up.
+
+
+def test_resolve_provider_uses_the_configured_providers_own_default_model():
+    """A provider with no model named gets ITS default, not another vendor's.
+
+    The old two-branch fallback ("gpt-4o if openai else claude-sonnet-4-6") sent a
+    Gemini-configured install an Anthropic model id.
+    """
+    from app.models.ai_assistant import AIAssistantConfig
+    from app.services.llm_provider import GeminiProvider
+
+    with blank_session() as db:
+        db.add(
+            AIAssistantConfig(
+                provider="gemini", model="", api_key_ciphertext="ZZT-gemini-key"
+            )
+        )
+        db.commit()
+
+        provider, provider_name, model_name = AIExtractService(db)._resolve_provider()
+
+        assert isinstance(provider, GeminiProvider)
+        assert provider_name == "gemini"
+        assert model_name == "gemini-2.5-flash"

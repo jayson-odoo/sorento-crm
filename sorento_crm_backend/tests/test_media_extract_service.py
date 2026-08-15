@@ -818,3 +818,163 @@ def test_a_still_running_job_stamps_normally(caplog):
         db.refresh(usage)
         assert usage.model == "gpt-4o"
         assert usage.prompt_tokens == 2963
+
+
+# --------------------------------------------------------------------------- #
+# Provider resolution for the image lane, Gemini included                      #
+# --------------------------------------------------------------------------- #
+
+
+def _media_settings(db, **overrides):
+    """The resolved settings for this blank schema, with the image lane fields
+    overridden - the settings page's own job, done without a request."""
+    from dataclasses import replace
+
+    from app.services.media_access_service import resolve_media_settings
+
+    return replace(resolve_media_settings(db), **overrides)
+
+
+def _seed_ai_config(db, **columns):
+    from app.models.ai_assistant import AIAssistantConfig
+
+    row = AIAssistantConfig(**columns)
+    db.add(row)
+    db.commit()
+    return row
+
+
+def test_image_lane_on_gemini_uses_the_gemini_key_column_and_its_own_default_model():
+    """Selecting Gemini with no model named must not fall into the Anthropic
+    default, and must read the dedicated Gemini key rather than the primary."""
+    from app.services.llm_provider import GeminiProvider
+
+    with blank_session() as db:
+        _seed_ai_config(
+            db,
+            provider="openai",
+            model="",
+            api_key_ciphertext="ZZT-openai-key",
+            gemini_api_key_ciphertext="ZZT-gemini-key",
+        )
+
+        settings = _media_settings(
+            db, image_provider="gemini", image_model=None, image_degraded_model=None
+        )
+        provider, provider_name, model_name = MediaExtractService(
+            db
+        )._resolve_image_provider(None, settings)
+
+        assert isinstance(provider, GeminiProvider)
+        assert provider_name == "gemini"
+        assert model_name == "gemini-2.5-flash"
+        assert provider.api_key == "ZZT-gemini-key"
+
+
+def test_image_lane_on_gemini_honours_an_explicit_model_and_the_degraded_tier():
+    with blank_session() as db:
+        _seed_ai_config(db, provider="openai", gemini_api_key_ciphertext="ZZT-gemini-key")
+
+        settings = _media_settings(
+            db,
+            image_provider="gemini",
+            image_model="gemini-2.5-pro",
+            image_degraded_model="gemini-2.5-flash-lite",
+        )
+        service = MediaExtractService(db)
+
+        assert service._resolve_image_provider(None, settings)[2] == "gemini-2.5-pro"
+        assert (
+            service._resolve_image_provider("degraded", settings)[2]
+            == "gemini-2.5-flash-lite"
+        )
+
+
+def test_image_lane_on_gemini_borrows_the_primary_key_only_when_the_assistant_is_gemini():
+    from app.services.llm_provider import GeminiProvider
+
+    with blank_session() as db:
+        _seed_ai_config(db, provider="gemini", model="", api_key_ciphertext="ZZT-primary-key")
+
+        settings = _media_settings(
+            db, image_provider="gemini", image_model=None, image_degraded_model=None
+        )
+        provider, _, _ = MediaExtractService(db)._resolve_image_provider(None, settings)
+
+        assert isinstance(provider, GeminiProvider)
+        assert provider.api_key == "ZZT-primary-key"
+
+
+def test_image_lane_on_gemini_falls_back_to_the_env_key(monkeypatch):
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-env-gemini-key", raising=False)
+    with blank_session() as db:
+        settings = _media_settings(
+            db, image_provider="gemini", image_model=None, image_degraded_model=None
+        )
+        provider, _, _ = MediaExtractService(db)._resolve_image_provider(None, settings)
+        assert provider.api_key == "ZZT-env-gemini-key"
+
+
+def test_image_lane_on_gemini_never_sends_another_providers_key_to_google(monkeypatch):
+    """An OpenAI-configured assistant with no Gemini key must say so, not post
+    the OpenAI key to Google and surface the 400 as a Gemini outage."""
+    from app.config import settings as app_settings
+    from app.services.media_extract.service import MediaExtractionError
+
+    monkeypatch.setattr(app_settings, "gemini_api_key", None, raising=False)
+    with blank_session() as db:
+        _seed_ai_config(db, provider="openai", api_key_ciphertext="ZZT-openai-key")
+
+        settings = _media_settings(
+            db, image_provider="gemini", image_model=None, image_degraded_model=None
+        )
+        with pytest.raises(MediaExtractionError) as excinfo:
+            MediaExtractService(db)._resolve_image_provider(None, settings)
+        # The lane can run on a different provider than the assistant, so the
+        # message names WHICH key is missing rather than sending an admin to
+        # look at one that is already set.
+        message = str(excinfo.value)
+        assert "'gemini'" in message
+        assert "No API key is configured" in message
+        assert "System > AI Assistant" in message
+
+
+def test_image_lane_missing_key_message_names_the_provider_it_needed(monkeypatch):
+    from app.config import settings as app_settings
+    from app.services.media_extract.service import MediaExtractionError
+
+    monkeypatch.setattr(app_settings, "openai_api_key", None, raising=False)
+    with blank_session() as db:
+        settings = _media_settings(
+            db, image_provider="openai", image_model=None, image_degraded_model=None
+        )
+        with pytest.raises(MediaExtractionError) as excinfo:
+            MediaExtractService(db)._resolve_image_provider(None, settings)
+        assert "'openai'" in str(excinfo.value)
+
+
+def test_image_lane_default_model_per_provider_is_unchanged_for_openai_and_anthropic():
+    with blank_session() as db:
+        _seed_ai_config(
+            db,
+            provider="openai",
+            model="",
+            api_key_ciphertext="ZZT-openai-key",
+            anthropic_api_key_ciphertext="ZZT-anthropic-key",
+        )
+        service = MediaExtractService(db)
+
+        openai_settings = _media_settings(
+            db, image_provider="openai", image_model=None, image_degraded_model=None
+        )
+        anthropic_settings = _media_settings(
+            db, image_provider="anthropic", image_model=None, image_degraded_model=None
+        )
+
+        assert service._resolve_image_provider(None, openai_settings)[2] == "gpt-4o"
+        assert (
+            service._resolve_image_provider(None, anthropic_settings)[2]
+            == "claude-sonnet-4-6"
+        )

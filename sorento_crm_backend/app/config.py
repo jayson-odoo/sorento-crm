@@ -118,6 +118,9 @@ class Settings(BaseSettings):
     # SCM M5 market research — Anthropic web-search backend (key-gated; the run
     # endpoint degrades to a 'failed' run row when unset, never crashes).
     anthropic_api_key: str | None = None
+    # Google Gemini - env fallback for the DB-configured key (System > AI
+    # Assistant). Read by the chatbot media image lane when Gemini is selected.
+    gemini_api_key: str | None = None
     openai_embeddings_url: str = "https://api.openai.com/v1/embeddings"
     openai_chat_completions_url: str = "https://api.openai.com/v1/chat/completions"
 

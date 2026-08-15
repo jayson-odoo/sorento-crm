@@ -48,6 +48,7 @@ from app.services.llm_provider import (
     ChatResult,
     ImagePart,
     LLMProvider,
+    default_model_for,
     get_provider,
 )
 from app.services.lookup_resolver import LookupResolverService
@@ -375,7 +376,7 @@ class AIExtractService:
                 code="ai_extract_no_api_key",
             )
         if not model_name:
-            model_name = "gpt-4o" if provider_name == "openai" else "claude-sonnet-4-6"
+            model_name = default_model_for(provider_name)
         try:
             provider = get_provider(provider_name, api_key, model=model_name)
         except ValueError as exc:

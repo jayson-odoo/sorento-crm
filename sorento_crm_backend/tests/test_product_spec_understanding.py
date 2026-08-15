@@ -393,3 +393,28 @@ def test_a_refusal_of_an_unknown_value_is_dropped(db, monkeypatch):
     )
 
     assert understand_phrase(db, "not unobtainium").exclusions == []
+
+
+def test_resolve_provider_uses_the_configured_providers_own_default_model():
+    """A provider with no model named must get ITS default, not another vendor's.
+
+    The old two-branch fallback ("gpt-4o if openai else claude-sonnet-4-6") handed
+    a Gemini-configured install an Anthropic model id, which Google answers with a
+    404 that reads like the feature is broken.
+    """
+    from app.models.ai_assistant import AIAssistantConfig
+    from app.services.llm_provider import GeminiProvider
+
+    with blank_session() as db:
+        db.add(
+            AIAssistantConfig(
+                provider="gemini", model="", api_key_ciphertext="ZZT-gemini-key"
+            )
+        )
+        db.commit()
+
+        provider, provider_name, model_name = understanding._resolve_provider(db)
+
+        assert isinstance(provider, GeminiProvider)
+        assert provider_name == "gemini"
+        assert model_name == "gemini-2.5-flash"
