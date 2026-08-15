@@ -458,6 +458,10 @@ export function PlanLinesGrid({
               <PlanTrendPopover
                 trend={trendFor?.(row.original)}
                 sellingPrice={economicsFor?.(row.original)?.avg_sell_price ?? null}
+                runId={runId ?? null}
+                productId={row.original.product_id}
+                segment={row.original.rec.segment ?? 'project'}
+                outstandingSales={row.original.rec.outstanding_sales ?? null}
               />
             </StopClick>
             {/* The velocity behind the trend verdict - the fast/slow, high/low evidence a

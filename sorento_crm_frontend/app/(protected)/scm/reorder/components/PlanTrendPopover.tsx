@@ -1,28 +1,23 @@
 'use client';
 
+import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { ApexOptions } from 'apexcharts';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { fmtDate, fmtSupplierCost } from '../../lib/format';
+import { fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
+import { useCustomerOrders } from '../hooks/useReorderRun';
 import {
   TRAJECTORY_ROW_LABEL,
   TRAJECTORY_TONE,
   chartSeries,
   describeTrajectory,
   describeYearAgo,
+  type TrajectoryCustomer,
   type TrajectoryEntry,
 } from '../lib/trajectory';
-
-/**
- * A customer row, widened with `last_order_date` (backend: `trajectory_service.py`).
- *
- * The shared `TrajectoryEntry['customers']` element type does not carry this field yet -
- * kept as a local widening here rather than edited into `lib/trajectory.ts` while that
- * file is in flight elsewhere. Structurally compatible: the backend payload already
- * includes it, so this is purely a read-side type, no runtime cast of substance.
- */
-type CustomerRow = TrajectoryEntry['customers'][number] & { last_order_date?: string | null };
 
 const ApexChart = dynamic(() => import('react-apexcharts').then((mod) => mod.default), {
   ssr: false,
@@ -45,9 +40,136 @@ const TONE_CLASS = {
   warning: 'text-amber-600',
 } as const;
 
+/**
+ * The orders behind ONE customer row, fetched when the row is opened.
+ *
+ * > "sells RM 0.94?"
+ *
+ * A quantity beside a name says who buys it; it does not say at what price, and that is
+ * the question the row is opened to answer. Newest first, capped, with the count of what
+ * is not shown said out loud rather than silently dropped.
+ */
+function CustomerOrderLines({
+  runId,
+  productId,
+  segment,
+  customerKey,
+}: {
+  runId: string | null;
+  productId: string | null;
+  segment: string;
+  customerKey: string;
+}) {
+  const { data, isLoading, isError, error } = useCustomerOrders(
+    runId,
+    productId,
+    segment,
+    customerKey,
+    true,
+  );
+
+  if (isLoading) {
+    return (
+      <div className="space-y-1 py-1">
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-2/3" />
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <p className="py-1 text-2xs text-muted-foreground">
+        {error instanceof Error ? error.message : 'Failed to load the orders.'}
+      </p>
+    );
+  }
+  if (!data || !data.lines.length) {
+    return <p className="py-1 text-2xs text-muted-foreground">No orders in the window.</p>;
+  }
+  return (
+    <div className="py-1">
+      <table className="w-full text-2xs">
+        <tbody>
+          {data.lines.map((l, i) => (
+            <tr key={`${l.so_number}-${i}`}>
+              <td className="max-w-32 truncate py-0.5" title={l.so_number}>
+                {l.so_number}
+              </td>
+              <td className="py-0.5 text-right tabular-nums">{fmtDate(l.order_date)}</td>
+              <td className="py-0.5 text-right tabular-nums">{fmtInt(l.qty)}</td>
+              <td className="py-0.5 text-right tabular-nums">
+                {fmtSupplierCost(l.unit_price, null)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {data.total > data.shown ? (
+        <p className="pt-0.5 text-2xs text-muted-foreground">
+          {fmtInt(data.total - data.shown)} more
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** One Who-bought-it row: the summary, and the orders behind it on request. */
+function CustomerRow({
+  customer,
+  runId,
+  productId,
+  segment,
+}: {
+  customer: TrajectoryCustomer;
+  runId: string | null;
+  productId: string | null;
+  segment: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <tr>
+        <td className="max-w-40 truncate py-0.5" title={customer.customer_name}>
+          <button
+            type="button"
+            aria-expanded={open}
+            className="flex w-full items-center gap-1 text-left hover:text-foreground"
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? (
+              <ChevronDown className="size-3 shrink-0" aria-hidden />
+            ) : (
+              <ChevronRight className="size-3 shrink-0" aria-hidden />
+            )}
+            <span className="truncate">{customer.customer_name}</span>
+          </button>
+        </td>
+        <td className="py-0.5 text-right tabular-nums">{fmtInt(customer.qty)}</td>
+        <td className="py-0.5 text-right tabular-nums">{fmtDate(customer.last_order_date)}</td>
+      </tr>
+      {open ? (
+        <tr>
+          <td colSpan={3} className="pl-4">
+            <CustomerOrderLines
+              runId={runId}
+              productId={productId}
+              segment={segment}
+              customerKey={customer.customer_key}
+            />
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
 export function PlanTrendPopover({
   trend,
   sellingPrice,
+  runId = null,
+  productId = null,
+  segment = 'project',
+  outstandingSales = null,
 }: {
   trend: TrajectoryEntry | undefined;
   /** What this line sells for (realized average, or list price when nothing has sold) -
@@ -55,9 +177,26 @@ export function PlanTrendPopover({
    *  refetched (user markup, 2026-08-12: "similar to SO - what is the trend of purchase").
    *  Omitted when we hold no opinion. */
   sellingPrice?: number | null;
+  /** The run + product + side the customer drill is keyed by. */
+  runId?: string | null;
+  productId?: string | null;
+  segment?: string;
+  /** This row's open sales-order quantity. A product can carry real open demand and no
+   *  dated history at all (the outstanding book only started stating an order date), and
+   *  "No order history" beside 51 open units reads as a defect rather than as a fact. */
+  outstandingSales?: number | null;
 }) {
   if (!trend) {
-    return <span className="text-2xs text-muted-foreground">No order history</span>;
+    return (
+      <span className="block text-2xs text-muted-foreground">
+        <span className="block truncate" title="No orders dated in the last 24 months.">
+          No orders dated in the last 24 months.
+        </span>
+        {outstandingSales && outstandingSales > 0 ? (
+          <span className="block truncate">Open now: {fmtInt(outstandingSales)} (see Demand)</span>
+        ) : null}
+      </span>
+    );
   }
 
   const { labels, thisYear, lastYear } = chartSeries(trend);
@@ -119,14 +258,14 @@ export function PlanTrendPopover({
                   </tr>
                 </thead>
                 <tbody>
-                  {(trend.customers as CustomerRow[]).map((c) => (
-                    <tr key={c.customer_name}>
-                      <td className="max-w-40 truncate py-0.5" title={c.customer_name}>
-                        {c.customer_name}
-                      </td>
-                      <td className="py-0.5 text-right tabular-nums">{c.qty.toLocaleString()}</td>
-                      <td className="py-0.5 text-right tabular-nums">{fmtDate(c.last_order_date)}</td>
-                    </tr>
+                  {trend.customers.map((c) => (
+                    <CustomerRow
+                      key={`${c.customer_key ?? ''}:${c.customer_name}`}
+                      customer={c}
+                      runId={runId}
+                      productId={productId}
+                      segment={segment}
+                    />
                   ))}
                 </tbody>
               </table>

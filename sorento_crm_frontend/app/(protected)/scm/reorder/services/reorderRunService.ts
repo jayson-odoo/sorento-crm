@@ -507,6 +507,11 @@ export interface PlanDemandLine {
   order_date: string | null;
   required_date: string | null;
   qty: number;
+  /** Who ordered it: the customer name, `Debtor <code>` when the code resolves to
+   *  nobody, or `No customer on order` when the order names neither. */
+  customer_label: string | null;
+  /** What they pay for it, when the order line carries a price. */
+  unit_price: number | null;
 }
 
 export interface PlanDemand {
@@ -517,7 +522,15 @@ export interface PlanDemand {
   unlocated_total: number;
   /** Distinct locations the demand actually sits at - the answer to "why this warehouse". */
   locations: string[];
+  /** Which set of locations this list is drawn from: the row's OWN warehouse (the
+   *  default), or every member of its pool when the plan netted them together. */
+  scope: 'warehouse' | 'pool';
+  /** The pool root's code, when the scope is the pool. Null otherwise. */
+  pool_code: string | null;
 }
+
+/** PHASE-1 STUB - deleted when the backend lands. Set NEXT_PUBLIC_SCM_P2_STUB=1. */
+const P2_STUB = process.env.NEXT_PUBLIC_SCM_P2_STUB === '1';
 
 /** GET /api/v1/scm/reorder-runs/{run}/recommendations/{rec}/demand */
 export async function getRecommendationDemand(
@@ -528,6 +541,76 @@ export async function getRecommendationDemand(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/recommendations/${encodeURIComponent(recId)}/demand`,
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the demand behind this row'));
+  const body = (await res.json()) as PlanDemand;
+  if (!P2_STUB) return body;
+  const labels = ['Vivo Homes Sdn Bhd', 'Debtor 300-R009', 'No customer on order'];
+  return {
+    ...body,
+    scope: 'pool',
+    pool_code: 'BRW',
+    lines: body.lines.map((l, i) => ({
+      ...l,
+      customer_label: labels[i % labels.length],
+      unit_price: i % 3 === 2 ? null : 94.5 + i,
+    })),
+  };
+}
+
+/** One sales order behind a customer's line in the trend popover. */
+export interface CustomerOrderLine {
+  so_number: string;
+  order_date: string | null;
+  qty: number;
+  unit_price: number | null;
+  warehouse_code: string | null;
+}
+
+export interface CustomerOrders {
+  lines: CustomerOrderLine[];
+  total: number;
+  shown: number;
+}
+
+/**
+ * The sales orders behind one Who-bought-it row.
+ *
+ * `customerKey` is the customer id, `debtor:<code>` for an order whose debtor code
+ * resolves to no customer, or `none` for an order that names neither - the same three
+ * cases the label falls back through, so the drill can be opened on every row rather
+ * than only on the named ones.
+ *
+ * GET /api/v1/scm/reorder-runs/{run}/customer-orders
+ */
+export async function getCustomerOrders(
+  runId: string,
+  productId: string,
+  segment: string,
+  customerKey: string,
+  limit = 20,
+): Promise<CustomerOrders> {
+  const qs = new URLSearchParams({
+    product_id: productId,
+    segment,
+    customer_key: customerKey,
+    limit: String(limit),
+  });
+  if (P2_STUB) {
+    // PHASE-1 STUB - deleted when the backend lands.
+    const lines: CustomerOrderLine[] = Array.from({ length: 3 }, (_, i) => ({
+      so_number: `SO41${4050 + i}`,
+      order_date: `2026-0${i + 4}-12`,
+      qty: 12 * (i + 1),
+      unit_price: i === 2 ? null : 0.94 + i,
+      warehouse_code: 'BRW-BB',
+    }));
+    return { lines, total: 27, shown: lines.length };
+  }
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/customer-orders?${qs.toString()}`,
+  );
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load the orders behind this customer'));
+  }
   return res.json();
 }
 
@@ -650,7 +733,13 @@ export async function getCoverSources(
 export async function getTrajectory(runId: string): Promise<TrajectoryPayload> {
   const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/trajectory`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load order trends'));
-  return res.json();
+  const body = (await res.json()) as TrajectoryPayload;
+  if (!P2_STUB) return body;
+  // PHASE-1 STUB - deleted when the backend lands.
+  for (const entry of Object.values(body.series)) {
+    entry.customers = entry.customers.map((c) => ({ ...c, customer_key: c.customer_key ?? 'none' }));
+  }
+  return body;
 }
 
 export async function getLevelSuggestions(runId: string): Promise<LevelSuggestionsPayload> {

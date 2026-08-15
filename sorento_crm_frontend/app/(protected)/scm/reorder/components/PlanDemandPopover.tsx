@@ -5,8 +5,9 @@ import { Info } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EM_DASH, fmtInt } from '../../lib/format';
+import { fmtInt, fmtSupplierCost } from '../../lib/format';
 import { useRecommendationDemand } from '../hooks/useReorderRun';
+import type { PlanDemand } from '../services/reorderRunService';
 
 /**
  * Which orders a planned quantity is actually for, behind an information icon on the row.
@@ -27,6 +28,22 @@ import { useRecommendationDemand } from '../hooks/useReorderRun';
  * subscription for a panel nobody had opened - hundreds of them on a full plan - and made
  * the drill unusable anywhere without a QueryClientProvider in scope.
  */
+/**
+ * The one line the header says: how much is committed, and WHERE this list is drawn from.
+ *
+ * The scope is the whole point (AC-1.1/AC-1.2). With pool netting off the list is the
+ * row's own warehouse and the total is the row's own SO figure; with it on the plan netted
+ * the pool together, so the pool is named rather than left for the reader to infer from a
+ * list of locations they did not order for.
+ */
+export function describeDemandScope(data: PlanDemand): string {
+  const at = data.locations.length ? ` at ${data.locations.join(', ')}` : '';
+  const pool = data.scope === 'pool' && data.pool_code ? ` (pool ${data.pool_code})` : '';
+  const unlocated =
+    data.unlocated_total > 0 ? `, incl. ${fmtInt(data.unlocated_total)} unlocated` : '';
+  return `${fmtInt(data.committed_total)} committed${at}${pool}${unlocated}`;
+}
+
 function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string }) {
   const { data, isLoading, isError, error } = useRecommendationDemand(runId, recId, true);
   return (
@@ -34,13 +51,7 @@ function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string 
       <div className="border-b px-3 py-2">
         <div className="text-xs font-semibold">Demand behind this row</div>
         {data ? (
-          <p className="mt-0.5 text-2xs text-muted-foreground">
-            {fmtInt(data.committed_total)} committed
-            {data.unlocated_total > 0
-              ? `, of which ${fmtInt(data.unlocated_total)} named no location`
-              : ''}
-            {data.locations.length ? ` · sits at ${data.locations.join(', ')}` : ''}
-          </p>
+          <p className="mt-0.5 text-2xs text-muted-foreground">{describeDemandScope(data)}</p>
         ) : null}
       </div>
       {isLoading ? (
@@ -79,6 +90,19 @@ function PlanDemandBody({ runId, recId }: { runId: string | null; recId: string 
                     </Badge>
                     {l.order_type ? <span className="capitalize">{l.order_type}</span> : null}
                     {l.required_date ? <span>needed {l.required_date}</span> : null}
+                  </div>
+                  {/* Who ordered it and what they pay. The "it sells RM 0.94" question is
+                      answerable from the order itself rather than from a second screen;
+                      a line the extract carries no price for simply says nothing. */}
+                  <div className="mt-0.5 flex items-baseline gap-1.5 text-2xs text-muted-foreground">
+                    <span className="min-w-0 flex-1 truncate" title={l.customer_label ?? undefined}>
+                      {l.customer_label}
+                    </span>
+                    {l.unit_price !== null && l.unit_price !== undefined ? (
+                      <span className="shrink-0 tabular-nums">
+                        {fmtSupplierCost(l.unit_price, null)}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
                 <span className="shrink-0 text-xs font-medium tabular-nums">
@@ -123,7 +147,7 @@ export function PlanDemandPopover({
         </button>
       </PopoverTrigger>
       <PopoverPortal>
-        <PopoverContent align="start" className="w-[420px] p-0">
+        <PopoverContent align="start" className="w-[26rem] max-w-[92vw] p-0">
           {open ? <PlanDemandBody runId={runId} recId={recId} /> : null}
         </PopoverContent>
       </PopoverPortal>

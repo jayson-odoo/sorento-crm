@@ -9,6 +9,7 @@ import {
   getBuyRecommendationsForCash,
   getCoveredRecommendations,
   getNeedsLevelRecommendations,
+  getCustomerOrders,
   getRecommendationDemand,
   getReorderRun,
   getRecommendations,
@@ -321,6 +322,31 @@ export function useRecommendationDemand(
     queryKey: ['scm', 'reorder', 'rec-demand', runId, recId],
     queryFn: () => getRecommendationDemand(runId as string, recId as string),
     enabled: enabled && !!runId && !!recId,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * The sales orders behind ONE customer row of the trend popover.
+ *
+ * Fetched only while that row is expanded, for the same reason the demand drill is:
+ * a popover holding five customers would otherwise issue five requests nobody asked
+ * for, on every row of the plan.
+ */
+export function useCustomerOrders(
+  runId: string | null,
+  productId: string | null,
+  segment: string,
+  customerKey: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'customer-orders', runId, productId, segment, customerKey],
+    queryFn: () =>
+      getCustomerOrders(runId as string, productId as string, segment, customerKey as string),
+    enabled: enabled && !!runId && !!productId && !!customerKey,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: 1,
