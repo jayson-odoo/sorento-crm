@@ -17,31 +17,78 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+// Container pulls SettingsProvider context this unit test does not need.
+vi.mock('@/components/common/container', () => ({
+  Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
+const routerPush = vi.fn();
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: routerPush, replace: vi.fn() }),
   usePathname: () => '/user-management/onboarding-requests/req-1',
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// The pager reads a backend `/neighbours` endpoint; nothing answers it here.
+vi.mock('@/hooks/useRecordNeighbours', () => ({
+  useRecordNeighbours: () => ({
+    prevId: null,
+    nextId: null,
+    index: 1,
+    total: 1,
+    isLoading: false,
+  }),
+}));
+
+const copyToClipboard = vi.fn();
+vi.mock('@/hooks/use-copy-to-clipboard', () => ({
+  useCopyToClipboard: ({ onCopy }: { onCopy?: () => void } = {}) => ({
+    isCopied: false,
+    copyToClipboard: (value: string) => {
+      copyToClipboard(value);
+      onCopy?.();
+    },
+  }),
+}));
+
 const getOnboardingRequest = vi.fn();
-const listOnboardingRequests = vi.fn();
 const rejectOnboardingPerson = vi.fn();
 const approveOnboardingRequest = vi.fn();
 const approveOnboardingPerson = vi.fn();
 const startOnboardingReview = vi.fn();
 const updateOnboardingPerson = vi.fn();
 const deleteOnboardingRequest = vi.fn();
+const revokeOnboardingRequest = vi.fn();
+const regenerateOnboardingToken = vi.fn();
+const sendOnboardingRequest = vi.fn();
 
 vi.mock('../../services/onboardingService', () => ({
+  ONBOARDING_NEIGHBOURS_PATH: '/api/user-management/onboarding/requests/neighbours',
   getOnboardingRequest: (...a: unknown[]) => getOnboardingRequest(...a),
-  listOnboardingRequests: (...a: unknown[]) => listOnboardingRequests(...a),
+  listOnboardingRequests: vi.fn(),
+  createOnboardingRequest: vi.fn(),
   rejectOnboardingPerson: (...a: unknown[]) => rejectOnboardingPerson(...a),
   approveOnboardingRequest: (...a: unknown[]) => approveOnboardingRequest(...a),
   approveOnboardingPerson: (...a: unknown[]) => approveOnboardingPerson(...a),
   startOnboardingReview: (...a: unknown[]) => startOnboardingReview(...a),
   updateOnboardingPerson: (...a: unknown[]) => updateOnboardingPerson(...a),
   deleteOnboardingRequest: (...a: unknown[]) => deleteOnboardingRequest(...a),
+  revokeOnboardingRequest: (...a: unknown[]) => revokeOnboardingRequest(...a),
+  regenerateOnboardingToken: (...a: unknown[]) => regenerateOnboardingToken(...a),
+  sendOnboardingRequest: (...a: unknown[]) => sendOnboardingRequest(...a),
 }));
+
+/**
+ * Record actions live behind the gear menu, so open it before clicking one.
+ * Radix opens on pointerdown, which jsdom does not synthesize from a click, so
+ * drive it by keyboard instead (ArrowDown opens and focuses the first item).
+ */
+async function openGearMenu() {
+  const trigger = await screen.findByRole('button', { name: /Request actions/i });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
+  return screen.findByRole('menu');
+}
 
 function detail(overrides: Partial<Detail> = {}): Detail {
   return {
@@ -58,6 +105,7 @@ function detail(overrides: Partial<Detail> = {}): Detail {
     created_at: '2026-08-12T10:00:00',
     expires_at: '2026-08-26T10:00:00',
     revoked_at: null,
+    intake_url: 'https://crm.example.com/onboarding/TOKEN',
     reviewer_note: null,
     requester_note: null,
     reviewed_by_name: null,
@@ -116,10 +164,6 @@ function renderDetail() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listOnboardingRequests.mockResolvedValue({
-    data: [{ id: 'req-1' }],
-    pagination: { page: 1, limit: 100, total: 1 },
-  });
 });
 
 describe('OnboardingRequestDetail', () => {
@@ -143,13 +187,38 @@ describe('OnboardingRequestDetail', () => {
     renderDetail();
     // The notes section exists even with no note - a hidden section reads as
     // data loss to whoever came looking for it.
-    expect(await screen.findByText('Notes from the requester')).toBeInTheDocument();
-    expect(screen.getByText(/Nothing was added/)).toBeInTheDocument();
+    expect(await screen.findByText('Notes')).toBeInTheDocument();
+    expect(screen.getByText('No notes.')).toBeInTheDocument();
     // "People" and "Provisioning" also name grid columns, so assert the section
     // headings exist rather than that the words appear exactly once.
     expect(screen.getAllByText('People').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Provisioning').length).toBeGreaterThan(0);
-    expect(screen.getByText(/Nothing has been provisioned yet/)).toBeInTheDocument();
+    expect(screen.getByText('Nothing provisioned yet.')).toBeInTheDocument();
+    expect(screen.getByText('Intake link')).toBeInTheDocument();
+  });
+
+  it('shows the link is live without ever printing the tokenised URL', async () => {
+    getOnboardingRequest.mockResolvedValue(detail({ status: 'sent' }));
+    const { container } = renderDetail();
+    expect(await screen.findByText('Link active')).toBeInTheDocument();
+    // A tokenised URL on screen is a credential on screen: it is copied from
+    // the gear menu, never rendered.
+    expect(container.textContent).not.toContain('onboarding/TOKEN');
+  });
+
+  it('says when the link was revoked instead of offering it', async () => {
+    getOnboardingRequest.mockResolvedValue(
+      detail({ status: 'sent', revoked_at: '2026-08-15T09:00:00' }),
+    );
+    renderDetail();
+    expect(await screen.findByText(/^Revoked on /)).toBeInTheDocument();
+    expect(screen.queryByText('Link active')).not.toBeInTheDocument();
+  });
+
+  it('says so when no link could be built at all', async () => {
+    getOnboardingRequest.mockResolvedValue(detail({ status: 'sent', intake_url: null }));
+    renderDetail();
+    expect(await screen.findByText('No intake link available.')).toBeInTheDocument();
   });
 
   it('keeps read-only metadata in the header strip, not inside a section', async () => {
@@ -185,7 +254,7 @@ describe('OnboardingRequestDetail', () => {
     const inDialog = within(dialog).getByRole('button', { name: 'Reject' });
     expect(inDialog).toBeDisabled();
 
-    fireEvent.change(within(dialog).getByLabelText('Why'), {
+    fireEvent.change(within(dialog).getByLabelText('Reason'), {
       target: { value: 'Left the company.' },
     });
     await waitFor(() => expect(inDialog).not.toBeDisabled());
@@ -208,9 +277,9 @@ describe('OnboardingRequestDetail', () => {
       }),
     );
     renderDetail();
-    expect(await screen.findByText('1 submitted')).toBeInTheDocument();
-    expect(screen.getByText('1 already exist')).toBeInTheDocument();
-    expect(screen.getByText('1 need a chat-agent seat')).toBeInTheDocument();
+    expect(await screen.findByText('Submitted 1')).toBeInTheDocument();
+    expect(screen.getByText('Existing 1')).toBeInTheDocument();
+    expect(screen.getByText('Agent seats 1')).toBeInTheDocument();
   });
 
   it('names the failures rather than only counting successes', async () => {
@@ -227,15 +296,42 @@ describe('OnboardingRequestDetail', () => {
       }),
     );
     renderDetail();
-    expect(await screen.findByText('1 failed to provision')).toBeInTheDocument();
+    expect(await screen.findByText('Failed 1')).toBeInTheDocument();
     expect(screen.getAllByText('Email already registered.').length).toBeGreaterThan(0);
+  });
+
+  it('puts the record actions behind the gear, not in a flat button row', async () => {
+    getOnboardingRequest.mockResolvedValue(detail({ status: 'sent' }));
+    renderDetail();
+    const menu = await openGearMenu();
+    for (const label of ['Copy link', 'Revoke link', 'Issue a new link', 'Delete']) {
+      expect(within(menu).getByRole('menuitem', { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it('copies the link from the gear rather than showing it', async () => {
+    getOnboardingRequest.mockResolvedValue(detail({ status: 'sent' }));
+    renderDetail();
+    const menu = await openGearMenu();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy link' }));
+    expect(copyToClipboard).toHaveBeenCalledWith('https://crm.example.com/onboarding/TOKEN');
   });
 
   it('confirms before deleting, in the standard words', async () => {
     getOnboardingRequest.mockResolvedValue(detail());
     renderDetail();
-    fireEvent.click(await screen.findByRole('button', { name: /Delete/ }));
+    const menu = await openGearMenu();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete' }));
     expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
     expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument();
+    expect(deleteOnboardingRequest).not.toHaveBeenCalled();
+  });
+
+  it('carries the reviewer back to the queue', async () => {
+    getOnboardingRequest.mockResolvedValue(detail());
+    renderDetail();
+    expect(
+      await screen.findByRole('link', { name: /Back to onboarding requests/ }),
+    ).toHaveAttribute('href', '/user-management/onboarding-requests');
   });
 });

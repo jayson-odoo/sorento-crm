@@ -8,18 +8,29 @@
  * controls. Every section renders even when empty, with an explicit empty state
  * - a hidden section reads as data loss to whoever came looking for it.
  *
- * Read-only metadata (created, submitted, link expiry) lives in the header meta
+ * The shell is the standard detail shell: a Toolbar carrying the breadcrumb,
+ * the pager, the status-gated primary action and the gear menu, then stacked
+ * cards. Read-only metadata (created, submitted, link expiry) lives in the meta
  * strip and never inside an editable section, so the read view and the edit view
  * have exactly one structure between them.
  */
 
-import { useCallback, useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Copy, Loader2, Send, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { CheckCircle2, Copy, KeyRound, Link2Off, Loader2, MoveLeft, Send, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -27,44 +38,38 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { Container } from '@/components/common/container';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import {
+  Toolbar,
+  ToolbarActions,
+  ToolbarHeading,
+  ToolbarTitle,
+} from '@/components/common/toolbar';
 import { PeopleGrid } from '@/components/common/onboarding/PeopleGrid';
 import {
   ONBOARDING_STATUS_LABELS,
-  type OnboardingPersonPatch,
+  ONBOARDING_STATUS_PILL_CODES,
 } from '@/components/common/onboarding/types';
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import {
-  approveOnboardingPerson,
-  approveOnboardingRequest,
-  deleteOnboardingRequest,
-  getOnboardingRequest,
-  listOnboardingRequests,
-  regenerateOnboardingToken,
-  rejectOnboardingPerson,
-  revokeOnboardingRequest,
-  sendOnboardingRequest,
-  startOnboardingReview,
-  updateOnboardingPerson,
-} from '../../services/onboardingService';
+  useOnboardingRequest,
+  useOnboardingRequestMutations,
+} from '../../hooks/useOnboardingRequests';
+import { OnboardingRequestNavigation } from './OnboardingRequestNavigation';
 
 const BASE_PATH = '/user-management/onboarding-requests';
 
-function formatMoment(value: string | null): string {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+/** Stored naive UTC, read as Malaysia wall-clock, never as the browser's zone. */
+function moment(value: string | null): string {
+  return value ? formatDateTimeInMalaysia(value) : '-';
 }
 
 function MetaItem({ label, value }: { label: string; value: string }) {
@@ -78,119 +83,72 @@ function MetaItem({ label, value }: { label: string; value: string }) {
   );
 }
 
+function DetailShell({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Container>
+        <Toolbar>
+          <ToolbarHeading>
+            <ToolbarTitle>Onboarding Request</ToolbarTitle>
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem>
+                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>User Management</BreadcrumbPage>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                  <BreadcrumbLink href={BASE_PATH}>Onboarding Requests</BreadcrumbLink>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+          </ToolbarHeading>
+          {children}
+        </Toolbar>
+      </Container>
+    </>
+  );
+}
+
+function BackToQueue() {
+  return (
+    <Button asChild variant="outline">
+      <Link href={BASE_PATH}>
+        <MoveLeft /> Back to onboarding requests
+      </Link>
+    </Button>
+  );
+}
+
 export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
-  const queryClient = useQueryClient();
+  const router = useRouter();
   const [rejecting, setRejecting] = useState<{ id: string; name: string } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const requestQuery = useQuery({
-    queryKey: ['onboarding-request', requestId],
-    queryFn: () => getOnboardingRequest(requestId),
-  });
-
-  // Neighbours for prev/next: reviewing a queue one request at a time is the
-  // common case, and going back to the list between each is what makes a detail
-  // page feel unfinished.
-  const neighboursQuery = useQuery({
-    queryKey: ['onboarding-requests', 'neighbours'],
-    queryFn: () => listOnboardingRequests({ page: 1, limit: 100 }),
-  });
-
+  const requestQuery = useOnboardingRequest(requestId);
   const request = requestQuery.data;
 
-  const invalidate = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['onboarding-request', requestId] });
-    queryClient.invalidateQueries({ queryKey: ['onboarding-requests'] });
-  }, [queryClient, requestId]);
+  const {
+    patchPerson,
+    approvePerson,
+    rejectPerson,
+    startReview,
+    approveRequest,
+    send,
+    revoke,
+    regenerate,
+    remove,
+  } = useOnboardingRequestMutations(requestId);
 
-  const patchMutation = useMutation({
-    mutationFn: ({ personId, patch }: { personId: string; patch: OnboardingPersonPatch }) =>
-      updateOnboardingPerson(requestId, personId, patch),
-    onSuccess: invalidate,
-    onError: (e: Error) => toast.error(e.message),
+  const { copyToClipboard } = useCopyToClipboard({
+    onCopy: () => toast.success('Link copied'),
   });
 
-  const keepMutation = useMutation({
-    mutationFn: (personId: string) => approveOnboardingPerson(requestId, personId),
-    onSuccess: () => {
-      invalidate();
-      toast.success('Kept for provisioning');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const rejectMutation = useMutation({
-    mutationFn: ({ personId, reason }: { personId: string; reason: string }) =>
-      rejectOnboardingPerson(requestId, personId, reason),
-    onSuccess: () => {
-      invalidate();
-      setRejecting(null);
-      setRejectReason('');
-      toast.success('Row rejected. The requester sees the reason.');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const startReviewMutation = useMutation({
-    mutationFn: () => startOnboardingReview(requestId),
-    onSuccess: () => {
-      invalidate();
-      toast.success('Review started');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const approveMutation = useMutation({
-    mutationFn: () => approveOnboardingRequest(requestId),
-    onSuccess: (result) => {
-      invalidate();
-      if (result.job_id) {
-        toast.success(
-          `Approved. Provisioning queued for ${result.queued_people} ${
-            result.queued_people === 1 ? 'person' : 'people'
-          }.`,
-        );
-      } else {
-        // The approval committed but the queue did not take the job. Saying so
-        // is the point: the request sits in Provisioning with nothing running,
-        // and silence here would read as "it is working on it".
-        toast.warning(
-          'Approved, but provisioning could not be queued. Ask an admin to requeue it.',
-        );
-      }
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const sendMutation = useMutation({
-    mutationFn: () => sendOnboardingRequest(requestId),
-    onSuccess: () => {
-      invalidate();
-      toast.success('The link is live. Copy it and send it to the requester.');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const revokeMutation = useMutation({
-    mutationFn: () => revokeOnboardingRequest(requestId),
-    onSuccess: () => {
-      invalidate();
-      toast.success('Link revoked. It stops working immediately.');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const regenerateMutation = useMutation({
-    mutationFn: () => regenerateOnboardingToken(requestId),
-    onSuccess: () => {
-      invalidate();
-      toast.success('New link issued. The old one no longer works.');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const people = request?.people ?? [];
+  const people = useMemo(() => request?.people ?? [], [request]);
   const counts = useMemo(
     () => ({
       total: people.length,
@@ -204,237 +162,260 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
 
   if (requestQuery.isLoading) {
     return (
-      <div className="flex flex-col gap-4">
-        <Skeleton className="h-8 w-72" />
-        <Skeleton className="h-20 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
+      <>
+        <DetailShell>
+          <ToolbarActions>
+            <BackToQueue />
+          </ToolbarActions>
+        </DetailShell>
+        <Container>
+          <div className="flex flex-col gap-4">
+            <Skeleton className="h-8 w-72" />
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-64 w-full" />
+          </div>
+        </Container>
+      </>
     );
   }
 
   if (requestQuery.isError || !request) {
     return (
-      <Alert variant="destructive">
-        <AlertIcon />
-        <AlertTitle>This onboarding request could not be loaded.</AlertTitle>
-      </Alert>
+      <>
+        <DetailShell>
+          <ToolbarActions>
+            <BackToQueue />
+          </ToolbarActions>
+        </DetailShell>
+        <Container>
+          <Alert variant="destructive">
+            <AlertIcon />
+            <AlertTitle>This onboarding request could not be loaded.</AlertTitle>
+          </Alert>
+        </Container>
+      </>
     );
   }
 
   const canStartReview = request.status === 'submitted';
   const canApprove = request.status === 'in_review';
+  const linkLive = !request.revoked_at;
+  const canAdministerLink = ['draft', 'sent'].includes(request.status);
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Header: wraps on mobile so long titles never overlap the actions or
-          push the page into horizontal overflow. */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold break-words">{request.title}</h1>
-            <span className={`${STATUS_PILL_BASE} ${statusPillClass(request.status)}`}>
-              {ONBOARDING_STATUS_LABELS[request.status]}
-            </span>
-          </div>
-          <p className="text-sm text-muted-foreground break-words">
-            {request.company_name} · from {request.requester_name}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <RecordNavigation
-            basePath={BASE_PATH}
-            currentId={requestId}
-            items={neighboursQuery.data?.data ?? []}
-            ariaLabel="onboarding request"
-          />
+    <>
+      <DetailShell>
+        <ToolbarActions>
+          <OnboardingRequestNavigation requestId={requestId} />
           {canStartReview ? (
             <Button
               variant="outline"
-              onClick={() => startReviewMutation.mutate()}
-              disabled={startReviewMutation.isPending}
+              onClick={() => startReview.mutate()}
+              disabled={startReview.isPending}
             >
               Start review
             </Button>
           ) : null}
           {canApprove ? (
-            <Button onClick={() => approveMutation.mutate()} disabled={approveMutation.isPending}>
-              {approveMutation.isPending ? (
-                <Loader2 className="size-4 mr-2 animate-spin" />
+            <Button onClick={() => approveRequest.mutate()} disabled={approveRequest.isPending}>
+              {approveRequest.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
               ) : (
-                <CheckCircle2 className="size-4 mr-2" />
+                <CheckCircle2 className="size-4" />
               )}
               Approve and provision
             </Button>
           ) : null}
-          <Button variant="outline" onClick={() => setDeleteOpen(true)}>
-            <Trash2 className="size-4 mr-2" />
-            Delete
-          </Button>
-        </div>
-      </div>
+          <DetailActionsMenu ariaLabel="Request actions">
+            <DropdownMenuItem
+              disabled={!request.intake_url || !linkLive}
+              onSelect={(e) => {
+                e.preventDefault();
+                if (request.intake_url) copyToClipboard(request.intake_url);
+              }}
+            >
+              <Copy className="size-4" />
+              Copy link
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!linkLive || !canAdministerLink || revoke.isPending}
+              onSelect={(e) => {
+                e.preventDefault();
+                revoke.mutate();
+              }}
+            >
+              <Link2Off className="size-4" />
+              Revoke link
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!canAdministerLink || regenerate.isPending}
+              onSelect={(e) => {
+                e.preventDefault();
+                regenerate.mutate();
+              }}
+            >
+              <KeyRound className="size-4" />
+              Issue a new link
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onSelect={(e) => {
+                e.preventDefault();
+                setDeleteOpen(true);
+              }}
+            >
+              <Trash2 className="size-4" />
+              Delete
+            </DropdownMenuItem>
+          </DetailActionsMenu>
+          <BackToQueue />
+        </ToolbarActions>
+      </DetailShell>
 
-      {/* Meta strip: read-only facts with no edit counterpart, so they live here
-          rather than inside a section body. */}
-      <dl className="grid grid-cols-2 gap-4 rounded-lg border p-4 sm:grid-cols-3 lg:grid-cols-6">
-        <MetaItem label="Requester email" value={request.requester_email} />
-        <MetaItem label="Created" value={formatMoment(request.created_at)} />
-        <MetaItem label="Submitted" value={formatMoment(request.submitted_at)} />
-        <MetaItem label="Link expires" value={formatMoment(request.expires_at)} />
-        <MetaItem label="Reviewed by" value={request.reviewed_by_name ?? '—'} />
-        <MetaItem label="Source file" value={request.source_file_name ?? 'Typed in'} />
-      </dl>
+      <Container>
+        <div className="flex flex-col gap-6">
+          {/* Meta: the record's own identity plus the read-only facts that have
+              no edit counterpart, so they never sit inside a section body. */}
+          <Card>
+            <CardHeader>
+              <CardHeading>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle className="break-words">{request.title}</CardTitle>
+                  <span
+                    className={`${STATUS_PILL_BASE} ${statusPillClass(
+                      ONBOARDING_STATUS_PILL_CODES[request.status],
+                    )}`}
+                  >
+                    {ONBOARDING_STATUS_LABELS[request.status]}
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground break-words">
+                  {request.company_name} · from {request.requester_name}
+                </p>
+              </CardHeading>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+                <MetaItem label="Requester email" value={request.requester_email} />
+                <MetaItem label="Created" value={moment(request.created_at)} />
+                <MetaItem label="Submitted" value={moment(request.submitted_at)} />
+                <MetaItem label="Link expires" value={moment(request.expires_at)} />
+                <MetaItem label="Reviewed by" value={request.reviewed_by_name ?? '-'} />
+                <MetaItem label="Source file" value={request.source_file_name ?? 'Typed in'} />
+              </dl>
+            </CardContent>
+          </Card>
 
-      {/* The link IS the product of creating a request (AC-3.3: revocable,
-          re-sendable). Rendered in every status - after submission it doubles
-          as the requester's status page, so "copy" stays useful throughout. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Intake link</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {request.revoked_at ? (
-            <p className="text-sm text-red-700">
-              This link was revoked on {formatMoment(request.revoked_at)}. Issue a new link to
-              let the requester back in.
-            </p>
-          ) : request.intake_url ? (
-            <p className="text-sm break-all font-mono" title={request.intake_url}>
-              {request.intake_url}
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              The link could not be built. Set the frontend base URL in system settings.
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            {request.intake_url && !request.revoked_at ? (
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(request.intake_url!);
-                  toast.success('Link copied. Paste it into WhatsApp or an email.');
-                }}
-              >
-                <Copy className="size-4 mr-2" />
-                Copy link
-              </Button>
-            ) : null}
-            {request.status === 'draft' ? (
-              <Button onClick={() => sendMutation.mutate()} disabled={sendMutation.isPending}>
-                {sendMutation.isPending ? (
-                  <Loader2 className="size-4 mr-2 animate-spin" />
-                ) : (
-                  <Send className="size-4 mr-2" />
-                )}
-                Open the link for filling
-              </Button>
-            ) : null}
-            {!request.revoked_at && ['draft', 'sent'].includes(request.status) ? (
-              <Button
-                variant="outline"
-                onClick={() => revokeMutation.mutate()}
-                disabled={revokeMutation.isPending}
-              >
-                Revoke link
-              </Button>
-            ) : null}
-            {['draft', 'sent'].includes(request.status) ? (
-              <Button
-                variant="outline"
-                onClick={() => regenerateMutation.mutate()}
-                disabled={regenerateMutation.isPending}
-              >
-                Issue a new link
-              </Button>
-            ) : null}
-          </div>
-        </CardContent>
-      </Card>
+          {/* The link IS the product of creating a request (AC-3.3: revocable,
+              re-sendable). Its state is shown; the token itself never is - a
+              tokenised URL printed on screen is a credential on screen. */}
+          <Card>
+            <CardHeader>
+              <CardHeading>
+                <CardTitle>Intake link</CardTitle>
+              </CardHeading>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {request.revoked_at ? (
+                <p className="text-sm text-destructive">
+                  Revoked on {moment(request.revoked_at)}.
+                </p>
+              ) : request.intake_url ? (
+                <p className="text-sm">Link active</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">No intake link available.</p>
+              )}
+              {request.status === 'draft' ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => send.mutate()} disabled={send.isPending}>
+                    {send.isPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Send className="size-4" />
+                    )}
+                    Send link
+                  </Button>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Notes from the requester</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {request.requester_note ? (
-            <p className="text-sm whitespace-pre-wrap break-words">{request.requester_note}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Nothing was added. Anything unusual would appear here.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardHeading>
+                <CardTitle>Notes</CardTitle>
+              </CardHeading>
+            </CardHeader>
+            <CardContent>
+              {request.requester_note ? (
+                <p className="text-sm whitespace-pre-wrap break-words">{request.requester_note}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">No notes.</p>
+              )}
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>People</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-            <span>{counts.total} submitted</span>
-            <span>·</span>
-            <span>{counts.rejected} rejected</span>
-            <span>·</span>
-            <span>{counts.collisions} already exist</span>
-            <span>·</span>
-            <span>{counts.needsAgentSeat} need a chat-agent seat</span>
-            {counts.failed ? (
-              <>
-                <span>·</span>
-                <span className="text-red-700">{counts.failed} failed to provision</span>
-              </>
-            ) : null}
-          </div>
           <PeopleGrid
             mode="review"
             people={people}
             templates={request.templates}
-            onPatchPerson={(personId, patch) => patchMutation.mutate({ personId, patch })}
-            onApprovePerson={(personId) => keepMutation.mutate(personId)}
+            description={
+              <span className="flex flex-wrap gap-1">
+                <span>Submitted {counts.total}</span>
+                <span>·</span>
+                <span>Rejected {counts.rejected}</span>
+                <span>·</span>
+                <span>Existing {counts.collisions}</span>
+                <span>·</span>
+                <span>Agent seats {counts.needsAgentSeat}</span>
+                {counts.failed ? (
+                  <>
+                    <span>·</span>
+                    <span className="text-destructive">Failed {counts.failed}</span>
+                  </>
+                ) : null}
+              </span>
+            }
+            onPatchPerson={(personId, patch) => patchPerson.mutate({ personId, patch })}
+            onApprovePerson={(personId) => approvePerson.mutate(personId)}
             onRejectPerson={(personId) => {
               const person = people.find((p) => p.id === personId);
               setRejecting({ id: personId, name: person?.full_name ?? 'this person' });
               setRejectReason('');
             }}
-            emptyMessage="Nobody has been submitted against this link yet."
+            emptyMessage="No people submitted yet."
           />
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Provisioning</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {request.provisioned_at ? (
-            <p className="text-sm">Provisioning ran at {formatMoment(request.provisioned_at)}.</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Nothing has been provisioned yet. Approving queues a background job; each person&apos;s
-              lanes update on their row above as it runs.
-            </p>
-          )}
-          <p className="mt-2 text-sm text-muted-foreground">
-            This release creates CRM users. WhatsApp contacts and chat-agent seats are recorded
-            but not yet created automatically.
-          </p>
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardHeading>
+                <CardTitle>Provisioning</CardTitle>
+              </CardHeading>
+            </CardHeader>
+            <CardContent>
+              {request.provisioned_at ? (
+                <p className="text-sm">Provisioning ran at {moment(request.provisioned_at)}.</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">Nothing provisioned yet.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </Container>
 
       {/* Reject: a reason is required, and it is required server-side too. */}
       <Dialog open={!!rejecting} onOpenChange={(open) => !open && setRejecting(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Reject {rejecting?.name}</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="reject-reason">Why</Label>
+            <Label htmlFor="reject-reason">Reason</Label>
             <Textarea
               id="reject-reason"
               value={rejectReason}
               onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="The requester sees this."
+              placeholder="Reason for rejection"
               rows={3}
             />
           </div>
@@ -444,11 +425,19 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
             </Button>
             <Button
               variant="destructive"
-              disabled={!rejectReason.trim() || rejectMutation.isPending}
-              onClick={() =>
-                rejecting &&
-                rejectMutation.mutate({ personId: rejecting.id, reason: rejectReason })
-              }
+              disabled={!rejectReason.trim() || rejectPerson.isPending}
+              onClick={() => {
+                if (!rejecting) return;
+                rejectPerson.mutate(
+                  { personId: rejecting.id, reason: rejectReason },
+                  {
+                    onSuccess: () => {
+                      setRejecting(null);
+                      setRejectReason('');
+                    },
+                  },
+                );
+              }}
             >
               Reject
             </Button>
@@ -466,14 +455,14 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
           </>
         }
         onDelete={async () => {
-          await deleteOnboardingRequest(requestId);
+          await remove.mutateAsync();
         }}
         queryKeysToInvalidate={[['onboarding-requests']]}
         successMessage="Onboarding request deleted"
         onSuccess={() => {
-          window.location.assign(BASE_PATH);
+          router.push(BASE_PATH);
         }}
       />
-    </div>
+    </>
   );
 }

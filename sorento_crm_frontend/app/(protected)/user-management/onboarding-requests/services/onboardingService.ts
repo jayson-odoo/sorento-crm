@@ -2,6 +2,9 @@
  * The captain-side onboarding API contract (UAC AC-6, AC-9).
  *
  *   GET    /api/v1/user-management/onboarding/requests            `.view`
+ *          Paged, sorted and searched server-side; standard grid envelope.
+ *   GET    /api/v1/user-management/onboarding/requests/neighbours `.view`
+ *          Prev/next within the active list query, for the detail pager.
  *   POST   /api/v1/user-management/onboarding/requests            `.add`
  *   GET    /api/v1/user-management/onboarding/requests/{id}       `.view`
  *          Detail, with collisions computed live on read.
@@ -24,7 +27,8 @@
  */
 
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type {
   OnboardingPersonPatch,
   OnboardingRequestDetail,
@@ -33,12 +37,13 @@ import type {
 
 const BASE = '/api/user-management/onboarding';
 
-export interface OnboardingRequestListParams {
-  page?: number;
-  limit?: number;
-  query?: string;
-  status?: string;
-}
+/** Where the detail page's prev/next pager reads its neighbours from. */
+export const ONBOARDING_NEIGHBOURS_PATH = `${BASE}/requests/neighbours`;
+
+export type OnboardingRequestListParams = DataGridApiFetchParams & {
+  /** A single `onboarding_request` status code, or undefined for all. */
+  statusKey?: string;
+};
 
 export interface OnboardingRequestListResult {
   data: OnboardingRequestSummary[];
@@ -59,35 +64,13 @@ async function readOrThrow<T>(response: Response, fallback: string): Promise<T> 
   return response.json();
 }
 
-/**
- * The queue.
- *
- * The endpoint answers with the whole list rather than a page: a review queue is
- * tens of rows, not thousands, and paginating server-side would cost a second
- * round trip to show a count nobody is waiting on. The grid still paginates
- * client-side, so the slice is done here.
- */
+/** One page of the queue. Paging, sorting and search all happen server-side. */
 export async function listOnboardingRequests(
-  params: OnboardingRequestListParams = {},
+  params: OnboardingRequestListParams,
 ): Promise<OnboardingRequestListResult> {
-  const search = new URLSearchParams();
-  if (params.query?.trim()) search.set('query', params.query.trim());
-  if (params.status) search.set('status_key', params.status);
-  const suffix = search.toString() ? `?${search.toString()}` : '';
-
-  const response = await apiFetch(`${BASE}/requests${suffix}`);
-  const rows = await readOrThrow<OnboardingRequestSummary[]>(
-    response,
-    'Could not load onboarding requests',
-  );
-
-  const page = params.page ?? 1;
-  const limit = params.limit ?? 10;
-  const start = (page - 1) * limit;
-  return {
-    data: rows.slice(start, start + limit),
-    pagination: { page, limit, total: rows.length },
-  };
+  const search = buildDataGridParams(params, { status_key: params.statusKey });
+  const response = await apiFetch(`${BASE}/requests?${search.toString()}`);
+  return readOrThrow(response, 'Could not load onboarding requests');
 }
 
 export async function getOnboardingRequest(id: string): Promise<OnboardingRequestDetail> {
