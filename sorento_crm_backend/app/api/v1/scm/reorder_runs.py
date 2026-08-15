@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
+from app.models.product import Product
 from app.schemas.scm_reorder import (
     CreateReorderRunRequest,
     ReorderRunAccepted,
@@ -25,6 +26,8 @@ from app.schemas.scm_reorder import (
     UnlocatedDemandResponse,
 )
 from app.services.company_scope_sql import company_sql_predicate
+from app.services.dealer_kit import product_images
+from app.services.dealer_kit.viewer import ViewerContext
 from app.services.scm import cover_service
 from app.services.scm import price_history_service
 from app.services.scm import (
@@ -466,6 +469,51 @@ def list_product_economics(
     """
     svc.assert_run_visible(db, run_id)
     return product_economics_service.economics_for_run(db, run_id)
+
+
+@router.get("/reorder-runs/{run_id}/product-images")
+def list_product_images(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """What each product on the plan LOOKS like, keyed by product id (AC-7).
+
+    > "as IT I do not know what a product looks like"
+
+    A row is a code and a name, and a buyer who never handles the goods cannot tell two
+    codes apart from either. The photo is NOT a new asset: it is the one already chosen in
+    Dealer Kit -> Brochure images (`product_attachments.is_primary`), read through the same
+    viewer-gated reader the catalogue tiles use, so the plan screen and the brochure can
+    never show a different picture of the same product.
+
+    ONE call for the whole run rather than one per row: every entry is a signed URL, and a
+    plan of four thousand lines whose buyer opens two photos must not sign four thousand of
+    them. The frontend asks for it lazily, on the first icon opened.
+
+    A product with no permitted image is ABSENT from the map rather than mapped to null -
+    the popover has a designed "No primary photo yet" state, and a blank url would reach
+    the browser as a broken image instead.
+    """
+    svc.assert_run_visible(db, run_id)
+    product_ids = [
+        r[0]
+        for r in db.execute(
+            text(
+                "SELECT DISTINCT product_id::text FROM scm.reorder_recommendation "
+                "WHERE run_id::text = :run"
+            ),
+            {"run": run_id},
+        ).fetchall()
+    ]
+    if not product_ids:
+        return {"images": {}}
+    products = db.query(Product).filter(Product.id.in_(product_ids)).all()
+    # Staff: the plan screen is behind `scm.dashboard.view`, an internal permission, so
+    # trade imagery is permitted here exactly as it is in the dealer-kit builder. What a
+    # CONSUMER may see is decided again, per reader, when a catalogue page is published.
+    viewer = ViewerContext(is_staff=True)
+    return {"images": product_images.primary_image_urls(db, products, viewer)}
 
 
 @router.get("/reorder-runs/{run_id}/level-suggestions")
