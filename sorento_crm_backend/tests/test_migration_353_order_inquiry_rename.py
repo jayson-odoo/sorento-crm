@@ -16,6 +16,13 @@ live database, per the pattern in CLAUDE.md. The live database is already past t
 so "the new table exists there" would be a statement about the environment, not about the code.
 The old-name schema is built by running the revision's own `downgrade()`, which pins that half
 of the file at the same time.
+
+**Migration 354 then moved these two tables into the `projects` schema** (ADR-0011), and 353
+still operates on `current_schema()` - correctly, because that is where the tables were at the
+moment 353 ran. So every test here rewinds one revision further first, by running 354's own
+downgrade: that puts `project_order_inquiries` / `project_order_inquiry_rows` back in the
+default schema exactly as they stood between the two revisions. It is the real historical
+sequence, played with the real migration code, rather than a hand-built imitation of it.
 """
 from __future__ import annotations
 
@@ -30,16 +37,13 @@ from sqlalchemy import text
 from app.models.base import set_company_scope
 from app.models.project_so import OrderInquiry, ProjectSalesOrder
 from app.models.projects import Project, ProjectLead
-from tests._pg_fixture import blank_session, unique_code
+from tests._pg_fixture import blank_schema_engine, blank_session, unique_code
 
 SORENTO = "00000000-0000-0000-0000-000000000001"
 
-MIGRATION = (
-    Path(__file__).resolve().parents[1]
-    / "alembic"
-    / "versions"
-    / "353_project_order_inquiry_rename.py"
-)
+VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+MIGRATION = VERSIONS / "353_project_order_inquiry_rename.py"
+MIGRATION_354 = VERSIONS / "354_projects_schema_move.py"
 
 NEW_TABLES = ("project_order_inquiries", "project_order_inquiry_rows")
 OLD_TABLES = ("order_inquiries", "order_inquiry_rows")
@@ -47,10 +51,14 @@ OLD_TABLES = ("order_inquiries", "order_inquiry_rows")
 
 @pytest.fixture
 def db():
-    """A scratch schema built by ``create_all``, so it carries the NEW names already.
+    """A scratch schema built by ``create_all``, so it carries the CURRENT (post-354) shape.
+
+    Every test calls ``_rewind_past_354`` to reach the shape 353 left behind. It is a call
+    rather than fixture setup because the row test has to seed through the ORM first, while
+    the tables are still where the models say they are.
 
     Everything here is DDL, and Postgres runs DDL inside the transaction the fixture rolls
-    back, so the shared blank schema is unchanged afterwards.
+    back, so both scratch schemas are unchanged afterwards.
     """
     with blank_session() as session:
         yield session
@@ -61,6 +69,19 @@ def _module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _rewind_past_354(db) -> None:
+    spec = importlib.util.spec_from_file_location("m354_for_353", MIGRATION_354)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # Never the real `projects` schema: the fixture's scratch stand-in for it.
+    options = blank_schema_engine().get_execution_options()
+    module.TARGET_SCHEMA = options["schema_translate_map"]["projects"]
+
+    ctx = MigrationContext.configure(db.connection())
+    with Operations.context(ctx):
+        module.downgrade()
 
 
 def _run(db, direction: str) -> None:
@@ -115,6 +136,7 @@ def test_upgrade_changes_nothing_when_the_new_names_are_already_there(db):
     cover indexes and constraints separately, and a missing guard on one of those would
     raise ``ALTER INDEX ... does not exist`` rather than quietly do the wrong thing.
     """
+    _rewind_past_354(db)
     before = (_tables(db), _indexes(db), _constraints(db))
     assert set(NEW_TABLES) <= before[0]
     assert not (set(OLD_TABLES) & before[0]), "the scratch schema is not the post-rename one"
@@ -126,6 +148,7 @@ def test_upgrade_changes_nothing_when_the_new_names_are_already_there(db):
 
 def test_upgrade_is_repeatable_on_the_new_names(db):
     """Twice is the same as once. A guard that only holds on the first pass is not a guard."""
+    _rewind_past_354(db)
     _run(db, "upgrade")
     before = (_tables(db), _indexes(db), _constraints(db))
 
@@ -140,6 +163,7 @@ def test_upgrade_is_repeatable_on_the_new_names(db):
 
 def test_upgrade_renames_when_the_old_names_are_present(db):
     """Build the pre-353 schema with the revision's own downgrade, then upgrade it back."""
+    _rewind_past_354(db)
     expected = (_tables(db), _indexes(db), _constraints(db))
 
     _run(db, "downgrade")
@@ -152,7 +176,7 @@ def test_upgrade_renames_when_the_old_names_are_present(db):
 
     _run(db, "upgrade")
 
-    # Back to exactly the schema create_all builds: every table, index and constraint name
+    # Back to exactly the shape 353 left behind: every table, index and constraint name
     # round-trips. Anything the revision renamed on the way down and forgot on the way up
     # would show here as a leftover `order_inquir%` name.
     assert (_tables(db), _indexes(db), _constraints(db)) == expected
@@ -194,6 +218,10 @@ def test_upgrade_carries_the_rows_across_the_rename(db):
 
     # Detach the identity map before the tables move out from under it.
     db.expunge_all()
+
+    # Seeded first, through the ORM, while the tables are still in the projects schema.
+    # Only then rewind to the shape 353 operated on.
+    _rewind_past_354(db)
 
     _run(db, "downgrade")
     assert (

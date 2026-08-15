@@ -336,8 +336,8 @@ def test_every_company_id_table_is_registered():
     #   - Certificate children are deliberately NOT owned: they are only reachable through
     #     the certificate, which is scoped, so a second filter is redundant surface (SEC-2a).
     #     Same reasoning for the project children that inherit their partition through their
-    #     parent (project_series_categories, project_brands, project_collaborators,
-    #     project_takeover_requests).
+    #     parent (projects.series_categories, projects.brands, projects.collaborators,
+    #     projects.takeover_requests).
     #   - `access_agents` is NOT owned: one agent routes both brands through two ladders.
     # Derived instead of owned: demand_stat / item_classification / the views (via the
     # warehouse join), supplier_performance (via suppliers), market signals (facts about

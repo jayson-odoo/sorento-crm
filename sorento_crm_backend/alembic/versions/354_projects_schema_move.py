@@ -15,11 +15,20 @@ rename them because a rename inside one schema leaves the index names behind. Re
 report it as drift, because alembic does not compare index NAMES it did not author; a human
 reading `\\d projects.parties` will see it, and this paragraph is the answer.
 
+The DOWN direction has one job the up direction does not: restoring auto-DERIVED
+constraint and index names. Postgres names a primary key `<table>_pkey`, so on a database
+built by `create_all` from the post-move models the key of `projects.brands` is called
+`brands_pkey`, and index names are unique per SCHEMA - moving that table back beside CORE
+`public.brands`, which already owns `brands_pkey`, is refused outright. `project_brands_pkey`
+is what Postgres derived when the table WAS called `project_brands`, so `downgrade()`
+restores exactly that, and does nothing at all on a database this revision actually
+migrated (where the names already carry the prefix). See `_restore_derived_names`.
+
 Every step is guarded on "the source is there and the destination is not", so the revision
 no-ops on a database built by `create_all` from the post-move models and does the work on
-one built before the move. `downgrade()` is the exact inverse and leaves the (empty)
-`projects` schema in place: other objects may land there later, and dropping it would make
-the downgrade destructive rather than symmetric.
+one built before the move. `downgrade()` leaves the (empty) `projects` schema in place:
+other objects may land there later, and dropping it would make the downgrade destructive
+rather than symmetric.
 
 Neither schema name is a literal in the ALTER statements. `TARGET_SCHEMA` is a module-level
 constant and the source is read from `current_schema()` at run time, so the dual-path test
@@ -105,6 +114,74 @@ def _has_table(schema: str, name: str) -> bool:
     return sa.inspect(op.get_bind()).has_table(name, schema=schema)
 
 
+def _derived_names(schema: str, table: str, stem: str):
+    """Constraints and indexes on ``schema.table`` whose name derives from ``stem``.
+
+    Postgres auto-names a primary key `<table>_pkey` and a foreign key
+    `<table>_<column>_fkey`, so on a database built by ``create_all`` from the post-move
+    models the primary key of `projects.brands` is called `brands_pkey`. See
+    ``_restore_derived_names`` for why that has to be undone before a downgrade.
+    """
+    bind = op.get_bind()
+    constraints = [
+        row[0]
+        for row in bind.execute(
+            sa.text(
+                "SELECT con.conname FROM pg_constraint con "
+                "JOIN pg_class c ON c.oid = con.conrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = :schema AND c.relname = :table "
+                "AND con.conname LIKE :prefix"
+            ),
+            {"schema": schema, "table": table, "prefix": f"{stem}\\_%"},
+        )
+    ]
+    indexes = [
+        row[0]
+        for row in bind.execute(
+            sa.text(
+                "SELECT ic.relname FROM pg_index i "
+                "JOIN pg_class ic ON ic.oid = i.indexrelid "
+                "JOIN pg_class tc ON tc.oid = i.indrelid "
+                "JOIN pg_namespace n ON n.oid = tc.relnamespace "
+                "WHERE n.nspname = :schema AND tc.relname = :table "
+                "AND ic.relname LIKE :prefix"
+            ),
+            {"schema": schema, "table": table, "prefix": f"{stem}\\_%"},
+        )
+    ]
+    # A constraint rename carries its backing index with it, so do not do both.
+    return constraints, [name for name in indexes if name not in constraints]
+
+
+def _restore_derived_names(schema: str, table: str, old: str, new: str) -> None:
+    """Put auto-derived constraint and index names back to their pre-354 form.
+
+    Index names are unique per SCHEMA, not per table, and this is not cosmetic on the way
+    down: on a database built by ``create_all`` the primary key of `projects.brands` is
+    called `brands_pkey`, and moving that table back into the default schema, where CORE
+    `brands` already owns `brands_pkey`, is refused by Postgres. Five of the seven
+    colliding names hit this.
+
+    Renaming `brands_pkey` to `project_brands_pkey` IS the pre-354 name - that is what
+    Postgres derived when the table was called `project_brands` - so this restores rather
+    than invents. On a database that was actually migrated by this revision it is a no-op,
+    because those names already carry the prefix (the upgrade deliberately does not touch
+    them, see the module docstring).
+    """
+    if old == new:
+        return
+    constraints, indexes = _derived_names(schema, table, new)
+    for name in constraints:
+        restored = f"{old}{name[len(new):]}"
+        op.execute(
+            f'ALTER TABLE "{schema}"."{table}" RENAME CONSTRAINT "{name}" TO "{restored}"'
+        )
+    for name in indexes:
+        restored = f"{old}{name[len(new):]}"
+        op.execute(f'ALTER INDEX "{schema}"."{name}" RENAME TO "{restored}"')
+
+
 def upgrade() -> None:
     source = _source_schema()
     op.execute(f'CREATE SCHEMA IF NOT EXISTS "{TARGET_SCHEMA}"')
@@ -126,6 +203,7 @@ def downgrade() -> None:
         if _has_table(source, old):
             continue  # already back
         if old != new and _has_table(TARGET_SCHEMA, new) and not _has_table(TARGET_SCHEMA, old):
+            _restore_derived_names(TARGET_SCHEMA, new, old, new)
             op.execute(f'ALTER TABLE "{TARGET_SCHEMA}"."{new}" RENAME TO "{old}"')
         if _has_table(TARGET_SCHEMA, old):
             op.execute(f'ALTER TABLE "{TARGET_SCHEMA}"."{old}" SET SCHEMA "{source}"')

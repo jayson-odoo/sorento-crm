@@ -63,8 +63,9 @@ def blank_schema_engine():
     whole session rather than per test. Data isolation is the caller's job: use
     ``blank_session()``, which discards writes.
 
-    ``scm`` is translated alongside the default schema, so the ``scm.*`` models
-    -- which could not be created on sqlite at all -- are included.
+    ``scm`` and ``projects`` are translated alongside the default schema, so the
+    models that declare a schema -- which could not be created on sqlite at all --
+    are included.
     """
     if "engine" not in _BLANK:
         from app import models  # noqa: F401  register every model's table
@@ -82,10 +83,15 @@ def blank_schema_engine():
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_scm"')
+        admin.exec_driver_sql(f'CREATE SCHEMA "{name}_projects"')
         admin.close()
 
         scoped = engine.execution_options(
-            schema_translate_map={None: name, "scm": f"{name}_scm"}
+            schema_translate_map={
+                None: name,
+                "scm": f"{name}_scm",
+                "projects": f"{name}_projects",
+            }
         )
         with scoped.connect() as connection:
             # The Sorento company row is seeded by the ``after_create`` DDL event on
@@ -108,6 +114,7 @@ def drop_blank_schema():
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_scm" CASCADE')
+        admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_projects" CASCADE')
         admin.close()
 
 
@@ -131,8 +138,18 @@ def blank_session() -> Session:
     #
     # That failure is silent and writes live data, so pin search_path too. SET
     # LOCAL scopes it to this transaction, which is discarded below.
+    #
+    # ORDER MATTERS, and the projects schema must come LAST. The default schema stays
+    # first so `current_schema()` is still `{name}` (migration 354 reads it to find
+    # where the tables are). The projects schema trails everything because seven of its
+    # bare names -- brands, purchase_orders, purchase_order_lines, sales_orders,
+    # sales_order_lines, quotations, quotation_lines -- also exist as CORE tables, and
+    # unqualified raw SQL naming one of those means the core one. Put `{name}_projects`
+    # earlier and seven core tables silently repoint at the module's.
     name = _BLANK["name"]
-    connection.exec_driver_sql(f'SET LOCAL search_path TO "{name}", "{name}_scm"')
+    connection.exec_driver_sql(
+        f'SET LOCAL search_path TO "{name}", "{name}_scm", "{name}_projects"'
+    )
 
     session = Session(bind=connection, join_transaction_mode="create_savepoint")
     try:
@@ -165,14 +182,18 @@ def _globally_required_tables():
 def _with_dependencies(tables):
     """Close the set over foreign keys, in dependency order.
 
-    Anything reachable in the default schema is included; tables in another
-    schema (the ``scm.*`` models) are skipped, since the translate map only
-    redirects the default one.
+    Everything reachable is included, whatever schema it declares. It used to skip
+    ``table.schema is not None`` because the translate map only redirected the default
+    schema, and that skip became a trap the moment the projects module moved into its
+    own schema: ``complaints`` and ``purchase_requests`` carry a foreign key to
+    ``projects.projects``, so a caller passing either would have been handed a schema
+    whose FK target was silently missing. ``pg_empty_schema`` now translates all three
+    schemas, so nothing needs skipping.
     """
     seen: dict[str, object] = {}
 
     def visit(table):
-        if table.key in seen or table.schema is not None:
+        if table.key in seen:
             return
         seen[table.key] = table
         for fk in table.foreign_keys:
@@ -198,19 +219,31 @@ def pg_empty_schema(tables) -> Session:
     ``schema_translate_map``, so the DDL is the real DDL and only the data is
     empty. The schema is dropped afterwards.
 
-    ``tables`` is an explicit list because the full metadata cannot be emitted
-    wholesale: the SCM models declare ``schema="scm"``, which the translate map
-    would not redirect. Whatever those tables reference is pulled in for you --
-    Postgres validates FK targets at DDL time where sqlite did not, so an
+    ``tables`` is an explicit list because emitting the full metadata wholesale is
+    what ``blank_schema_engine`` is for. Whatever those tables reference is pulled in
+    for you -- Postgres validates FK targets at DDL time where sqlite did not, so an
     incomplete list fails loudly here instead of silently not enforcing.
+
+    All three schemas are translated (``scm`` and ``projects`` alongside the default),
+    mirroring ``blank_schema_engine``: a model that declares a schema must land in a
+    scratch copy of it, never in the REAL ``projects`` schema, and a caller reaching
+    one through a foreign key must not have it quietly dropped.
     """
     tables = _with_dependencies(list(tables) + _globally_required_tables())
     name = f"zzt_scratch_{uuid.uuid4().hex[:12]}"
     admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
+    admin.exec_driver_sql(f'CREATE SCHEMA "{name}_scm"')
+    admin.exec_driver_sql(f'CREATE SCHEMA "{name}_projects"')
     admin.close()
 
-    scoped = engine.execution_options(schema_translate_map={None: name})
+    scoped = engine.execution_options(
+        schema_translate_map={
+            None: name,
+            "scm": f"{name}_scm",
+            "projects": f"{name}_projects",
+        }
+    )
     connection = scoped.connect()
     try:
         # create_all rather than per-table create(): it sorts by dependency and
@@ -227,4 +260,6 @@ def pg_empty_schema(tables) -> Session:
         connection.close()
         cleanup = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
+        cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_scm" CASCADE')
+        cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_projects" CASCADE')
         cleanup.close()

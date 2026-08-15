@@ -30,7 +30,7 @@ from app.models.projects import ProjectParty
 from app.models.user import User
 from app.services.error_handler import AppException
 
-from ._pg_fixture import blank_session
+from ._pg_fixture import blank_schema_engine, blank_session
 
 MARKER = "zzt-lead-accept"
 
@@ -51,8 +51,13 @@ def _allow_no_buyer(db) -> None:
     MODELS is stricter than production. Dropping it here keeps the no-buyer tests
     honest about the real column. Idempotent, so it stays a no-op once the model catches
     up with the migration.
+
+    Qualified with the fixture's scratch stand-in for the `projects` schema (ADR-0011).
+    A literal ``projects.leads`` here would reach past the scratch schema and alter the
+    REAL table.
     """
-    db.execute(text("alter table project_leads alter column customer_id drop not null"))
+    schema = blank_schema_engine().get_execution_options()["schema_translate_map"]["projects"]
+    db.execute(text(f'alter table "{schema}".leads alter column customer_id drop not null'))
     db.flush()
 
 

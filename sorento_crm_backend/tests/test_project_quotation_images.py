@@ -688,9 +688,10 @@ def test_a_product_this_company_cannot_see_is_off_catalog_not_an_invitation():
             ),
             {"id": _uid(), "pid": their_product, "aid": str(theirs.id)},
         )
-        db.execute(
-            text("UPDATE project_quotation_lines SET product_id = :pid WHERE id = :lid"),
-            {"pid": their_product, "lid": str(line.id)},
+        # Through the ORM, not raw SQL: `quotation_lines` exists in `public` as well as in
+        # `projects` (ADR-0011), so an unqualified UPDATE would hit the wrong table.
+        db.query(ProjectQuotationLine).filter(ProjectQuotationLine.id == line.id).update(
+            {ProjectQuotationLine.product_id: their_product}, synchronize_session=False
         )
         db.flush()
         db.expire_all()

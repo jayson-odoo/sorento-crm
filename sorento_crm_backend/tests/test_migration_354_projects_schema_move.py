@@ -92,24 +92,56 @@ def _tables(db) -> set[str]:
 
     Filtering on `current_schema()` alone - which is what the 353 test does - would see an
     empty set after the move and pass regardless of what the revision did.
+
+    In the default schema only the PRE-move names count. Seven of the post-move bare names
+    (`brands`, `purchase_orders`, `sales_orders` and friends) are also CORE tables sitting
+    right there, and counting those would make the assertion drift with core rather than
+    with this revision. The pre-move names carry the `project_` prefix precisely so they
+    cannot be confused, and the 13 that never carried it collide with nothing.
     """
-    names = {old for old, _ in _module().TABLES} | {new for _, new in _module().TABLES}
+    projects_schema = _scratch_projects_schema()
+    old_names = sorted(old for old, _ in _module().TABLES)
     rows = db.execute(
         text(
             "SELECT schemaname, tablename FROM pg_tables "
-            "WHERE schemaname = ANY(:schemas) AND tablename = ANY(:names)"
+            "WHERE schemaname = :projects "
+            "   OR (schemaname = :default AND tablename = ANY(:old_names))"
         ),
-        {"schemas": _schemas(), "names": sorted(names)},
+        {
+            "projects": projects_schema,
+            "default": _scratch_default_schema(),
+            "old_names": old_names,
+        },
     )
     return {f"{row[0]}.{row[1]}" for row in rows}
+
+
+def _scope_params() -> dict:
+    return {
+        "projects": _scratch_projects_schema(),
+        "default": _scratch_default_schema(),
+        "old_names": sorted(old for old, _ in _module().TABLES),
+    }
+
+
+#: Same scoping as ``_tables``: module tables only, never the core table that happens to
+#: share a bare name. Including core's `brands_pkey` here would make the round-trip
+#: expectation below rewrite a core index name.
+_MODULE_TABLE_SCOPE = (
+    "(n.nspname = :projects OR (n.nspname = :default AND c.relname = ANY(:old_names)))"
+)
 
 
 def _indexes(db) -> set[str]:
     rows = db.execute(
         text(
-            "SELECT schemaname, indexname FROM pg_indexes WHERE schemaname = ANY(:schemas)"
+            "SELECT n.nspname, ic.relname FROM pg_index i "
+            "JOIN pg_class ic ON ic.oid = i.indexrelid "
+            "JOIN pg_class c ON c.oid = i.indrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            f"WHERE {_MODULE_TABLE_SCOPE}"
         ),
-        {"schemas": _schemas()},
+        _scope_params(),
     )
     return {f"{row[0]}.{row[1]}" for row in rows}
 
@@ -120,15 +152,39 @@ def _constraints(db) -> set[str]:
             "SELECT n.nspname, c.relname, con.conname FROM pg_constraint con "
             "JOIN pg_class c ON c.oid = con.conrelid "
             "JOIN pg_namespace n ON n.oid = c.relnamespace "
-            "WHERE n.nspname = ANY(:schemas)"
+            f"WHERE {_MODULE_TABLE_SCOPE}"
         ),
-        {"schemas": _schemas()},
+        _scope_params(),
     )
     return {f"{row[0]}.{row[1]}.{row[2]}" for row in rows}
 
 
 def _snapshot(db):
     return (_tables(db), _indexes(db), _constraints(db))
+
+
+def _with_derived_names_restored(names: set[str]) -> set[str]:
+    """Apply the down-direction rule to a set of qualified constraint / index names.
+
+    A name Postgres DERIVED from the post-move table name (`brands_pkey`) becomes the name
+    it would have derived from the pre-move one (`project_brands_pkey`). ``downgrade()``
+    does this because index names are unique per schema and `brands_pkey` is already taken
+    in the default schema by CORE `brands`; ``upgrade()`` deliberately does not undo it,
+    since renaming 200-odd live objects would be risk spent on cosmetics (ADR-0011).
+
+    So a create_all schema that has been round-tripped down and back carries the prefixed
+    names - which is exactly what a database migrated by this revision has always carried.
+    """
+    mapping = {new: old for old, new in _module().TABLES if old != new}
+    out = set()
+    for qualified in names:
+        head, _, name = qualified.rpartition(".")
+        for new, old in mapping.items():
+            if name.startswith(f"{new}_"):
+                name = f"{old}{name[len(new):]}"
+                break
+        out.add(f"{head}.{name}")
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -205,10 +261,44 @@ def test_upgrade_moves_and_renames_when_the_tables_are_in_the_default_schema(db)
 
     _run(db, "upgrade")
 
-    # Back to exactly what create_all builds. Indexes and constraints are asserted too:
-    # they ride along with SET SCHEMA and are deliberately NOT renamed, so a stray
-    # rename in either direction would show here.
-    assert _snapshot(db) == expected
+    tables, indexes, constraints = _snapshot(db)
+    # Every table is back where create_all put it, under the name create_all gave it.
+    assert tables == expected[0]
+    # Indexes and constraints are asserted too, because they ride along with SET SCHEMA
+    # and a stray rename in either direction would show here. The one expected change is
+    # the derived-name restoration the downgrade had to perform and the upgrade
+    # deliberately does not undo.
+    assert indexes == _with_derived_names_restored(expected[1])
+    assert constraints == _with_derived_names_restored(expected[2])
+
+
+def test_downgrade_moves_a_colliding_table_back_beside_its_core_namesake(db):
+    """`projects.brands` has to land next to CORE `brands` without either losing its key.
+
+    Index names are unique per SCHEMA. A schema built by create_all calls the module key
+    `brands_pkey`, and CORE `brands` already owns that name in the default schema, so a
+    plain SET SCHEMA is refused outright - which is what this revision did before the
+    downgrade learned to restore derived names. Five of the seven colliding tables hit it.
+    """
+    default = _scratch_default_schema()
+
+    _run(db, "downgrade")
+
+    names = {name.rpartition(".")[2] for name in _indexes(db)}
+    assert "project_brands_pkey" in names, "the module key did not come back prefixed"
+    assert f"{default}.project_brands" in _tables(db)
+
+    # Core's own key is untouched and still where it was.
+    assert (
+        db.execute(
+            text(
+                "SELECT count(*) FROM pg_class c JOIN pg_namespace n "
+                "ON n.oid = c.relnamespace WHERE n.nspname = :s AND c.relname = 'brands_pkey'"
+            ),
+            {"s": default},
+        ).scalar()
+        == 1
+    )
 
 
 def test_index_names_keep_the_project_prefix_inside_the_projects_schema(db):
