@@ -130,15 +130,51 @@ describe('PlanHealthCell - the popover answers, it does not editorialise (AC-5)'
     expect(screen.getByText('Suggestion: Keep selling')).toBeInTheDocument();
   });
 
-  it('shows a dash rather than claiming "keep selling" when there is no verdict yet', () => {
-    // `advice` is null while the economics are still loading, and on any product the
-    // advisory holds no opinion about. Defaulting that to "Keep selling" would be a claim
-    // the system has not made.
+  it('shows a dash rather than claiming "keep selling" when there is no verdict', () => {
+    // `discontinueAdvice` returns null only when there are no economics, and the grid
+    // renders a bare dash in that case, so this branch is defensive rather than a state
+    // the plan screen reaches today. It stays because the prop allows null and the
+    // alternative - defaulting to "Keep selling" - is a claim the system never made.
     render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={null} econ={econ()} />);
     open();
 
     expect(screen.getByText('Suggestion: -')).toBeInTheDocument();
     expect(screen.queryByText(/Suggestion: Keep selling/)).not.toBeInTheDocument();
+  });
+
+  it('offers neither button as the suggested one when there is no verdict', () => {
+    // The suggestion is what the outlined button MEANS. Outlining Keep selling here would
+    // put a recommendation on screen that nothing computed.
+    render(
+      <PlanHealthCell
+        margin={marginOf(60, econ(), 15)}
+        advice={null}
+        econ={econ()}
+        onDecideLifecycle={() => {}}
+      />,
+    );
+    open();
+
+    const keep = screen.getByRole('button', { name: 'Keep selling' });
+    const stop = screen.getByRole('button', { name: 'Discontinue' });
+    // Both plain: the outline variant is the marker the suggested button carries.
+    expect(keep.className).not.toMatch(/border-input/);
+    expect(stop.className).not.toMatch(/border-input/);
+    expect(screen.queryByText('suggested')).not.toBeInTheDocument();
+  });
+
+  it('still outlines the suggested button when there IS a verdict', () => {
+    render(
+      <PlanHealthCell
+        margin={marginOf(60, econ(), 15)}
+        advice={{ consider: false, factors: [] }}
+        econ={econ()}
+        onDecideLifecycle={() => {}}
+      />,
+    );
+    open();
+
+    expect(screen.getByRole('button', { name: 'Keep selling' }).className).toMatch(/border-input/);
   });
 
   it('drops the two prose verdicts it used to open with', () => {

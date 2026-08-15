@@ -51,7 +51,14 @@ export function PlanHealthCell({
   }
 
   const decision = econ?.lifecycle_decision ?? null;
-  const suggested: 'keep' | 'discontinue' = advice?.consider ? 'discontinue' : 'keep';
+  // Null when there is no verdict to offer, so NEITHER button gets the outline that means
+  // "this is the suggestion". Defaulting it to keep would put a recommendation on screen
+  // that nothing computed.
+  const suggested: 'keep' | 'discontinue' | null = advice
+    ? advice.consider
+      ? 'discontinue'
+      : 'keep'
+    : null;
 
   const record = async (next: 'keep' | 'discontinue' | null) => {
     if (!onDecideLifecycle || !econ) return;
