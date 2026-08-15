@@ -544,9 +544,11 @@ def decide_and_record(
         }
 
     def _refuse(outcome: str, notices: list[dict]) -> MediaDecision:
-        usage = _record(
+        usage, inserted = _record(
             db, request, contact, period_key, outcome, tier=None, notices=notices
         )
+        if not inserted:
+            return _replay(db, usage, settings, resets_on)
         return MediaDecision(
             decision=_OUTCOME_TO_DECISION[outcome],
             tier=None,
@@ -663,9 +665,11 @@ def decide_and_record(
     #    the notices on the metered fact is what lets a replay and the callback
     #    carry the same text this response does. The notices are part of what was
     #    decided, not a by-product of rendering it.
-    usage = _record(
+    usage, inserted = _record(
         db, request, contact, period_key, "accepted", tier=tier, notices=notices
     )
+    if not inserted:
+        return _replay(db, usage, settings, resets_on)
 
     # 9. The job row. The caller enqueues it after the commit, so the worker
     #    cannot pick up a row that is not there yet.
@@ -772,11 +776,15 @@ def _record(
     *,
     tier: Optional[str],
     notices: Optional[list[dict]] = None,
-) -> ContactMediaUsage:
+) -> tuple[ContactMediaUsage, bool]:
     """`INSERT ... ON CONFLICT DO NOTHING`, then re-select.
 
-    The conflict path is the concurrent-duplicate case: two n8n retries racing
-    each other must produce ONE ledger row and one job, not two of each.
+    Returns `(usage, inserted)`. The conflict path (`inserted=False`) is the
+    concurrent-duplicate case: two n8n retries racing each other, where the
+    loser gets the WINNER's committed row back. The loser must then take the
+    replay path rather than act on the row as its own - in particular it must
+    not create a second job, which `uq_media_extraction_job_usage_id` would
+    reject. `decide_and_record` branches on the flag for exactly that.
 
     `notices` travels in the insert rather than being written over the row
     afterwards: the ledger is append-mostly and must not churn, and on the
@@ -801,9 +809,9 @@ def _record(
         )
         .on_conflict_do_nothing(constraint="uq_contact_media_usage_idempotency")
     )
-    db.execute(statement)
+    result = db.execute(statement)
     db.flush()
     usage = _find_usage(db, request)
     if usage is None:  # pragma: no cover - only reachable if the insert vanished
         raise RuntimeError("media usage row could not be recorded")
-    return usage
+    return usage, result.rowcount == 1
