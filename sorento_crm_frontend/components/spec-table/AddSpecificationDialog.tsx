@@ -144,7 +144,13 @@ export function AddSpecificationDialog({
     }
     setSaving(true);
     try {
-      await onCreateKey({ spec_key: toSpecKey(label), label, data_type: proposedType });
+      const specKey = toSpecKey(label);
+      await onCreateKey({ spec_key: specKey, label, data_type: proposedType });
+      // The key is now vocabulary, and the person who minted it came here to set it on
+      // THIS product. Closing without handing it on left them with a key in the registry
+      // and a product that never mentions it - the same dead end as picking an existing
+      // one used to be.
+      onPick(specKey);
       close();
     } finally {
       setSaving(false);
