@@ -131,6 +131,23 @@ interface RespondChatListProps {
    * Surfaces that pass none render exactly as before.
    */
   comments?: ConversationCommentRenderable[];
+  /**
+   * Viewer-scoped byte loader for chat media (AC-N4). Chat attachments live on
+   * hosts that send no CORS headers (R2 CDN, CloudFront, Respond media), so a
+   * spreadsheet/csv cannot be read from the browser and the preview surface used
+   * to dead-end on "No source available to load this file". Passing this routes
+   * the Excel slide AND the Download button through the backend media proxy
+   * (ticket-keyed in the drawer, contact-keyed in the Conversations inbox);
+   * images/video/pdf keep their direct CDN url either way.
+   *
+   * A `Response` rather than the bytes: it is what `AttachmentPreviewModal`
+   * consumes and what `apiFetch` already hands back, so nothing has to
+   * re-wrap a blob on the way through.
+   *
+   * Surfaces that pass nothing (portal thread, complaint / SI / PR panels)
+   * behave exactly as before.
+   */
+  mediaProxy?: (url: string) => Promise<Response>;
 }
 
 /** Message text with the searched term marked. Escaping lives in the helper. */
@@ -303,6 +320,7 @@ export default function RespondChatList({
   searchController,
   highlightTerm = '',
   comments = [],
+  mediaProxy,
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -319,9 +337,11 @@ export default function RespondChatList({
   // AC-D6: attachment bubbles open the SAME preview surface the rest of the CRM
   // uses (image/video/pdf inline, spreadsheets via its Excel slide, everything
   // else its download/open fallback) - never a raw-URL new tab. Chat media has
-  // no `attachments` row, so items carry the CDN url only: no `downloadUrl`
-  // means the modal's authenticated byte-fetch is never called, which is also
-  // what keeps this working on the token-authenticated portal thread.
+  // no `attachments` row, so items carry the CDN url only: without a
+  // `mediaProxy` there is no `downloadUrl` either, the modal's authenticated
+  // byte-fetch is never called, and the token-authenticated portal thread keeps
+  // working. With one (AC-N4) the url doubles as the item's byte source and the
+  // proxy reads it server-side, which is what makes .xlsx/.csv render inline.
   const [previewItems, setPreviewItems] = useState<AttachmentPreviewItem[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
   // Briefly ringed after a quote-block jump, so the reader sees WHICH bubble the
@@ -337,13 +357,24 @@ export default function RespondChatList({
           id: `${idPrefix}-att-${i}`,
           name: attachmentDisplayName(att),
           url: att.url as string,
+          // Only with a proxy: `downloadUrl` is what turns the Download button
+          // and the Excel slide on, and both read it through `fetchBytes`.
+          downloadUrl: mediaProxy ? (att.url as string) : undefined,
         }));
       if (items.length === 0) return;
       const start = items.findIndex((it) => it.id === `${idPrefix}-att-${clicked}`);
       setPreviewIndex(start < 0 ? 0 : start);
       setPreviewItems(items);
     },
-    [],
+    [mediaProxy],
+  );
+
+  const previewFetchBytes = useMemo(
+    () =>
+      mediaProxy
+        ? (item: AttachmentPreviewItem) => mediaProxy(item.downloadUrl ?? item.url)
+        : undefined,
+    [mediaProxy],
   );
 
   const normalizedHighlightId =
@@ -828,6 +859,7 @@ export default function RespondChatList({
         }}
         items={previewItems}
         startIndex={previewIndex}
+        fetchBytes={previewFetchBytes}
       />
     </div>
   );

@@ -35,6 +35,7 @@ import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 
 import {
   useSlaTrackingConversation,
+  useSlaTrackingMediaProxy,
   useSlaTrackingThreadLoaders,
 } from '../hooks/useConversationSLATracking';
 import {
@@ -125,6 +126,9 @@ export default function InterventionTicketDrawer({
   // SLA detail panel and the complaint / stock-inquiry / PR chat panels inherit
   // them by passing the same loaders - nothing here is drawer-specific.
   const { loadPage, searchMessages } = useSlaTrackingThreadLoaders(ticketId);
+  // AC-N4: chat media has no CORS, so the preview reads its bytes through the
+  // ticket-scoped backend proxy - that is what makes an .xlsx open inline here.
+  const mediaProxy = useSlaTrackingMediaProxy(ticketId);
   const thread = useConversationThread({
     liveItems: liveMessages,
     loadPage,
@@ -291,6 +295,7 @@ export default function InterventionTicketDrawer({
                   searchController={thread.search}
                   highlightTerm={thread.highlightTerm}
                   comments={commentsQuery.data ?? []}
+                  mediaProxy={mediaProxy}
                   onReply={(item) =>
                     setReplyTo({ messageId: item.messageId ?? null, excerpt: excerptOf(item) })
                   }

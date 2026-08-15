@@ -405,6 +405,31 @@ export async function searchSlaTrackingConversation(
   return body.items ?? [];
 }
 
+/**
+ * Ticket-scoped byte proxy for a chat attachment (UAC AC-N4).
+ *
+ * GET .../{tracking_id}/media?url=<absolute url>
+ *   -> the upstream bytes, upstream content-type, `Content-Disposition: inline`.
+ *   Host allowlisted server-side (our storage + Respond media); 400 off it,
+ *   413 over 50 MB, 404 for a viewer who cannot see the ticket.
+ *
+ * Returns the raw `Response` on purpose: the only consumer is
+ * `AttachmentPreviewModal`'s `fetchBytes`, which wants to read `.blob()` /
+ * `.arrayBuffer()` itself rather than be handed a copy of the payload.
+ */
+export async function fetchSlaTrackingMedia(
+  trackingId: string,
+  url: string,
+): Promise<Response> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${encodeURIComponent(trackingId)}/media?url=${encodeURIComponent(url)}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not load this attachment'));
+  }
+  return response;
+}
+
 // ---------------------------------------------------------------------------
 // My Team Tasks / Takeover / Reassign (team coverage & reassignment)
 // ---------------------------------------------------------------------------

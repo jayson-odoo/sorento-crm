@@ -16,6 +16,7 @@ import {
   getConversationSLAEventLogs,
   syncAssigneeFromRespond,
   postConversationSLATestOverrides,
+  fetchSlaTrackingMedia,
   getSlaTrackingConversation,
   getSlaTrackingConversationPage,
   searchSlaTrackingConversation,
@@ -210,6 +211,17 @@ export function useSlaTrackingThreadLoaders(trackingId: string | null) {
     [trackingId],
   );
   return { loadPage, searchMessages };
+}
+
+/**
+ * The chat-media byte loader for a ticket-scoped thread (UAC AC-N4), memoised
+ * on the ticket id so `RespondChatList` does not see a new callback each render.
+ */
+export function useSlaTrackingMediaProxy(trackingId: string | null) {
+  return useCallback(
+    (url: string) => fetchSlaTrackingMedia(trackingId ?? '', url),
+    [trackingId],
+  );
 }
 
 export function useSlaTrackingConversationReply(trackingId: string) {
