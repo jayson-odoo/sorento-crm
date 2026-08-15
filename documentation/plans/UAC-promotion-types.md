@@ -309,3 +309,42 @@ absent from both.
 container-status and human-source-boost heads first). Applied to the local DB: the
 five types seeded, and all 29 existing promotions classified from their file names
 (28 standard, 1 A3 flyer, 0 unclassified).
+
+### Live check rerun (2026-08-15, post machine reboot)
+
+Both surfaces re-proven against a freshly restarted stack in one scripted pass
+(`live_check.py`): 9/9 checks PASS — MCP serves the live A3 flyer and the expired PP
+as expired-but-usable, hides the expired special; resolve returns the identical
+verdict; flipping `special.show_expired` on makes BOTH surfaces serve the special
+with no process restart, and reverting hides it again.
+
+### Browser verification (agent-browser headless, prod build on :3047)
+
+Full sidebar walk, logged in as the E2E user:
+
+- **Nav**: Marketing Management → Promotions → **Promotion Types** entry renders and
+  navigates to `/marketing-management/promotion-types` (screenshot `pt-list.png`).
+- **List**: the five seeded types with When-expired pills (Special "Not served" red,
+  others "Still served" green), plain-language rules ("Not served once expired",
+  "Still applies until end of year", "Still applies within 180 days"), file-name
+  markers, per-type promotion counts, and the Default tag on Standard Promo.
+- **Create**: Add Promotion Type modal (Code, Name, Description, Show-when-expired
+  switch, File-name markers, Match priority, Sort order, Default switch). Created a
+  throwaway `zzt_test` type; row appeared with rule "Still applies, no time limit".
+- **Delete**: trash icon → dialog titled "Confirm delete" with copy
+  `Delete promotion type "ZZT Test Type"? This action cannot be undone.`, destructive
+  red Delete; confirmed → backend `DELETE ... 200`, row gone (screenshot
+  `pt-delete-dialog.png`).
+- **Promotions list**: Type column renders per-row type names.
+- **Promotion detail**: "Promotion Type" field always rendered; auto-classified rows
+  read e.g. "Special Promo (from the file name)".
+- **Retype round trip**: edit form's clearable Promotion Type select, Special →
+  Standard saved (`PUT 200`, detail shows "Standard Promo" with the file-name hint
+  dropped, i.e. the manual stamp), then reverted to Special.
+- **Console**: zero page errors. The one warning (missing dialog description) was
+  fixed by adding an `sr-only` `DialogDescription` to the form modal.
+
+Environment note for future lanes: the CRM fires cross-origin API calls from the
+browser, so the backend's `CORS_ORIGINS` must include the FE port. With :3047
+missing, every preflight 400'd and react-query's retries pinned the renderer at
+100% CPU - it presents as a hung browser, not as a CORS error.

@@ -1,7 +1,8 @@
 # PLAN — Maintainable promotion types with per-type expired-promo behaviour
 
-**Status:** built and self-verified (pytest + vitest + MCP suite green; live MCP and
-resolve checks in the UAC verification log). Awaiting review.
+**Status:** built and fully verified — pytest + vitest + MCP suites green, live MCP and
+resolve checks green (rerun post-reboot 2026-08-15), and browser verification of the
+admin screens complete on a prod build (see the UAC verification log). Awaiting review.
 
 **Process deviation, called out deliberately:** the Phase-1 "FE prototype against mock
 data, signed off before any backend" step was collapsed into Phase 2. The two screens

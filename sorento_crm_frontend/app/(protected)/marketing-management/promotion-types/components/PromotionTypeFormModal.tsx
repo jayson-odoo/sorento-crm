@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -125,6 +126,11 @@ export default function PromotionTypeFormModal({
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>{isEditMode ? 'Edit promotion type' : 'Add promotion type'}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {isEditMode
+              ? 'Change how promotions of this type are classified and served after expiry.'
+              : 'Define a new promotion type with its classification markers and expiry rule.'}
+          </DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
