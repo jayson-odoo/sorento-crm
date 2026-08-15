@@ -29,10 +29,15 @@ from sqlalchemy import cast, func, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from app.models.product import Product, ProductCategory
+from app.models.product import Brand, Product, ProductCategory
 from app.models.product_spec import ProductSpecifications
-from app.services.product_class_signal import resolve_classes_for_term
-from app.services.product_spec_registry import active_registry, merged_synonyms, search_policy
+from app.services.product_class_signal import resolve_classes_for_term, stored_class_labels
+from app.services.product_spec_registry import (
+    active_registry,
+    merged_allowed_values,
+    merged_synonyms,
+    search_policy,
+)
 from app.services.product_spec_write import AUTHORED_SOURCES
 
 # These are now DEFAULTS, not the settings. The live numbers come from
@@ -125,6 +130,21 @@ def _tokens(text: str) -> set[str]:
 
 def _summarise(values: dict, rendered: str | None) -> str:
     return rendered or ""
+
+
+def values_only(values: dict | None) -> dict:
+    """The stored spec block as `{key: value}`, wire-lean.
+
+    Storage keeps each value in its own envelope (`{"value": 1.2, "unit": "mm"}`)
+    because derivation needs somewhere to put the unit. A renderer needs the
+    number. A list stays a list - two finishes on one product is one value, not
+    two keys - and a key holding no value is simply not offered.
+    """
+    return {
+        key: entry["value"]
+        for key, entry in (values or {}).items()
+        if isinstance(entry, dict) and entry.get("value") is not None
+    }
 
 
 # Customers do not write in one unit. The catalog is millimetres throughout, so every
@@ -297,8 +317,99 @@ def _resolve_quantities(
     return resolved
 
 
-def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
+def brand_names(db: Session) -> list[str]:
+    """Every brand name the catalog spells, once. One query, name column only.
+
+    Exposed so a request that consults brands more than once (resolve reads them
+    for binding, for the vocabulary, and for junk suppression) can read them ONCE
+    and hand the same list round.
+    """
+    return [
+        str(name).strip()
+        for (name,) in db.query(Brand.brand_name).all()
+        if str(name or "").strip()
+    ]
+
+
+# A placeholder brand word too generic to ever be an ask. "OTHERS" is how the
+# catalog records the ABSENCE of a brand on 1,956 products, and a customer writing
+# "others" means the English word, never that bucket - so it stays unbindable even
+# though the full name matches. "NO LOGO" is the opposite case: nobody says those
+# two words in that order by accident, so the full phrase IS an ask (F8).
+_UNBINDABLE_BRAND_NAMES: frozenset[str] = frozenset({"others"})
+
+
+def _brand_match_in_haystack(
+    haystack: str, registry_rows, names: list[str]
+) -> tuple[str | None, tuple[int, int] | None]:
+    """The brand named in the customer's words, with the span that named it.
+
+    `excluded_values` on the registry row is how the catalog records the ABSENCE
+    of a brand (OTHERS, NO LOGO). Those values are never OFFERED to the
+    understanding model, but a customer who names one IN FULL is asking a real
+    question - "no logo kitchen sink" is a request for the unbranded range, and
+    answering it with silence was the gap. So an excluded value binds only on a
+    full-phrase, word-boundary match of a MULTI-WORD name; a single generic word
+    (OTHERS) never binds at all.
+
+    Longest name wins, for the same reason the synonym loop above prefers the
+    longest phrase: a specific reading beats a generic one that is a substring of
+    the same words.
+    """
+    brand_row = next((row for row in registry_rows if row.spec_key == "brand"), None)
+    excluded = {
+        str(value).strip().lower()
+        for value in (getattr(brand_row, "excluded_values", None) or [])
+    }
+    for name in sorted(names, key=len, reverse=True):
+        lowered = name.lower()
+        if lowered in _UNBINDABLE_BRAND_NAMES:
+            continue
+        if lowered in excluded and " " not in lowered:
+            continue
+        match = re.search(rf"(?<!\w){re.escape(lowered)}(?!\w)", haystack)
+        if match:
+            return name, (match.start(), match.end())
+    return None, None
+
+
+def resolve_terms_to_specs(
+    db: Session,
+    free_terms: list[str],
+    *,
+    registry_rows=None,
+    brands: list[str] | None = None,
+) -> list[dict]:
     """Turn customer words into registry spec values, longest phrase first.
+
+    Kept as the plain list-returning entry point every existing caller uses;
+    `resolve_terms_to_specs_with_spans` is the same work with the WHERE reported
+    as well (see there).
+    """
+    resolved, _spans, _haystack = resolve_terms_to_specs_with_spans(
+        db, free_terms, registry_rows=registry_rows, brands=brands
+    )
+    return resolved
+
+
+def resolve_terms_to_specs_with_spans(
+    db: Session,
+    free_terms: list[str],
+    *,
+    registry_rows=None,
+    brands: list[str] | None = None,
+) -> tuple[list[dict], dict[str, list[tuple[int, int]]], str]:
+    """The resolved specs, WHERE in the phrase each one was said, and the phrase.
+
+    The spans are what makes a refusal readable without a model: knowing that
+    `material=glass` was earned by the characters at 17..22 lets the caller look
+    at the words just before them and see the "not" (see
+    `product_spec_understanding._split_refusals`). Without them the word-level
+    reader answers "not glass" with material=glass, which is the exact opposite
+    of what was said.
+
+    Spans are reported for values stated in WORDS and for the brand. A number
+    bound by proximity has no phrase of its own to negate.
 
     The registry has carried the synonyms all along and nothing consulted them, so a
     phrase only ever earned a weak substring boost against the rendered sentence. That
@@ -311,9 +422,9 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     """
     haystack = " ".join(t.lower() for t in free_terms if t)
     if not haystack:
-        return []
+        return [], {}, ""
 
-    rows = active_registry(db)
+    rows = active_registry(db) if registry_rows is None else registry_rows
 
     candidates: list[tuple[int, str, str]] = []
     # Where a spec was stated in words, so a number inside those words is not also
@@ -344,6 +455,13 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
             best[key] = (length, value)
 
     types = {row.spec_key: row.data_type for row in rows}
+    brand_binding: str | None = None
+    brand_span: tuple[int, int] | None = None
+    if "brand" not in best:
+        brand_binding, brand_span = _brand_match_in_haystack(
+            haystack, rows, brand_names(db) if brands is None else brands
+        )
+    spans: dict[str, list[tuple[int, int]]] = {}
     resolved: list[dict] = []
     for key, (_, value) in best.items():
         # The synonym map is JSON, so every key arrives as a string. Coerce back to the
@@ -357,6 +475,18 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
             except (TypeError, ValueError):
                 continue
         resolved.append({"key": key, "value": value})
+        # The winning value's own spans: where the customer SAID this.
+        spans[key] = list(spoken_spans.get((key, best[key][1]), []))
+
+    # A brand is a brand. The registry's `brand` row ships with an empty synonym map,
+    # so "sorento" bound to nothing and the word was left to the code probes, which
+    # prefix-matched it into SORENTOBAG and SORENTO188 (live turn 12303509). The names
+    # are read from the `brands` table rather than hand-seeded into the registry, so a
+    # brand added tomorrow is understood the same day, spelled exactly as the catalog
+    # spells it - which is the spelling the derived `brand` values carry.
+    if brand_binding is not None:
+        resolved.append({"key": "brand", "value": brand_binding})
+        spans["brand"] = [brand_span] if brand_span else []
 
     # Numbers the customer typed: "trap 200mm", "thickness 1.2mm", 'S trap 8"'.
     # A value stated in WORDS wins over one bound by proximity — "double bowl" is a
@@ -372,7 +502,175 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
         if key not in already:
             resolved.append({"key": key, "value": value})
 
-    return resolved
+    return resolved, spans, haystack
+
+
+# The words that turn the thing after them into a refusal, in the two languages the
+# catalogue's customers write in. Single source of truth: `product_spec_understanding`
+# compiles its `_NEGATORS` pattern from this set, and the set is also folded into the
+# stopwords below, so a word that layer READS as a refusal can never be reported back
+# as one we did not understand. It lives here because the import runs one way only
+# (understanding imports search, never the reverse).
+NEGATOR_WORDS: frozenset[str] = frozenset({"not", "no", "without", "non", "bukan", "tanpa"})
+
+# Words that name nothing about a product and are never reported. Small and inline
+# on purpose: this whole helper is precision-first, and the cost of the two errors
+# is nowhere near symmetric. Telling a customer "I don't know what 'kitchen' means"
+# destroys the conversation; missing one alien word costs a clarifying question we
+# were going to be able to answer anyway.
+_PHRASE_STOPWORDS: frozenset[str] = NEGATOR_WORDS | frozenset(
+    {
+        "the", "a", "an", "and", "or", "for", "in", "of", "to", "with", "without",
+        "me", "my", "i", "we", "is", "are", "it", "this", "that", "there",
+        "any", "some", "all", "want", "wanted", "need", "have", "has", "got",
+        "looking", "look", "find", "get", "send", "show", "please", "can", "you",
+        "do", "does", "like", "would", "also", "just", "about", "price",
+    }
+)
+
+# Shorter than this and a word carries no reportable meaning: "hi", "ok", "no" and
+# every stray letter left by punctuation would otherwise read as alien.
+_MIN_REPORTABLE_WORD = 3
+
+
+def _search_vocabulary(
+    db: Session, *, registry_rows=None, brands: list[str] | None = None
+) -> frozenset[str]:
+    """Every WORD the catalogue's own vocabulary contains.
+
+    Multi-word phrases are split, so "kitchen sink" whitelists both halves: a
+    customer writes one word at a time and the sentence they wrote is the only
+    thing being checked. Three sources, the same three a term is resolved
+    against - the registry (keys, values and their synonyms), the class
+    vocabulary (labels, category search synonyms, values products actually
+    carry), and the brand names.
+    """
+    words: set[str] = set()
+
+    def absorb(text) -> None:
+        for word in re.split(r"[^a-z0-9]+", str(text or "").lower()):
+            if word:
+                words.add(word)
+
+    for row in (active_registry(db) if registry_rows is None else registry_rows):
+        absorb(row.spec_key)
+        absorb(row.label)
+        for value, synonyms in merged_synonyms(row).items():
+            if value != SELF_SYNONYM_KEY:
+                absorb(value)
+            for synonym in synonyms:
+                absorb(synonym)
+        for value in merged_allowed_values(row):
+            absorb(value)
+
+    categories = (
+        db.query(ProductCategory.class_label, ProductCategory.search_synonyms)
+        .filter(ProductCategory.is_searchable.is_(True))
+        .all()
+    )
+    for label, synonyms in categories:
+        absorb(label)
+        for synonym in synonyms or []:
+            absorb(synonym)
+    for label in stored_class_labels(db):
+        absorb(label)
+
+    for name in (brand_names(db) if brands is None else brands):
+        absorb(name)
+
+    return frozenset(words)
+
+
+def _content_words(phrase: str) -> list[str]:
+    """The words in `phrase` that could carry product meaning, in order.
+
+    A number is never one of them: "1.2mm" and "820" are measurements, and a
+    token with a digit in it is either that or a product code - and a code is
+    reported through `unresolved_tokens`, which is the channel that can say
+    "I could not find that code" rather than "I do not know that word".
+    """
+    seen: list[str] = []
+    for raw in re.split(r"[^a-z0-9.]+", (phrase or "").lower()):
+        word = raw.strip(".")
+        if not word or word in seen:
+            continue
+        if len(word) < _MIN_REPORTABLE_WORD:
+            continue
+        if word in _PHRASE_STOPWORDS:
+            continue
+        if any(character.isdigit() for character in word):
+            continue
+        seen.append(word)
+    return seen
+
+
+def unrecognized_words(
+    db: Session,
+    phrase: str,
+    *,
+    vocabulary: frozenset[str] | None = None,
+    registry_rows=None,
+    brands: list[str] | None = None,
+) -> list[str]:
+    """Words in the sentence that name nothing this catalogue knows.
+
+    The honest counterpart to `unmet`: a key the customer named and no product
+    could answer is one sentence ("thickness isn't recorded for these"), and a
+    word that bound to nothing at all is a different one ("I don't know what
+    'flurbish' means"). Reported in the order they were written, once each.
+
+    Word level, not term level, because the raw free term IS the whole sentence
+    once the CRM reads it itself - checking the term would only ever report the
+    customer's entire message back at them.
+    """
+    known = (
+        _search_vocabulary(db, registry_rows=registry_rows, brands=brands)
+        if vocabulary is None
+        else vocabulary
+    )
+    return [word for word in _content_words(phrase) if word not in known]
+
+
+def unrecognized_terms(
+    db: Session,
+    *,
+    query: str | None = None,
+    free_terms: list[str] | None = None,
+    registry_rows=None,
+    brands: list[str] | None = None,
+) -> list[str]:
+    """Everything in the request that bound to nothing, ready to be read out.
+
+    A term the CALLER supplied is reported VERBATIM when every content word in
+    it is alien: they sent "flurbish grommet" as one thing, so answering with
+    two mystery words would misdescribe their own question. Its words are then
+    dropped from the word-level list, so each unhonourable thing is named once.
+
+    A term that is only PARTLY alien is reported word by word instead. Skipping
+    it - which is what a term-level check does - meant "sink flurbish" arrived as
+    one caller term and the mystery word inside it was never named at all, so a
+    request that could not be honoured read as a clean success.
+    """
+    vocabulary = _search_vocabulary(db, registry_rows=registry_rows, brands=brands)
+    reported = unrecognized_words(db, query or "", vocabulary=vocabulary)
+
+    for term in free_terms or []:
+        phrase = str(term or "").strip()
+        if not phrase or phrase in reported:
+            continue
+        content = _content_words(phrase)
+        alien = [word for word in content if word not in vocabulary]
+        if not alien:
+            continue
+        if len(alien) == len(content):
+            reported = [word for word in reported if word not in content]
+            reported.append(phrase)
+            continue
+        for word in alien:
+            if word not in reported:
+                reported.append(word)
+
+    return reported
 
 
 def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: list[str] | None = None) -> dict:
@@ -389,6 +687,13 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
       - names a known spec value -> dropped (recognized, boost-only)
       - names nothing            -> `unrecognized_terms` (clarify, never "none")
 
+    The third verdict is reached WORD by word, not term by term. A term that
+    bound something can still carry an alien word inside it - "sorento grommet"
+    resolves the brand and says nothing about the grommet - and a term-level
+    check called that a success, so the one thing the CRM could not honour was
+    the one thing it never mentioned. A term whose every content word is alien
+    is still reported verbatim: they asked it as one thing.
+
     Returns `{"clause", "class_labels", "unrecognized_terms"}`; `clause` is a
     predicate over `ProductSpecifications.values`, or None when no class was named.
     """
@@ -399,13 +704,21 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
         if entry.get("key") == "class" and entry.get("value"):
             labels.add(str(entry["value"]))
 
+    vocabulary = _search_vocabulary(db) if free_terms else frozenset()
     unrecognized: list[str] = []
     for term in free_terms:
         classes = resolve_classes_for_term(db, term)
         if classes:
             labels.update(classes)
-        elif not resolve_terms_to_specs(db, [term]):
-            unrecognized.append(term)
+        content = _content_words(term)
+        alien = [word for word in content if word not in vocabulary]
+        if content and len(alien) == len(content):
+            if term not in unrecognized:
+                unrecognized.append(term)
+            continue
+        for word in alien:
+            if word not in unrecognized:
+                unrecognized.append(word)
 
     clause = None
     if labels:
@@ -612,6 +925,12 @@ def search_specs(
         # match anything at all" stays answerable after they are applied.
         penalty = 0.0
         matched: list[str] = []
+        # Keys the HOUSE put there, kept apart from the ones the customer earned.
+        # Reported separately for the same reason the score is split: a renderer
+        # reading "matched: brand" could not tell "you asked for Sorento" from "we
+        # like Sorento", and told the customer they had asked for something they
+        # never said.
+        preferred: list[str] = []
 
         for entry in specs:
             key, target = entry.get("key"), entry.get("value")
@@ -707,14 +1026,14 @@ def search_specs(
         # that outranked their own words would be a bug wearing a boost's clothes.
         # It is a tie-breaker by design - it lands on top of whatever the specs scored,
         # so it reorders equally-good answers without promoting a worse one.
-        for key, preferred in house_preferences.items():
+        for key, weighted in house_preferences.items():
             if key in stated:
                 continue
             held = str((values.get(key) or {}).get("value") or "").lower()
-            bonus = preferred.get(held)
+            bonus = weighted.get(held)
             if bonus:
                 score += bonus
-                matched.append(key)
+                preferred.append(key)
 
         # Discontinued still sells - it is ranked below a live equivalent, not hidden.
         # Applied as a PENALTY rather than a filter for the same reason as everything
@@ -744,7 +1063,16 @@ def search_specs(
                 "product_code": product.product_code,
                 "summary": _summarise(values, spec_row.rendered_text),
                 "class": (values.get("class") or {}).get("value"),
+                # What this product IS, values only. The shortlist has to be able to
+                # say "this one is 1.2mm, that one 1.0mm" or the customer cannot tell
+                # the rows apart, and a code is not an answer to a description.
+                # Evidence, provenance and unit stay behind: they are review data,
+                # and this rides a reply path.
+                "specifications": values_only(values),
+                # What the customer's OWN WORDS earned. A house preference is
+                # reported next door, never here (see `preferred`).
                 "matched_specs": sorted(set(matched)),
+                "preferred_specs": sorted(set(preferred)),
                 "score": round(score, 4),
                 # Kept only to test the floor, then dropped before the caller sees it.
                 "_evidence": round(evidence - penalty, 4),
