@@ -302,14 +302,14 @@ def test_cover_sources_lists_the_products_this_run_plans():
         assert list(payload["sources"]) == [w["A"]["product_id"]]
 
 
-@pytest.mark.parametrize("missing", ["00000000-0000-0000-0000-0000000000ff"])
-def test_a_run_with_no_recommendations_answers_empty_rather_than_everything(missing):
+def test_a_run_with_no_recommendations_answers_empty_rather_than_everything():
     """The failure mode a dropped predicate produces: every row in the table comes back."""
     from app.services.scm.price_history_service import price_history_for_run
     from app.services.scm.purchase_trend_service import purchase_trend_for_run
 
     with pg_session() as db:
         _world(db)
+        missing = _u()
         db.execute(
             text(
                 "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
@@ -321,3 +321,102 @@ def test_a_run_with_no_recommendations_answers_empty_rather_than_everything(miss
 
         assert price_history_for_run(db, missing) == {}
         assert purchase_trend_for_run(db, missing)["products"] == {}
+
+
+# --------------------------------------------------------------------------- #
+# the same question of the readers whose product predicates were rewritten
+#
+# These carry a list of product ids rather than a run id, so the failure mode is the
+# mirror image: an id list that no longer matches (empty answers everywhere) or one that
+# matches too much (another product's stock and orders folded into this one's figures).
+# --------------------------------------------------------------------------- #
+
+def test_product_economics_answers_for_the_runs_own_products_only():
+    from app.services.scm.product_economics_service import economics_for_run
+
+    with pg_session() as db:
+        w = _world(db)
+
+        products = economics_for_run(db, w["A"]["run_id"])["products"]
+
+        assert list(products) == [w["A"]["product_id"]]
+        # 500 on hand was seeded for this product at the one warehouse.
+        assert products[w["A"]["product_id"]]["on_hand"] == 500.0
+
+
+def test_product_economics_does_not_fold_in_another_products_stock():
+    from app.services.scm.product_economics_service import economics_for_run
+
+    with pg_session() as db:
+        w = _world(db)
+
+        a = economics_for_run(db, w["A"]["run_id"])["products"][w["A"]["product_id"]]
+        b = economics_for_run(db, w["B"]["run_id"])["products"][w["B"]["product_id"]]
+
+        assert a["on_hand"] == b["on_hand"] == 500.0
+
+
+def test_reorder_level_movement_is_scoped_to_the_products_asked_about():
+    from app.services.scm.reorder_level_service import monthly_movement
+
+    with pg_session() as db:
+        w = _world(db)
+
+        movement = monthly_movement(db, [w["A"]["product_id"]], months=12)
+
+        # Keyed by product id, and product B is not one of them.
+        assert list(movement) == [w["A"]["product_id"]]
+
+
+def test_reorder_level_lookup_returns_only_the_asked_products_level():
+    from app.services.scm.reorder_level_service import get_levels, upsert_level
+
+    with pg_session() as db:
+        w = _world(db)
+        upsert_level(db, product_id=w["A"]["product_id"],
+                     warehouse_id=w["warehouse_id"], level=7, source="manual")
+        upsert_level(db, product_id=w["B"]["product_id"],
+                     warehouse_id=w["warehouse_id"], level=99, source="manual")
+        db.flush()
+
+        levels = get_levels(db, [w["A"]["product_id"]])
+
+        assert {pid for pid, _ in levels} == {w["A"]["product_id"]}
+        assert float(next(iter(levels.values()))["level"]) == 7.0
+
+
+def test_supplier_constraints_are_scoped_to_the_asked_products():
+    from app.services.scm.reorder_level_service import supplier_constraints
+
+    with pg_session() as db:
+        w = _world(db)
+        for tag in ("A", "B"):
+            db.execute(
+                text(
+                    "INSERT INTO product_suppliers (id, product_id, supplier_id, moq, "
+                    "standard_lead_time_days, is_primary_supplier) "
+                    "VALUES (:id, :p, :s, 25, 30, false)"
+                ),
+                {"id": _u(), "p": w[tag]["product_id"], "s": w[tag]["supplier_id"]},
+            )
+        db.flush()
+
+        out = supplier_constraints(db, [w["A"]["product_id"]])
+
+        assert list(out) == [w["A"]["product_id"]]
+        assert out[w["A"]["product_id"]]["moq"] == 25.0
+
+
+def test_an_empty_id_list_matches_nothing_rather_than_everything():
+    """`= ANY(CAST(:pids AS uuid[]))` on an empty list.
+
+    The old `::text` form and the new one both have to mean "no products", not "all of
+    them", and an empty array must not raise on the cast either.
+    """
+    from app.services.scm.reorder_level_service import get_levels, supplier_constraints
+
+    with pg_session() as db:
+        _world(db)
+
+        assert get_levels(db, []) == {}
+        assert supplier_constraints(db, []) == {}
