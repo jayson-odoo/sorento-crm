@@ -14,7 +14,10 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
-import ConversationsInbox from './components/ConversationsInbox';
+import RequireAccess from '@/app/components/common/RequireAccess';
+import ConversationsInbox, {
+  CONVERSATIONS_VIEW_PERMISSION,
+} from './components/ConversationsInbox';
 
 export const metadata: Metadata = {
   title: 'Conversations',
@@ -49,7 +52,11 @@ export default async function ConversationsPage() {
       </Container>
 
       <Container>
-        <ConversationsInbox />
+        {/* The sidebar entry is permission-gated, but a deep link is not: without
+            the guard a denied user would land on an inbox whose every call 403s. */}
+        <RequireAccess permission={CONVERSATIONS_VIEW_PERMISSION}>
+          <ConversationsInbox />
+        </RequireAccess>
       </Container>
     </>
   );
