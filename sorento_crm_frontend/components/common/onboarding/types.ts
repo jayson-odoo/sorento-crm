@@ -52,6 +52,25 @@ export const ONBOARDING_STATUS_LABELS: Record<OnboardingRequestStatus, string> =
 };
 
 /**
+ * The `lib/status-pill` code each status paints with.
+ *
+ * Only `sent` needs translating: the shared palette already owns `sent` as
+ * outbound delivery's success green, and an intake link that has gone out is a
+ * wait rather than a success.
+ */
+export const ONBOARDING_STATUS_PILL_CODES: Record<OnboardingRequestStatus, string> = {
+  draft: 'draft',
+  sent: 'link_sent',
+  submitted: 'submitted',
+  in_review: 'in_review',
+  processing: 'processing',
+  completed: 'completed',
+  partially_completed: 'partially_completed',
+  rejected: 'rejected',
+  cancelled: 'cancelled',
+};
+
+/**
  * A collision against a live unique key, computed at read time and never stored
  * (UAC AC-6.4). An existing artifact is NOT an error - it pre-decides that lane
  * as `skipped`, so onboarding someone who half-exists fills in the rest.

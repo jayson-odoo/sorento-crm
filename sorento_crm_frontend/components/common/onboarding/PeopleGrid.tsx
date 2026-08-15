@@ -14,26 +14,38 @@
  *                second component, so the two can never disagree about what a
  *                row said.
  *
- * Two renderings of one row model: a `DataGrid` from md up, stacked cards below
- * it. A public intake link is opened on a phone from WhatsApp as often as on a
- * desktop, and a 6-column editable grid inside a horizontal scroller is not
- * something anybody fills in on a 375px screen. Both call the same
- * `onPatchPerson`, so there is one source of truth for what an edit means.
+ * One rendering, at every width: the embedded-grid idiom (DataGrid > Card >
+ * CardTable > ScrollArea) that every other detail-page grid uses, scrolling
+ * horizontally inside its own card on a phone. A second, hand-rolled card
+ * layout for small screens used to live here; two renderings of one row model
+ * is exactly how the two views start disagreeing.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react';
 import {
   getCoreRowModel,
   useReactTable,
   type ColumnDef,
 } from '@tanstack/react-table';
+import { Card, CardHeader, CardHeading, CardTable, CardTitle, CardToolbar } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { CollisionChips, LaneChip, ProblemChips, ReviewStatusBadge } from './OnboardingChips';
 import type {
   OnboardingPerson,
@@ -48,6 +60,12 @@ export interface PeopleGridProps {
   people: OnboardingPerson[];
   templates: OnboardingTemplateOption[];
   isLoading?: boolean;
+  /** Card heading. The section this grid IS, so it never needs an outer card. */
+  title?: string;
+  /** Optional line under the heading, e.g. the reviewer's counts strip. */
+  description?: ReactNode;
+  /** Optional header-right slot, e.g. the intake page's "Add a person". */
+  actions?: ReactNode;
   /**
    * Review mode with the pens taken away: the collision and ledger columns
    * still render (they are what a completed batch is FOR), but every input is
@@ -140,11 +158,13 @@ function BufferedInput({
 }
 
 function TemplateSelect({
+  personId,
   value,
   templates,
   disabled,
   onChange,
 }: {
+  personId: string;
   value: string | null;
   templates: OnboardingTemplateOption[];
   disabled?: boolean;
@@ -154,24 +174,30 @@ function TemplateSelect({
   if (disabled) {
     return <span className="text-sm">{selected?.name ?? 'None'}</span>;
   }
+  const id = `people-grid-template-${personId}`;
   return (
-    // A plain <select>: the options are a short, fixed list of labels with no
-    // search, and it is the control a phone renders as a native picker.
-    <select
-      aria-label="Access template"
-      className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
-      value={value ?? ''}
-      onChange={(e) => onChange(e.target.value || null)}
-    >
-      {/* Clearable, because the template is optional (ADR: an optional select
-          must be clearable, or a value can be changed but never unset). */}
-      <option value="">No template</option>
-      {templates.map((template) => (
-        <option key={template.id} value={template.id}>
-          {template.name}
-        </option>
-      ))}
-    </select>
+    <>
+      {/* The grid header is a column title, not a per-cell label, so the control
+          carries its own for anyone reading the row on its own. */}
+      <label htmlFor={id} className="sr-only">
+        Access template
+      </label>
+      <SearchableSelect
+        id={id}
+        size="sm"
+        // The template is optional, so it must be possible to unset it and not
+        // only to change it (ADR: an optional select must be clearable).
+        clearable
+        value={value ?? ''}
+        onChange={(next) => onChange(next || null)}
+        options={templates.map((template) => ({
+          value: template.id,
+          label: template.name,
+          description: template.description ?? undefined,
+        }))}
+        placeholder="No template"
+      />
+    </>
   );
 }
 
@@ -232,17 +258,21 @@ export function PeopleGrid({
   people,
   templates,
   isLoading = false,
+  title = 'People',
+  description,
+  actions,
   locked = false,
   onPatchPerson,
   onRemovePerson,
   onApprovePerson,
   onRejectPerson,
-  emptyMessage = 'No people yet. Upload a sheet or add a row.',
+  emptyMessage = 'No people yet. Upload a sheet or add a person.',
 }: PeopleGridProps) {
   const editable = mode !== 'readonly' && !locked;
   const isReview = mode === 'review';
   const note = noteField(mode);
   const canRemove = Boolean(onRemovePerson);
+  const [removing, setRemoving] = useState<OnboardingPerson | null>(null);
 
   // Callers pass these inline (`onPatchPerson={(id, p) => mutate(...)}`), so
   // their identity changes on every parent render. Reading them through a ref
@@ -268,7 +298,7 @@ export function PeopleGrid({
         meta: { headerTitle: 'Section', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => (
           <span className="truncate block" title={row.original.section_label ?? undefined}>
-            {row.original.section_label ?? '—'}
+            {row.original.section_label ?? '-'}
           </span>
         ),
       },
@@ -309,7 +339,9 @@ export function PeopleGrid({
               onCommit={(next) => patch(row.original.id, { nick_name: next })}
             />
           ) : (
-            <span className="truncate block">{row.original.nick_name ?? '—'}</span>
+            <span className="truncate block" title={row.original.nick_name ?? undefined}>
+              {row.original.nick_name ?? '-'}
+            </span>
           ),
       },
       {
@@ -328,7 +360,9 @@ export function PeopleGrid({
               onCommit={(next) => patch(row.original.id, { phone_raw: next })}
             />
           ) : (
-            <span className="truncate block">{row.original.phone_raw ?? '—'}</span>
+            <span className="truncate block" title={row.original.phone_raw ?? undefined}>
+              {row.original.phone_raw ?? '-'}
+            </span>
           ),
       },
       {
@@ -348,7 +382,7 @@ export function PeopleGrid({
             />
           ) : (
             <span className="truncate block" title={row.original.email_raw ?? undefined}>
-              {row.original.email_raw ?? '—'}
+              {row.original.email_raw ?? '-'}
             </span>
           ),
       },
@@ -356,11 +390,12 @@ export function PeopleGrid({
         id: 'template',
         accessorFn: (row) => row.template_id ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Access template" column={column} />,
-        size: 170,
+        size: 190,
         enableSorting: false,
         meta: { headerTitle: 'Access template', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => (
           <TemplateSelect
+            personId={row.original.id}
             value={row.original.template_id}
             templates={templates}
             disabled={!editable}
@@ -438,7 +473,7 @@ export function PeopleGrid({
             />
           ) : (
             <span className="truncate block" title={row.original[note] ?? undefined}>
-              {row.original[note] ?? '—'}
+              {row.original[note] ?? '-'}
             </span>
           ),
       },
@@ -484,13 +519,16 @@ export function PeopleGrid({
               ) : null}
               {editable ? (
                 <div className="flex gap-1">
+                  {/* "Approve", the same word the badge and the request-level
+                      action use. The endpoint is still `keep`; the reviewer
+                      should not have to learn two words for one verdict. */}
                   <Button
                     size="sm"
                     variant="outline"
                     className="h-7 px-2 text-xs"
                     onClick={() => handlersRef.current.onApprovePerson?.(row.original.id)}
                   >
-                    Keep
+                    Approve
                   </Button>
                   <Button
                     size="sm"
@@ -510,7 +548,7 @@ export function PeopleGrid({
       base.push({
         id: 'actions',
         header: '',
-        size: 70,
+        size: 90,
         enableHiding: false,
         enableSorting: false,
         cell: ({ row }) => (
@@ -518,7 +556,7 @@ export function PeopleGrid({
             size="sm"
             variant="outline"
             className="h-7 px-2 text-xs"
-            onClick={() => handlersRef.current.onRemovePerson?.(row.original.id)}
+            onClick={() => setRemoving(row.original)}
           >
             Remove
           </Button>
@@ -546,158 +584,51 @@ export function PeopleGrid({
 
   return (
     <>
-      {/* Desktop: the shared grid. Wrapped so wide content scrolls inside its
-          own container and the page body never scrolls sideways. */}
-      <div className="hidden md:block w-full overflow-x-auto" data-testid="people-grid-desktop">
-        <DataGrid
-          table={table}
-          recordCount={people.length}
-          isLoading={isLoading}
-          emptyMessage={emptyMessage}
-          standardToolbar={false}
-          tableLayout={{ width: 'fixed', columnsResizable: true }}
-        >
-          <DataGridTable />
-        </DataGrid>
-      </div>
-
-      {/* Mobile: one card per person, same handlers. */}
-      <div className="md:hidden flex flex-col gap-3" data-testid="people-grid-mobile">
-        {isLoading ? (
-          <>
-            <Skeleton className="h-40 w-full" />
-            <Skeleton className="h-40 w-full" />
-          </>
-        ) : people.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{emptyMessage}</p>
-        ) : (
-          people.map((person) => (
-            <div key={person.id} className="rounded-lg border p-3 flex flex-col gap-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-xs text-muted-foreground truncate">
-                    {person.section_label ?? 'No section'}
-                  </p>
-                  {editable ? (
-                    <BufferedInput
-                      aria-label={`Name, row ${person.row_number}`}
-                      className="h-8 mt-1"
-                      value={person.full_name}
-                      onCommit={(next) => patch(person.id, { full_name: next })}
-                    />
-                  ) : (
-                    <p className="font-medium break-words">{person.full_name}</p>
-                  )}
-                </div>
-                {isReview ? <ReviewStatusBadge status={person.review_status} /> : null}
-              </div>
-
-              {editable ? (
-                <div className="grid grid-cols-1 gap-2">
-                  <BufferedInput
-                    aria-label={`Nickname, row ${person.row_number}`}
-                    className="h-8"
-                    placeholder="Nickname"
-                    value={person.nick_name ?? ''}
-                    onCommit={(next) => patch(person.id, { nick_name: next })}
-                  />
-                  <BufferedInput
-                    aria-label={`Phone, row ${person.row_number}`}
-                    className="h-8"
-                    placeholder="Phone"
-                    value={person.phone_raw ?? ''}
-                    onCommit={(next) => patch(person.id, { phone_raw: next })}
-                  />
-                  <BufferedInput
-                    aria-label={`Email, row ${person.row_number}`}
-                    className="h-8"
-                    placeholder="Email"
-                    value={person.email_raw ?? ''}
-                    onCommit={(next) => patch(person.id, { email_raw: next })}
-                  />
-                </div>
-              ) : (
-                <dl className="text-sm">
-                  <div className="flex gap-2">
-                    <dt className="text-muted-foreground w-20 shrink-0">Nickname</dt>
-                    <dd className="break-words">{person.nick_name ?? '—'}</dd>
-                  </div>
-                  <div className="flex gap-2">
-                    <dt className="text-muted-foreground w-20 shrink-0">Phone</dt>
-                    <dd className="break-words">{person.phone_raw ?? '—'}</dd>
-                  </div>
-                  <div className="flex gap-2">
-                    <dt className="text-muted-foreground w-20 shrink-0">Email</dt>
-                    <dd className="break-words">{person.email_raw ?? '—'}</dd>
-                  </div>
-                </dl>
-              )}
-
-              <TemplateSelect
-                value={person.template_id}
-                templates={templates}
-                disabled={!editable}
-                onChange={(templateId) => {
-                  const template = templates.find((t) => t.id === templateId);
-                  patch(person.id, {
-                    template_id: templateId,
-                    ...(template
-                      ? {
-                          needs_system_account: template.default_needs_system_account,
-                          needs_respond_contact: template.default_needs_respond_contact,
-                          needs_agent_seat: template.default_needs_agent_seat,
-                        }
-                      : {}),
-                  });
-                }}
-              />
-
-              <NeedsCheckboxes
-                person={person}
-                disabled={!editable}
-                idPrefix={`card-${person.id}`}
-                onPatch={(next) => patch(person.id, next)}
-              />
-
-              <ProblemChips problems={person.problems} />
-              {isReview ? (
-                <>
-                  <CollisionChips collisions={person.collisions} />
-                  <LaneLedger person={person} />
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => handlersRef.current.onApprovePerson?.(person.id)}
-                    >
-                      Keep
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => handlersRef.current.onRejectPerson?.(person.id)}
-                    >
-                      Reject
-                    </Button>
-                  </div>
-                </>
+      <DataGrid
+        table={table}
+        recordCount={people.length}
+        isLoading={isLoading}
+        emptyMessage={emptyMessage}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        // An embedded grid, not a listing: it has no route of its own, and the
+        // default key would persist column preferences per request id and per
+        // intake token.
+        listingKey=""
+      >
+        <Card data-testid="people-grid">
+          <CardHeader>
+            <CardHeading>
+              <CardTitle>{title}</CardTitle>
+              {description ? (
+                <div className="text-sm text-muted-foreground">{description}</div>
               ) : null}
-              {editable && onRemovePerson ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 text-xs self-start"
-                  onClick={() => onRemovePerson(person.id)}
-                >
-                  Remove
-                </Button>
-              ) : null}
-            </div>
-          ))
-        )}
-      </div>
+            </CardHeading>
+            {actions ? <CardToolbar>{actions}</CardToolbar> : null}
+          </CardHeader>
+          <CardTable>
+            <ScrollArea>
+              <DataGridTable />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </CardTable>
+        </Card>
+      </DataGrid>
+
+      {/* Removing a row throws away what she typed, so it is confirmed like any
+          other destructive action rather than being one click. Mounted only
+          where removal is offered: the dialog is query-client backed, and a
+          read-only grid has no business requiring one. */}
+      {canRemove ? (
+        <ConfirmDeleteDialog
+          open={!!removing}
+          onOpenChange={(open) => !open && setRemoving(null)}
+          description={`Remove ${removing?.full_name?.trim() || 'this person'} from this request? This action cannot be undone.`}
+          successMessage="Person removed"
+          onDelete={async () => {
+            if (removing) handlersRef.current.onRemovePerson?.(removing.id);
+          }}
+        />
+      ) : null}
     </>
   );
 }

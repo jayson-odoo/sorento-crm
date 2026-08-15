@@ -3,14 +3,15 @@
 /**
  * The three chip families the onboarding grid renders.
  *
- * They are deliberately separate visual vocabularies because they answer
- * different questions and a reader must not confuse them:
+ * They answer different questions and a reader must not confuse them, so each
+ * takes a different shared `Badge` variant rather than a hand-rolled pastel
+ * class:
  *
- * - a **problem** is something the parser could not read (amber, the requester
+ * - a **problem** is something the parser could not read (warning, the requester
  *   can fix it),
- * - a **collision** is something that already exists (blue, nobody needs to fix
+ * - a **collision** is something that already exists (info, nobody needs to fix
  *   it - the lane will be skipped),
- * - a **lane** is what provisioning did (green / red / grey).
+ * - a **lane** is what provisioning did (success / destructive / secondary).
  */
 
 import { AlertTriangle, Check, Info, Loader, X } from 'lucide-react';
@@ -22,14 +23,10 @@ export function ProblemChips({ problems }: { problems: string[] }) {
   return (
     <div className="flex flex-wrap gap-1">
       {problems.map((problem) => (
-        <span
-          key={problem}
-          title={problem}
-          className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800"
-        >
-          <AlertTriangle className="size-3 shrink-0" />
+        <Badge key={problem} variant="warning" appearance="light" size="sm" title={problem}>
+          <AlertTriangle />
           <span className="truncate max-w-[140px]">{problem}</span>
-        </span>
+        </Badge>
       ))}
     </div>
   );
@@ -42,28 +39,32 @@ export function CollisionChips({ collisions }: { collisions: OnboardingCollision
   return (
     <div className="flex flex-wrap gap-1">
       {collisions.map((collision) => (
-        <span
+        <Badge
           key={`${collision.kind}:${collision.label}`}
+          variant="info"
+          appearance="light"
+          size="sm"
           title={collision.label}
-          className="inline-flex items-center gap-1 rounded-md bg-sky-100 px-1.5 py-0.5 text-xs text-sky-800"
         >
-          <Info className="size-3 shrink-0" />
+          <Info />
           <span className="truncate max-w-[160px]">{collision.label}</span>
-        </span>
+        </Badge>
       ))}
     </div>
   );
 }
 
-const LANE_TONE: Record<OnboardingLaneStep, string> = {
-  pending: 'bg-gray-100 text-gray-600',
-  done: 'bg-emerald-100 text-emerald-800',
-  linked: 'bg-emerald-100 text-emerald-800',
-  pushed: 'bg-emerald-100 text-emerald-800',
-  created_local: 'bg-amber-100 text-amber-800',
-  awaiting_invite: 'bg-amber-100 text-amber-800',
-  skipped: 'bg-gray-200 text-gray-600',
-  failed: 'bg-red-100 text-red-800',
+type BadgeVariant = 'success' | 'warning' | 'destructive' | 'secondary';
+
+const LANE_VARIANT: Record<OnboardingLaneStep, BadgeVariant> = {
+  pending: 'secondary',
+  done: 'success',
+  linked: 'success',
+  pushed: 'success',
+  created_local: 'warning',
+  awaiting_invite: 'warning',
+  skipped: 'secondary',
+  failed: 'destructive',
 };
 
 const LANE_ICON: Record<OnboardingLaneStep, typeof Check> = {
@@ -75,6 +76,24 @@ const LANE_ICON: Record<OnboardingLaneStep, typeof Check> = {
   awaiting_invite: Loader,
   skipped: Info,
   failed: X,
+};
+
+/**
+ * What each lane step means in words.
+ *
+ * The tooltip used to interpolate the raw step, so hovering a half-provisioned
+ * contact read "created_local" - an enum code leaking into the UI, which tells
+ * a reviewer nothing about whether he has to act.
+ */
+export const LANE_STEP_LABELS: Record<OnboardingLaneStep, string> = {
+  pending: 'Not started',
+  done: 'Done',
+  linked: 'Linked',
+  pushed: 'Pushed',
+  created_local: 'Created here, not yet pushed',
+  awaiting_invite: 'Waiting on an invite',
+  skipped: 'Skipped, it already exists',
+  failed: 'Failed',
 };
 
 export interface LaneChipProps {
@@ -94,16 +113,19 @@ export interface LaneChipProps {
 export function LaneChip({ label, step, error, note, deferred }: LaneChipProps) {
   const Icon = LANE_ICON[step] ?? Loader;
   const detail = error || note || (deferred && step === 'pending' ? 'Not yet automated' : null);
-  const title = detail ? `${label}: ${step} - ${detail}` : `${label}: ${step}`;
+  const stepLabel = LANE_STEP_LABELS[step] ?? LANE_STEP_LABELS.pending;
+  const title = detail ? `${label}: ${stepLabel} - ${detail}` : `${label}: ${stepLabel}`;
   return (
-    <span
+    <Badge
+      variant={LANE_VARIANT[step] ?? 'secondary'}
+      appearance="light"
+      size="sm"
       title={title}
-      className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs ${LANE_TONE[step] ?? LANE_TONE.pending}`}
     >
-      <Icon className="size-3 shrink-0" />
+      <Icon />
       <span className="font-medium">{label}</span>
       {detail ? <span className="truncate max-w-[150px]">{detail}</span> : null}
-    </span>
+    </Badge>
   );
 }
 

@@ -6,7 +6,8 @@
  * reviewer's view must not drift: same columns in the same order, with the
  * reviewer's extra columns added rather than substituted.
  */
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PeopleGrid } from './PeopleGrid';
@@ -70,8 +71,17 @@ function person(overrides: Partial<OnboardingPerson> = {}): OnboardingPerson {
   };
 }
 
-function desktop() {
-  return screen.getByTestId('people-grid-desktop');
+/**
+ * The grid's own card. One rendering at every width now - the parallel
+ * small-screen card layout is gone, so a value can only be on screen once.
+ */
+function grid() {
+  return screen.getByTestId('people-grid');
+}
+
+/** The template picker for a row: a SearchableSelect behind an sr-only label. */
+function templateTrigger() {
+  return within(grid()).getAllByLabelText('Access template')[0];
 }
 
 describe('PeopleGrid', () => {
@@ -97,11 +107,11 @@ describe('PeopleGrid', () => {
 
   it('shows the requester her own values back, raw', () => {
     render(<PeopleGrid mode="intake" people={[person()]} templates={TEMPLATES} />);
-    const grid = within(desktop());
-    expect(grid.getByLabelText('Name, row 1')).toHaveValue('Nurul Aisyah');
+    const cells = within(grid());
+    expect(cells.getByLabelText('Name, row 1')).toHaveValue('Nurul Aisyah');
     // The dash and the spacing are hers. Normalising what she sees reads as the
     // system losing her input.
-    expect(grid.getByLabelText('Phone, row 1')).toHaveValue('012-3456781');
+    expect(cells.getByLabelText('Phone, row 1')).toHaveValue('012-3456781');
   });
 
   it('raises a patch when a field is edited, once the field is left', () => {
@@ -114,7 +124,7 @@ describe('PeopleGrid', () => {
         onPatchPerson={onPatch}
       />,
     );
-    const email = within(desktop()).getByLabelText('Email, row 1');
+    const email = within(grid()).getByLabelText('Email, row 1');
     fireEvent.change(email, { target: { value: 'new@mocha.com.my' } });
     // An edit is one event, not one per character: the parent hears about it
     // when she moves off the field.
@@ -138,7 +148,7 @@ describe('PeopleGrid', () => {
       />,
     );
 
-    const name = within(desktop()).getByLabelText('Name, row 1') as HTMLInputElement;
+    const name = within(grid()).getByLabelText('Name, row 1') as HTMLInputElement;
     name.focus();
     expect(document.activeElement).toBe(name);
 
@@ -177,7 +187,7 @@ describe('PeopleGrid', () => {
         onPatchPerson={vi.fn()}
       />,
     );
-    expect(within(desktop()).getByLabelText('Name, row 1')).toHaveValue('Nurul Aisyah');
+    expect(within(grid()).getByLabelText('Name, row 1')).toHaveValue('Nurul Aisyah');
 
     // A refetch (or another reviewer's edit) landing on an idle field must win.
     rerender(
@@ -188,7 +198,7 @@ describe('PeopleGrid', () => {
         onPatchPerson={vi.fn()}
       />,
     );
-    expect(within(desktop()).getByLabelText('Name, row 1')).toHaveValue(
+    expect(within(grid()).getByLabelText('Name, row 1')).toHaveValue(
       'Nurul Aisyah binti Rahman',
     );
   });
@@ -203,7 +213,7 @@ describe('PeopleGrid', () => {
         onPatchPerson={onPatch}
       />,
     );
-    const nickname = within(desktop()).getByLabelText('Nickname, row 1');
+    const nickname = within(grid()).getByLabelText('Nickname, row 1');
     fireEvent.change(nickname, { target: { value: 'Ais' } });
     fireEvent.keyDown(nickname, { key: 'Enter' });
     expect(onPatch).toHaveBeenCalledWith('p1', { nick_name: 'Ais' });
@@ -212,7 +222,7 @@ describe('PeopleGrid', () => {
     expect(onPatch).toHaveBeenCalledTimes(1);
   });
 
-  it('pre-fills the three needs from the template, without locking them', () => {
+  it('pre-fills the three needs from the template, without locking them', async () => {
     const onPatch = vi.fn();
     render(
       <PeopleGrid
@@ -222,9 +232,8 @@ describe('PeopleGrid', () => {
         onPatchPerson={onPatch}
       />,
     );
-    fireEvent.change(within(desktop()).getAllByLabelText('Access template')[0], {
-      target: { value: 'tpl-dealer' },
-    });
+    fireEvent.click(templateTrigger());
+    fireEvent.click(await screen.findByRole('option', { name: /Dealer/ }));
     expect(onPatch).toHaveBeenCalledWith('p1', {
       template_id: 'tpl-dealer',
       needs_system_account: false,
@@ -233,12 +242,28 @@ describe('PeopleGrid', () => {
     });
   });
 
-  it('offers a way to clear the template', () => {
+  it('is a searchable select, not a raw dropdown', () => {
     render(<PeopleGrid mode="intake" people={[person()]} templates={TEMPLATES} />);
-    const select = within(desktop()).getAllByLabelText('Access template')[0];
+    // Every dropdown-select in this codebase is SearchableSelect, which exposes
+    // the combobox role a raw <select> in a cell never did.
+    expect(templateTrigger()).toHaveAttribute('role', 'combobox');
+  });
+
+  it('offers a way to clear the template', () => {
+    const onPatch = vi.fn();
+    render(
+      <PeopleGrid
+        mode="intake"
+        people={[person()]}
+        templates={TEMPLATES}
+        onPatchPerson={onPatch}
+      />,
+    );
     // An optional select the user can change but never unset is the ADR's named
-    // failure; the empty option is what makes it clearable.
-    expect(within(select).getByText('No template')).toBeInTheDocument();
+    // failure; `clearable` is what makes it clearable.
+    const clear = within(templateTrigger()).getByRole('button', { name: 'Clear selection' });
+    fireEvent.pointerDown(clear);
+    expect(onPatch).toHaveBeenCalledWith('p1', { template_id: null });
   });
 
   it('shows per-row problems as chips', () => {
@@ -302,21 +327,23 @@ describe('PeopleGrid', () => {
     expect(screen.getAllByText('Email already registered.').length).toBeGreaterThan(0);
   });
 
-  it('offers keep and reject per row in review', () => {
-    const onKeep = vi.fn();
+  it('offers approve and reject per row in review, in the same words as the badge', () => {
+    const onApprove = vi.fn();
     const onReject = vi.fn();
     render(
       <PeopleGrid
         mode="review"
         people={[person()]}
         templates={TEMPLATES}
-        onApprovePerson={onKeep}
+        onApprovePerson={onApprove}
         onRejectPerson={onReject}
       />,
     );
-    fireEvent.click(within(desktop()).getByRole('button', { name: 'Keep' }));
-    fireEvent.click(within(desktop()).getByRole('button', { name: 'Reject' }));
-    expect(onKeep).toHaveBeenCalledWith('p1');
+    // "Approve", not "Keep": the badge for an approved row already says
+    // Approved, and one verdict must not have two names.
+    fireEvent.click(within(grid()).getByRole('button', { name: 'Approve' }));
+    fireEvent.click(within(grid()).getByRole('button', { name: 'Reject' }));
+    expect(onApprove).toHaveBeenCalledWith('p1');
     expect(onReject).toHaveBeenCalledWith('p1');
   });
 
@@ -336,21 +363,56 @@ describe('PeopleGrid', () => {
 
   it('is read-only in readonly mode, with the same values on screen', () => {
     render(<PeopleGrid mode="readonly" people={[person()]} templates={TEMPLATES} />);
-    const grid = within(desktop());
-    expect(grid.queryByLabelText('Name, row 1')).not.toBeInTheDocument();
-    expect(grid.getAllByText('Nurul Aisyah').length).toBeGreaterThan(0);
-    expect(grid.getAllByText('012-3456781').length).toBeGreaterThan(0);
+    const cells = within(grid());
+    expect(cells.queryByLabelText('Name, row 1')).not.toBeInTheDocument();
+    expect(cells.getAllByText('Nurul Aisyah').length).toBeGreaterThan(0);
+    expect(cells.getAllByText('012-3456781').length).toBeGreaterThan(0);
   });
 
-  it('renders a card per person for small screens', () => {
+  it('titles the card it is, so it needs no outer section around it', () => {
     render(
       <PeopleGrid
         mode="intake"
-        people={[person(), person({ id: 'p2', row_number: 2, full_name: 'Tan Wei Ming' })]}
+        people={[person()]}
         templates={TEMPLATES}
+        title="Access"
+        description="Submitted 1"
+        actions={<button type="button">Add a person</button>}
       />,
     );
-    const mobile = screen.getByTestId('people-grid-mobile');
-    expect(mobile.children).toHaveLength(2);
+    const card = within(grid());
+    expect(card.getByText('Access')).toBeInTheDocument();
+    expect(card.getByText('Submitted 1')).toBeInTheDocument();
+    expect(card.getByRole('button', { name: 'Add a person' })).toBeInTheDocument();
+  });
+
+  it('confirms before a row is removed', async () => {
+    const onRemove = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PeopleGrid
+          mode="intake"
+          people={[person()]}
+          templates={TEMPLATES}
+          onRemovePerson={onRemove}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(within(grid()).getByRole('button', { name: 'Remove' }));
+    // Removing a row throws away what she typed, so it is confirmed in the
+    // standard words rather than being one click.
+    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Remove Nurul Aisyah from this request? This action cannot be undone.',
+      ),
+    ).toBeInTheDocument();
+    expect(onRemove).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(onRemove).toHaveBeenCalledWith('p1'));
   });
 });
