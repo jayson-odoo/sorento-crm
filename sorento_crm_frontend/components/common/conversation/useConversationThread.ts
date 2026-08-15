@@ -108,6 +108,23 @@ export interface ConversationThread {
   highlightTerm: string;
   search: ConversationSearchController;
   error: string | null;
+  /**
+   * Scroll to one message by id and flash it (AC-N6), loading the surrounding
+   * page first when it is outside the window - the same mechanism a search jump
+   * uses, exposed for callers with their own entry point (the drawer's quoted
+   * enquiry). A no-op for an empty id.
+   */
+  jumpToMessage: (messageId: string | number | null | undefined) => void;
+  /** The message `RespondChatList` should scroll to and ring. */
+  focusMessageId: string | null;
+  /**
+   * Bumped on every `jumpToMessage` call, INCLUDING a repeat of the same id -
+   * clicking the enquiry twice must scroll back twice, and an id alone cannot
+   * express that.
+   */
+  focusNonce: number;
+  /** True while the around-page for a jump target is in flight. */
+  isJumpingToMessage: boolean;
 }
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -174,6 +191,16 @@ export function useConversationThread({
   const [isLoadingNewer, setIsLoadingNewer] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
 
+  // AC-N6: a caller-driven jump (the drawer's quoted enquiry). Kept apart from
+  // the search cursor: the two can be pointed at different messages, and a jump
+  // must not disturb an open search's active match.
+  const [focus, setFocus] = useState<{ messageId: string | null; nonce: number }>({
+    messageId: null,
+    nonce: 0,
+  });
+  const [isJumpingToMessage, setIsJumpingToMessage] = useState(false);
+  const focusToken = useRef<number | null>(null);
+
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQueryState] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
@@ -223,6 +250,9 @@ export function useConversationThread({
     setIsLoadingOlder(false);
     setIsLoadingNewer(false);
     setPageError(null);
+    focusToken.current = null;
+    setIsJumpingToMessage(false);
+    setFocus((current) => (current.messageId === null ? current : { messageId: null, nonce: current.nonce }));
   }, [setDetached]);
 
   const resetSearch = useCallback(() => {
@@ -400,6 +430,57 @@ export function useConversationThread({
     [items],
   );
 
+  // Readable at click time: `loadedIds` is a render-time memo, and a jump is
+  // triggered from an event handler that must decide "is it already here?"
+  // against the window as it stands NOW.
+  const loadedIdsRef = useRef(loadedIds);
+  useEffect(() => {
+    loadedIdsRef.current = loadedIds;
+  }, [loadedIds]);
+
+  /**
+   * AC-N6. Point the list at one message. Already in the window -> the list
+   * just scrolls and flashes it. Outside -> the server-centred page REPLACES
+   * the window first (same reasoning as the search jump: a window with a hole
+   * in the middle renders as a silent gap), and the list scrolls once the
+   * bubble mounts.
+   */
+  const jumpToMessage = useCallback(
+    (messageId: string | number | null | undefined) => {
+      if (!enabled) return;
+      const target = messageId == null ? '' : String(messageId).trim();
+      if (!target) return;
+      setFocus((current) => ({ messageId: target, nonce: current.nonce + 1 }));
+      if (loadedIdsRef.current.has(target)) return;
+
+      const token = nextToken();
+      focusToken.current = token;
+      const seq = (fetchSeq.current += 1);
+      setIsJumpingToMessage(true);
+      setPageError(null);
+      void loadPage({ around: target, limit: pageSize })
+        .then((page) => {
+          if (seq !== fetchSeq.current) return;
+          setDetached(page.items);
+          setOlderItems([]);
+          setHasMoreOlder(Boolean(page.has_more_older));
+          setHasMoreNewer(Boolean(page.has_more_newer));
+        })
+        .catch((error: unknown) => {
+          if (seq !== fetchSeq.current) return;
+          setPageError(
+            error instanceof Error ? error.message : 'Could not open that message.',
+          );
+        })
+        .finally(() => {
+          if (focusToken.current !== token) return;
+          focusToken.current = null;
+          setIsJumpingToMessage(false);
+        });
+    },
+    [enabled, loadPage, pageSize, setDetached],
+  );
+
   // What the detached window is hiding: live messages that are not in it. The
   // reader gets a count, not a silent gap.
   const newerUnseenCount = useMemo(() => {
@@ -504,6 +585,10 @@ export function useConversationThread({
     newerUnseenCount,
     highlightTerm: searchOpen ? appliedQuery : '',
     error: pageError,
+    jumpToMessage,
+    focusMessageId: focus.messageId,
+    focusNonce: focus.nonce,
+    isJumpingToMessage,
     search: {
       open: searchOpen,
       query,

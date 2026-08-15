@@ -43,12 +43,22 @@ vi.mock('@/components/common/RespondChatList', () => ({
     items,
     contactName,
     comments = [],
+    focusMessageId = null,
+    focusNonce = 0,
   }: {
     items: unknown[];
     contactName?: string | null;
     comments?: unknown[];
+    focusMessageId?: string | null;
+    focusNonce?: number;
   }) => (
-    <div data-testid="chat-list" data-contact={contactName ?? ''} data-notes={comments.length}>
+    <div
+      data-testid="chat-list"
+      data-contact={contactName ?? ''}
+      data-notes={comments.length}
+      data-focus-message-id={focusMessageId ?? ''}
+      data-focus-nonce={String(focusNonce)}
+    >
       {items.length} message(s)
     </div>
   ),
@@ -590,6 +600,44 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
     await screen.findByTestId('composer-send');
     expect(screen.queryByTestId('ticket-history-link')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ticket-resolved-badge')).not.toBeInTheDocument();
+  });
+
+  // AC-N6: the quoted enquiry is the way back into the thread.
+  describe('enquiry quote jump (AC-N6)', () => {
+    it('clicking the quote points the thread at the source message', async () => {
+      useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+      renderDrawer();
+
+      fireEvent.click(await screen.findByTestId('enquiry-quote-jump'));
+
+      await waitFor(() =>
+        expect(screen.getByTestId('chat-list')).toHaveAttribute('data-focus-message-id', '123'),
+      );
+      expect(screen.getByTestId('chat-list')).toHaveAttribute('data-focus-nonce', '1');
+    });
+
+    it('a source message outside the loaded window fetches the page around it', async () => {
+      const { loadPage } = useSlaTrackingThreadLoaders();
+      useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+      renderDrawer();
+
+      fireEvent.click(await screen.findByTestId('enquiry-quote-jump'));
+
+      await waitFor(() =>
+        expect(loadPage).toHaveBeenCalledWith({ around: '123', limit: 50 }),
+      );
+    });
+
+    it('stays plain text when the ticket has no source message to reach', async () => {
+      useInterventionTicket.mockReturnValue(
+        mockQuery(makeTicket({ source_message_id: null })),
+      );
+      renderDrawer();
+
+      await screen.findByTestId('chat-list');
+      expect(screen.queryByTestId('enquiry-quote-jump')).not.toBeInTheDocument();
+      expect(screen.getByText('Yes, please connect me to a person.')).toBeInTheDocument();
+    });
   });
 
   // AC-N5(a)/(b): the ticket actions live in the header action group. They used

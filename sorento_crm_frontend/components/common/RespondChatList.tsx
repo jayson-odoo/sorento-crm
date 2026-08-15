@@ -148,6 +148,16 @@ interface RespondChatListProps {
    * behave exactly as before.
    */
   mediaProxy?: (url: string) => Promise<Response>;
+  /**
+   * Caller-driven scroll target (AC-N6): the message to scroll to and flash.
+   * `focusNonce` is what actually triggers it, so asking for the SAME message
+   * twice scrolls twice. The pair comes straight from `useConversationThread`
+   * (`focusMessageId` / `focusNonce`), which loads the surrounding page first
+   * when the target is outside the window - this component only ever scrolls to
+   * a bubble that is mounted, and waits for it if it is not there yet.
+   */
+  focusMessageId?: string | null;
+  focusNonce?: number;
 }
 
 /** Message text with the searched term marked. Escaping lives in the helper. */
@@ -321,6 +331,8 @@ export default function RespondChatList({
   highlightTerm = '',
   comments = [],
   mediaProxy,
+  focusMessageId = null,
+  focusNonce = 0,
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -569,6 +581,21 @@ export default function RespondChatList({
     },
     [scrollBubbleIntoView],
   );
+
+  // AC-N6: an external jump (the drawer's quoted enquiry). The nonce is the
+  // trigger, and it is only marked handled once the bubble EXISTS - after an
+  // around-page load the target mounts a render or two later, so the effect
+  // re-runs on the item count until it can actually scroll.
+  const handledFocusNonce = useRef(0);
+  useEffect(() => {
+    if (!focusNonce || focusNonce === handledFocusNonce.current) return;
+    if (!focusMessageId) return;
+    const node = bubbleRefs.current.get(focusMessageId);
+    if (!node) return;
+    handledFocusNonce.current = focusNonce;
+    scrollBubbleIntoView(node, { behavior: 'smooth', block: 'center' });
+    setFlashMessageId(focusMessageId);
+  }, [focusNonce, focusMessageId, sortedItems.length, scrollBubbleIntoView]);
 
   // Clear the flash ring after it has been seen. Reset on every new target so a
   // second jump re-flashes instead of inheriting the first one's timer.

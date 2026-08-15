@@ -532,6 +532,73 @@ describe('useConversationThread', () => {
     expect(loadPage).toHaveBeenCalledTimes(1);
   });
 
+  // AC-N6: the drawer's quoted enquiry drives the same jump mechanism a search
+  // match does, through this hook rather than a second implementation.
+  describe('jumpToMessage', () => {
+    it('an already-loaded message only bumps the focus target, no fetch', () => {
+      const { result } = setup();
+
+      act(() => result.current.jumpToMessage(BASE_US + 8_000_000));
+
+      expect(loadPage).not.toHaveBeenCalled();
+      expect(result.current.focusMessageId).toBe(String(BASE_US + 8_000_000));
+      expect(result.current.focusNonce).toBe(1);
+    });
+
+    it('re-asking for the SAME message bumps the nonce again (scroll back twice)', () => {
+      const { result } = setup();
+
+      act(() => result.current.jumpToMessage(BASE_US + 8_000_000));
+      act(() => result.current.jumpToMessage(BASE_US + 8_000_000));
+
+      expect(result.current.focusNonce).toBe(2);
+      expect(loadPage).not.toHaveBeenCalled();
+    });
+
+    it('a message outside the window loads the page around it and replaces the window', async () => {
+      loadPage.mockResolvedValue(
+        page([msg(2), msg(3), msg(4)], { has_more_older: true, has_more_newer: true }),
+      );
+      const { result } = setup();
+
+      act(() => result.current.jumpToMessage(String(BASE_US + 3_000_000)));
+
+      expect(result.current.isJumpingToMessage).toBe(true);
+      await waitFor(() => expect(result.current.isJumpingToMessage).toBe(false));
+
+      expect(loadPage).toHaveBeenCalledWith({
+        around: String(BASE_US + 3_000_000),
+        limit: 50,
+      });
+      // Window REPLACED (detached), not spliced - no hole in the middle.
+      expect(result.current.items.map((m) => m.messageId)).toEqual([
+        BASE_US + 2_000_000,
+        BASE_US + 3_000_000,
+        BASE_US + 4_000_000,
+      ]);
+      expect(result.current.isDetached).toBe(true);
+      expect(result.current.focusMessageId).toBe(String(BASE_US + 3_000_000));
+    });
+
+    it('surfaces a failed around-page instead of leaving a dead control', async () => {
+      loadPage.mockRejectedValue(new Error('Could not open that message.'));
+      const { result } = setup();
+
+      act(() => result.current.jumpToMessage('999'));
+
+      await waitFor(() => expect(result.current.error).toBe('Could not open that message.'));
+      expect(result.current.isJumpingToMessage).toBe(false);
+    });
+
+    it('ignores an empty target', () => {
+      const { result } = setup();
+      act(() => result.current.jumpToMessage(null));
+      act(() => result.current.jumpToMessage(''));
+      expect(result.current.focusNonce).toBe(0);
+      expect(loadPage).not.toHaveBeenCalled();
+    });
+  });
+
   it('holds nothing when disabled', () => {
     const { result } = renderHook(() =>
       useConversationThread({

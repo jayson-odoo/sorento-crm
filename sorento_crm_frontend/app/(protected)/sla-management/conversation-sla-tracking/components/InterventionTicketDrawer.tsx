@@ -250,12 +250,31 @@ export default function InterventionTicketDrawer({
               </div>
             ) : ticket ? (
               <div className="rounded-md border bg-muted/30 p-3">
-                <div className="flex items-start gap-2">
-                  <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  <p className="min-w-0 whitespace-pre-wrap break-words text-sm">
-                    {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
-                  </p>
-                </div>
+                {/* AC-N6: the quote is the way INTO the thread. Clicking it
+                    scrolls to the message that started this ticket, fetching
+                    the surrounding page first when the reader has scrolled
+                    past it. Only a button when there is a message to reach. */}
+                {ticket.source_message_id ? (
+                  <button
+                    type="button"
+                    data-testid="enquiry-quote-jump"
+                    aria-label="Show this message in the conversation"
+                    onClick={() => thread.jumpToMessage(ticket.source_message_id)}
+                    className="flex w-full items-start gap-2 rounded text-start transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+                  >
+                    <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 whitespace-pre-wrap break-words text-sm">
+                      {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
+                    </span>
+                  </button>
+                ) : (
+                  <div className="flex items-start gap-2">
+                    <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                    <p className="min-w-0 whitespace-pre-wrap break-words text-sm">
+                      {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
+                    </p>
+                  </div>
+                )}
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span className="inline-flex items-center gap-1">
                     <Users className="size-3" />
@@ -333,6 +352,8 @@ export default function InterventionTicketDrawer({
                   isLoadingNewer={thread.isLoadingNewer}
                   searchController={thread.search}
                   highlightTerm={thread.highlightTerm}
+                  focusMessageId={thread.focusMessageId}
+                  focusNonce={thread.focusNonce}
                   comments={commentsQuery.data ?? []}
                   mediaProxy={mediaProxy}
                   onReply={(item) =>
