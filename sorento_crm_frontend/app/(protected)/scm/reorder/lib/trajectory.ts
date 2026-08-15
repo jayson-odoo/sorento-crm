@@ -43,6 +43,9 @@ export interface TrajectoryEntry {
 
 export interface TrajectoryPayload {
   windows: { retail_months: number; project_months: number };
+  /** How far back the monthly series reaches, so the empty state can say it rather than
+   *  carry a second copy of the backend's window. */
+  series_months: number;
   movement_threshold_pct: number;
   series: Record<string, TrajectoryEntry>;
 }

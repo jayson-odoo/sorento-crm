@@ -134,6 +134,7 @@ export function PlanLinesGrid({
   onAmendLevel,
   poFor,
   trendFor,
+  trendSeriesMonths = 24,
   purchaseTrendFor,
   purchaseTrendWindowMonths = 3,
   onOpenPurchaseTrend,
@@ -169,6 +170,9 @@ export function PlanLinesGrid({
   poFor?: (line: PlanLine) => PoReceipt[];
   /** Is this product's demand sustaining or dying off, on this line's side. */
   trendFor?: (line: PlanLine) => TrajectoryEntry | undefined;
+  /** How far back that trend's series reaches, for the "no orders dated in the last N
+   *  months" line. Off the payload, never a literal on the screen. */
+  trendSeriesMonths?: number;
   /** The mirror of `trendFor`, on the buy side: what we have actually purchased. */
   purchaseTrendFor?: (line: PlanLine) => ProductPurchaseTrend | undefined;
   /** The window the purchase-trend sentence compares (months). */
@@ -462,6 +466,7 @@ export function PlanLinesGrid({
                 productId={row.original.product_id}
                 segment={row.original.rec.segment ?? 'project'}
                 outstandingSales={row.original.rec.outstanding_sales ?? null}
+                seriesMonths={trendSeriesMonths}
               />
             </StopClick>
             {/* The velocity behind the trend verdict - the fast/slow, high/low evidence a

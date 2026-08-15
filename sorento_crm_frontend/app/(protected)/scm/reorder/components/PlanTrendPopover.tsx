@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { ApexOptions } from 'apexcharts';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -95,6 +96,17 @@ function CustomerOrderLines({
               <td className="max-w-32 truncate py-0.5" title={l.so_number}>
                 {l.so_number}
               </td>
+              {/* Where the order asked for it. Same pill as the demand popover uses, and
+                  the same honest wording when the order named no location at all. */}
+              <td className="py-0.5">
+                <Badge
+                  variant={l.warehouse_code ? 'secondary' : 'warning'}
+                  size="sm"
+                  className="font-normal"
+                >
+                  {l.warehouse_code ?? 'No location'}
+                </Badge>
+              </td>
               <td className="py-0.5 text-right tabular-nums">{fmtDate(l.order_date)}</td>
               <td className="py-0.5 text-right tabular-nums">{fmtInt(l.qty)}</td>
               <td className="py-0.5 text-right tabular-nums">
@@ -126,13 +138,21 @@ function CustomerRow({
   segment: string;
 }) {
   const [open, setOpen] = useState(false);
+  // The disclosure and the row it opens are paired by id, so a screen reader following
+  // aria-controls lands on the orders rather than being told a control exists and left to
+  // find what it did. Unique per customer key, because several rows are open at once.
+  const panelId = `plan-trend-orders-${useId()}`;
   return (
     <>
       <tr>
-        <td className="max-w-40 truncate py-0.5" title={customer.customer_name}>
+        <td className="max-w-40 truncate py-0.5">
           <button
             type="button"
             aria-expanded={open}
+            aria-controls={panelId}
+            // On the BUTTON, not the cell: the tooltip belongs to the thing the pointer is
+            // actually over, and a title on the cell never shows for a keyboard user.
+            title={customer.customer_name}
             className="flex w-full items-center gap-1 text-left hover:text-foreground"
             onClick={() => setOpen((v) => !v)}
           >
@@ -148,7 +168,7 @@ function CustomerRow({
         <td className="py-0.5 text-right tabular-nums">{fmtDate(customer.last_order_date)}</td>
       </tr>
       {open ? (
-        <tr>
+        <tr id={panelId}>
           <td colSpan={3} className="pl-4">
             <CustomerOrderLines
               runId={runId}
@@ -170,6 +190,7 @@ export function PlanTrendPopover({
   productId = null,
   segment = 'project',
   outstandingSales = null,
+  seriesMonths = 24,
 }: {
   trend: TrajectoryEntry | undefined;
   /** What this line sells for (realized average, or list price when nothing has sold) -
@@ -185,12 +206,16 @@ export function PlanTrendPopover({
    *  dated history at all (the outstanding book only started stating an order date), and
    *  "No order history" beside 51 open units reads as a defect rather than as a fact. */
   outstandingSales?: number | null;
+  /** How far back the trend's own series reaches, straight off the payload, so this copy
+   *  cannot drift from the window the backend actually read. */
+  seriesMonths?: number;
 }) {
   if (!trend) {
+    const empty = `No orders dated in the last ${seriesMonths} months.`;
     return (
       <span className="block text-2xs text-muted-foreground">
-        <span className="block truncate" title="No orders dated in the last 24 months.">
-          No orders dated in the last 24 months.
+        <span className="block truncate" title={empty}>
+          {empty}
         </span>
         {outstandingSales && outstandingSales > 0 ? (
           <span className="block truncate">Open now: {fmtInt(outstandingSales)} (see Demand)</span>

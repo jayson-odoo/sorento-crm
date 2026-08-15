@@ -182,6 +182,11 @@ def trajectory_for_run(
 
     out: dict[str, Any] = {
         "windows": windows,
+        # How far back the monthly series reaches. Stated rather than left for the screen to
+        # know: the trend popover's empty state says "no orders dated in the last N months",
+        # and a literal 24 there is a second copy of this constant that is free to disagree
+        # with it the day the window changes.
+        "series_months": SERIES_MONTHS,
         "movement_threshold_pct": MOVEMENT_THRESHOLD_PCT,
         "series": {},
     }

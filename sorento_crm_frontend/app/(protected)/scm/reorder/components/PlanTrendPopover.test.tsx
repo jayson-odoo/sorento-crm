@@ -162,6 +162,39 @@ describe('PlanTrendPopover - the orders behind a customer (AC-4.1)', () => {
     expect(row).toHaveAttribute('aria-expanded', 'true');
   });
 
+  it('pairs the disclosure with the row it opens, and titles the button itself', () => {
+    // aria-expanded alone says a control exists; aria-controls says WHAT it opened, so a
+    // screen reader can move to the orders instead of hunting for them. The tooltip sits
+    // on the button rather than the cell, which is the thing the pointer is over.
+    rendered();
+    openTrend();
+    const row = screen.getByRole('button', { name: /Vivo Homes/ });
+    expect(row).toHaveAttribute('title', 'Vivo Homes');
+
+    fireEvent.click(row);
+    const panelId = row.getAttribute('aria-controls');
+
+    expect(panelId).toBeTruthy();
+    expect(document.getElementById(panelId as string)).toContainElement(
+      screen.getByText('SO414050'),
+    );
+  });
+
+  it('names the location each order asked for, and says so when it named none', () => {
+    stubOrders(orders({
+      lines: [
+        { so_number: 'SO414050', order_date: '2026-07-12', qty: 60, unit_price: 0.94, warehouse_code: 'BRW-BB' },
+        { so_number: 'SO414051', order_date: '2026-06-05', qty: 40, unit_price: null, warehouse_code: null },
+      ],
+    }));
+    rendered();
+    openTrend();
+    fireEvent.click(screen.getByRole('button', { name: /Vivo Homes/ }));
+
+    expect(screen.getByText('BRW-BB')).toBeInTheDocument();
+    expect(screen.getByText('No location')).toBeInTheDocument();
+  });
+
   it('says how many orders it is NOT showing rather than dropping them silently', () => {
     stubOrders(orders({ total: 27, shown: 2 }));
     rendered();
@@ -205,6 +238,14 @@ describe('PlanTrendPopover - a line with open demand and no dated history (AC-4.
 
     expect(screen.getByText('No orders dated in the last 24 months.')).toBeInTheDocument();
     expect(screen.getByText('Open now: 51 (see Demand)')).toBeInTheDocument();
+  });
+
+  it('says the window the payload actually read, not a hardcoded 24', () => {
+    // The backend states `series_months`; repeating 24 here is a second copy of it that is
+    // free to be wrong the day the window changes.
+    render(<PlanTrendPopover trend={undefined} seriesMonths={36} />);
+
+    expect(screen.getByText('No orders dated in the last 36 months.')).toBeInTheDocument();
   });
 });
 
