@@ -2,10 +2,12 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import {
+  draftInterventionTicketReply,
   getInterventionTicket,
   resolveInterventionTicket,
   sendInterventionTicketMessage,
   type SendTicketMessageInput,
+  type TicketAIDraftInput,
 } from '../services/interventionTicketService';
 
 /**
@@ -61,6 +63,19 @@ export function useSendInterventionTicketMessage(id: string) {
     },
     // No onError toast: the composer owns send failures (it keeps the draft and
     // renders the typed no-template case), and two toasts for one failure is noise.
+  });
+}
+
+/**
+ * AI assist: draft a reply for THIS ticket (UAC AC-L5).
+ *
+ * No toast on either side: the composer owns the outcome - it writes the draft
+ * into the input on success and toasts the extracted message on failure, so a
+ * hook-level toast would either duplicate or contradict it.
+ */
+export function useDraftInterventionTicketReply(id: string) {
+  return useMutation({
+    mutationFn: (input: TicketAIDraftInput) => draftInterventionTicketReply(id, input),
   });
 }
 

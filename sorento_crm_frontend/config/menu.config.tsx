@@ -468,6 +468,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sla-management/escalation-logs',
       },
       {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
+      },
+      {
         title: 'KPI Dashboard',
         path: '/sla-management/kpi-dashboard',
         permission: 'sla.kpi.view',
@@ -1341,6 +1346,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
       },
       {
         title: 'KPI Dashboard',

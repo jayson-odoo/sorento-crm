@@ -37,6 +37,7 @@ import {
 } from '../services/conversationSLATrackingService';
 import { useSlaTrackingConversation } from '../hooks/useConversationSLATracking';
 import {
+  useDraftInterventionTicketReply,
   useInterventionTicket,
   useResolveInterventionTicket,
   useSendInterventionTicketMessage,
@@ -106,6 +107,7 @@ export default function InterventionTicketDrawer({
   const resolveMutation = useResolveInterventionTicket();
   const commentsQuery = useTicketComments(open ? ticketId : null);
   const commentMutation = useCreateTicketComment(ticketId ?? '');
+  const aiDraftMutation = useDraftInterventionTicketReply(ticketId ?? '');
 
   // A different ticket means a different enquiry: never carry a quote across,
   // and never carry comment mode into someone else's conversation.
@@ -328,6 +330,17 @@ export default function InterventionTicketDrawer({
                 // A manual template send is a reply too: stamp THIS ticket, or
                 // the response clock runs on while the contact has an answer.
                 templateSendTrackingId={ticket.id}
+                // Composer parity with Respond's own inbox (UAC AC-L4 / AC-L5).
+                // Snippet variables resolve against THIS ticket, and the AI
+                // draft is grounded on THIS thread - both server-side, so the
+                // drawer only has to say which ticket it is.
+                snippetsEnabled
+                snippetTrackingId={ticket.id}
+                emojiEnabled
+                onAiAssist={async ({ instruction }) => {
+                  const result = await aiDraftMutation.mutateAsync({ instruction });
+                  return result.draft;
+                }}
                 onSent={() => {
                   void ticketQuery.refetch();
                   void threadQuery.refetch();

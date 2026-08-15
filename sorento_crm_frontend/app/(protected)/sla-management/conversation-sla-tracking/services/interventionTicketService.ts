@@ -288,6 +288,53 @@ function buildSendFormData(input: SendTicketMessageInput, files: File[]): FormDa
 }
 
 /**
+ * G. AI assist (UAC AC-L5): draft a reply INTO the composer.
+ *
+ *    POST /{tracking_id}/ai-draft
+ *      body: { instruction?: string, tail?: number }   (both optional)
+ *      -> { draft, model, grounded_on, elapsed_ms }
+ *
+ *    The thread is read SERVER-SIDE from the same paginated conversation read
+ *    the drawer uses, so the browser never posts the conversation back up. The
+ *    draft is text for the assignee to edit; nothing here sends anything. A
+ *    missing/failing/empty model is a 503 with a readable message rather than a
+ *    silent no-op, because a button that does nothing is worse than one that
+ *    says the assistant is not configured.
+ */
+export interface TicketAIDraftInput {
+  /** What the agent wants the draft to do ("offer Tuesday delivery"). */
+  instruction?: string;
+  /** How many recent messages to ground on. Server default is 20. */
+  tail?: number;
+}
+
+export interface TicketAIDraftResult {
+  draft: string;
+  model: string | null;
+  /** How many thread messages the prompt actually carried. */
+  grounded_on: number;
+  elapsed_ms: number;
+}
+
+export async function draftInterventionTicketReply(
+  id: string,
+  input: TicketAIDraftInput = {},
+): Promise<TicketAIDraftResult> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}/ai-draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      instruction: input.instruction || undefined,
+      tail: input.tail ?? undefined,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to draft a reply'));
+  }
+  return response.json();
+}
+
+/**
  * F. Resolve THIS ticket. Siblings stay open; Respond conversation untouched.
  * Delegates to the existing dedicated resolve route - a ticket is resolved
  * exactly like any other conversation SLA row (UAC AC-C3).

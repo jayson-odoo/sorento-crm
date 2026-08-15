@@ -1,16 +1,30 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Send, Link2, LayoutTemplate, FileText, Info, Paperclip, X } from 'lucide-react';
+import {
+  Send,
+  Link2,
+  LayoutTemplate,
+  FileText,
+  Info,
+  Paperclip,
+  Sparkles,
+  StickyNote,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import SendTemplateDialog from '@/components/common/whatsapp-template/SendTemplateDialog';
 import { buildQuotedReplyText } from '@/lib/respondIoChatRender';
+import { useMessageSnippetOptions } from '@/app/(protected)/sla-management/message-snippets/hooks/useMessageSnippets';
+import type { MessageSnippetOption } from '@/app/(protected)/sla-management/message-snippets/types/messageSnippet.types';
 import { useConversationWindowState } from './useConversationWindowState';
+import EmojiPickerButton from './EmojiPickerButton';
+import SnippetPicker, { activeSlashFragment, filterSnippets } from './SnippetPicker';
 import {
   sendConversationMessage,
   getChatTemplatePreview,
@@ -83,6 +97,22 @@ interface SharedConversationComposerProps {
    * keeps running and the ticket breaches while visibly answered.
    */
   templateSendTrackingId?: string | null;
+  /**
+   * Offer the "/" snippet picker (UAC AC-L4). Off by default so the existing
+   * entity chat panels are untouched; the intervention-ticket drawer turns it
+   * on and supplies the ticket the `$variables` resolve against.
+   */
+  snippetsEnabled?: boolean;
+  snippetTrackingId?: string | null;
+  /** Offer the emoji picker (UAC AC-L5). */
+  emojiEnabled?: boolean;
+  /**
+   * AI assist (UAC AC-L5): drafts a reply INTO this input. Resolves with the
+   * draft text; rejects with an Error whose message is toasted. Anything
+   * already typed is passed as the instruction, so "offer Tuesday delivery"
+   * steers the draft instead of being lost. Absent = no button.
+   */
+  onAiAssist?: (input: { instruction?: string }) => Promise<string>;
 }
 
 /**
@@ -114,6 +144,10 @@ export default function SharedConversationComposer({
   windowStateOverride = null,
   showTemplateButton = true,
   templateSendTrackingId = null,
+  snippetsEnabled = false,
+  snippetTrackingId = null,
+  emojiEnabled = false,
+  onAiAssist,
 }: SharedConversationComposerProps) {
   const [replyText, setReplyText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -158,9 +192,147 @@ export default function SharedConversationComposer({
     queueMicrotask(() => replyTextareaRef.current?.focus());
   }, [replyComposePrefill]);
 
+  // ---- Snippets, emoji, AI assist (UAC AC-L4 / AC-L5) ---------------------
+
+  // The "/..." fragment being typed, or null when the picker is closed. Opened
+  // by the button too, with an empty query.
+  const [slashFragment, setSlashFragment] = useState<{ start: number; query: string } | null>(
+    null,
+  );
+  // The same picker, opened from the toolbar button instead of a "/". Kept
+  // apart from the fragment because a button-opened pick inserts at the caret
+  // rather than replacing a typed "/query".
+  const [snippetMenuOpen, setSnippetMenuOpen] = useState(false);
+  const [snippetIndex, setSnippetIndex] = useState(0);
+  const [aiDrafting, setAiDrafting] = useState(false);
+
+  const snippetPickerOpen = snippetsEnabled && (slashFragment !== null || snippetMenuOpen);
+  const snippetsQuery = useMessageSnippetOptions(snippetTrackingId, snippetPickerOpen);
+  const snippetMatches = useMemo(
+    () => filterSnippets(snippetsQuery.data ?? [], slashFragment?.query ?? ''),
+    [snippetsQuery.data, slashFragment],
+  );
+
+  const closeSnippetPicker = () => {
+    setSlashFragment(null);
+    setSnippetMenuOpen(false);
+  };
+
+  useEffect(() => {
+    setSnippetIndex(0);
+  }, [slashFragment?.query]);
+
+  // A different conversation is a different draft: never leave a picker open
+  // over someone else's thread.
+  useEffect(() => {
+    setSlashFragment(null);
+    setSnippetMenuOpen(false);
+  }, [entityId]);
+
+  /** Write `text` where the caret is, and leave the caret after it. */
+  const insertAtCaret = (text: string) => {
+    const node = replyTextareaRef.current;
+    const start = node?.selectionStart ?? replyText.length;
+    const end = node?.selectionEnd ?? start;
+    const next = replyText.slice(0, start) + text + replyText.slice(end);
+    setReplyText(next);
+    if (sendError) setSendError(null);
+    const caret = start + text.length;
+    queueMicrotask(() => {
+      node?.focus();
+      node?.setSelectionRange?.(caret, caret);
+    });
+  };
+
+  /**
+   * Insert the snippet, replacing the "/query" that summoned it. The body is
+   * ALREADY resolved by the backend, and it stays editable afterwards - it is
+   * just text in the box now.
+   */
+  const insertSnippet = (snippet: MessageSnippetOption) => {
+    const fragment = slashFragment;
+    closeSnippetPicker();
+    const body = snippet.resolved_body || snippet.body;
+    if (!fragment) {
+      insertAtCaret(body);
+      return;
+    }
+    const node = replyTextareaRef.current;
+    const caret = node?.selectionStart ?? fragment.start + fragment.query.length + 1;
+    const next = replyText.slice(0, fragment.start) + body + replyText.slice(caret);
+    setReplyText(next);
+    if (sendError) setSendError(null);
+    const nextCaret = fragment.start + body.length;
+    queueMicrotask(() => {
+      node?.focus();
+      node?.setSelectionRange?.(nextCaret, nextCaret);
+    });
+  };
+
+  const runAiAssist = async () => {
+    if (!onAiAssist || aiDrafting) return;
+    const instruction = replyText.trim();
+    setAiDrafting(true);
+    try {
+      const draft = await onAiAssist(instruction ? { instruction } : {});
+      const text = (draft ?? '').trim();
+      if (!text) {
+        toast.error('The assistant returned an empty draft.');
+        return;
+      }
+      // Replaces the box: anything typed was the STEERING for this draft, not
+      // part of the reply, so leaving it above the draft would send the
+      // instruction to the customer.
+      setReplyText(text);
+      if (sendError) setSendError(null);
+      queueMicrotask(() => replyTextareaRef.current?.focus());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to draft a reply');
+    } finally {
+      setAiDrafting(false);
+    }
+  };
+
   const onDraftChange = (value: string) => {
     setReplyText(value);
     if (sendError) setSendError(null);
+  };
+
+  /** Typing handler for the message field: also drives the "/" picker. */
+  const onComposerInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    onDraftChange(value);
+    if (!snippetsEnabled) return;
+    setSlashFragment(
+      activeSlashFragment(value, event.target.selectionStart ?? value.length),
+    );
+  };
+
+  /** Arrow/Enter/Escape while the picker is open belong to the picker. */
+  const onSnippetKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (!snippetPickerOpen) return false;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSnippetPicker();
+      return true;
+    }
+    if (snippetMatches.length === 0) return false;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setSnippetIndex((i) => (i + 1) % snippetMatches.length);
+      return true;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setSnippetIndex((i) => (i - 1 + snippetMatches.length) % snippetMatches.length);
+      return true;
+    }
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault();
+      insertSnippet(snippetMatches[snippetIndex]);
+      return true;
+    }
+    return false;
   };
 
   const canSubmit = !!replyText.trim() || (attachmentsEnabled && files.length > 0);
@@ -375,7 +547,8 @@ export default function SharedConversationComposer({
             data-testid="template-message-field"
             placeholder="Type your message…"
             value={replyText}
-            onChange={(e) => onDraftChange(e.target.value)}
+            onChange={onComposerInput}
+            onKeyDown={(e) => onSnippetKeyDown(e)}
             rows={2}
             disabled={sending}
             className="my-1 block w-full resize-none bg-background"
@@ -396,8 +569,28 @@ export default function SharedConversationComposer({
       {replyToChip}
       {attachmentChips}
 
-      {/* ---- Out-of-window, template configured: inline template-fill ---- */}
-      {templateMode ? (
+      {/* The message field and its typeaheads share one positioning context, so
+          the "/" picker floats above whichever field mode is rendered. */}
+      <div className="relative">
+        {snippetPickerOpen && (
+          <SnippetPicker
+            items={snippetMatches}
+            isLoading={snippetsQuery.isLoading}
+            error={
+              snippetsQuery.isError
+                ? snippetsQuery.error instanceof Error
+                  ? snippetsQuery.error.message
+                  : 'Failed to load snippets'
+                : null
+            }
+            activeIndex={snippetIndex}
+            onActiveIndexChange={setSnippetIndex}
+            onPick={insertSnippet}
+          />
+        )}
+
+        {/* ---- Out-of-window, template configured: inline template-fill ---- */}
+        {templateMode ? (
         <div className="space-y-2" data-testid="composer-template-mode">
           <div className="flex items-start gap-2 text-xs text-muted-foreground">
             <LayoutTemplate className="size-3.5 mt-0.5 shrink-0" />
@@ -434,8 +627,11 @@ export default function SharedConversationComposer({
             ref={replyTextareaRef}
             placeholder="Type your message..."
             value={replyText}
-            onChange={(e) => onDraftChange(e.target.value)}
+            onChange={onComposerInput}
             onKeyDown={(e) => {
+              // The picker owns the arrows and Enter while it is open, or
+              // choosing a snippet would send an unfinished message instead.
+              if (onSnippetKeyDown(e)) return;
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleSend();
@@ -447,13 +643,55 @@ export default function SharedConversationComposer({
           />
           {sendButton}
         </div>
-      )}
+        )}
+      </div>
 
       {/* Send-time no_chat_template fallback (rare race after preview said OK). */}
       {sendError && noTemplateNotice(sendError.settingsUrl, sendError.message)}
 
       <div className="flex flex-wrap gap-2">
         {attachButton}
+
+        {snippetsEnabled && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={sending}
+            aria-label="Insert snippet"
+            data-testid="snippet-button"
+            onClick={() => {
+              if (snippetPickerOpen) {
+                closeSnippetPicker();
+                return;
+              }
+              setSlashFragment(null);
+              setSnippetMenuOpen(true);
+            }}
+          >
+            <StickyNote className="size-4 mr-1" />
+            Snippet
+          </Button>
+        )}
+
+        {emojiEnabled && (
+          <EmojiPickerButton disabled={sending} onSelect={(emoji) => insertAtCaret(emoji)} />
+        )}
+
+        {onAiAssist && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={sending || aiDrafting}
+            data-testid="ai-assist-button"
+            title="Draft a reply from this conversation"
+            onClick={() => void runAiAssist()}
+          >
+            <Sparkles className={`size-4 mr-1${aiDrafting ? ' animate-pulse' : ''}`} />
+            {aiDrafting ? 'Drafting…' : 'AI assist'}
+          </Button>
+        )}
 
         {showTemplateButton && (
           <Button

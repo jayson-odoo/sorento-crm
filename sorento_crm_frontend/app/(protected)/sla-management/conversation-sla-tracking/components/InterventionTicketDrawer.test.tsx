@@ -10,11 +10,13 @@ const useResolveInterventionTicket = vi.fn();
 const useSendInterventionTicketMessage = vi.fn();
 const useTicketComments = vi.fn();
 const useCreateTicketComment = vi.fn();
+const useDraftInterventionTicketReply = vi.fn();
 
 vi.mock('../hooks/useInterventionTickets', () => ({
   useInterventionTicket: (...a: unknown[]) => useInterventionTicket(...a),
   useResolveInterventionTicket: (...a: unknown[]) => useResolveInterventionTicket(...a),
   useSendInterventionTicketMessage: (...a: unknown[]) => useSendInterventionTicketMessage(...a),
+  useDraftInterventionTicketReply: (...a: unknown[]) => useDraftInterventionTicketReply(...a),
 }));
 
 vi.mock('../hooks/useTicketComments', () => ({
@@ -76,6 +78,10 @@ vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
     sendAdapter,
     templateSendTrackingId,
     onSent,
+    snippetsEnabled,
+    snippetTrackingId,
+    emojiEnabled,
+    onAiAssist,
   }: {
     canReply: boolean;
     attachmentsEnabled?: boolean;
@@ -83,6 +89,10 @@ vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
     sendAdapter: (payload: { text: string; files: File[] }) => Promise<unknown>;
     templateSendTrackingId?: string | null;
     onSent?: () => void;
+    snippetsEnabled?: boolean;
+    snippetTrackingId?: string | null;
+    emojiEnabled?: boolean;
+    onAiAssist?: (input: { instruction?: string }) => Promise<string>;
   }) =>
     canReply ? (
       <>
@@ -90,12 +100,22 @@ vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
           data-testid="composer-send"
           data-attachments-enabled={String(!!attachmentsEnabled)}
           data-template-tracking-id={templateSendTrackingId ?? ''}
+          data-snippets-enabled={String(!!snippetsEnabled)}
+          data-snippet-tracking-id={snippetTrackingId ?? ''}
+          data-emoji-enabled={String(!!emojiEnabled)}
+          data-ai-assist={String(!!onAiAssist)}
           onClick={() => void sendAdapter({ text: 'hello', files: [] })}
         >
           Send
         </button>
         <button data-testid="composer-sent" onClick={() => onSent?.()}>
           sent
+        </button>
+        <button
+          data-testid="composer-ai-assist"
+          onClick={() => void onAiAssist?.({ instruction: 'offer Tuesday delivery' })}
+        >
+          ai
         </button>
       </>
     ) : (
@@ -152,6 +172,7 @@ const thread = {
 let resolveMutate: ReturnType<typeof vi.fn>;
 let sendMutateAsync: ReturnType<typeof vi.fn>;
 let commentMutateAsync: ReturnType<typeof vi.fn>;
+let aiDraftMutateAsync: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   useInterventionTicket.mockReset();
@@ -160,6 +181,10 @@ beforeEach(() => {
   useSendInterventionTicketMessage.mockReset();
   useTicketComments.mockReset();
   useCreateTicketComment.mockReset();
+  useDraftInterventionTicketReply.mockReset();
+
+  aiDraftMutateAsync = vi.fn().mockResolvedValue({ draft: 'drafted', model: 'gpt-4o', grounded_on: 3, elapsed_ms: 10 });
+  useDraftInterventionTicketReply.mockReturnValue({ mutateAsync: aiDraftMutateAsync });
 
   useTicketComments.mockReturnValue(mockQuery([]));
   commentMutateAsync = vi.fn().mockResolvedValue({ id: 'c1' });
@@ -400,5 +425,44 @@ describe('InterventionTicketDrawer', () => {
     useInterventionTicket.mockReturnValue(mockQuery(undefined));
     renderDrawer({ open: false });
     expect(useTicketComments).toHaveBeenCalledWith(null);
+  });
+});
+
+// --------------------------------------------------------- composer parity
+// UAC AC-L4 / AC-L5, slice S4.4. The drawer only says WHICH ticket; snippet
+// variables and the AI grounding are both resolved server-side against it.
+
+describe('InterventionTicketDrawer composer parity (AC-L4 / AC-L5)', () => {
+  it('turns on the snippet picker for THIS ticket', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    const send = await screen.findByTestId('composer-send');
+    expect(send).toHaveAttribute('data-snippets-enabled', 'true');
+    expect(send).toHaveAttribute('data-snippet-tracking-id', 't1');
+  });
+
+  it('turns on the emoji picker', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    expect(await screen.findByTestId('composer-send')).toHaveAttribute(
+      'data-emoji-enabled',
+      'true',
+    );
+  });
+
+  it('offers AI assist and passes the instruction through to the ticket draft', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    expect(await screen.findByTestId('composer-send')).toHaveAttribute('data-ai-assist', 'true');
+    fireEvent.click(screen.getByTestId('composer-ai-assist'));
+
+    await waitFor(() =>
+      expect(aiDraftMutateAsync).toHaveBeenCalledWith({
+        instruction: 'offer Tuesday delivery',
+      }),
+    );
   });
 });
