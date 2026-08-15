@@ -8,8 +8,11 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { createSpecKey } from '../services/productSpecService';
 import type { SpecRegistryKey } from '../types/productSpec.types';
 
+// "Dropdown" is the captain's word for the fixed-list type: it names the control the
+// user actually sees. Kept in lockstep with the product page's AddSpecificationDialog
+// so the same type never has two names.
 const DATA_TYPES = [
-  { value: 'enum', label: 'One of a fixed list (a finish, a mounting)' },
+  { value: 'enum', label: 'Dropdown (a finish, a mounting)' },
   { value: 'numeric', label: 'A measurement or a count' },
   { value: 'boolean', label: 'Yes or no (it has one, or it does not)' },
 ];

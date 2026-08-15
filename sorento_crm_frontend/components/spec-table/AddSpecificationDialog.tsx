@@ -42,8 +42,10 @@ import type { SpecKeyDefinition } from './types';
  */
 export type SpecDataType = 'enum' | 'numeric' | 'boolean';
 
+// "Dropdown", not "a word from a list": named after the control the user will see,
+// which is the thing they already have a word for (captain's call, hands-on test).
 const DATA_TYPE_OPTIONS = [
-  { value: 'enum', label: 'A word from a list' },
+  { value: 'enum', label: 'Dropdown' },
   { value: 'numeric', label: 'A number' },
   { value: 'boolean', label: 'Yes or no' },
 ];

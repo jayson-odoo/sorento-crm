@@ -62,7 +62,7 @@ export interface SpecTableRow {
 export interface SpecTableCallbacks {
   /** Save a value as authored. Rejecting the promise leaves the row in edit. */
   onSetValue: (specKey: string, value: SpecScalar) => Promise<void>;
-  /** "This product does not have this spec" - a tombstone that survives re-derivation. */
+  /** "Remove" - a durable absence that survives re-derivation. */
   onTombstone: (specKey: string) => Promise<void>;
   /** "Reset" - hand the key back to derivation. */
   onRevert: (specKey: string) => Promise<void>;

@@ -371,6 +371,30 @@ describe('editing in place', () => {
     expect(screen.queryByText('Seat cover material')).not.toBeInTheDocument();
   });
 
+  it('gives a fresh dropdown key the dropdown, never free text', async () => {
+    // Empty vocabulary is the fresh-key state. Free text here stored a value the
+    // key's vocabulary had never heard of; the dropdown's add-a-word affordance is
+    // the one path in, so the first word becomes vocabulary and value together.
+    const registry = [
+      ...MOCK_REGISTRY,
+      {
+        spec_key: 'valve_type',
+        label: 'Valve type',
+        data_type: 'enum',
+        unit: null,
+        allowed_values: [],
+      },
+    ];
+    const { container } = renderTable({ registry, openEditorFor: 'valve_type' });
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-spec-editor="valve_type"]')).not.toBeNull(),
+    );
+    const editor = container.querySelector('[data-spec-editor="valve_type"]') as HTMLElement;
+    expect(within(editor).getByRole('combobox')).toBeInTheDocument();
+    expect(within(editor).queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
   it('sorts that new row in by label rather than dropping it at the bottom', async () => {
     const { container } = renderTable({ openEditorFor: 'seat_material' });
 
@@ -385,20 +409,22 @@ describe('editing in place', () => {
 });
 
 describe('removing, by name', () => {
-  it('offers the two intents by name rather than one "delete"', async () => {
+  it('offers Remove and Reset as two distinct intents', async () => {
     renderTable();
     openMenu(screen.getByLabelText('More actions for Material'));
-    expect(screen.getByText('This product does not have this spec')).toBeInTheDocument();
+    expect(screen.getByText('Remove')).toBeInTheDocument();
     expect(screen.getByText('Reset')).toBeInTheDocument();
-    expect(screen.queryByText(/^delete$/i)).not.toBeInTheDocument();
   });
 
-  it('tombstones behind a confirmation carrying "cannot be undone"', async () => {
+  it('removes behind a confirmation carrying "cannot be undone"', async () => {
     const { callbacks } = renderTable();
     openMenu(screen.getByLabelText('More actions for Material'));
-    fireEvent.click(screen.getByText('This product does not have this spec'));
+    fireEvent.click(screen.getByText('Remove'));
 
+    expect(screen.getByText('Confirm delete')).toBeInTheDocument();
     expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument();
+    // The removal is durable: the copy says the value will not come back on its own.
+    expect(screen.getByText(/will not be filled in again/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await waitFor(() => expect(callbacks.onTombstone).toHaveBeenCalledWith('material'));
   });
@@ -411,11 +437,12 @@ describe('removing, by name', () => {
     await waitFor(() => expect(callbacks.onRevert).toHaveBeenCalledWith('material'));
   });
 
-  it('will not tombstone a key that already is one', async () => {
+  it('will not remove a key that already is removed', async () => {
     renderTable();
     openMenu(screen.getByLabelText('More actions for Overflow'));
-    expect(
-      screen.getByText('This product does not have this spec').closest('[role="menuitem"]'),
-    ).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByText('Remove').closest('[role="menuitem"]')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
   });
 });

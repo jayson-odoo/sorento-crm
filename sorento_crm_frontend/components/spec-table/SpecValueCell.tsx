@@ -14,9 +14,15 @@ import type { SpecScalar, SpecTableRow } from './types';
  * One spec's value, read or edited, in the same cell.
  *
  * The editor is the renderer that used to live in `AddSpecByHand`: a boolean gets
- * Yes/No, a key whose merged vocabulary is non-empty gets a `SearchableSelect`, and
- * anything else gets a typed input. Lifted here rather than copied, so the add-a-spec
- * flow and an edit of an existing row cannot disagree about what a key's editor is.
+ * Yes/No, a dropdown key gets a `SearchableSelect`, and anything else gets a typed
+ * input. Lifted here rather than copied, so the add-a-spec flow and an edit of an
+ * existing row cannot disagree about what a key's editor is.
+ *
+ * A dropdown key gets the dropdown even while its vocabulary is EMPTY - a fresh key
+ * has no words yet, and falling through to free text there stored a value the key's
+ * vocabulary had never heard of, which is exactly the split the registry exists to
+ * prevent. The one affordance an empty dropdown offers is "Add ... to <key>", so the
+ * first word becomes vocabulary and the value in the same motion.
  *
  * Swapping in place is the point (AC-A.1b). An editor that opens below the row, or in
  * a modal, moves every other row on the page: the reader loses the line they were on,
@@ -149,14 +155,18 @@ export function SpecValueCell({
             disabled={disabled}
             placeholder="Yes or No"
           />
-        ) : row.options.length > 0 ? (
+        ) : row.dataType === 'enum' || row.options.length > 0 ? (
           <SearchableSelect
             value={draft}
             onChange={setDraft}
             options={row.options.map((option) => ({ value: option, label: readable(option) }))}
             size="sm"
             disabled={disabled}
-            placeholder={`Pick a ${row.label.toLowerCase()}`}
+            placeholder={
+              row.options.length > 0
+                ? `Pick a ${row.label.toLowerCase()}`
+                : `Type the first ${row.label.toLowerCase()}`
+            }
             // The last row of the list, and only when the word genuinely is new. The
             // check runs against data already on screen, so the common case - the word
             // is there under another spelling - never costs a round trip. The server
