@@ -35,6 +35,7 @@ import {
   applySalesHistory,
 } from '../services/purchaseHistoryService';
 import { CountTile } from './UploadCountTile';
+import { UploadReadingIndicator } from './UploadReadingIndicator';
 import { UploadTestVerdict } from './UploadTestVerdict';
 
 /**
@@ -359,12 +360,7 @@ export function HistoryUploadDialog({
             aria-label={copy.dropzoneLabel}
           />
 
-          {previewing ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
-              Reading the file...
-            </div>
-          ) : null}
+          <UploadReadingIndicator reading={previewing} />
 
           {upload.testResult ? <UploadTestVerdict result={upload.testResult} /> : null}
 

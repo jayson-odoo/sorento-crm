@@ -355,11 +355,17 @@ describe('OutstandingUploadDialog - loading', () => {
     pickFile();
     fireEvent.click(testButton());
 
+    const row = () =>
+      document.querySelector('[data-slot="upload-reading-indicator"]') as HTMLElement;
+
     expect(await screen.findByText(/Reading the file/i)).toBeInTheDocument();
+    expect(row()).not.toHaveClass('invisible');
     expect(confirmButton()).toBeDisabled();
 
     release(preview());
-    await waitFor(() => expect(screen.queryByText(/Reading the file/i)).toBeNull());
+    // Hidden, not unmounted: the row holds its height so the centred dialog does not jump
+    // when the read ends. See `UploadReadingIndicator`.
+    await waitFor(() => expect(row()).toHaveClass('invisible'));
   });
 });
 
