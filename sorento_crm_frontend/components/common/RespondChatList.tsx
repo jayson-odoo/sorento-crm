@@ -15,6 +15,7 @@ import {
   Paperclip,
   Search,
   Smile,
+  StickyNote,
   Video,
 } from 'lucide-react';
 import {
@@ -39,9 +40,24 @@ import AttachmentPreviewModal, {
 import ConversationSearchBar from '@/components/common/conversation/ConversationSearchBar';
 import type { ConversationSearchController } from '@/components/common/conversation/useConversationThread';
 import { splitHighlightSegments } from '@/lib/textHighlight';
+import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 
 /** Distance from the top that starts the next older page (AC-L7). */
 const LOAD_OLDER_THRESHOLD_PX = 80;
+
+/**
+ * An internal note rendered inline in the thread (UAC AC-L1). It is drawer-side
+ * data merged at RENDER time - a comment is never written into `chat_histories`
+ * and is never a message.
+ */
+export interface ConversationCommentRenderable {
+  id: string;
+  body: string;
+  author_name: string | null;
+  /** Naive UTC, as the backend serializes every datetime. */
+  created_at: string;
+  source?: 'crm' | 'respond';
+}
 
 interface RespondChatListProps {
   items: RespondMessageRenderable[];
@@ -84,6 +100,11 @@ interface RespondChatListProps {
    */
   searchController?: ConversationSearchController;
   highlightTerm?: string;
+  /**
+   * Internal notes to interleave with the messages, chronologically (AC-L1).
+   * Surfaces that pass none render exactly as before.
+   */
+  comments?: ConversationCommentRenderable[];
 }
 
 /** Message text with the searched term marked. Escaping lives in the helper. */
@@ -189,6 +210,7 @@ export default function RespondChatList({
   atConversationStart = false,
   searchController,
   highlightTerm = '',
+  comments = [],
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -242,6 +264,26 @@ export default function RespondChatList({
       return (a.messageId ?? 0) - (b.messageId ?? 0);
     });
   }, [items]);
+
+  // Messages and internal notes are two streams shown as one thread: comments
+  // live in their own table (never in `chat_histories`), so the interleave
+  // happens here, at render time, on the wall clock both carry.
+  const entries = useMemo(() => {
+    const messageEntries = sortedItems.map((item) => ({
+      kind: 'message' as const,
+      item,
+      ms: getRespondMessageSortTimeMs(item),
+    }));
+    if (comments.length === 0) return messageEntries;
+    const commentEntries = comments.map((comment) => ({
+      kind: 'comment' as const,
+      comment,
+      ms: parseDateTimeAsUTC(comment.created_at).getTime() || 0,
+    }));
+    // Stable sort with the messages listed first, so a note written in the same
+    // millisecond as a message reads as the reaction it is.
+    return [...messageEntries, ...commentEntries].sort((a, b) => a.ms - b.ms);
+  }, [sortedItems, comments]);
 
   const activeMatchId = searchController?.activeMessageId ?? null;
   // Pinning to the newest message is right while reading the live tail and
@@ -357,10 +399,47 @@ export default function RespondChatList({
             Beginning of this conversation
           </p>
         )}
-        {sortedItems.length === 0 && (
+        {entries.length === 0 && (
           <p className="py-4 text-center text-sm text-zinc-500 dark:text-zinc-400">{emptyHint}</p>
         )}
-        {sortedItems.map((item, idx) => {
+        {entries.map((entry, idx) => {
+          if (entry.kind === 'comment') {
+            const comment = entry.comment;
+            const dKeyNote = entry.ms > 0 ? dateKeyFromMs(entry.ms) : '';
+            const noteDivider =
+              dKeyNote && dKeyNote !== lastDateKey ? formatDatePillLabel(entry.ms) : '';
+            if (dKeyNote) lastDateKey = dKeyNote;
+            return (
+              <div key={`note-${comment.id}`} data-testid="chat-internal-note">
+                {noteDivider && (
+                  <div className="sticky top-0 z-10 my-2 flex justify-center">
+                    <span className="rounded-md bg-[#e1f3fb] dark:bg-[#1d282f] px-3 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 shadow-sm">
+                      {noteDivider}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-center">
+                  <div className="max-w-[92%] rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-sm text-amber-950 shadow-sm dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100">
+                    <div className="mb-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+                      <span className="inline-flex items-center gap-1">
+                        <StickyNote className="size-3" />
+                        Internal
+                      </span>
+                      <span>{comment.author_name || 'Unknown author'}</span>
+                      <span className="font-normal opacity-80">
+                        {formatDateTimeInMalaysia(comment.created_at)}
+                      </span>
+                    </div>
+                    <div className="whitespace-pre-wrap break-words leading-snug">
+                      <HighlightedText text={comment.body} term={highlightTerm} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          const item = entry.item;
           const isOutgoing = item.traffic === 'outgoing';
           // Direction aware: only OUR outgoing replies carry the ">" quote
           // convention. A contact message starting with ">" renders verbatim.

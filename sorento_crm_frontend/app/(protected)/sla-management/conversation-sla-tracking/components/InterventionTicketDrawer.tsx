@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, MessageSquareQuote, Users } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 import {
   AlertDialog,
@@ -24,6 +25,7 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import RespondChatList from '@/components/common/RespondChatList';
+import InternalCommentComposer from '@/components/common/conversation/InternalCommentComposer';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -39,6 +41,7 @@ import {
   useResolveInterventionTicket,
   useSendInterventionTicketMessage,
 } from '../hooks/useInterventionTickets';
+import { useCreateTicketComment, useTicketComments } from '../hooks/useTicketComments';
 import TicketSlaChips from './TicketSlaChips';
 
 interface InterventionTicketDrawerProps {
@@ -84,6 +87,9 @@ export default function InterventionTicketDrawer({
     null,
   );
   const [confirmResolve, setConfirmResolve] = useState(false);
+  // Reply talks to the contact; Comment never leaves the CRM. Two modes, one
+  // switch, so nobody can WhatsApp a customer while meaning to leave a note.
+  const [composerMode, setComposerMode] = useState<'reply' | 'comment'>('reply');
 
   const ticketQuery = useInterventionTicket(open ? ticketId : null);
   // The SAME query the SLA detail page's conversation panel uses (one key, one
@@ -98,10 +104,14 @@ export default function InterventionTicketDrawer({
   });
   const sendMutation = useSendInterventionTicketMessage(ticketId ?? '');
   const resolveMutation = useResolveInterventionTicket();
+  const commentsQuery = useTicketComments(open ? ticketId : null);
+  const commentMutation = useCreateTicketComment(ticketId ?? '');
 
-  // A different ticket means a different enquiry: never carry a quote across.
+  // A different ticket means a different enquiry: never carry a quote across,
+  // and never carry comment mode into someone else's conversation.
   useEffect(() => {
     setReplyTo(null);
+    setComposerMode('reply');
   }, [ticketId]);
 
   const ticket = ticketQuery.data;
@@ -256,6 +266,7 @@ export default function InterventionTicketDrawer({
                   atConversationStart={thread.atConversationStart}
                   searchController={thread.search}
                   highlightTerm={thread.highlightTerm}
+                  comments={commentsQuery.data ?? []}
                   onReply={(item) =>
                     setReplyTo({ messageId: item.messageId ?? null, excerpt: excerptOf(item) })
                   }
@@ -263,8 +274,51 @@ export default function InterventionTicketDrawer({
               </>
             )}
 
-            {/* ---- Composer: text + attachments, quoted reply emulated ---- */}
+            {/* ---- Mode switch: message the contact, or note to the team ---- */}
             {ticket && (
+              <div
+                role="tablist"
+                aria-label="Composer mode"
+                className="flex w-full gap-1 rounded-md border bg-muted/40 p-1"
+              >
+                {(['reply', 'comment'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="tab"
+                    aria-selected={composerMode === mode}
+                    data-testid={`composer-mode-${mode}`}
+                    onClick={() => setComposerMode(mode)}
+                    className={cn(
+                      'flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors',
+                      composerMode === mode
+                        ? mode === 'comment'
+                          ? 'bg-amber-500 text-white shadow-sm'
+                          : 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {mode === 'reply' ? 'Reply' : 'Comment'}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* ---- Composer: text + attachments, quoted reply emulated ---- */}
+            {ticket && composerMode === 'comment' && (
+              <InternalCommentComposer
+                disabled={ticket.is_resolved}
+                disabledMessage="This ticket is resolved."
+                onSubmit={({ body, mentionedUserIds }) =>
+                  commentMutation.mutateAsync({
+                    body,
+                    mentioned_user_ids: mentionedUserIds,
+                  })
+                }
+              />
+            )}
+
+            {ticket && composerMode === 'reply' && (
               <SharedConversationComposer
                 entityType="conversation_sla"
                 entityId={ticket.id}
