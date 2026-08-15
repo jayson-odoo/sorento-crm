@@ -23,6 +23,16 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 
+/**
+ * The user-facing label, matching the backend's precedence everywhere else
+ * (rename, collision guard, reading names): `stored_filename` is the
+ * renameable library label, `original_filename` covers legacy rows without
+ * one, and the id is the last resort so a row always renders a name.
+ */
+function attachmentDisplayName(att: Attachment): string {
+  return att.stored_filename || att.original_filename || att.id;
+}
+
 function collectAllFolderIds(nodes: AttachmentDirectoryTreeNode[]): Set<string> {
   const ids = new Set<string>();
   for (const node of nodes) {
@@ -143,14 +153,21 @@ function FolderNode({
   );
 }
 
-export interface ComplaintLinkAttachmentBrowserDialogProps {
+/** One picked file, as the caller of `onConfirm` sees it. */
+export interface LinkAttachmentSelection {
+  id: string;
+  name: string;
+}
+
+export interface LinkAttachmentBrowserDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  entityId: string;
+  /** The record the picked attachments are linked to. Not needed with `onConfirm`. */
+  entityId?: string;
   /** Attachment IDs already linked to this entity (so we can exclude them from the list). */
-  linkedAttachmentIds: Set<string>;
-  /** API call to link one attachment ID to the entity. */
-  linkAttachment: (entityId: string, attachmentId: string) => Promise<unknown>;
+  linkedAttachmentIds?: Set<string>;
+  /** API call to link one attachment ID to the entity. Not needed with `onConfirm`. */
+  linkAttachment?: (entityId: string, attachmentId: string) => Promise<unknown>;
   /**
    * Query keys to invalidate after successful link.
    * Example: [['complaint', id], ['complaints']]
@@ -159,9 +176,23 @@ export interface ComplaintLinkAttachmentBrowserDialogProps {
   successEntityLabel?: string;
   /** When 1, only one attachment can be selected (e.g. one-to-one relationship). */
   maxSelections?: number;
+  /**
+   * Pick-and-return escape hatch. When given, confirming hands the selection
+   * back and this dialog links NOTHING - the caller decides what the file is
+   * for. `entityId`, `linkAttachment` and the invalidation list are then unused.
+   */
+  onConfirm?: (selected: LinkAttachmentSelection[]) => void | Promise<void>;
+  /**
+   * Restrict the file list to these mime types, e.g. `['application/pdf']`.
+   * Omitted means every type, which is what every existing caller wants.
+   */
+  mimeTypes?: string[];
+  /** Defaults to the link-flow wording. */
+  title?: string;
+  confirmLabel?: string;
 }
 
-export default function ComplaintLinkAttachmentBrowserDialog({
+export default function LinkAttachmentBrowserDialog({
   open,
   onOpenChange,
   entityId,
@@ -170,15 +201,22 @@ export default function ComplaintLinkAttachmentBrowserDialog({
   invalidateQueryKeys = [],
   successEntityLabel = 'record',
   maxSelections,
-}: ComplaintLinkAttachmentBrowserDialogProps) {
+  onConfirm,
+  mimeTypes,
+  title,
+  confirmLabel,
+}: LinkAttachmentBrowserDialogProps) {
   const queryClient = useQueryClient();
   const [selectedDirectoryId, setSelectedDirectoryId] = useState<string | null>(null);
   const [selectedMap, setSelectedMap] = useState<Map<string, string>>(new Map());
-  const [isLinking, setIsLinking] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   const selectedIds = useMemo(() => new Set(selectedMap.keys()), [selectedMap]);
+  // A stable key part: an array literal in a query key is a new object on every
+  // render, so the mime filter goes in as a string.
+  const mimeKey = mimeTypes?.join(',') ?? '';
 
   const { data: tree = [] } = useQuery({
     queryKey: ['attachment-directories-tree', false],
@@ -201,6 +239,7 @@ export default function ComplaintLinkAttachmentBrowserDialog({
       false,
       undefined,
       selectedDirectoryId === null ? undefined : selectedDirectoryId,
+      mimeKey,
     ],
     queryFn: () =>
       getAttachments({
@@ -210,6 +249,7 @@ export default function ComplaintLinkAttachmentBrowserDialog({
         searchQuery,
         directory_id: selectedDirectoryId === null ? undefined : selectedDirectoryId,
         is_deleted: false,
+        mime_types: mimeTypes,
       }),
     enabled: open,
     staleTime: Infinity,
@@ -232,7 +272,7 @@ export default function ComplaintLinkAttachmentBrowserDialog({
   }, []);
 
   const availableAttachments = useMemo(
-    () => attachments.filter((a) => !linkedAttachmentIds.has(a.id)),
+    () => attachments.filter((a) => !linkedAttachmentIds?.has(a.id)),
     [attachments, linkedAttachmentIds]
   );
 
@@ -243,7 +283,7 @@ export default function ComplaintLinkAttachmentBrowserDialog({
         next.delete(att.id);
       } else {
         if (maxSelections === 1) next.clear();
-        next.set(att.id, att.original_filename || att.id);
+        next.set(att.id, attachmentDisplayName(att));
       }
       return next;
     });
@@ -254,7 +294,7 @@ export default function ComplaintLinkAttachmentBrowserDialog({
       setSelectedMap(new Map());
     } else {
       setSelectedMap(
-        new Map(availableAttachments.map((a) => [a.id, a.original_filename || a.id]))
+        new Map(availableAttachments.map((a) => [a.id, attachmentDisplayName(a)]))
       );
     }
   }, [availableAttachments, selectedIds.size]);
@@ -276,13 +316,38 @@ export default function ComplaintLinkAttachmentBrowserDialog({
     [onOpenChange, resetOnClose]
   );
 
+  const selectedList = useMemo(
+    () => Array.from(selectedMap.entries()).map(([id, name]) => ({ id, name })),
+    [selectedMap]
+  );
+
   const handleConfirmLink = async () => {
-    if (!entityId || selectedIds.size === 0) {
+    if (selectedIds.size === 0) {
       toast.error('Select at least one attachment to link.');
       return;
     }
 
-    setIsLinking(true);
+    // Pick-and-return: hand the choice back and close. Nothing is linked, and
+    // no toast either - the caller is still mid-flow and owns the outcome.
+    if (onConfirm) {
+      setIsConfirming(true);
+      try {
+        await onConfirm(selectedList);
+        handleOpenChange(false);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to use the selected file.');
+      } finally {
+        setIsConfirming(false);
+      }
+      return;
+    }
+
+    if (!entityId || !linkAttachment) {
+      toast.error('Failed to link attachment(s).');
+      return;
+    }
+
+    setIsConfirming(true);
     const ids = Array.from(selectedIds);
 
     try {
@@ -297,20 +362,15 @@ export default function ComplaintLinkAttachmentBrowserDialog({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to link attachment(s).');
     } finally {
-      setIsLinking(false);
+      setIsConfirming(false);
     }
   };
-
-  const selectedList = useMemo(
-    () => Array.from(selectedMap.entries()).map(([id, name]) => ({ id, name })),
-    [selectedMap]
-  );
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>Link Existing Attachment</DialogTitle>
+          <DialogTitle>{title ?? 'Link Existing Attachment'}</DialogTitle>
         </DialogHeader>
 
         <ResizablePanelGroup
@@ -389,8 +449,18 @@ export default function ComplaintLinkAttachmentBrowserDialog({
                   )}
                 </div>
               </div>
-              <ScrollArea className="flex-1 min-h-0">
-                <div className="p-2">
+              {/*
+                Radix sizes the viewport's content wrapper with an inline
+                `display: table`, which is shrink-to-fit on its MAX-content: a
+                long filename makes that wrapper wider than the panel, so the
+                name never reaches its `truncate` and the viewport hard-cuts it
+                mid-word instead (measured 431px of content in a 258px viewport
+                at 375px wide). Forcing the wrapper back to a block keeps it at
+                the panel width, so long names ellipsis with the full value on
+                hover, per the repo's long-text rule.
+              */}
+              <ScrollArea className="flex-1 min-h-0" viewportClassName="[&>div]:block!">
+                <div className="p-2 min-w-0">
                   {isLoadingAttachments ? (
                     <div className="flex items-center justify-center py-8 text-muted-foreground text-sm">
                       <LoaderCircleIcon className="size-5 animate-spin mr-2" />
@@ -400,7 +470,7 @@ export default function ComplaintLinkAttachmentBrowserDialog({
                     <div className="py-8 text-center text-sm text-muted-foreground">
                       {attachments.length === 0
                         ? 'No files in this folder.'
-                        : 'All files here are already linked to this complaint.'}
+                        : `All files here are already linked to this ${successEntityLabel}.`}
                     </div>
                   ) : (
                     <ul className="space-y-0.5">
@@ -408,7 +478,7 @@ export default function ComplaintLinkAttachmentBrowserDialog({
                         <li
                           key={att.id}
                           className={cn(
-                            'flex items-center gap-2 rounded-md px-2 py-2 cursor-pointer hover:bg-accent/50',
+                            'flex items-center gap-2 rounded-md px-2 py-2 cursor-pointer hover:bg-accent/50 min-w-0',
                             selectedIds.has(att.id) && 'bg-accent/70'
                           )}
                           onClick={() => toggleSelection(att)}
@@ -419,8 +489,8 @@ export default function ComplaintLinkAttachmentBrowserDialog({
                             onClick={(e) => e.stopPropagation()}
                           />
                           <FileText className="size-4 text-muted-foreground shrink-0" />
-                          <span className="truncate text-sm flex-1" title={att.original_filename}>
-                            {att.original_filename}
+                          <span className="truncate text-sm flex-1 min-w-0" title={attachmentDisplayName(att)}>
+                            {attachmentDisplayName(att)}
                           </span>
                         </li>
                       ))}
@@ -461,14 +531,15 @@ export default function ComplaintLinkAttachmentBrowserDialog({
           </Button>
           <Button
             onClick={handleConfirmLink}
-            disabled={selectedIds.size === 0 || isLinking || !entityId}
+            disabled={selectedIds.size === 0 || isConfirming || (!onConfirm && !entityId)}
           >
-            {isLinking ? (
+            {isConfirming ? (
               <LoaderCircleIcon className="size-4 animate-spin" />
-            ) : maxSelections === 1 ? (
-              'Link attachment'
             ) : (
-              `Link ${selectedIds.size > 0 ? selectedIds.size : ''} attachment(s)`
+              confirmLabel ??
+              (maxSelections === 1
+                ? 'Link attachment'
+                : `Link ${selectedIds.size > 0 ? selectedIds.size : ''} attachment(s)`)
             )}
           </Button>
         </DialogFooter>

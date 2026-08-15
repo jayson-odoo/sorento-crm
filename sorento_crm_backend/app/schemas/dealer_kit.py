@@ -516,6 +516,24 @@ class FlyerReadingOut(FlyerReadingSummary):
     headings: list[PageHeadingOut] = Field(default_factory=list)
 
 
+class FlyerReadingFromAttachmentIn(BaseModel):
+    """Read a flyer that is already in the file library.
+
+    The whole request is which file, because everything else about it - name,
+    size, type, folder - is already known. ``promotionId`` is the same optional
+    question the upload asks as a query parameter: which offer to report the
+    printed products against.
+
+    Both are ``UUID`` and not ``str``, so a malformed value is a 422 at the edge
+    and can never reach a WHERE clause. This feature has produced that 500 once.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    attachment_id: UUID = Field(validation_alias="attachmentId")
+    promotion_id: Optional[UUID] = Field(default=None, validation_alias="promotionId")
+
+
 # ---------------------------------------------------------------------------
 # Seeding a brochure from a reading (S7.4)
 # ---------------------------------------------------------------------------

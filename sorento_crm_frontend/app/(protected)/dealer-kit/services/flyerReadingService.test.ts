@@ -16,6 +16,7 @@ import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 
 import {
+  createFlyerReadingFromAttachment,
   deleteFlyerReading,
   getFlyerReading,
   listFlyerReadings,
@@ -184,6 +185,52 @@ describe('uploadFlyerReading', () => {
     expect(mockFetch.mock.calls[0][0]).toBe(
       '/api/v1/dealer-kit/flyer-readings?promotionId=promo-7',
     );
+  });
+});
+
+describe('createFlyerReadingFromAttachment', () => {
+  it('sends only the attachmentId when no promotion is chosen', async () => {
+    mockFetch.mockResolvedValue(ok(READING));
+
+    await createFlyerReadingFromAttachment('att-1');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/v1/dealer-kit/flyer-readings/from-attachment');
+    expect(init?.method).toBe('POST');
+    expect(init?.headers).toEqual({ 'Content-Type': 'application/json' });
+    const body = JSON.parse(String(init?.body));
+    expect(body).toEqual({ attachmentId: 'att-1' });
+    expect('promotionId' in body).toBe(false);
+  });
+
+  it('includes the promotion when one is chosen', async () => {
+    mockFetch.mockResolvedValue(ok(READING));
+
+    await createFlyerReadingFromAttachment('att-1', 'promo-7');
+
+    const body = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(body).toEqual({ attachmentId: 'att-1', promotionId: 'promo-7' });
+  });
+
+  it('returns the same shape the upload route returns, report and all', async () => {
+    mockFetch.mockResolvedValue(ok(READING));
+
+    const reading = await createFlyerReadingFromAttachment('att-1');
+
+    expect(reading.report.matched).toHaveLength(1);
+    expect(reading.report.unmatched).toHaveLength(1);
+  });
+
+  it('surfaces a 4xx failure through extractApiError, same message the upload route would give', async () => {
+    mockFetch.mockResolvedValue(failed(400));
+    mockError.mockResolvedValue(
+      'That file could not be read as a PDF (it is filed as application/msword). Upload the flyer as a PDF export rather than a Word or image file.',
+    );
+
+    await expect(createFlyerReadingFromAttachment('att-1')).rejects.toThrow(
+      /could not be read as a PDF/,
+    );
+    expect(mockError).toHaveBeenCalled();
   });
 });
 
