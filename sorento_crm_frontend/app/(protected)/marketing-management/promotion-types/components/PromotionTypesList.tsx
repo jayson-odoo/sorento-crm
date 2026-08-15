@@ -7,6 +7,7 @@ import {
   SortingState,
   getCoreRowModel,
   getPaginationRowModel,
+  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
@@ -74,6 +75,7 @@ export default function PromotionTypesList() {
       },
       {
         id: 'show_expired',
+        accessorFn: (row) => (row.show_expired ? 1 : 0),
         header: ({ column }) => <DataGridColumnHeader title="When expired" column={column} />,
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
@@ -88,6 +90,7 @@ export default function PromotionTypesList() {
       },
       {
         id: 'expiry_rule',
+        accessorFn: (row) => expiryRuleLabel(row),
         header: ({ column }) => <DataGridColumnHeader title="Rule" column={column} />,
         cell: ({ row }) => (
           <div className="truncate" title={expiryRuleLabel(row.original)}>
@@ -99,6 +102,7 @@ export default function PromotionTypesList() {
       },
       {
         id: 'match_markers',
+        accessorFn: (row) => (row.match_markers || []).join(', '),
         header: ({ column }) => <DataGridColumnHeader title="File-name markers" column={column} />,
         cell: ({ row }) => {
           const markers = (row.original.match_markers || []).join(', ');
@@ -160,6 +164,7 @@ export default function PromotionTypesList() {
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',
   });

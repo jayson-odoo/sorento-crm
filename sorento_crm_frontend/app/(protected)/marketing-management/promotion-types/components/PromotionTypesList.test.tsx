@@ -122,6 +122,25 @@ describe('PromotionTypesList', () => {
     expect(await screen.findByText('Add promotion type')).toBeInTheDocument();
   });
 
+  it('sorting reorders the rows, it does not just flip the arrow', async () => {
+    render();
+    await screen.findByText('Special Promo');
+
+    const rowOrder = () =>
+      screen
+        .getAllByRole('row')
+        .map((row) => row.textContent || '')
+        .filter((text) => text.includes('Special Promo') || text.includes('Standard Promo'));
+
+    expect(rowOrder()[0]).toContain('Special Promo');
+
+    // Promotions: Special has 3, Standard has 0 — ascending must put Standard first.
+    fireEvent.click(screen.getByRole('button', { name: /^Promotions$/i }));
+
+    await waitFor(() => expect(rowOrder()[0]).toContain('Standard Promo'));
+    expect(rowOrder()[1]).toContain('Special Promo');
+  });
+
   it('delete confirmation names the promotions that lose their type', async () => {
     render();
     fireEvent.click(await screen.findByRole('button', { name: /delete special promo/i }));

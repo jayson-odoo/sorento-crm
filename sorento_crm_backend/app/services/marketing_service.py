@@ -49,6 +49,7 @@ from app.services.error_handler import handle_not_found, handle_conflict, handle
 from app.services.contact_access_type_service import ContactAccessTypeService
 from app.services.embedding_events import publish_embedding_event
 from app.services.identifier_resolver import resolve_identifier
+from app.services.uuid_path_param import validate_uuid_path
 
 _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
@@ -1021,6 +1022,7 @@ class PromotionService:
         return promotion
 
     def _assert_promotion_type_exists(self, promotion_type_id: str) -> None:
+        validate_uuid_path(str(promotion_type_id), resource="Promotion Type")
         exists_row = (
             self.db.query(PromotionType.id)
             .filter(PromotionType.id == str(promotion_type_id))
@@ -1745,6 +1747,21 @@ class PromotionProductService:
         return {"message": "Product removed from promotion"}
 
 
+#: NOT NULL on `promotion_types`. An explicit null for one of these means "leave
+#: it alone", not "write NULL" -- the column would reject it at commit time and
+#: the caller would get a 500 for what is a malformed payload.
+_PROMOTION_TYPE_REQUIRED_COLUMNS = (
+    "type_code",
+    "type_name",
+    "show_expired",
+    "expired_valid_until_year_end",
+    "match_markers",
+    "match_priority",
+    "is_default",
+    "sort_order",
+)
+
+
 class PromotionTypeService:
     """CRUD for the promotion-type vocabulary an admin maintains."""
 
@@ -1819,11 +1836,11 @@ class PromotionTypeService:
         if not promo_type:
             raise handle_not_found("Promotion Type", type_id)
         update_data = type_data.model_dump(exclude_unset=True)
+        for column in _PROMOTION_TYPE_REQUIRED_COLUMNS:
+            if column in update_data and update_data[column] is None:
+                update_data.pop(column)
         if "type_code" in update_data:
-            if update_data["type_code"] is None:
-                update_data.pop("type_code")
-            else:
-                self._assert_code_free(update_data["type_code"], exclude_id=type_id)
+            self._assert_code_free(update_data["type_code"], exclude_id=type_id)
         if update_data.get("is_default"):
             self._clear_other_defaults(type_id)
         if update_data.get("is_default") is False and promo_type.is_default:

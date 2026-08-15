@@ -189,6 +189,67 @@ def test_unticking_the_only_default_is_refused():
         assert exc.value.status_code == 409
 
 
+def test_an_explicit_null_on_a_required_field_leaves_the_row_alone():
+    """A null for a NOT NULL column is a malformed payload, not a write of NULL."""
+    with blank_session() as db:
+        created = _create(db, show_expired=True, match_priority=15, type_name="Clearance")
+
+        updated = _service(db).update_promotion_type(
+            created.id,
+            PromotionTypeUpdate.model_validate(
+                {
+                    "type_name": None,
+                    "show_expired": None,
+                    "expired_valid_until_year_end": None,
+                    "match_markers": None,
+                    "match_priority": None,
+                    "sort_order": None,
+                    "description": "still editable",
+                }
+            ),
+        )
+
+        assert updated.type_name == "Clearance"
+        assert updated.show_expired is True
+        assert updated.match_markers == ["clearance"]
+        assert updated.match_priority == 15
+        assert updated.description == "still editable"
+
+
+def test_a_malformed_promotion_type_id_is_a_4xx_not_a_db_error():
+    """The id reaches a UUID column; an unparseable one must never hit the cast."""
+    from app.schemas.marketing import PromotionCreate, PromotionUpdate
+    from app.services.marketing_service import PromotionService
+
+    with blank_session() as db:
+        with pytest.raises(AppException) as create_exc:
+            PromotionService(db).create_promotion(
+                PromotionCreate.model_validate(
+                    {
+                        "description": "ZZT bad type id",
+                        "access_levels": ["dealer"],
+                        "promotion_type_id": "abc",
+                    }
+                ),
+                created_by=None,
+            )
+        assert 400 <= create_exc.value.status_code < 500
+
+        promo = Promotion(
+            id=str(uuid.uuid4()), description="ZZT retype target", access_levels=["dealer"]
+        )
+        db.add(promo)
+        db.commit()
+
+        with pytest.raises(AppException) as update_exc:
+            PromotionService(db).update_promotion(
+                str(promo.id), PromotionUpdate.model_validate({"promotion_type_id": "abc"})
+            )
+        assert 400 <= update_exc.value.status_code < 500
+
+        assert db.query(PromotionType).count() == 0
+
+
 def test_list_reports_how_many_promotions_use_each_type():
     with blank_session() as db:
         created = _create(db)
