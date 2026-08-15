@@ -140,6 +140,41 @@ describe('onConfirm (pick-and-return)', () => {
   });
 });
 
+describe('display name precedence (stored_filename first)', () => {
+  it('shows and returns stored_filename for a renamed library file', async () => {
+    const renamed = attachment('att-r', 'uploaded-name.pdf', {
+      stored_filename: 'Season Flyer 2026.pdf',
+    });
+    mockAttachments.mockResolvedValue(respond([renamed]));
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    renderDialog({ onConfirm, maxSelections: 1 });
+
+    await selectByFilename('Season Flyer 2026.pdf');
+    expect(screen.queryByText('uploaded-name.pdf')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /link attachment/i }));
+    await waitFor(() =>
+      expect(onConfirm).toHaveBeenCalledWith([{ id: 'att-r', name: 'Season Flyer 2026.pdf' }]),
+    );
+  });
+
+  it('falls back to original_filename for a legacy row without stored_filename', async () => {
+    const legacy = attachment('att-l', 'legacy-flyer.pdf', {
+      stored_filename: null as unknown as string,
+    });
+    mockAttachments.mockResolvedValue(respond([legacy]));
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    renderDialog({ onConfirm, maxSelections: 1 });
+
+    await selectByFilename('legacy-flyer.pdf');
+
+    fireEvent.click(screen.getByRole('button', { name: /link attachment/i }));
+    await waitFor(() =>
+      expect(onConfirm).toHaveBeenCalledWith([{ id: 'att-l', name: 'legacy-flyer.pdf' }]),
+    );
+  });
+});
+
 describe('mimeTypes', () => {
   it('is forwarded to getAttachments as mime_types', async () => {
     renderDialog({ mimeTypes: ['application/pdf'] });

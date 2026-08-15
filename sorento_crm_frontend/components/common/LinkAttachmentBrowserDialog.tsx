@@ -23,6 +23,16 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 
+/**
+ * The user-facing label, matching the backend's precedence everywhere else
+ * (rename, collision guard, reading names): `stored_filename` is the
+ * renameable library label, `original_filename` covers legacy rows without
+ * one, and the id is the last resort so a row always renders a name.
+ */
+function attachmentDisplayName(att: Attachment): string {
+  return att.stored_filename || att.original_filename || att.id;
+}
+
 function collectAllFolderIds(nodes: AttachmentDirectoryTreeNode[]): Set<string> {
   const ids = new Set<string>();
   for (const node of nodes) {
@@ -273,7 +283,7 @@ export default function LinkAttachmentBrowserDialog({
         next.delete(att.id);
       } else {
         if (maxSelections === 1) next.clear();
-        next.set(att.id, att.original_filename || att.id);
+        next.set(att.id, attachmentDisplayName(att));
       }
       return next;
     });
@@ -284,7 +294,7 @@ export default function LinkAttachmentBrowserDialog({
       setSelectedMap(new Map());
     } else {
       setSelectedMap(
-        new Map(availableAttachments.map((a) => [a.id, a.original_filename || a.id]))
+        new Map(availableAttachments.map((a) => [a.id, attachmentDisplayName(a)]))
       );
     }
   }, [availableAttachments, selectedIds.size]);
@@ -469,8 +479,8 @@ export default function LinkAttachmentBrowserDialog({
                             onClick={(e) => e.stopPropagation()}
                           />
                           <FileText className="size-4 text-muted-foreground shrink-0" />
-                          <span className="truncate text-sm flex-1" title={att.original_filename}>
-                            {att.original_filename}
+                          <span className="truncate text-sm flex-1" title={attachmentDisplayName(att)}>
+                            {attachmentDisplayName(att)}
                           </span>
                         </li>
                       ))}

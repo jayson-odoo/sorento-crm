@@ -522,9 +522,9 @@ def create_reading_from_attachment(
 
     return create_reading(
         db,
-        # The name the picker showed them, so the reading is recognisable as the
-        # file they chose. ``stored_filename`` is the display name in the library
-        # and ``original_filename`` is the fallback for rows without one.
+        # The library's user-facing label: ``stored_filename`` is the renameable
+        # display name everywhere in Files, and ``original_filename`` is the
+        # fallback for rows without one. The picker shows the same precedence.
         filename=(
             getattr(attachment, "stored_filename", None)
             or getattr(attachment, "original_filename", None)
