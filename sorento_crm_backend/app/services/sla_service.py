@@ -1456,12 +1456,37 @@ class ConversationSLATrackingService:
         members = self._members_of_teams(self._visible_team_ids(user_id))
         return str(assignee) in members
 
+    def _picker_rows(self, member_ids: set) -> list[dict]:
+        """Serialize a picker's user set. ONE builder for both branches below,
+        so a field added for the picker cannot land on only one of them.
+
+        ``respond_linked`` (UAC AC-N7) says whether a reply sent by this person
+        can carry a real Respond sender identity - resolved by the SAME helper
+        the send path uses, so the badge never promises a linkage the send would
+        find unusable. Human-readable name, no UUIDs beyond the row id.
+        """
+        from app.models.user import User
+        from app.services.crm_chat_outbound_webhook import usable_respond_user_id
+
+        if not member_ids:
+            return []
+        rows = self.db.query(User).filter(User.id.in_(list(member_ids))).all()
+        out = [
+            {
+                "id": str(u.id),
+                "name": (u.name or u.email or "").strip() or None,
+                "email": u.email,
+                "respond_linked": usable_respond_user_id(u) is not None,
+            }
+            for u in rows
+        ]
+        out.sort(key=lambda x: (x["name"] or x["email"] or "").lower())
+        return out
+
     def list_visible_users(self, user_id: str) -> list[dict]:
         """Scope-B picker source: users I can see (members of my visible teams),
         excluding myself. Admins see every user, so the picker matches what their
         bypass actually allows them to save. Human-readable name, no UUIDs."""
-        from app.models.user import User
-
         if self._is_admin(user_id):
             # Every user who belongs to at least one team, i.e. everyone who can
             # actually own an SLA task (22 people here, vs ~2.5k user rows). An
@@ -1471,36 +1496,10 @@ class ConversationSLATrackingService:
             member_ids = {
                 str(uid) for (uid,) in self.db.query(TeamMember.user_id).distinct().all()
             }
-            member_ids.discard(str(user_id))
-            if not member_ids:
-                return []
-            rows = self.db.query(User).filter(User.id.in_(list(member_ids))).all()
-            out = [
-                {
-                    "id": str(u.id),
-                    "name": (u.name or u.email or "").strip() or None,
-                    "email": u.email,
-                }
-                for u in rows
-            ]
-            out.sort(key=lambda x: (x["name"] or x["email"] or "").lower())
-            return out
-
-        member_ids = self._members_of_teams(self._visible_team_ids(user_id))
+        else:
+            member_ids = self._members_of_teams(self._visible_team_ids(user_id))
         member_ids.discard(str(user_id))
-        if not member_ids:
-            return []
-        rows = self.db.query(User).filter(User.id.in_(list(member_ids))).all()
-        out = [
-            {
-                "id": str(u.id),
-                "name": (u.name or u.email or "").strip() or None,
-                "email": u.email,
-            }
-            for u in rows
-        ]
-        out.sort(key=lambda x: (x["name"] or x["email"] or "").lower())
-        return out
+        return self._picker_rows(member_ids)
 
     def list_team_pending(
         self,

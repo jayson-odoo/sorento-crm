@@ -466,6 +466,40 @@ def test_reply_needs_the_reply_permission_not_just_view(client, seed, sent):
 
 
 # --------------------------------------------------------------------------- #
+# Reassign picker linkage (AC-N7)                                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_the_reassign_picker_carries_respond_linkage_over_the_wire(client, db, seed):
+    """The dialog badges (and filters on) who can carry a real Respond sender
+    identity. Asserted at the ROUTE, not the service: a response_model that
+    forgot the field would drop it silently between the two."""
+    from app.models.access import Team, TeamMember
+
+    team_id = str(uuid.uuid4())
+    db.add(Team(id=team_id, name="ZZT Picker Team"))
+    linked_id = str(uuid.uuid4())
+    db.add(
+        User(
+            id=linked_id,
+            email=f"zzt-linked-{linked_id[:8]}@test.com",
+            name="ZZT Linked",
+            respond_user_id="900999",
+        )
+    )
+    for uid in (seed["assignee_id"], seed["colleague_id"], linked_id):
+        db.add(TeamMember(id=str(uuid.uuid4()), team_id=team_id, user_id=uid))
+    db.commit()
+
+    _act_as(seed["assignee_id"])
+    got = client.get(f"{TICKET_BASE}/visible-users")
+    assert got.status_code == 200, got.text
+    rows = {row["id"]: row for row in got.json()["data"]}
+    assert rows[linked_id]["respond_linked"] is True
+    assert rows[seed["colleague_id"]]["respond_linked"] is False
+
+
+# --------------------------------------------------------------------------- #
 # Quoted reply (AC-L6 parity with the drawer send)                             #
 # --------------------------------------------------------------------------- #
 

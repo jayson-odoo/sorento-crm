@@ -307,6 +307,21 @@ def enqueue_crm_chat_outbound_webhook(
     threading.Thread(target=send_async, daemon=True).start()
 
 
+def usable_respond_user_id(user: Any) -> Optional[str]:
+    """This user's REAL Respond user id, or None.
+
+    The one definition of "Respond-linked" in the codebase: present, and not a
+    CRM ``users.id`` UUID parked in the column. Used by the send path (whose
+    signal n8n evaluates against Respond's own users) AND by the reassign
+    picker's ``respond_linked`` badge, so the badge cannot promise a linkage the
+    send would then find unusable.
+    """
+    respond_id = str(getattr(user, "respond_user_id", None) or "").strip() if user else ""
+    if not respond_id or _is_crm_user_uuid(respond_id):
+        return None
+    return respond_id
+
+
 def resolve_sender_respond_user_id(
     db: Session, crm_sender_user_id: Optional[str]
 ) -> Optional[str]:
@@ -319,10 +334,7 @@ def resolve_sender_respond_user_id(
     if not crm_sender_user_id or not str(crm_sender_user_id).strip():
         return None
     user = db.query(User).filter(User.id == str(crm_sender_user_id).strip()).first()
-    respond_id = str(getattr(user, "respond_user_id", None) or "").strip() if user else ""
-    if not respond_id or _is_crm_user_uuid(respond_id):
-        return None
-    return respond_id
+    return usable_respond_user_id(user)
 
 
 def _notify_human_send(
