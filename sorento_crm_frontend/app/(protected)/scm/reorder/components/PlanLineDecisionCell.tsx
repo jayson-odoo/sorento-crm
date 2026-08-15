@@ -4,11 +4,13 @@ import { useState } from 'react';
 import { Check, Pencil, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { fmtInt } from '../../lib/format';
 import type { PlanLine } from '../lib/planLine';
 import type { PlanDecision } from '../lib/planDecisions';
-import { describeCover, type CoverProposal } from '../lib/coverPlan';
+import { applySourceEdits, sourceEditsForTotal, type CoverProposal } from '../lib/coverPlan';
+import { CoverBreakdownTable } from './CoverBreakdownTable';
 import { describePoBook, poOffset, type PoReceipt } from '../lib/poCover';
 import { trendAdvice, type TrajectoryEntry } from '../lib/trajectory';
 import { marginOf, type ProductEconomics } from '../lib/productHealth';
@@ -101,24 +103,19 @@ export function PlanLineDecisionCell({
 
   // The SAME shape, suggestion or decision - only the buy verb changes tense. That tense is
   // the "made / not made" signal: a decided row must not read exactly like an undecided one.
+  //
+  // SHORT on purpose (captain, round 2): the source codes used to ride inside the label
+  // ("Stock 15 (BRW-BB, PJ-SR) + Buy 182"), which grew with every location and truncated
+  // before the buy figure - the one number the button is asking about. Where the stock came
+  // from moved to the hover table, where it has room to be a list.
   const summary = (d: PlanDecision, decided = false): string => {
     if (d.skip) return 'Skipped';
     const parts: string[] = [];
-    if ((d.stock?.qty ?? 0) > 0) {
-      parts.push(`Stock ${fmtInt(d.stock!.qty)} (${d.stock!.sources.map((s) => s.warehouse_code).join(', ')})`);
-    }
+    if ((d.stock?.qty ?? 0) > 0) parts.push(`Stock ${fmtInt(d.stock!.qty)}`);
     if ((d.po ?? 0) > 0) parts.push(`PO ${fmtInt(d.po!)}`);
     if ((d.buy ?? 0) > 0) parts.push(`${decided ? 'Bought' : 'Buy'} ${fmtInt(d.buy!)}`);
     return parts.length ? parts.join(' + ') : 'Nothing';
   };
-
-  const acceptTitle = [
-    `Accept for ${line.sku}: ${summary(suggested)}.`,
-    stockQty > 0 ? describeCover(cover, (n) => fmtInt(n)) : null,
-    suggestedPo > 0 ? `Already ordered: ${describePoBook(poReceipts).join(' ')}` : null,
-  ]
-    .filter(Boolean)
-    .join(' ');
 
   if (decision) {
     return (
@@ -128,9 +125,28 @@ export function PlanLineDecisionCell({
         ) : (
           <Check className="size-3.5 shrink-0 text-scm-incoming" aria-hidden />
         )}
-        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground" title={summary(decision, true)}>
-          {summary(decision, true)}
-        </span>
+        {decision.skip ? (
+          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+            {summary(decision, true)}
+          </span>
+        ) : (
+          <HoverCard openDelay={120}>
+            <HoverCardTrigger asChild>
+              <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                {summary(decision, true)}
+              </span>
+            </HoverCardTrigger>
+            <HoverCardContent className="w-56 p-3" align="start">
+              <CoverBreakdownTable
+                title={`${line.sku} - decided`}
+                sources={decision.stock?.sources ?? []}
+                poQty={decision.po ?? 0}
+                buyQty={decision.buy ?? 0}
+                buyLabel="Bought"
+              />
+            </HoverCardContent>
+          </HoverCard>
+        )}
         <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs" onClick={onClear}>
           Change
         </Button>
@@ -158,17 +174,35 @@ export function PlanLineDecisionCell({
   return (
     <div className="min-w-0 space-y-1">
       <div className="flex flex-wrap items-center gap-1.5">
-        {/* The loudest thing in the row: this button IS the decision. */}
-        <Button
-          size="sm"
-          className="h-8 px-2"
-          onClick={() => onDecide(suggested)}
-          disabled={!canAccept}
-          title={acceptTitle}
-        >
-          <Check className="size-3.5 shrink-0" />
-          <span className="max-w-44 truncate">{summary(suggested)}</span>
-        </Button>
+        {/* The loudest thing in the row: this button IS the decision. Its detail lives in
+            the hover table beside it, never in a `title` sentence. */}
+        <HoverCard openDelay={120}>
+          <HoverCardTrigger asChild>
+            <Button
+              size="sm"
+              className="h-8 px-2"
+              onClick={() => onDecide(suggested)}
+              disabled={!canAccept}
+              aria-label={`Accept for ${line.sku}: ${summary(suggested)}`}
+            >
+              <Check className="size-3.5 shrink-0" />
+              <span className="max-w-44 truncate">{summary(suggested)}</span>
+            </Button>
+          </HoverCardTrigger>
+          <HoverCardContent className="w-56 p-3" align="start">
+            <CoverBreakdownTable
+              title={`Accept for ${line.sku}`}
+              sources={suggested.stock?.sources ?? []}
+              poQty={suggestedPo}
+              buyQty={suggestedBuy}
+            />
+            {suggestedPo > 0 ? (
+              <p className="mt-2 text-2xs text-muted-foreground">
+                {`Already ordered: ${describePoBook(poReceipts).join(' ')}`}
+              </p>
+            ) : null}
+          </HoverCardContent>
+        </HoverCard>
         {line.purchasable ? (
           <AdjustMixture
             line={line}
@@ -271,22 +305,21 @@ function AdjustMixture({
   };
 
   const commit = () => {
-    const stockQty = Math.min(num(stock), stockMax);
     const poQty = Math.min(num(po), poMax);
     const buyQty = num(buy);
     // Stock keeps its per-bin split, scaled down from the front when the buyer takes less
-    // than offered: the nearest bins were ranked first, so they are kept first.
-    let remaining = stockQty;
-    const sources = cover.sources
-      .map((s) => {
-        const take = Math.min(s.qty, remaining);
-        remaining -= take;
-        return { warehouse_id: s.warehouse_id, warehouse_code: s.warehouse_code, qty: take };
-      })
-      .filter((s) => s.qty > 0);
+    // than offered: the nearest bins were ranked first, so they are kept first. The scaling
+    // goes through the SAME helper the ledger's per-location inputs use, so a total typed
+    // here and quantities typed there can never produce a different split.
+    const edited = applySourceEdits(cover, sourceEditsForTotal(cover, Math.min(num(stock), stockMax)));
+    const sources = edited.sources.map((s) => ({
+      warehouse_id: s.warehouse_id,
+      warehouse_code: s.warehouse_code,
+      qty: s.qty,
+    }));
     onDecide({
       ...(buyQty > 0 ? { buy: buyQty } : {}),
-      ...(stockQty > 0 ? { stock: { qty: stockQty, sources } } : {}),
+      ...(edited.coverQty > 0 ? { stock: { qty: edited.coverQty, sources } } : {}),
       ...(poQty > 0 ? { po: poQty } : {}),
     });
     setOpen(false);
