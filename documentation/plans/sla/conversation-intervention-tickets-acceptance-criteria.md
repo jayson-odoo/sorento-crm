@@ -414,6 +414,18 @@ channel - quote-prefix emulation stays), sticker sends.
   uses AI assist, Then emoji insert inline and AI assist drafts a reply into the input
   using the EXISTING CRM AI assistant grounded on the visible thread - no new AI surface.
 
+  **As built (deviation recorded 2026-08-15, Phase-3 review finding 16).** The emoji
+  picker opens from a TOOLBAR BUTTON only; there is no ":" typing trigger. Deliberate:
+  ":" is ordinary punctuation in a sentence a person is writing (times, ratios, "note:"),
+  and a dropdown fighting the typist over it is the same failure the "/" picker avoids by
+  only opening at the start of the input (deviation 4 above). The button is always
+  visible, so nothing is unreachable. The AC wording keeps the ":" for the record; the
+  build is button-only.
+
+  **AI assist and an occupied input (2026-08-15, same review).** Anything already typed
+  is passed as the instruction AND kept: the draft lands under it, separated by a blank
+  line, so a half-written reply is never destroyed by the button. No confirm dialog.
+
   **As built (slice S4.4, 2026-08-15) - wire contract for L4/L5.**
 
   Table `message_snippets` (migration `329_message_snippets`, chained on
@@ -544,6 +556,23 @@ channel - quote-prefix emulation stays), sticker sends.
   Coverage caveat (accepted for v1): search sees what is in `chat_histories` - the
   live ingest plus every page a reader has already scrolled through. History that
   predates the ingest becomes searchable as it is scrolled in.
+
+  **As built (deviation recorded 2026-08-15, Phase-3 review finding 7) - no match
+  LIST.** The bar shows a match COUNTER ("3 / 12") with up/down chevrons (and
+  Enter / Shift+Enter), each step jumping the thread to that match and ringing the
+  bubble; the terms are `<mark>`ed inside every bubble. There is no separate
+  scrollable list of results. That IS WhatsApp's own in-chat search UX, which is
+  the stated reference for this AC, and a list beside a 45vh drawer thread would
+  take the room the conversation needs. The search response still returns the
+  `snippet` per match, so a list remains a pure FE addition if it is ever wanted.
+
+  **Way back from a jump (added 2026-08-15, Phase-3 review finding 3).** A jump
+  leaves the window DETACHED in the past, so the thread now says so and offers two
+  ways back: it pages forward when the reader reaches the bottom (`after=<newest
+  loaded id>`, rejoining the live tail by itself once a page reports
+  `has_more_newer: false`), and a "Jump to latest" pill - carrying the count of
+  live messages the window is hiding - returns to the tail in one tap. Without
+  those, an inbound message was invisible with nothing on screen saying why.
 
 ### M. Post-resolve reassurance + Respond close semantics (Journey step 7b) - added 2026-08-14
 
