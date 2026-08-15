@@ -43,7 +43,7 @@ import AttachmentPreviewModal, {
 import ConversationSearchBar from '@/components/common/conversation/ConversationSearchBar';
 import type { ConversationSearchController } from '@/components/common/conversation/useConversationThread';
 import { splitHighlightSegments } from '@/lib/textHighlight';
-import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
+import { parseDateTimeAsUTC } from '@/lib/helpers';
 
 /** Distance from the top that starts the next older page (AC-L7). */
 const LOAD_OLDER_THRESHOLD_PX = 80;

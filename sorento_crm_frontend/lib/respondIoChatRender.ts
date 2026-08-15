@@ -143,7 +143,15 @@ function normalizeAttachmentKind(raw: unknown): MessageAttachmentKind {
  * its own path segment and keep the clean filename last). Query string and
  * fragment are dropped, percent-escapes decoded; anything unusable yields
  * `undefined` so the caller falls back to the typed label.
+ *
+ * Respond-hosted media is named after a uuid or a content hash. That is not a
+ * filename to anybody, and rendering it would put a UUID in the UI, so a stem
+ * that is nothing but one is rejected in favour of "Photo" / "Document".
  */
+const UUID_STEM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A hex run this long is a hash, never something a person typed. */
+const HEX_HASH_STEM = /^[0-9a-f]{16,}$/i;
+
 export function fileNameFromAttachmentUrl(url?: string): string | undefined {
   const raw = (url ?? '').trim();
   if (!raw) return undefined;
@@ -155,7 +163,12 @@ export function fileNameFromAttachmentUrl(url?: string): string | undefined {
   } catch {
     // Malformed escape - keep the raw segment rather than losing the name.
   }
-  return decoded.trim() || undefined;
+  const name = decoded.trim();
+  if (!name) return undefined;
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  if (UUID_STEM.test(stem) || HEX_HASH_STEM.test(stem)) return undefined;
+  return name;
 }
 
 function toDescriptor(raw: unknown, fallbackKind?: unknown): MessageAttachmentDescriptor | null {

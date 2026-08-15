@@ -291,6 +291,12 @@ export default function InterventionTicketDrawer({
                   hasMoreOlder={thread.hasMoreOlder}
                   isLoadingOlder={thread.isLoadingOlder}
                   atConversationStart={thread.atConversationStart}
+                  isDetached={thread.isDetached}
+                  onJumpToLatest={thread.jumpToLatest}
+                  newerUnseenCount={thread.newerUnseenCount}
+                  onLoadNewer={thread.loadNewer}
+                  hasMoreNewer={thread.hasMoreNewer}
+                  isLoadingNewer={thread.isLoadingNewer}
                   searchController={thread.search}
                   highlightTerm={thread.highlightTerm}
                   comments={commentsQuery.data ?? []}
