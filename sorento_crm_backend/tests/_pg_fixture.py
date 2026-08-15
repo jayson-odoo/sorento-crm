@@ -56,11 +56,20 @@ def unique_code(stem: str = "") -> str:
 
 
 @contextmanager
-def pg_session() -> Session:
-    """Yield a session whose work is discarded at the end."""
+def pg_session(autoflush: bool = True) -> Session:
+    """Yield a session whose work is discarded at the end.
+
+    ``autoflush=False`` reproduces how the application actually runs: ``SessionLocal`` is
+    built with ``autoflush=False``, so a row that a service has only ``db.add``ed is NOT
+    visible to the next SELECT that service makes. A test session that autoflushes writes
+    that row out before the read and therefore hides a whole class of defect - the "does
+    this already exist?" guard that sits in front of a unique index passes under the test
+    and collides at flush in production. Ask for it wherever the behaviour under test is a
+    get-or-create.
+    """
     connection = engine.connect()
     transaction = connection.begin()
-    session = Session(bind=connection)
+    session = Session(bind=connection, autoflush=autoflush)
     try:
         yield session
     finally:
