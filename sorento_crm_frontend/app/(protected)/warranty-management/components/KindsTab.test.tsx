@@ -1,5 +1,5 @@
 /**
- * `KindsTab` — S7b Phase 2c gate.
+ * `KindsTab` - S7b Phase 2c gate.
  *
  * Group 1 item 1 (AC-P17): the "no rules" / "no terms" affordance must be
  * driven by the server-computed booleans `has_no_rules` / `has_no_terms`, NOT
@@ -107,7 +107,7 @@ beforeEach(() => {
   hooks.useDeleteKind.mockReturnValue({ mutateAsync: deleteMutate, isPending: false });
 });
 
-describe('KindsTab — AC-P17: the zero/non-zero flag is the server boolean, not the count', () => {
+describe('KindsTab - AC-P17: the zero/non-zero flag is the server boolean, not the count', () => {
   it('a row with has_no_rules=true, rule_count=37 (contradictory) is FLAGGED on Rules', () => {
     hooks.useKinds.mockReturnValue({
       data: [FLAGGED_WITH_COUNTS],
@@ -176,7 +176,7 @@ describe('KindsTab — AC-P17: the zero/non-zero flag is the server boolean, not
   });
 });
 
-describe('KindsTab — AC-P12: deleting a referenced Kind is refused, naming BOTH counts', () => {
+describe('KindsTab - AC-P12: deleting a referenced Kind is refused, naming BOTH counts', () => {
   it('a Kind with terms and rules cannot be deleted, and the refusal names both counts', async () => {
     const referenced = kind({
       id: 'kind-ref',
@@ -204,7 +204,7 @@ describe('KindsTab — AC-P12: deleting a referenced Kind is refused, naming BOT
     expect(within(dialog).getByText('2')).toBeInTheDocument();
     expect(within(dialog).getByText(/terms/i)).toBeInTheDocument();
     expect(within(dialog).getByText(/rules/i)).toBeInTheDocument();
-    // The refusal dialog never offers a destructive confirm — only "Close".
+    // The refusal dialog never offers a destructive confirm, only "Close".
     expect(within(dialog).queryByRole('button', { name: /^Delete$/i })).not.toBeInTheDocument();
   });
 

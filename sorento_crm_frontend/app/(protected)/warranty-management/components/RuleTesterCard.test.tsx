@@ -1,16 +1,20 @@
 /**
- * `RuleTesterCard` — S7b Phase 2c gate.
+ * `RuleTesterCard` - S7b Phase 2c gate.
  *
- * Group 1 item 5: the tester renders three distinct outcomes — HIT, MISS and
- * CANDIDATE (AC-P6b: an unsaved candidate rule can win the ranking; its
- * `deciding_rule.id` is null and the UI must not crash on that, and must mark
- * the winner as unsaved).
+ * Pins two things about the rule tester.
+ *
+ * Group 1 item 5: it renders three distinct outcomes, HIT, MISS and CANDIDATE
+ * (AC-P6b: an unsaved candidate rule can win the ranking; its
+ * `deciding_rule.id` is null, so the UI must neither crash on that nor present
+ * the winner as if it were saved).
  *
  * Group 2 item 9 (tester half of AC-P24, "strict at write, tolerant at read"):
- * an unknown `match_type` the frontend has no label for must render a readable
- * fallback, never the literal string `undefined`, in both the "deciding rule"
- * summary and the ranked matches list. EXPECTED TO FAIL today —
- * `KIND_RULE_MATCH_TYPE_LABEL[match_type]` is indexed bare in two places.
+ * an unknown `match_type` the frontend has no label for renders a readable
+ * fallback, never the literal string `undefined`, in BOTH the "deciding rule"
+ * summary and the ranked matches list. Both call sites now go through
+ * `formatMatchTypeLabel` (see `warrantyLabels.matchTypeLabel.test.ts`) instead
+ * of indexing `KIND_RULE_MATCH_TYPE_LABEL` bare, and these tests are what keep
+ * either one from regressing back to a bare index.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -35,7 +39,7 @@ beforeEach(() => {
   testerHook.useTestKindRules.mockReturnValue({ mutateAsync, isPending: false });
 });
 
-describe('RuleTesterCard — HIT / MISS / CANDIDATE outcomes (AC-P6, AC-P6b, AC-P6c)', () => {
+describe('RuleTesterCard - HIT / MISS / CANDIDATE outcomes (AC-P6, AC-P6b, AC-P6c)', () => {
   it('HIT: a saved rule decides the kind, and the deciding rule is named', async () => {
     const response: KindRuleTestResponse = {
       resolved_kind: { id: 'kind-mirror', code: 'mirror_cabinet', name: 'Mirror Cabinet' },
@@ -71,7 +75,7 @@ describe('RuleTesterCard — HIT / MISS / CANDIDATE outcomes (AC-P6, AC-P6b, AC-
     fireEvent.click(screen.getByRole('button', { name: /^Resolve$/i }));
 
     // "Mirror Cabinet" appears both as the resolved-kind badge and inside the
-    // ranked matches list — assert at least one instance rendered.
+    // ranked matches list: assert at least one instance rendered.
     await waitFor(() => expect(screen.getAllByText('Mirror Cabinet').length).toBeGreaterThan(0));
     expect(screen.getByText('Deciding rule')).toBeInTheDocument();
     // "Model prefix" appears both in the deciding-rule summary and the ranked list.
@@ -130,16 +134,16 @@ describe('RuleTesterCard — HIT / MISS / CANDIDATE outcomes (AC-P6, AC-P6b, AC-
     typeProductCode('SRTMCB6071-BL');
     fireEvent.click(screen.getByRole('button', { name: /^Resolve$/i }));
 
-    // No crash on a null `deciding_rule.id` — the winner still renders.
+    // No crash on a null `deciding_rule.id`: the winner still renders.
     // "Mirror Cabinet" appears both as the resolved-kind badge and inside the
-    // ranked matches list — assert at least one instance rendered.
+    // ranked matches list: assert at least one instance rendered.
     await waitFor(() => expect(screen.getAllByText('Mirror Cabinet').length).toBeGreaterThan(0));
     expect(screen.getByText('Decided by the unsaved rule')).toBeInTheDocument();
     expect(screen.getByText('Unsaved')).toBeInTheDocument();
   });
 });
 
-describe('RuleTesterCard — AC-P24 tolerant read: an unrecognised match_type never renders literal "undefined"', () => {
+describe('RuleTesterCard - AC-P24 tolerant read: an unrecognised match_type never renders literal "undefined"', () => {
   it('renders a readable fallback for the deciding rule and the ranked match, not undefined', async () => {
     const response: KindRuleTestResponse = {
       resolved_kind: { id: 'kind-mirror', code: 'mirror_cabinet', name: 'Mirror Cabinet' },
@@ -177,11 +181,11 @@ describe('RuleTesterCard — AC-P24 tolerant read: an unrecognised match_type ne
     fireEvent.click(screen.getByRole('button', { name: /^Resolve$/i }));
 
     // "Mirror Cabinet" appears both as the resolved-kind badge and inside the
-    // ranked matches list — assert at least one instance rendered.
+    // ranked matches list: assert at least one instance rendered.
     await waitFor(() => expect(screen.getAllByText('Mirror Cabinet').length).toBeGreaterThan(0));
 
     // JSX silently renders `undefined` as NOTHING, not the literal string
-    // "undefined" — so a naive `queryByText('undefined')` check would pass even
+    // "undefined", so a naive `queryByText('undefined')` check would pass even
     // though `KIND_RULE_MATCH_TYPE_LABEL['something_new']` is blank. The real
     // requirement is a READABLE fallback (e.g. the raw match_type), not silence.
     const decidingRuleRow = screen.getByText('Deciding rule').closest('div');

@@ -5,7 +5,7 @@ import { FormDialogScaffold } from '@/components/common/FormDialogScaffold';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { previousCivilDay } from '../lib/warrantyLabels';
+import { nextCivilDay, previousCivilDay } from '../lib/warrantyLabels';
 import type { WarrantyPolicyRow, WarrantyPolicyWrite } from '../types/warranty-config.types';
 
 export type PolicyDialogMode = 'create' | 'edit' | 'supersede';
@@ -81,12 +81,26 @@ export function PolicyFormDialog({
    * An incumbent that ALREADY has an end date is not moved by this write (the
    * server refuses to supersede a closed policy), so its existing end is stated
    * as-is rather than a close date it will never take.
+   *
+   * AC-P21: the successor must start STRICTLY after the incumbent's own start,
+   * so a computed close date earlier than that start describes a write the
+   * server can never perform (the incumbent closing before it opened). The
+   * earliest selectable date rules that out, but a typed-in date is not blocked
+   * by `min`, so the preview stays silent rather than stating the impossible.
    */
   const successorLabel = version.trim() || 'the new version';
   const incumbentAlreadyClosed = !!incumbent?.effective_to;
-  const incumbentEnd = incumbent?.effective_to ?? previousCivilDay(effectiveFrom);
+  const earliestStart = incumbent ? nextCivilDay(incumbent.effective_from) : null;
+  const computedClose = previousCivilDay(effectiveFrom);
+  const closeIsBeforeIncumbentStart =
+    !!incumbent && !!computedClose && computedClose < incumbent.effective_from;
+  const incumbentEnd = incumbent?.effective_to ?? computedClose;
   const showResultingWindow =
-    mode === 'supersede' && !!incumbent && !!effectiveFrom && !!incumbentEnd;
+    mode === 'supersede' &&
+    !!incumbent &&
+    !!effectiveFrom &&
+    !!incumbentEnd &&
+    (incumbentAlreadyClosed || !closeIsBeforeIncumbentStart);
 
   return (
     <FormDialogScaffold
@@ -149,7 +163,7 @@ export function PolicyFormDialog({
             id="policy-from"
             type="date"
             value={effectiveFrom}
-            min={mode === 'supersede' && incumbent ? incumbent.effective_from : undefined}
+            min={mode === 'supersede' && earliestStart ? earliestStart : undefined}
             onChange={(e) => setEffectiveFrom(e.target.value)}
           />
         </div>

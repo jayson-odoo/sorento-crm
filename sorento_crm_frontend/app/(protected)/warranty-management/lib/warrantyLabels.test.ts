@@ -1,11 +1,11 @@
 /**
- * `warrantyLabels` — S7b Phase 2c gate.
+ * `warrantyLabels` - S7b Phase 2c gate.
  *
  * Group 1 item 6: `policyLifecycle` boundaries (AC-P2b: both ends INCLUSIVE).
  * Group 1 item 7: `formatCivilDate` must never shift a civil date by timezone.
  *
  * These are prototype behaviours that already claim correctness (string-split
- * dates, three-state lifecycle) — expected to PASS. A failure here is a real
+ * dates, three-state lifecycle): expected to PASS. A failure here is a real
  * regression finding, not an intentional red.
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -30,7 +30,7 @@ function policy(over: Partial<WarrantyPolicyRow>): WarrantyPolicyRow {
 /** Fixed "today" for every boundary test below: 2026-06-15. */
 const TODAY = new Date(2026, 5, 15); // month is 0-indexed -> June
 
-describe('policyLifecycle — boundary dates (AC-P2b: both ends inclusive)', () => {
+describe('policyLifecycle - boundary dates (AC-P2b: both ends inclusive)', () => {
   it('a policy starting tomorrow is "scheduled", not "in_force" or "superseded"', () => {
     vi.useFakeTimers();
     vi.setSystemTime(TODAY);
@@ -87,7 +87,7 @@ describe('policyLifecycle — boundary dates (AC-P2b: both ends inclusive)', () 
   });
 });
 
-describe('formatCivilDate — no timezone shift (classic off-by-one-day bug)', () => {
+describe('formatCivilDate - no timezone shift (classic off-by-one-day bug)', () => {
   it('sanity control: a naive `new Date(iso)` UTC-midnight parse DOES render the previous day west of Greenwich', () => {
     // This proves the bug is real for this exact input, independent of the
     // *process*'s own TZ (Intl.DateTimeFormat's `timeZone` option is explicit,
@@ -101,7 +101,7 @@ describe('formatCivilDate — no timezone shift (classic off-by-one-day bug)', (
     expect(naiveWrong).toBe('Aug 31, 2026');
   });
 
-  it('renders 2026-09-01 as "01 Sep 2026" — NOT the previous day a UTC-midnight parse would show', () => {
+  it('renders 2026-09-01 as "01 Sep 2026", NOT the previous day a UTC-midnight parse would show', () => {
     expect(formatCivilDate('2026-09-01')).toBe('01 Sep 2026');
   });
 

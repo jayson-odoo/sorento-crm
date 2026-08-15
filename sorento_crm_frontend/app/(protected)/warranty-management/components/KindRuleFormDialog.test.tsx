@@ -1,19 +1,19 @@
 /**
- * `KindRuleFormDialog` — S7b Phase 2c follow-up gate, item 4.
+ * `KindRuleFormDialog` - S7b Phase 2c follow-up gate, item 4.
  *
  * AC-P24 is "strict at write, tolerant at READ". Reads are tolerant
- * (`formatMatchTypeLabel` falls back to the raw value — see
+ * (`formatMatchTypeLabel` falls back to the raw value, see
  * `warrantyLabels.matchTypeLabel.test.ts`, and the grid half is pinned in
  * `RulesTab.test.tsx`). But this dialog's `match_type` picker is built from
  * the four KNOWN values only (`KIND_RULE_MATCH_TYPES`), so a rule whose
  * STORED value falls outside that set is a real data-integrity hole:
  *
  *   (a) Opening such a rule must SHOW its stored match_type (the raw value),
- *       not an empty/placeholder picker — an admin must see what is actually
+ *       not an empty/placeholder picker: an admin must see what is actually
  *       in the row before deciding whether to touch it.
  *   (b) Saving WITHOUT touching that field must NOT send `match_type` at
  *       all. These are PATCH endpoints with partial semantics (see the
- *       contract doc atop `services/warrantyConfigService.ts`) — an
+ *       contract doc atop `services/warrantyConfigService.ts`): an
  *       untouched field must stay untouched server-side, so a legacy row
  *       can have its OTHER fields edited without the write being rejected
  *       (or worse, silently rewriting a value the user never chose).
@@ -27,7 +27,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { KindRuleFormDialog } from './KindRuleFormDialog';
 import type { WarrantyKindRef, WarrantyKindRuleRow } from '../types/warranty-config.types';
 
@@ -47,7 +47,7 @@ const LEGACY_ROW: WarrantyKindRuleRow = {
   priority: 5,
 };
 
-describe('KindRuleFormDialog — a legacy row with an unknown match_type (AC-P24 write-side hole)', () => {
+describe('KindRuleFormDialog - a legacy row with an unknown match_type (AC-P24 write-side hole)', () => {
   it('(a) shows the STORED raw match_type on open, not an empty/placeholder picker', () => {
     render(
       <KindRuleFormDialog
@@ -81,7 +81,7 @@ describe('KindRuleFormDialog — a legacy row with an unknown match_type (AC-P24
       />,
     );
 
-    // Touch an unrelated field only — priority — never the match-type picker.
+    // Touch an unrelated field only (priority), never the match-type picker.
     fireEvent.change(screen.getByLabelText('Priority'), { target: { value: '9' } });
     fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
 

@@ -122,15 +122,21 @@ export default function WarrantyPolicyDetailPage({
           </Badge>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              setFormError(null);
-              setDialogMode('supersede');
-            }}
-          >
-            <Layers className="size-4" /> Supersede
-          </Button>
+          {/* AC-P21: a policy that already has an end date cannot be superseded
+              by any date, so the action is hidden rather than offered and then
+              refused. The Effective period card below states the end date, and
+              the header badge states the lifecycle. */}
+          {data.effective_to ? null : (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setFormError(null);
+                setDialogMode('supersede');
+              }}
+            >
+              <Layers className="size-4" /> Supersede
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => {

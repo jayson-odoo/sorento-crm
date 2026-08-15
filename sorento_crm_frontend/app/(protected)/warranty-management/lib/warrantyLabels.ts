@@ -62,13 +62,35 @@ export function formatCivilDate(iso: string | null | undefined): string {
  * only belong to one version. Done in UTC so no local timezone can move it.
  */
 export function previousCivilDay(iso: string | null | undefined): string | null {
+  return shiftCivilDay(iso, -1);
+}
+
+/**
+ * The civil day AFTER `iso` (`2026-01-31` -> `2026-02-01`), or null when the
+ * input is not a civil date. Counterpart of `previousCivilDay`, and equally
+ * UTC-based so a machine west of Greenwich cannot move the answer.
+ *
+ * AC-P21: a supersede must start STRICTLY after the incumbent's own
+ * `effective_from` (the server compares `<=` and refuses), so this is the
+ * earliest date the Supersede dialog may offer. The `min` attribute of a date
+ * input is INCLUSIVE, which is why the incumbent's own start cannot be handed
+ * to it directly.
+ */
+export function nextCivilDay(iso: string | null | undefined): string | null {
+  return shiftCivilDay(iso, 1);
+}
+
+/** Civil-day arithmetic in UTC, so no local timezone can shift the result. */
+function shiftCivilDay(iso: string | null | undefined, days: number): string | null {
   if (!iso) return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (!m) return null;
   const [, y, mo, d] = m;
-  const prev = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)) - 24 * 60 * 60 * 1000);
+  const shifted = new Date(
+    Date.UTC(Number(y), Number(mo) - 1, Number(d)) + days * 24 * 60 * 60 * 1000,
+  );
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${prev.getUTCFullYear()}-${pad(prev.getUTCMonth() + 1)}-${pad(prev.getUTCDate())}`;
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
 }
 
 /** The policy window, both ends inclusive, open-ended when there is no end. */

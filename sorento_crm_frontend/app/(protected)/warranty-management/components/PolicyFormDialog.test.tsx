@@ -1,12 +1,17 @@
 /**
- * `PolicyFormDialog` — S7b Phase 2c gate, Group 2 item 10 (AC-P26 prevention clause).
+ * `PolicyFormDialog` - S7b Phase 2c gate, Group 2 item 10 (AC-P26 prevention clause).
  *
  * AC-P26: "The Supersede dialog states the resulting window for BOTH policies
  * before it is confirmed (the AC's own example: 'Version 15 closes
- * 2026-08-31; Version 16 runs from 2026-09-01')." Today the dialog shows only
- * "Replacing {version}" — no computed closing date, no confirmation of the
- * successor's own start. EXPECTED TO FAIL until built; this test is the gate
- * that forces it.
+ * 2026-08-31; Version 16 runs from 2026-09-01')." Supersede has no undo, so
+ * that statement IS the safety mechanism. This pins the open-ended incumbent
+ * branch: once an `effective_from` is entered, the dialog names the
+ * incumbent's computed closing date AND the successor's start, and it
+ * recomputes when the date is edited rather than showing a stale window.
+ *
+ * The already-closed incumbent branch is pinned in
+ * `PolicyFormDialog.supersedeClosedIncumbent.test.tsx`, and the earliest
+ * selectable date in `PolicyFormDialog.supersedeMinDate.test.tsx`.
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
@@ -26,7 +31,7 @@ const INCUMBENT: WarrantyPolicyRow = {
   updated_at: null,
 };
 
-describe('PolicyFormDialog (supersede mode) — AC-P26: states the resulting window for BOTH policies before confirm', () => {
+describe('PolicyFormDialog (supersede mode) - AC-P26: states the resulting window for BOTH policies before confirm', () => {
   it('once a new effective_from is entered, the dialog names the incumbent\'s closing date AND the successor\'s start date, before Publish is clicked', () => {
     render(
       <PolicyFormDialog
@@ -46,13 +51,13 @@ describe('PolicyFormDialog (supersede mode) — AC-P26: states the resulting win
     const dialog = screen.getByRole('dialog');
     // The AC's own worked example: the incumbent closes the day BEFORE the
     // successor's start (2026-09-01 -> 2026-08-31), stated in the dialog
-    // BEFORE the admin confirms — not discovered afterwards from a toast.
+    // BEFORE the admin confirms, not discovered afterwards from a toast.
     expect(dialog.textContent ?? '').toMatch(/2026-08-31/);
     expect(dialog.textContent ?? '').toMatch(/2026-09-01/);
     expect(dialog.textContent ?? '').toMatch(/v15/);
     expect(dialog.textContent ?? '').toMatch(/v16/);
 
-    // This must be true BEFORE Publish is clicked — the dialog is still open
+    // This must be true BEFORE Publish is clicked: the dialog is still open
     // and no submit has happened.
     expect(screen.getByRole('button', { name: /^Publish$/i })).toBeInTheDocument();
   });

@@ -1,8 +1,8 @@
 /**
- * `formatMatchTypeLabel` — S7b Phase 2c follow-up gate, item 2.
+ * `formatMatchTypeLabel` - S7b Phase 2c follow-up gate, item 2.
  *
  * AC-P24 "strict at write, tolerant at read": a `match_type` the frontend has
- * no label for must still render SOMETHING readable — the RAW stored value,
+ * no label for must still render SOMETHING readable: the RAW stored value,
  * not an invented placeholder word like "Unknown". An admin looking at a
  * legacy row (written before the frontend knew this match_type, or by a
  * migration) needs to see what is actually in the database column, not a
@@ -24,7 +24,7 @@ describe('formatMatchTypeLabel', () => {
 
   it('falls back to the RAW stored value for an unknown match_type, not a placeholder', () => {
     expect(formatMatchTypeLabel('something_new')).toBe('something_new');
-    // Not "Unknown", not "-", not empty — the exact column value survives.
+    // Not "Unknown", not "-", not empty: the exact column value survives.
     expect(formatMatchTypeLabel('legacy_sku_regex')).toBe('legacy_sku_regex');
   });
 

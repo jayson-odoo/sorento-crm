@@ -1,5 +1,5 @@
 /**
- * `previousCivilDay` — S7b Phase 2c follow-up gate, item 1.
+ * `previousCivilDay` - S7b Phase 2c follow-up gate, item 1.
  *
  * Pins the class of date-arithmetic bug this helper exists to avoid: month
  * rollover, YEAR rollover, leap day, and the non-leap "century-ish" neighbour

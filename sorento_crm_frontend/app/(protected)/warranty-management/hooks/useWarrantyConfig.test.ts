@@ -1,13 +1,12 @@
 /**
- * `useWarrantyConfig` — S7b Phase 2c gate, Group 2 item 8.
+ * `useWarrantyConfig` - S7b Phase 2c gate, Group 2 item 8.
  *
- * Today `usePolicies`'s react-query `queryKey` is
- * `[...WARRANTY_POLICIES_KEY, pageIndex, pageSize, searchQuery]` — `sorting` is
- * NOT part of the key. A grid column-header click changes `sorting` but leaves
- * the query key identical, so react-query treats it as the SAME query and never
- * refetches: every column header on the Policies grid is dead.
- *
- * EXPECTED TO FAIL until `sorting` is added to the queryKey.
+ * Pins `sorting` as part of `usePolicies`'s react-query `queryKey`. Leave it
+ * out and a grid column-header click changes `sorting` while the key stays
+ * identical, so react-query serves the cached page and never refetches: every
+ * column header on the Policies grid goes dead, silently, with no error to
+ * point at. The sort is server-side (`manualSorting`), which is exactly why
+ * the key has to carry it.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -32,7 +31,7 @@ beforeEach(() => {
   mockedListPolicies.mockResolvedValue(PAGE);
 });
 
-describe('usePolicies — refetches when sorting changes (dead column-header click bug)', () => {
+describe('usePolicies - refetches when sorting changes (dead column-header click bug)', () => {
   it('calls listPolicies a second time when `sorting` changes with page/size/search held fixed', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const wrapper = ({ children }: { children: React.ReactNode }) =>
@@ -49,7 +48,7 @@ describe('usePolicies — refetches when sorting changes (dead column-header cli
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockedListPolicies).toHaveBeenCalledTimes(1);
 
-    // Same page/size/search — only sorting changes, as a column-header click does.
+    // Same page/size/search: only sorting changes, as a column-header click does.
     rerender({
       pageIndex: 0,
       pageSize: 10,

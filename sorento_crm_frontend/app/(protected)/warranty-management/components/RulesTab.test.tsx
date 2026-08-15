@@ -1,11 +1,11 @@
 /**
- * `RulesTab` — S7b Phase 2c gate, Group 2 item 9 (grid half of AC-P24).
+ * `RulesTab` - S7b Phase 2c gate, Group 2 item 9 (grid half of AC-P24).
  *
- * "Strict at write, tolerant at read": an unknown `match_type` must never
- * reach the grid as blank/`undefined` — `KIND_RULE_MATCH_TYPE_LABEL[match_type]`
- * is indexed bare in `RulesTab.tsx`'s `match_type` column, so a row with a
- * match_type the frontend does not know about renders an EMPTY badge today.
- * EXPECTED TO FAIL until a readable fallback is added.
+ * "Strict at write, tolerant at read": an unknown `match_type` never reaches
+ * the grid as a blank/`undefined` badge. The `match_type` column goes through
+ * `formatMatchTypeLabel`, which falls back to the RAW stored value, so a row
+ * written before the frontend knew about that match type is still readable
+ * instead of rendering an empty badge that looks like a rendering bug.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -82,17 +82,17 @@ function renderTab() {
   );
 }
 
-describe('RulesTab grid — AC-P24 tolerant read: an unknown match_type renders readable, not blank', () => {
+describe('RulesTab grid - AC-P24 tolerant read: an unknown match_type renders readable, not blank', () => {
   it('renders a non-empty match-type badge for a row whose match_type the FE label map does not know', () => {
     renderTab();
 
-    // The value column ("ABC") always renders — locate the row via it, then
+    // The value column ("ABC") always renders, so locate the row via it, then
     // check the SAME row's match-type badge cell is not left empty.
     const valueCell = screen.getByText('ABC');
     const row = valueCell.closest('tr');
     expect(row).not.toBeNull();
     // "Mirror Cabinet" + "ABC" + "0" (priority) all render regardless; the
-    // match-type badge is the one cell this AC is actually about — pin its
+    // match-type badge is the one cell this AC is actually about, so pin its
     // text directly rather than trusting an absence-of-"undefined" check
     // (JSX renders `undefined` as nothing, so that check would pass vacuously).
     expect(row?.textContent ?? '').toContain('something_new');

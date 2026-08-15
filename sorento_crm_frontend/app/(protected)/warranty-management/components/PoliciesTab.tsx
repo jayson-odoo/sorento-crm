@@ -208,19 +208,26 @@ export function PoliciesTab() {
         meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
         cell: ({ row }) => (
           <div className="flex items-center justify-end gap-1">
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              title="Supersede"
-              aria-label="Supersede policy"
-              onClick={(e) => {
-                e.stopPropagation();
-                openDialog('supersede', row.original);
-              }}
-            >
-              <Layers className="size-4" />
-            </Button>
+            {/* AC-P21: the server refuses to supersede a policy that already
+                has an end date, and no date entered in the dialog can make it
+                succeed. The action is hidden rather than disabled - the row
+                already states its end date and lifecycle badge, and this repo
+                does not explain features inside the UI. */}
+            {row.original.effective_to ? null : (
+              <Button
+                mode="icon"
+                variant="ghost"
+                size="sm"
+                title="Supersede"
+                aria-label="Supersede policy"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openDialog('supersede', row.original);
+                }}
+              >
+                <Layers className="size-4" />
+              </Button>
+            )}
             <Button
               mode="icon"
               variant="ghost"

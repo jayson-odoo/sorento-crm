@@ -1,5 +1,5 @@
 /**
- * `TermsByKindSection` — S7b Phase 2c gate.
+ * `TermsByKindSection` - S7b Phase 2c gate.
  *
  * Group 1 item 4 (AC-P4): every Term under a Kind is listed together with a
  * divider between kind groups; an empty group list renders the empty state,
@@ -7,7 +7,7 @@
  *
  * Group 1 item 3, term half (AC-P8a): deleting a Term whose assessments
  * already exist warns that those assessments SURVIVE the delete (historical
- * record, not a cascade victim) — both branches of the copy are asserted.
+ * record, not a cascade victim). Both branches of the copy are asserted.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -97,7 +97,7 @@ beforeEach(() => {
   hooks.useDeleteTerm.mockReturnValue({ mutateAsync: deleteMutate, isPending: false });
 });
 
-describe('TermsByKindSection — AC-P4: terms grouped under their kind, with a divider between groups', () => {
+describe('TermsByKindSection - AC-P4: terms grouped under their kind, with a divider between groups', () => {
   it('renders one group-header divider per kind, labelled with the kind name, in the order the API sent them', () => {
     hooks.useTermsGroupedByKind.mockReturnValue({
       data: grouped([
@@ -112,7 +112,7 @@ describe('TermsByKindSection — AC-P4: terms grouped under their kind, with a d
 
     // `data-group-label` is only set by the non-draggable DataGridTable variant;
     // `columnsDraggable` defaults to true, so the DnD variant (which does not
-    // set that attribute) is what actually renders here — assert on the
+    // set that attribute) is what actually renders here, so assert on the
     // divider's own text instead, which is correct for either variant.
     const dividers = screen.getAllByTestId('data-grid-group-header');
     expect(dividers).toHaveLength(2);
@@ -139,7 +139,7 @@ describe('TermsByKindSection — AC-P4: terms grouped under their kind, with a d
   });
 });
 
-describe('TermsByKindSection — AC-P8a: deleting a Term names whether assessments survive it', () => {
+describe('TermsByKindSection - AC-P8a: deleting a Term names whether assessments survive it', () => {
   it('a Term with assessments warns that they will be KEPT (not lost)', async () => {
     const withAssessments = term({
       id: 'term-quoted',

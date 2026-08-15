@@ -1,12 +1,12 @@
 /**
- * `PolicyFormDialog` (supersede mode) — S7b Phase 2c follow-up gate, item 3.
+ * `PolicyFormDialog` (supersede mode) - S7b Phase 2c follow-up gate, item 3.
  *
  * AC-P26 says the dialog states the resulting window for BOTH policies. The
  * existing gate (`PolicyFormDialog.test.tsx`) only pins the OPEN-ENDED
  * incumbent branch (computes the close date as the day before the successor
  * starts). This file pins the OTHER branch: an incumbent that already has an
- * `effective_to` is not touched by Supersede — the server refuses to
- * supersede an already-closed policy — so the dialog must say it "already
+ * `effective_to` is not touched by Supersede (the server refuses to
+ * supersede an already-closed policy), so the dialog must say it "already
  * ends" its EXISTING end date, and must NOT assert a computed close date the
  * server would reject.
  *
@@ -34,7 +34,7 @@ function policy(over: Partial<WarrantyPolicyRow>): WarrantyPolicyRow {
   };
 }
 
-describe('PolicyFormDialog (supersede mode) — AC-P26, already-closed incumbent branch', () => {
+describe('PolicyFormDialog (supersede mode) - AC-P26, already-closed incumbent branch', () => {
   it('an OPEN-ENDED incumbent: states the COMPUTED close date (day before the successor starts)', () => {
     render(
       <PolicyFormDialog
@@ -76,7 +76,7 @@ describe('PolicyFormDialog (supersede mode) — AC-P26, already-closed incumbent
     expect(dialog.textContent ?? '').toMatch(/already ends/i);
     expect(dialog.textContent ?? '').toMatch(/2026-06-30/);
     // ...and does NOT claim the server would move it to the day before the
-    // successor starts (2026-08-31) — that close date would be refused.
+    // successor starts (2026-08-31): that close date would be refused.
     expect(dialog.textContent ?? '').not.toMatch(/2026-08-31/);
     expect(dialog.textContent ?? '').not.toMatch(/\bcloses\b/i);
   });

@@ -1,16 +1,17 @@
 /**
- * `PoliciesTab` — S7b Phase 2c gate.
+ * `PoliciesTab` - S7b Phase 2c gate.
  *
  * Group 1 item 3, policy half (AC-P13): deleting a Policy cascades its Terms,
  * so the confirmation names how many Terms go with it. Both branches (has
  * terms / has none) are asserted.
  *
- * Group 2 item 11: the grid must not offer a sort the backend silently
+ * Group 2 item 11: the grid does not offer a sort the backend silently
  * ignores. The backend's sort whitelist is exactly
- * `{version, effective_from, effective_to, created_at}`. `term_count` is
- * currently sortable and the click does nothing — EXPECTED TO FAIL.
- * `lifecycle` and `source_document` are already (correctly) `enableSorting:
- * false` and serve as the negative control that proves the detector works.
+ * `{version, effective_from, effective_to, created_at}`, so `term_count` is
+ * pinned as NOT sortable (a header that looks clickable and reorders nothing
+ * is worse than no control at all). `lifecycle` and `source_document` were
+ * already `enableSorting: false` and serve as the negative control proving
+ * the detector actually distinguishes sortable from not.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -104,7 +105,7 @@ function mockList(rows: WarrantyPolicyRow[]) {
   });
 }
 
-describe('PoliciesTab — AC-P13: deleting a Policy names how many Terms cascade with it', () => {
+describe('PoliciesTab - AC-P13: deleting a Policy names how many Terms cascade with it', () => {
   it('a Policy with terms names the count and says they go with it', async () => {
     mockList([policy({ id: 'pol-terms', version: 'v15', term_count: 4 })]);
     renderTab();
@@ -130,7 +131,7 @@ describe('PoliciesTab — AC-P13: deleting a Policy names how many Terms cascade
   });
 });
 
-describe('PoliciesTab — sort whitelist: no column offers a sort the backend silently ignores', () => {
+describe('PoliciesTab - sort whitelist: no column offers a sort the backend silently ignores', () => {
   it('Version, Effective from and Effective to (the whitelist) render as clickable sort buttons', () => {
     mockList([policy({})]);
     renderTab();
@@ -147,7 +148,7 @@ describe('PoliciesTab — sort whitelist: no column offers a sort the backend si
     expect(headerHasSortAffordance('Terms')).toBe(false);
   });
 
-  it('Status and Source document (already correctly excluded) stay excluded — the negative control', () => {
+  it('Status and Source document (already correctly excluded) stay excluded: the negative control', () => {
     mockList([policy({})]);
     renderTab();
 
@@ -158,7 +159,7 @@ describe('PoliciesTab — sort whitelist: no column offers a sort the backend si
 
 /**
  * Every `<th>` in this grid renders as a `<button>` regardless of
- * sortability (column drag/resize wraps it too) — so "is it inside a
+ * sortability (column drag/resize wraps it too), so "is it inside a
  * button" is not a reliable signal. `DataGridColumnHeader` only renders the
  * up/down chevron sort icon when `column.getCanSort()` is true, so that icon
  * is the real tell.
