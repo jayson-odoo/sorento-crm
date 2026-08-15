@@ -10,6 +10,7 @@ import { fmtInt } from '../../lib/format';
 import type { PlanLine } from '../lib/planLine';
 import type { PlanDecision } from '../lib/planDecisions';
 import { applySourceEdits, sourceEditsForTotal, type CoverProposal } from '../lib/coverPlan';
+import { roundBuyQty } from '../lib/orderQtyLedger';
 import { CoverBreakdownTable } from './CoverBreakdownTable';
 import { describePoBook, poOffset, type PoReceipt } from '../lib/poCover';
 import { trendAdvice, type TrajectoryEntry } from '../lib/trajectory';
@@ -82,7 +83,12 @@ export function PlanLineDecisionCell({
   const stockQty = cover.coverQty;
   const afterStock = stockQty > 0 ? cover.buyQty : needed;
   const poQty = poReceipts.reduce((t, r) => t + r.remaining, 0);
-  const { usePo: suggestedPo, buy: suggestedBuy } = poOffset(afterStock, poQty);
+  const { usePo: suggestedPo, buy: rawBuy } = poOffset(afterStock, poQty);
+  // MoQ and the order multiple are the supplier's rules, not the ledger's: a buy is rounded
+  // wherever it is recorded, or the same row lands on 14 from this button and 20 from the
+  // ledger. The LABEL reads the rounded figure too - a button that says 14 and records 20 is
+  // the worse half of the bug.
+  const suggestedBuy = roundBuyQty(rawBuy, line.order_qty_inputs);
 
   const suggested: PlanDecision = {
     ...(suggestedBuy > 0 ? { buy: suggestedBuy } : {}),
@@ -166,6 +172,14 @@ export function PlanLineDecisionCell({
   // What used to be the separate "Suggested action" column: the notes a buyer needs beyond
   // the mix itself. Quiet, underneath the button, never a second place to look for them.
   const advice = trendAdvice(trend, suggestedBuy);
+  // The advisory records a decision like any other control, so its figure is rounded like any
+  // other - stated once here and used by both the tooltip and the click.
+  const advisedBuy = advice
+    ? roundBuyQty(
+        advice.direction === 'more' ? suggestedBuy + advice.delta : suggestedBuy - advice.delta,
+        line.order_qty_inputs,
+      )
+    : 0;
   const margin = economics ? marginOf(line.unit_cost_base, economics, healthThresholds.margin_floor_pct) : null;
   const thinMargin =
     advice?.direction === 'more' &&
@@ -247,9 +261,7 @@ export function PlanLineDecisionCell({
             <button
               type="button"
               className="block truncate text-scm-incoming underline decoration-dotted underline-offset-2 hover:text-primary"
-              title={`Apply: adjust the buy to ${fmtInt(
-                advice.direction === 'more' ? suggestedBuy + advice.delta : suggestedBuy - advice.delta,
-              )}`}
+              title={`Apply: adjust the buy to ${fmtInt(advisedBuy)}`}
               onClick={() =>
                 onDecide({
                   ...(stockQty > 0
@@ -265,7 +277,7 @@ export function PlanLineDecisionCell({
                       }
                     : {}),
                   ...(suggestedPo > 0 ? { po: suggestedPo } : {}),
-                  buy: advice.direction === 'more' ? suggestedBuy + advice.delta : suggestedBuy - advice.delta,
+                  buy: advisedBuy,
                   reason: `Trend: orders ${advice.direction === 'more' ? 'rose' : 'fell'} ${advice.pct}%`,
                 })
               }
@@ -313,7 +325,9 @@ function AdjustMixture({
 
   const commit = () => {
     const poQty = Math.min(num(po), poMax);
-    const buyQty = num(buy);
+    // Typed by hand, rounded all the same: the supplier's MoQ and order multiple do not stop
+    // applying because the buyer overrode the mixture (review finding 1, round 2).
+    const buyQty = roundBuyQty(num(buy), line.order_qty_inputs);
     // Stock keeps its per-bin split, scaled down from the front when the buyer takes less
     // than offered: the nearest bins were ranked first, so they are kept first. The scaling
     // goes through the SAME helper the ledger's per-location inputs use, so a total typed

@@ -22,7 +22,7 @@ import {
   forecastQtyCap,
   levelLine,
   lineBreachStatus,
-  roundOrderQty,
+  roundBuyQty,
 } from '../lib/orderQtyLedger';
 import type { TrajectoryEntry } from '../lib/trajectory';
 import type { ReorderRecommendation } from '../types/reorder.types';
@@ -433,7 +433,7 @@ export function OrderQtyLedger({
   // line, never a checkbox, so it can never actually be toggled on.
   const delta = forecastOn ? forecastQty : 0;
   const buyBeforeRounding = mixture.buy + delta;
-  const buyRounded = roundOrderQty(buyBeforeRounding, q.moq, q.order_multiple);
+  const buyRounded = roundBuyQty(buyBeforeRounding, q);
   const econ = economicsFor?.(line);
   const gap = moqGap(buyBeforeRounding, q.moq, buyRounded, econ, healthThresholds.dead_turnover_months);
   // Whether the row's own basis (level or ROP) is actually breached right now, computed
@@ -463,7 +463,9 @@ export function OrderQtyLedger({
     const m = composeMixture(needed, cover, poQty, { ...next, stockQty: stock.coverQty });
     const d = next.forecastOn ? next.forecastQty : 0;
     const before = m.buy + d;
-    const rounded = roundOrderQty(before, q.moq, q.order_multiple);
+    // The SAME helper the Accept button and the Adjust popup record through, so the three
+    // surfaces cannot land on different quantities for one row (review finding 1, round 2).
+    const rounded = roundBuyQty(before, q);
     onDecide({
       ...(rounded > 0 ? { buy: rounded } : {}),
       ...(m.stockQty > 0

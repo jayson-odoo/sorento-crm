@@ -566,6 +566,19 @@ describe('order-qty ledger - per-location use stock', () => {
     expect(last.buy).toBe(14);
   });
 
+  it('records a MoQ-legal buy, the same figure the accept and adjust paths record', () => {
+    // Review finding 1, round 2: 20 needed, 10 order multiple, 5 covered after the edit, so
+    // the raw remainder is 15 and the only legal order is 20.
+    const l = line({ order_qty: 20, recommended_qty: 20, moq: null, order_multiple: 10 });
+    const { onDecide } = renderLedger({ line: l, cover: coverForLine(l, twoSources) });
+
+    fireEvent.change(screen.getByLabelText('Use from PJ-SR'), { target: { value: '0' } });
+
+    const last = onDecide.mock.calls.at(-1)![0];
+    expect(last.buy).toBe(20);
+    expect(last.stock.qty).toBe(5);
+  });
+
   it('seeds the inputs from the decision already taken, not from the proposal', () => {
     const l = shortLine();
     renderLedger({

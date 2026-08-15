@@ -169,6 +169,62 @@ describe('PlanLineDecisionCell - Adjust mixture goes through the shared helper',
   });
 });
 
+/**
+ * A recorded buy is MoQ-legal wherever it was typed (review finding 1, round 2).
+ *
+ * The ledger rounded through `roundBuyQty` and these two paths did not, so the SAME row
+ * recorded 14 from the Accept button and 20 from the ledger. The fixture is the one the
+ * reviewer used: 20 needed, 10 order multiple, 6 covered from stock, so the raw remainder is
+ * 14 and the only legal order is 20.
+ */
+describe('PlanLineDecisionCell - a recorded buy obeys MoQ and the order multiple', () => {
+  const roundedLine = () =>
+    line({ order_qty: 20, recommended_qty: 20, outstanding_sales: 20, order_multiple: 10 });
+
+  it('accepting the suggestion records the rounded buy, never the raw remainder', () => {
+    const l = roundedLine();
+    const { onDecide } = renderCell({ line: l, cover: coverForLine(l, elsewhere) });
+
+    fireEvent.click(screen.getByRole('button', { name: /Accept for SKU-1/ }));
+
+    const next = onDecide.mock.calls.at(-1)![0] as PlanDecision;
+    expect(next.buy).toBe(20);
+    expect(next.stock?.qty).toBe(6);
+  });
+
+  it('the button states the figure it will record, so the label cannot lie', () => {
+    const l = roundedLine();
+    renderCell({ line: l, cover: coverForLine(l, elsewhere) });
+
+    expect(screen.getByRole('button', { name: /Accept for SKU-1/ })).toHaveTextContent(
+      'Stock 6 + Buy 20',
+    );
+  });
+
+  it('adjusting the mixture rounds the typed buy the same way', () => {
+    const l = roundedLine();
+    const { onDecide } = renderCell({ line: l, cover: coverForLine(l, elsewhere) });
+
+    fireEvent.click(screen.getByRole('button', { name: /Adjust the mix/i }));
+    fireEvent.change(screen.getByLabelText('Units to buy'), { target: { value: '14' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Record' }));
+
+    expect((onDecide.mock.calls.at(-1)![0] as PlanDecision).buy).toBe(20);
+  });
+
+  it('a mixture that buys nothing records no buy at all, MoQ or not', () => {
+    // A MoQ must not invent an order out of a row the buyer decided to cover outright.
+    const l = line({ order_qty: 6, recommended_qty: 6, outstanding_sales: 6, moq: 100 });
+    const { onDecide } = renderCell({ line: l, cover: coverForLine(l, elsewhere) });
+
+    fireEvent.click(screen.getByRole('button', { name: /Adjust the mix/i }));
+    fireEvent.change(screen.getByLabelText('Units to buy'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Record' }));
+
+    expect(onDecide.mock.calls.at(-1)![0]).not.toHaveProperty('buy');
+  });
+});
+
 describe('PlanLineDecisionCell - the hover breakdown', () => {
   it('renders the parts as rows once the hover card opens', async () => {
     const l = line();
