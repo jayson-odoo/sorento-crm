@@ -213,7 +213,9 @@ describe('IntakeScreen', () => {
       },
     });
 
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Read 1 people, 1 with issues.'));
+    // "1 person", not "1 people": a one-row sheet is an ordinary sheet, so the
+    // toast would read wrong on a common case rather than a rare one.
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Read 1 person, 1 with issues.'));
   });
 
   it('turns into a read-only status page once submitted', async () => {

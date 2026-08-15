@@ -30,6 +30,11 @@ import { useIntakeContext, useParseSheet, useSubmitIntake } from '../hooks/useIn
 
 const ACCEPTED = '.xlsx,.xlsm,.xls';
 
+/** "1 person", "2 people". A sheet with one row on it is not "1 people". */
+function people_(count: number): string {
+  return count === 1 ? 'person' : 'people';
+}
+
 /** A blank row, so somebody with three people to add never needs a spreadsheet. */
 function blankPerson(rowNumber: number, sectionLabel: string | null): OnboardingPerson {
   return {
@@ -89,10 +94,9 @@ export function IntakeScreen({ token }: { token: string }) {
       setPeople(parsed);
       setFiles([]);
       const problemCount = parsed.filter((p) => p.problems.length).length;
+      const read = `Read ${parsed.length} ${people_(parsed.length)}`;
       toast.success(
-        problemCount
-          ? `Read ${parsed.length} people, ${problemCount} with issues.`
-          : `Read ${parsed.length} people.`,
+        problemCount ? `${read}, ${problemCount} with issues.` : `${read}.`,
       );
     },
     onError: (e) => toast.error(e.message),
@@ -250,7 +254,7 @@ export function IntakeScreen({ token }: { token: string }) {
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">
-                {rows.length} {rows.length === 1 ? 'person' : 'people'} ready to submit.
+                {rows.length} {people_(rows.length)} ready to submit.
               </p>
               <Button
                 onClick={() => submitMutation.mutate({ rows: rows.map(toDraftRow), note: note.trim() || null })}
