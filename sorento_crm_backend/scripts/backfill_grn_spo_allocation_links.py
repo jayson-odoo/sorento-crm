@@ -31,9 +31,13 @@ and the inbound-shipment line statuses (so the stored column the import availabi
 check reads agrees with the computed value the detail page shows).
 
 Availability per allocation = allocated_quantity - compute_received_for_allocation()
-(approved GRN lines only) — the SAME source of truth the service FIFO uses, so the
-stored/computed divergence is closed rather than widened. NULL lines contribute 0 to
-compute_received, so deleting/recreating them does not change the pool mid-run.
+(approved GRN lines only). NULL lines contribute 0 to compute_received, so
+deleting/recreating them does not change the pool mid-run. NOTE: the RUNTIME pool
+(`app/services/grn_spo_matching.build_allocation_pool`, shared by the import, the
+approval writer and forward matching) now computes availability over every
+non-rejected GRN line via `quantity_picked`; this script deliberately keeps its own
+approved-only copy - it is a standalone operator repair tool for the pre-fix corpus,
+outside the runtime path.
 
 SAFETY / IDEMPOTENCY
 --------------------

@@ -216,6 +216,57 @@ def _resolve_contact_phone_for_webhook(contact: Any, contact_respond_io_id: str)
     return None
 
 
+def _forward_match_for_spo(
+    db: Session, spo_number: Optional[str], company_id: Optional[str] = None
+) -> None:
+    """Fire forward matching after an allocation has been WRITTEN and committed.
+
+    The GRN and its SPO arrive in whatever order the supplier and the warehouse
+    produce them, so the moment an allocation appears is the moment the lines that
+    were waiting on it can be placed. Every call site is post-commit and
+    best-effort - a side effect that fails must not turn a successful allocation
+    write into a 500, because the caller's retry takes the idempotent path and
+    never backfills the missed effect.
+
+    ``company_id`` is the allocation's own company, passed so the match stays
+    inside it even on the ``X-API-Key`` path, whose scope is NULL ("all
+    companies") and therefore constrains nothing.
+
+    Imported inside the function: ``grn_spo_matching`` imports this module at load
+    time, so a module-level import here would be a cycle.
+    """
+    from app.services.grn_spo_matching import forward_match_grn_lines_for_spo_best_effort
+
+    forward_match_grn_lines_for_spo_best_effort(db, spo_number, company_id=company_id)
+
+
+def _stated_spo_for_line(
+    payload_value: Optional[str], header_spo_number: Optional[str]
+) -> Optional[str]:
+    """What a picking line SAYS it was received against.
+
+    What the client sent wins - it is the value the GRN screen read back and is
+    round-tripping, and re-deriving over it would silently rewrite an imported
+    line's evidence on an unrelated edit. Otherwise the header's SPO stands in, but
+    only when it names EXACTLY ONE (``_single_spo_or_none``): a joined multi-SPO
+    header names no single allocation, and storing it would put a claim on screen
+    that the scalar matcher can never honour.
+
+    Without this, ``update_grn`` - which deletes and recreates every picking line -
+    would wipe ``spo_number_raw`` off an imported GRN on the first edit and make it
+    un-forward-matchable. It also gives the UI and external-API GRN paths a stated
+    SPO, so a GRN that arrives that way BEFORE its allocation is forward-matchable
+    too.
+    """
+    if payload_value is not None and str(payload_value).strip():
+        return payload_value
+    # Local import: app.tasks.import_tasks imports this module at load time, and
+    # the sheet-parsing rules live there with the rest of the import vocabulary.
+    from app.tasks.import_tasks import _single_spo_or_none
+
+    return _single_spo_or_none(header_spo_number)
+
+
 def _spo_match_key(spo_number: Optional[str]) -> str:
     """Alphanumeric-only key so SPO-202602-0102 matches SPO-2026/02-0102 and SPO-2026.02-0102."""
     if not spo_number or not str(spo_number).strip():
@@ -730,13 +781,24 @@ class InboundShipmentService:
         return shipment
 
     def get_received_quantities_by_product(self, shipment_id: str) -> dict[str, int]:
-        """Return received qty per product for a shipment, ignoring warehouse boundaries."""
+        """Return received qty per product for a shipment, ignoring warehouse boundaries.
+
+        The received quantity is ``quantity_picked`` - the same column
+        ``build_allocation_pool`` and ``compute_received_for_allocation`` measure,
+        see the convention note in ``app.services.grn_spo_matching`` (AC-FM-28).
+        This reader PERSISTS ``inbound_shipment_lines.quantity_received`` and
+        ``line_status`` (via ``refresh_shipment_line_statuses``), so while it summed
+        ``quantity_expected`` any line where picked differed from expected made the
+        shipment and its own SPO allocation report different numbers for the same
+        goods: a 60-of-100 short receipt read as 100 here and 60 there, and the
+        container looked fully received when 40 of it never arrived.
+        """
         received_totals: dict[str, int] = {}
 
         linked_rows = (
             self.db.query(
                 SPOAllocation.product_id,
-                func.coalesce(func.sum(PickingLine.quantity_expected), 0).label("total"),
+                func.coalesce(func.sum(PickingLine.quantity_picked), 0).label("total"),
             )
             .join(PickingLine, PickingLine.spo_allocation_id == SPOAllocation.id)
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
@@ -784,7 +846,7 @@ class InboundShipmentService:
             self.db.query(
                 PickingLine.product_id,
                 norm_expr.label("normalized_spo_number"),
-                func.coalesce(func.sum(PickingLine.quantity_expected), 0).label("total"),
+                func.coalesce(func.sum(PickingLine.quantity_picked), 0).label("total"),
             )
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
             .filter(
@@ -1456,8 +1518,22 @@ class SPOAllocationService:
             raise handle_not_found("SPO Allocation", allocation_id)
         return allocation
     
-    def create_allocation(self, allocation_data: SPOAllocationCreate, created_by: str):
-        """Create a new SPO allocation."""
+    def create_allocation(
+        self,
+        allocation_data: SPOAllocationCreate,
+        created_by: str,
+        *,
+        forward_match: bool = True,
+    ):
+        """Create a new SPO allocation.
+
+        ``forward_match=False`` is for a caller that writes SEVERAL allocations for
+        one SPO in a batch (the SPO Excel import). Firing the hook per row would
+        place a waiting GRN line against whichever allocation happened to be
+        written first, before the one that actually covers its warehouse exists -
+        so that caller suppresses it here and fires it once, per SPO number, when
+        the whole file has landed.
+        """
         # Check unique constraint: (spo_number, product_id, warehouse_id)
         if allocation_data.spo_number and allocation_data.product_id and allocation_data.warehouse_id:
             existing = self.db.query(SPOAllocation).filter(
@@ -1479,6 +1555,13 @@ class SPOAllocationService:
         self.db.refresh(allocation)
         self._capture_incoming_cost(allocation)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(allocation.inbound_shipment_id)
+        # The other half of the journey: any GRN line that stated this SPO and
+        # could not be placed when it was imported is now placeable. This is the
+        # hook for the paths that write ONE allocation - the UI / API create, and
+        # the SCM allocation suggestion. The SPO Excel import writes a file's worth
+        # at a time and hooks itself once at the end instead.
+        if forward_match:
+            _forward_match_for_spo(self.db, allocation.spo_number, allocation.company_id)
         return allocation
 
     def _capture_incoming_cost(self, allocation: SPOAllocation) -> None:
@@ -1573,7 +1656,11 @@ class SPOAllocationService:
             self.db.rollback()
 
     def upsert_allocation(
-        self, allocation_data: SPOAllocationCreate, created_by: str
+        self,
+        allocation_data: SPOAllocationCreate,
+        created_by: str,
+        *,
+        forward_match: bool = True,
     ) -> tuple[str, SPOAllocation]:
         """Create or update an SPO allocation keyed by (spo_number, product_id, warehouse_id).
 
@@ -1598,7 +1685,9 @@ class SPOAllocationService:
             ).first()
 
         if existing is None:
-            allocation = self.create_allocation(allocation_data, created_by)
+            allocation = self.create_allocation(
+                allocation_data, created_by, forward_match=forward_match
+            )
             return ("created", allocation)
 
         new_qty = allocation_data.allocated_quantity
@@ -1622,6 +1711,11 @@ class SPOAllocationService:
         # nothing, because there was no moment of allocation to capture at.
         self._capture_incoming_cost(existing)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(existing.inbound_shipment_id)
+        # A corrected SPO file raising `allocated_quantity` FREES capacity, and the
+        # lines waiting on it should get it. The "unchanged" branch returns above
+        # without writing, so there is no moment of allocation to react to there.
+        if forward_match:
+            _forward_match_for_spo(self.db, existing.spo_number, existing.company_id)
         return ("updated", existing)
 
     def update_allocation(self, allocation_id: str, allocation_data: SPOAllocationUpdate):
@@ -1672,11 +1766,19 @@ class SPOAllocationService:
         return {"message": f"Deleted {deleted} SPO allocation(s)", "deleted_count": deleted}
 
     def compute_received_for_allocation(self, allocation_id: str) -> int:
-        """Computed on read: sum quantity_expected from picking lines where spo_allocation_id = allocation_id
-        and the picking line's header (GRN) is approved. Not stored in DB."""
+        """Computed on read: sum the DRAWN quantity from picking lines where
+        spo_allocation_id = allocation_id and the picking line's header (GRN) is
+        approved. Not stored in DB.
+
+        The drawn quantity is ``quantity_picked`` - see the convention note in
+        ``app.services.grn_spo_matching``. It has to be the same column
+        ``build_allocation_pool`` measures, or the capacity a line consumes and the
+        receipt it reports disagree: summing ``quantity_expected`` charged a split
+        line's whole document quantity to its FIRST allocation and nothing to the
+        rest, which reported a partial receipt as fully received."""
         from sqlalchemy import func
         total = (
-            self.db.query(func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            self.db.query(func.coalesce(func.sum(PickingLine.quantity_picked), 0))
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
             .filter(
                 PickingLine.spo_allocation_id == allocation_id,
@@ -1688,12 +1790,14 @@ class SPOAllocationService:
         return int(total)
 
     def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
-        """Bulk: for each allocation id, return computed quantity_received (sum quantity_expected from approved GRN lines)."""
+        """Bulk: for each allocation id, return computed quantity_received (the sum
+        of the drawn quantity over approved GRN lines - the same column
+        ``compute_received_for_allocation`` sums)."""
         if not allocation_ids:
             return {}
         from sqlalchemy import func
         rows = (
-            self.db.query(PickingLine.spo_allocation_id, func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            self.db.query(PickingLine.spo_allocation_id, func.coalesce(func.sum(PickingLine.quantity_picked), 0))
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
             .filter(
                 PickingLine.spo_allocation_id.in_(allocation_ids),
@@ -1985,6 +2089,9 @@ class PickingHeaderService:
             q_str = f"%{query.strip()}%"
             q = q.filter(or_(
                 SPOAllocation.spo_number.ilike(q_str),
+                # The stated SPO too, or the lines this feature exists for - the
+                # ones with no allocation to search by - are unfindable by number.
+                PickingLine.spo_number_raw.ilike(q_str),
                 Product.product_code.ilike(q_str),
                 Product.product_name.ilike(q_str),
             ))
@@ -2104,6 +2211,14 @@ class PickingHeaderService:
             for line_data in grn_data.picking_lines:
                 line_dict = line_data.model_dump(exclude={"quantity_discrepancy"}, exclude_none=False)
                 line_dict.pop("spo_allocation_id", None)  # Never link on create
+                # Not linked is not the same as not stated (AC-FM-9c). A GRN that
+                # arrives through the UI or the external API BEFORE its SPO is the
+                # case this feature exists for, and a draft line that states
+                # nothing is invisible to forward matching until somebody approves
+                # it - which is the wrong way round. Same rule as `update_grn`.
+                line_dict["spo_number_raw"] = _stated_spo_for_line(
+                    line_dict.get("spo_number_raw"), grn_dict.get("spo_number")
+                )
                 line = PickingLine(**line_dict, picking_header_id=grn.id)
                 self.db.add(line)
         
@@ -2130,6 +2245,20 @@ class PickingHeaderService:
             self.db.flush()
 
         if picking_lines_payload is not None:
+            if prev_status == "approved" and grn.picking_status == "approved":
+                # Release BEFORE the delete, for the same reason the approved ->
+                # draft transition above does. ``build_allocation_pool`` protects a
+                # re-write by subtracting the caller's own linked rows from the
+                # stored ``quantity_received`` before treating the excess as an
+                # integration's receipt - and that subtraction needs those rows to
+                # still exist. Delete them first and this GRN's own approval-written
+                # receipt reads as somebody else's, swallowing the allocation it
+                # came from: the line is rewritten UNLINKED, and
+                # ``sync_grn_received_to_spo`` walks only linked lines, so the
+                # allocation is left reporting a receipt no picking line explains
+                # and is un-drawable by every later pool build. Nothing self-heals.
+                self._unlink_grn_from_spo(grn_id)
+                self.db.flush()
             self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
             # Only link to SPO when status is approved; otherwise create lines without spo_allocation_id
             if grn.picking_status == "approved" and grn.spo_number and str(grn.spo_number).strip():
@@ -2138,6 +2267,12 @@ class PickingHeaderService:
                 for line_data in picking_lines_payload:
                     line_dict = {k: v for k, v in line_data.items() if k != "quantity_discrepancy"}
                     line_dict.pop("spo_allocation_id", None)  # Do not link when not approved
+                    # Not linked is not the same as not stated: an unapproved GRN is
+                    # the normal state of an imported one, and it has to stay
+                    # forward-matchable through an edit.
+                    line_dict["spo_number_raw"] = _stated_spo_for_line(
+                        line_data.get("spo_number_raw"), grn.spo_number
+                    )
                     line = PickingLine(**line_dict, picking_header_id=grn_id)
                     self.db.add(line)
         elif grn.picking_status == "approved" and grn.spo_number and str(grn.spo_number).strip():
@@ -2160,6 +2295,9 @@ class PickingHeaderService:
                             "source_warehouse_id": str(line.source_warehouse_id) if line.source_warehouse_id else None,
                             "quantity_expected": line.quantity_expected or 0,
                             "quantity_picked": line.quantity_picked or 0,
+                            # Carried through the delete-and-recreate, or approving an
+                            # imported GRN would erase what its sheet said.
+                            "spo_number_raw": line.spo_number_raw,
                         }
                         for line in existing_lines
                     ]
@@ -2303,10 +2441,30 @@ class PickingHeaderService:
         source_warehouse_id: str,
         quantity: int,
         spo_allocation_id: Optional[str] = None,
+        spo_number_raw: Optional[str] = None,
+        company_id: Optional[str] = None,
     ):
         """Create or update one picking line by (header, product, source_warehouse, spo_allocation_id).
         Allows multiple lines with same (header, product, warehouse) when spo_allocation_id differs (for splitting).
-        Idempotent."""
+        Idempotent.
+
+        ``spo_number_raw`` is what the SHEET said this line was received against.
+        It is written on BOTH branches, so a corrected export refreshes it in place
+        rather than leaving the old claim behind; it is deliberately NOT part of the
+        match filter, because the row identity is still
+        (header, product, source_warehouse, spo_allocation_id).
+
+        ``company_id`` is the GRN header's own company, stated rather than left to
+        the insert hook - the same rule ``_add_picking_line`` follows. An import job
+        with no company snapshot runs system-scoped ("all companies"), where the
+        hook stamps the INCUMBENT company: the import already confines its POOL to
+        the header's company, so without this the row draws company B's capacity
+        and lands in Sorento, invisible on its own GRN. Worse, the consumption query
+        filters on ``company_id`` too, so the mis-stamped row never counts as
+        consumption and a re-import over-draws (AC-FM-27, both halves or neither).
+        It is written on BOTH branches, so a row a previous run mis-stamped is
+        corrected rather than left behind.
+        """
         # Match by (header, product, warehouse, spo_allocation_id) to allow splitting across multiple SPOs
         filters = [
             PickingLine.picking_header_id == picking_header_id,
@@ -2322,6 +2480,9 @@ class PickingHeaderService:
         if line:
             line.quantity_expected = quantity
             line.quantity_picked = quantity
+            line.spo_number_raw = spo_number_raw
+            if company_id:
+                line.company_id = str(company_id)
             self.db.flush()
             return line
         line = PickingLine(
@@ -2331,6 +2492,8 @@ class PickingHeaderService:
             quantity_expected=quantity,
             quantity_picked=quantity,
             spo_allocation_id=spo_allocation_id,
+            spo_number_raw=spo_number_raw,
+            company_id=str(company_id) if company_id else None,
         )
         self.db.add(line)
         self.db.flush()
@@ -2344,8 +2507,18 @@ class PickingHeaderService:
         quantity_expected: int,
         quantity_picked: int,
         spo_allocation_id: Optional[str] = None,
+        spo_number_raw: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> PickingLine:
-        """Create one picking line (used by FIFO when splitting)."""
+        """Create one picking line (used by FIFO when splitting).
+
+        ``company_id`` is the GRN header's own company, stated rather than left to
+        the insert hook: under the ``X-API-Key`` NULL ("all companies") scope the
+        hook stamps the INCUMBENT company, so a row written for a company-B GRN
+        would land in Sorento - invisible on the GRN it belongs to while still
+        consuming that GRN's allocation (AC-FM-27). The same reason forward
+        matching states it on the rows a split creates.
+        """
         line = PickingLine(
             picking_header_id=picking_header_id,
             product_id=product_id,
@@ -2353,7 +2526,9 @@ class PickingHeaderService:
             quantity_expected=quantity_expected,
             quantity_picked=quantity_picked,
             spo_allocation_id=spo_allocation_id,
+            spo_number_raw=spo_number_raw,
             picked_condition="good",
+            company_id=company_id,
         )
         self.db.add(line)
         self.db.flush()
@@ -2365,17 +2540,62 @@ class PickingHeaderService:
         spo_number: str,
         lines_payload: List[Dict[str, Any]],
     ) -> None:
-        """Create picking lines for a GRN, assigning spo_allocation_id via FIFO by SPO number + product.
-        Matches import logic: same SPO number + product, consume from allocations (same warehouse first, then others)."""
+        """Create picking lines for a GRN, assigning spo_allocation_id by drawing on
+        the SPO's allocation pool.
+
+        The pool and the draw are ``app.services.grn_spo_matching``'s, not this
+        method's. This used to hold a THIRD copy of the two-pass
+        warehouse-then-age rule (the import and forward matching hold none now),
+        and it sized availability with ``compute_received_for_allocation``, which
+        counts APPROVED headers only. The shared pool counts every non-rejected
+        header, drafts included - which is what makes forward matching safe, and is
+        what put the two furthest apart. The consequence, in the office rather than
+        in the code: a draft GRN already linked for 60 against a 100-unit
+        allocation was invisible here, so approving a second GRN for 100 through
+        the screen drew the full 100 and left 160 units drawing on that allocation.
+
+        Imported inside the method: ``grn_spo_matching`` imports this module at load
+        time, so a module-level import here would be a cycle.
+
+        Every line it writes also STATES its SPO (``spo_number_raw``), so a GRN that
+        arrives through the UI or the external API before its allocation is
+        forward-matchable, and so this delete-and-recreate does not erase what an
+        imported line already said.
+        """
+        import app.services.grn_spo_matching as matching
+
         spo_key = _spo_match_key(spo_number)
         if not spo_key:
             for line_data in lines_payload:
                 line_dict = {k: v for k, v in line_data.items() if k != "quantity_discrepancy"}
+                line_dict["spo_number_raw"] = _stated_spo_for_line(
+                    line_data.get("spo_number_raw"), spo_number
+                )
                 line = PickingLine(**line_dict, picking_header_id=grn_id)
                 self.db.add(line)
             return
 
+        # The GRN's own company, stated rather than assumed, on BOTH halves: the
+        # ``X-API-Key`` principal resolves to a NULL scope ("all companies"), where
+        # the scope layer adds no predicate at all. Reading, that offers one
+        # company's allocation to another company's GRN line; writing, the insert
+        # hook stamps the INCUMBENT company instead. Fixing only the read half is
+        # worse than leaving both wrong, because a company-B GRN would then draw
+        # correctly and still show none of the rows it drew (AC-FM-27).
+        company_id = (
+            self.db.query(PickingHeader.company_id)
+            .filter(PickingHeader.id == grn_id)
+            .scalar()
+        )
+
+        # One pool per product, shared by every payload line for that product.
+        # Rebuilding it per line would hand the same capacity out twice, because
+        # this GRN is excluded from its own consumption (below) and so the rows
+        # already written for the previous line would not count.
+        pools: Dict[str, List[Any]] = {}
+
         for line_data in lines_payload:
+            stated_spo = _stated_spo_for_line(line_data.get("spo_number_raw"), spo_number)
             product_id = line_data.get("product_id")
             if not product_id:
                 continue
@@ -2385,81 +2605,75 @@ class PickingHeaderService:
             if quantity_expected <= 0 and quantity_picked <= 0:
                 continue
 
-            # SPO allocations for this product, same SPO match key, FIFO by created_at
-            allocations = (
-                self.db.query(SPOAllocation)
-                .filter(
-                    SPOAllocation.product_id == product_id,
-                    SPOAllocation.spo_number.isnot(None),
+            if str(product_id) not in pools:
+                pools[str(product_id)] = matching.build_allocation_pool(
+                    self.db,
+                    product_id=str(product_id),
+                    spo_number=spo_number,
+                    # This path DELETES and recreates this GRN's lines, so it must
+                    # not see the rows it is about to replace as capacity somebody
+                    # else took - the same reason the import excludes itself.
+                    exclude_header_ids={str(grn_id)},
+                    company_id=str(company_id) if company_id else None,
                 )
-                .order_by(SPOAllocation.created_at.asc())
-                .all()
-            )
-            spo_allocations = [
-                a for a in allocations
-                if _spo_match_key(a.spo_number) == spo_key
-            ]
-            # Pool: [alloc_id, alloc_warehouse_id, available]
-            spo_pool: List[List[Any]] = []
-            for alloc in spo_allocations:
-                received = self.compute_received_for_allocation(str(alloc.id))
-                available = alloc.allocated_quantity - received
-                if available > 0:
-                    spo_pool.append([str(alloc.id), alloc.warehouse_id, available])
+            pool = pools[str(product_id)]
 
             # Consume from SPO pool by received qty when present; otherwise expected (draft line with only expected filled).
             remaining = quantity_picked if quantity_picked > 0 else quantity_expected
-            first_chunk = True
 
-            # First pass: same warehouse
-            for entry in spo_pool:
-                alloc_id, alloc_wh, avail = entry
-                if alloc_wh != source_warehouse_id or avail <= 0 or remaining <= 0:
-                    continue
-                take = min(remaining, avail)
-                qty_exp = quantity_expected if first_chunk else 0
+            # Every chunk of a SPLIT carries the quantity IT drew, in BOTH columns.
+            # This used to put the whole `quantity_expected` on the first chunk and
+            # 0 on the rest, which made the GRN-line writers disagree: the import
+            # writes the per-chunk draw, so the same receipt came out as different
+            # rows depending on which writer produced it (AC-FM-19 compares
+            # `quantity_expected`), and every reader that sums that column charged
+            # one line's whole draw to its first allocation. See the convention note
+            # in `app.services.grn_spo_matching`. The cost, stated plainly: a
+            # receipt SPLIT across allocations can no longer carry an
+            # expected-vs-picked discrepancy, because the split is a fact about
+            # what arrived. An unsplit line still can - a single fully-covering
+            # draw keeps the caller's `quantity_expected`, so a short receipt's
+            # shortfall stays visible (AC-FM-30), the same guard forward matching
+            # applies.
+            draws = matching.draw_fifo(
+                pool,
+                warehouse_id=str(source_warehouse_id) if source_warehouse_id else None,
+                quantity=remaining,
+            )
+            if not any(draw.allocation_id for draw in draws):
+                # No allocation covered any of it, so this is not a split at all:
+                # the line is written exactly as the caller stated it, keeping any
+                # expected-vs-picked discrepancy.
                 self._add_picking_line(
                     grn_id, product_id, source_warehouse_id,
-                    qty_exp, take, alloc_id,
+                    quantity_expected, quantity_picked, None, stated_spo,
+                    company_id=str(company_id) if company_id else None,
                 )
-                remaining -= take
-                entry[2] = avail - take
-                first_chunk = False
+                continue
 
-            # Second pass: other warehouses
-            for entry in spo_pool:
-                alloc_id, alloc_wh, avail = entry
-                if alloc_wh == source_warehouse_id or avail <= 0 or remaining <= 0:
-                    continue
-                take = min(remaining, avail)
-                qty_exp = quantity_expected if first_chunk else 0
+            split = len(draws) > 1
+            for draw in draws:
                 self._add_picking_line(
                     grn_id, product_id, source_warehouse_id,
-                    qty_exp, take, alloc_id,
-                )
-                remaining -= take
-                entry[2] = avail - take
-                first_chunk = False
-
-            if remaining > 0:
-                qty_exp = quantity_expected if first_chunk else 0
-                self._add_picking_line(
-                    grn_id, product_id, source_warehouse_id,
-                    qty_exp, remaining, None,
-                )
-            elif first_chunk and (quantity_expected > 0 or quantity_picked > 0):
-                # No SPO consumption (e.g. quantity_picked is 0) but we still need one line
-                self._add_picking_line(
-                    grn_id, product_id, source_warehouse_id,
-                    quantity_expected, quantity_picked, None,
+                    draw.quantity if split else quantity_expected,
+                    draw.quantity, draw.allocation_id, stated_spo,
+                    company_id=str(company_id) if company_id else None,
                 )
 
     def compute_received_for_allocation(self, allocation_id: str) -> int:
-        """Computed on read: sum quantity_expected from picking lines where spo_allocation_id = allocation_id
-        and the picking line's header (GRN) is approved. Not stored in DB."""
+        """Computed on read: sum the DRAWN quantity from picking lines where
+        spo_allocation_id = allocation_id and the picking line's header (GRN) is
+        approved. Not stored in DB.
+
+        The drawn quantity is ``quantity_picked`` - see the convention note in
+        ``app.services.grn_spo_matching``. It has to be the same column
+        ``build_allocation_pool`` measures, or the capacity a line consumes and the
+        receipt it reports disagree: summing ``quantity_expected`` charged a split
+        line's whole document quantity to its FIRST allocation and nothing to the
+        rest, which reported a partial receipt as fully received."""
         from sqlalchemy import func
         total = (
-            self.db.query(func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            self.db.query(func.coalesce(func.sum(PickingLine.quantity_picked), 0))
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
             .filter(
                 PickingLine.spo_allocation_id == allocation_id,
@@ -2471,12 +2685,14 @@ class PickingHeaderService:
         return int(total)
 
     def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
-        """Bulk: for each allocation id, return computed quantity_received (sum quantity_expected from approved GRN lines)."""
+        """Bulk: for each allocation id, return computed quantity_received (the sum
+        of the drawn quantity over approved GRN lines - the same column
+        ``compute_received_for_allocation`` sums)."""
         if not allocation_ids:
             return {}
         from sqlalchemy import func
         rows = (
-            self.db.query(PickingLine.spo_allocation_id, func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            self.db.query(PickingLine.spo_allocation_id, func.coalesce(func.sum(PickingLine.quantity_picked), 0))
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
             .filter(
                 PickingLine.spo_allocation_id.in_(allocation_ids),

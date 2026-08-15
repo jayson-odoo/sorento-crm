@@ -2,6 +2,12 @@ export interface PickingLine {
   id: string;
   picking_header_id: string;
   spo_allocation_id?: string | null;
+  /**
+   * The SPO number the imported sheet stated for this line, character for
+   * character. Present whether or not the line matched an allocation; null when
+   * the sheet named no single SPO.
+   */
+  spo_number_raw?: string | null;
   product_id: string;
   quantity_expected: number;
   quantity_picked: number;
@@ -100,6 +106,11 @@ export interface GRNFormData {
   notes?: string;
   picking_lines?: Array<{
     spo_allocation_id?: string;
+    /**
+     * Round-tripped, not re-derived: an edit that omitted it would make the
+     * backend restate the header's SPO over what the sheet actually said.
+     */
+    spo_number_raw?: string | null;
     product_id: string;
     quantity_expected: number;
     quantity_picked: number;

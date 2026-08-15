@@ -84,7 +84,7 @@ async def list_product_specifications(
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None, description="Match a product code or class."),
-    status: Optional[str] = Query(None, description="derived | needs_review | approved"),
+    status: Optional[str] = Query(None, description="derived | needs_review | authored"),
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -328,7 +328,7 @@ async def set_spec_value_by_hand(
     vocabulary is shared.
     """
     from app.services.product_spec_registry import merged_allowed_values
-    from app.services.product_spec_rendering import render_spec_sentence
+    from app.services.product_spec_write import apply_spec_values
 
     product = db.query(Product).filter(Product.id == product_id).first()
     if product is None:
@@ -350,6 +350,15 @@ async def set_spec_value_by_hand(
         value = int(number) if number.is_integer() else number
     else:
         value = str(value).strip()
+        if not value:
+            # An empty string is not a value, it is a removal wearing one. Stored, it
+            # canonicalises to nothing while derivation keeps producing something, so
+            # the merge would raise the same conflict on every run forever - in a table
+            # whose contract is exceptions only.
+            raise _spec_reject(
+                f"{row.label} cannot be blank. To take the value away, remove the "
+                f"specification instead."
+            )
         allowed = merged_allowed_values(row)
         if allowed and value not in allowed:
             raise _spec_reject(
@@ -357,27 +366,23 @@ async def set_spec_value_by_hand(
                 f"Add it to the specification first, or pick one of: {', '.join(allowed)}."
             )
 
-    spec = db.query(ProductSpecifications).filter_by(product_id=product.id).first()
-    if spec is None:
-        spec = ProductSpecifications(product_id=product.id, values={}, provenance={})
-        db.add(spec)
-        db.flush()
-
-    values = dict(spec.values or {})
-    entry: dict[str, Any] = {"value": value}
-    if row.unit:
-        entry["unit"] = row.unit
-    values[spec_key] = entry
-    provenance = dict(spec.provenance or {})
-    provenance[spec_key] = {
-        "source": "human",
-        "confidence": 1.0,
-        "evidence": f"set by {current_user.get('email') or 'a person'}",
-    }
-    spec.values = values
-    spec.provenance = provenance
-    spec.rendered_text = render_spec_sentence(values)
-    db.commit()
+    # The write itself belongs to the spec write service: it fans the value out to every
+    # company copy of the code, holds it against the re-derivation it triggers, and
+    # raises the disagreement if the rules read something else.
+    apply_spec_values(
+        db,
+        product.product_code,
+        [
+            {
+                "spec_key": spec_key,
+                "op": "set",
+                "value": value,
+                "unit": row.unit or None,
+                "source": "human",
+            }
+        ],
+        actor=current_user,
+    )
     return {"spec_key": spec_key, "value": value, "source": "human"}
 
 
@@ -385,25 +390,53 @@ async def set_spec_value_by_hand(
 async def clear_hand_set_spec_value(
     product_id: str,
     spec_key: str,
+    mode: str = Query(
+        "revert",
+        description=(
+            "revert - hand the key back to derivation. "
+            "absent - record that this product does not have this spec."
+        ),
+    ),
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Drop a hand-set value and let derivation own the key again."""
-    from app.services.product_spec_derivation import derive_for_code
+    """Remove a value, one of two ways, because they mean different things.
+
+    "Use what the rules read" hands the key back to derivation and it comes back with
+    whatever the catalogue says. "This product does not have this spec" is a statement
+    of fact that must survive every later run, so it is stored as a tombstone rather
+    than as an absence, which derivation would simply fill in again.
+
+    `revert` is the default because it is what the shipped screen has always done.
+    """
+    from app.services.product_spec_write import apply_spec_values
+
+    mode = (mode or "revert").strip().lower()
+    if mode not in {"revert", "absent"}:
+        raise _spec_reject(
+            f"\"{mode}\" is not a way to remove a specification. Use revert or absent."
+        )
 
     product = db.query(Product).filter(Product.id == product_id).first()
     if product is None:
         raise handle_not_found("Product", product_id)
 
-    spec = db.query(ProductSpecifications).filter_by(product_id=product.id).first()
-    if spec is not None:
-        spec.values = {k: v for k, v in (spec.values or {}).items() if k != spec_key}
-        spec.provenance = {k: v for k, v in (spec.provenance or {}).items() if k != spec_key}
-        db.flush()
-    # Re-read so the key comes back with whatever the rules make of it, rather than
-    # staying blank until the next catalogue run.
-    derive_for_code(db, product.product_code, commit=True)
-    return {"spec_key": spec_key, "cleared": True}
+    if mode == "absent":
+        # A tombstone pins `status='authored'` on every copy of the code for good, so
+        # the key it names has to be one the registry knows - otherwise a typo writes a
+        # permanent provenance entry no registry-driven screen will ever show.
+        # `revert` is deliberately NOT checked: a key the registry has since dropped is
+        # still stored on rows, and handing it back to derivation must stay possible.
+        if db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first() is None:
+            raise handle_not_found("Spec key", spec_key)
+
+    apply_spec_values(
+        db,
+        product.product_code,
+        [{"spec_key": spec_key, "op": mode}],
+        actor=current_user,
+    )
+    return {"spec_key": spec_key, "cleared": True, "mode": mode}
 
 
 class FlyerTextEdit(BaseModel):

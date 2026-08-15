@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import Link from 'next/link';
 import type {
   ColumnDef,
   PaginationState,
@@ -25,6 +24,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SpoAllocationCell } from '@/components/common/SpoAllocationCell';
 import { useQuery } from '@tanstack/react-query';
 import { getPickingLines, type PickingLinesListParams } from '../services/pickingLineService';
 import type { PickingLineListItem } from '../types/pickingLine.types';
@@ -66,23 +66,17 @@ export default function PickingLinesList() {
       buildSelectColumn<PickingLineListItem>(),
       {
         id: 'spo_allocation',
-        accessorFn: (row) => row.spo_allocation?.spo_number ?? '',
+        accessorFn: (row) => row.spo_allocation?.spo_number ?? row.spo_number_raw ?? '',
         header: ({ column }) => (
           <DataGridColumnHeader title="SPO Allocation" column={column} />
         ),
-        cell: ({ row }) => {
-          const alloc = row.original.spo_allocation;
-          if (!alloc) return '-';
-          return (
-            <Link
-              href={`/procurement-management/spo-allocations/${alloc.id}`}
-              className="text-primary hover:underline font-medium"
-            >
-              {alloc.spo_number ?? alloc.id}
-            </Link>
-          );
-        },
-        size: 160,
+        cell: ({ row }) => (
+          <SpoAllocationCell
+            allocation={row.original.spo_allocation}
+            statedSpoNumber={row.original.spo_number_raw}
+          />
+        ),
+        size: 280,
         meta: { headerTitle: 'SPO Allocation', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {

@@ -8,7 +8,9 @@
 **Slug:** `spec-authoring-verification` · **Domain:** master-data · **Milestone:** 1
 **Classification:** CORE, schema `public`, normal FKs (per `PRINCIPLES.md` modular-architecture
 rule: products and their specifications are a base-platform capability every install needs).
-**Status:** DRAFT (pre-code, pending captain review)
+**Status:** ACCEPTED - captain-reviewed 2026-08-14, the contract for milestone 1. PR 1
+(Foundations) implemented on `fm/spec-pr1-foundations`: AC-F.1 to AC-F.14 plus the PR-1 half of
+AC-D.17. PRs 2-4 pending.
 
 ## Scope
 

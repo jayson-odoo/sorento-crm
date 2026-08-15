@@ -205,6 +205,92 @@ def test_a_line_with_no_po_number_still_falls_back_to_the_header(seeded):
     assert lines[0].spo_allocation_id == seeded["allocations"][(FALLBACK_SPO, "MWC-SC8606-PP")]
 
 
+def test_a_matched_line_stores_what_the_sheet_said_as_well_as_the_link(seeded):
+    """AC-FM-6. The link is the answer; the stated text is the evidence, and it is
+    kept whether or not the matcher could use it."""
+    _run(seeded)
+
+    for line in _lines(seeded["session"], GRN_WITH_LINE_SPO):
+        assert line.spo_allocation_id is not None
+        assert line.spo_number_raw == LINE_SPO
+
+
+def test_an_unmatched_line_still_remembers_the_spo_it_stated(seeded):
+    """AC-FM-5. The GRN landing before its SPO is the normal case, not an error -
+    a dash here would read as "the sheet said nothing", which is false."""
+    session = seeded["session"]
+    for spo, code in list(seeded["allocations"]):
+        if spo == LINE_SPO:
+            session.query(SPOAllocation).filter(
+                SPOAllocation.id == seeded["allocations"][(spo, code)]
+            ).delete()
+    session.flush()
+
+    _run(seeded)
+
+    lines = _lines(session, GRN_WITH_LINE_SPO)
+    assert lines, "the lines must still be written, just unlinked"
+    for line in lines:
+        assert line.spo_allocation_id is None
+        assert line.spo_number_raw == LINE_SPO, "character for character as stated"
+
+
+def test_the_header_fallback_is_what_a_silent_line_stores(seeded):
+    """AC-FM-7. Most of the corpus has no line-level column at all."""
+    _run(seeded)
+
+    for line in _lines(seeded["session"], GRN_WITHOUT_LINE_SPO):
+        assert line.spo_number_raw == FALLBACK_SPO
+
+
+def test_a_multi_spo_header_leaves_a_silent_line_stating_nothing(seeded):
+    """AC-FM-8. A joined value names no single allocation, so storing it would put
+    a claim on screen the scalar matcher can never honour."""
+    session = seeded["session"]
+    header = (
+        session.query(PickingHeader)
+        .filter(PickingHeader.picking_number == GRN_WITHOUT_LINE_SPO)
+        .one()
+    )
+    header.spo_number = "SPO-2026/06-0099, SPO-2026/06-0100"
+    session.flush()
+
+    _run(seeded)
+
+    lines = _lines(session, GRN_WITHOUT_LINE_SPO)
+    assert lines
+    for line in lines:
+        assert line.spo_number_raw is None
+        assert line.spo_allocation_id is None
+
+
+def test_a_corrected_sheet_refreshes_the_stored_text_in_place(seeded):
+    """AC-FM-9. The same row is rewritten, not duplicated - which is what makes
+    re-uploading a corrected export safe."""
+    session = seeded["session"]
+    header = (
+        session.query(PickingHeader)
+        .filter(PickingHeader.picking_number == GRN_WITHOUT_LINE_SPO)
+        .one()
+    )
+    # An SPO no allocation covers, so both runs take the unlinked path and the row
+    # identity (header, product, warehouse, NULL allocation) is stable across them.
+    header.spo_number = "SPO-2026/06-0912"
+    session.flush()
+    _run(seeded)
+    assert [l.spo_number_raw for l in _lines(session, GRN_WITHOUT_LINE_SPO)] == [
+        "SPO-2026/06-0912"
+    ]
+
+    header.spo_number = "SPO-2026/06-0913"
+    session.flush()
+    _run(seeded)
+
+    lines = _lines(session, GRN_WITHOUT_LINE_SPO)
+    assert len(lines) == 1, "the corrected sheet must update the row, not add one"
+    assert lines[0].spo_number_raw == "SPO-2026/06-0913"
+
+
 def test_the_job_reports_every_row_as_written(seeded):
     _run(seeded)
     job = (

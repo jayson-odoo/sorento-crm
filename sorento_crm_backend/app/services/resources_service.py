@@ -561,6 +561,38 @@ class AttachmentService:
             entity_buckets,
         )
 
+    def company_name_map(self, attachments) -> dict:
+        """``company_id`` -> company name for a page of attachment rows.
+
+        ONE query per page, not per row: the serializers stamp the owning company
+        on every attachment payload, and `Attachment` has no relationship to
+        `Company` (the mixin only gives it the FK column), so without a batched
+        lookup this would be an N+1 on the file library's busiest endpoint.
+
+        Attachments are company-SHARED, so a NULL `company_id` is legitimate and
+        simply contributes no entry. Best-effort: a failed lookup returns an empty
+        map, which renders the row without a company rather than failing the list.
+        """
+        ids = {
+            str(getattr(att, "company_id", None))
+            for att in (attachments or [])
+            if getattr(att, "company_id", None)
+        }
+        if not ids:
+            return {}
+        try:
+            from app.models.company import Company
+
+            return {
+                str(cid): name
+                for cid, name in self.db.query(Company.id, Company.name)
+                .filter(Company.id.in_(ids))
+                .all()
+            }
+        except Exception:  # noqa: BLE001 - attribution is additive, never fatal
+            logger.warning("Could not resolve company names for attachments", exc_info=True)
+            return {}
+
     def _resolve_attachment_type_code(self, code: str) -> Optional[str]:
         """Resolve one attachment-type code/name to its AttachmentType id.
 

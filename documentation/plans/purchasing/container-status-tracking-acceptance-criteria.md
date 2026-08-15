@@ -270,8 +270,10 @@ rather than one tool per document.
   each resolve to a type without a tool per document. This is the one-time build that makes every
   future document configuration-only.
 - **D6.** Container status attachments carry `access_levels = ["sorento_office"]`.
-- **D7.** **Every upload is retained**; the list returns the newest by `created_at`. Prior uploads
-  remain as attachments and as per-job `import_jobs.source_file_key` bytes, which is what makes a bad
+- **D7.** ~~**Every upload is retained**; the list returns the newest by `created_at`.~~
+  **SUPERSEDED**: each import now trashes (soft-deletes) that company's previous sheets so exactly
+  one workbook is live per company - see `PLAN-container-status-per-company.md`. Trashed copies and
+  per-job `import_jobs.source_file_key` bytes remain recoverable, which is what makes a bad
   re-import reversible.
 - **D8.** Delivery uses the existing path with **zero n8n changes on the file-send leg**: the agent
   maps `file_path` -> `url`, `stored_filename` -> `filename`, `mime_type` -> `mimeType`, sets

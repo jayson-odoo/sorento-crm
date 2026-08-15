@@ -22,6 +22,7 @@ export type ActivityEntityType =
   | 'stock_inquiry'
   | 'purchase_request'
   | 'product'
+  | 'customer'
   | 'attachment';
 
 /** Normalised action verb. Backend INSERT/CREATE collapse to "created"; IMPORT → "imported". */

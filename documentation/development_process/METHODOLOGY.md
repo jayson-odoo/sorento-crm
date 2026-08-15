@@ -26,7 +26,8 @@ grill-me (FE + BE)  →  UAC file (FIRST)  →  PLAN  →  Phase 1 (FE mock)
 ### Phase 1 — Frontend prototype (mock)
 
 UI → hook → service → **mock**. Tune every state (loading / empty / error / partial / success)
-with no backend running. Verify in a real browser via Playwright MCP — **navigate by clicking the
+with no backend running. Verify in a real browser via agent-browser (headless,
+`npx -y agent-browser@0.27.0`) — **navigate by clicking the
 sidebar from `/`, never a deep URL** (deep-URL nav hides menu-gating bugs). Document the expected
 API contract at the top of the service file or in the plan. NO backend code, NO tests yet (shape
 may still shift after prototype review). Reuse shared components — a new variant is a prop on the
@@ -41,7 +42,7 @@ Then swap the mock for the real `api-client` call — a one-line change at the s
 - **vitest** — every new component's states + every new query/mutation hook.
 - **pytest** — every new route (happy path + auth denial + validation error) + service-level logic.
 - **Playwright E2E** — one spec per user flow, **real clicks**, exercising FE→BE→DB; assert the
-  right `/api/v1/*` call fired (`browser_network_requests`). AI/file/portal flows use **real
+  right `/api/v1/*` call fired. AI/file/portal flows use **real
   committed fixtures** in `e2e/fixtures/`, not stubbed mocks.
 
 Re-verify live against the running stack (3000 / 8000 / worker). Write the **test report**

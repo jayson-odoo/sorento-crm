@@ -162,17 +162,25 @@ def log_import_audit(
     user_id: Optional[str] = None,
     entity_id: Optional[str] = None,
     status: str = "success",
+    details: Optional[dict[str, Any]] = None,
 ) -> AuditLog:
     """Write ONE coarse job-level audit row for a bulk import.
 
     Bulk imports persist via ``bulk_insert_mappings`` / raw SQL which BYPASS the
-    ORM flush listener, so per-row audit never fires. This records a single
-    ``IMPORT`` event at the job boundary instead. Best-effort by contract: the
-    caller MUST wrap this (and the commit) in try/except so an audit-write
-    failure never breaks the import.
+    ORM flush listener, so per-row audit never fires. An import of an AUDITED
+    model (e.g. customers) suppresses the per-row listener instead, via
+    ``session.info["skip_audit_entity_types"]``, because a worker has no request
+    actor and would log N rows as "System". Either way this records a single
+    ``IMPORT`` event at the job boundary. Best-effort by contract: the caller
+    MUST wrap this (and the commit) in try/except so an audit-write failure
+    never breaks the import.
 
     ``status`` other than ``"success"`` appends a suffix to the description:
     ``"partial"`` -> ``(partial)``, anything else -> ``(failed)``.
+
+    ``details`` lands in ``new_values``: what the run did, and the job id that
+    reaches the per-row outcomes in ``import_job_rows``. One coarse row is only
+    worth having if it leads back to the rows it stands for.
     """
     description = f"{label}, {row_count} rows"
     if status == "partial":
@@ -184,6 +192,7 @@ def log_import_audit(
         entity_type,
         entity_id or "",
         "IMPORT",
+        new_values=details,
         user_id=user_id,
         description=description,
     )
@@ -291,6 +300,26 @@ def _audit_table_exists(bind: Any) -> bool:
     return cached
 
 
+def _company_id_for_new(obj: Any) -> Any:
+    """The company an about-to-be-inserted audited row belongs to.
+
+    ``company_id`` on a brand new owned row is still ``None`` here: the stamp is a
+    mapper-level ``before_insert`` hook, which runs AFTER this ``before_flush``
+    listener. Recording that ``None`` would not just lose the company, it would
+    publish the row - ``admin_listing_company_filter`` shows company-less audit rows
+    to every company, so another company's staff could read the created entity's
+    values out of the audit list. Ask the scope for the value the stamp is about to
+    write; ``None`` back means the insert has no company to land in (and will raise),
+    so leave it null rather than guess.
+    """
+    company_id = getattr(obj, "company_id", None)
+    if company_id is not None:
+        return company_id
+    from app.services.company_scope import pending_company_id
+
+    return pending_company_id(obj)
+
+
 def _session_before_flush(session: Session, _flush_context: Any, _instances: Any) -> None:
     """Collect audit payloads from session.new, session.dirty, session.deleted for tracked models."""
     pending = session.info.setdefault("audit_pending", [])
@@ -322,10 +351,17 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         if _should_skip(entity_type, entity_id):
             continue
         cols = getattr(cls, "__audit_columns__", None)
+        # Same timing gap as company_id, unresolved: a column whose value comes from
+        # a Python-side or server DEFAULT is still None here, so the CREATE snapshot
+        # reads null for it (e.g. customers.customer_type, server_default "company").
+        # Left as-is deliberately: a server default is SQL text, not a value we can
+        # evaluate without a round-trip, and half-resolving only the Python-side ones
+        # would make the snapshot inconsistent per column rather than uniformly
+        # "unset at creation". UPDATE rows read the real stored value.
         new_values = _model_to_audit_dict(obj)
         if cols is not None:
             new_values = {k: v for k, v in new_values.items() if k in cols}
-        pending.append((entity_type, entity_id, "CREATE", None, new_values, getattr(obj, "company_id", None)))
+        pending.append((entity_type, entity_id, "CREATE", None, new_values, _company_id_for_new(obj)))
     for obj in session.dirty:
         if not _is_audited(obj):
             continue
@@ -398,8 +434,21 @@ def _session_after_flush(session: Session, _flush_context: Any) -> None:
     session.info.pop("audit_pending", None)
 
 
+_listeners_registered = False
+
+
 def register_audit_listeners() -> None:
-    """Register SQLAlchemy session listeners for automatic audit logging. Call once at app startup."""
+    """Register SQLAlchemy session listeners for automatic audit logging.
+
+    Idempotent: the listeners are global on ``Session``, so registering twice
+    would write every audit row twice. Production calls this once at startup,
+    but a test process can reach it from both the app's startup event and a
+    fixture, and a doubled history is worse than none.
+    """
+    global _listeners_registered
+    if _listeners_registered:
+        return
+
     from sqlalchemy import event
 
     @event.listens_for(Session, "before_flush")
@@ -409,3 +458,7 @@ def register_audit_listeners() -> None:
     @event.listens_for(Session, "after_flush")
     def after_flush(session, flush_context):
         _session_after_flush(session, flush_context)
+
+    # Set last: if registering ever raises, a retry must be able to finish the job
+    # rather than find the flag already claiming the listeners are installed.
+    _listeners_registered = True

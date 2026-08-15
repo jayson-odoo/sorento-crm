@@ -20,6 +20,7 @@ from sqlalchemy import or_ as _sa_or
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.models.access import ContactAccessType
+from app.models.company import Company
 from app.models.marketing import Promotion, PromotionProduct
 from app.models.product import Brand, Product
 from app.models.resources import Attachment, AttachmentType
@@ -112,6 +113,11 @@ def _resolve_with_domain_hint(
     description, scoped to `attachment_type_id = <resolved hint type>`. When
     the hint resolves to no AttachmentType, returns an empty payload with
     `domain_hint_unresolved=True` so the agent knows the hint label was bad.
+
+    Every match carries `company_id` / `company_name`, the same attribution the
+    main resolver stamps in `_attach_company_info` - this short-circuit is the
+    path a document request actually takes, and a contact granted two companies
+    gets one current workbook from each.
     """
     type_row = _resolve_attachment_type_for_hint(db, hint)
     base_empty: dict[str, Any] = {
@@ -144,6 +150,11 @@ def _resolve_with_domain_hint(
 
     resolutions: list[dict[str, Any]] = []
     for term in terms:
+        # LEFT JOIN, not a filter: company ISOLATION is already done by the
+        # `do_orm_execute` scope filter on this ORM query. This only ATTRIBUTES
+        # the rows that survive it, so a contact granted both Mocha and Sorento
+        # gets both current workbooks and can tell them apart - two files named
+        # "Container Status 2026.xlsx" are otherwise indistinguishable.
         q = (
             db.query(
                 Attachment.id,
@@ -151,7 +162,10 @@ def _resolve_with_domain_hint(
                 Attachment.description,
                 Attachment.mime_type,
                 Attachment.full_directory_path,
+                Attachment.company_id,
+                Company.name,
             )
+            .outerjoin(Company, Company.id == Attachment.company_id)
             .filter(
                 Attachment.attachment_type_id == type_id,
                 Attachment.is_deleted.is_(False),
@@ -174,15 +188,22 @@ def _resolve_with_domain_hint(
                 "match_field": "original_filename",
                 "match_tier": "substring" if term else "scope",
                 "similarity": None,
+                # Same shape the main resolver emits (`_attach_company_info`):
+                # at the match level for callers that read the match, and again
+                # inside `display` for renderers that only read `display`.
+                "company_id": str(company_id) if company_id else None,
+                "company_name": company_name,
                 "display": {
                     "filename": filename,
                     "description": description,
                     "attachment_type": type_row.type_name,
                     "mime_type": mime,
                     "directory": dir_path,
+                    "company_id": str(company_id) if company_id else None,
+                    "company_name": company_name,
                 },
             }
-            for aid, filename, description, mime, dir_path in rows
+            for aid, filename, description, mime, dir_path, company_id, company_name in rows
         ]
         resolutions.append(
             {
