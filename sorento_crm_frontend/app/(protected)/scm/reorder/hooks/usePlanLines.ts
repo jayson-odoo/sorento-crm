@@ -9,6 +9,7 @@ import {
   getPoBook,
   getPriceHistory,
   getProductEconomics,
+  getProductImages,
   getPurchaseTrend,
   getTrajectory,
   recordLifecycleDecision,
@@ -34,6 +35,7 @@ import {
   type PriceAdvice,
 } from '../lib/priceAdvice';
 import { trajectoryKey, type TrajectoryEntry } from '../lib/trajectory';
+import type { ProductPhotoStatus } from '../components/ProductPhotoPopover';
 import { levelKey, type LevelSuggestion } from '../lib/levelSuggestion';
 import type { PoReceipt } from '../lib/poCover';
 import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
@@ -151,6 +153,48 @@ export function usePlanLines(runId: string | null, enabled = true) {
     () => toPlanLines(buys.data, covered.data, needsLevel.data, dispositions.data),
     [buys.data, covered.data, needsLevel.data, dispositions.data],
   );
+
+  /**
+   * What each product LOOKS like (AC-7), fetched the same lazy way the purchase trend is.
+   *
+   * > "as IT I do not know what a product looks like"
+   *
+   * One call for the whole run rather than one per row - each entry is a signed URL, and a
+   * plan of four thousand lines whose buyer opens two photos must not sign four thousand of
+   * them. `requestProductImages` flips the flag when the FIRST icon opens; react-query then
+   * serves every later popover on the run from cache.
+   */
+  const [photosWanted, setPhotosWanted] = useState(false);
+  const requestProductImages = useCallback(() => setPhotosWanted(true), []);
+  const photos = useQuery({
+    queryKey: ['plan-lines', runId, 'product-images'],
+    queryFn: () => getProductImages(runId as string),
+    enabled: on && photosWanted,
+    // Losing the photos must not take the plan down: the popover says so and nothing else on
+    // the row changes - a photo is context, never an input to a decision.
+    retry: false,
+  });
+
+  /** The signed URL for a line's product, or undefined when it has no permitted photo. */
+  const photoFor = useCallback(
+    (line: PlanLine): string | undefined =>
+      line.product_id ? photos.data?.images[line.product_id] : undefined,
+    [photos.data],
+  );
+
+  /**
+   * Where the map is, so the icon knows whether "no photo" is a FACT yet.
+   *
+   * Dimming before the answer lands would tell the buyer this product has no photo when we
+   * have not looked.
+   */
+  const photoStatus: ProductPhotoStatus = !photosWanted
+    ? 'idle'
+    : photos.isError
+      ? 'error'
+      : photos.data
+        ? 'ready'
+        : 'loading';
 
   const [decisions, setDecisions] = useState<Record<string, PlanDecision | undefined>>({});
 
@@ -322,6 +366,9 @@ export function usePlanLines(runId: string | null, enabled = true) {
     purchaseTrendFor,
     purchaseTrendWindowMonths: purchaseTrend.data?.window_months ?? 3,
     requestPurchaseTrend,
+    photoFor,
+    photoStatus,
+    requestProductImages,
     economicsFor,
     decideLifecycle,
     healthThresholds: economics.data?.thresholds ?? {

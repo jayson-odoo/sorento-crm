@@ -61,6 +61,7 @@ import {
 } from '../lib/productHealth';
 import { PlanChecklistPopover } from './PlanChecklistPopover';
 import { PlanDemandPopover } from './PlanDemandPopover';
+import { ProductPhotoPopover, type ProductPhotoStatus } from './ProductPhotoPopover';
 import {
   DaysCoverDrill,
   ExplainNumber,
@@ -137,6 +138,9 @@ export function PlanLinesGrid({
   purchaseTrendFor,
   purchaseTrendWindowMonths = 3,
   onOpenPurchaseTrend,
+  photoFor,
+  photoStatus = 'idle',
+  onOpenPhoto,
   economicsFor,
   healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
   onDecideLifecycle,
@@ -176,6 +180,13 @@ export function PlanLinesGrid({
   /** Fired the first time a PO cell's popover opens - lets the caller lazily start the
    *  purchase-trend fetch instead of it running for every product on plan mount. */
   onOpenPurchaseTrend?: () => void;
+  /** The signed URL of a line's primary photo, or undefined when the product has none. */
+  photoFor?: (line: PlanLine) => string | undefined;
+  /** Where the run's photo map is. Until it is `ready`, "no photo" is not yet a fact. */
+  photoStatus?: ProductPhotoStatus;
+  /** Fired the first time a photo popover opens - starts the run-wide photo fetch, the same
+   *  laziness `onOpenPurchaseTrend` gives the PO cell. */
+  onOpenPhoto?: () => void;
   /** What the product sells for and how fast it moves. Undefined = no opinion. */
   economicsFor?: (line: PlanLine) => ProductEconomics | undefined;
   /** The policy's lines for "thin margin" and "dead turnover". */
@@ -380,6 +391,15 @@ export function PlanLinesGrid({
               <StopClick>
                 <PlanDemandPopover runId={runId ?? null} recId={row.original.id} />
                 <PlanChecklistPopover rec={row.original.rec} />
+                {/* What the thing IS. A buyer who never handles the goods cannot tell two
+                    codes apart, and the photo is the one Dealer Kit already chose. */}
+                <ProductPhotoPopover
+                  sku={row.original.sku}
+                  productName={row.original.product_name}
+                  url={photoFor?.(row.original)}
+                  status={photoStatus}
+                  onOpen={onOpenPhoto}
+                />
               </StopClick>
             </div>
             <div className="truncate text-xs text-muted-foreground" title={row.original.product_name}>
@@ -816,8 +836,8 @@ export function PlanLinesGrid({
     ],
     [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor,
      levelFor, onAmendLevel, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
-     onOpenPurchaseTrend, economicsFor, healthThresholds, onDecideLifecycle, staleAfterDays,
-     renderSuggestedQtyCell],
+     onOpenPurchaseTrend, photoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
+     onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell],
   );
 
   // The story order (see the header comment): each chapter leads with its result and is

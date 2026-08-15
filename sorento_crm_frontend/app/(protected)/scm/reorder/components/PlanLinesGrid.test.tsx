@@ -915,3 +915,72 @@ describe('PlanLinesGrid - secondaryActions (the removed tiles\' replacement entr
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('PlanLinesGrid - product photo on the row (AC-7)', () => {
+  // > "as IT I do not know what a product looks like"
+  // The icon lives on the product cell, beside the demand and checklist drills, and it is
+  // the ONLY thing on the row that says what the item is.
+
+  function renderWithPhotos(
+    lines: PlanLine[],
+    photoFor?: (l: PlanLine) => string | undefined,
+    photoStatus: 'idle' | 'loading' | 'ready' | 'error' = 'ready',
+    onOpenPhoto?: () => void,
+  ) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PlanLinesGrid
+          lines={lines}
+          decisions={{}}
+          onDecide={vi.fn()}
+          onClear={vi.fn()}
+          photoFor={photoFor}
+          photoStatus={photoStatus}
+          onOpenPhoto={onOpenPhoto}
+          staleAfterDays={180}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('carries a photo icon on every row', () => {
+    renderWithPhotos([line({ id: 'a', sku: 'BUY-1' }), line({ id: 'b', sku: 'BUY-2', rank: 2 })]);
+    expect(screen.getAllByRole('button', { name: /product photo/i })).toHaveLength(2);
+  });
+
+  it('dims the icon for a product the run found no photo for', () => {
+    renderWithPhotos(
+      [line({ id: 'a', sku: 'HAS-1', product_id: 'p1' }),
+       line({ id: 'b', sku: 'NONE-1', product_id: 'p2', rank: 2 })],
+      (l) => (l.product_id === 'p1' ? 'https://cdn.test.invalid/p1.jpg' : undefined),
+    );
+
+    const withPhoto = screen.getByText('HAS-1').closest('tr') as HTMLElement;
+    const without = screen.getByText('NONE-1').closest('tr') as HTMLElement;
+
+    expect(
+      within(withPhoto).getByRole('button', { name: /product photo/i }).className,
+    ).not.toContain('text-muted-foreground/50');
+    expect(
+      within(without).getByRole('button', { name: /product photo/i }).className,
+    ).toContain('text-muted-foreground/50');
+  });
+
+  it('nothing is dimmed before the photos have been asked for', () => {
+    // Dimming on `idle` would tell the buyer a product has no photo before anyone looked.
+    renderWithPhotos([line({ sku: 'BUY-1' })], undefined, 'idle');
+    expect(
+      screen.getByRole('button', { name: /product photo/i }).className,
+    ).not.toContain('text-muted-foreground/50');
+  });
+
+  it('starts the run-wide fetch on the FIRST icon opened, not on mount', () => {
+    const onOpenPhoto = vi.fn();
+    renderWithPhotos([line({ sku: 'BUY-1' })], undefined, 'idle', onOpenPhoto);
+
+    expect(onOpenPhoto).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /product photo/i }));
+    expect(onOpenPhoto).toHaveBeenCalledTimes(1);
+  });
+});

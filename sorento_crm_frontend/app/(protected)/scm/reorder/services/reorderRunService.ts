@@ -711,6 +711,26 @@ export async function amendLevelSuggestion(input: {
 }
 
 /**
+ * What each product on the run looks like: `{product_id: signed url}` (AC-7).
+ *
+ * One call for the whole run, made lazily the first time a row's photo icon opens. The photo
+ * is the one chosen in Dealer Kit -> Brochure images (`product_attachments.is_primary`), read
+ * through the same viewer-gated reader the catalogue uses, so the two surfaces cannot show a
+ * different picture of the same product.
+ *
+ * A product with no permitted photo is ABSENT from the map rather than mapped to null: the
+ * popover has a designed empty state, and a blank url would render a broken image.
+ */
+export async function getProductImages(
+  runId: string,
+): Promise<{ images: Record<string, string> }> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/product-images`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the product photos'));
+  const body = (await res.json()) as { images?: Record<string, string> };
+  return { images: body.images ?? {} };
+}
+
+/**
  * The mirror of the order trend, on the buy side: who we bought from, and when (per
  * product, across every supplier - `price-history` narrows to one supplier pair instead).
  */

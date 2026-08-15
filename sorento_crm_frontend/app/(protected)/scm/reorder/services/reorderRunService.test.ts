@@ -7,6 +7,7 @@ import {
   createReorderRun,
   getReorderRun,
   getRecommendations,
+  getProductImages,
   listReorderRuns,
 } from './reorderRunService';
 
@@ -178,5 +179,33 @@ describe('reorderRunService - listReorderRuns', () => {
     expect(page.data[0].run_id).toBe('run-b');
     expect(page.data[0].warehouse_codes).toEqual(['WH-KL', 'WH-JB']);
     expect(page.data[0].summary?.recommendation_count).toBe(5);
+  });
+});
+
+describe('reorderRunService - getProductImages (AC-7)', () => {
+  it('reads the run photo map from one endpoint', async () => {
+    apiFetch.mockResolvedValue(ok({ images: { p1: 'https://cdn.test.invalid/p1.jpg' } }));
+
+    const out = await getProductImages('run-9');
+
+    expect(calledUrl().pathname).toBe('/api/v1/scm/reorder-runs/run-9/product-images');
+    expect(out.images.p1).toBe('https://cdn.test.invalid/p1.jpg');
+  });
+
+  it('normalises a body with no images at all, so the caller never guards for it', async () => {
+    apiFetch.mockResolvedValue(ok({}));
+    expect(await getProductImages('run-9')).toEqual({ images: {} });
+  });
+
+  it('surfaces the backend message rather than a blank failure', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ message: 'Reorder run not found.' }),
+      text: async () => JSON.stringify({ message: 'Reorder run not found.' }),
+    } as unknown as Response);
+
+    await expect(getProductImages('nope')).rejects.toThrow(/not found/i);
   });
 });
