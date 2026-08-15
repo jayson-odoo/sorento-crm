@@ -283,6 +283,20 @@ a dependency, behind `next/dynamic` with `ssr: false`.
 
 ### S4.5 Post-resolve reassurance + close semantics (UAC M) [FE coder + BE coder + n8n peer]
 
+**LAUNCH PROCEDURE (user decision via n8n session 2026-08-15, inert launch):** the CRM
+close lane is a SEPARATE n8n workflow (inactive at launch); `respond-close-convo`
+(Respond trigger, `eventSource: ["user"]`, resolve-all under the inert semantic) stays
+active. Prod `N8N_CLOSE_CONVO_WEBHOOK_URL` stays UNSET until switchover (unset = warn +
+skip, resolve unaffected, no outbox row - no retry backlog into an inactive webhook);
+set it at switchover, then deactivate the Respond lane and activate the CRM lane
+(rollback = re-activate). Accepted tradeoff: during launch a CRM-screen resolve sends
+the customer no closing message. Retries are bounded anyway (`max_retry_allowed=3`,
+exponential backoff, then parked failed). LOOP GUARD (code-verified 2026-08-15): the
+close webhook fires ONLY for user-origin resolves; API-key-principal `PUT` resolves
+(that is n8n's own resolve-all under the flag) never fire it, else one Respond close
+would echo back as a second closing message. n8n additionally guards one closing message
+per contact per 60s.
+
 - Drawer stays open post-resolve in a Resolved state (badge, composer disabled, thread
   readable); "recently resolved" affordance links to the SLA tracking listing filtered
   to the contact.
