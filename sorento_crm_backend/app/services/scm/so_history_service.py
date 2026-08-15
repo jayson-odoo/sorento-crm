@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
@@ -44,6 +45,7 @@ from app.models.product import Product
 from app.services import import_outcome_codes as oc
 from app.services.import_outcome import ImportOutcome
 from app.services.import_alias_service import AliasResolver
+from app.services.scm.customer_label import normalize_debtor_code
 from app.services.scm.history_sources import SO_HISTORY_SOURCE
 from app.services.scm.so_listing_reader import (
     DOC_TYPE,
@@ -81,14 +83,27 @@ def _by_code(db: Session, model, code_col, codes: set[str]) -> dict[str, str]:
     return {str(code): str(row_id) for code, row_id in rows}
 
 
-def _price(value) -> Optional[float]:
-    """A unit price as a comparable number, and None kept as None.
+#: The precision `sales_order_lines.unit_price` stores. Comparing at anything finer asks
+#: the file and the column to agree about digits the column never kept.
+_PRICE_PLACES = Decimal("0.01")
+
+
+def _price(value) -> Optional[Decimal]:
+    """A unit price as the column would hold it, and None kept as None.
 
     Compared rather than written unconditionally, like every other column in this feed: a
     re-upload of an unchanged book must still report zero updates. `Decimal("12.50")` and
     `12.5` are the same price and must not read as a change.
+
+    Quantized to two places because that is what the column stores: a sheet stating 0.945
+    comes back out of it as 0.95, so comparing the raw figures reports that line as updated
+    on every single upload, for ever, and stamps `updated_at` on a row nothing changed.
+    ROUND_HALF_UP is how Postgres rounds into NUMERIC(_, 2) - verified against it - so the
+    comparison agrees with the value the previous upload actually wrote.
     """
-    return None if value is None else float(value)
+    if value is None:
+        return None
+    return Decimal(str(value)).quantize(_PRICE_PLACES, rounding=ROUND_HALF_UP)
 
 
 def _has_foreign_lines(db: Session, order_id: str) -> bool:
@@ -282,7 +297,7 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                 # The code in its own column, so a reader can attribute the order without
                 # parsing a note: the plan's demand and trend popovers fall back to
                 # "Debtor 300-R009" when the link failed.
-                debtor_code=parsed_order.debtor_code or None,
+                debtor_code=normalize_debtor_code(parsed_order.debtor_code),
                 # The debtor code and the customer's printed name are kept even when the
                 # link fails, because "ROWENDA KITCHEN SDN BHD / 300-R009" is what makes the
                 # link fixable later. Dropping it leaves an order nobody can attribute. Kept
@@ -342,11 +357,11 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
             if customer_id and order.customer_id != customer_id:
                 order.customer_id = customer_id
                 changed = True
-            if (parsed_order.debtor_code
-                    and order.debtor_code != parsed_order.debtor_code):
+            stated_debtor = normalize_debtor_code(parsed_order.debtor_code)
+            if stated_debtor and order.debtor_code != stated_debtor:
                 # The file is the record of what the document printed, so a restated code
                 # corrects the column. An absent one never blanks a code we already hold.
-                order.debtor_code = parsed_order.debtor_code
+                order.debtor_code = stated_debtor
                 changed = True
             if order.status != _ORDER_STATUS:
                 if _has_open_quantity(db, str(order.id)):

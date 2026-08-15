@@ -47,6 +47,22 @@ NO_CUSTOMER_KEY = "none"
 
 _DEBTOR_PREFIX = "debtor:"
 
+
+def normalize_debtor_code(value) -> "str | None":
+    """The debtor code as `sales_orders.debtor_code` holds it: trimmed and upper-cased.
+
+    Both SO feeds write that column and they did not agree - the outstanding book upper-cased
+    it, the history listing wrote it as the sheet printed it. `300-r009` and `300-R009` are
+    one debtor, so the disagreement showed up as two Who-bought-it rows for the same buyer,
+    each carrying half the quantity, with a drill behind each that could not see the other
+    half. One spelling in the column is what makes the label, the key and the drill agree.
+
+    Lives here rather than in either importer because this module owns that identity: the
+    printed `Debtor <code>` and the `debtor:<code>` key are both built from the stored value.
+    """
+    code = (value or "").strip().upper()
+    return code or None
+
 #: "This order resolves to no customer of its own company" - the same test the guarded join
 #: makes, written for a query that does not join `customers` at all. Without it the drill
 #: selects a different set from the row it was opened from, and the lines stop adding up to

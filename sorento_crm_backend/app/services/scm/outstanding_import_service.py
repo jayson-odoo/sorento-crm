@@ -48,6 +48,7 @@ from app.services.scm import sales_agent_service
 from app.services.scm.history_sources import HISTORY_SOURCE_SYSTEMS
 from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS
 from app.services.scm.demand_class import class_of as _class_of
+from app.services.scm.customer_label import normalize_debtor_code
 from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
 
 logger = logging.getLogger(__name__)
@@ -1175,8 +1176,14 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # The code as printed, kept whether or not it linked. The file is the record of
         # what the document says, so a restated code overwrites; a file that simply omits
         # it never blanks one we already hold.
+        #
+        # `party_code_by_doc` holds it already `_norm`ed (trimmed, upper), which is what
+        # `customer_label.normalize_debtor_code` writes from the history feed. The two feeds
+        # write the SAME column, so a difference in spelling shows up as two Who-bought-it
+        # rows for one debtor - passed through that helper here so there is one authority
+        # for the value rather than two that merely agree today.
         if bind.party_code_header_col:
-            code = resolved.party_code_by_doc.get(number)
+            code = normalize_debtor_code(resolved.party_code_by_doc.get(number))
             if code:
                 setattr(header, bind.party_code_header_col, code)
         order_ids[number] = header.id
