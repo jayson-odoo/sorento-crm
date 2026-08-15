@@ -257,10 +257,52 @@ shrink it below the truth.
 the documented "CI database has no data" class in CLAUDE.md, where tests borrow a row with
 `LIMIT 1` from the shared production-copy database. Fixing that is not this branch's job.
 
+## Browser sign-off of the two operator surfaces
+
+Done against a production build (`next build` + `next start`), not a dev server, with a real login
+and a live backend. Both surfaces were reached by clicking, not by typing a deep URL.
+
+**Settings -> Chatbot Media.** The tab renders in the settings tab bar and routes to
+`/user-management/settings/chatbot-media`. Every field loads from the singleton row with the
+shipped defaults (50 photos, 100 voice notes, 120s clip ceiling, warn at 80 percent, burst 5 per
+60s, 10 entities, 30s synchronous wait, 45s extraction ceiling, Whisper v1). Voice degraded model
+reads "Not set", which is the shipped state, and carries no warning; image degraded model is blank
+here and does carry its warning, and that warning clears the moment a model is named. Validation was
+exercised live: an extraction ceiling of 20 against a 30s wait produces the cross-field sentence and
+disables Save, a 999s wait produces the range sentence, and Reset restores both and re-enables Save.
+Saving unchanged values round-trips as `POST /api/v1/user-management/settings/general` 200 followed
+by a refetch.
+
+**The failed-load state was verified for real**, since that was the point of review finding 16.3. With
+the backend stopped, the page renders "Chatbot media settings could not be loaded. Reload the page
+to try again." rather than skeletons that never resolve. A backend that hangs instead of refusing
+still renders skeletons, which is correct: a hang is loading, not an error.
+
+**Contact detail -> Media Access.** Both panels render for a contact that has never been configured,
+showing "Not enabled", used 0 of the inherited limit, the reset date, "Default (50)" / "Default
+(100)" / "Default (120s)", and the "Never configured" line. Turning photos on is one click and
+round-trips as `PUT .../media-access/image` 200 plus a refetch, after which the panel reads
+"Enabled" and stamps who changed it. Turning it off goes through the confirmation dialog ("Turn off
+photos? The bot will stop reading photos from this contact and will tell them to type instead") and
+only then issues the PUT. The limits dialog refuses 5000 clip seconds inline and disables Save;
+saving 25 and 90 persists and the panel switches to "Override (25)" and "Override (90s)", with the
+allowance line following the override.
+
+One defect came out of this and is fixed in the branch: the limits dialog rendered without an
+accessible description, which React reports as a missing `Description` for `DialogContent`.
+
+Two observations that are **not** this branch's doing, recorded because the sign-off found them:
+
+- Row click on the contacts list does not navigate to the contact in a production build. The row
+  carries the handler and the element is hit-testable, but no navigation and no request follows.
+  `ContactsList.tsx` and `data-grid-table.tsx` are byte-identical to the merge base.
+- The dev database has this branch's media columns and all three media tables already present while
+  `alembic_version` still reads `353_project_order_inquiry_rename`, so its schema was advanced
+  without being stamped. Nothing was changed there to find this out.
+
 ## Known unmet, stated rather than papered over
 
-- **Playwright E2E and browser sign-off of the two operator surfaces.** Blocked on the absence of a
-  CRM login: no `*_E2E_EMAIL` / `*_E2E_PASSWORD` in any `.env`, and the local database is a copy of
-  production, so no password was reset to manufacture one. Not claimed as done.
+- **A persisted Playwright spec for these two surfaces.** The interactive sign-off above covers the
+  flows; a committed regression spec does not exist yet.
 - **RQ worker end-to-end against the `queue_service` socket-timeout change** is unverified.
 - **No corpus re-run through the changed voice path** after the voice-quota fix.
