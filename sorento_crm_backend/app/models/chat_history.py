@@ -89,6 +89,12 @@ class ChatHistory(Base):
             "reply_to_message_id",
             postgresql_where=reply_to_message_id.isnot(None),
         ),
+        # NOTE: a pg_trgm GIN index on `message` also exists in migrated
+        # databases (alembic 327_chat_history_trgm) to serve the in-thread
+        # `ILIKE '%q%'` search. It is deliberately NOT declared here: it needs
+        # the pg_trgm extension, and `Base.metadata.create_all` (the test blank
+        # schema) would fail where the extension is absent. Nothing in the ORM
+        # references it - the planner picks it up on its own.
         Index(
             "uq_chat_histories_contact_message_dedupe",
             "contact_id",

@@ -5329,6 +5329,77 @@ class ConversationSLATrackingService:
         client = RespondClient()
         return client.list_messages(ident, limit=limit, cursor=cursor)
 
+    def _thread_contact_for_tracking(self, tracking: ConversationSLATracking):
+        """The contact descriptor the thread reads need, or None when unlinked."""
+        from app.services.conversation_thread_service import ThreadContact
+
+        ident = self._respond_io_identifier_for_tracking(tracking)
+        if not ident:
+            return None
+        contact = tracking.contact
+        return ThreadContact(
+            respond_io_id=ident,
+            phone_number=str(getattr(contact, "phone_number", "") or ""),
+            first_name=getattr(contact, "first_name", None),
+            last_name=getattr(contact, "last_name", None),
+        )
+
+    def fetch_conversation_thread_page(
+        self,
+        tracking_id: str,
+        *,
+        before: Optional[str] = None,
+        after: Optional[str] = None,
+        around: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict:
+        """One scroll-back window of this tracking's contact thread (AC-L7)."""
+        from app.services import conversation_thread_service as thread_service
+        from app.services.integration_service import RespondClient
+
+        tracking = self.get_tracking(tracking_id)
+        contact = self._thread_contact_for_tracking(tracking)
+        if contact is None:
+            return {
+                "items": [],
+                "has_more_older": False,
+                "has_more_newer": False,
+                "oldest_message_id": None,
+                "newest_message_id": None,
+                "anchor_message_id": None,
+                "limit": limit,
+                "source": "none",
+                "backfilled": 0,
+                "error": "No Respond.io contact linked",
+            }
+        return thread_service.fetch_thread_page(
+            self.db,
+            contact,
+            before=before,
+            after=after,
+            around=around,
+            limit=limit,
+            client=RespondClient(),
+        )
+
+    def search_conversation_thread(
+        self, tracking_id: str, *, q: str, limit: int = 100
+    ) -> dict:
+        """In-thread message search for this tracking's contact (AC-L8)."""
+        from app.services import conversation_thread_service as thread_service
+
+        tracking = self.get_tracking(tracking_id)
+        contact = self._thread_contact_for_tracking(tracking)
+        if contact is None:
+            return {
+                "items": [],
+                "total": 0,
+                "truncated": False,
+                "query": (q or "").strip(),
+                "error": "No Respond.io contact linked",
+            }
+        return thread_service.search_thread(self.db, contact, q=q, limit=limit)
+
     def send_conversation_reply_for_tracking(
         self,
         tracking_id: str,

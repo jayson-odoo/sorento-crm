@@ -2107,6 +2107,92 @@ async def get_sla_tracking_conversation(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{tracking_id}/conversation/page")
+async def get_sla_tracking_conversation_page(
+    tracking_id: UUID,
+    before: Optional[str] = Query(
+        None, description="Message id to page OLDER than (exclusive)"
+    ),
+    after: Optional[str] = Query(
+        None, description="Message id to page NEWER than (exclusive)"
+    ),
+    around: Optional[str] = Query(
+        None, description="Message id to centre the window on (jump to a search match)"
+    ),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """One scroll-back window of the contact thread (UAC AC-L7).
+
+    Items always come back **oldest-to-newest**, whichever direction was asked
+    for, so the caller never reverses. ``has_more_older`` is true whenever the
+    page came back full; the client keeps asking until it is false, which is the
+    true start of the conversation.
+
+    Read-only from the user's point of view: it never marks anything read and
+    never touches the conversation-window cache. It does opportunistically write
+    fetched Respond messages into ``chat_histories`` so in-thread search reaches
+    history that predates our ingest - best-effort, and a failure there does not
+    fail the read.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    cursors = [c for c in (before, after, around) if c]
+    if len(cursors) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Pass at most one of before, after, around.",
+        )
+
+    try:
+        service = ConversationSLATrackingService(db)
+        return await run_in_threadpool(
+            lambda: service.fetch_conversation_thread_page(
+                str(tracking_id),
+                before=before,
+                after=after,
+                around=around,
+                limit=limit,
+            )
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{tracking_id}/conversation/search")
+async def search_sla_tracking_conversation(
+    tracking_id: UUID,
+    q: str = Query("", description="Free text searched inside this contact's messages"),
+    limit: int = Query(100, ge=1, le=200),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """In-thread message search for this tracking's contact (UAC AC-L8).
+
+    ILIKE over the stored message body, newest-first and capped. Side-effect
+    free. Each hit carries the message id the thread jumps to via
+    ``GET .../conversation/page?around=<message_id>``.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    try:
+        service = ConversationSLATrackingService(db)
+        return await run_in_threadpool(
+            lambda: service.search_conversation_thread(str(tracking_id), q=q, limit=limit)
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.post("/{tracking_id}/conversation/reply")
 async def post_sla_tracking_conversation_reply(
     tracking_id: UUID,
