@@ -883,27 +883,113 @@ Journey addition:
   oversize -> 413), 30s timeout, no request headers forwarded, and only content-type /
   content-length come back plus
   `Content-Disposition: inline; filename="<basename>"`. Anything else -> 400.
+
+  **As built (2026-08-15, frontend).** `RespondChatList` takes an optional
+  `mediaProxy: (url) => Promise<Response>`; ONLY with one does a preview item get a
+  `downloadUrl`, which is what turns the Excel slide and the Download button on. So
+  the surfaces that pass nothing (the token-authenticated portal thread, the
+  complaint / SI / PR panels) are byte-for-byte unchanged and cannot start issuing
+  authenticated fetches by accident. Images / video / pdf keep rendering from the
+  direct CDN url - only the byte-reading paths go through the proxy. The loader is
+  wired as component -> hook -> service: `useSlaTrackingMediaProxy` ->
+  `fetchSlaTrackingMedia` in the drawer and Chat Records, `useContactMediaProxy` ->
+  `fetchContactMedia` in the inbox. DEVIATION from the slice brief's suggested
+  `Promise<ArrayBuffer|Blob>` signature: `AttachmentPreviewModal.fetchBytes` consumes
+  a `Response` (it reads `.blob()` / `.arrayBuffer()` itself) and `apiFetch` already
+  returns one, so converting down and re-wrapping would add a `new Response(blob)`
+  hop that buys nothing.
 - **AC-N5 [FE][T]** Given the ticket drawer, When it renders, Then: (a) the **Resolve**
   action lives in the drawer HEADER (with Reassign and the overflow actions), not
   floating over the composer; (b) the composer toolbar has no floating siblings; (c) the
   global AI-assistant launcher renders as a slim edge tab ("envelope label") anchored to
   the bottom-right screen edge instead of a round FAB, so it can never overlap a
   drawer's bottom controls. Verified at 375px and 1280px.
+
+  **As built (2026-08-15, frontend).** (a) Resolve, Reassign, View history and the
+  resolved timestamp share one `ticket-header-actions` row directly under the sheet
+  header; the footer under the composer is gone. The row is its OWN row rather than
+  sitting beside the title because the sheet's close button owns the top-right
+  corner at every width. (b) There are no overflow actions yet - Resolve and Reassign
+  are the whole set, so a "..." menu holding one item would be worse than the two
+  buttons. (c) The launcher is a 40px tab (`h-10 rounded-s-full`, label from `sm` up,
+  icon only below) at `fixed bottom-6 end-0 z-40`. The z-index is the actual fix:
+  the FAB was `z-[120]`, above every Sheet / Dialog (z-50), so it floated over the
+  drawer's controls; z-40 keeps it above the header (z-10) and sidebar (z-20) and
+  under any open sheet. Both widths are pinned by class assertions in
+  `AIAssistantBubble.test.tsx` (no browser).
 - **AC-N6 [FE][T]** Given the drawer header's quoted enquiry message, When clicked, Then
   the thread scrolls to that message (loading the surrounding page via `around=` when it
   is outside the loaded window) and flash-highlights it - same mechanism as a search
   match.
+
+  **As built (2026-08-15, frontend).** "Same mechanism" is literal: the around-page
+  load lives in `useConversationThread.jumpToMessage`, next to the search jump and
+  sharing its fetch-sequence guard, and the list is told where to go by a
+  `(focusMessageId, focusNonce)` PAIR. The nonce, not the id, is the trigger -
+  clicking the quote twice has to scroll back twice, and an id alone cannot express
+  that. `RespondChatList` only marks a nonce handled once the bubble EXISTS, so a
+  target that arrives with the around-page (a render or two later) is still scrolled
+  to. The flash reuses the quoted-context ring, so a jump from the header and a jump
+  from a quote block look identical.
 - **AC-N7 [FE][T]** Given the drawer, When the user has the reassign permission, Then a
   Reassign action is in the drawer header; the assignee picker shows which users are
   Respond-linked (a small badge / secondary text) and lets the user filter to
   Respond-linked only, because a reply from an unlinked user cannot carry a real Respond
   sender identity. Same dialog component as the widget (AC-B3), never a fork.
+
+  **As built (2026-08-15, frontend).** Literally the widget's `ReassignDialog`, so
+  the badge and the filter landed on both surfaces at once. DEVIATION worth naming:
+  the scope-B picker source (`.../conversation-sla-tracking/visible-users`) does NOT
+  carry the linkage - it returns `{id,name,email}` only - so the dialog reads it
+  from the shared user-select endpoint, which is gated by
+  `user_management.users.view`, a permission an SLA agent may well not hold. That
+  read is therefore BEST EFFORT (`retry: false`): when it fails, the badge AND the
+  filter toggle are absent and the picker behaves exactly as it did, rather than
+  showing a badge that might be lying. Selecting someone and then switching the
+  filter on drops the selection instead of submitting an invisible one. Backend
+  follow-up: have `visible-users` return `respond_user_id` and the second call goes
+  away.
 - **AC-N8 [FE][T]** Given the SLA-tracking detail page, When "Chat Records" is opened,
   Then it renders the SAME shared thread panel (scroll-back, search, preview, notes,
   quoted context) the drawer uses - the legacy `SlaTrackingConversationPanel` sheet is
   replaced, not duplicated. Complaint / stock-inquiry / PR "Chat Records" follow in the
   same change if the panel is already the shared one; if their panel is a separate
   component, they are listed as a follow-up in the PLAN, not silently skipped.
+
+  **As built (2026-08-15, frontend).** `SlaTrackingConversationPanel` is DELETED (it
+  had exactly one importer) and replaced by `SlaTrackingChatRecords`, which renders
+  the same `RespondChatList` + `useConversationThread` the drawer does with the
+  ticket-keyed loaders, the ticket notes and the ticket media proxy. The composer
+  and the header's Refresh / Open-in-Respond actions are carried over unchanged; the
+  "to send files, open Respond" hint box is not (a feature explanation in the UI).
+  Complaint / stock-inquiry / purchase-request each have their OWN panel component
+  (`ComplaintConversationPanel`, `StockInquiryConversationPanel`,
+  `PurchaseRequestConversationPanel`), so per this AC's own escape clause they are
+  the named follow-up in PLAN S4.9, not converted here.
+
+  **AC-N1/N2/N3 frontend, as built (2026-08-15).** Page at
+  `sla-management/conversations`, sidebar entry under SLA Management in both menu
+  blocks, gated on `sla_management.conversations.view`. Left pane =
+  `useInfiniteQuery` over the keyset cursor (opaque, passed back verbatim), 300ms
+  search debounce, "Load more" button AND bottom-of-list infinite scroll (the button
+  is what makes it keyboard-reachable on a short list), per-tab empty copy, error
+  with retry. Switching tab clears the selection: the row may not exist in the new
+  tab. Right pane = the shared thread with contact-keyed loaders + contact-keyed
+  notes + contact media proxy. Three FE deviations, each forced by a missing
+  backend piece and each recorded as a follow-up:
+  (1) **Note mode is offered only when the viewer holds exactly one open enquiry for
+  the contact** and posts via the ticket-keyed `POST .../{tracking_id}/comments` -
+  there is no contact-keyed note CREATE (the AC only specified the contact-keyed
+  LIST). Without one the tab is disabled with a reason on hover rather than hidden.
+  (2) **No 24h-window read is contact-keyed**, so the composer runs with
+  `windowStateOverride={{closed:false}}` and no "Send template" button: the backend
+  still smart-sends the template out of window, but the inbox cannot render it
+  inline the way the drawer does. (3) **`POST /{ref}/reply` takes no
+  `reply_to_message_id` / `reply_to_excerpt`**, so the inbox thread deliberately
+  offers no per-bubble Reply-quote affordance (the drawer keeps it). Liveness is the
+  30s list interval plus the thread's existing 10s poll: the S4.2 SSE subscriber is
+  a BACKEND-ONLY slice today (no FE `EventSource` hook exists anywhere in the repo),
+  so there is nothing to subscribe the open thread to yet.
 
 ## No-regression strategy
 

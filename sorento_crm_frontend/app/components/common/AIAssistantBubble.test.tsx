@@ -37,7 +37,7 @@ function tab() {
   return screen.getByTestId('ai-assistant-tab');
 }
 
-describe('AIAssistantBubble — edge-tab launcher (AC-N5c)', () => {
+describe('AIAssistantBubble edge-tab launcher (AC-N5c)', () => {
   beforeEach(() => {
     hasPermission.mockReturnValue(true);
   });

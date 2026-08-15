@@ -58,7 +58,7 @@ function openPreview() {
   return screen.getByTestId('attachment-preview');
 }
 
-describe('RespondChatList — chat-media proxy (AC-N4)', () => {
+describe('RespondChatList chat-media proxy (AC-N4)', () => {
   it('without a mediaProxy the preview item carries no byte source (unchanged)', () => {
     render(<RespondChatList items={attachmentItems} contactName="X" />);
     const preview = openPreview();

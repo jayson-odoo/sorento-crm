@@ -642,6 +642,44 @@ Frontend (second, same worktree, after BE lands):
 - "Chat Records" on the SLA-tracking detail replaced by the shared panel; complaint /
   SI / PR listed as follow-up if their panel is separate.
 
+**Frontend as built 2026-08-15. Status: DONE (AC-N1..N8), vitest green, no browser
+verification yet** (the orchestrator owns the prod build + the 375px / 1280px pass).
+Per-AC detail lives under each AC in the UAC file; what belongs here is the shape and
+the follow-ups.
+
+Shape: `app/(protected)/sla-management/conversations/` = page + `ConversationsInbox`
+(two-pane shell, responsive stack) + `ConversationListPane` + `ConversationThreadPane`
++ `hooks/useConversationsInbox` + `services/conversationsInboxService` (the as-built
+contract above is restated at the top of that file). `RespondChatList` grew two
+optional props and nothing else changed for its existing five callers: `mediaProxy`
+(AC-N4, byte loader; without it there is no `downloadUrl` and the surface is
+untouched) and `(focusMessageId, focusNonce)` (AC-N6, caller-driven scroll target).
+`useConversationThread` grew `jumpToMessage` next to the search jump. The legacy
+`SlaTrackingConversationPanel` is deleted in favour of `SlaTrackingChatRecords`.
+
+Follow-ups this slice deliberately did NOT do (each is a backend gap, not an FE
+choice):
+1. **Contact-keyed note CREATE.** Only the LIST is contact-keyed. The inbox therefore
+   disables Note unless the viewer holds exactly one open ticket for the contact, and
+   posts through the ticket route when they do.
+2. **Contact-keyed 24h window / chat-template read.** The inbox composer cannot show
+   the out-of-window template inline the way the drawer does; the backend still
+   smart-sends it.
+3. **`POST /conversations/{ref}/reply` carries no `reply_to_message_id` /
+   `reply_to_excerpt`,** so the inbox thread offers no per-bubble Reply-quote.
+4. **`.../conversation-sla-tracking/visible-users` does not return `respond_user_id`.**
+   The Respond-linked badge reads the shared user-select endpoint instead, gated by
+   `user_management.users.view`, and degrades to no-badge-no-filter when that 403s.
+5. **The S4.2 SSE subscriber is still backend-only.** No `EventSource` hook exists in
+   the FE, so inbox liveness is a bounded 30s list interval plus the thread's existing
+   10s poll. When the subscriber lands, the open thread subscribes with `?contacts=`
+   and both become fallbacks.
+6. **Complaint / stock-inquiry / purchase-request "Chat Records" are separate
+   components** (`ComplaintConversationPanel`, `StockInquiryConversationPanel`,
+   `PurchaseRequestConversationPanel`) and still render the legacy bubble list. Moving
+   them onto the shared thread is its own slice: each has form-SLA chrome around the
+   panel, and their contact is reached by entity, not by tracking id.
+
 ### Phase 4 execution order (user-approved 2026-08-14)
 
 S4.1 and S4.2 first (they close the two live operational gaps: bot does not pause, thread
