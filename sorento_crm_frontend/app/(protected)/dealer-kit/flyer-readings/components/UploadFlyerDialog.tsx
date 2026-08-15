@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { FileText, FileUp } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -56,16 +55,17 @@ const PDF_MIME_TYPES = [
  * The second one used to mean downloading it out of the CRM and uploading it
  * back in, which is a round trip the system can spare them.
  *
- * No progress bar and no job to watch. Extraction runs inside the request, and
- * it is not quick: measured at 17 to 18 s for the real 36 page flyer on a quiet
- * machine, 39 to 62 s on a loaded one. So this is a button that goes quiet for
- * a while and then lands on the review screen. A queue here would buy a pending
- * state, a polling screen and a failure path; it is on the backlog for when
- * artwork rasterisation makes the read longer still.
+ * The dialog closes as soon as the flyer is handed over, and goes nowhere. The
+ * read is a queued job now (measured at 18 s for the real 36 page flyer, which
+ * is more than any gateway will hold a request for), so there is nothing to
+ * navigate to yet: the row is already at the top of the Flyers list saying
+ * Processing, and that is where the toast points.
  *
  * The backend refuses a non-PDF with a 400 and anything over 50 MB with a 413,
  * both in words and identically for both sources, so those messages are shown
- * as they arrive rather than replaced with a generic one.
+ * as they arrive rather than replaced with a generic one. A refusal only the
+ * bytes can produce (password protected) cannot be shown here - it happens
+ * after this dialog is gone - and lands on the row as Failed instead.
  */
 export function UploadFlyerDialog({
   open,
@@ -74,7 +74,6 @@ export function UploadFlyerDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [source, setSource] = useState<FlyerSource>('upload');
   const [file, setFile] = useState<File | null>(null);
@@ -96,12 +95,10 @@ export function UploadFlyerDialog({
     }
   }, [open]);
 
-  // Straight to the review screen, from either source. Reading a flyer and
-  // never looking at what came back is the one path this feature must not have.
-  const onRead = (readingId: string) => {
-    onOpenChange(false);
-    router.push(`/dealer-kit/flyer-readings/${readingId}`);
-  };
+  // Handed over, from either source: the dialog gets out of the way and the
+  // designer is back on the list with their flyer already on it. A refusal
+  // keeps the dialog open, because the file they chose is the thing to change.
+  const onHandedOver = () => onOpenChange(false);
 
   const submit = () => {
     setError(null);
@@ -110,7 +107,7 @@ export function UploadFlyerDialog({
       upload.mutate(
         { file },
         {
-          onSuccess: (reading) => onRead(reading.id),
+          onSuccess: onHandedOver,
           onError: (readError) => setError(readError.message),
         },
       );
@@ -120,7 +117,7 @@ export function UploadFlyerDialog({
     fromAttachment.mutate(
       { attachmentId: picked.id },
       {
-        onSuccess: (reading) => onRead(reading.id),
+        onSuccess: onHandedOver,
         onError: (readError) => setError(readError.message),
       },
     );
@@ -135,8 +132,7 @@ export function UploadFlyerDialog({
         <DialogHeader>
           <DialogTitle>Read a flyer</DialogTitle>
           <DialogDescription>
-            The flyer is read straight away and can take up to a minute. You get a report of what
-            was found before anything is created.
+            You get a report of what was found before anything is created.
           </DialogDescription>
         </DialogHeader>
 

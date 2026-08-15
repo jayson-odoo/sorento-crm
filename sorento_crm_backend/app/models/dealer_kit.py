@@ -409,7 +409,18 @@ class FlyerReadingRecord(Base, CompanyScopedMixin):
     ``sha256`` is the bytes' fingerprint, so "is this the same PDF I uploaded on
     Tuesday" is answerable without keeping the file. The bytes themselves are
     deliberately NOT kept here: what the seed needs is the structure, and the
-    original document lives wherever marketing keeps it.
+    original document lives wherever marketing keeps it. It is NULLABLE because
+    the library path has no bytes at enqueue time and the job fills it in.
+
+    **The row is created before the flyer is read, not after.** The read takes
+    tens of seconds and runs on the worker, so this row is the record of a read
+    that was ASKED for: ``processing`` from the moment the POST answers,
+    ``done`` or ``failed`` when the job says so. Existing rows read ``done``,
+    which is what actually happened to them under the old synchronous route.
+
+    ``reading_json`` on a ``processing`` row is the empty reading, so
+    ``page_count`` / ``code_count`` / ``headings`` answer 0 / 0 / [] without a
+    special case anywhere that reads them.
     """
 
     __tablename__ = "flyer_reading"
@@ -421,10 +432,25 @@ class FlyerReadingRecord(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     filename = Column(String(255), nullable=False)
     byte_size = Column(Integer, nullable=False)
-    sha256 = Column(String(64), nullable=False)
+    sha256 = Column(String(64), nullable=True)
     reading_json = Column(JSONB, nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = _created_at()
+
+    # ``processing`` / ``done`` / ``failed``, pinned by a CHECK in migration 359.
+    status = Column(
+        String(16), nullable=False, server_default=text("'done'"), default="done"
+    )
+    # Why it failed, in the words the request used to say. NULL on a row that
+    # has not failed.
+    error_message = Column(Text, nullable=True)
+    finished_at = Column(DateTime(timezone=False), nullable=True)
+    # The library file the read came from; NULL for an upload. No ForeignKey on
+    # purpose: a reading is derived working material and must never block or
+    # cascade an attachment delete.
+    source_attachment_id = Column(UUID(as_uuid=False), nullable=True)
+    # The RQ job, for an operator asking where a read went.
+    job_id = Column(String(64), nullable=True)
 
 
 class Selection(Base, CompanyScopedMixin):

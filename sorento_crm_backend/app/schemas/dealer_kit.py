@@ -470,6 +470,12 @@ class FlyerReadingSummary(BaseModel):
 
     The list screen only says which flyers have been read. Attaching a report to
     each row would run a match per row for a screen nobody reads them on.
+
+    ``status`` is on the SUMMARY and not only the detail because the list is the
+    surface a designer watches a read on: they post a flyer, the dialog closes,
+    and this row is where they learn it is still going, finished, or failed.
+    ``errorMessage`` travels beside it for the same reason - a Failed pill with
+    no words sends them back to upload the same broken file.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -480,6 +486,14 @@ class FlyerReadingSummary(BaseModel):
     page_count: int = Field(default=0, serialization_alias="pageCount")
     code_count: int = Field(default=0, serialization_alias="codeCount")
     uploaded_at: datetime = Field(serialization_alias="uploadedAt")
+    # ``processing`` / ``done`` / ``failed``. Defaulted so a row written before
+    # migration 359 (or by a test building the model by hand) reads as done,
+    # which is what happened to every one of them.
+    status: str = Field(default="done")
+    error_message: Optional[str] = Field(default=None, serialization_alias="errorMessage")
+    finished_at: Optional[datetime] = Field(
+        default=None, serialization_alias="finishedAt"
+    )
 
 
 class PageHeadingOut(BaseModel):

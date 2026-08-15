@@ -14,6 +14,10 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   pending_project_sales: 'bg-amber-100 text-amber-800',
   pending_purchasing: 'bg-amber-100 text-amber-800',
   updated: 'bg-amber-100 text-amber-800',
+  // Work that was accepted and is still running (a queued flyer read). Amber
+  // like the other "waiting on something" states, so a list reads at a glance
+  // as not-finished-yet rather than as an outcome.
+  processing: 'bg-amber-100 text-amber-800',
   responded: 'bg-indigo-100 text-indigo-800',
   approved: 'bg-blue-100 text-blue-800',
   rejected: 'bg-red-100 text-red-800',

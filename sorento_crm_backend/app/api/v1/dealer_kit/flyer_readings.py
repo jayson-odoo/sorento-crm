@@ -11,26 +11,33 @@ migration before a single existing role held it, and every designer who can
 build a page can already do everything this feature leads to. Both sources carry
 the same slug, because they do the same thing.
 
-**Extraction happens inside the request, but never on the event loop.** Measured
-on the real ``_SORENTO A3 FLYER 2025-2026_compressed.pdf`` (20.1 MB, 36 A3 pages,
-998 codes) on a quiet machine, ``extract_flyer`` alone takes 17 to 18 seconds,
-and the whole POST 40 to 60 seconds on a loaded one. This module used to claim
-"about a second", and that number was the entire justification for doing the
-work in the request - so it is written down here as measured, with what it was
-measured against, rather than as a recollection.
+**The request never reads the flyer. It answers 202 and queues the read.**
+Measured on the real ``_SORENTO A3 FLYER 2025-2026_compressed.pdf`` (20.1 MB, 36
+A3 pages, 998 codes) on a quiet machine, ``extract_flyer`` alone takes 17 to 18
+seconds, and the whole POST 40 to 60 seconds on a loaded one. This module used
+to claim "about a second", and that number was the entire justification for
+doing the work in the request - so it is written down here as measured, with
+what it was measured against, rather than as a recollection.
 
-The consequence of getting it wrong was not slowness. The upload handler is
-``async def``, so the read ran ON the loop and one flyer froze its whole worker:
-a ``GET /health`` issued during a read waited **57.5 seconds** on a single
-worker. Production runs four (``gunicorn --workers 4``), which is why it read as
-"the system is jamming" from the uploading desktop and as nothing at all from a
-phone on a different worker. The fix is ``run_in_threadpool`` - the heavy half
-now runs where FastAPI would have run a plain ``def`` handler anyway.
+Getting it wrong cost two separate things, in this order. First, the upload
+handler was ``async def`` and the read ran ON the loop, so one flyer froze its
+whole gunicorn worker: a ``GET /health`` issued during a read waited **57.5
+seconds** on a single worker. PR #164 fixed that with ``run_in_threadpool``, and
+deliberately left the duration alone. The duration then produced the second
+failure on its own: the captain's read came back as ``Gateway timeout (504)``,
+a proxy in front of the backend giving up while FastAPI was still extracting.
+Raising that timeout fixes one flyer and re-breaks on the next bigger one, and
+it keeps a designer staring at a disabled button for a minute either way.
 
-A queue is still the right end state and is deliberately NOT built here: it buys
-a pending row, a polling screen, a failure path and a worker restart per code
-change. Take that decision again when artwork rasterisation lands, on these
-numbers, not on a guess.
+So the read is now an RQ job on the ``flyer_read`` queue, following the shape
+the catalogue PDF export already uses. Both POSTs answer **202** with the
+reading in ``processing``, carrying the id the finished reading will have, so
+the Flyers list shows the row from the first second and the report link never
+changes. What still runs in the request is only what cannot wait: the ceiling as
+the bytes arrive, the refusals that need nothing but the attachment row, staging
+an upload's bytes, and the INSERT. Everything the bytes alone can reveal lands
+on the row as ``failed`` with the reason, which the list and the review screen
+both show.
 
 **The report is never stored.** It is derived from the stored reading against
 the master, on every read. See ``flyer_reading_service``.
@@ -67,6 +74,7 @@ from app.services.dealer_kit import dimension_apply_service
 from app.services.dealer_kit import flyer_reading_service as svc
 from app.services.dealer_kit import flyer_seed_service as seed_service
 from app.services.dealer_kit import page_service
+from app.services.error_handler import AppException
 
 router = APIRouter()
 
@@ -179,6 +187,17 @@ def _report_out(report) -> MatchReportOut:
 
 
 def _summary(record) -> FlyerReadingSummary:
+    """The ONE builder for a row, list and detail alike.
+
+    Which is why the three lifecycle fields go in here and nowhere else: a
+    column that reaches only one of the two builders is a column the screen
+    shows on one page and not the other, and this repository has paid for that
+    twice already (``get_user``, ``system_settings``).
+
+    ``status`` falls back to ``done`` for a row read out of a database that has
+    not taken migration 359 yet. Those rows were all read synchronously and
+    successfully, so it is what happened to them rather than a guess.
+    """
     return FlyerReadingSummary(
         id=record.id,
         filename=record.filename,
@@ -186,6 +205,9 @@ def _summary(record) -> FlyerReadingSummary:
         page_count=svc.page_count(record),
         code_count=svc.code_count(record),
         uploaded_at=record.created_at,
+        status=getattr(record, "status", None) or svc.ReadingStatus.DONE,
+        error_message=getattr(record, "error_message", None),
+        finished_at=getattr(record, "finished_at", None),
     )
 
 
@@ -217,33 +239,10 @@ _PROMOTION_ID = Query(
 )
 
 
-def _create_and_detail(
-    db: Session,
-    *,
-    filename: Optional[str],
-    data: bytes,
-    user_id: Optional[str],
-    promotion_id: Optional[UUID],
-) -> FlyerReadingOut:
-    """Store a reading and answer with its report, as ONE unit of blocking work.
-
-    Both halves and not just the extraction, deliberately. The report recompute
-    inside ``_detail`` is a further 0.9 seconds against the real flyer's 998
-    codes, and a handler that moved the extraction off the loop and then ran the
-    report on it would have moved the freeze rather than removed it.
-
-    Every second of this is synchronous: PyMuPDF for the reading, boto for the
-    banners, psycopg for the row. Nothing in here is awaitable, which is exactly
-    why it belongs in a thread.
-    """
-    record = svc.create_reading(db, filename=filename, data=data, user_id=user_id)
-    return _detail(db, record, promotion_id)
-
-
 @router.post(
     "/flyer-readings",
-    response_model=FlyerReadingOut,
-    status_code=status.HTTP_201_CREATED,
+    response_model=FlyerReadingSummary,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def upload_flyer_reading(
     file: UploadFile = File(...),
@@ -251,70 +250,110 @@ async def upload_flyer_reading(
     db: Session = Depends(get_db),
     user: dict = Depends(_EDIT),
 ):
-    """A flyer off the designer's laptop.
+    """A flyer off the designer's laptop, queued for the worker.
+
+    **202 and a summary, not 201 and a report.** The report does not exist yet:
+    the read is 18 seconds of PyMuPDF on the real flyer and it happens on the
+    worker. What comes back is the row, in ``processing``, carrying the id the
+    finished reading will have - so the dialog closes at once, the Flyers list
+    shows the row immediately, and the link to the report is the same URL from
+    the first second to the last.
 
     Still ``async def``, and that is the one thing about this route that must not
     change: ``_read_within_limit`` needs ``await file.read(...)`` to refuse an
     oversized upload as the bytes arrive rather than after they are all in
-    memory. What changed is everything after that line - it now goes to
-    ``run_in_threadpool``, which is what FastAPI does for a plain ``def`` handler
-    and what this half of the route was never getting.
+    memory. Everything after it - hashing 20 MB, the PUT that stages the bytes
+    where the worker can reach them, the INSERT - is synchronous, so it goes to
+    ``run_in_threadpool`` exactly as the extraction used to (AC-K1).
 
-    The behaviour a caller sees is untouched: same 201, same body, same errors,
-    same wait. What changed is that everybody ELSE keeps being served while it
-    happens. See the module docstring for the 57.5 second measurement that made
-    this necessary.
+    ``promotionId`` is still accepted and still validated at the edge, even
+    though there is no report on this response to compute against: the frontend
+    sends it with the upload, and a malformed uuid reaching a WHERE clause is
+    how this feature produced a 500 once. The report is asked for on the GET.
     """
     data = await _read_within_limit(file)
-    return await run_in_threadpool(
-        _create_and_detail,
+    record = await run_in_threadpool(
+        svc.enqueue_reading_from_upload,
         db,
         filename=file.filename,
         data=data,
         user_id=_user_id(user),
-        promotion_id=promotion_id,
     )
+    return _summary(record)
 
 
 @router.post(
     "/flyer-readings/from-attachment",
-    response_model=FlyerReadingOut,
-    status_code=status.HTTP_201_CREATED,
+    response_model=FlyerReadingSummary,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 def read_flyer_from_attachment(
     payload: FlyerReadingFromAttachmentIn,
     db: Session = Depends(get_db),
     user: dict = Depends(_EDIT),
 ):
-    """A flyer the system is already holding.
+    """A flyer the system is already holding, queued for the worker.
 
     Marketing files the season's flyer in Resource Management long before
     anybody thinks about the Kit, so the alternative to this route is a designer
     downloading a 20 MB PDF out of the CRM to upload it straight back in.
 
-    Plain ``def``, so FastAPI runs the whole thing in a thread: it does a storage
-    download and then the same extraction as the upload, and must no more sit on
-    the loop than that one does.
+    **202, before a single byte is fetched.** This path touches storage not at
+    all: everything it refuses, it refuses on the attachment ROW - out of scope
+    or trashed is a 404, a file the library already says is not a PDF is a 400,
+    a recorded size over the ceiling is a 413, a row naming no stored object is
+    a 422. The order matters and lives in the service; see
+    ``flyer_reading_service.assert_attachment_readable``.
+
+    Plain ``def``, so FastAPI runs it in a thread. It is metadata and one INSERT
+    now rather than a download and an extraction, but the rule that no handler
+    here does synchronous work on the loop does not change with the workload.
 
     ``dealer_kit.page.edit``, declared the same way as the upload, so a caller
     without it gets the same 403 naming the same slug. Nothing about the source
     of the bytes changes who may read a flyer.
-
-    Everything before ``create_reading`` is in the service, in an order that
-    matters (scope, then type, then size, THEN bytes) - see
-    ``flyer_reading_service.create_reading_from_attachment``. From
-    ``create_reading`` on, the two sources are one code path, which is what makes
-    "indistinguishable once created" true rather than aspirational.
     """
-    record = svc.create_reading_from_attachment(
+    record = svc.enqueue_reading_from_attachment(
         db, attachment_id=str(payload.attachment_id), user_id=_user_id(user)
     )
-    return _detail(db, record, payload.promotion_id)
+    return _summary(record)
+
+
+def _assert_read(record) -> None:
+    """Refuse to build anything out of a flyer that has not been read yet.
+
+    409 rather than 404 or 422: the reading EXISTS and the request is
+    well-formed, it is the state that is wrong, and it will stop being wrong on
+    its own in a few seconds. The two states get different words because the
+    next action differs - one is "wait", the other is "read a different file".
+
+    The screens do not offer either action before a reading is done, so nothing
+    in the UI can reach this. That is exactly why it is here: a stale tab, a
+    retried request or a script are all outside what the UI can promise, and
+    seeding a brochure from an empty reading would produce a catalogue with no
+    products and no error to explain it.
+    """
+    reading_status = getattr(record, "status", None) or svc.ReadingStatus.DONE
+    if reading_status == svc.ReadingStatus.DONE:
+        return
+    if reading_status == svc.ReadingStatus.PROCESSING:
+        message = "That flyer is still being read. Try again once it says Done."
+    else:
+        message = (
+            "That flyer could not be read, so there is nothing to build from it. "
+            + (record.error_message or "Read the flyer again, or try another file.")
+        )
+    raise AppException(status_code=409, message=message, code="FLYER_NOT_READ_YET")
 
 
 @router.get("/flyer-readings", response_model=list[FlyerReadingSummary])
 def list_flyer_readings(db: Session = Depends(get_db), _user: dict = Depends(_VIEW)):
-    """Which flyers have been read, newest first. No reports: see the schema."""
+    """Which flyers have been read, newest first. No reports: see the schema.
+
+    Every row carries ``status``, ``errorMessage`` and ``finishedAt``, because
+    this is the screen a designer watches a read on. The frontend polls this
+    while any row is Processing and stops when none is.
+    """
     return [_summary(record) for record in svc.list_readings(db)]
 
 
@@ -330,6 +369,12 @@ def get_flyer_reading(
     ``promotionId`` is asked here rather than fixed at upload because "what does
     this promotion not carry" is a question about the report, not a property of
     the file. A reviewer tries it against two promotions without re-uploading.
+
+    Answers on ANY status, deliberately. The row exists from the moment the POST
+    returns, so the review screen has to be able to open it before the job has
+    run - and a reading that has not happened yet has an empty reading, which
+    matches nothing and reports nothing without a single special case here. The
+    screen reads ``status`` and shows its waiting or failed state instead.
     """
     return _detail(db, svc.get_reading(db, reading_id), promotion_id)
 
@@ -363,6 +408,7 @@ def seed_from_flyer_reading(
     stamp an owned row at all, so it fails closed rather than guessing.
     """
     record = svc.get_reading(db, reading_id)
+    _assert_read(record)
     result = seed_service.seed(
         db,
         record,
@@ -437,6 +483,7 @@ def apply_flyer_dimensions(
     success readable.
     """
     record = svc.get_reading(db, reading_id)
+    _assert_read(record)
     result = dimension_apply_service.apply_dimensions(
         db,
         record,
