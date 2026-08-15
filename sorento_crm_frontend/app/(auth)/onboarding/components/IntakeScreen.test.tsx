@@ -213,6 +213,9 @@ describe('IntakeScreen', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Add a person/ }));
     const nameInputs = await screen.findAllByLabelText('Name, row 1');
     fireEvent.change(nameInputs[0], { target: { value: 'Typed Person' } });
+    // The grid commits a text edit when the field is left, so leaving it is
+    // part of typing a name, exactly as it is for a real requester.
+    fireEvent.blur(nameInputs[0]);
 
     const submit = screen.getByRole('button', { name: /Submit for review/ });
     await waitFor(() => expect(submit).not.toBeDisabled());

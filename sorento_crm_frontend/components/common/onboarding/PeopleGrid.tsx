@@ -21,7 +21,7 @@
  * `onPatchPerson`, so there is one source of truth for what an edit means.
  */
 
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   getCoreRowModel,
   useReactTable,
@@ -65,6 +65,78 @@ export interface PeopleGridProps {
 /** The note field each mode writes. Intake writes the requester's, review the reviewer's. */
 function noteField(mode: PeopleGridMode): 'requester_note' | 'reviewer_note' {
   return mode === 'review' ? 'reviewer_note' : 'requester_note';
+}
+
+type BufferedInputProps = Omit<
+  ComponentProps<typeof Input>,
+  'value' | 'onChange' | 'defaultValue'
+> & {
+  value: string;
+  onCommit: (next: string) => void;
+};
+
+/**
+ * A text cell that keeps the typing local and tells the parent once, on blur
+ * (or Enter).
+ *
+ * The parent owns the row, so a patch per keystroke means the whole grid
+ * re-renders mid-word - and on the review screen it also means a PUT per
+ * character, with the refetch that follows racing whatever is being typed next.
+ * Buffering makes an edit one event: the field the user actually finished.
+ *
+ * A value that changes from outside (a refetch, a template pre-fill) still has
+ * to land, so it is copied into the buffer whenever the field is NOT focused.
+ * While it IS focused, the typing wins - nothing may overwrite a half-typed name.
+ */
+function BufferedInput({
+  value,
+  onCommit,
+  onFocus,
+  onBlur,
+  onKeyDown,
+  ...rest
+}: BufferedInputProps) {
+  const [draft, setDraft] = useState(value);
+  const focusedRef = useRef(false);
+  // What the parent last heard from this field, so Enter-then-blur commits once.
+  const committedRef = useRef(value);
+
+  useEffect(() => {
+    committedRef.current = value;
+    if (!focusedRef.current) setDraft(value);
+  }, [value]);
+
+  const commit = (next: string) => {
+    if (next === committedRef.current) return;
+    committedRef.current = next;
+    onCommit(next);
+  };
+
+  return (
+    <Input
+      {...rest}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={(e) => {
+        focusedRef.current = true;
+        onFocus?.(e);
+      }}
+      onBlur={(e) => {
+        focusedRef.current = false;
+        commit(e.target.value);
+        onBlur?.(e);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          // Enter inside a grid cell means "I am done with this field", not
+          // "submit the page".
+          e.preventDefault();
+          commit(e.currentTarget.value);
+        }
+        onKeyDown?.(e);
+      }}
+    />
+  );
 }
 
 function TemplateSelect({
@@ -170,10 +242,20 @@ export function PeopleGrid({
   const editable = mode !== 'readonly' && !locked;
   const isReview = mode === 'review';
   const note = noteField(mode);
+  const canRemove = Boolean(onRemovePerson);
 
-  const patch = (personId: string, next: OnboardingPersonPatch) => {
-    onPatchPerson?.(personId, next);
-  };
+  // Callers pass these inline (`onPatchPerson={(id, p) => mutate(...)}`), so
+  // their identity changes on every parent render. Reading them through a ref
+  // keeps the column definitions - and therefore every cell renderer - stable,
+  // which is what stops a cell being torn down and remounted while it is being
+  // typed into. A shared grid has to be robust to inline handlers rather than
+  // asking every caller to memoise.
+  const handlersRef = useRef({ onPatchPerson, onRemovePerson, onApprovePerson, onRejectPerson });
+  handlersRef.current = { onPatchPerson, onRemovePerson, onApprovePerson, onRejectPerson };
+
+  const patch = useCallback((personId: string, next: OnboardingPersonPatch) => {
+    handlersRef.current.onPatchPerson?.(personId, next);
+  }, []);
 
   const columns = useMemo<ColumnDef<OnboardingPerson>[]>(() => {
     const base: ColumnDef<OnboardingPerson>[] = [
@@ -199,11 +281,11 @@ export function PeopleGrid({
         meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-28" /> },
         cell: ({ row }) =>
           editable ? (
-            <Input
+            <BufferedInput
               aria-label={`Name, row ${row.original.row_number}`}
               className="h-8"
               value={row.original.full_name}
-              onChange={(e) => patch(row.original.id, { full_name: e.target.value })}
+              onCommit={(next) => patch(row.original.id, { full_name: next })}
             />
           ) : (
             <span className="truncate block" title={row.original.full_name}>
@@ -220,11 +302,11 @@ export function PeopleGrid({
         meta: { headerTitle: 'Nickname', skeleton: <Skeleton className="h-4 w-16" /> },
         cell: ({ row }) =>
           editable ? (
-            <Input
+            <BufferedInput
               aria-label={`Nickname, row ${row.original.row_number}`}
               className="h-8"
               value={row.original.nick_name ?? ''}
-              onChange={(e) => patch(row.original.id, { nick_name: e.target.value })}
+              onCommit={(next) => patch(row.original.id, { nick_name: next })}
             />
           ) : (
             <span className="truncate block">{row.original.nick_name ?? '—'}</span>
@@ -239,11 +321,11 @@ export function PeopleGrid({
         meta: { headerTitle: 'Phone', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) =>
           editable ? (
-            <Input
+            <BufferedInput
               aria-label={`Phone, row ${row.original.row_number}`}
               className="h-8"
               value={row.original.phone_raw ?? ''}
-              onChange={(e) => patch(row.original.id, { phone_raw: e.target.value })}
+              onCommit={(next) => patch(row.original.id, { phone_raw: next })}
             />
           ) : (
             <span className="truncate block">{row.original.phone_raw ?? '—'}</span>
@@ -258,11 +340,11 @@ export function PeopleGrid({
         meta: { headerTitle: 'Email', skeleton: <Skeleton className="h-4 w-32" /> },
         cell: ({ row }) =>
           editable ? (
-            <Input
+            <BufferedInput
               aria-label={`Email, row ${row.original.row_number}`}
               className="h-8"
               value={row.original.email_raw ?? ''}
-              onChange={(e) => patch(row.original.id, { email_raw: e.target.value })}
+              onCommit={(next) => patch(row.original.id, { email_raw: next })}
             />
           ) : (
             <span className="truncate block" title={row.original.email_raw ?? undefined}>
@@ -348,11 +430,11 @@ export function PeopleGrid({
         },
         cell: ({ row }) =>
           editable ? (
-            <Input
+            <BufferedInput
               aria-label={`Note, row ${row.original.row_number}`}
               className="h-8"
               value={row.original[note] ?? ''}
-              onChange={(e) => patch(row.original.id, { [note]: e.target.value })}
+              onCommit={(next) => patch(row.original.id, { [note]: next })}
             />
           ) : (
             <span className="truncate block" title={row.original[note] ?? undefined}>
@@ -406,7 +488,7 @@ export function PeopleGrid({
                     size="sm"
                     variant="outline"
                     className="h-7 px-2 text-xs"
-                    onClick={() => onApprovePerson?.(row.original.id)}
+                    onClick={() => handlersRef.current.onApprovePerson?.(row.original.id)}
                   >
                     Keep
                   </Button>
@@ -414,7 +496,7 @@ export function PeopleGrid({
                     size="sm"
                     variant="outline"
                     className="h-7 px-2 text-xs"
-                    onClick={() => onRejectPerson?.(row.original.id)}
+                    onClick={() => handlersRef.current.onRejectPerson?.(row.original.id)}
                   >
                     Reject
                   </Button>
@@ -424,7 +506,7 @@ export function PeopleGrid({
           ),
         },
       );
-    } else if (editable && onRemovePerson) {
+    } else if (editable && canRemove) {
       base.push({
         id: 'actions',
         header: '',
@@ -436,7 +518,7 @@ export function PeopleGrid({
             size="sm"
             variant="outline"
             className="h-7 px-2 text-xs"
-            onClick={() => onRemovePerson(row.original.id)}
+            onClick={() => handlersRef.current.onRemovePerson?.(row.original.id)}
           >
             Remove
           </Button>
@@ -445,10 +527,13 @@ export function PeopleGrid({
     }
 
     return base;
-    // `templates` and the handlers are stable per render of the parent; the
-    // deps are listed rather than trimmed so a changed template list is picked
-    // up by the picker.
-  }, [editable, isReview, mode, note, templates, onApprovePerson, onRejectPerson, onRemovePerson]);
+    // Deliberately no handler identities in here: they come from the ref above,
+    // so the columns only change when the SHAPE of the grid does. Recomputing
+    // them per keystroke gave every cell a new renderer identity, which React
+    // treats as a different component - the cell remounted and the caret was
+    // lost after the first character. `canRemove` is a boolean rather than the
+    // handler for the same reason.
+  }, [editable, isReview, mode, note, templates, canRemove, patch]);
 
   const table = useReactTable({
     columns,
@@ -494,11 +579,11 @@ export function PeopleGrid({
                     {person.section_label ?? 'No section'}
                   </p>
                   {editable ? (
-                    <Input
+                    <BufferedInput
                       aria-label={`Name, row ${person.row_number}`}
                       className="h-8 mt-1"
                       value={person.full_name}
-                      onChange={(e) => patch(person.id, { full_name: e.target.value })}
+                      onCommit={(next) => patch(person.id, { full_name: next })}
                     />
                   ) : (
                     <p className="font-medium break-words">{person.full_name}</p>
@@ -509,26 +594,26 @@ export function PeopleGrid({
 
               {editable ? (
                 <div className="grid grid-cols-1 gap-2">
-                  <Input
+                  <BufferedInput
                     aria-label={`Nickname, row ${person.row_number}`}
                     className="h-8"
                     placeholder="Nickname"
                     value={person.nick_name ?? ''}
-                    onChange={(e) => patch(person.id, { nick_name: e.target.value })}
+                    onCommit={(next) => patch(person.id, { nick_name: next })}
                   />
-                  <Input
+                  <BufferedInput
                     aria-label={`Phone, row ${person.row_number}`}
                     className="h-8"
                     placeholder="Phone"
                     value={person.phone_raw ?? ''}
-                    onChange={(e) => patch(person.id, { phone_raw: e.target.value })}
+                    onCommit={(next) => patch(person.id, { phone_raw: next })}
                   />
-                  <Input
+                  <BufferedInput
                     aria-label={`Email, row ${person.row_number}`}
                     className="h-8"
                     placeholder="Email"
                     value={person.email_raw ?? ''}
-                    onChange={(e) => patch(person.id, { email_raw: e.target.value })}
+                    onCommit={(next) => patch(person.id, { email_raw: next })}
                   />
                 </div>
               ) : (
@@ -584,7 +669,7 @@ export function PeopleGrid({
                       size="sm"
                       variant="outline"
                       className="h-7 px-2 text-xs"
-                      onClick={() => onApprovePerson?.(person.id)}
+                      onClick={() => handlersRef.current.onApprovePerson?.(person.id)}
                     >
                       Keep
                     </Button>
@@ -592,7 +677,7 @@ export function PeopleGrid({
                       size="sm"
                       variant="outline"
                       className="h-7 px-2 text-xs"
-                      onClick={() => onRejectPerson?.(person.id)}
+                      onClick={() => handlersRef.current.onRejectPerson?.(person.id)}
                     >
                       Reject
                     </Button>

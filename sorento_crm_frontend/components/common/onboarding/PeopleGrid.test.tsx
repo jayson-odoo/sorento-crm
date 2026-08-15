@@ -104,7 +104,7 @@ describe('PeopleGrid', () => {
     expect(grid.getByLabelText('Phone, row 1')).toHaveValue('012-3456781');
   });
 
-  it('raises a patch when a field is edited', () => {
+  it('raises a patch when a field is edited, once the field is left', () => {
     const onPatch = vi.fn();
     render(
       <PeopleGrid
@@ -114,10 +114,102 @@ describe('PeopleGrid', () => {
         onPatchPerson={onPatch}
       />,
     );
-    fireEvent.change(within(desktop()).getByLabelText('Email, row 1'), {
-      target: { value: 'new@mocha.com.my' },
-    });
+    const email = within(desktop()).getByLabelText('Email, row 1');
+    fireEvent.change(email, { target: { value: 'new@mocha.com.my' } });
+    // An edit is one event, not one per character: the parent hears about it
+    // when she moves off the field.
+    fireEvent.blur(email);
     expect(onPatch).toHaveBeenCalledWith('p1', { email_raw: 'new@mocha.com.my' });
+  });
+
+  it('keeps the caret in the cell while a name is typed, and patches once', () => {
+    // The bug this pins: the columns were rebuilt whenever a handler identity
+    // changed, which is every keystroke for a parent that owns the rows. New
+    // cell renderers meant React remounted the cell, so the input lost focus
+    // after the first character and a name could not be typed at all.
+    const onPatch = vi.fn();
+    const { rerender } = render(
+      <PeopleGrid
+        mode="intake"
+        people={[person({ full_name: '' })]}
+        templates={TEMPLATES}
+        // Inline, like both real callers: the grid has to survive it.
+        onPatchPerson={(id, patch) => onPatch(id, patch)}
+      />,
+    );
+
+    const name = within(desktop()).getByLabelText('Name, row 1') as HTMLInputElement;
+    name.focus();
+    expect(document.activeElement).toBe(name);
+
+    let typed = '';
+    for (const char of 'Aisyah') {
+      typed += char;
+      fireEvent.change(name, { target: { value: typed } });
+      // The controlled parent re-renders on every keystroke it hears about; do
+      // the same here so a remount would show up.
+      rerender(
+        <PeopleGrid
+          mode="intake"
+          people={[person({ full_name: '' })]}
+          templates={TEMPLATES}
+          onPatchPerson={(id, patch) => onPatch(id, patch)}
+        />,
+      );
+      expect(document.activeElement).toBe(name);
+      expect(name.value).toBe(typed);
+    }
+
+    // Nothing was sent while she was still typing.
+    expect(onPatch).not.toHaveBeenCalled();
+
+    fireEvent.blur(name);
+    expect(onPatch).toHaveBeenCalledTimes(1);
+    expect(onPatch).toHaveBeenCalledWith('p1', { full_name: 'Aisyah' });
+  });
+
+  it('takes an update from outside into a field nobody is typing into', () => {
+    const { rerender } = render(
+      <PeopleGrid
+        mode="review"
+        people={[person({ full_name: 'Nurul Aisyah' })]}
+        templates={TEMPLATES}
+        onPatchPerson={vi.fn()}
+      />,
+    );
+    expect(within(desktop()).getByLabelText('Name, row 1')).toHaveValue('Nurul Aisyah');
+
+    // A refetch (or another reviewer's edit) landing on an idle field must win.
+    rerender(
+      <PeopleGrid
+        mode="review"
+        people={[person({ full_name: 'Nurul Aisyah binti Rahman' })]}
+        templates={TEMPLATES}
+        onPatchPerson={vi.fn()}
+      />,
+    );
+    expect(within(desktop()).getByLabelText('Name, row 1')).toHaveValue(
+      'Nurul Aisyah binti Rahman',
+    );
+  });
+
+  it('commits on Enter without waiting for the field to be left', () => {
+    const onPatch = vi.fn();
+    render(
+      <PeopleGrid
+        mode="intake"
+        people={[person()]}
+        templates={TEMPLATES}
+        onPatchPerson={onPatch}
+      />,
+    );
+    const nickname = within(desktop()).getByLabelText('Nickname, row 1');
+    fireEvent.change(nickname, { target: { value: 'Ais' } });
+    fireEvent.keyDown(nickname, { key: 'Enter' });
+    expect(onPatch).toHaveBeenCalledWith('p1', { nick_name: 'Ais' });
+    // And leaving the field afterwards does not send the same edit twice.
+    fireEvent.blur(nickname);
+    expect(onPatch).toHaveBeenCalledTimes(1);
   });
 
   it('pre-fills the three needs from the template, without locking them', () => {
