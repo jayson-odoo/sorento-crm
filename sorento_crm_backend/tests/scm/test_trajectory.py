@@ -101,12 +101,14 @@ def test_the_run_reads_monthly_series_per_product_and_side(db_world):
     entry = out["series"].get(f"{db_world['product_id']}:project")
 
     assert entry is not None
-    # 40 units two months ago + 60 one month ago inside the 12-month project window
-    assert entry["recent_qty"] == 100
+    # 40 units two months ago, then 60 + 5 + 3 one month ago, inside the 12-month project
+    # window. The last two are the unattributed orders the fixture also carries (one with
+    # only a debtor code, one naming nobody): they are demand like any other and count.
+    assert entry["recent_qty"] == 108
     assert entry["verdict"] in ("rising", "holding", "falling", "quiet", "no_history")
     months = {m["month"]: m["qty"] for m in entry["months"]}
     assert months.get("2026-06") == 40
-    assert months.get("2026-07") == 60
+    assert months.get("2026-07") == 68
 
 
 def test_the_popup_names_who_bought_it(db_world):
@@ -130,6 +132,89 @@ def test_who_bought_it_carries_the_date_of_their_last_order(db_world):
     customer = next(c for c in entry["customers"] if c["customer_name"] == f"{MARKER} Vivo Homes")
     # Two orders on record for this customer: 2026-06-05 and 2026-07-12. The later one wins.
     assert customer["last_order_date"] == "2026-07-12"
+
+
+def test_an_order_with_no_customer_is_named_by_its_debtor_code(db_world):
+    """AC-4.3: "Unnamed customer" hid an attribution that was sitting on the document.
+
+    2,546 of the 2,548 orders the outstanding book created had no `customer_id` and a
+    debtor code on the face of the order. `Debtor 300-R009` is a name the buyer can act on.
+    """
+    from app.services.scm.trajectory_service import trajectory_for_run
+
+    out = trajectory_for_run(db_world["db"], db_world["run_id"], as_of=AS_OF)
+    entry = out["series"][f"{db_world['product_id']}:project"]
+    names = {c["customer_name"] for c in entry["customers"]}
+
+    assert f"Debtor {db_world['debtor_code']}" in names
+    assert "Unnamed customer" not in names
+
+
+def test_an_order_naming_nobody_at_all_says_so(db_world):
+    """The honest end of the fallback: a fact about the order, not missing data."""
+    from app.services.scm.trajectory_service import trajectory_for_run
+
+    out = trajectory_for_run(db_world["db"], db_world["run_id"], as_of=AS_OF)
+    entry = out["series"][f"{db_world['product_id']}:project"]
+
+    assert "No customer on order" in {c["customer_name"] for c in entry["customers"]}
+
+
+def test_every_customer_row_carries_the_key_its_orders_are_drilled_by(db_world):
+    """A row the reader can see has to be a row the reader can open (AC-4.1)."""
+    from app.services.scm.trajectory_service import trajectory_for_run
+
+    out = trajectory_for_run(db_world["db"], db_world["run_id"], as_of=AS_OF)
+    entry = out["series"][f"{db_world['product_id']}:project"]
+    keys = {c["customer_name"]: c["customer_key"] for c in entry["customers"]}
+
+    assert keys[f"{MARKER} Vivo Homes"] == db_world["customer_id"]
+    assert keys[f"Debtor {db_world['debtor_code']}"] == f"debtor:{db_world['debtor_code']}"
+    assert keys["No customer on order"] == "none"
+
+
+# --------------------------------------------------------------------------- #
+# the orders behind one of those customers (AC-4.1)
+# --------------------------------------------------------------------------- #
+
+def _orders(db_world, customer_key: str, **kw):
+    from app.services.scm.trajectory_service import orders_for_customer
+
+    return orders_for_customer(
+        db_world["db"], product_id=db_world["product_id"], segment="project",
+        customer_key=customer_key, as_of=AS_OF, **kw,
+    )
+
+
+def test_the_drill_lists_a_named_customers_orders_newest_first(db_world):
+    """> "sells RM 0.94?" - the price is on the order, so the order is what is shown."""
+    out = _orders(db_world, db_world["customer_id"])
+
+    assert [l["so_number"] for l in out["lines"]] == db_world["vivo_orders"]
+    assert out["lines"][0]["order_date"] == "2026-07-12"
+    assert out["lines"][0]["qty"] == 60
+    assert out["lines"][0]["unit_price"] == 0.94
+    assert out["total"] == 2 and out["shown"] == 2
+
+
+def test_the_drill_works_for_an_order_that_only_carries_a_debtor_code(db_world):
+    out = _orders(db_world, f"debtor:{db_world['debtor_code']}")
+
+    assert [l["so_number"] for l in out["lines"]] == [db_world["debtor_order"]]
+
+
+def test_the_drill_works_for_an_order_that_names_nobody(db_world):
+    out = _orders(db_world, "none")
+
+    assert [l["so_number"] for l in out["lines"]] == [db_world["anon_order"]]
+    assert out["lines"][0]["unit_price"] is None, \
+        "a line with no price says nothing, never 0.00"
+
+
+def test_the_cap_is_reported_rather_than_silent(db_world):
+    out = _orders(db_world, db_world["customer_id"], limit=1)
+
+    assert out["shown"] == 1 and out["total"] == 2
 
 
 def test_the_windows_come_from_the_policy_not_a_constant(db_world):
@@ -174,19 +259,28 @@ def db_world():
             "VALUES (:id, :c, :n, true)"),
             {"id": cust_id, "c": unique_code("C")[:20], "n": f"{MARKER} Vivo Homes"})
 
-        def order(day: date, qty: float):
+        def order(day: date, qty: float, *, customer=cust_id, debtor=None, price=None):
             oid = _u()
+            number = f"{MARKER}-{oid[:8]}"
             db.execute(text(
-                "INSERT INTO sales_orders (id, so_number, status, order_date, customer_id) "
-                "VALUES (:id, :n, 'closed', :d, :cu)"),
-                {"id": oid, "n": f"{MARKER}-{oid[:8]}", "d": day, "cu": cust_id})
+                "INSERT INTO sales_orders (id, so_number, status, order_date, customer_id, "
+                "debtor_code) VALUES (:id, :n, 'closed', :d, :cu, :dc)"),
+                {"id": oid, "n": number, "d": day, "cu": customer, "dc": debtor})
             db.execute(text(
                 "INSERT INTO sales_order_lines (id, sales_order_id, product_id, warehouse_id, "
-                "qty_ordered, qty_delivered, line_status) VALUES (:id, :so, :p, :w, :q, :q, 'closed')"),
-                {"id": _u(), "so": oid, "p": product.id, "w": wid, "q": qty})
+                "qty_ordered, qty_delivered, unit_price, line_status) "
+                "VALUES (:id, :so, :p, :w, :q, :q, :up, 'closed')"),
+                {"id": _u(), "so": oid, "p": product.id, "w": wid, "q": qty, "up": price})
+            return number
 
-        order(date(2026, 6, 5), 40)
-        order(date(2026, 7, 12), 60)
+        first = order(date(2026, 6, 5), 40, price=0.90)
+        second = order(date(2026, 7, 12), 60, price=0.94)
+        # The two orders the plan screen could not name before: one carries the debtor code
+        # the document printed and no customer row, the other names neither.
+        debtor_code = unique_code("D")[:20]
+        debtor_order = order(date(2026, 7, 2), 5, customer=None, debtor=debtor_code,
+                             price=1.10)
+        anon_order = order(date(2026, 7, 3), 3, customer=None)
         db.flush()
 
         run_id = _u()
@@ -200,4 +294,12 @@ def db_world():
             {"id": _u(), "r": run_id, "p": product.id, "w": wid})
         db.flush()
 
-        yield {"db": db, "run_id": run_id, "product_id": str(product.id)}
+        yield {
+            "db": db, "run_id": run_id, "product_id": str(product.id),
+            "customer_id": cust_id,
+            "debtor_code": debtor_code,
+            # Newest first, which is the order the drill returns them in.
+            "vivo_orders": [second, first],
+            "debtor_order": debtor_order,
+            "anon_order": anon_order,
+        }

@@ -416,6 +416,38 @@ def get_trajectory(
     return trajectory_service.trajectory_for_run(db, run_id)
 
 
+@router.get("/reorder-runs/{run_id}/customer-orders")
+def get_customer_orders(
+    run_id: str,
+    product_id: str = Query(...),
+    segment: str = Query(...),
+    customer_key: str = Query(...),
+    limit: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The sales orders behind ONE customer on the trend popover (AC-4.1).
+
+    > "sells RM 0.94?"
+
+    The trend names who bought the product and how much; this is the evidence under one of
+    those names - order, date, quantity, unit price - over the same 24-month window, newest
+    first. `customer_key` is the customer id, `debtor:<code>` for an order whose debtor code
+    resolves to nobody we hold, or `none` for an order that names neither, so every row of
+    the trend can be opened rather than only the named ones.
+    """
+    # The two sides a warehouse can carry, and the value an unsegmented one defaults to
+    # (`trajectory_service`). Rejected rather than passed through, so a typo comes back as
+    # a bad request instead of an empty list that reads as "this customer bought nothing".
+    if segment not in ("project", "dealer"):
+        raise AppException(status_code=422, message="Unknown segment.")
+    svc.assert_run_visible(db, run_id)
+    return trajectory_service.orders_for_customer(
+        db, product_id=product_id, segment=segment,
+        customer_key=customer_key, limit=limit,
+    )
+
+
 @router.get("/reorder-runs/{run_id}/po-book")
 def get_po_book(
     run_id: str,
