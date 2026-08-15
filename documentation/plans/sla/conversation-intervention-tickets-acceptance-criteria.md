@@ -271,6 +271,51 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
   carry the same "Respond by" line for the current clock. Test fixture: Sat 09:25 MYT
   request -> Mon 09:00 MYT clock start (crosses a weekend, not just a night).
 
+  **As built (2026-08-15).** One builder, `sla_service.sla_clock_line(tracking)` +
+  `append_clock_line(body, tracking)`, feeding the single `body` string that already
+  goes to in-app, email AND `build_sla_whatsapp_data` - so the three channels cannot
+  disagree. Out-of-hours is detected as "the clock start was DEFERRED", i.e.
+  `current_tier_started_at - initiated_at > 1s` (`_working_clock_start` pushes the start
+  to the next working-window open; a sub-second gap is just the two stamps being taken
+  microseconds apart on an in-hours create, not a deferral). Both times render through
+  `format_myt`, which is naive-UTC -> `MALAYSIA_TZ` -> `"%a <day> %b %H:%M MYT"`
+  (deliberately NOT `form_sla_service._fmt_due`, which carries no weekday and no zone).
+  Exact rendered bodies:
+
+  - out of hours (Sat 15 Aug 2026 09:25 MYT request, clock Mon 17 Aug 09:00 MYT,
+    due Mon 17 Aug 10:00 MYT):
+
+        Aisyah Rahman has been assigned to you.
+
+        Clock starts Mon 17 Aug 09:00 MYT · respond by Mon 17 Aug 10:00 MYT
+
+        Open: https://fe-sorento.foundryx.my/?ticket=<id>
+
+  - in hours (Fri 14 Aug 2026 14:00 MYT request, due 15:00 MYT):
+
+        Aisyah Rahman has been assigned to you.
+
+        Respond by Fri 14 Aug 15:00 MYT
+
+        Open: https://fe-sorento.foundryx.my/?ticket=<id>
+
+  The MIDDLE DOT is the real character (U+00B7): `sanitize_param` only collapses
+  newlines/tabs/space-runs for the WhatsApp template lane, so punctuation survives -
+  verified by test. Applied to assignment-on-create, reassign/takeover, the coverage
+  copy (a coverer decides whether to take over from the deadline) and the conversation
+  escalation notify, which previously carried a zone-less, day-less
+  "Respond by 17 Aug 2026, 10:00 AM".
+
+  **One deviation, recorded:** after the first response the response clock has STOPPED,
+  so "respond by" would be false on a later reassign/takeover. The line then names the
+  clock that is actually running: `"Resolve by <due_at_resolution MYT>"`. This is the
+  coordinator's "for the current clock" read literally. The line is only ever absent
+  when there is no deadline at all to state (both due columns null), which cannot
+  happen for a live conversation ticket (`due_at` is NOT NULL). Fixture times are
+  SEEDED, not derived from the working calendar: CI's database has no calendar
+  configuration, so a derived fixture would assert about seed data instead of the copy.
+  Pinned by `tests/test_sla_notify_clock_line.py`.
+
 ### J. Human-send signal to n8n (Journey step 5b) - added 2026-08-14
 
 Grounding (verified from live n8n executions 2026-08-14): a CRM API send and a
@@ -693,6 +738,23 @@ closes, so it WILL fire on our close once live. Two consequences need explicit h
   structurally impossible on this lane. The message copy itself and its rendering stay
   n8n-side (nothing CRM-side to build there).
 
+  **Hardening as built (2026-08-15, loop fix): an API-key-principal resolve NEVER fires
+  this webhook.** The loop that made this necessary: a contact or agent closes the
+  conversation in Respond -> n8n's `respond-close-convo` lane resolves the ticket
+  through `PUT /conversation-sla-tracking/{id}` with the API-key principal ->
+  `update_tracking` fired the CRM's own close-convo webhook back at n8n -> n8n sent the
+  customer a SECOND closing message. `closedBySource` could not stop it, because the
+  payload said `"crm"` and truthfully so; the missing information was WHO asked for the
+  resolve. Fixed at the source: `update_tracking(..., resolve_origin=...)` defaults to
+  `"user"`; `PUT /{tracking_id}` passes `"api_key"` when
+  `current_user["auth_method"] == "api_key"`, and the unauthenticated
+  `POST|PUT /integration/{tracking_id}` lane always passes it. The webhook fires only
+  for a user-origin resolve - an API-key resolve came from n8n, which already knows.
+  The gate is the PRINCIPAL, not the route: a human resolving through `PUT` still fires
+  it. The RQ Respond-close job is deliberately unchanged (idempotent transport tidy-up,
+  not a message to the contact) and still runs on every resolve. Pinned by
+  `tests/test_close_convo_webhook_origin.py`.
+
 ### B-additions (widget actions on ticket rows) - added 2026-08-14
 
 - **AC-B3 [FE][T]** Given an Enquiry (intervention ticket) row in the pending-tasks widget,
@@ -728,6 +790,27 @@ Journey addition:
   with an open ticket and no assignee; All = every contact with any message). It never
   loads a thread until one is selected. Works at 10 000+ contacts: no per-row thread
   fetch, no client-side filtering over the full set, one list query per page.
+
+  **As built (2026-08-15, backend).** `GET /api/v1/sla-management/conversations`, ONE
+  SQL statement per page - pinned by a statement counter over a seeded 500-contact
+  chain, which also walks every cursor boundary and asserts no gaps and no duplicates.
+  The cursor is a PAIR, `(sort_at, contact_pk)` compared as a row value: a bulk ingest
+  writes many messages with the same `sent_at`, and a cursor on time alone silently
+  drops every row after the first of a tie (the test seeds deliberate ties). The last
+  message comes from a `DISTINCT ON (contact_id)` over `chat_histories` served by the
+  new `ix_chat_histories_contact_sent_desc` (migration 330) - the pre-existing
+  composite leads on `channel`, which the inbox does not filter on. Per-row ticket
+  counts come from a LATERAL applied AFTER the page's LIMIT, so the aggregate runs
+  `limit` times rather than once per contact in the database. Two deviations worth
+  naming: (a) "newest first" is a DIFFERENT clock on Mentioned (the newest mentioning
+  note's `created_at`, per this AC's own wording) than on the other three (last message
+  time), so the cursor's `sort_at` is tab-dependent; (b) on the Mine / Unassigned tabs
+  the message join is OUTER with the sort falling back to `respond_contacts.created_at`
+  - a contact with an open ticket but no stored message must still be reachable - while
+  All keeps the inner join, because this AC defines All as "every contact with any
+  message". Scaling follow-up, unchanged from the plan: if the `DISTINCT ON` stops
+  being cheap, a `respond_contacts.last_message_at` column maintained by the ingest
+  turns that CTE into a column read and nothing else changes.
 - **AC-N2 [BE][T]** Given a user, When they open a thread from the inbox, Then READ
   access is granted by a new permission `sla_management.conversations.view` (granted to
   every role that already holds `conversation_sla_tracking.view` via a grant sweep) -
@@ -737,12 +820,43 @@ Journey addition:
   `sla_management.conversations.reply`; a reply is stamped onto the sender's own open
   ticket for that contact when one exists, else it is an unstamped human send (still
   fires the AC-J human-send signal, still logs the outbox).
+
+  **As built (2026-08-15, backend).** Migration `330_conversations_inbox` creates both
+  slugs and copies BOTH grant sets from `sla_management.conversation_sla_tracking.view`
+  (9 roles each on the dev snapshot, matching the source slug's 9). `.reply` has no
+  "ticket send/reply-equivalent permission" to copy from: the drawer's send route
+  (`POST .../conversation-sla-tracking/{id}/ticket/send`) carries NO permission slug at
+  all today - it is gated by `can_user_act_on_tracking` alone - so the S4.9 plan's
+  documented fallback ("else same set as view") applies. Recorded here as the choice.
+
+  **"Exactly one" is the stamping rule, not "any".** A sender holding TWO open tickets
+  for the contact gets an UNSTAMPED send: picking one would guess which enquiry the
+  reply answers and corrupt both response clocks. The inbox list row says so directly -
+  it carries `my_open_ticket_count` and only populates `my_open_ticket_id` when that
+  count is exactly 1. The unstamped lane writes its Respond outbox row against
+  `respond_contacts` / the contact's own id (there is no ticket that owns it, and
+  `integration_log.business_id` is a uuid column, which `respond_contacts.id`
+  satisfies) and fires `notify_human_contact_send`, which shares its whole body with
+  `notify_human_ticket_send` (`_notify_human_send`) so the payload n8n receives is
+  identical apart from `crm.business_table` / `crm.business_id`.
 - **AC-N3 [BE][T]** Given the thread endpoints (page / search / media), When called by
   contact reference instead of tracking id, Then contact-keyed variants exist
   (`.../conversations/{contact_ref}/page|search|media`) with the SAME response shapes as
   the ticket-keyed ones and the AC-N2 read gate; the ticket-keyed ones remain for the
   drawer. Notes on a contact render in the inbox thread (contact-scoped ones always;
   ticket-scoped ones too - a note is internal staff context, not ticket-private).
+
+  **As built (2026-08-15).** "Same shapes" is enforced by SHARED CORES, not by two
+  implementations that happen to agree: `ConversationSLATrackingService.
+  _thread_page_for_contact` / `_thread_search_for_contact` are called by BOTH the
+  ticket-keyed and the contact-keyed methods (which differ only in how they obtain the
+  contact and which gate they pass through first), and `TicketCommentService._list`
+  serializes for both `list_for_tracking` and `list_for_contact`. The parity test
+  compares the two HTTP responses for the same underlying contact rather than
+  restating the shape. `contact_ref` resolves through
+  `resolve_internal_respond_contact_id`, so it accepts a Respond.io contact id, a
+  `respond_contacts.id` or a phone number in any of the shapes the integration lookups
+  already tolerate; an unresolvable ref is a 404.
 - **AC-N4 [BE][FE][T]** (Excel/office preview: captain hit "No source available to load
   this file" on an .xlsx) Given an attachment bubble whose bytes live on a host that
   sends no CORS headers (R2 CDN, CloudFront, Respond media), When the viewer opens it,
@@ -750,6 +864,25 @@ Journey addition:
   (ticket- or contact-keyed, host ALLOWLISTED to our storage + Respond media domains,
   never an open URL fetcher) so Excel/csv render inline exactly like the attachments
   module, and Download works. Images/pdf keep direct URLs.
+
+  **As built (2026-08-15, backend).** `GET .../conversation-sla-tracking/{tracking_id}/
+  media?url=` (ticket scope, 404 for an outsider) and
+  `GET .../conversations/{contact_ref}/media?url=` (the AC-N2 view permission), both
+  streaming through `app/services/media_proxy_service.py`. The allowlist is
+  `R2_CDN_DOMAIN` + `CLOUDFRONT_DOMAIN` read from the SAME env the storage layer reads
+  (never hardcoded), plus Respond's media hosts, which were LEARNT from live threads
+  rather than guessed: an inbound WhatsApp file arrives on `cdn.chatapi.net`, a file
+  uploaded from the Respond app on
+  `production--bucket.s3-accelerate.amazonaws.com`. `CHAT_MEDIA_PROXY_EXTRA_HOSTS`
+  (comma separated) is the operational escape hatch for a deployment whose media sits
+  on a host neither env var names - e.g. a local database copied from an environment
+  with a different CDN domain. Comparison is host EQUALITY, never a suffix test
+  (`evil-cdn.chatapi.net.attacker.test` ends with an allowlisted label and is refused);
+  `follow_redirects` is OFF and each hop's `Location` is re-validated, so an
+  allowlisted host cannot bounce us onto an internal address; 50 MB cap (declared
+  oversize -> 413), 30s timeout, no request headers forwarded, and only content-type /
+  content-length come back plus
+  `Content-Disposition: inline; filename="<basename>"`. Anything else -> 400.
 - **AC-N5 [FE][T]** Given the ticket drawer, When it renders, Then: (a) the **Resolve**
   action lives in the drawer HEADER (with Reassign and the overflow actions), not
   floating over the composer; (b) the composer toolbar has no floating siblings; (c) the

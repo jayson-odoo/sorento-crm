@@ -375,6 +375,22 @@ the n8n peer builds the receiving lane from THIS text.**
 - The pre-existing best-effort RQ Respond conversation-close job is UNCHANGED and
   still fires on the same gate: the webhook is additive (transport tidy-up stays,
   the flow signal is new).
+- **LOOP GUARD, actually built 2026-08-15 (it was NOT in the code when the launch
+  procedure above claimed it).** `_notify_close_convo_webhook_best_effort` fired on any
+  resolve, principal-agnostic, so: contact closes in Respond -> n8n's
+  `respond-close-convo` lane resolves the ticket via `PUT
+  /conversation-sla-tracking/{id}` with the API-key principal -> our webhook fires back
+  at n8n -> n8n sends the customer a SECOND closing message. `closedBySource` could not
+  catch it (the payload said `"crm"`, truthfully); the missing fact was WHO asked for
+  the resolve. `update_tracking` now takes `resolve_origin` (default `"user"`);
+  `PUT /{tracking_id}` passes `"api_key"` when
+  `current_user["auth_method"] == "api_key"`, and the unauthenticated
+  `POST|PUT /integration/{tracking_id}` lane always passes it. The webhook fires only
+  for `"user"`. The gate is the PRINCIPAL, not the route - a human resolving through
+  `PUT` still fires it. The RQ close job is untouched by this (idempotent transport
+  tidy-up, not a customer message). Pinned by
+  `sorento_crm_backend/tests/test_close_convo_webhook_origin.py`; n8n's own
+  one-message-per-contact-per-60s guard stays as the belt to this braces.
 
 Deviations from the bullets above, and why:
 
@@ -531,6 +547,87 @@ Backend (first):
   -> stamps sender's own open ticket if any (reuse send_ticket_message), else the
   unstamped human send path (same webhook signal + outbox).
 - Notes list by contact for the inbox thread.
+
+**Backend as built 2026-08-15 (this IS the FE contract - build from this text).**
+
+Everything is under `/api/v1/sla-management`. Permissions:
+`sla_management.conversations.view` (every read below) and
+`sla_management.conversations.reply` (the reply). Migration `330_conversations_inbox`
+creates both and copies each grant set from
+`sla_management.conversation_sla_tracking.view` (9 roles each on the dev snapshot); the
+drawer's send route has no slug of its own, so `.reply` reuses `.view`'s holders.
+`contact_ref` is a Respond.io contact id, a `respond_contacts.id` OR a phone number -
+whatever the row gave you; unresolvable -> 404. Every read that a 403 could gate is a
+403 (the permission is a real gate, not an existence secret); an unknown contact is 404.
+
+1. `GET /conversations?tab=&q=&cursor=&limit=`
+   - `tab`: `mine` | `mentioned` | `unassigned` | `all` (default `all`); unknown -> 400.
+   - `q`: contact name or phone fragment, ILIKE, `%`/`_`/`\` literal.
+   - `limit`: default 30, max 100 (over -> 422). `cursor`: opaque, from `next_cursor`.
+   - Response:
+     ```json
+     {
+       "items": [{
+         "contact_ref": "10025531",          // pass this to every /{contact_ref}/... call
+         "respond_io_id": "10025531",
+         "phone": "+60123456789",
+         "name": "Aisyah Rahman",
+         "last_message_at": "2026-08-15T02:11:03",   // naive UTC; render via formatDateTimeInMalaysia
+         "last_message_snippet": "Yes please send the quote",  // <=160 chars, whitespace collapsed
+         "last_message_direction": "incoming",       // "incoming" | "outgoing"
+         "mentioned_at": null,                        // non-null ONLY on tab=mentioned
+         "open_ticket_count": 2,
+         "my_open_ticket_count": 1,
+         "my_open_ticket_id": "<uuid>"                // null unless my_open_ticket_count == 1
+       }],
+       "next_cursor": "b64...|null",
+       "has_more": true,
+       "limit": 30,
+       "tab": "all",
+       "query": ""
+     }
+     ```
+   - `last_message_*` can be null on the ticket tabs (a contact with an open ticket but
+     no stored message). Ordering: `mentioned` is newest-NOTE first, the rest are
+     newest-MESSAGE first. Paginate by passing `next_cursor` back verbatim; stop when
+     it is null.
+2. `GET /conversations/{contact_ref}/page?before=&after=&around=&limit=`
+   - At most ONE of before/after/around (two -> 422). `limit` 1..200, default 50.
+   - Response is BYTE-IDENTICAL to
+     `GET /conversation-sla-tracking/{tracking_id}/conversation/page` (same service
+     core), so `useConversationThread` works unchanged with contact-keyed loaders.
+3. `GET /conversations/{contact_ref}/search?q=&limit=` - identical to the ticket-keyed
+   `/conversation/search` (`limit` 1..200, default 100).
+4. `GET /conversations/{contact_ref}/comments` - a plain array of the same
+   `TicketCommentResponse` the drawer already renders, oldest first. Wider scope than
+   the ticket-keyed list ON PURPOSE (AC-N3): contact-scoped notes AND every
+   conversation ticket's notes for that contact.
+5. `GET /conversations/{contact_ref}/media?url=<absolute url>` and
+   `GET /conversation-sla-tracking/{tracking_id}/media?url=<absolute url>` - streams
+   the bytes with the upstream content-type, `Content-Length` when the upstream
+   declared one, and `Content-Disposition: inline; filename="<basename>"`. A host off
+   the allowlist -> 400, over 50 MB -> 413, upstream 4xx/5xx passed through / 502.
+   Use this as `AttachmentPreviewModal`'s `fetchBytes` for chat-media URL items.
+6. `POST /conversations/{contact_ref}/reply` - JSON `{"text": "..."}` or
+   `multipart/form-data` with `text` + repeated `files`, exactly like the drawer's
+   `POST /conversation-sla-tracking/{id}/ticket/send`. Response is the drawer send's
+   shape plus one field:
+   ```json
+   {
+     "sent_as": "text",             // "text" | "template" | "attachment"
+     "rendered_text": "...",
+     "flattened": false,
+     "window": {"open": true, "expires_at": null},
+     "attachments": null,            // or {"delivered": ["a.pdf"], "failed": {...}|null}
+     "stamped_ticket_id": "<uuid>"   // null = unstamped human send
+   }
+   ```
+   `stamped_ticket_id` is non-null only when the sender held EXACTLY ONE open ticket for
+   that contact (then it is that ticket's first response, identical to a drawer send).
+   Zero or several -> unstamped: the message still goes, the outbox is still written and
+   n8n still gets the human-intervention signal, so the FE should NOT block on it -
+   surface it only if it wants to say "not attached to one of your enquiries".
+   Empty text and no files -> 400.
 
 Frontend (second, same worktree, after BE lands):
 - New page `sla-management/conversations`: two-pane, left list (tabs, search, cursor
