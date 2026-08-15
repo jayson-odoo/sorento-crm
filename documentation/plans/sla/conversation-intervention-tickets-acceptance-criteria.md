@@ -360,6 +360,44 @@ channel - quote-prefix emulation stays), sticker sends.
 - **AC-L3 [BE][FE][T]** Given comments were made in Respond's own inbox, When n8n forwards
   `comment.created` events to the CRM ingest, Then they appear in the ticket thread too -
   both surfaces converge going forward (no backfill: Respond has no comment list API).
+
+  **As built (slice S4.3, 2026-08-15) - wire contract for L1/L2/L3.**
+  Table `conversation_ticket_comments` (migration `328_ticket_comments`, chained on
+  `327_chat_history_trgm`): `id`, nullable `tracking_id` -> `conversation_sla_tracking`,
+  nullable `respond_contact_id` -> `respond_contacts` (CHECK: at least one is set),
+  `author_id` -> `users`, `author_name`, `author_respond_user_id`, `body`,
+  `mentioned_user_ids text[]`, `source ('crm'|'respond')`, `respond_comment_id`
+  (unique where not null), `respond_mirrored`, `created_at`.
+
+  Endpoints:
+  - `POST /api/v1/sla-management/conversation-sla-tracking/{tracking_id}/comments`
+    body `{ body: string, mentioned_user_ids?: string[] }` -> 201
+    `{ id, tracking_id, body, author_name, mentioned_names[], source, created_at }`.
+    Assignee-or-manager scoped via `can_user_act_on_tracking` (404 for an outsider,
+    never 403). An unknown mentioned user is a 400 `VALIDATION_ERROR`; a blank body is
+    a 422 from the request schema.
+  - `GET  .../{tracking_id}/comments` -> the same shape, oldest first, carrying this
+    ticket's CRM comments PLUS the contact-scoped Respond-ingested ones.
+  - `POST /api/v1/external/chat-history/comments` (X-API-Key, `system.chat_history.view`)
+    body `{ contact_id? (respond_io_id), phone_number?, comment_id?, text,
+    author_respond_user_id?, author_name?, created_at? (epoch ms) }` -> 201
+    `{ id, status: "created" | "duplicate" }`. Unknown contact = 404, no contact
+    reference at all = 400.
+
+  Deviations from the wording above, and why:
+  1. **Ingested comments are contact-scoped, not ticket-scoped.** Respond's comment API
+     is per contact and carries no ticket reference, so an ingested row stores
+     `tracking_id = NULL` and renders in EVERY open ticket drawer for that contact. This
+     is what made `tracking_id` nullable.
+  2. **Dedupe is on Respond's `comment_id`, not on (contact, created_at, text)** as the
+     PLAN sketched. The webhook does carry a comment id; keying on it makes a replay
+     exact instead of heuristic. A payload with no `comment_id` still inserts.
+  3. **Notification channels:** in-app per the AC (no email, no WhatsApp). The
+     notification service's existing in-app -> web-push mirror still applies for users
+     who subscribed a browser, since that IS the in-app lane's delivery.
+  4. **Comments are NOT written into `chat_histories`.** They are a separate stream
+     merged into the thread at render time, so in-thread message search (AC-L8) and the
+     scroll-back mirror stay message-only.
 - **AC-L4 [FE][T]** Given the composer, When the assignee types "/", Then a snippet picker
   searches CRM-stored snippets (admin-managed CRUD, UI-visible per product standard);
   picking one inserts its text with `$` variables already resolved from the ticket context

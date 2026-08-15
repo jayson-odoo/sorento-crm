@@ -224,6 +224,18 @@ against this).**
   `comment.created` webhooks to a new ingest route; dedupe by (contact, created_at,
   text) since Respond gives no comment id in the webhook (verify payload at build time).
 
+BUILT 2026-08-15. The as-built wire contract, and the four places it deviates from the
+sketch above, are written under AC-L3 in the UAC file (that is the contract; this bullet
+is the design note). Summary of the deviations: the table is
+`conversation_ticket_comments` with a NULLABLE `tracking_id` because Respond comments are
+contact-scoped; dedupe keys on Respond's own `comment_id` rather than
+(contact, created_at, text); the mention notification is the in-app lane only; and
+comments are never written into `chat_histories` - the drawer merges the two streams at
+render time. FE: a "Reply | Comment" mode switch in the drawer, an amber
+`InternalCommentComposer` (shared, in `components/common/conversation/`) with an @
+typeahead over `userSelectService`, and amber "Internal" bubbles interleaved by
+`RespondChatList`'s new `comments` prop.
+
 ### S4.4 Snippets + variables + emoji + AI assist (UAC L4-L5) [FE coder + BE coder]
 
 - `message_snippets` table + admin CRUD (UI-visible, workspace-global v1), "/" picker in
