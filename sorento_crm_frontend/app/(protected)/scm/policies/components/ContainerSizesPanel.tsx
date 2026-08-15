@@ -123,7 +123,7 @@ export function ContainerSizesPanel() {
                   ) : null}
                 </div>
                 <p className="truncate text-2xs text-muted-foreground">
-                  {size.label ?? 'No description'} · {fmtTrimmedDecimal(size.cbm, 2)} cbm
+                  {size.label ?? 'No description'} · {fmtTrimmedDecimal(size.cbm, 3)} cbm
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">

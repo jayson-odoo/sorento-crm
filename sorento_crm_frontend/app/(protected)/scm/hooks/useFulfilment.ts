@@ -88,7 +88,7 @@ export function useBuildLoadingPlan() {
     onSuccess: (plan: LoadingPlan) => {
       invalidate(plan.supplier_id);
       toast.success(
-        `Planned ${fmtTrimmedDecimal(plan.planned_cbm, 2)} of ${fmtTrimmedDecimal(plan.capacity_cbm, 2)} cbm.`,
+        `Planned ${fmtTrimmedDecimal(plan.planned_cbm, 3)} of ${fmtTrimmedDecimal(plan.capacity_cbm, 3)} cbm.`,
       );
     },
     onError: (e: Error) => toast.error(e.message),
