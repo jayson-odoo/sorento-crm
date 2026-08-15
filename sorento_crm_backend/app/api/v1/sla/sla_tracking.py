@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.dependencies import get_current_user_or_api_key, require_permission, get_current_user
 from app.services.sla_service import (
     ConversationSLATrackingService,
+    append_clock_line,
     compute_tracking_timings,
     event_log_assignee_fields,
 )
@@ -613,9 +614,14 @@ def _notify_conversation_sla_escalation(db, tracking, assignee: dict, reason: st
         new_tier = int(getattr(tracking, "current_tier", 0) or 0)
 
         title = "Conversation SLA escalated to you"
-        body = f"A conversation SLA (tier {new_tier}) has been escalated to you. Reason: {reason}."
-        if respond_due:
-            body += f" Respond by {respond_due}."
+        # AC-G2: the same clock line as assignment / reassignment, in Malaysia
+        # time with the day and the zone. `_fmt_due` above still feeds the
+        # WhatsApp template's own due-date variables, which have their own
+        # format; the BODY the human reads uses the one shared builder.
+        body = append_clock_line(
+            f"A conversation SLA (tier {new_tier}) has been escalated to you. Reason: {reason}.",
+            tracking,
+        )
         if link:
             body += f"\n\nOpen: {link}"
 

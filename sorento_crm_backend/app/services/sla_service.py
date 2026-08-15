@@ -411,6 +411,73 @@ def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
+def format_myt(dt: Optional[datetime]) -> Optional[str]:
+    """An SLA timestamp as Malaysia wall clock WITH the day and the zone.
+
+    "Mon 17 Aug 09:00 MYT". Both halves are load-bearing (AC-G2): staff read
+    these notifications at 22:00, when the deadline is another day, so a bare
+    "10:00" is worse than useless. Every SLA column is naive UTC, which
+    ``_to_aware_utc`` is the single place that knows.
+
+    Deliberately NOT ``form_sla_service._fmt_due`` ("18 Aug 2026, 10:00 AM"),
+    which carries no weekday and no zone.
+    """
+    aware = _to_aware_utc(dt)
+    if aware is None:
+        return None
+    local = aware.astimezone(MALAYSIA_TZ)
+    # `local.day` rather than %-d: the no-pad strftime flag is platform-specific.
+    return f"{local:%a} {local.day} {local:%b} {local:%H:%M} MYT"
+
+
+# A clock recomputed from `now` a few microseconds after `initiated_at` is the
+# SAME instant for a reader; only a real deferral to the next working window is
+# "out of hours".
+_CLOCK_DEFERRED_THRESHOLD = timedelta(seconds=1)
+
+
+def sla_clock_line(tracking) -> Optional[str]:
+    """The one-line clock statement every assignment notification carries (AC-G2).
+
+    Out of hours (the clock start was pushed to the next working-window open):
+
+        "Clock starts Mon 17 Aug 09:00 MYT · respond by Mon 17 Aug 10:00 MYT"
+
+    In hours, unconditionally - a missing line reads as "there is no clock",
+    which is the misreading this AC exists to remove:
+
+        "Respond by Fri 14 Aug 15:00 MYT"
+
+    Once the first response has landed the response clock has stopped, so on a
+    reassign / takeover the clock that is actually running is the resolution
+    one and the line says so ("Resolve by ..."). Returns None only when there is
+    no deadline at all to state.
+
+    One builder, used by the in-app / email / WhatsApp body alike: the same
+    string is passed to ``build_sla_whatsapp_data``, so the three channels
+    cannot disagree about the deadline.
+    """
+    responded = bool(getattr(tracking, "is_responded", False))
+    if responded:
+        due = format_myt(getattr(tracking, "due_at_resolution", None))
+        return f"Resolve by {due}" if due else None
+
+    due = format_myt(getattr(tracking, "due_at", None))
+    if not due:
+        return None
+    start = _to_aware_utc(getattr(tracking, "current_tier_started_at", None))
+    initiated = _to_aware_utc(getattr(tracking, "initiated_at", None))
+    if start and initiated and start - initiated > _CLOCK_DEFERRED_THRESHOLD:
+        return f"Clock starts {format_myt(start)} · respond by {due}"
+    return f"Respond by {due}"
+
+
+def append_clock_line(body: str, tracking) -> str:
+    """``body`` with the AC-G2 clock line appended, when there is one to state."""
+    line = sla_clock_line(tracking)
+    return f"{body}\n\n{line}" if line else body
+
+
 def _coerce_flag(value) -> bool:
     """Coerce a JSON-ish truthy flag (True / 1 / "true" / "1") to bool.
 
@@ -1641,7 +1708,8 @@ class ConversationSLATrackingService:
 
             # New assignee - always. Same window-aware WhatsApp data as form SLA assign.
             new_title = "An SLA task was assigned to you"
-            new_body = f"{ref} has been assigned to you."
+            # AC-G2: the new owner is told which clock is running and until when.
+            new_body = append_clock_line(f"{ref} has been assigned to you.", tracking)
             if detail:
                 new_body += f"\n\nOpen: {detail}"
             new_data = {
@@ -4127,7 +4195,10 @@ class ConversationSLATrackingService:
             ) or "an SLA task"
 
             title = "An SLA task was assigned to you"
-            body = f"{ref} has been assigned to you."
+            # AC-G2: the clock statement sits BEFORE the link, so it survives a
+            # notification surface that truncates, and so WhatsApp's flattened
+            # single-line param reads "... assigned to you. Clock starts ...".
+            body = append_clock_line(f"{ref} has been assigned to you.", tracking)
             if detail:
                 body += f"\n\nOpen: {detail}"
             data = {
@@ -4204,7 +4275,11 @@ class ConversationSLATrackingService:
             # subscriber. Word it that way (auto-assign uses the normal "assigned to you"
             # notification, since the coverer IS the assignee there).
             cover_title = f"SLA task assigned to {covered_name}"
-            cover_body = f"{ref} has been assigned to {covered_name}."
+            # AC-G2: a coverer decides whether to take over from the deadline, so
+            # they get the same clock statement the assignee got.
+            cover_body = append_clock_line(
+                f"{ref} has been assigned to {covered_name}.", tracking
+            )
             cover_body += f"\n\nYou're receiving this because you cover for {covered_name}."
             if team_link:
                 cover_body += f"\n\nTake over: {team_link}"
