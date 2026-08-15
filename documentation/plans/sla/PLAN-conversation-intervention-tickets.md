@@ -261,6 +261,11 @@ against this).**
   verify both R2 CDN and S3 signed-url branches.
 - D6: attachment bubbles open the EXISTING CRM attachment preview surface on click; no
   new viewer.
+- Live-verified 2026-08-15: delivered payload URL basename is the clean filename
+  (canary_d5_stock.xlsx), Respond accepted. Gotcha discovered: Respond 400s some
+  extensions ("attachment url is not valid") via its own allowlist - a .txt was
+  rejected while the URL served 200; xlsx/jpg fine. Route degrades gracefully
+  (per-file failed entry).
 
 Built 2026-08-15 (code + tests; awaiting tester/review):
 - D5 `upload_chat_attachment` key is now `{table}/{id}/{uuid}/{name}`; `chat_attachment_basename`
