@@ -834,6 +834,61 @@ def test_gemini_json_schema_sets_a_translated_response_schema(monkeypatch):
     assert schema["properties"]["intent"] == {"type": "string"}
 
 
+def test_gemini_json_schema_drops_the_null_member_from_a_nullable_enum(monkeypatch):
+    """The real schema every assistant turn sends. `_semantic_parse` calls
+    `provider.chat(json_schema=PARSE_RESULT_JSON_SCHEMA)`, whose `form_target`,
+    `entities.domain` and `entities.time_scope` each spell the null branch as a
+    literal `None` inside `enum` (OpenAI strict mode's form). Gemini's
+    `Schema.enum` is a proto `repeated string`, so a null member is a 400 and
+    semantic routing dies silently into `fallback_parse` on every turn."""
+    from app.schemas.ai_semantic_parser import PARSE_RESULT_JSON_SCHEMA
+
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response('{"intent":"x"}')))
+    GeminiProvider("k").chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+        json_schema=PARSE_RESULT_JSON_SCHEMA,
+        json_schema_name="parse_result",
+    )
+
+    schema = t.body["generationConfig"]["responseSchema"]
+
+    form_target = schema["properties"]["form_target"]
+    assert None not in form_target["enum"]
+    assert form_target["enum"] == [
+        "complaint",
+        "stock_inquiry",
+        "purchase_request",
+        "sponsorship_form",
+    ]
+    assert form_target["nullable"] is True
+    assert form_target["type"] == "string"
+
+    entities = schema["properties"]["entities"]["properties"]
+    assert None not in entities["domain"]["enum"]
+    assert entities["domain"]["nullable"] is True
+    assert None not in entities["time_scope"]["enum"]
+    assert entities["time_scope"]["nullable"] is True
+
+    # A non-nullable enum is untouched, so the translation cannot be passing by
+    # emptying every enum it sees.
+    intent = schema["properties"]["intent"]
+    assert "unknown" in intent["enum"]
+    assert "nullable" not in intent
+
+    def _no_null_enum(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("enum"), list):
+                assert None not in node["enum"], node
+            for value in node.values():
+                _no_null_enum(value)
+        elif isinstance(node, list):
+            for item in node:
+                _no_null_enum(item)
+
+    _no_null_enum(schema)
+
+
 def test_gemini_chat_surfaces_the_provider_error_message(monkeypatch):
     _install(
         monkeypatch,

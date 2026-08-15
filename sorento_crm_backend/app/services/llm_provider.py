@@ -709,6 +709,17 @@ def _gemini_schema(schema: Any) -> Any:
             if len(concrete) != len(value):
                 out["nullable"] = True
             continue
+        if key == "enum" and isinstance(value, list):
+            # `Schema.enum` is a proto `repeated string`, so the null branch an
+            # OpenAI strict schema spells as a literal `None` member is a 400
+            # rather than an ignored hint. It carries the same meaning as the
+            # `["string","null"]` type union above, and is translated the same
+            # way: dropped from the list, recorded as `nullable`.
+            members = [item for item in value if item is not None and item != "null"]
+            out["enum"] = members
+            if len(members) != len(value):
+                out["nullable"] = True
+            continue
         if key == "properties" and isinstance(value, dict):
             out["properties"] = {
                 name: _gemini_schema(prop) for name, prop in value.items()
