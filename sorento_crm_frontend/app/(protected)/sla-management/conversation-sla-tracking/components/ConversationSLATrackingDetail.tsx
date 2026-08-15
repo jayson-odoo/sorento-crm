@@ -51,7 +51,7 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { getUsersSelect } from '@/services/userSelectService';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import SlaTrackingConversationPanel from './SlaTrackingConversationPanel';
+import SlaTrackingChatRecords from './SlaTrackingChatRecords';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
 
 const RESPOND_IO_INBOX_BASE_URL = 'https://app.respond.io/space/364817/inbox';
@@ -1094,7 +1094,7 @@ export default function ConversationSLATrackingDetail({
               <SheetTitle>Chat Records</SheetTitle>
             </SheetHeader>
             <div className="flex-1 min-h-0 pt-2">
-              <SlaTrackingConversationPanel
+              <SlaTrackingChatRecords
                 trackingId={trackingId}
                 respondInboxUrl={respondInboxUrl}
                 showAsPopup
