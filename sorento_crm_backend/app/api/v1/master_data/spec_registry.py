@@ -249,6 +249,54 @@ def _validate_reachable(data_type: str, allowed_values, synonyms) -> None:
         )
 
 
+# The n8n renderer humanises a value token blind: underscore -> space, title case. That
+# only holds while the underscore is ONLY ever a separator. Kept byte-identical to the
+# pattern in tests/test_spec_values_on_rows.py; two regexes drifting apart would let the
+# UI write exactly what the seed forbids.
+_VALUE_TOKEN_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
+
+# `class` holds category labels ("Kitchen Sink") and `brand` holds display-cased names
+# ("SORENTO"). Both are rendered as-is, never humanised. Same two exemptions as the
+# seeded test, and they must stay in step with it.
+_TOKEN_EXEMPT_KEYS = {"class", "brand"}
+
+# `_self` names the measurement rather than a value ("thickness"), so it is the one
+# leading-underscore token the registry ships and it is not a render token.
+_SELF_SYNONYM_KEY = "_self"
+
+
+def _validate_value_tokens(spec_key: str, values) -> None:
+    """A VALUE the renderer cannot humanise is a value that renders wrong forever.
+
+    Same promotion `_validate_reachable` already got: the seeded registry is pinned by
+    a test, but that test runs on a blank schema and so cannot see a prod UI edit. A
+    value saved as `Free_Standing` or `wall-hung` breaks the render contract with
+    nothing failing anywhere, because the humanising happens in another repo.
+
+    The subject is the VALUE, never the customer word. `wall hung` is a fine thing to
+    say for the value `wall_hung`; rejecting it would break the search this protects.
+
+    A value needing a semantic underscore is a BREAKING change to the render contract
+    and wants a cross-team ping, which is precisely why it should not be reachable by
+    a quiet UI edit.
+    """
+    if str(spec_key) in _TOKEN_EXEMPT_KEYS:
+        return
+    offenders = [
+        str(value)
+        for value in (values or [])
+        if str(value) != _SELF_SYNONYM_KEY and not _VALUE_TOKEN_RE.match(str(value))
+    ]
+    if offenders:
+        raise _reject(
+            "These values are not in the format the search reads back to customers: "
+            f"{', '.join(offenders)}. Use lowercase words joined by single underscores "
+            "(free_standing, wall_hung, single_bowl). Customer wordings go in synonyms, "
+            "where spaces and capitals are fine.",
+            "spec_registry_value_token_format",
+        )
+
+
 class PolicyUpdate(BaseModel):
     """One scoring knob. Bounded so a typo cannot make the ranker meaningless."""
 
@@ -634,6 +682,13 @@ async def create_spec_key(
                 "spec_registry_duplicate",
             )
         _validate_reachable(payload.data_type, payload.allowed_values, payload.user_synonyms)
+        # Both places a value can enter on create: the closed list, and a synonym map
+        # keyed by value (its keys name values, its words are customer phrasings and
+        # are deliberately not checked).
+        _validate_value_tokens(
+            payload.spec_key,
+            list(payload.allowed_values or []) + list((payload.user_synonyms or {}).keys()),
+        )
 
         tolerance, decay = default_match_window(payload.unit)
         row = ProductSpecRegistry(
@@ -755,6 +810,15 @@ async def update_spec_key(
         for field in ("label", "rank_weight", "is_active", "match_tolerance", "match_decay"):
             if field in fields and fields[field] is not None:
                 setattr(row, field, fields[field])
+
+        # BEFORE the auto-fill below, which humanises a value with
+        # `replace("_", " ")` and so silently assumes the very format this checks. A
+        # malformed value would otherwise be handed a self-synonym generated under a
+        # rule it violates, and the two would ship together.
+        _validate_value_tokens(
+            row.spec_key,
+            list(merged_allowed_values(row)) + list(merged_synonyms(row).keys()),
+        )
 
         # A value nobody can say is unsearchable, and a newly added one has no words
         # yet. Rather than refusing the save, give it the obvious word - its own name,
