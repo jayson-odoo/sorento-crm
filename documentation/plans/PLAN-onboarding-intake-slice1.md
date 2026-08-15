@@ -1,6 +1,8 @@
 # PLAN - Onboarding intake, review and CRM-user provisioning (Slice 1)
 
-**Status:** In progress - Phase 1 (FE mock) then Phase 2 (backend + tests) then Phase 3 (review).
+**Status:** Phases 1 and 2 shipped (FE on the real API, backend + tests green), then
+restandardized onto the repo's list/detail idiom; Phase 3 (review) in progress. Section 2.6's
+endpoint table and 2.7's registry note describe what actually shipped, not the original sketch.
 **Contract:** `documentation/plans/UAC-onboarding-intake.md`. Read that first; it carries the
 Journey and every AC this plan implements. Nothing outside the repo is required.
 
@@ -240,12 +242,25 @@ after editing it.
 **Admin** - `app/api/v1/user_management/onboarding.py`, mounted under the existing
 `user_management` router (so it inherits `require_module_enabled_with_api_key('base')`):
 
-`GET|POST /requests`, `GET|DELETE /requests/{id}`, `POST /requests/{id}/send`,
-`POST /requests/{id}/revoke`, `POST /requests/{id}/regenerate-token`,
-`POST /requests/{id}/start-review`, `PUT /requests/{id}/people/{person_id}`,
-`POST /requests/{id}/people/{person_id}/reject`, `POST /requests/{id}/approve`,
-`GET|POST /templates`, `PUT|DELETE /templates/{id}`,
-`POST /templates/capture-from-user/{user_id}`.
+| Method + path | Behaviour |
+|---|---|
+| `GET /requests` | One page of the review queue. Takes `page`, `limit`, `query`, `status_key`, `sort`, `dir` and answers the standard `ListResponse` envelope (`data` + `pagination`). Sortable on `title`, `company_name`, `requester_name`, `status`, `submitted_at`, `expires_at`, `created_at`; an unknown column falls back to `created_at desc` rather than erroring. Ordering ends on `id`, so a row cannot land on two pages, and nulls sort last, so drafts do not outrank fresh submissions. |
+| `GET /requests/neighbours` | `{total, index, prev_id, next_id}` for the detail page's prev/next pager, taking the same filter and sort params as the list. Declared BEFORE `/requests/{id}`: FastAPI matches in declaration order, so the other way round "neighbours" is read as an id. |
+| `POST /requests` | Create. `company_id` is required - it decides what approval actually grants. |
+| `GET\|DELETE /requests/{id}` | Detail (collisions computed on read), and hard delete (people cascade). |
+| `POST /requests/{id}/send` | Mint and email the intake link. |
+| `POST /requests/{id}/revoke` | Kill the link immediately. |
+| `POST /requests/{id}/regenerate-token` | Issue a new link; the old one stops working. |
+| `POST /requests/{id}/start-review` | `submitted -> in_review`. |
+| `PUT /requests/{id}/people/{person_id}` | Edit one person. |
+| `POST /requests/{id}/people/{person_id}/keep\|hold\|reject` | Per-person verdict. `reject` requires a reason, checked here and not only in the dialog. |
+| `POST /requests/{id}/approve` | `in_review -> processing`, and queues provisioning. |
+| `GET\|POST /templates`, `PUT\|DELETE /templates/{id}`, `POST /templates/capture-from-user/{user_id}` | Template administration. |
+
+Every per-person route resolves the person through the request named in the path and 404s on a
+mismatch. Both ids are caller-supplied, and without that check a write addressed to request A
+but naming request B's person landed on B while answering with A's detail - the caller saw
+their own batch unchanged and never learnt that somebody else's had been edited.
 
 Permission per route: `.view` on reads, `.add` on create/send, `.edit` on writes and templates,
 `.delete` on delete, `.approve` on approve. `DELETE` is a hard delete (people cascade).
@@ -255,7 +270,12 @@ Permission per route: `.view` on reads, `.add` on create/send, `.edit` on writes
 - `app/rbac/permission_registry.py`: the five slugs.
 - `app/services/email_event_registry.py`: `onboarding_intake_link` (priority 0 - it is the
   link she is waiting for), `onboarding_submitted`, `onboarding_completed`.
-- `app/services/list_query_registry.py`: `onboarding_requests` for the DataGrid listing.
+
+**Not** `app/services/list_query_registry.py`. That registry serves the saved-filter and
+server-side-export path, and the queue needs neither: it pages through its own endpoint and
+lets column preferences key on the DataGrid default (the route pathname). The embedded people
+grid opts out of preferences altogether with `listingKey=""`, or it would store a separate
+column layout per request id and per intake token.
 
 ## 3. Frontend
 
