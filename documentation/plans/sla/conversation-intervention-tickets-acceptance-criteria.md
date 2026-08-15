@@ -379,10 +379,10 @@ channel - quote-prefix emulation stays), sticker sends.
   - `GET  .../{tracking_id}/comments` -> the same shape, oldest first, carrying this
     ticket's CRM comments PLUS the contact-scoped Respond-ingested ones.
   - `POST /api/v1/external/chat-history/comments` (X-API-Key, `system.chat_history.view`)
-    body `{ contact_id? (respond_io_id), phone_number?, comment_id?, text,
+    body `{ contact_id? (respond_io_id), phone_number?, comment_id, text,
     author_respond_user_id?, author_name?, created_at? (epoch ms) }` -> 201
     `{ id, status: "created" | "duplicate" }`. Unknown contact = 404, no contact
-    reference at all = 400.
+    reference at all = 400, **no `comment_id` = 400**.
 
   Deviations from the wording above, and why:
   1. **Ingested comments are contact-scoped, not ticket-scoped.** Respond's comment API
@@ -391,7 +391,15 @@ channel - quote-prefix emulation stays), sticker sends.
      is what made `tracking_id` nullable.
   2. **Dedupe is on Respond's `comment_id`, not on (contact, created_at, text)** as the
      PLAN sketched. The webhook does carry a comment id; keying on it makes a replay
-     exact instead of heuristic. A payload with no `comment_id` still inserts.
+     exact instead of heuristic.
+     **REVISED 2026-08-15 (Phase-3 review).** `comment_id` is now REQUIRED - a
+     payload without one is a 400, not a blind insert. Without the key there is
+     nothing to recognise a replay by, so every n8n retry added another copy of
+     the same note to every open drawer for that contact, permanently and
+     indistinguishably; a 201 that is not idempotent is a worse promise than a
+     refusal. The insert is additionally wrapped in the unique index: the read
+     check races two forwarding lanes, and the loser now re-reads the winner's
+     row and answers `duplicate` rather than 500-ing into an infinite retry.
   3. **Notification channels:** in-app per the AC (no email, no WhatsApp). The
      notification service's existing in-app -> web-push mirror still applies for users
      who subscribed a browser, since that IS the in-app lane's delivery.

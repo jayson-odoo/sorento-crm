@@ -69,12 +69,18 @@ export default function MessageSnippetFormDialog({
     if (!form.body.trim()) next.body = 'A snippet needs some text.';
     setErrors(next);
     if (Object.keys(next).length > 0) return;
-    await onSubmit({
-      name: form.name.trim(),
-      shortcut: (form.shortcut || '').trim() || null,
-      body: form.body,
-      is_active: form.is_active,
-    });
+    try {
+      await onSubmit({
+        name: form.name.trim(),
+        shortcut: (form.shortcut || '').trim() || null,
+        body: form.body,
+        is_active: form.is_active,
+      });
+    } catch {
+      // A duplicate shortcut is a 409, and the mutation hook already toasts it.
+      // Swallowed HERE so it is not an unhandled rejection, and so the dialog
+      // stays open with the draft the person typed.
+    }
   };
 
   /** Drop a variable into the body at the caret (or at the end). */

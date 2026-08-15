@@ -14,10 +14,22 @@ import {
 import type { MessageSnippetFormData } from '../types/messageSnippet.types';
 
 const LIST_KEY = ['message-snippets'] as const;
+/** Every ticket's picker cache, whatever it was resolved against. */
+const OPTIONS_KEY = ['message-snippet-options'] as const;
 
 /** The composer picker's key. Per ticket, because the bodies come back resolved. */
 export const snippetOptionsKey = (trackingId: string | null) =>
-  ['message-snippet-options', trackingId] as const;
+  [...OPTIONS_KEY, trackingId] as const;
+
+/**
+ * Admin CRUD moves BOTH caches: the listing, and every composer picker. A
+ * snippet edited (or deactivated) while a drawer is open otherwise keeps
+ * offering the old wording for the rest of the session.
+ */
+function invalidateSnippets(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: LIST_KEY });
+  void queryClient.invalidateQueries({ queryKey: OPTIONS_KEY });
+}
 
 export function useMessageSnippets(query: MessageSnippetListQuery) {
   return useQuery({
@@ -33,7 +45,7 @@ export function useCreateMessageSnippet() {
   return useMutation({
     mutationFn: (body: MessageSnippetFormData) => createMessageSnippet(body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: LIST_KEY });
+      invalidateSnippets(queryClient);
       toast.success('Snippet created');
     },
     onError: (error: Error) => toast.error(error.message),
@@ -46,7 +58,7 @@ export function useUpdateMessageSnippet() {
     mutationFn: ({ id, body }: { id: string; body: Partial<MessageSnippetFormData> }) =>
       updateMessageSnippet(id, body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: LIST_KEY });
+      invalidateSnippets(queryClient);
       toast.success('Snippet updated');
     },
     onError: (error: Error) => toast.error(error.message),
@@ -60,7 +72,7 @@ export function useDeleteMessageSnippet() {
     // The success toast belongs to ConfirmDeleteDialog (product standard), so
     // this one only refreshes the list.
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: LIST_KEY });
+      invalidateSnippets(queryClient);
     },
     onError: (error: Error) => toast.error(error.message),
   });

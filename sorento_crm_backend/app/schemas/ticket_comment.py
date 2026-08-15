@@ -58,7 +58,12 @@ class TicketCommentIngestRequest(BaseModel):
     # Respond.io contact id (the `respond_io_id` we store), or `phone_number`.
     contact_id: Optional[str] = None
     phone_number: Optional[str] = None
-    # Respond's own comment id: the dedupe key for a replayed webhook.
+    # Respond's own comment id: the dedupe key for a replayed webhook, and
+    # therefore MANDATORY. Typed Optional so a payload without one gets the
+    # route's readable 400 rather than a pydantic 422 the forwarder cannot tell
+    # apart from a transport fault - but a missing or blank value is refused.
+    # Without it there is no way to recognise a replay, and a 201 that is not
+    # idempotent is a worse promise than a refusal.
     comment_id: Optional[str] = Field(None, max_length=128)
     text: str = Field(..., min_length=1, max_length=5000)
     author_respond_user_id: Optional[str] = Field(None, max_length=64)

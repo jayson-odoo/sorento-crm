@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact
@@ -286,12 +287,21 @@ class TicketCommentService:
         self._publish(tracking)
         return self.serialize(comment)
 
+    def _existing_ingested_comment(
+        self, respond_comment_id: str
+    ) -> Optional[ConversationTicketComment]:
+        return (
+            self.db.query(ConversationTicketComment)
+            .filter(ConversationTicketComment.respond_comment_id == respond_comment_id)
+            .first()
+        )
+
     def ingest_respond_comment(
         self,
         *,
         contact: RespondContact,
         body: str,
-        respond_comment_id: Optional[str],
+        respond_comment_id: str,
         author_respond_user_id: Optional[str],
         author_name: Optional[str],
         created_at_ms: Optional[int],
@@ -302,17 +312,20 @@ class TicketCommentService:
         every open ticket drawer for this contact. Returns
         ``(comment, already_existed)`` - a replayed ``comment.created`` webhook
         resolves to the row it already created rather than duplicating it.
+
+        ``respond_comment_id`` is required (the route refuses a payload without
+        one): it is the only thing that makes a replay recognisable, and a note
+        cannot be un-duplicated once it is in front of everyone.
+
+        The read-then-insert below RACES - two lanes forwarding the same event
+        can both find nothing - so the insert is also guarded by the unique
+        index. The loser re-reads the winner's row and reports a duplicate,
+        which is what it truthfully is, instead of a 500 the forwarder retries
+        forever.
         """
-        if respond_comment_id:
-            existing = (
-                self.db.query(ConversationTicketComment)
-                .filter(
-                    ConversationTicketComment.respond_comment_id == respond_comment_id
-                )
-                .first()
-            )
-            if existing:
-                return existing, True
+        existing = self._existing_ingested_comment(respond_comment_id)
+        if existing:
+            return existing, True
 
         created_at = None
         if created_at_ms and int(created_at_ms) > 0:
@@ -330,13 +343,24 @@ class TicketCommentService:
             body=body.strip(),
             mentioned_user_ids=[],
             source=COMMENT_SOURCE_RESPOND,
-            respond_comment_id=respond_comment_id or None,
+            respond_comment_id=respond_comment_id,
             respond_mirrored=True,
         )
         if created_at is not None:
             comment.created_at = created_at
         self.db.add(comment)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            # Lost the race with the other lane: the unique index on
+            # respond_comment_id is the real dedupe, the SELECT above is only
+            # the cheap path. Rolling back and re-reading turns a 500 the
+            # forwarder retries forever into the honest "duplicate".
+            self.db.rollback()
+            winner = self._existing_ingested_comment(respond_comment_id)
+            if winner is None:
+                raise
+            return winner, True
         self.db.refresh(comment)
         return comment, False
 

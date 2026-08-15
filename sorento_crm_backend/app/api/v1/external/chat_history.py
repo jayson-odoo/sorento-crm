@@ -231,10 +231,13 @@ def ingest_respond_comment(
     are CONTACT-scoped, not ticket-scoped, so the stored row carries the contact
     only and renders in every open ticket drawer for that contact.
 
-    Idempotent on Respond's own ``comment_id``: a replayed webhook answers with
-    the id of the row it already created and ``status: "duplicate"`` - a 201
-    either way, mirroring the message ingest, because the forwarder treats
-    anything else as a lane failure and retries.
+    Idempotent on Respond's own ``comment_id``, which is REQUIRED: a replayed
+    webhook answers with the id of the row it already created and
+    ``status: "duplicate"`` - a 201 either way, mirroring the message ingest,
+    because the forwarder treats anything else as a lane failure and retries.
+    A payload with no ``comment_id`` is a 400: there would be nothing to
+    recognise a replay by, so every retry would add another copy of the same
+    note to every open drawer for that contact.
     """
     _ = current_user
     contact_ref = (payload.contact_id or "").strip()
@@ -243,6 +246,15 @@ def ingest_respond_comment(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Provide contact_id (Respond contact id) or phone_number.",
+        )
+    comment_id = (payload.comment_id or "").strip()
+    if not comment_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "comment_id is required: it is the key a replayed comment.created "
+                "event is recognised by."
+            ),
         )
 
     contact = None
@@ -265,7 +277,7 @@ def ingest_respond_comment(
     comment, already_existed = TicketCommentService(db).ingest_respond_comment(
         contact=contact,
         body=payload.text,
-        respond_comment_id=(payload.comment_id or "").strip() or None,
+        respond_comment_id=comment_id,
         author_respond_user_id=payload.author_respond_user_id,
         author_name=payload.author_name,
         created_at_ms=payload.created_at,

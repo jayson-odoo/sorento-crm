@@ -164,3 +164,68 @@ def test_no_api_key_is_rejected(anon_client, db):
 
     assert resp.status_code in (401, 403), resp.text
     assert db.query(ConversationTicketComment).count() == 0
+
+
+# --------------------------------------------------------------------------- #
+# Idempotency is the whole contract, so the key is mandatory                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_payload_with_no_comment_id_is_refused(client, db):
+    """`comment_id` used to be optional, and a payload without one inserted
+    unconditionally - so an n8n retry of the same Respond comment produced a
+    duplicate note in every open drawer for that contact, forever, with nothing
+    able to tell them apart. A 201 that is not idempotent is a worse promise
+    than a 400."""
+    _seed_contact(db)
+
+    resp = client.post(URL, json=_payload(comment_id=None))
+
+    assert resp.status_code == 400, resp.text
+    assert "comment_id" in resp.text
+    assert db.query(ConversationTicketComment).count() == 0
+
+
+def test_a_blank_comment_id_is_refused_too(client, db):
+    _seed_contact(db)
+
+    assert client.post(URL, json=_payload(comment_id="   ")).status_code == 400
+    assert db.query(ConversationTicketComment).count() == 0
+
+
+def test_a_duplicate_that_beats_the_read_check_is_still_a_duplicate(client, db):
+    """The read-then-insert dedupe races: two lanes forwarding the same
+    `comment.created` can both find nothing and both insert, and the second one
+    then dies on the unique index as a 500 the forwarder retries forever. The
+    insert is wrapped so the loser re-reads the winner's row and answers
+    `duplicate`, which is what it truthfully is."""
+    from app.services.ticket_comment_service import TicketCommentService
+
+    _seed_contact(db)
+    assert client.post(URL, json=_payload()).status_code == 201
+
+    # Simulate losing the race: the existence probe sees nothing (as it would
+    # have a microsecond before the winner committed), so the code path runs
+    # straight into the unique index.
+    original = TicketCommentService._existing_ingested_comment
+    calls = {"n": 0}
+
+    def _blind(self, respond_comment_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None
+        return original(self, respond_comment_id)
+
+    TicketCommentService._existing_ingested_comment = _blind
+    try:
+        second = client.post(URL, json=_payload(text="the losing lane"))
+    finally:
+        TicketCommentService._existing_ingested_comment = original
+
+    assert second.status_code == 201, second.text
+    assert second.json()["status"] == "duplicate"
+    assert db.query(ConversationTicketComment).count() == 1
+    assert db.query(ConversationTicketComment).one().body == (
+        "Called him, he is happy to wait."
+    ), "the winner's row stands; the loser does not overwrite it"
+    assert calls["n"] == 2, "the loser re-selects after the IntegrityError"
