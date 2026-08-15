@@ -82,7 +82,7 @@ def _rec_row(db, run_id, pid, wid=None):
     Pinned wherever the scope is what is under test: a pool emits a row per member, and
     "whichever row came back first" is exactly the ambiguity these tests exist to remove.
     """
-    sql = ("SELECT id::text AS id, warehouse_id::text AS warehouse_id, inputs "
+    sql = ("SELECT id::text AS id, warehouse_id::text AS warehouse_id, rec_type, inputs "
            "FROM scm.reorder_recommendation "
            "WHERE run_id = :r AND product_id = :p AND rec_type IN ('buy','covered')")
     params = {"r": run_id, "p": pid}
@@ -373,6 +373,46 @@ def test_a_per_warehouse_row_keeps_its_own_bin_after_pooled_netting_is_turned_on
     assert out["pool_code"] is None
     assert [l["so_number"] for l in out["lines"]] == ["ZZTSO-SCOPE7-R"]
     assert out["committed_total"] == float(rec["inputs"]["committed"]) == 40.0
+
+
+def test_a_pooled_covered_row_lists_the_pool_its_own_figure_came_from(scm_app):
+    """The pool's stock covers its demand, so the pool gets ONE row and no buy split.
+
+    `_emit_pool` writes an allocation only when it buys, so this row names its siblings
+    nowhere - and it sits on the pool root carrying the POOL's committed. Reading the
+    scope off the row's own frozen `committed` is what keeps the two agreeing: without it
+    the row printed 100 committed above a list of 40, which is the popover contradicting
+    the row it hangs on.
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    root = _mk_warehouse(db, "ZZTW-SCOPE8-R")
+    bin_ = _mk_warehouse(db, "ZZTW-SCOPE8-B")
+    db.execute(text("UPDATE warehouses SET pool_warehouse_id = :r WHERE id = :b"),
+               {"r": root, "b": bin_})
+    pid = _mk_product(db, f"ZZTP-SCOPE8-{uuid.uuid4().hex[:6]}")
+    # Held at the root, ordered for both: the pool covers itself, so nothing is bought.
+    _mk_stock(db, pid, root, 500)
+    _mk_stock(db, pid, bin_, 0)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _so(db, pid, root, 40, number="ZZTSO-SCOPE8-R")
+    _so(db, pid, bin_, 60, number="ZZTSO-SCOPE8-B")
+    _link(db, pid, _mk_supplier(db, "ZZT Scope8 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    rec = _rec_row(db, _run(db, ["ZZTW-SCOPE8-R", "ZZTW-SCOPE8-B"]), pid)
+    assert rec["rec_type"] == "covered", "the pool covered its own demand"
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    out = dbs.demand_for_recommendation(db, str(rec["id"]))
+
+    assert out["scope"] == "pool"
+    assert out["pool_code"] == "ZZTW-SCOPE8-R"
+    assert sorted(l["so_number"] for l in out["lines"]) == [
+        "ZZTSO-SCOPE8-B", "ZZTSO-SCOPE8-R",
+    ]
+    assert out["committed_total"] == float(rec["inputs"]["committed"]) == 100.0
 
 
 # --- who ordered it, and at what price (AC-1.4 / AC-4.2) --------------------------
