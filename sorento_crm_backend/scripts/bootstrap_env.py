@@ -48,7 +48,14 @@ def _require_db_url() -> str:
 
 
 def create_schema() -> None:
-    """Create every table declared by the ORM models, plus the `scm` schema."""
+    """Create every table declared by the ORM models, plus the module schemas.
+
+    The `CREATE SCHEMA` lines are not optional decoration. ``create_all`` emits
+    ``CREATE TABLE scm.x`` / ``CREATE TABLE projects.x`` and never creates the schema
+    itself, so a from-zero database (CI, disaster recovery) dies here with
+    ``schema "projects" does not exist`` - a failure that never reproduces on a
+    developer machine, where migration 273 or 354 already made the schema.
+    """
     import app.models  # noqa: F401  — registers every model on Base.metadata
     from sqlalchemy import text
 
@@ -56,6 +63,7 @@ def create_schema() -> None:
 
     with engine.begin() as conn:
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS scm"))
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS projects"))
         # pgvector / trigram are used by the embedding + entity-resolver paths.
         for ext in ("vector", "pg_trgm"):
             try:

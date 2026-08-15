@@ -69,12 +69,13 @@ def extract_po_version(po_version_id: str) -> dict:
     # is on the row, so run system-wide and let the service scope by what it loads.
     set_company_scope(db, None)
     try:
+        from app.models.project_so import ProjectPOVersion
         from app.services.project_po_extraction_service import ProjectPOExtractionService
 
         return ProjectPOExtractionService(db).run_extraction(po_version_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception("PO extraction failed for version %s", po_version_id)
-        _mark_failed(db, "project_po_versions", po_version_id, exc)
+        _mark_failed(db, ProjectPOVersion, po_version_id, exc)
         return {"status": "failed", "error": str(exc)[:300]}
     finally:
         db.close()
@@ -85,30 +86,36 @@ def extract_schedule_version(schedule_version_id: str) -> dict:
     db = SessionLocal()
     set_company_scope(db, None)
     try:
+        from app.models.project_so import DeliveryScheduleVersion
         from app.services.project_schedule_service import ProjectScheduleService
 
         return ProjectScheduleService(db).run_extraction(schedule_version_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Schedule extraction failed for version %s", schedule_version_id)
-        _mark_failed(db, "delivery_schedule_versions", schedule_version_id, exc)
+        _mark_failed(db, DeliveryScheduleVersion, schedule_version_id, exc)
         return {"status": "failed", "error": str(exc)[:300]}
     finally:
         db.close()
 
 
-def _mark_failed(db, table: str, row_id: str, exc: Exception) -> None:
-    """Last-resort state write, so nothing is left showing "queued" after a crash."""
-    from sqlalchemy import text
+def _mark_failed(db, model, row_id: str, exc: Exception) -> None:
+    """Last-resort state write, so nothing is left showing "queued" after a crash.
 
+    Takes the MODEL, not a table name. Both of these tables live in the `projects`
+    schema now (ADR-0011), so a raw ``UPDATE project_po_versions`` would need
+    qualifying by hand, and a hardcoded ``projects.`` reaches past a test fixture's
+    scratch schema into the real one. The mapped class carries its own schema and
+    honours the fixture's translation.
+    """
     try:
         db.rollback()
-        db.execute(
-            text(
-                f"UPDATE {table} SET extraction_state = 'failed', extraction_error = :err "  # noqa: S608 - table is a literal from this module
-                "WHERE id = :id"
-            ),
-            {"err": str(exc)[:500], "id": row_id},
+        db.query(model).filter(model.id == row_id).update(
+            {
+                model.extraction_state: "failed",
+                model.extraction_error: str(exc)[:500],
+            },
+            synchronize_session=False,
         )
         db.commit()
     except Exception:  # noqa: BLE001
-        logger.exception("could not mark %s %s as failed", table, row_id)
+        logger.exception("could not mark %s %s as failed", model.__tablename__, row_id)

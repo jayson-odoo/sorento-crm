@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
-from sqlalchemy import func, or_, text
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.projects import (
@@ -17,6 +17,7 @@ from app.models.projects import (
     ProjectBrand,
     ProjectCollaborator,
     ProjectParty,
+    ProjectPurchaseOrder,
     ProjectSalesProfile,
     ProjectStakeholder,
     ProjectTakeoverRequest,
@@ -1033,34 +1034,23 @@ def delete_project(
     A project with a customer PO against it is commercial history, and deleting it
     would silently remove revenue from every report that reads it. Archive is the
     action for that case.
-
-    The PO table arrives in S4; the guard is written against ``information_schema``
-    so it is correct both before and after, rather than being a TODO that ships.
     """
     assert_can_edit_project(db, project, actor_user_id, permissions)
 
-    has_po_table = db.execute(
-        text(
-            "select 1 from information_schema.tables "
-            "where table_name = 'project_purchase_orders' limit 1"
-        )
-    ).first()
-    if has_po_table:
-        po_count = db.execute(
-            text(
-                "select count(*) from project_purchase_orders where project_id = :pid"
+    # Through the ORM rather than raw SQL: the table is `projects.purchase_orders` and
+    # `public.purchase_orders` is a DIFFERENT, supplier-side table (ADR-0002, ADR-0011),
+    # so an unqualified count would silently read procurement's rows. The model carries
+    # the schema, and a test fixture's schema translation carries with it.
+    po_count = db.query(ProjectPurchaseOrder).filter_by(project_id=project.id).count()
+    if po_count:
+        raise AppException(
+            status_code=409,
+            message=(
+                f"{project.project_code} has {po_count} purchase order(s) "
+                "recorded against it. Archive it instead of deleting."
             ),
-            {"pid": project.id},
-        ).scalar()
-        if po_count:
-            raise AppException(
-                status_code=409,
-                message=(
-                    f"{project.project_code} has {po_count} purchase order(s) "
-                    "recorded against it. Archive it instead of deleting."
-                ),
-                code="project_has_purchase_orders",
-            )
+            code="project_has_purchase_orders",
+        )
 
     db.delete(project)
     db.flush()
