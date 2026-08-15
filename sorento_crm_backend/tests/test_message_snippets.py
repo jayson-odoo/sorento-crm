@@ -203,6 +203,64 @@ def test_update_unknown_is_404(client):
     assert client.put(f"{BASE}/{uuid.uuid4()}", json={"name": "x"}).status_code == 404
 
 
+def test_the_database_refuses_a_duplicate_shortcut_on_its_own(db):
+    """The case-insensitive uniqueness lived only in the migration, so a
+    create_all schema (every test in this suite) had no index behind the
+    service check - and the check alone races. Declared in __table_args__ the
+    way ticket_comment.py does, the constraint is real everywhere."""
+    from sqlalchemy.exc import IntegrityError
+
+    _add(db, name="Stock check", shortcut="stock")
+
+    db.add(
+        MessageSnippet(
+            id=str(uuid.uuid4()), name="Other", shortcut="STOCK", body="x"
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_two_snippets_without_a_shortcut_are_fine(db):
+    """The index is partial: a snippet is findable by name alone."""
+    _add(db, name="One", shortcut=None)
+    _add(db, name="Two", shortcut=None)
+
+    assert db.query(MessageSnippet).count() == 2
+
+
+def test_a_duplicate_that_beats_the_service_check_is_a_409_not_a_500(client, db):
+    """The read-then-write check races. When the index catches what the check
+    missed, the caller must still be told "that shortcut is taken", not handed
+    an internal error."""
+    from app.services import message_snippet_service as svc
+
+    _add(db, name="Stock check", shortcut="stock")
+    svc.MessageSnippetService._assert_shortcut_free = lambda *a, **k: None
+    try:
+        resp = client.post(BASE, json={"name": "Other", "shortcut": "STOCK", "body": "x"})
+    finally:
+        del svc.MessageSnippetService._assert_shortcut_free
+
+    assert resp.status_code == 409, resp.text
+    assert db.query(MessageSnippet).count() == 1
+
+
+def test_an_update_onto_a_taken_shortcut_is_a_409_not_a_500(client, db):
+    from app.services import message_snippet_service as svc
+
+    _add(db, name="Stock check", shortcut="stock")
+    other = _add(db, name="Delivery ETA", shortcut="eta")
+    svc.MessageSnippetService._assert_shortcut_free = lambda *a, **k: None
+    try:
+        resp = client.put(f"{BASE}/{other.id}", json={"shortcut": "STOCK"})
+    finally:
+        del svc.MessageSnippetService._assert_shortcut_free
+
+    assert resp.status_code == 409, resp.text
+
+
 # --------------------------------------------------------------------- delete
 
 

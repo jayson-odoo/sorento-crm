@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.message_snippet import MessageSnippet
@@ -189,13 +190,33 @@ class MessageSnippetService:
                 f"A snippet with the shortcut '{shortcut}' already exists."
             )
 
+    def _commit_or_conflict(self, shortcut: Optional[str]) -> None:
+        """Commit, turning the shortcut index's veto into the same 409 the
+        pre-check gives.
+
+        ``_assert_shortcut_free`` is a read-then-write check, so two admins
+        saving the same shortcut at once both pass it and the second one hits
+        ``uq_message_snippets_shortcut``. That is the index doing its job; the
+        caller still deserves "that shortcut is taken" rather than an internal
+        error.
+        """
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise handle_conflict(
+                f"A snippet with the shortcut '{shortcut}' already exists."
+                if shortcut
+                else "That snippet conflicts with an existing one."
+            )
+
     def create_snippet(
         self, payload: MessageSnippetCreate, created_by: Optional[str] = None
     ) -> MessageSnippet:
         self._assert_shortcut_free(payload.shortcut)
         row = MessageSnippet(**payload.model_dump(), created_by=created_by)
         self.db.add(row)
-        self.db.commit()
+        self._commit_or_conflict(payload.shortcut)
         self.db.refresh(row)
         return row
 
@@ -209,7 +230,7 @@ class MessageSnippetService:
         for key, value in data.items():
             setattr(row, key, value)
         row.updated_at = func.now()
-        self.db.commit()
+        self._commit_or_conflict(data.get("shortcut", row.shortcut))
         self.db.refresh(row)
         return row
 

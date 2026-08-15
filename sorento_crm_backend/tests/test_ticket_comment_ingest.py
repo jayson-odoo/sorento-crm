@@ -229,3 +229,66 @@ def test_a_duplicate_that_beats_the_read_check_is_still_a_duplicate(client, db):
         "Called him, he is happy to wait."
     ), "the winner's row stands; the loser does not overwrite it"
     assert calls["n"] == 2, "the loser re-selects after the IntegrityError"
+
+
+# --------------------------------------------------------------------------- #
+# The inbound integration_log the sibling message ingest already writes        #
+# --------------------------------------------------------------------------- #
+
+
+def _ingest_logs(db):
+    from app.models.integration import IntegrationLog
+
+    return (
+        db.query(IntegrationLog)
+        .filter(IntegrationLog.business_table == "conversation_ticket_comments")
+        .order_by(IntegrationLog.created_at.asc())
+        .all()
+    )
+
+
+def test_an_ingested_comment_leaves_an_inbound_log_row(client, db):
+    """The message ingest next door logs every call; the comment ingest logged
+    none, so a comment that never appeared was undiagnosable from the CRM side."""
+    import json
+
+    _seed_contact(db)
+
+    assert client.post(URL, json=_payload()).status_code == 201
+
+    rows = _ingest_logs(db)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.direction == "inbound"
+    assert row.integration_channel == "n8n"
+    assert row.external_reference == RESPOND_IO_ID
+    assert row.status == "success"
+    assert row.status_code == 201
+    assert "Called him" in (row.request_payload or "")
+    headers = json.loads(row.request_headers or "{}")
+    assert all(v == "***" for k, v in headers.items() if k.lower() == "x-api-key"), (
+        "an API key must never be readable from a log row"
+    )
+
+
+def test_a_refused_comment_is_logged_too(client, db):
+    """The failure is the case worth logging: "n8n says it forwarded it" versus
+    "the CRM had never heard of that contact" is the whole diagnosis."""
+    _seed_contact(db)
+
+    assert client.post(URL, json=_payload(contact_id="does-not-exist")).status_code == 404
+
+    rows = _ingest_logs(db)
+    assert len(rows) == 1
+    assert rows[0].status == "failed"
+    assert rows[0].status_code == 404
+    assert rows[0].error_message
+
+
+def test_a_duplicate_is_logged_as_a_success(client, db):
+    _seed_contact(db)
+    client.post(URL, json=_payload())
+    client.post(URL, json=_payload())
+
+    rows = _ingest_logs(db)
+    assert [r.status for r in rows] == ["success", "success"]

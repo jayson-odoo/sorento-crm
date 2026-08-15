@@ -17,9 +17,8 @@ set and the fallbacks.
 """
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Index, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import func
 
 from app.database import Base
 
@@ -30,8 +29,8 @@ class MessageSnippet(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(150), nullable=False)
     # The "/" keyword the composer filters on. Optional: a snippet is findable by
-    # name alone. Unique case-insensitively (enforced by the migration's
-    # functional index) so "/stock" can never mean two things.
+    # name alone. Unique case-insensitively (see __table_args__) so "/stock" can
+    # never mean two things.
     shortcut = Column(String(60), nullable=True)
     body = Column(Text, nullable=False)
     # Retired wording stays readable in the admin list but leaves the picker.
@@ -40,4 +39,16 @@ class MessageSnippet(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
 
-    __table_args__ = (Index("ix_message_snippets_is_active", "is_active"),)
+    __table_args__ = (
+        Index("ix_message_snippets_is_active", "is_active"),
+        # Declared here as well as in migration 329 so a create_all schema (the
+        # test substrate) enforces it too: uniqueness that only exists in a
+        # migration is uniqueness the tests cannot see. Name and shape match the
+        # migration exactly, so alembic autogenerate sees no drift.
+        Index(
+            "uq_message_snippets_shortcut",
+            func.lower(shortcut),
+            unique=True,
+            postgresql_where=text("shortcut IS NOT NULL"),
+        ),
+    )

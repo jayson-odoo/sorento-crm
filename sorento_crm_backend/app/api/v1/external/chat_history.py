@@ -3,6 +3,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
@@ -222,6 +223,7 @@ def ingest_chat_message(
 )
 def ingest_respond_comment(
     payload: TicketCommentIngestRequest,
+    request: Request,
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
@@ -238,50 +240,68 @@ def ingest_respond_comment(
     A payload with no ``comment_id`` is a 400: there would be nothing to
     recognise a replay by, so every retry would add another copy of the same
     note to every open drawer for that contact.
+
+    Every call leaves an inbound ``integration_log`` row, success AND refusal,
+    exactly as the message ingest above does. The refusal is the case worth
+    having: "n8n says it forwarded the comment" versus "the CRM had never heard
+    of that contact" is the whole diagnosis, and without the row neither side
+    could show its work.
     """
     _ = current_user
-    contact_ref = (payload.contact_id or "").strip()
-    phone = (payload.phone_number or "").strip()
-    if not contact_ref and not phone:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide contact_id (Respond contact id) or phone_number.",
-        )
-    comment_id = (payload.comment_id or "").strip()
-    if not comment_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "comment_id is required: it is the key a replayed comment.created "
-                "event is recognised by."
-            ),
-        )
+    status_code = status.HTTP_201_CREATED
+    error_message: Optional[str] = None
+    try:
+        contact_ref = (payload.contact_id or "").strip()
+        phone = (payload.phone_number or "").strip()
+        if not contact_ref and not phone:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Provide contact_id (Respond contact id) or phone_number.",
+            )
+        comment_id = (payload.comment_id or "").strip()
+        if not comment_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "comment_id is required: it is the key a replayed comment.created "
+                    "event is recognised by."
+                ),
+            )
 
-    contact = None
-    if contact_ref:
-        contact = (
-            db.query(RespondContact)
-            .filter(RespondContact.respond_io_id == contact_ref)
-            .first()
-        )
-    if contact is None and phone:
-        contact = (
-            db.query(RespondContact).filter(RespondContact.phone_number == phone).first()
-        )
-    if contact is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No CRM contact matches this Respond.io contact.",
-        )
+        contact = None
+        if contact_ref:
+            contact = (
+                db.query(RespondContact)
+                .filter(RespondContact.respond_io_id == contact_ref)
+                .first()
+            )
+        if contact is None and phone:
+            contact = (
+                db.query(RespondContact)
+                .filter(RespondContact.phone_number == phone)
+                .first()
+            )
+        if contact is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No CRM contact matches this Respond.io contact.",
+            )
 
-    comment, already_existed = TicketCommentService(db).ingest_respond_comment(
-        contact=contact,
-        body=payload.text,
-        respond_comment_id=comment_id,
-        author_respond_user_id=payload.author_respond_user_id,
-        author_name=payload.author_name,
-        created_at_ms=payload.created_at,
-    )
+        comment, already_existed = TicketCommentService(db).ingest_respond_comment(
+            contact=contact,
+            body=payload.text,
+            respond_comment_id=comment_id,
+            author_respond_user_id=payload.author_respond_user_id,
+            author_name=payload.author_name,
+            created_at_ms=payload.created_at,
+        )
+    except HTTPException as exc:
+        status_code = exc.status_code
+        error_message = str(exc.detail)
+        _log_comment_ingest(db, request, payload, status_code, error_message)
+        raise
+
+    _log_comment_ingest(db, request, payload, status_code, error_message)
 
     # AC-K1: poke every drawer open on this contact, but never on the replay
     # path - the first lane already announced this comment.
@@ -293,6 +313,48 @@ def ingest_respond_comment(
     return TicketCommentIngestResponse(
         id=str(comment.id), status="duplicate" if already_existed else "created"
     )
+
+
+def _log_comment_ingest(
+    db: Session,
+    request: Request,
+    payload: TicketCommentIngestRequest,
+    status_code: int,
+    error_message: Optional[str],
+) -> None:
+    """One inbound row per comment ingest call. Best-effort, like its sibling:
+    logging must never be the reason an ingest fails."""
+    try:
+        request_headers = dict(request.headers)
+        if "x-api-key" in request_headers:
+            request_headers["x-api-key"] = "***"
+
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="n8n",
+                business_table="conversation_ticket_comments",
+                business_id=str(uuid.uuid4()),
+                external_reference=str(payload.contact_id or payload.phone_number or ""),
+                direction="inbound",
+                endpoint=str(request.url.path),
+                http_method=request.method,
+                request_headers=json.dumps(request_headers),
+                request_payload=payload.model_dump_json(),
+                status_code=status_code,
+                status="success" if status_code < 400 else "failed",
+                error_message=error_message,
+            )
+        )
+    except Exception as log_error:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning(
+            "Failed to create integration log for comment ingestion: %s",
+            log_error,
+            exc_info=True,
+        )
 
 
 @router.post("", response_model=ChatHistoryMessagesResponse, status_code=status.HTTP_200_OK)
