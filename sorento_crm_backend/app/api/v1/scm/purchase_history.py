@@ -103,7 +103,11 @@ def _queue(db: Session, *, upload: RetainedUpload, job_type: str, task, user_id:
 
 @router.post("/purchase-history/preview")
 async def preview_purchase_history(
-    file: UploadFile = File(..., description="AutoCount Purchase Order Listing With Detail"),
+    file: UploadFile = File(
+        ...,
+        description="AutoCount Purchase Order Listing With Detail, or the flat PO + SPO "
+                    "history extract. Which one it is is read off the header row.",
+    ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
@@ -113,9 +117,13 @@ async def preview_purchase_history(
     error, because the screen has to render WHICH part failed for the export to be fixed and
     an exception body would lose that.
 
-    This is HISTORY, not outstanding supply: the report carries what was ordered and has no
-    received or outstanding column at all, so the lines are written closed and fully received
-    and can never read as stock on its way in.
+    One channel, two file shapes and two document families: purchase orders and shipping
+    orders (`SPO-...`) are split on the Doc No prefix and counted separately on the answer
+    (`orders_po` / `orders_spo`).
+
+    This is HISTORY, not outstanding supply: neither export carries a received or outstanding
+    column this channel reads, so every line is written closed and fully received and can
+    never read as stock on its way in.
 
     Refused without a single active company: read across every company the item and creditor
     codes resolve to the wrong company's rows, so the counts describe a book nobody has.

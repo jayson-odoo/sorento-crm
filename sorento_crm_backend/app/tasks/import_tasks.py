@@ -3566,11 +3566,15 @@ def process_outstanding_import(db_job_id: str, file_data: bytes, filename: str,
 
 
 def process_po_history_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
-    """Import the purchase-order listing as HISTORY, then resolve the SO<->PO claims.
+    """Import a purchase book as HISTORY, then resolve the SO<->PO claims.
 
-    History is written closed and fully received, so it can never read as incoming supply.
-    The link resolve runs inside the job because the notes in this file name sales orders, so
-    an upload can complete a pairing the other side claimed months ago.
+    Either export shape (the banded listing, or the flat PO + SPO extract) and both document
+    families; the service decides from the file itself. History is written closed and fully
+    received, so it can never read as incoming supply, whichever family it belongs to.
+
+    The link resolve runs inside the job because these files name sales orders - per document
+    in the banded report, per LINE in the structured one - so an upload can complete a pairing
+    the other side claimed months ago.
     """
     from app.services.scm import order_link_service, po_history_service
 

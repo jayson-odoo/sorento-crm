@@ -44,6 +44,7 @@ from app.models.product import Product
 from app.services import import_outcome_codes as oc
 from app.services.import_outcome import ImportOutcome
 from app.services.import_alias_service import AliasResolver
+from app.services.scm.history_sources import SO_HISTORY_SOURCE
 from app.services.scm.so_listing_reader import (
     DOC_TYPE,
     SoListingResult,
@@ -55,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 #: Written on every row this feed creates, so a later reader can tell absorbed history from
 #: an order somebody raised in the system, and so a correction can find its own rows.
-SOURCE_SYSTEM = "scm_so_history"
+SOURCE_SYSTEM = SO_HISTORY_SOURCE
 SOURCE_REF = "so_listing"
 
 #: What a historical document carries. The exclusion from `committed_v` is done by the LINE
