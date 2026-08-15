@@ -6083,6 +6083,66 @@ class ConversationSLATrackingService:
         )
         return sibling_count > 1
 
+    def _window_and_template(
+        self,
+        *,
+        identifier: Optional[str],
+        respond_contact_id: Optional[str],
+        sender_name: str,
+        entity_id: str,
+    ) -> dict:
+        """The composer's two facts: is the 24h window open, and what does the
+        out-of-window ``conversation_chat`` template look like filled in.
+
+        ONE core for both surfaces - the ticket drawer reads it off
+        ``get_ticket_detail`` (bundled so the drawer opens in one round trip)
+        and the Conversations inbox reads it off ``get_contact_window``, so the
+        two composers can never disagree about the window they are in. The
+        window resolution is a live Respond.io call (15s timeout), so callers
+        that are ``async def`` must run this in a threadpool.
+        """
+        from app.services.respond_chat_template_service import (
+            get_chat_template_preview,
+            get_window_state_for,
+        )
+
+        if not identifier:
+            return {
+                "window": {"open": False, "expires_at": None},
+                "chat_template": {"configured": False, "reason": "no_contact"},
+            }
+        window = get_window_state_for(
+            self.db, identifier=identifier, respond_contact_id=respond_contact_id
+        )
+        return {
+            "window": {"open": bool(window.get("open")), "expires_at": None},
+            "chat_template": get_chat_template_preview(
+                self.db,
+                identifier=identifier,
+                respond_contact_id=respond_contact_id,
+                chat_use_case="conversation_chat",
+                sender_name=sender_name,
+                entity_id=entity_id,
+                context_builder=None,
+            ),
+        }
+
+    def get_contact_window(self, contact_ref: str, *, sender_name: str) -> dict:
+        """Composer state for a CONTACT with no ticket in hand (UAC AC-N3).
+
+        Same ``{window, chat_template}`` pair the drawer reads off the ticket
+        detail, so the inbox composer can smart-send identically: render the
+        template inline with the message slot editable when the window is shut,
+        a plain textbox when it is open.
+        """
+        contact = self.require_contact(contact_ref)
+        return self._window_and_template(
+            identifier=str(getattr(contact, "respond_io_id", "") or "").strip() or None,
+            respond_contact_id=str(contact.id),
+            sender_name=sender_name,
+            entity_id=str(contact.id),
+        )
+
     def get_ticket_detail(
         self,
         tracking_id: str,
@@ -6099,10 +6159,6 @@ class ConversationSLATrackingService:
         outside its visibility scope (never leaks existence via a 403).
         """
         from app.services.form_sla_service import FORM_SLA_TYPES
-        from app.services.respond_chat_template_service import (
-            get_chat_template_preview,
-            get_window_state_for,
-        )
 
         tracking = self.get_tracking(tracking_id, load_event_logs=False)
         if not tracking or getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
@@ -6121,23 +6177,14 @@ class ConversationSLATrackingService:
         assigned_user = getattr(tracking, "assigned_user", None)
         team_label = (self._ticket_team_labels([tracking]) or {}).get(str(tracking.id))
 
-        if identifier:
-            window = get_window_state_for(
-                self.db, identifier=identifier, respond_contact_id=respond_contact_id
-            )
-            window_out = {"open": bool(window.get("open")), "expires_at": None}
-            chat_template = get_chat_template_preview(
-                self.db,
-                identifier=identifier,
-                respond_contact_id=respond_contact_id,
-                chat_use_case="conversation_chat",
-                sender_name=sender_name,
-                entity_id=str(tracking.id),
-                context_builder=None,
-            )
-        else:
-            window_out = {"open": False, "expires_at": None}
-            chat_template = {"configured": False, "reason": "no_contact"}
+        composer = self._window_and_template(
+            identifier=identifier,
+            respond_contact_id=respond_contact_id,
+            sender_name=sender_name,
+            entity_id=str(tracking.id),
+        )
+        window_out = composer["window"]
+        chat_template = composer["chat_template"]
 
         can_send = bool(identifier) and not is_resolved
         can_resolve = not is_resolved
@@ -6607,3 +6654,102 @@ class ConversationSLATrackingService:
             )
         result["stamped_ticket_id"] = None
         return result
+
+    def send_contact_template_message(
+        self,
+        contact_ref: str,
+        *,
+        template_id: str,
+        params: dict,
+        sender_user_id: Optional[str],
+        sender_name: str,
+    ) -> dict:
+        """Send an approved template to a CONTACT from the inbox (UAC AC-N2).
+
+        The out-of-window half of ``send_contact_message``, and it stamps by the
+        same rule: exactly one open conversation ticket of the sender's for this
+        contact makes this that ticket's first response (response clock +
+        human-intervention signal, indistinguishable from the drawer's template
+        send); zero or several leaves it unstamped against the contact, because
+        guessing which enquiry a template answers would corrupt both clocks.
+
+        Delivery is synchronous through the shared
+        ``deliver_manual_template_now``: the operator gets the real outcome and
+        the Respond outbox row exists either way. The DB-only precheck runs
+        first so a bad template id or a missing parameter is an inline 404/400
+        rather than a delivered surprise.
+        """
+        from app.services.crm_chat_outbound_webhook import (
+            notify_human_contact_send,
+            notify_human_ticket_send,
+        )
+        from app.services.respond_chat_template_service import (
+            deliver_manual_template_now,
+            precheck_manual_template,
+        )
+
+        contact = self.require_contact(contact_ref)
+        identifier = str(getattr(contact, "respond_io_id", "") or "").strip()
+        if not identifier:
+            raise handle_validation_error(
+                "No Respond.io contact linked; cannot send a template."
+            )
+
+        pre = precheck_manual_template(self.db, template_id=template_id, params=params)
+
+        mine = self.my_open_tickets_for_contact(str(contact.id), sender_user_id)
+        stamped = mine[0] if len(mine) == 1 else None
+        business_table = "conversation_sla_tracking" if stamped else "respond_contacts"
+        business_id = str(stamped.id) if stamped else str(contact.id)
+
+        sent = deliver_manual_template_now(
+            self.db,
+            identifier=identifier,
+            template_id=template_id,
+            params=params,
+            business_table=business_table,
+            business_id=business_id,
+            sender_user_id=sender_user_id,
+        )
+        response = sent.get("response") if isinstance(sent, dict) else None
+
+        # Post-send side effects: the contact already has the message, so each
+        # one warns rather than raising (notify_human_* never raise by design).
+        if stamped is not None:
+            try:
+                self.mark_ticket_responded(
+                    stamped,
+                    responded_by_user_id=sender_user_id,
+                    reason="CRM reply (sent_as=template)",
+                )
+            except Exception:  # noqa: BLE001
+                _module_logger.warning(
+                    "send_contact_template_message: response-clock stamp failed for %s",
+                    stamped.id,
+                    exc_info=True,
+                )
+            notify_human_ticket_send(
+                self.db,
+                tracking_id=str(stamped.id),
+                contact_respond_io_id=identifier,
+                message_text=pre.get("rendered_body") or "",
+                respond_api_response=response if isinstance(response, dict) else None,
+                sender_user_id=sender_user_id,
+            )
+        else:
+            notify_human_contact_send(
+                self.db,
+                respond_contact_id=str(contact.id),
+                contact_respond_io_id=identifier,
+                message_text=pre.get("rendered_body") or "",
+                respond_api_response=response if isinstance(response, dict) else None,
+                sender_user_id=sender_user_id,
+            )
+
+        return {
+            "ok": True,
+            "queued": False,
+            "template_name": pre["template_name"],
+            "rendered_body": pre["rendered_body"],
+            "stamped_ticket_id": str(stamped.id) if stamped is not None else None,
+        }

@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from app.api.v1._respond_chat_template_routes import TemplateMessageSendRequest
 from app.database import get_db
 from app.dependencies import require_permission
 from app.schemas.ticket_comment import TicketCommentCreate, TicketCommentResponse
@@ -153,6 +154,63 @@ async def list_contact_comments(
     one ticket.
     """
     return TicketCommentService(db).list_for_contact(contact_ref)
+
+
+@router.get("/{contact_ref}/window")
+async def get_contact_window(
+    contact_ref: str,
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Composer state for this contact: the 24h window plus the out-of-window
+    chat-template preview (AC-N3).
+
+    The same ``{window, chat_template}`` pair the drawer reads off
+    ``GET .../conversation-sla-tracking/{tracking_id}/ticket`` - one service
+    core answers both - so the inbox composer smart-sends identically instead
+    of guessing the window is open.
+
+    NOT DB-only: the window resolves via a real Respond.io call (15s timeout),
+    hence the threadpool hop.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    service = ConversationSLATrackingService(db)
+    sender_name = (current_user.get("name") or "").strip() or "Customer Service"
+    return await run_in_threadpool(
+        service.get_contact_window, contact_ref, sender_name=sender_name
+    )
+
+
+@router.post("/{contact_ref}/template-message")
+async def send_contact_template_message(
+    contact_ref: str,
+    body: TemplateMessageSendRequest,
+    current_user: dict = Depends(require_permission(REPLY)),
+    db: Session = Depends(get_db),
+):
+    """Send an approved template to this contact from the inbox (AC-N2).
+
+    Same body as every entity chat panel's template route
+    (``{template_id, params}``); ``tracking_id`` is ignored here because the
+    ticket is derived, not chosen: the send stamps the sender's own open ticket
+    when they hold exactly one, and is otherwise unstamped. Synchronous, so the
+    response carries the real outcome and the Respond outbox row exists either
+    way.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    service = ConversationSLATrackingService(db)
+    sender_name = (current_user.get("name") or "").strip() or "Customer Service"
+    return await run_in_threadpool(
+        lambda: service.send_contact_template_message(
+            contact_ref,
+            template_id=body.template_id,
+            params=body.params,
+            sender_user_id=str(current_user.get("id") or "") or None,
+            sender_name=sender_name,
+        )
+    )
 
 
 @router.post(

@@ -226,6 +226,54 @@ def send_manual_template_for(
     }
 
 
+def deliver_manual_template_now(
+    db: Session,
+    *,
+    identifier: str,
+    template_id: str,
+    params: Dict[str, str],
+    business_table: str,
+    business_id: str,
+    sender_user_id: Optional[str],
+) -> Dict[str, Any]:
+    """Deliver a manual template IN-REQUEST and answer the truth.
+
+    The queued path answers ``{ok: true, queued: true}`` the moment the job is
+    in Redis: with no worker draining ``respond_io`` the operator sees a success
+    toast and NO ``integration_log`` row exists until something drains the queue
+    (observed: a template sat queued for four hours). Every surface that needs
+    the OUTCOME - the ticket drawer, the Conversations inbox - comes through
+    here instead.
+
+    ``send_manual_template_for`` writes the outbox itself on BOTH outcomes and
+    re-raises on failure; this translates that into the 502 a composer can show.
+    Callers own whatever happens afterwards (a response clock, a human-send
+    signal), which is the only thing that differs between them.
+    """
+    from app.services.error_handler import AppException
+
+    try:
+        return send_manual_template_for(
+            db,
+            identifier=identifier,
+            template_id=template_id,
+            params=params,
+            business_table=business_table,
+            business_id=business_id,
+            created_by=sender_user_id,
+        )
+    except AppException:
+        raise
+    except Exception as e:  # noqa: BLE001 - the outbox row is already written
+        logger.exception("Manual template send failed for %s %s", business_table, business_id)
+        raise AppException(
+            status_code=502,
+            message="Failed to send the template. Please try again.",
+            detail=str(e),
+            code="respond_send_failed",
+        )
+
+
 def _resolve_contact_name(db: Session, *, respond_contact_id: Optional[str], identifier: str) -> str:
     """Contact display name (name -> joined -> phone), falling back to the identifier."""
     from app.models.access import RespondContact

@@ -69,36 +69,22 @@ def _send_ticket_template_now(
 
     This route is a plain ``def``, which FastAPI already runs in its external
     threadpool, so the blocking Respond call never touches the event loop.
-    ``send_manual_template_for`` writes the outbox itself on both outcomes and
-    re-raises on failure; we translate that into a 502 the composer can show.
-    The response-clock stamp is a post-send side effect: best-effort, never
-    fatal (the contact already has the message).
+    The delivery itself (outbox on both outcomes, 502 on failure) is
+    ``deliver_manual_template_now``, shared with the Conversations inbox's
+    contact-keyed template send. The response-clock stamp is a post-send side
+    effect: best-effort, never fatal (the contact already has the message).
     """
-    from app.services.error_handler import AppException
-    from app.services.respond_chat_template_service import send_manual_template_for
+    from app.services.respond_chat_template_service import deliver_manual_template_now
 
-    try:
-        sent = send_manual_template_for(
-            db,
-            identifier=identifier,
-            template_id=body.template_id,
-            params=body.params,
-            business_table=business_table,
-            business_id=entity_id,
-            created_by=sender_user_id,
-        )
-    except AppException:
-        raise
-    except Exception as e:  # noqa: BLE001 - the outbox row is already written
-        logger.exception(
-            "Manual template send failed for %s %s", business_table, entity_id
-        )
-        raise AppException(
-            status_code=502,
-            message="Failed to send the template. Please try again.",
-            detail=str(e),
-            code="respond_send_failed",
-        )
+    sent = deliver_manual_template_now(
+        db,
+        identifier=identifier,
+        template_id=body.template_id,
+        params=body.params,
+        business_table=business_table,
+        business_id=entity_id,
+        sender_user_id=sender_user_id,
+    )
 
     try:
         from app.services.sla_service import ConversationSLATrackingService
