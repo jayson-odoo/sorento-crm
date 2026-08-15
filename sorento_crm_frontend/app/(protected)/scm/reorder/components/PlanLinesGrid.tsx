@@ -138,7 +138,7 @@ export function PlanLinesGrid({
   purchaseTrendFor,
   purchaseTrendWindowMonths = 3,
   onOpenPurchaseTrend,
-  photoFor,
+  hasPhotoFor,
   photoStatus = 'idle',
   onOpenPhoto,
   economicsFor,
@@ -180,8 +180,8 @@ export function PlanLinesGrid({
   /** Fired the first time a PO cell's popover opens - lets the caller lazily start the
    *  purchase-trend fetch instead of it running for every product on plan mount. */
   onOpenPurchaseTrend?: () => void;
-  /** The signed URL of a line's primary photo, or undefined when the product has none. */
-  photoFor?: (line: PlanLine) => string | undefined;
+  /** Whether the run's photo map says this line's product has a photo at all. */
+  hasPhotoFor?: (line: PlanLine) => boolean;
   /** Where the run's photo map is. Until it is `ready`, "no photo" is not yet a fact. */
   photoStatus?: ProductPhotoStatus;
   /** Fired the first time a photo popover opens - starts the run-wide photo fetch, the same
@@ -394,9 +394,11 @@ export function PlanLinesGrid({
                 {/* What the thing IS. A buyer who never handles the goods cannot tell two
                     codes apart, and the photo is the one Dealer Kit already chose. */}
                 <ProductPhotoPopover
+                  runId={runId ?? null}
+                  productId={row.original.product_id}
                   sku={row.original.sku}
                   productName={row.original.product_name}
-                  url={photoFor?.(row.original)}
+                  hasPhoto={hasPhotoFor?.(row.original) ?? false}
                   status={photoStatus}
                   onOpen={onOpenPhoto}
                 />
@@ -836,7 +838,7 @@ export function PlanLinesGrid({
     ],
     [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor,
      levelFor, onAmendLevel, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
-     onOpenPurchaseTrend, photoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
+     onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
      onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell],
   );
 

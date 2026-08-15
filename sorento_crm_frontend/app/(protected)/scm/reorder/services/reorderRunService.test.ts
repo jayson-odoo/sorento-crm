@@ -7,6 +7,7 @@ import {
   createReorderRun,
   getReorderRun,
   getRecommendations,
+  getProductImage,
   getProductImages,
   listReorderRuns,
 } from './reorderRunService';
@@ -183,18 +184,18 @@ describe('reorderRunService - listReorderRuns', () => {
 });
 
 describe('reorderRunService - getProductImages (AC-7)', () => {
-  it('reads the run photo map from one endpoint', async () => {
-    apiFetch.mockResolvedValue(ok({ images: { p1: 'https://cdn.test.invalid/p1.jpg' } }));
+  it('reads which products have a photo from one endpoint', async () => {
+    apiFetch.mockResolvedValue(ok({ has_image: { p1: true } }));
 
     const out = await getProductImages('run-9');
 
     expect(calledUrl().pathname).toBe('/api/v1/scm/reorder-runs/run-9/product-images');
-    expect(out.images.p1).toBe('https://cdn.test.invalid/p1.jpg');
+    expect(out.has_image.p1).toBe(true);
   });
 
   it('normalises a body with no images at all, so the caller never guards for it', async () => {
     apiFetch.mockResolvedValue(ok({}));
-    expect(await getProductImages('run-9')).toEqual({ images: {} });
+    expect(await getProductImages('run-9')).toEqual({ has_image: {} });
   });
 
   it('surfaces the backend message rather than a blank failure', async () => {
@@ -207,5 +208,23 @@ describe('reorderRunService - getProductImages (AC-7)', () => {
     } as unknown as Response);
 
     await expect(getProductImages('nope')).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('reorderRunService - getProductImage (AC-7)', () => {
+  it('signs one product photo, on the popover that asked for it', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ url: 'https://cdn.test.invalid/p1.jpg?Signature=stub', is_primary: true }),
+    );
+
+    const out = await getProductImage('run-9', 'p1');
+
+    expect(calledUrl().pathname).toBe('/api/v1/scm/reorder-runs/run-9/product-images/p1');
+    expect(out).toEqual({ url: 'https://cdn.test.invalid/p1.jpg?Signature=stub', is_primary: true });
+  });
+
+  it('reads a product with no photo as a null url, not a failure', async () => {
+    apiFetch.mockResolvedValue(ok({ url: null, is_primary: false }));
+    expect(await getProductImage('run-9', 'p2')).toEqual({ url: null, is_primary: false });
   });
 });

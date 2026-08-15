@@ -3,15 +3,26 @@
  *
  * > "as IT I do not know what a product looks like"
  *
- * The four states this popover can be in are the whole component: the map has not been
- * asked for yet, it is in flight, it landed with a photo, it landed WITHOUT one (which is
- * a fact worth saying, plus where to fix it), or it failed.
+ * Two facts drive this component and they arrive separately: the run-wide map says whether
+ * the icon is lit, and the per-product fetch (made on the open, in here) brings the picture.
+ * The states pinned below are the ones the buyer can actually land on: still loading, a
+ * chosen photo, a photo nobody nominated (which keeps the way back to the picker on screen),
+ * no photo at all, and a photo we could not load.
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const useProductPhoto = vi.fn();
+vi.mock('../hooks/useReorderRun', () => ({
+  useProductPhoto: (...a: unknown[]) => useProductPhoto(...a),
+}));
 
 import { ProductPhotoPopover } from './ProductPhotoPopover';
+
+function photo(data: unknown, extra: Record<string, unknown> = {}) {
+  useProductPhoto.mockReturnValue({ data, isLoading: false, isError: false, ...extra });
+}
 
 async function open() {
   fireEvent.click(screen.getByRole('button', { name: /product photo/i }));
@@ -19,7 +30,12 @@ async function open() {
 }
 
 describe('ProductPhotoPopover', () => {
-  it("asks for the run's photos only when a row is actually opened", async () => {
+  beforeEach(() => {
+    useProductPhoto.mockReset();
+    photo(undefined, { isLoading: true });
+  });
+
+  it("asks for the run's photo map only when a row is actually opened", async () => {
     const onOpen = vi.fn();
     render(<ProductPhotoPopover sku="SRTWCY8840" onOpen={onOpen} />);
 
@@ -29,8 +45,16 @@ describe('ProductPhotoPopover', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
-  it('shows a placeholder while the photos are still in flight', async () => {
-    render(<ProductPhotoPopover sku="SRTWCY8840" status="loading" />);
+  it('costs nothing until the popover opens', () => {
+    render(<ProductPhotoPopover runId="run-1" productId="p1" sku="SRTWCY8840" />);
+
+    // The body holds the query, and the body only mounts on open: a plan of thousands of
+    // rows must not hold a subscription each for panels nobody opened.
+    expect(useProductPhoto).not.toHaveBeenCalled();
+  });
+
+  it('shows a placeholder while the photo is still in flight', async () => {
+    render(<ProductPhotoPopover runId="run-1" productId="p1" sku="SRTWCY8840" status="ready" />);
     await open();
 
     expect(screen.getByTestId('product-photo-skeleton')).toBeInTheDocument();
@@ -39,23 +63,43 @@ describe('ProductPhotoPopover', () => {
   });
 
   it('shows the photo with the product it belongs to', async () => {
+    photo({ url: 'https://cdn.test.invalid/products/a.jpg?Signature=stub', is_primary: true });
     render(
       <ProductPhotoPopover
+        runId="run-1"
+        productId="p1"
         sku="SRTWCY8840"
         productName="Wall hung water closet"
-        url="https://cdn.test.invalid/products/a.jpg?Signature=stub"
+        hasPhoto
         status="ready"
       />,
     );
     await open();
 
-    const img = screen.getByRole('img', { name: 'SRTWCY8840' });
+    const img = screen.getByRole('img', { name: 'Wall hung water closet' });
     expect(img).toHaveAttribute('src', 'https://cdn.test.invalid/products/a.jpg?Signature=stub');
     expect(screen.getByText('Wall hung water closet')).toBeInTheDocument();
+    // Nobody has to be sent anywhere: this IS the chosen photo.
+    expect(screen.queryByRole('link', { name: /choose the primary photo/i })).not.toBeInTheDocument();
+  });
+
+  it('offers the way to Brochure images when the photo is only a fallback', async () => {
+    photo({ url: 'https://cdn.test.invalid/products/a.jpg', is_primary: false });
+    render(
+      <ProductPhotoPopover runId="run-1" productId="p1" sku="SRTWCY8840" hasPhoto status="ready" />,
+    );
+    await open();
+
+    expect(screen.getByRole('img', { name: 'SRTWCY8840' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /choose the primary photo/i })).toHaveAttribute(
+      'href',
+      '/dealer-kit/brochure-images',
+    );
   });
 
   it('says there is no photo yet and where to choose one', async () => {
-    render(<ProductPhotoPopover sku="SRTWCY8840" status="ready" />);
+    photo({ url: null, is_primary: false });
+    render(<ProductPhotoPopover runId="run-1" productId="p1" sku="SRTWCY8840" status="ready" />);
     await open();
 
     expect(screen.getByText('No primary photo yet')).toBeInTheDocument();
@@ -65,12 +109,30 @@ describe('ProductPhotoPopover', () => {
     );
   });
 
-  it('says the photos failed rather than pretending the product has none', async () => {
-    render(<ProductPhotoPopover sku="SRTWCY8840" status="error" />);
+  it('says the photo failed rather than pretending the product has none', async () => {
+    photo(undefined, { isError: true });
+    render(
+      <ProductPhotoPopover runId="run-1" productId="p1" sku="SRTWCY8840" hasPhoto status="ready" />,
+    );
     await open();
 
     expect(screen.getByText(/failed to load the photo/i)).toBeInTheDocument();
     expect(screen.queryByText(/no primary photo yet/i)).not.toBeInTheDocument();
+  });
+
+  it('says so when the signed url has expired under the browser', async () => {
+    photo({ url: 'https://cdn.test.invalid/products/a.jpg?Signature=expired', is_primary: true });
+    render(
+      <ProductPhotoPopover runId="run-1" productId="p1" sku="SRTWCY8840" hasPhoto status="ready" />,
+    );
+    await open();
+
+    // A signed URL that expired between the fetch and the render comes back 403, and the
+    // browser reports it only through the image's own error event. Without this the buyer
+    // stares at a broken-image glyph and no explanation.
+    fireEvent.error(screen.getByRole('img', { name: 'SRTWCY8840' }));
+
+    expect(screen.getByText(/failed to load the photo/i)).toBeInTheDocument();
   });
 
   it('dims the icon only once we KNOW the product has no photo', () => {
@@ -84,7 +146,7 @@ describe('ProductPhotoPopover', () => {
       'text-muted-foreground/50',
     );
 
-    rerender(<ProductPhotoPopover sku="SRTWCY8840" status="ready" url="https://x/y.jpg" />);
+    rerender(<ProductPhotoPopover sku="SRTWCY8840" status="ready" hasPhoto />);
     expect(screen.getByRole('button', { name: /product photo/i }).className).not.toContain(
       'text-muted-foreground/50',
     );

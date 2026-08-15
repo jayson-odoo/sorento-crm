@@ -923,7 +923,7 @@ describe('PlanLinesGrid - product photo on the row (AC-7)', () => {
 
   function renderWithPhotos(
     lines: PlanLine[],
-    photoFor?: (l: PlanLine) => string | undefined,
+    hasPhotoFor?: (l: PlanLine) => boolean,
     photoStatus: 'idle' | 'loading' | 'ready' | 'error' = 'ready',
     onOpenPhoto?: () => void,
   ) {
@@ -935,7 +935,7 @@ describe('PlanLinesGrid - product photo on the row (AC-7)', () => {
           decisions={{}}
           onDecide={vi.fn()}
           onClear={vi.fn()}
-          photoFor={photoFor}
+          hasPhotoFor={hasPhotoFor}
           photoStatus={photoStatus}
           onOpenPhoto={onOpenPhoto}
           staleAfterDays={180}
@@ -953,7 +953,7 @@ describe('PlanLinesGrid - product photo on the row (AC-7)', () => {
     renderWithPhotos(
       [line({ id: 'a', sku: 'HAS-1', product_id: 'p1' }),
        line({ id: 'b', sku: 'NONE-1', product_id: 'p2', rank: 2 })],
-      (l) => (l.product_id === 'p1' ? 'https://cdn.test.invalid/p1.jpg' : undefined),
+      (l) => l.product_id === 'p1',
     );
 
     const withPhoto = screen.getByText('HAS-1').closest('tr') as HTMLElement;

@@ -142,7 +142,7 @@ export function PlanLinesSection({
         purchaseTrendFor={planLines.purchaseTrendFor}
         purchaseTrendWindowMonths={planLines.purchaseTrendWindowMonths}
         onOpenPurchaseTrend={planLines.requestPurchaseTrend}
-        photoFor={planLines.photoFor}
+        hasPhotoFor={planLines.hasPhotoFor}
         photoStatus={planLines.photoStatus}
         onOpenPhoto={planLines.requestProductImages}
         economicsFor={planLines.economicsFor}

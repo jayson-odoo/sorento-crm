@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Image as ImageIcon } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useProductPhoto } from '../hooks/useReorderRun';
 
 /**
  * What the product actually looks like, on the row the buyer is deciding.
@@ -12,39 +13,105 @@ import { Skeleton } from '@/components/ui/skeleton';
  * > "as IT I do not know what a product looks like"
  *
  * A plan row is a code and a name, and a buyer who does not handle the goods cannot tell
- * SRTWCY8840 from SRTWCY8850 from either. The photo is the one already chosen in
- * Dealer Kit -> Brochure images (`product_attachments.is_primary`), so the plan screen and
- * the catalogue can never show a different picture of the same product.
+ * SRTWCY8840 from SRTWCY8850 from either. The picture is the catalogue's, governed by
+ * Dealer Kit -> Brochure images, so the plan screen and the catalogue can never show a
+ * different picture of the same product.
  *
- * The photos are fetched ONCE for the whole run, lazily, the first time any row's icon is
- * opened (`onOpen`) - the same shape as the PO cell's purchase trend. Fetching them per row
- * would sign a URL for every product on a plan the buyer opens two photos of.
+ * Two fetches, deliberately. The run-wide map (`onOpen`, once) says only WHICH rows have a
+ * photo, so the icon can dim without signing anything; the URL is signed here, per product,
+ * on the popover that asked for it.
  */
 export type ProductPhotoStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-export function ProductPhotoPopover({
+/**
+ * The fetch lives in here, and this only mounts once the popover is OPEN.
+ *
+ * The same reason the demand drill does it: a query subscription per row, for a panel nobody
+ * opened, is hundreds of them on a full plan.
+ */
+function ProductPhotoBody({
+  runId,
+  productId,
   sku,
   productName,
-  url,
+}: {
+  runId: string | null;
+  productId: string | null;
+  sku: string;
+  productName?: string | null;
+}) {
+  const { data, isError } = useProductPhoto(runId, productId, true);
+  // A signed URL that expired between the fetch and the render comes back 403, and the
+  // browser reports it only through the image's own error event.
+  const [broken, setBroken] = useState(false);
+
+  if (data?.url && !broken) {
+    return (
+      <div className="space-y-2">
+        {/* A plain <img>: the src is a signed, expiring S3/R2 URL, so next/image would
+            need every storage host whitelisted and would re-proxy a link that is
+            already thumbnail-sized and short-lived. */}
+        <img
+          src={data.url}
+          alt={productName || sku}
+          onError={() => setBroken(true)}
+          className="mx-auto max-h-[320px] w-auto max-w-full rounded object-contain"
+        />
+        {/* Most products have never been nominated, so this is the picture the catalogue
+            falls back to. Saying where the choice is made keeps the loop open. */}
+        {data.is_primary ? null : (
+          <Link
+            href="/dealer-kit/brochure-images"
+            className="block text-2xs text-primary hover:underline"
+          >
+            Choose the primary photo in Dealer Kit -&gt; Brochure images
+          </Link>
+        )}
+      </div>
+    );
+  }
+  if (isError || broken) {
+    return <p className="text-2xs text-muted-foreground">Failed to load the photo.</p>;
+  }
+  if (!data) {
+    return <Skeleton className="h-40 w-full" data-testid="product-photo-skeleton" />;
+  }
+  return (
+    <div className="space-y-1">
+      <p className="text-xs">No primary photo yet</p>
+      <Link href="/dealer-kit/brochure-images" className="text-2xs text-primary hover:underline">
+        Choose one in Dealer Kit -&gt; Brochure images
+      </Link>
+    </div>
+  );
+}
+
+export function ProductPhotoPopover({
+  runId = null,
+  productId = null,
+  sku,
+  productName,
+  hasPhoto = false,
   status = 'idle',
   onOpen,
   label = 'Product photo',
 }: {
+  runId?: string | null;
+  productId?: string | null;
   sku: string;
   productName?: string | null;
-  /** The signed URL for this product's primary photo, or undefined when it has none. */
-  url?: string | null;
-  /** Where the run's photo map is: not asked for yet, in flight, loaded, or failed. */
+  /** Whether the run-wide map says this product has a photo at all. */
+  hasPhoto?: boolean;
+  /** Where the run's map is: not asked for yet, in flight, loaded, or failed. */
   status?: ProductPhotoStatus;
-  /** Fired on the first open, so the caller can start the run-wide fetch. */
+  /** Fired on the first open, so the caller can start the run-wide map fetch. */
   onOpen?: () => void;
   label?: string;
 }) {
   const [open, setOpen] = useState(false);
   // Dimmed only once we KNOW: before the map lands, "no photo" is not yet a fact about this
   // product, and a dimmed icon would tell the buyer something we have not checked.
-  const known = status === 'ready';
-  const missing = known && !url;
+  const missing = status === 'ready' && !hasPhoto;
 
   return (
     <Popover
@@ -82,30 +149,12 @@ export function ProductPhotoPopover({
             ) : null}
           </div>
           <div className="p-3">
-            {status === 'loading' || status === 'idle' ? (
-              <Skeleton className="h-40 w-full" data-testid="product-photo-skeleton" />
-            ) : status === 'error' ? (
-              <p className="text-2xs text-muted-foreground">Failed to load the photo.</p>
-            ) : url ? (
-              // A plain <img>: the src is a signed, expiring S3/R2 URL, so next/image would
-              // need every storage host whitelisted and would re-proxy a link that is
-              // already thumbnail-sized and short-lived.
-              <img
-                src={url}
-                alt={sku}
-                className="mx-auto max-h-[320px] w-auto max-w-full rounded object-contain"
-              />
-            ) : (
-              <div className="space-y-1">
-                <p className="text-xs">No primary photo yet</p>
-                <Link
-                  href="/dealer-kit/brochure-images"
-                  className="text-2xs text-primary hover:underline"
-                >
-                  Choose one in Dealer Kit -&gt; Brochure images
-                </Link>
-              </div>
-            )}
+            <ProductPhotoBody
+              runId={runId}
+              productId={productId}
+              sku={sku}
+              productName={productName}
+            />
           </div>
         </PopoverContent>
       </PopoverPortal>

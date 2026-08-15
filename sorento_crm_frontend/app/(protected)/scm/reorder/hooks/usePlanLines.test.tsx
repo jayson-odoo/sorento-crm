@@ -62,7 +62,7 @@ beforeEach(() => {
   getPurchaseTrend.mockReset().mockResolvedValue({ window_months: 3, products: {} });
   getPoBook.mockReset().mockResolvedValue({ po_book: {} });
   getProductEconomics.mockReset().mockResolvedValue({ products: {}, thresholds: {} });
-  getProductImages.mockReset().mockResolvedValue({ images: {} });
+  getProductImages.mockReset().mockResolvedValue({ has_image: {} });
 });
 
 describe('usePlanLines - purchase trend is lazy, not eager', () => {
@@ -104,7 +104,7 @@ describe('usePlanLines - purchase trend is lazy, not eager', () => {
   });
 });
 
-describe('usePlanLines - product photos are lazy too, and one call for the whole run (AC-7)', () => {
+describe('usePlanLines - the photo map is lazy too, and one call for the whole run (AC-7)', () => {
   it('does NOT fetch the photos on mount', async () => {
     renderHook(() => usePlanLines('run-1', true), { wrapper });
 
@@ -123,8 +123,8 @@ describe('usePlanLines - product photos are lazy too, and one call for the whole
     expect(getProductImages).toHaveBeenCalledTimes(1);
   });
 
-  it('reports idle until asked, then ready, and resolves a url per product', async () => {
-    getProductImages.mockResolvedValue({ images: { p1: 'https://cdn.test.invalid/p1.jpg' } });
+  it('reports idle until asked, then ready, and says which products have a photo', async () => {
+    getProductImages.mockResolvedValue({ has_image: { p1: true } });
     const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
     await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
 
@@ -135,8 +135,8 @@ describe('usePlanLines - product photos are lazy too, and one call for the whole
 
     const withPhoto = { product_id: 'p1' } as never;
     const without = { product_id: 'p2' } as never;
-    expect(result.current.photoFor(withPhoto)).toBe('https://cdn.test.invalid/p1.jpg');
-    expect(result.current.photoFor(without)).toBeUndefined();
+    expect(result.current.hasPhotoFor(withPhoto)).toBe(true);
+    expect(result.current.hasPhotoFor(without)).toBe(false);
   });
 
   it('a failed photo fetch is reported, and never takes the plan down with it', async () => {

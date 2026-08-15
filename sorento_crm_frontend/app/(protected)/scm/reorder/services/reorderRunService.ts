@@ -711,23 +711,40 @@ export async function amendLevelSuggestion(input: {
 }
 
 /**
- * What each product on the run looks like: `{product_id: signed url}` (AC-7).
+ * Which products on the run have a photo to show: `{product_id: true}` (AC-7).
  *
- * One call for the whole run, made lazily the first time a row's photo icon opens. The photo
- * is the one chosen in Dealer Kit -> Brochure images (`product_attachments.is_primary`), read
- * through the same viewer-gated reader the catalogue uses, so the two surfaces cannot show a
- * different picture of the same product.
+ * Only the question the icon asks, because the icon is on EVERY row: the answer costs no
+ * signature, so a plan of four thousand lines is one cheap call rather than four thousand
+ * signed URLs the buyer will never open. The picture itself is `getProductImage` below, on
+ * the popover that wants it.
  *
- * A product with no permitted photo is ABSENT from the map rather than mapped to null: the
- * popover has a designed empty state, and a blank url would render a broken image.
+ * A product with nothing to show is ABSENT from the map rather than mapped to false.
  */
 export async function getProductImages(
   runId: string,
-): Promise<{ images: Record<string, string> }> {
+): Promise<{ has_image: Record<string, boolean> }> {
   const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/product-images`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the product photos'));
-  const body = (await res.json()) as { images?: Record<string, string> };
-  return { images: body.images ?? {} };
+  const body = (await res.json()) as { has_image?: Record<string, boolean> };
+  return { has_image: body.has_image ?? {} };
+}
+
+/**
+ * The photo of ONE product on the run, signed on the open of its popover (AC-7).
+ *
+ * `is_primary` says whether anyone ever nominated this picture in Dealer Kit -> Brochure
+ * images. The reader falls back to the first catalogue image when nobody has, which is the
+ * right thing to show and still worth telling the buyer, so the popover keeps the way back
+ * to the picker on screen.
+ */
+export async function getProductImage(
+  runId: string,
+  productId: string,
+): Promise<{ url: string | null; is_primary: boolean }> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/product-images/${productId}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the product photo'));
+  const body = (await res.json()) as { url?: string | null; is_primary?: boolean };
+  return { url: body.url ?? null, is_primary: !!body.is_primary };
 }
 
 /**
