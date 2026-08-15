@@ -529,9 +529,6 @@ export interface PlanDemand {
   pool_code: string | null;
 }
 
-/** PHASE-1 STUB - deleted when the backend lands. Set NEXT_PUBLIC_SCM_P2_STUB=1. */
-const P2_STUB = process.env.NEXT_PUBLIC_SCM_P2_STUB === '1';
-
 /** GET /api/v1/scm/reorder-runs/{run}/recommendations/{rec}/demand */
 export async function getRecommendationDemand(
   runId: string,
@@ -541,19 +538,7 @@ export async function getRecommendationDemand(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/recommendations/${encodeURIComponent(recId)}/demand`,
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the demand behind this row'));
-  const body = (await res.json()) as PlanDemand;
-  if (!P2_STUB) return body;
-  const labels = ['Vivo Homes Sdn Bhd', 'Debtor 300-R009', 'No customer on order'];
-  return {
-    ...body,
-    scope: 'pool',
-    pool_code: 'BRW',
-    lines: body.lines.map((l, i) => ({
-      ...l,
-      customer_label: labels[i % labels.length],
-      unit_price: i % 3 === 2 ? null : 94.5 + i,
-    })),
-  };
+  return res.json();
 }
 
 /** One sales order behind a customer's line in the trend popover. */
@@ -594,17 +579,6 @@ export async function getCustomerOrders(
     customer_key: customerKey,
     limit: String(limit),
   });
-  if (P2_STUB) {
-    // PHASE-1 STUB - deleted when the backend lands.
-    const lines: CustomerOrderLine[] = Array.from({ length: 3 }, (_, i) => ({
-      so_number: `SO41${4050 + i}`,
-      order_date: `2026-0${i + 4}-12`,
-      qty: 12 * (i + 1),
-      unit_price: i === 2 ? null : 0.94 + i,
-      warehouse_code: 'BRW-BB',
-    }));
-    return { lines, total: 27, shown: lines.length };
-  }
   const res = await apiFetch(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/customer-orders?${qs.toString()}`,
   );
@@ -733,13 +707,7 @@ export async function getCoverSources(
 export async function getTrajectory(runId: string): Promise<TrajectoryPayload> {
   const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/trajectory`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load order trends'));
-  const body = (await res.json()) as TrajectoryPayload;
-  if (!P2_STUB) return body;
-  // PHASE-1 STUB - deleted when the backend lands.
-  for (const entry of Object.values(body.series)) {
-    entry.customers = entry.customers.map((c) => ({ ...c, customer_key: c.customer_key ?? 'none' }));
-  }
-  return body;
+  return res.json();
 }
 
 export async function getLevelSuggestions(runId: string): Promise<LevelSuggestionsPayload> {
