@@ -230,7 +230,7 @@ Once the FE prototype is signed off, build the backend to match the contract doc
 - FE: replace mocks with real hooks / services / `api-client` calls. Delete `__mocks__` fixtures unless they're reused by tests.
 - **Tests must land in this phase, not deferred:**
   - **Vitest** (`sorento_crm_frontend/`): component tests for every new component covering loading / empty / error / data states. Hook tests for new query/mutation hooks. Use existing `vitest` + `@testing-library/react` patterns. Single test: `npx vitest run path/to/file.test.ts`.
-  - **Playwright** (`sorento_crm_frontend/e2e/`): one spec per user-facing flow that exercises the FE→BE→DB round-trip (click sidebar → action → assert outcome → assert the right `/api/v1/*` call). Add real fixtures to `e2e/fixtures/` for AI / file flows.
+  - **Playwright** (`sorento_crm_frontend/e2e/`): **a NEW spec is not currently added** - see "Persisted Playwright spec" below for the standing order and what covers a flow instead. The shape a spec would have had is still the target: one per user-facing flow, exercising the FE→BE→DB round-trip (click sidebar → action → assert outcome → assert the right `/api/v1/*` call), with real fixtures in `e2e/fixtures/` for AI / file flows.
   - **pytest** (`sorento_crm_backend/`): endpoint tests for every new route covering happy path + auth denial + validation error. Service-level tests for non-trivial business logic.
 - Re-verify with agent-browser against the real stack: `localhost:3000` (FE) + `localhost:8000` (BE) + worker if relevant. Hit the same flows the prototype demonstrated; states should look identical with live data.
 - Output: backend merged, FE off-mocks, all three test suites green in CI.
@@ -239,7 +239,7 @@ Once the FE prototype is signed off, build the backend to match the contract doc
 
 Run `/code-review` (or `/code-review ultra` for big diffs) on the merged Phase 1 + Phase 2 branch before opening PR for human review. Address findings with `/code-review --fix` or `/simplify` where appropriate. Then open the PR.
 
-- Reviewer checklist: `docs/PR-CHECKLIST.md` plus — "did Phase 1 prototype get a screenshot in the PR description? did Phase 2 add tests (vitest + playwright + pytest)? does the contract doc match what shipped?"
+- Reviewer checklist: `documentation/reference/PR-CHECKLIST.md` plus — "did Phase 1 prototype get a screenshot in the PR description? did Phase 2 add tests (vitest + pytest) and a recorded evidence run for the user flow? does the contract doc match what shipped?"
 
 ### Why this order
 
@@ -251,7 +251,7 @@ Run `/code-review` (or `/code-review ultra` for big diffs) on the merged Phase 1
 
 Frontend changes are not done until verified in a real browser. Type-check + Vitest = code correctness, not feature correctness. UI/flow changes MUST be exercised end-to-end before reporting complete.
 
-**Use `agent-browser` (headless). Playwright MCP is retired for verification - do not use the `mcp__plugin_playwright_playwright__*` tools.** Committed Playwright specs under `e2e/` are a separate question and are unchanged for now.
+**Use `agent-browser` (headless). Playwright MCP is retired for verification - do not use the `mcp__plugin_playwright_playwright__*` tools.** The committed specs under `e2e/` are unchanged and still run, but no NEW one is added - see "Persisted Playwright spec" below.
 
 Two paths, pick one:
 
@@ -314,6 +314,7 @@ If unable to reach a browser (server down, sandboxed, daemon unresponsive), stat
 
 ### 2. Persisted Playwright spec (when the flow deserves regression coverage)
 
+- **Do NOT add a new spec.** A standing order is that no project carries a playwright trace, and a new spec is a new trace. The ~40 pre-existing specs, `playwright.config.ts` and the dependency are untouched and still run; what replaces them repo-wide is an open decision. A flow that would have earned a spec is covered instead by a reproducible **agent-browser evidence run** (the exact steps, the network calls and the outcome written into the plan and the commit, so it can be re-walked), and the missing regression guard is logged in `documentation/backlogs/backlog.md`. The trade is spelled out in `documentation/plans/dealer-kit/PLAN-flyer-read-hardening.md` ("The e2e spec, and why it is not here").
 - Specs live in `sorento_crm_frontend/e2e/`, config in `sorento_crm_frontend/playwright.config.ts` (chromium only, `baseURL` from `PORTAL_E2E_BASE_URL` ?? `http://localhost:3000`, viewport 1400x1600, single worker, no retries).
 - Run all: `npm run test:e2e`. Run one: `npx playwright test e2e/foo.spec.ts`. Headed debug: `npx playwright test --headed --project=chromium`.
 - Fixtures in `e2e/fixtures/` are real committed sample files (per memory rule: AI/file features test against real fixtures, not stubbed mocks). Add new fixtures alongside, do not gitignore them.
@@ -321,8 +322,8 @@ If unable to reach a browser (server down, sandboxed, daemon unresponsive), stat
 
 ### When to use which
 
-- New CRUD page / modal / detail page → agent-browser interactive verification minimum; promote to a spec only when it exercises a non-trivial cross-feature flow worth pinning.
-- AI / file-extraction / portal flows → spec required, real fixture required.
+- New CRUD page / modal / detail page → agent-browser interactive verification minimum.
+- AI / file-extraction / portal flows → a recorded agent-browser evidence run, against a real fixture, is what a spec would have been. No new spec (see above).
 - Pure visual / Tailwind tweak → an agent-browser `screenshot` is sufficient.
 
 ## Frontend dev loop (HMR by default; build only at handoff)

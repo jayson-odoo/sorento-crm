@@ -66,7 +66,9 @@ opinion. Running a step in the wrong seat is a process violation.
    and, above all, **deterministic engines** (e.g. the SCM reorder maths): the golden-set expected
    numbers are written as failing tests first, and the code is built to satisfy them. FE hook/logic
    tests (vitest) are likewise test-first; FE component-state tests may follow once the prototype
-   shape settles. One Playwright E2E per user flow (real clicks, FE→BE→DB). Tests are **never
+   shape settles. Per user flow, real clicks FE→BE→DB, but **no new Playwright spec**: a
+   recorded agent-browser evidence run stands in, per CLAUDE.md "Persisted Playwright spec".
+   Tests are **never
    deferred** to Phase 3. Re-verify live. `/tdd` drives the loop; `/implement` may drive a whole
    ticket **at this phase only** (it calls `/tdd` internally and knows nothing of Phase 1).
 5. **Phase 3 — Code review.** `/code-review` (or `ultra` for big diffs) → address via `--fix` /

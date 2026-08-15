@@ -396,20 +396,8 @@ applicable, nothing gains a column). Gates 1 and 5 apply in full.
 
 ## Backlog
 
-- Two forked copies of the link-attachment browser remain under
-  `master-data-management/products` and `marketing-management/promotions`. They
-  should collapse onto the shared component.
-- The read is still 15 to 60 seconds of foreground work with no progress
-  feedback. When artwork rasterisation lands, this becomes an enqueue returning
-  202 with a row to watch, as the catalogue PDF export already does.
-- The picker filters on the six positive PDF mime spellings, so a flyer whose
-  mime was lost on import (NULL, `application/octet-stream`) is accepted by the
-  route but not offered by the picker. Closing it properly needs a filename or
-  extension filter on the attachments list, not a wider mime filter, which would
-  list every binary blob in the library.
-- AC-A10 has no committed regression guard, only a reproducible evidence run.
-  It should get one when the repo-wide replacement for the e2e specs is decided.
-- The existing dealer-kit specs drive clicks through `dispatchEvent`, which
-  bypasses actionability checks and so cannot catch a swallowed click. That is a
-  property of the whole frozen spec family, not of this branch, and belongs with
-  the same decision.
+Four items are deferred here, and they live as rows **BL-004 to BL-007** in
+`documentation/backlogs/backlog.md`, which is the single register for deferred
+work: the enqueue-and-watch read, the two remaining forked link-attachment
+browsers, the flyer whose mime was lost on import being unpickable, and AC-A10
+having no committed regression guard.

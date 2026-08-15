@@ -729,7 +729,9 @@ filenames was rejected: it would identify the right image for 509 of 535 and a g
 tile fed the wrong picture is a confident, expensive error.
 
 **S7.1 to S7.4 - extract, match, review, seed.** Extraction is pure and runs inside the request
-(a second for 36 pages, so no queue, no polling screen, no failure path). The reading is
+(so no queue, no polling screen, no failure path; the "a second for 36 pages" recorded here was
+never measured and is wrong - see `PLAN-flyer-read-hardening.md` for the measurements and for why
+the queue is still deliberately not built). The reading is
 PERSISTED and the match report is DERIVED on every read - a stored report is only true for the
 master it was computed against and goes stale in the direction that costs money. The seed is a
 draft BY CONSTRUCTION: no draft flag was added, because a version with no label pointing at it
