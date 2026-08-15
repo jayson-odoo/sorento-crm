@@ -186,5 +186,10 @@ export async function openConversationEventStream(
     throw error;
   } finally {
     signal.removeEventListener('abort', onAbort);
+    try {
+      reader.releaseLock();
+    } catch {
+      // Already released by a cancel; nothing to hold onto.
+    }
   }
 }

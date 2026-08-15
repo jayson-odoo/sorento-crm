@@ -98,6 +98,9 @@ export function useConversationEvents({
     const controller = new AbortController();
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    // Cleanup during a backoff wait must wake the sleeper, or the suspended
+    // run() (and every closure it holds) outlives the drawer that opened it.
+    let wakeRetry: (() => void) | null = null;
 
     const run = async () => {
       let attempt = 0;
@@ -135,8 +138,10 @@ export function useConversationEvents({
         const delay = reconnectDelayMs(attempt);
         attempt += 1;
         await new Promise<void>((resolve) => {
+          wakeRetry = resolve;
           retryTimer = setTimeout(resolve, delay);
         });
+        wakeRetry = null;
       }
     };
 
@@ -145,6 +150,7 @@ export function useConversationEvents({
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
+      wakeRetry?.();
       controller.abort();
       setConnected(false);
     };

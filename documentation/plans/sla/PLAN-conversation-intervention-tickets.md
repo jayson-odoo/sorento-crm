@@ -823,6 +823,20 @@ total) and `tests/test_sla_takeover_reassign.py` (17 total).
    "linkage unknown" state to degrade into, so a workspace where nobody is
    linked shows the filter emptying the list rather than hiding itself.
 
+### Phase 4 cross-model review (codex, 2026-08-15)
+
+Two read-only codex passes over e1db0e6e6..HEAD (backend, frontend). Findings, verified
+against the code before acting:
+- FE `useConversationEvents`: cleanup during a backoff wait left the suspended `run()`
+  alive after unmount (cleared timer, promise never resolved) - FIXED (wake the sleeper
+  on cleanup). FE `conversationEventsService`: stream reader lock not released on
+  close - FIXED (`releaseLock` in `finally`).
+- BE `conversation_thread_service` has-more flags use `len(rows) == limit`, so an
+  exact-size final page reports one more page and the FE makes one extra fetch that
+  returns empty (then shows "Beginning of this conversation"). ACCEPTED as-is: no wrong
+  data, one spare round-trip in a rare case; the "next only when page full" rule is
+  deliberate (inherited from the reference design). Revisit only if it shows in use.
+
 ### Phase 4 execution order (user-approved 2026-08-14)
 
 S4.1 and S4.2 first (they close the two live operational gaps: bot does not pause, thread
