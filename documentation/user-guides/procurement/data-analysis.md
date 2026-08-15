@@ -157,11 +157,11 @@ A goods-receipt header recording what was physically received against an SPO. Me
 
 A single received line under a GRN: product, expected vs picked quantity, condition, and the SPO allocation it fulfils. Menu: [**Procurement → Picking Lines**](/procurement-management/picking-lines) — a **read-only** flat list of all GRN lines (columns: **SPO Allocation**, **Product**, **Location**, **Expected**, **Picked**). The list only shows lines whose parent header is a GRN (`picking_type = 'goods_received'`).
 
-**Fields:** `id`, `picking_header_id` (FK → GRN), `spo_allocation_id` (FK → SPO allocation; UI **SPO Allocation** shows the SPO number), `product_id` (UI **Product**), `quantity_expected` (UI **Expected**), `quantity_picked` (UI **Picked**), `quantity_discrepancy` (**DB-generated** = `quantity_expected − quantity_picked`), `uom_id`, `picked_condition` (default `good`), `condition_remarks`, `batch_number_picked`, `expiry_date`, `unit_cost`, `line_total`, `source_warehouse_id`, `destination_warehouse_id` (UI **Location**), `created_at`, `updated_at`.
+**Fields:** `id`, `picking_header_id` (FK → GRN), `spo_allocation_id` (FK → SPO allocation; UI **SPO Allocation** shows the SPO number), `spo_number_raw` (the SPO number the upload stated for the line, kept even when no allocation matched; UI shows it with an **Unmatched** badge when `spo_allocation_id` is empty), `product_id` (UI **Product**), `quantity_expected` (UI **Expected**), `quantity_picked` (UI **Picked**), `quantity_discrepancy` (**DB-generated** = `quantity_expected − quantity_picked`), `uom_id`, `picked_condition` (default `good`), `condition_remarks`, `batch_number_picked`, `expiry_date`, `unit_cost`, `line_total`, `source_warehouse_id`, `destination_warehouse_id` (UI **Location**), `created_at`, `updated_at`.
 
 **Date columns:** `expiry_date` (of the picked batch), `created_at`, `updated_at`.
 
-**Filters (list endpoint `GET /api/v1/procurement/picking-lines`):** `query` only (matches SPO allocation number, product code, product name).
+**Filters (list endpoint `GET /api/v1/procurement/picking-lines`):** `query` only (matches SPO allocation number, stated SPO number, product code, product name).
 **Sortable:** `spo_allocation` (by SPO number), `product` (by product code), `quantity_expected`, `quantity_picked`. Default sort `spo_allocation` ascending.
 
 **Example questions**

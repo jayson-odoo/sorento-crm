@@ -1,17 +1,17 @@
 /**
  * ============================================================================
- * SCM M5 Part B — Market advisory feature service
+ * SCM M5 Part B - Market advisory feature service
  * ============================================================================
  * Layering: hooks (useMarket) → THIS service → lib/api-client → backend.
  *
  * Phase 1: every fn branches on `USE_M5_MARKET_MOCKS` (from marketMockStore) and
- * serves the deterministic mock — NO backend. The real `apiFetch` +
+ * serves the deterministic mock - NO backend. The real `apiFetch` +
  * `extractApiError` branch is written but unhit until Phase 2 flips the flag.
  *
  * ── PHASE-2 BACKEND CONTRACT ────────────────────────────────────────────────
  * All endpoints mount under `require_module_enabled_with_api_key("scm")`.
  * The market layer is ADVISORY-ONLY (M5-D4): no endpoint here writes a
- * quantity/ROP/SS/rank — signals are cached web-search output, read-only.
+ * quantity/ROP/SS/rank - signals are cached web-search output, read-only.
  *
  * 1) Cached market signals  (read-only viz)
  *    GET /api/v1/scm/market-signals
@@ -78,7 +78,7 @@ export async function listMarketSignals(): Promise<MarketSignal[]> {
 // ── Research run ─────────────────────────────────────────────────────────────
 
 /** Small deterministic delay so the mock's running→complete feedback is visible
- *  (not random — a fixed duration). */
+ *  (not random - a fixed duration). */
 const MOCK_RUN_DELAY_MS = 900;
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -94,11 +94,11 @@ export async function runMarketResearch(): Promise<MarketResearchRun> {
   return body.run;
 }
 
-/** Poll a run's status (Phase 2 — unhit under mocks, which return terminal). */
+/** Poll a run's status (Phase 2 - unhit under mocks, which return terminal). */
 export async function getMarketResearchRun(runId: string): Promise<MarketResearchRun> {
   if (USE_M5_MARKET_MOCKS) {
     // Mock runs complete synchronously; there is nothing to poll.
-    throw new Error('Mock research runs return a terminal run — no polling.');
+    throw new Error('Mock research runs return a terminal run - no polling.');
   }
   const res = await apiFetch(
     `/api/v1/scm/market-research/runs/${encodeURIComponent(runId)}`,

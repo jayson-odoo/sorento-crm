@@ -26,6 +26,7 @@ from app.schemas.external.procurement import (
     PurchaseRequestExternalResponse,
     PurchaseRequestExternalLine,
 )
+from app.services.document_number import display_document_number
 from app.services.procurement_service import PurchaseRequestService
 
 router = APIRouter()
@@ -87,7 +88,10 @@ def create_purchase_request(
             system_id=str(header.id),
             form_type=header.request_type,
             request_type=header.request_type,
-            request_number=getattr(header, "request_number", None),
+            # Carries the revision (UAC N5); upsert_external_request strips a
+            # trailing "-R<n>" before its lookup, so echoing this back still
+            # updates the existing row rather than inserting a duplicate (N6).
+            request_number=display_document_number(header) or None,
             action=outcome,
             date=header.request_date,
             customer_name=header.customer_name,

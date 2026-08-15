@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.schemas.procurement import StockInquiryCreate, StockInquiryResponse
+from app.services.document_number import display_document_number
 from app.services.procurement_service import StockInquiryService
 from app.services.error_handler import handle_internal_error
 
@@ -68,7 +69,15 @@ async def create_stock_inquiry_external(
                 e,
                 exc_info=True,
             )
-        return service.get_inquiry_for_response(str(inquiry.id))
+        data = service.get_inquiry_for_response(str(inquiry.id))
+        # The integration payload carries the revision too (UAC N5). Safe to echo
+        # back: create_inquiry strips a trailing "-R<n>" before its resubmit lookup
+        # (UAC N6), so a caller replaying this number still updates the rejected row
+        # instead of inserting a duplicate.
+        data["inquiry_number"] = (
+            display_document_number(inquiry) or data.get("inquiry_number")
+        )
+        return data
     except HTTPException:
         raise
     except Exception as e:

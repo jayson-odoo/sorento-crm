@@ -19,7 +19,7 @@ import {
 } from '../hooks/useStockInquiries';
 import { linkStockInquiryAttachment } from '../services/stockInquiryService';
 import type { StockInquiryAttachment } from '../types/stockInquiry.types';
-import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
+import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import { attachmentUploaderLabel } from '@/app/(protected)/master-data-management/shared/lib/attachment-attribution';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
@@ -241,7 +241,7 @@ export default function StockInquiryAttachmentsSection({
         </AlertDialogContent>
       </AlertDialog>
       {linkDialogOpen && (
-        <ComplaintLinkAttachmentBrowserDialog
+        <LinkAttachmentBrowserDialog
           open={linkDialogOpen}
           onOpenChange={setLinkDialogOpen}
           entityId={inquiryId}

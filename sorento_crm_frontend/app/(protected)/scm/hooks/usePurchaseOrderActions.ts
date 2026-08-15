@@ -8,7 +8,7 @@ import {
 
 // Confirm (draft→active) and create-GR change what counts as ON-ORDER (M4-D5/D6),
 // so besides the PO list we must invalidate every dashboard read that surfaces
-// on_order / net position — else a user who viewed the dashboard sees stale
+// on_order / net position - else a user who viewed the dashboard sees stale
 // incoming-supply numbers until staleTime/refocus.
 const AFFECTED_KEYS = [
   ['scm', 'purchase-orders'],

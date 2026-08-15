@@ -26,7 +26,7 @@ LOCKED formulae (UAC M3-D1..D5):
   recommended_qty = S - net (0 when not triggered / non-positive)
   rounded_qty     = ceil(max(recommended, moq) / order_multiple) * order_multiple
   trigger         = reorder_point: net<=ROP ; periodic_review: on-cadence & net<S ;
-                    min_max: net<=min_override
+                    min_max: net<=min_override ; reorder_level: net<=stored level
   network buy     = aggregate demand+net -> S_agg - net_agg (rounded) ; allocate
                     deficit-first then velocity-proportional surplus (sums to buy)
   confidence      = X & adequate -> high ; Z or thin sample -> low ; else medium
@@ -41,6 +41,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.scm.money import BASE_CURRENCY, Rate, load_rates, to_base
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     DEFAULT_OVERSTOCK_DAYS,
@@ -53,7 +54,12 @@ DEFAULT_LEAD_TIME_DAYS = 30
 DEFAULT_SERVICE_LEVEL = 0.95
 DEFAULT_REVIEW_PERIOD_DAYS = 30
 DEFAULT_FORECAST_WINDOW_DAYS = 90
-DEFAULT_SUPPLIER_SELECTION = "primary"
+# Cost leads. The business buys the same item from more than one supplier on 5,995 of its
+# products, and the instruction is plain: "we should pick the cheapest one if got multiple
+# suppliers". `is_primary` stays in the key as the tiebreak, so a nominated supplier still
+# wins a tie on price - it just no longer wins on nomination alone. Overridable per policy
+# via the `supplier_selection` toggle (`primary` / `best_score` / `lowest_cost`).
+DEFAULT_SUPPLIER_SELECTION = "lowest_cost"
 
 # Most-specific-wins ordering for policy resolution (SKU beats cell beats class beats global).
 _SCOPE_RANK = {"sku": 3, "abc_xyz_cell": 2, "product_class": 1, "global": 0}
@@ -109,6 +115,27 @@ def _policy_matches(p: dict[str, Any], product_id: str, abc_xyz_cell: Optional[s
     return False
 
 
+def price_in_base(supplier: dict, rates: dict[str, Rate]) -> dict:
+    """Stamp a candidate with its price expressed in the base currency.
+
+    Two prices cannot be ranked until they are in the same money, and the book prices in
+    four currencies. This adds the comparable figure WITHOUT touching `unit_cost` /
+    `currency`, which stay as what the supplier charges and what the PO will say.
+
+    A price we cannot convert gets `unit_cost_base = None` and `missing_rate_currency` set,
+    so the ranking can hold it back from winning on a small number and the buyer is told
+    which rate to enter. Mutates and returns the dict, because callers build these rows in
+    a list comprehension and a copy here would silently drop later edits.
+    """
+    conv = to_base(_num(supplier.get("unit_cost")), supplier.get("currency"), rates)
+    supplier["unit_cost_base"] = conv.amount
+    supplier["base_currency"] = BASE_CURRENCY
+    supplier["rate_to_base"] = conv.rate
+    supplier["rate_as_of"] = conv.as_of
+    supplier["missing_rate_currency"] = conv.missing_currency
+    return supplier
+
+
 def select_supplier(suppliers: list[dict], *,
                     selection: str = DEFAULT_SUPPLIER_SELECTION) -> dict:
     """Pick the sourcing supplier + attach ranked alternatives (AC-M3.5/3.6).
@@ -124,16 +151,76 @@ def select_supplier(suppliers: list[dict], *,
     lead_time_days, composite_score}.
     """
     if not suppliers:
-        return {"chosen": None, "alternatives": [], "exception": "no_supplier"}
+        return {"chosen": None, "alternatives": [], "exception": "no_supplier",
+                "reason": {"basis": "no_supplier"}}
+    # Ranking happens on the base-currency price, so a candidate nobody has priced yet gets
+    # priced here with no rates: one carrying no currency is already in base money and is
+    # unaffected (the pure-maths callers, whose figures are all one currency), while a
+    # foreign price a caller supplied no rate for correctly becomes unrankable rather than
+    # being compared at face value.
+    for s in suppliers:
+        if "unit_cost_base" not in s:
+            price_in_base(s, {})
     ranked = sorted(suppliers, key=lambda s: _supplier_sort_key(s, selection))
     chosen = ranked[0]
     alternatives = [{
         "supplier_id": s.get("supplier_id"),
+        "supplier_name": s.get("supplier_name"),
         "unit_cost": _num(s.get("unit_cost")),
+        "currency": s.get("currency"),
+        # The converted figure travels with the original so the popup can show both, and
+        # so a reader can see WHICH number the ranking actually used.
+        "unit_cost_base": _num(s.get("unit_cost_base")),
+        "base_currency": s.get("base_currency") or BASE_CURRENCY,
+        "missing_rate_currency": s.get("missing_rate_currency"),
+        "unit_cost_source": s.get("unit_cost_source"),
         "lead_time_days": _num(s.get("lead_time_days")),
         "composite_score": _num(s.get("composite_score")),
     } for s in ranked[1:]]
-    return {"chosen": chosen, "alternatives": alternatives, "exception": None}
+    return {"chosen": chosen, "alternatives": alternatives, "exception": None,
+            "reason": _selection_reason(chosen, ranked[1:], selection, ranked)}
+
+
+def _selection_reason(chosen: dict, losers: list[dict], selection: str,
+                      all_candidates: Optional[list[dict]] = None) -> dict:
+    """Why this supplier, in a shape the decision popup can render without re-deriving it.
+
+    Stated rather than implied, and never over-stated:
+
+    * With nothing to compare against, "chosen because cheaper" is a fabrication, so a lone
+      supplier says `only_supplier`.
+    * A saving is quoted only when BOTH prices converted to the base currency. The gap to an
+      unpriced runner-up is unknowable, and the gap to an unconvertible one is worse than
+      unknowable - subtracting 10 CNY from 190 MYR produces a number that looks like money.
+    * When NOTHING could be converted, `lowest_cost` is a claim we cannot support, so the
+      basis reads `no_comparable_cost` and the missing currencies are named.
+    """
+    pool = all_candidates if all_candidates is not None else ([chosen] + list(losers))
+    missing = sorted({s.get("missing_rate_currency") for s in pool
+                      if s.get("missing_rate_currency")})
+
+    if not losers:
+        return {"basis": "only_supplier", "runner_up": None, "saving_per_unit": None,
+                "compared_in": BASE_CURRENCY, "missing_rates": missing}
+
+    comparable = [s for s in pool if _num(s.get("unit_cost_base")) is not None]
+    basis = selection
+    if selection == "lowest_cost" and not comparable:
+        basis = "no_comparable_cost"
+
+    runner_up = losers[0]
+    ours, theirs = _num(chosen.get("unit_cost_base")), _num(runner_up.get("unit_cost_base"))
+    return {
+        "basis": basis,
+        "runner_up": runner_up.get("supplier_name"),
+        "runner_up_cost": _num(runner_up.get("unit_cost")),
+        "runner_up_currency": runner_up.get("currency"),
+        "runner_up_cost_base": theirs,
+        "compared_in": BASE_CURRENCY,
+        "missing_rates": missing,
+        "saving_per_unit": (round(theirs - ours, 4)
+                            if ours is not None and theirs is not None else None),
+    }
 
 
 def _supplier_sort_key(s: dict, selection: str):
@@ -141,7 +228,10 @@ def _supplier_sort_key(s: dict, selection: str):
     sc = _num(s.get("composite_score"))
     # present-first (0), then higher score first (negate)
     sc_key = (0, -sc) if sc is not None else (1, 0.0)
-    uc = _num(s.get("unit_cost"))
+    # Rank on the BASE-currency price, never the supplier's own figure: 45 USD is not
+    # cheaper than 190 MYR, and a price in a currency we hold no rate for is not a bargain
+    # at 10 - it is unknown, so it sorts with the unpriced rather than ahead of everything.
+    uc = _num(s.get("unit_cost_base"))
     uc_key = (0, uc) if uc is not None else (1, 0.0)   # present-first, lower cost first
     # Final deterministic tiebreak: two suppliers tied on every ranking factor must
     # resolve to the SAME winner every call (never DB row order). supplier_id is stable.
@@ -205,9 +295,20 @@ def order_up_to(rop: float, demand_rate: float,
 
 def trigger(policy_type: Optional[str], *, net: float, rop: Optional[float] = None,
             min_level: Optional[float] = None, oup: Optional[float] = None,
-            on_cadence: bool = True) -> tuple[bool, Optional[str]]:
+            on_cadence: bool = True,
+            reorder_level: Optional[float] = None) -> tuple[bool, Optional[str]]:
     """Whether a buy fires + the human ``triggered_reason`` (AC-M3.7)."""
     n = float(net)
+    if policy_type == "reorder_level":
+        # The buyer's own number. No forecast term participates, by design: this basis exists
+        # because forecast cover turned a 2-unit order into a 15.933 buy. A missing level is
+        # NOT a level of zero - the caller emits the row as `needs_level` instead of planning
+        # it, so an item nobody has set up is neither bought nor silently dropped.
+        if reorder_level is None:
+            return False, None
+        if n <= float(reorder_level):
+            return True, f"reorder_level: net {_g(n)} <= level {_g(reorder_level)}"
+        return False, None
     if policy_type == "periodic_review":
         if on_cadence and oup is not None and n < float(oup):
             return True, f"periodic_review: net {_g(n)} < order-up-to {_g(oup)} on review cadence"
@@ -302,14 +403,26 @@ def allocate(buy_qty: float, warehouses: list[dict]) -> dict[str, int]:
     if total <= total_deficit:
         weights = deficits                              # buy <= Σdeficit -> proportional to deficit
     else:
+        # The rounding surplus (MOQ / pack multiple) goes ONLY to locations that were short.
+        #
+        # > "it won't go to brw-bb, only ordered for brw-bb will go into brw-bb"
+        #
+        # Spreading it velocity-proportionally across every member sent stock to bins sitting
+        # in surplus that had ordered nothing. A pool lets a short bin BORROW from a sibling;
+        # it never entitles the sibling to a share of the purchase.
         surplus = total - total_deficit
-        total_demand = sum(demands)
-        if total_demand > 0:
-            weights = [deficits[i] + surplus * demands[i] / total_demand
-                       for i in range(len(warehouses))]
+        short = [i for i in range(len(warehouses)) if deficits[i] > 0]
+        if not short:
+            # Nothing was short anywhere, so the buy exists purely as a minimum order. There
+            # is no bin that asked for it; spread by demand so it lands where it will move.
+            short = list(range(len(warehouses)))
+        short_demand = sum(demands[i] for i in short)
+        if short_demand > 0:
+            extra = {i: surplus * demands[i] / short_demand for i in short}
         else:
-            even = surplus / len(warehouses)            # no demand signal -> even surplus
-            weights = [deficits[i] + even for i in range(len(warehouses))]
+            even = surplus / len(short)                 # no demand signal -> even among short
+            extra = {i: even for i in short}
+        weights = [deficits[i] + extra.get(i, 0.0) for i in range(len(warehouses))]
     parts = _apportion(total, weights)
     return {warehouses[i]["warehouse_id"]: parts[i] for i in range(len(warehouses))}
 
@@ -318,22 +431,36 @@ def aggregate_network(warehouses: list[dict], *, lead_time_days: float,
                       safety_days: float = DEFAULT_SAFETY_DAYS,
                       review_days: float = DEFAULT_REVIEW_PERIOD_DAYS,
                       moq: Optional[float] = None,
-                      order_multiple: Optional[float] = None) -> dict:
+                      order_multiple: Optional[float] = None,
+                      levels: Optional[dict[str, Optional[float]]] = None) -> dict:
     """Aggregate demand+net across warehouses, size one buy on the aggregate, and
     auto-allocate it (AC-M3.8). ``warehouses``: [{warehouse_id, demand_rate, net}].
     Uses fixed_days SS on the aggregate (network golden path).
+
+    ``levels`` switches the target from the forecast order-up-to to the levels the buyer
+    owns: the pool's target is the SUM of its members' levels, and each member's deficit is
+    measured against its OWN level. A member with no level contributes nothing and can
+    therefore receive nothing, which is what keeps a bin nobody has set up out of a purchase
+    instead of guessing a number for it.
     """
     agg_demand = sum(float(w["demand_rate"]) for w in warehouses)
     agg_net = sum(float(w["net"]) for w in warehouses)
     ss = agg_demand * float(safety_days)
-    rop = reorder_point(agg_demand, lead_time_days, ss)
-    oup = order_up_to(rop, agg_demand, review_days)
+    if levels is not None:
+        rop = sum(float(levels.get(w["warehouse_id"]) or 0.0) for w in warehouses)
+        oup = rop
+    else:
+        rop = reorder_point(agg_demand, lead_time_days, ss)
+        oup = order_up_to(rop, agg_demand, review_days)
     recommended = oup - agg_net
     buy = round_order_qty(recommended, moq, order_multiple) if recommended > 0 else 0.0
     per_wh = []
     for w in warehouses:
         d = float(w["demand_rate"])
-        rop_i = reorder_point(d, lead_time_days, d * float(safety_days))
+        if levels is not None:
+            rop_i = float(levels.get(w["warehouse_id"]) or 0.0)
+        else:
+            rop_i = reorder_point(d, lead_time_days, d * float(safety_days))
         per_wh.append({"warehouse_id": w["warehouse_id"],
                        "deficit": max(rop_i - float(w["net"]), 0.0),
                        "demand_rate": d, "reorder_point": rop_i})
@@ -347,24 +474,38 @@ def aggregate_network(warehouses: list[dict], *, lead_time_days: float,
 
 def disposition(*, on_hand: float, last_movement_days: Optional[float],
                 dead_stock_days: float, days_of_cover_val: Optional[float],
-                overstock_days: float) -> Optional[dict]:
-    """Dead (an ACTUAL stale movement > dead_stock_days) OR overstock (DoC >
-    overstock_days) → a disposition rec. Dead takes precedence. ``None`` when neither
-    applies.
+                overstock_days: float,
+                last_purchase_days: Optional[float] = None) -> Optional[dict]:
+    """Dead (stale movement, or stock older than the window that has never moved) OR
+    overstock (DoC > overstock_days) → a disposition rec. Dead takes precedence.
+    ``None`` when neither applies.
 
-    A never-moved SKU (``last_movement_days is None``) is NOT dead — no consumption
-    history is not the same as a stale movement, and a stocked-but-idle SKU should not
-    be auto-flagged for discontinuation. It may still be overstock (independent DoC
-    check) when it has demand + high cover.
+    Two ways to be dead, and the rec says WHICH, because they are different evidence and
+    a buyer acts differently on each:
+
+    * ``movement`` - it moved, and the last time was longer ago than the window.
+    * ``ageing`` - it has NEVER moved, and the stock sitting there was bought longer ago
+      than the window. *"If I order from 5 years ago and now still got stock, this is not
+      very hot selling"* - which is a fact about THIS stock rather than a statistic about
+      demand, and is why it is stronger evidence than variance alone.
+
+    The ageing branch is deliberately confined to the never-moved case. Without a purchase
+    date there was no evidence either way there, so the rule abstained ("no consumption
+    history is not the same as a stale movement") and a stocked-but-idle SKU was never
+    flagged. The purchase-history feed supplies exactly that missing evidence, so the
+    abstention is now only correct while the purchase date is ALSO unknown. A SKU that
+    moved recently is not dead however old its last purchase is - that is a slow seller,
+    and slow-but-selling is what the overstock check below is for.
     """
     if not on_hand or float(on_hand) <= 0:
         return None
-    is_dead = (last_movement_days is not None
-               and float(last_movement_days) > float(dead_stock_days))
-    if is_dead:
-        return {"type": "dead", "action": "discontinue_or_promo"}
+    if last_movement_days is not None:
+        if float(last_movement_days) > float(dead_stock_days):
+            return {"type": "dead", "action": "discontinue_or_promo", "basis": "movement"}
+    elif last_purchase_days is not None and float(last_purchase_days) > float(dead_stock_days):
+        return {"type": "dead", "action": "discontinue_or_promo", "basis": "ageing"}
     if days_of_cover_val is not None and float(days_of_cover_val) > float(overstock_days):
-        return {"type": "overstock", "action": "hold_or_promo"}
+        return {"type": "overstock", "action": "hold_or_promo", "basis": "cover"}
     return None
 
 
@@ -437,6 +578,7 @@ def load_policies(db: Session) -> list[dict]:
         "SELECT id, scope_type, scope_ref, policy_type, service_level, safety_stock_method, "
         "safety_days, review_period_days, forecast_window_days, spike_handling, buy_scope, "
         "dead_stock_days, overstock_days, min_override, max_override, factor_toggles, "
+        "pool_netting, level_study_months, level_cover_months, "
         "is_active, priority FROM scm.reorder_policy WHERE is_active = true"
     )).mappings().all()
     return [dict(r) for r in rows]
@@ -490,12 +632,59 @@ def load_net_position(db: Session, product_id: str,
     return [dict(r) for r in db.execute(text(sql), params).mappings().all()]
 
 
+def last_purchase_costs(db: Session, product_id: str) -> dict[str, dict]:
+    """What we last PAID for this SKU, per supplier: {supplier_id: {cost, currency, ref, at}}.
+
+    Evidence beats a typed figure. `product_suppliers.unit_cost` is a contract or a quote
+    somebody entered; a purchase-order line is money that actually moved, so where both exist
+    the order wins.
+
+    Per SUPPLIER, never pooled. A price we paid supplier A does not price a buy from
+    supplier B - putting it there would read as a quote from B, and it is not one.
+
+    A line recording 0 is a price OF zero, and is kept: 637 lines in the customer's own order
+    book are exactly that. Only the ABSENCE of a line means unknown, and unknown is `None`.
+    Ordered by issue date with the row's own creation time as the tiebreak, because a book
+    imported in one go shares an issue date and the order among those would otherwise be up
+    to the planner.
+    """
+    rows = db.execute(text(
+        "SELECT DISTINCT ON (po.supplier_id) po.supplier_id, pol.unit_cost, "
+        "       COALESCE(pol.currency, po.currency) AS currency, "
+        "       po.po_number, po.issue_date "
+        "FROM purchase_order_lines pol "
+        "JOIN purchase_orders po ON po.id = pol.purchase_order_id "
+        # A price we cannot attribute to anybody is not a quote from anybody. 15 lines in
+        # the customer's book sit on an order with no supplier; keyed by the missing id
+        # they became the literal string "None", which then aborted the candidate query
+        # for all 11 affected products - so the plan CRASHED on those SKUs rather than
+        # merely knowing less about them.
+        "WHERE pol.product_id = :pid AND pol.unit_cost IS NOT NULL "
+        "  AND po.supplier_id IS NOT NULL "
+        "ORDER BY po.supplier_id, po.issue_date DESC NULLS LAST, pol.created_at DESC"
+    ), {"pid": product_id}).mappings().all()
+    return {
+        str(r["supplier_id"]): {
+            "cost": _num(r["unit_cost"]),
+            "currency": r["currency"],
+            "ref": r["po_number"],
+            "at": r["issue_date"],
+        }
+        for r in rows
+    }
+
+
 def load_supplier_candidates(db: Session, product_id: str,
-                             *, default_lead: float = DEFAULT_LEAD_TIME_DAYS) -> list[dict]:
+                             *, default_lead: float = DEFAULT_LEAD_TIME_DAYS,
+                             rates: Optional[dict[str, Rate]] = None) -> list[dict]:
     """Assemble the SKU's suppliers for ``select_supplier``, folding in the M2 measured
     lead-time / composite / variance (supplier×product row preferred, supplier-level
     fallback). Each dict carries declared + measured lead so ``lead_time`` precedence
-    can be applied downstream.
+    can be applied downstream, plus the price restated in the base currency so the
+    candidates are actually comparable.
+
+    ``rates`` is threaded in by the run (one read for thousands of SKUs) and read from the
+    DB when a caller resolves a single SKU on its own.
     """
     rows = db.execute(text(
         "SELECT ps.supplier_id, su.supplier_code, su.supplier_name, "
@@ -505,20 +694,65 @@ def load_supplier_candidates(db: Session, product_id: str,
         "WHERE ps.product_id = :pid "
         "ORDER BY ps.supplier_id"          # deterministic load order (stable tie input)
     ), {"pid": product_id}).mappings().all()
+    paid = last_purchase_costs(db, product_id)
+    rates = load_rates(db) if rates is None else rates
+    # A supplier we have BOUGHT this item from is a supplier for it, whether or not anybody
+    # kept the `product_suppliers` row up to date. 3,070 such pairs exist in the customer's
+    # book, each with a price we paid, and every one of them was invisible to the plan. They
+    # join as candidates carrying no contract terms - no MOQ, no declared lead - so the lead
+    # time falls back to measured-then-default exactly as it does for a contract row with a
+    # blank lead.
+    known = {str(r["supplier_id"]) for r in rows}
+    # `sid` is cast to uuid[] below, so anything that is not one aborts the query for the
+    # whole SKU rather than being skipped.
+    extra = [sid for sid in paid if sid and sid != "None" and sid not in known]
+    if extra:
+        rows = list(rows) + [
+            dict(er) for er in db.execute(text(
+                "SELECT su.id AS supplier_id, su.supplier_code, su.supplier_name, "
+                "       NULL::numeric AS standard_lead_time_days, NULL::numeric AS moq, "
+                "       NULL::numeric AS order_multiple, NULL::numeric AS unit_cost, "
+                "       NULL::varchar AS currency, FALSE AS is_primary_supplier, "
+                "       NULL::numeric AS lead_time_variability_days "
+                "FROM suppliers su WHERE su.id = ANY(CAST(:ids AS uuid[])) ORDER BY su.id"
+            ), {"ids": extra}).mappings().all()
+        ]
     out: list[dict] = []
     for r in rows:
         perf = _supplier_perf(db, r["supplier_id"], product_id)
+        # The cascade, in one place: what we last paid this supplier, else the contract
+        # figure, else nothing. `unit_cost_source` travels with it so a buyer can tell a
+        # quote from a receipt, and `None` stays None rather than becoming a free item.
+        last = paid.get(str(r["supplier_id"]))
+        if last is not None and last["cost"] is not None:
+            unit_cost = last["cost"]
+            cost_source = "last_po"
+            cost_currency = last["currency"] or r["currency"]
+            cost_ref, cost_at = last["ref"], last["at"]
+        elif _num(r["unit_cost"]) is not None:
+            unit_cost = _num(r["unit_cost"])
+            cost_source = "contract"
+            cost_currency = r["currency"]
+            cost_ref = cost_at = None
+        else:
+            unit_cost = None
+            cost_source = None
+            cost_currency = r["currency"]
+            cost_ref = cost_at = None
         measured_lead = perf.get("avg_lead_time_days") if perf else None
         declared_lead = r["standard_lead_time_days"]
         lt_val, lt_src = lead_time(_num(measured_lead), _num(declared_lead),
                                    default=default_lead)
-        out.append({
+        out.append(price_in_base({
             "supplier_id": r["supplier_id"],
             "supplier_code": r["supplier_code"],
             "supplier_name": r["supplier_name"],
             "is_primary": bool(r["is_primary_supplier"]),
-            "unit_cost": _num(r["unit_cost"]),
-            "currency": r["currency"],
+            "unit_cost": unit_cost,
+            "unit_cost_source": cost_source,
+            "unit_cost_ref": cost_ref,
+            "unit_cost_at": cost_at,
+            "currency": cost_currency,
             "moq": _num(r["moq"]),
             "order_multiple": _num(r["order_multiple"]),
             "declared_lead_time_days": _num(declared_lead),
@@ -530,7 +764,7 @@ def load_supplier_candidates(db: Session, product_id: str,
             "composite_score": _num(perf.get("composite_score")) if perf else None,
             "supplier_sample_size": (perf.get("sample_size") if perf else None),
             "supplier_confidence": (perf.get("confidence") if perf else None),
-        })
+        }, rates))
     return out
 
 
@@ -551,11 +785,13 @@ def _supplier_perf(db: Session, supplier_id: str, product_id: str) -> Optional[d
 
 def resolve_supplier_for_sku(db: Session, product_id: str, *,
                              selection: str = DEFAULT_SUPPLIER_SELECTION,
-                             default_lead: float = DEFAULT_LEAD_TIME_DAYS) -> dict:
+                             default_lead: float = DEFAULT_LEAD_TIME_DAYS,
+                             rates: Optional[dict[str, Rate]] = None) -> dict:
     """DB-backed ``select_supplier``: read the SKU's product_suppliers + M2 scores and
     pick the sourcing supplier (or flag the no-supplier exception)."""
-    return select_supplier(load_supplier_candidates(db, product_id, default_lead=default_lead),
-                           selection=selection)
+    return select_supplier(
+        load_supplier_candidates(db, product_id, default_lead=default_lead, rates=rates),
+        selection=selection)
 
 
 def resolve_policy_for_sku(db: Session, product_id: str,

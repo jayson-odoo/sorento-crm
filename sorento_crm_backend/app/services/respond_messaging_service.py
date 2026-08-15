@@ -25,6 +25,8 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.services.document_number import display_document_number
+
 logger = logging.getLogger(__name__)
 
 
@@ -741,7 +743,9 @@ def build_context_vars(
 
             row = db.query(StockInquiry).filter(StockInquiry.id == business_id).first()
             if row:
-                vars_out["entity_number"] = row.inquiry_number
+                # {{entity_number}} is what the CONTACT reads, so it carries the
+                # revision (UAC N1/N5). The stored column stays bare.
+                vars_out["entity_number"] = display_document_number(row) or row.inquiry_number
                 vars_out["status"] = row.status
                 vars_out["reason"] = row.rejection_reason
                 # Discrete fields for the structured stock-inquiry template (Customer /
@@ -759,7 +763,7 @@ def build_context_vars(
                 .first()
             )
             if row:
-                vars_out["entity_number"] = row.request_number
+                vars_out["entity_number"] = display_document_number(row) or row.request_number
                 vars_out["status"] = row.approval_status or row.status
                 # Rejection reason lives in approval_comments (public/in-system
                 # approval flows write the reviewer's note there).

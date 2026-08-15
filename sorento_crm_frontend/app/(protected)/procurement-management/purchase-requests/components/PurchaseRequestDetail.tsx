@@ -30,7 +30,11 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
-import { usePurchaseRequest, useExportPurchaseRequestPdf } from '../hooks/usePurchaseRequests';
+import {
+  usePurchaseRequest,
+  useExportPurchaseRequestPdf,
+  usePurchaseRequestRevisions,
+} from '../hooks/usePurchaseRequests';
 import { formatDate, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
@@ -40,7 +44,7 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision, isDeferredDecision } from '../services/purchaseRequestService';
+import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision, isDeferredDecision, getPurchaseRequestRevisions } from '../services/purchaseRequestService';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -53,9 +57,11 @@ import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_s
 import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { RevisionBanner } from '@/components/common/RevisionBanner';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
+import { withRevisionSuffix } from '@/lib/document-number';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban, UserRoundCog, Undo2 } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -70,7 +76,13 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-request-excel-export';
+import {
+  createSalesTypeLabelResolver,
+  exportPurchaseRequestOrSponsorshipToExcel,
+  exportPurchaseRequestOrSponsorshipWithRevisionsToExcel,
+} from '../lib/purchase-request-excel-export';
+import { ExportWithRevisionsDialog } from '@/components/common/ExportWithRevisionsDialog';
+import { useRevisionEnabledMap } from '@/app/(protected)/sla-management/_shared/useRevisionEnabledMap';
 import { useLookupOptionsByBinding } from '@/hooks/useLookupOptionsByBinding';
 import { toast } from 'sonner';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
@@ -217,6 +229,86 @@ export default function PurchaseRequestDetail({
   } | null>(null);
   const [openingReplySheet, setOpeningReplySheet] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
+  // Denormalized revision counter (UAC H4). Drives the banner, the number
+  // suffix and the revision-lineage refetch.
+  const revisionNo = Number(request?.revision_no ?? 0);
+  const revisionsQuery = usePurchaseRequestRevisions(
+    isValidId ? requestId : null,
+    revisionNo,
+  );
+  // The newest entry carries the reason and submitter the banner quotes verbatim.
+  const latestRevision = (revisionsQuery.data ?? [])
+    .filter((entry) => (entry.revision_no ?? 0) > 0)
+    .at(-1);
+
+  /**
+   * "Include revisions?" is only a real question when this record HAS revisions
+   * and the type has them switched on (round 6, 6.4). Anywhere else both exports
+   * behave exactly as they always have, with no dialog in the way. PR and SF are
+   * separate types in the config, so the flag is read per request type.
+   */
+  const { data: revisionEnabledMap } = useRevisionEnabledMap();
+  const canOfferRevisionExport =
+    revisionEnabledMap?.[request?.request_type ?? ''] === true && revisionNo > 0;
+  const [exportChoice, setExportChoice] = useState<'excel' | 'pdf' | null>(null);
+
+  const runExcelExport = async (includeRevisions: boolean) => {
+    if (!request) return;
+    setExportingExcel(true);
+    try {
+      const resolve = createSalesTypeLabelResolver(salesTypeOptions.data?.options);
+      if (includeRevisions) {
+        // The lineage as it stands at export time. The banner query has usually
+        // already cached it (keyed on `revision_no`, so it cannot be stale after
+        // a revision lands); the direct read is the fallback for a first click
+        // before it resolves.
+        const entries = revisionsQuery.data ?? (await getPurchaseRequestRevisions(requestId));
+        await exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(request, entries, resolve);
+      } else {
+        await exportPurchaseRequestOrSponsorshipToExcel(request, resolve(request.sales_type));
+      }
+      toast.success(
+        request.request_type === 'sponsorship_form'
+          ? 'Sponsorship form exported to Excel'
+          : 'Purchase request exported to Excel',
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    if (!request) return;
+    if (canOfferRevisionExport) {
+      setExportChoice('excel');
+      return;
+    }
+    await runExcelExport(false);
+  };
+
+  const handleExportPdf = () => {
+    if (canOfferRevisionExport) {
+      setExportChoice('pdf');
+      return;
+    }
+    exportPdfMutation.mutate(requestId);
+  };
+
+  const handleExportConfirmed = (includeRevisions: boolean) => {
+    const choice = exportChoice;
+    setExportChoice(null);
+    if (choice === 'pdf') {
+      // No option chosen, no body: the request stays the one this export has
+      // always sent.
+      exportPdfMutation.mutate(
+        includeRevisions ? { id: requestId, options: { include_revisions: true } } : requestId,
+      );
+      return;
+    }
+    void runExcelExport(includeRevisions);
+  };
 
   const { data: systemSettingsPayload } = useQuery({
     queryKey: ['system-settings'],
@@ -244,6 +336,7 @@ export default function PurchaseRequestDetail({
     const idPhrase = purchaseRequestNumberReplyPhrase(
       request.request_type,
       request.request_number,
+      request.revision_no,
     );
     let fullMessage = `This is the ${idPhrase} for ${typeLabelVal} for project title ${request.project_title ?? ''}.`;
     if (viewUrl) {
@@ -394,7 +487,7 @@ export default function PurchaseRequestDetail({
           <h1 className="text-2xl font-bold break-words">
             {typeLabel}
             {request.request_number
-              ? ` - ${request.request_number}`
+              ? ` - ${withRevisionSuffix(request.request_number, revisionNo)}`
               : request.customer_name
                 ? ` - ${request.customer_name}`
                 : request.project_title
@@ -629,26 +722,7 @@ export default function PurchaseRequestDetail({
               disabled={exportingExcel}
               onClick={async (e) => {
                 e.preventDefault();
-                if (!request) return;
-                setExportingExcel(true);
-                try {
-                  const code = (request.sales_type ?? '').trim().toLowerCase();
-                  const salesTypeLabel = code
-                    ? (salesTypeOptions.data?.options.find(
-                        (o) => o.value.toLowerCase() === code,
-                      )?.label ?? request.sales_type)
-                    : null;
-                  await exportPurchaseRequestOrSponsorshipToExcel(request, salesTypeLabel);
-                  toast.success(
-                    request.request_type === 'sponsorship_form'
-                      ? 'Sponsorship form exported to Excel'
-                      : 'Purchase request exported to Excel',
-                  );
-                } catch (err) {
-                  toast.error(err instanceof Error ? err.message : 'Export failed');
-                } finally {
-                  setExportingExcel(false);
-                }
+                await handleExportExcel();
               }}
             >
               <FileDown className="size-4" />
@@ -659,7 +733,7 @@ export default function PurchaseRequestDetail({
               disabled={exportPdfMutation.isPending}
               onSelect={(e) => {
                 e.preventDefault();
-                exportPdfMutation.mutate(requestId);
+                handleExportPdf();
               }}
             >
               <Printer className="size-4" />
@@ -732,6 +806,13 @@ export default function PurchaseRequestDetail({
           )}
         </div>
       </div>
+
+      <ExportWithRevisionsDialog
+        open={exportChoice !== null}
+        onOpenChange={(open) => !open && setExportChoice(null)}
+        title={exportChoice === 'pdf' ? 'Print / Download PDF' : 'Export to Excel'}
+        onConfirm={handleExportConfirmed}
+      />
 
       <HandlingLockBanner
         state={handlingLock.state}
@@ -950,6 +1031,15 @@ export default function PurchaseRequestDetail({
         />
       )}
 
+      {/* Contact revised their submission (UAC H1). Renders nothing at revision 0. */}
+      <RevisionBanner
+        revisionNo={revisionNo}
+        documentNumber={request.request_number}
+        revisedAt={request.last_revised_at}
+        revisedByName={latestRevision?.submitted_by}
+        reason={latestRevision?.reason}
+      />
+
       <VoidBanner
         voided={isVoided}
         voidedByName={request.voided_by_name}
@@ -1009,7 +1099,9 @@ export default function PurchaseRequestDetail({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Purchase request number</p>
-                    <p className="font-medium tabular-nums">{request.request_number || ' - '}</p>
+                    <p className="font-medium tabular-nums">
+                      {withRevisionSuffix(request.request_number, revisionNo) || ' - '}
+                    </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Submitted date</p>
@@ -1164,7 +1256,9 @@ export default function PurchaseRequestDetail({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Sponsorship form number</p>
-                    <p className="font-medium tabular-nums">{request.request_number || ' - '}</p>
+                    <p className="font-medium tabular-nums">
+                      {withRevisionSuffix(request.request_number, revisionNo) || ' - '}
+                    </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Submitted date</p>
@@ -1314,6 +1408,11 @@ export default function PurchaseRequestDetail({
             attachments={request.attachments}
           />
         </div>
+
+        {/* The lineage lives in the page's own "Revisions" TAB (round 6), not in
+            this grid: it is reference material, and burying it under the whole
+            form meant scrolling past everything to read it. The query stays here
+            because the revise banner above quotes the newest entry. */}
 
         {request?.respond_inbox_url && (
           <Sheet

@@ -850,9 +850,13 @@ export default function PurchaseRequestForm({
                 const values = form.getValues();
                 const typeLabel =
                   REQUEST_TYPE_LABELS[values.request_type ?? ''] ?? values.request_type ?? 'Request';
+                // Form state holds the bare number (a suffix there would be
+                // submitted back); the message quotes it with the revision
+                // suffix the screens show.
                 const idPhrase = purchaseRequestNumberReplyPhrase(
                   values.request_type,
                   values.request_number,
+                  request?.revision_no,
                 );
                 let defaultReply = `This is the ${idPhrase} for ${typeLabel} for project title ${values.project_title ?? ''}.`;
                 if (publicViewLinksEnabled) {

@@ -307,7 +307,7 @@ function SourceChip({
 /**
  * DEMO-ONLY knowledge-source picker (no backend, no network): the buyer attaches
  * files or pastes links to illustrate grounding the assistant against their own
- * documents. Everything lives in local state and is NOT sent with the Ask request —
+ * documents. Everything lives in local state and is NOT sent with the Ask request -
  * it only shows the intended UX for the demo.
  */
 function KnowledgeSources() {
@@ -551,7 +551,7 @@ function ProposalCard({
 
 /** Format a nullable qty, dash when the engine had no value. */
 function q(v: number | null): string {
-  return v === null || v === undefined ? '—' : fmtInt(v);
+  return v === null || v === undefined ? '-' : fmtInt(v);
 }
 
 const DECISION_LABEL: Record<string, string> = {
@@ -625,7 +625,7 @@ function ComparisonCard({ comparison }: { comparison: PlanComparison }) {
               <span className="inline-flex flex-col items-start rounded-md bg-background px-2 py-1">
                 <span className="text-[0.6rem] uppercase tracking-wide text-muted-foreground">Previous</span>
                 <span className="font-medium tabular-nums">
-                  {row.previous_qty === null ? '—' : q(row.previous_qty)}
+                  {row.previous_qty === null ? '-' : q(row.previous_qty)}
                   {row.previous_decision ? (
                     <span className="ms-1 font-normal text-muted-foreground">
                       {DECISION_LABEL[row.previous_decision] ?? row.previous_decision}

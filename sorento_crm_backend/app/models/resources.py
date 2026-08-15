@@ -1,5 +1,5 @@
 """Resource management models."""
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, event
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, event
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -46,6 +46,12 @@ class AttachmentType(Base):
     # may download without further gating. crm_resource_attachments_list is pinned
     # to these via `direct_access_only`.
     is_direct_access = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Badge artwork for this document type. A product renders the badge because
+    # it HOLDS a document of this type, so the mark is a claim about the product
+    # and is never placed by hand.
+    certification_logo_attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
+    )
     # When false, an upload of this type does NOT call the n8n intake webhook, and
     # the upload-activity drawer skips it. Without this the row waits forever on a
     # reply that is never coming, and shows "Processing" while it waits. Default
@@ -64,7 +70,20 @@ class AttachmentType(Base):
     max_validity_months = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
-    attachments = relationship("Attachment", back_populates="attachment_type")
+    # Two FK paths now link these tables: attachments.attachment_type_id (a file
+    # OF this type) and attachment_types.certification_logo_attachment_id (this
+    # type's badge artwork). Both sides must name the column they mean, or
+    # SQLAlchemy cannot pick a join.
+    attachments = relationship(
+        "Attachment",
+        back_populates="attachment_type",
+        foreign_keys="Attachment.attachment_type_id",
+    )
+    certification_logo = relationship(
+        "Attachment",
+        foreign_keys=[certification_logo_attachment_id],
+        viewonly=True,
+    )
 
 
 class Attachment(Base, CompanyScopedMixin):
@@ -99,6 +118,9 @@ class Attachment(Base, CompanyScopedMixin):
         "uploader_kind",
         "is_deleted",
         "deleted_by",
+        # Certification expiry. Audited on purpose: letting an expiry change go
+        # unrecorded turns a compliance question into an unanswerable one.
+        "valid_until",
     ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -122,6 +144,10 @@ class Attachment(Base, CompanyScopedMixin):
     uploaded_by_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)
     uploader_kind = Column(String(16), nullable=True)  # user | contact | system
     uploaded_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    # Certification expiry. Lives on the DOCUMENT, not on each product link, so
+    # one edit updates every product holding it - and an expired certificate
+    # stops rendering its badge everywhere at once (AC-E5, AC-E8).
+    valid_until = Column(Date, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)
     deleted_at = Column(DateTime(timezone=False), nullable=True)
@@ -151,7 +177,11 @@ class Attachment(Base, CompanyScopedMixin):
     # coalesce per-attachment n8n callbacks into a single outbox email.
     upload_batch_id = Column(String(36), nullable=True)
 
-    attachment_type = relationship("AttachmentType", back_populates="attachments")
+    attachment_type = relationship(
+        "AttachmentType",
+        back_populates="attachments",
+        foreign_keys=[attachment_type_id],
+    )
     directory = relationship("AttachmentDirectory", back_populates="attachments")
 
     __table_args__ = (

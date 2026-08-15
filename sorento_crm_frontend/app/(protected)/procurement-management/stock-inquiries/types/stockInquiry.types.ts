@@ -42,6 +42,22 @@ export interface StockInquiry {
   handled_by_name?: string | null;
   /** PDF exports the CURRENT user has taken of this record (list path only). */
   print_count?: number | null;
+  /** Contact-initiated portal revisions, denormalized so the list needs no
+   *  per-row query (UAC H4). 0 = the original submission. The `-R{n}` document
+   *  number suffix is DERIVED from this, never stored (UAC N2). */
+  revision_no?: number | null;
+  /** When the latest revision landed (naive UTC). */
+  last_revised_at?: string | null;
+  /**
+   * Whether the backend will accept a `purchasing_response` write at this
+   * record's current status (UAC O1). Server-owned: the allowed statuses live in
+   * `app/services/response_gate.py` and are deliberately NOT mirrored on this
+   * side, so the affordance can never disagree with the endpoint that 422s.
+   *
+   * Absent means not gated, matching the backend's own fail-open for a type it
+   * has no rule for.
+   */
+  response_write_allowed?: boolean | null;
   attachments?: StockInquiryAttachment[];
   created_at: Date;
   updated_at: Date;

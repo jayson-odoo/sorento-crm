@@ -10,7 +10,8 @@ Health status (per SKU×warehouse or per aggregated product) precedence:
                      ``reorder_policy.dead_stock_days`` (or never moved)
   3. ``low``       — on_hand > 0, not dead, and ``net <= reorder_point`` (the demand-aware
                      engine ROP from the latest completed run); rendered "Low stock" (M8-B7)
-  4. ``incoming``  — on_hand > 0, not dead/low, and an open (placed) PO contributes supply
+  4. ``incoming``  — on_hand > 0, not dead/low, and supply is on its way (``on_order`` from
+     ``scm.net_position_v``, which reads SPO ALLOCATIONS, not purchase orders)
   5. ``healthy``   — otherwise
 
 ``stockout_with_committed`` = on_hand == 0 AND committed > 0 (the reorder-signal
@@ -31,6 +32,7 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
@@ -42,7 +44,10 @@ from app.services.scm.reorder_policy import (
 # across its per-warehouse classification rows.
 _ABC_RANK = {"A": 0, "B": 1, "C": 2}
 
-# PO statuses that count as placed supply — mirrors scm.on_order_v (drafts excluded).
+# PO statuses that count as PLACED. No longer "supply": since migration 337 `scm.on_order_v`
+# reads SPO allocations, because a purchase order is an order placed and the allocation is the
+# shipment against it. These statuses now scope the open-PO COUNTS and ETAs this screen shows
+# beside the stock figures, which remain honest purchase-order facts.
 PLACED_PO_STATUSES = ("active", "received", "partial", "closed")
 
 _STATUS_RANK = {"stockout": 1, "dead": 2, "low": 3, "incoming": 4, "healthy": 5}
@@ -225,6 +230,18 @@ class ScmDashboardService:
         self._latest_run_id: Optional[str] = None
         self._latest_run_loaded = False
 
+    def _company_clause(self, column: str, prefix: str) -> Tuple[str, dict]:
+        """``(clause, params)`` restricting a RAW query to the caller's company.
+
+        Every reader on this service is raw SQL over the `scm.*` views, so the ORM
+        isolation filter never sees any of them. Company is a property of the LOCATION,
+        so the clause is applied to the joined `warehouses` (or `products` / `suppliers`
+        where the row names no location) and everything derived from that row inherits it.
+        Always returns a usable boolean, so callers can splice it unconditionally.
+        """
+        clause, params = company_sql_predicate(self.db, column, param_prefix=prefix)
+        return (clause or "true"), params
+
     # -- latest completed reorder run (reorder-point source) -----------------
 
     def _latest_completed_run_id(self) -> Optional[str]:
@@ -237,12 +254,19 @@ class ScmDashboardService:
         reference the same run. ``None`` when no run has ever completed (low-stock then
         reads as zero, never crashing)."""
         if not self._latest_run_loaded:
+            # Company-scoped by hand: raw SQL bypasses the ORM isolation filter, and the run
+            # this picks is what drives the low-stock signal. Another company's frozen reorder
+            # points would produce a warning list about stock this company does not hold.
+            co, co_params = company_sql_predicate(
+                self.db, "company_id", param_prefix="cdr"
+            )
             row = self.db.execute(text(
                 "SELECT id FROM scm.reorder_run "
                 "WHERE status = 'completed' "
+                f"{('AND ' + co + ' ') if co else ''}"
                 "ORDER BY COALESCE(finished_at, created_at) DESC, created_at DESC "
                 "LIMIT 1"
-            )).fetchone()
+            ), co_params).fetchone()
             self._latest_run_id = row[0] if row else None
             self._latest_run_loaded = True
         return self._latest_run_id
@@ -311,6 +335,10 @@ class ScmDashboardService:
         where = ["1=1"]
         where.extend(self._lifecycle_where(filters))
         params: dict = {}
+        for column, prefix in (("w.company_id", "cbw"), ("p.company_id", "cbp")):
+            clause, co_params = self._company_clause(column, prefix)
+            where.append(clause)
+            params.update(co_params)
         if filters.warehouses:
             where.append("w.warehouse_code = ANY(:whs)")
             params["whs"] = filters.warehouses
@@ -453,12 +481,14 @@ class ScmDashboardService:
         if warehouses:
             wh_clause = "AND w.warehouse_code = ANY(:whs)"
             params["whs"] = warehouses
+        co, co_params = self._company_clause("w.company_id", "clw")
+        params.update(co_params)
         rows = self.db.execute(text(
             f"""
             SELECT cv.product_id, cv.warehouse_id, MAX(cv.day) AS last_day
             FROM scm.consumption_v cv
             JOIN warehouses w ON w.id = cv.warehouse_id
-            WHERE cv.product_id = ANY(:pids) {wh_clause}
+            WHERE cv.product_id = ANY(:pids) AND {co} {wh_clause}
             GROUP BY cv.product_id, cv.warehouse_id
             """
         ), params).fetchall()
@@ -468,17 +498,18 @@ class ScmDashboardService:
         """One representative supplier per product (primary first, else lowest lead time)."""
         if not product_ids:
             return {}
+        co, co_params = self._company_clause("su.company_id", "csm")
         rows = self.db.execute(text(
-            """
+            f"""
             SELECT ps.product_id, su.supplier_code, su.supplier_name,
                    ps.standard_lead_time_days, ps.is_primary_supplier
             FROM product_suppliers ps
             JOIN suppliers su ON su.id = ps.supplier_id
-            WHERE ps.product_id = ANY(:pids)
+            WHERE ps.product_id = ANY(:pids) AND {co}
             ORDER BY ps.is_primary_supplier DESC NULLS LAST,
                      ps.standard_lead_time_days ASC NULLS LAST
             """
-        ), {"pids": product_ids}).fetchall()
+        ), {"pids": product_ids, **co_params}).fetchall()
         out: Dict[str, dict] = {}
         for r in rows:
             if r[0] not in out:  # first per product wins (ordered primary-first)
@@ -490,8 +521,16 @@ class ScmDashboardService:
         return out
 
     def _placed_po_rows(self, filters: ScmFilters) -> List[dict]:
-        """Open (placed) PO lines with remaining supply, respecting scope filters."""
-        where = ["po.status = ANY(:statuses)", "pol.qty_ordered > pol.qty_received"]
+        """Open (placed) PO lines, respecting scope filters. Used for COUNTS and ETAs only.
+
+        Not supply: the quantity a buyer is waiting for comes from ``scm.net_position_v``,
+        which reads SPO allocations (migration 337). What these rows answer is "how many
+        orders are open with this supplier, and when is the earliest due", which is a
+        purchase-order question and stays a purchase-order answer. ``pol.line_status`` is
+        still filtered because a line that left the order book is not an open order either.
+        """
+        where = ["po.status = ANY(:statuses)", "pol.line_status = 'open'",
+                 "pol.qty_ordered > pol.qty_received"]
         where.extend(self._lifecycle_where(filters))
         params: dict = {"statuses": list(PLACED_PO_STATUSES)}
         if filters.warehouses:
@@ -713,16 +752,17 @@ class ScmDashboardService:
         rather than fabricating a score."""
         if not supplier_codes:
             return {}
+        co, co_params = self._company_clause("su.company_id", "csp")
         rows = self.db.execute(text(
-            """
+            f"""
             SELECT su.supplier_code, sp.on_time_rate, sp.avg_lead_time_days,
                    sp.reject_rate, sp.fill_rate, sp.composite_score, sp.sample_size,
                    sp.confidence
             FROM scm.supplier_performance sp
             JOIN suppliers su ON su.id = sp.supplier_id
-            WHERE sp.product_id IS NULL AND su.supplier_code = ANY(:codes)
+            WHERE sp.product_id IS NULL AND su.supplier_code = ANY(:codes) AND {co}
             """
-        ), {"codes": supplier_codes}).fetchall()
+        ), {"codes": supplier_codes, **co_params}).fetchall()
         out: Dict[str, dict] = {}
         for r in rows:
             out[r[0]] = {
@@ -990,18 +1030,24 @@ class ScmDashboardService:
         Returns the oldest→newest monthly buckets (zero-filled) plus the SKU's
         xyz_class + plain-language demand label so the caption can echo it.
         """
+        # 11,390 product codes exist in more than one company, so an unscoped lookup by
+        # code resolves to whichever copy Postgres returns first - and then every figure
+        # below is about another company's stock.
+        pco, pco_params = self._company_clause("company_id", "cds")
         prow = self.db.execute(text(
-            "SELECT id, product_code, product_name FROM products WHERE product_code = :c"
-        ), {"c": sku}).fetchone()
+            f"SELECT id, product_code, product_name FROM products "
+            f"WHERE product_code = :c AND {pco}"
+        ), {"c": sku, **pco_params}).fetchone()
         if not prow:
             raise AppException(status_code=404, message=f"Unknown SKU '{sku}'.")
         pid = prow[0]
 
         wid = None
         if warehouse:
+            wco, wco_params = self._company_clause("company_id", "cdw")
             wrow = self.db.execute(text(
-                "SELECT id FROM warehouses WHERE warehouse_code = :c"
-            ), {"c": warehouse}).fetchone()
+                f"SELECT id FROM warehouses WHERE warehouse_code = :c AND {wco}"
+            ), {"c": warehouse, **wco_params}).fetchone()
             if not wrow:
                 raise AppException(status_code=404, message=f"Unknown warehouse '{warehouse}'.")
             wid = wrow[0]

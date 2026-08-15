@@ -1,16 +1,16 @@
 /**
  * ============================================================================
- * PURCHASE ORDERS — real API binding + M4 Slice B draft→confirm→GR flow
+ * PURCHASE ORDERS - real API binding + M4 Slice B draft→confirm→GR flow
  * ============================================================================
  * Mounted under `require_module_enabled_with_api_key("scm")` at
  * `/api/v1/scm/purchase-orders`, gated on `scm.dashboard.view` (writes use
  * `scm.reorder.run`). The PO feeds "on-order" / "incoming" into the
- * net-position views. No UUIDs surfaced — PO by po_number.
+ * net-position views. No UUIDs surfaced - PO by po_number.
  *
  * At M1 the list was READ-ONLY. M4 Slice B adds the draft→confirm→GR flow:
  *   - draft POs (status `draft_recommendation`) are drafted from accepted
  *     recommendations and are NOT on-order (M4-D5);
- *   - bulk Confirm flips them to `active` — only then do they count as on-order;
+ *   - bulk Confirm flips them to `active` - only then do they count as on-order;
  *   - create-GR stamps received qty on an active PO (GR = `picking_headers`,
  *     `picking_type='goods_received'`).
  *
@@ -55,6 +55,21 @@ export interface PurchaseOrderListQuery {
   searchQuery?: string;
   status?: string | null;
   supplier?: string | null;
+  /**
+   * Keep only orders carrying this SKU. The response then also carries `product_cost`:
+   * what we last paid for it, on which order. That is where a buyer checks why a plan
+   * line shows no cost, since the plan now reads its cost from this book.
+   */
+  productCode?: string | null;
+}
+
+/** What we last paid for a SKU. `null` when we have never bought it; a recorded 0 is 0. */
+export interface ProductLastCost {
+  unit_cost: number;
+  currency: string | null;
+  po_number: string;
+  issue_date: string | null;
+  supplier_name: string | null;
 }
 
 /** Client-side list slice over the mock store (search + status filter + paging). */
@@ -80,9 +95,14 @@ function mockPurchaseOrderList(
   };
 }
 
+/** The list, plus the last-paid block when the caller narrowed it to one product. */
+export type PurchaseOrderListResponse = DataGridApiResponse<PurchaseOrder> & {
+  product_cost?: ProductLastCost | null;
+};
+
 export async function getPurchaseOrders(
   params: PurchaseOrderListQuery,
-): Promise<DataGridApiResponse<PurchaseOrder>> {
+): Promise<PurchaseOrderListResponse> {
   if (USE_SLICE_B_MOCKS) return mockPurchaseOrderList(params);
   const sorting = params.sortField
     ? [{ id: params.sortField, desc: params.sortDir === 'desc' }]
@@ -94,14 +114,18 @@ export async function getPurchaseOrders(
       sorting,
       searchQuery: params.searchQuery,
     },
-    { status: params.status ?? undefined, supplier: params.supplier ?? undefined },
+    {
+      status: params.status ?? undefined,
+      supplier: params.supplier ?? undefined,
+      product_code: params.productCode || undefined,
+    },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load purchase orders'));
   return res.json();
 }
 
-/** Single PO by stable id — drives the detail page. GET /purchase-orders/{id}. */
+/** Single PO by stable id - drives the detail page. GET /purchase-orders/{id}. */
 export async function getPurchaseOrder(id: string): Promise<PurchaseOrder | null> {
   if (USE_SLICE_B_MOCKS) return mockGetPurchaseOrder(id);
   const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}`);

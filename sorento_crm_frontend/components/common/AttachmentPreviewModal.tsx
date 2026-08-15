@@ -186,7 +186,10 @@ export default function AttachmentPreviewModal({
         className="max-w-5xl gap-0 overflow-hidden p-0"
         onKeyDown={onKeyDown}
       >
-        <DialogHeader className="flex-row items-center justify-between gap-3 border-b px-4 py-3 pr-12">
+        {/* Stacks at phone width: title + zoom + Open + Download cannot fit on
+            one 375px row, and a plain flex-row overflows the dialog instead of
+            wrapping. */}
+        <DialogHeader className="flex-col items-stretch gap-2 border-b px-4 py-3 pr-12 text-start sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <div className="min-w-0">
             <DialogTitle className="truncate text-base" title={activeItem?.name}>
               {activeItem?.name}
@@ -198,7 +201,7 @@ export default function AttachmentPreviewModal({
               {current + 1} / {items.length}
             </DialogDescription>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
             {activeIsImage && (
               <div className="flex items-center rounded-md border">
                 <Button
@@ -318,10 +321,11 @@ function PreviewSlide({
 }) {
   const kind = kindOf(item.name);
   // <img>/<video>/<iframe> can't send an auth header, so they can only render a
-  // public CDN url. Without one (e.g. an attachment missing its stored CDN
-  // path), fall back to download rather than a broken element. Excel is exempt
-  // it reads bytes via fetchBytes.
-  const hasCdn = item.url.startsWith('http');
+  // public CDN url - or a local blob:/data: url for bytes the browser already
+  // holds (a file staged before upload). Without one (e.g. an attachment
+  // missing its stored CDN path), fall back to download rather than a broken
+  // element. Excel is exempt - it reads bytes via fetchBytes.
+  const hasCdn = /^(https?:|blob:|data:)/.test(item.url);
 
   if (kind === 'image') {
     return hasCdn ? (

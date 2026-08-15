@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from typing import Annotated, Optional
 
@@ -25,6 +26,7 @@ from fastapi import (
     Path,
     Query,
     Request,
+    Response,
     UploadFile,
     status,
 )
@@ -36,7 +38,12 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.portal import PortalToken
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_attachment_service import EntityAttachmentService
-from app.services.error_handler import AppException, handle_validation_error
+from app.services.error_handler import (
+    AppException,
+    handle_not_found,
+    handle_validation_error,
+)
+from app.services.uuid_path_param import validate_uuid_path
 from app.services.portal_service import (
     PORTAL_ATTACHMENT_TYPE_CODE,
     PortalAuthError,
@@ -646,6 +653,93 @@ def portal_list_submissions(
     }
 
 
+class RevisionPolicyBlock(BaseModel):
+    """Everything the portal needs to render (or not render) the Revise action.
+
+    ``used`` is the submission's current ``revision_no`` - the value the FE sends back
+    as ``expected_revision_no`` so a double tap cannot produce two revisions.
+    """
+
+    enabled: bool
+    allowed: bool
+    used: int
+    max: int
+    remaining: int
+    blocked_reason: Optional[str] = None
+    # Where a revision sends the form back to, in words (UAC E1/E1a). Derived from
+    # the type's config so the confirm dialog never hardcodes "the purchasing team"
+    # on a type that does not route to purchasing. NULL = nothing to name, and the
+    # copy falls back to the generic sentence.
+    restart_stage_label: Optional[str] = None
+
+
+class RevisionEntry(BaseModel):
+    id: str
+    version_no: int
+    revision_no: int
+    kind: str
+    label: str
+    reason: Optional[str] = None
+    submitted_at: Optional[str] = None
+    submitted_by: Optional[str] = None
+    is_reconstructed: bool = False
+    snapshot: dict = {}
+    attachments: list[dict] = []
+    # Stage output this revision invalidated (e.g. the superseded purchasing
+    # response), kept so history shows the answer beside the version it answered.
+    invalidated: Optional[dict] = None
+    # The PRIMARY (newest) voided stage. Every existing timeline renders these two.
+    voided_stage_code: Optional[str] = None
+    voided_assignee_name: Optional[str] = None
+    # EVERY stage this revision voided, newest first: {stage_code, assignee_name}.
+    # A form can sit with two stages open at once, and the revision stops both and
+    # tells both handlers, so history must not name only one. Declared here or the
+    # response_model would silently drop what the service built.
+    voided_stages: list[dict] = []
+    # {field, label, from, to} - `from` is a Python keyword, so this stays a plain
+    # dict rather than a model that would have to alias around it.
+    changes: list[dict] = []
+    # {field, label, value, display} - the WHOLE form at this version, labeled and
+    # ordered by the adapter, backing the read-only full-form view (UAC G9).
+    # `display` is the server-rendered presentation of `value` (a lookup option's
+    # label, a DD/MM/YYYY date) or null when the raw value already reads correctly,
+    # so both surfaces show the same string. Declared here or the response_model
+    # drops it, exactly as with `voided_stages` above.
+    snapshot_fields: list[dict] = []
+
+
+class RevisionListResponse(BaseModel):
+    items: list[RevisionEntry]
+
+
+class RevisePayload(BaseModel):
+    """The submit payload plus the two things only a revision carries."""
+
+    # Length is NOT constrained here: the service is the single validator, so a
+    # blank reason reads as the same shared sentence ("Tell us what changed and
+    # why.") whether it arrived as "" or as whitespace, rather than as a pydantic
+    # envelope for one of the two.
+    reason: str = Field(...)
+    # The revision_no the contact was looking at. A mismatch is a 409 (UAC C5).
+    expected_revision_no: int = Field(..., ge=0)
+    fields: dict = {}
+    products: Optional[list[dict]] = None
+
+
+class ReviseResponse(BaseModel):
+    submission: dict
+    revision: RevisionPolicyBlock
+    revision_no: int
+
+
+def _revision_policy_block(db: Session, kind: str, submission_id: str) -> dict:
+    """Policy block for a submission id. Fails closed (disabled) for a type with no
+    adapter or no config row, so the portal simply renders no Revise action."""
+    from app.services.portal_revision_service import PortalRevisionService
+
+    return PortalRevisionService(db).policy_for(kind, submission_id).as_dict()
+
+
 @router.get("/submissions/{kind}/{submission_id}")
 def portal_get_submission(
     kind: str = Path(...),
@@ -653,9 +747,74 @@ def portal_get_submission(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    detail = PortalService(db).get_submission(token, _check_kind(kind), submission_id)
+    k = _check_kind(kind)
+    detail = PortalService(db).get_submission(token, k, submission_id)
     detail["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
+    # One call, no extra round trip (UAC B1).
+    detail["revision"] = _revision_policy_block(db, k, submission_id)
     return detail
+
+
+@router.get(
+    "/submissions/{kind}/{submission_id}/revisions",
+    response_model=RevisionListResponse,
+)
+def portal_list_revisions(
+    kind: str = Path(...),
+    submission_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The original plus every version since, each with what changed (UAC G).
+
+    Read-only, ownership-checked through the same ``get_submission`` call the rest of
+    the portal uses, so another contact's token gets the usual 404 / OWNER_MISMATCH.
+    """
+    from app.services.portal_revision_service import PortalRevisionService
+
+    k = _check_kind(kind)
+    PortalService(db).get_submission(token, k, submission_id)
+    return {"items": PortalRevisionService(db).list_revisions(k, submission_id)}
+
+
+@router.post(
+    "/submissions/{kind}/{submission_id}/revise",
+    response_model=ReviseResponse,
+)
+def portal_revise_submission(
+    payload: RevisePayload,
+    kind: str = Path(...),
+    submission_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Send a revision: current work stops and the flow restarts (UAC F).
+
+    409 when ``expected_revision_no`` is stale, 422 carrying one human sentence when
+    the policy refuses it.
+    """
+    from app.services.portal_revision_service import PortalRevisionService
+
+    k = _check_kind(kind)
+    body = dict(payload.fields or {})
+    if payload.products is not None:
+        body["products"] = payload.products
+    result = PortalRevisionService(db).revise(
+        token,
+        k,
+        submission_id,
+        body,
+        payload.reason,
+        payload.expected_revision_no,
+    )
+    submission = PortalService(db).get_submission(token, k, submission_id)
+    submission["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
+    submission["revision"] = result["policy"]
+    return {
+        "submission": submission,
+        "revision": result["policy"],
+        "revision_no": result["revision_no"],
+    }
 
 
 class SubmissionNeighboursResponse(BaseModel):
@@ -735,6 +894,16 @@ def portal_submit(
 def _entity_type_for(kind: str) -> str:
     """Sponsorship form shares the purchase_request entity_type for attachments."""
     return "purchase_request" if kind == "sponsorship_form" else kind
+
+
+def _kinds_for_entity_type(entity_type: str) -> tuple[str, ...]:
+    """Reverse of :func:`_entity_type_for` - the portal kinds an attachment link
+    could belong to. `purchase_request` is ambiguous (PR and sponsorship form
+    share the entity type), so both are tried."""
+    et = (entity_type or "").strip().lower()
+    if et == "purchase_request":
+        return ("purchase_request", "sponsorship_form")
+    return (et,) if et in SUPPORTED_TYPES else ()
 
 
 def _ext(filename: Optional[str], content_type: Optional[str]) -> str:
@@ -888,6 +1057,145 @@ def portal_list_attachments(
     # Ensures the contact owns this submission.
     PortalService(db).get_submission(token, k, submission_id)
     return {"items": _list_attachments_for(db, _entity_type_for(k), submission_id)}
+
+
+def _attachment_is_on_own_submission(
+    db: Session, token: PortalToken, attachment_id: str
+) -> bool:
+    """True when this attachment is linked to a submission the contact owns."""
+    portal = PortalService(db)
+    links = (
+        db.query(EntityAttachmentLink)
+        .filter(EntityAttachmentLink.attachment_id == attachment_id)
+        .all()
+    )
+    for link in links:
+        for kind in _kinds_for_entity_type(link.entity_type):
+            try:
+                portal.get_submission(token, kind, link.entity_id)
+                return True
+            except HTTPException:
+                # Not this contact's (404 / OWNER_MISMATCH) - try the next link.
+                continue
+    return False
+
+
+def _attachment_is_in_own_revision_history(
+    db: Session, token: PortalToken, attachment_id: str
+) -> bool:
+    """True when the attachment appears in a revision snapshot of a submission the
+    contact owns.
+
+    This is the clause that keeps history previewable: a file dropped during a
+    revision is unlinked (UAC G6), so it has no ``EntityAttachmentLink`` left and the
+    live-link check above would 404 on exactly the historical files the history exists
+    to show (UAC I2a).
+    """
+    from app.models.portal import PortalFormRevision
+    from app.services.portal_revision_service import PortalRevisionService
+
+    rows = (
+        db.query(PortalFormRevision.source_entity_type, PortalFormRevision.source_entity_id)
+        .filter(
+            PortalFormRevision.attachments_json.contains(
+                [{"attachment_id": str(attachment_id)}]
+            )
+        )
+        .distinct()
+        .all()
+    )
+    if not rows:
+        return False
+    portal = PortalService(db)
+    service = PortalRevisionService(db)
+    for entity_type, entity_id in rows:
+        # A revision row stores the portal KIND (sponsorship_form stays itself), so
+        # unlike an attachment link there is nothing ambiguous to resolve here.
+        if entity_type not in SUPPORTED_TYPES:
+            continue
+        try:
+            portal.get_submission(token, entity_type, str(entity_id))
+        except HTTPException:
+            continue  # not this contact's - try the next snapshot
+        if str(attachment_id) in service.attachment_ids_in_history(
+            entity_type, str(entity_id)
+        ):
+            return True
+    return False
+
+
+def _portal_can_read_attachment(
+    db: Session, token: PortalToken, attachment_id: str
+) -> bool:
+    """Authorisation for the portal bytes route: token -> contact owns a
+    submission -> the attachment belongs to it, now or in one of its revisions.
+
+    Single gate on purpose, so the preview, the download and the history all agree.
+    """
+    return _attachment_is_on_own_submission(
+        db, token, attachment_id
+    ) or _attachment_is_in_own_revision_history(db, token, attachment_id)
+
+
+def _content_disposition(filename: str) -> str:
+    """RFC 5987 disposition - portal filenames come off the contact's device and
+    are frequently non-ASCII, which a bare ``filename="..."`` cannot encode."""
+    from urllib.parse import quote
+
+    ascii_name = re.sub(r'[^A-Za-z0-9._-]', "_", filename).strip("_") or "attachment"
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+
+
+@router.get("/attachments/{attachment_id}/download")
+def portal_download_attachment(
+    attachment_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Attachment bytes for the contact portal, authenticated by the portal token.
+
+    Keyed on ``attachment_id``, NOT ``link_id``: an attachment removed during a
+    revision is unlinked but stays visible in that revision's history, and a
+    link-keyed route would 404 on exactly those historical files.
+
+    The portal has no NextAuth JWT session, so the office
+    ``/resource-management/attachments/{id}/download`` route 401s there. This
+    route backs both the in-place preview (Excel bytes) and the Download button.
+    """
+    attachment_id = validate_uuid_path(attachment_id, resource="Attachment")
+    # Ownership first: a 404 for "exists but not yours" and for "does not exist"
+    # alike, so the route never confirms an id the contact has no claim on.
+    if not _portal_can_read_attachment(db, token, attachment_id):
+        raise handle_not_found("Attachment", attachment_id)
+
+    attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+    if attachment is None:
+        raise handle_not_found("Attachment", attachment_id)
+
+    from app.services.resources_service import AttachmentService
+
+    try:
+        content = AttachmentService(db).get_file_content(attachment_id)
+    except HTTPException:
+        # An AppException from the service (e.g. 404) is already the right
+        # answer - don't relabel it as a storage failure.
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Portal attachment download failed for %s: %s", attachment_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="File download failed. Please try again.",
+        ) from e
+
+    filename = attachment.original_filename or attachment.stored_filename or "attachment"
+    return Response(
+        content=content,
+        media_type=str(getattr(attachment, "mime_type", None) or "application/octet-stream"),
+        headers={
+            "Content-Disposition": _content_disposition(filename),
+            "Content-Length": str(len(content)),
+        },
+    )
 
 
 @router.post("/attachments")

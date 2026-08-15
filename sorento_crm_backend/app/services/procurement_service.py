@@ -21,6 +21,7 @@ from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
     PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine,
     ApprovalToken,
+    PurchaseOrderLine,
     ViewToken,
 )
 from app.models.product import Product
@@ -36,7 +37,19 @@ from app.schemas.procurement import (
     StockInquiryCreate, StockInquiryUpdate,
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
 )
-from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services.error_handler import (
+    handle_not_found,
+    handle_conflict,
+    handle_unprocessable,
+    handle_validation_error,
+)
+from app.services.scm.money import BASE_CURRENCY as MONEY_BASE_CURRENCY
+from app.services.document_number import display_document_number, strip_revision_suffix
+from app.services.response_gate import (
+    assert_response_write_allowed,
+    is_response_status_allowed,
+    response_text_changed,
+)
 from app.services.banner_person_service import wa_phone_for_user_id
 from app.services.validators import validate_project_value
 from app.services.requestor_options_service import (
@@ -49,6 +62,88 @@ _UNSET_REQUESTOR = object()
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_number_suffix_in_place(payload: dict, key: str) -> None:
+    """Keep a STORED document number bare (UAC N2).
+
+    ``request_number`` is user-assignable and the edit forms post it back, so a
+    surface rendering ``PR-26-0012-R2`` could round-trip the revision suffix into
+    the very column it was derived from - after which every lookup-by-number
+    depends on the caller repeating that suffix. The revision lives in
+    ``revision_no``; the number never carries it.
+    """
+    value = payload.get(key)
+    if isinstance(value, str):
+        payload[key] = strip_revision_suffix(value)
+
+
+def _pop_status_or_refuse_move(
+    payload: dict,
+    *,
+    current: Optional[str],
+    label: str,
+    actions: str,
+    also_allowed: tuple[str, ...] = (),
+) -> None:
+    """Take ``status`` out of an edit payload, and refuse a real lifecycle move.
+
+    The lifecycle belongs to the workflow actions, never to an edit: a contact
+    revision sets the status back to the restart stage, and an office tab holding
+    the superseded value must not be able to stomp it back.
+
+    Dropping the field silently is not enough. Both update schemas still DECLARE
+    ``status`` (and removing it would change nothing, since a Pydantic model
+    ignores undeclared fields by default), so an n8n / MCP caller that had been
+    walking the lifecycle through this endpoint would get ``200`` and no change -
+    the worst failure mode available. So a payload whose ``status`` would actually
+    MOVE the record is refused with one plain sentence.
+
+    A payload echoing the CURRENT status moves nothing and is dropped quietly, so
+    a read-modify-write round trip of the whole entity keeps saving. Same rule the
+    response gate uses just below: only a real change counts as a write.
+
+    ``also_allowed`` is for a path that legitimately moves the status ITSELF: the
+    purchasing reply always lands the inquiry on ``responded``, so a caller asking
+    for exactly the destination the call is about to reach is not refused for it
+    (it is still dropped, since the workflow, not the payload, performs the move).
+    Anything else is refused as usual.
+    """
+    if "status" not in payload:
+        return
+    supplied = payload.pop("status")
+    if supplied is None:
+        return
+    supplied_norm = str(supplied).strip().lower()
+    if not supplied_norm:
+        return
+    accepted = {str(current or "").strip().lower()}
+    accepted.update(str(value).strip().lower() for value in also_allowed)
+    if supplied_norm in accepted:
+        return
+    raise handle_unprocessable(
+        f"The status of this {label} cannot be changed by editing it, so use the "
+        f"{actions} action instead."
+    )
+
+
+def _request_label(header: Any) -> str:
+    """"purchase request" / "sponsorship form" for a message the office reads.
+
+    One table, two document types (``request_type``), so every sentence about a
+    header has to name the right one. Shared by both write paths that guard the
+    status, so the two cannot end up naming it differently.
+    """
+    return (
+        "sponsorship form"
+        if getattr(header, "request_type", None) == "sponsorship_form"
+        else "purchase request"
+    )
+
+
+# The workflow actions that own a purchase request's / sponsorship form's status.
+# Named in the refusal so the caller is told where the move belongs.
+_REQUEST_STATUS_ACTIONS = "approval, process, close or void"
 
 
 class AllocationReceivedGuardError(Exception):
@@ -119,6 +214,57 @@ def _resolve_contact_phone_for_webhook(contact: Any, contact_respond_io_id: str)
     except Exception:
         logger.debug("Could not resolve contact phone from Respond.io for id=%s", identifier, exc_info=True)
     return None
+
+
+def _forward_match_for_spo(
+    db: Session, spo_number: Optional[str], company_id: Optional[str] = None
+) -> None:
+    """Fire forward matching after an allocation has been WRITTEN and committed.
+
+    The GRN and its SPO arrive in whatever order the supplier and the warehouse
+    produce them, so the moment an allocation appears is the moment the lines that
+    were waiting on it can be placed. Every call site is post-commit and
+    best-effort - a side effect that fails must not turn a successful allocation
+    write into a 500, because the caller's retry takes the idempotent path and
+    never backfills the missed effect.
+
+    ``company_id`` is the allocation's own company, passed so the match stays
+    inside it even on the ``X-API-Key`` path, whose scope is NULL ("all
+    companies") and therefore constrains nothing.
+
+    Imported inside the function: ``grn_spo_matching`` imports this module at load
+    time, so a module-level import here would be a cycle.
+    """
+    from app.services.grn_spo_matching import forward_match_grn_lines_for_spo_best_effort
+
+    forward_match_grn_lines_for_spo_best_effort(db, spo_number, company_id=company_id)
+
+
+def _stated_spo_for_line(
+    payload_value: Optional[str], header_spo_number: Optional[str]
+) -> Optional[str]:
+    """What a picking line SAYS it was received against.
+
+    What the client sent wins - it is the value the GRN screen read back and is
+    round-tripping, and re-deriving over it would silently rewrite an imported
+    line's evidence on an unrelated edit. Otherwise the header's SPO stands in, but
+    only when it names EXACTLY ONE (``_single_spo_or_none``): a joined multi-SPO
+    header names no single allocation, and storing it would put a claim on screen
+    that the scalar matcher can never honour.
+
+    Without this, ``update_grn`` - which deletes and recreates every picking line -
+    would wipe ``spo_number_raw`` off an imported GRN on the first edit and make it
+    un-forward-matchable. It also gives the UI and external-API GRN paths a stated
+    SPO, so a GRN that arrives that way BEFORE its allocation is forward-matchable
+    too.
+    """
+    if payload_value is not None and str(payload_value).strip():
+        return payload_value
+    # Local import: app.tasks.import_tasks imports this module at load time, and
+    # the sheet-parsing rules live there with the rest of the import vocabulary.
+    from app.tasks.import_tasks import _single_spo_or_none
+
+    return _single_spo_or_none(header_spo_number)
 
 
 def _spo_match_key(spo_number: Optional[str]) -> str:
@@ -635,13 +781,24 @@ class InboundShipmentService:
         return shipment
 
     def get_received_quantities_by_product(self, shipment_id: str) -> dict[str, int]:
-        """Return received qty per product for a shipment, ignoring warehouse boundaries."""
+        """Return received qty per product for a shipment, ignoring warehouse boundaries.
+
+        The received quantity is ``quantity_picked`` - the same column
+        ``build_allocation_pool`` and ``compute_received_for_allocation`` measure,
+        see the convention note in ``app.services.grn_spo_matching`` (AC-FM-28).
+        This reader PERSISTS ``inbound_shipment_lines.quantity_received`` and
+        ``line_status`` (via ``refresh_shipment_line_statuses``), so while it summed
+        ``quantity_expected`` any line where picked differed from expected made the
+        shipment and its own SPO allocation report different numbers for the same
+        goods: a 60-of-100 short receipt read as 100 here and 60 there, and the
+        container looked fully received when 40 of it never arrived.
+        """
         received_totals: dict[str, int] = {}
 
         linked_rows = (
             self.db.query(
                 SPOAllocation.product_id,
-                func.coalesce(func.sum(PickingLine.quantity_expected), 0).label("total"),
+                func.coalesce(func.sum(PickingLine.quantity_picked), 0).label("total"),
             )
             .join(PickingLine, PickingLine.spo_allocation_id == SPOAllocation.id)
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
@@ -689,7 +846,7 @@ class InboundShipmentService:
             self.db.query(
                 PickingLine.product_id,
                 norm_expr.label("normalized_spo_number"),
-                func.coalesce(func.sum(PickingLine.quantity_expected), 0).label("total"),
+                func.coalesce(func.sum(PickingLine.quantity_picked), 0).label("total"),
             )
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
             .filter(
@@ -1361,8 +1518,22 @@ class SPOAllocationService:
             raise handle_not_found("SPO Allocation", allocation_id)
         return allocation
     
-    def create_allocation(self, allocation_data: SPOAllocationCreate, created_by: str):
-        """Create a new SPO allocation."""
+    def create_allocation(
+        self,
+        allocation_data: SPOAllocationCreate,
+        created_by: str,
+        *,
+        forward_match: bool = True,
+    ):
+        """Create a new SPO allocation.
+
+        ``forward_match=False`` is for a caller that writes SEVERAL allocations for
+        one SPO in a batch (the SPO Excel import). Firing the hook per row would
+        place a waiting GRN line against whichever allocation happened to be
+        written first, before the one that actually covers its warehouse exists -
+        so that caller suppresses it here and fires it once, per SPO number, when
+        the whole file has landed.
+        """
         # Check unique constraint: (spo_number, product_id, warehouse_id)
         if allocation_data.spo_number and allocation_data.product_id and allocation_data.warehouse_id:
             existing = self.db.query(SPOAllocation).filter(
@@ -1382,11 +1553,114 @@ class SPOAllocationService:
         self.db.add(allocation)
         self.db.commit()
         self.db.refresh(allocation)
+        self._capture_incoming_cost(allocation)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(allocation.inbound_shipment_id)
+        # The other half of the journey: any GRN line that stated this SPO and
+        # could not be placed when it was imported is now placeable. This is the
+        # hook for the paths that write ONE allocation - the UI / API create, and
+        # the SCM allocation suggestion. The SPO Excel import writes a file's worth
+        # at a time and hooks itself once at the end instead.
+        if forward_match:
+            _forward_match_for_spo(self.db, allocation.spo_number, allocation.company_id)
         return allocation
 
+    def _capture_incoming_cost(self, allocation: SPOAllocation) -> None:
+        """Stamp the packing-list cost, in its currency, on the inbound shipment line.
+
+        AC-C3.2. The allocation is the moment the incoming cost becomes a fact about this
+        purchase, so it is captured here rather than left to be reconstructed later.
+
+        The packing-list line IS ``inbound_shipment_lines``, so the cost is already on the
+        row this writes to; the half that is missing is the CURRENCY, which the packing list
+        does not state. It resolves through ``po_line_id`` to the ordered line's currency,
+        and where there is no such source it stays NULL. It is never guessed: a currency
+        invented for a cost silently changes what the variance means.
+
+        The ordered line is only READ (AC-C3.3). Its cost, its currency and its updated_at
+        must come out untouched, because a supplier whose incoming cost drifts above its
+        ordered cost has repriced after we committed, and overwriting the ordered figure
+        destroys the only evidence of that.
+
+        NOTE (external dependency, recorded in PLAN-scm-purchasing-fulfilment): the
+        packing-list ingest cannot supply a cost today -- the extracted product carries
+        product_code and quantity only -- so in production every line takes the uncosted
+        branch below and is logged. The mechanism is correct the day a cost arrives.
+
+        Best-effort: this runs AFTER the allocation has committed, so a failure here must
+        not turn a successful write into a 500 for the caller.
+        """
+        try:
+            line = (
+                self.db.query(InboundShipmentLine)
+                .filter(
+                    InboundShipmentLine.shipment_id == allocation.inbound_shipment_id,
+                    InboundShipmentLine.product_id == allocation.product_id,
+                )
+                .first()
+            )
+            if line is None:
+                # An allocation against a product that is not on the packing list. Real,
+                # and not this function's problem to resolve.
+                return
+
+            if line.unit_cost is None:
+                # Reported, never defaulted. A zero here would read as free goods and would
+                # flow into the variance as a 100% saving.
+                logger.warning(
+                    "SPO allocation %s is written against an uncosted packing-list line "
+                    "(shipment %s, product %s): no incoming cost to capture, so the cost "
+                    "variance against the ordered line is not computable",
+                    allocation.id,
+                    allocation.inbound_shipment_id,
+                    allocation.product_id,
+                )
+                return
+
+            if line.currency:
+                # The packing list stated the unit itself. Nothing to resolve, and the
+                # stated currency is never overwritten by an inferred one.
+                return
+
+            currency = None
+            if allocation.po_line_id:
+                currency = (
+                    self.db.query(PurchaseOrderLine.currency)
+                    .filter(PurchaseOrderLine.id == allocation.po_line_id)
+                    .scalar()
+                )
+
+            if not currency:
+                logger.warning(
+                    "SPO allocation %s captured an incoming cost of %s with no currency "
+                    "(shipment %s, product %s): %s, so the unit stays unknown rather than "
+                    "assumed",
+                    allocation.id,
+                    line.unit_cost,
+                    allocation.inbound_shipment_id,
+                    allocation.product_id,
+                    "the allocation links no PO line"
+                    if not allocation.po_line_id
+                    else "the linked PO line states no currency",
+                )
+                return
+
+            line.currency = currency
+            line.updated_at = datetime.utcnow()
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - best-effort side effect, see docstring
+            logger.warning(
+                "Failed to capture the incoming cost for SPO allocation %s",
+                getattr(allocation, "id", None),
+                exc_info=True,
+            )
+            self.db.rollback()
+
     def upsert_allocation(
-        self, allocation_data: SPOAllocationCreate, created_by: str
+        self,
+        allocation_data: SPOAllocationCreate,
+        created_by: str,
+        *,
+        forward_match: bool = True,
     ) -> tuple[str, SPOAllocation]:
         """Create or update an SPO allocation keyed by (spo_number, product_id, warehouse_id).
 
@@ -1411,7 +1685,9 @@ class SPOAllocationService:
             ).first()
 
         if existing is None:
-            allocation = self.create_allocation(allocation_data, created_by)
+            allocation = self.create_allocation(
+                allocation_data, created_by, forward_match=forward_match
+            )
             return ("created", allocation)
 
         new_qty = allocation_data.allocated_quantity
@@ -1430,7 +1706,16 @@ class SPOAllocationService:
         existing.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(existing)
+        # The allocation was written, so the incoming cost is re-captured against it
+        # (AC-C3.2). The "unchanged" path above returns before any write and stamps
+        # nothing, because there was no moment of allocation to capture at.
+        self._capture_incoming_cost(existing)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(existing.inbound_shipment_id)
+        # A corrected SPO file raising `allocated_quantity` FREES capacity, and the
+        # lines waiting on it should get it. The "unchanged" branch returns above
+        # without writing, so there is no moment of allocation to react to there.
+        if forward_match:
+            _forward_match_for_spo(self.db, existing.spo_number, existing.company_id)
         return ("updated", existing)
 
     def update_allocation(self, allocation_id: str, allocation_data: SPOAllocationUpdate):
@@ -1481,11 +1766,19 @@ class SPOAllocationService:
         return {"message": f"Deleted {deleted} SPO allocation(s)", "deleted_count": deleted}
 
     def compute_received_for_allocation(self, allocation_id: str) -> int:
-        """Computed on read: sum quantity_expected from picking lines where spo_allocation_id = allocation_id
-        and the picking line's header (GRN) is approved. Not stored in DB."""
+        """Computed on read: sum the DRAWN quantity from picking lines where
+        spo_allocation_id = allocation_id and the picking line's header (GRN) is
+        approved. Not stored in DB.
+
+        The drawn quantity is ``quantity_picked`` - see the convention note in
+        ``app.services.grn_spo_matching``. It has to be the same column
+        ``build_allocation_pool`` measures, or the capacity a line consumes and the
+        receipt it reports disagree: summing ``quantity_expected`` charged a split
+        line's whole document quantity to its FIRST allocation and nothing to the
+        rest, which reported a partial receipt as fully received."""
         from sqlalchemy import func
         total = (
-            self.db.query(func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            self.db.query(func.coalesce(func.sum(PickingLine.quantity_picked), 0))
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
             .filter(
                 PickingLine.spo_allocation_id == allocation_id,
@@ -1497,12 +1790,14 @@ class SPOAllocationService:
         return int(total)
 
     def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
-        """Bulk: for each allocation id, return computed quantity_received (sum quantity_expected from approved GRN lines)."""
+        """Bulk: for each allocation id, return computed quantity_received (the sum
+        of the drawn quantity over approved GRN lines - the same column
+        ``compute_received_for_allocation`` sums)."""
         if not allocation_ids:
             return {}
         from sqlalchemy import func
         rows = (
-            self.db.query(PickingLine.spo_allocation_id, func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            self.db.query(PickingLine.spo_allocation_id, func.coalesce(func.sum(PickingLine.quantity_picked), 0))
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
             .filter(
                 PickingLine.spo_allocation_id.in_(allocation_ids),
@@ -1794,6 +2089,9 @@ class PickingHeaderService:
             q_str = f"%{query.strip()}%"
             q = q.filter(or_(
                 SPOAllocation.spo_number.ilike(q_str),
+                # The stated SPO too, or the lines this feature exists for - the
+                # ones with no allocation to search by - are unfindable by number.
+                PickingLine.spo_number_raw.ilike(q_str),
                 Product.product_code.ilike(q_str),
                 Product.product_name.ilike(q_str),
             ))
@@ -1913,6 +2211,14 @@ class PickingHeaderService:
             for line_data in grn_data.picking_lines:
                 line_dict = line_data.model_dump(exclude={"quantity_discrepancy"}, exclude_none=False)
                 line_dict.pop("spo_allocation_id", None)  # Never link on create
+                # Not linked is not the same as not stated (AC-FM-9c). A GRN that
+                # arrives through the UI or the external API BEFORE its SPO is the
+                # case this feature exists for, and a draft line that states
+                # nothing is invisible to forward matching until somebody approves
+                # it - which is the wrong way round. Same rule as `update_grn`.
+                line_dict["spo_number_raw"] = _stated_spo_for_line(
+                    line_dict.get("spo_number_raw"), grn_dict.get("spo_number")
+                )
                 line = PickingLine(**line_dict, picking_header_id=grn.id)
                 self.db.add(line)
         
@@ -1939,6 +2245,20 @@ class PickingHeaderService:
             self.db.flush()
 
         if picking_lines_payload is not None:
+            if prev_status == "approved" and grn.picking_status == "approved":
+                # Release BEFORE the delete, for the same reason the approved ->
+                # draft transition above does. ``build_allocation_pool`` protects a
+                # re-write by subtracting the caller's own linked rows from the
+                # stored ``quantity_received`` before treating the excess as an
+                # integration's receipt - and that subtraction needs those rows to
+                # still exist. Delete them first and this GRN's own approval-written
+                # receipt reads as somebody else's, swallowing the allocation it
+                # came from: the line is rewritten UNLINKED, and
+                # ``sync_grn_received_to_spo`` walks only linked lines, so the
+                # allocation is left reporting a receipt no picking line explains
+                # and is un-drawable by every later pool build. Nothing self-heals.
+                self._unlink_grn_from_spo(grn_id)
+                self.db.flush()
             self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
             # Only link to SPO when status is approved; otherwise create lines without spo_allocation_id
             if grn.picking_status == "approved" and grn.spo_number and str(grn.spo_number).strip():
@@ -1947,6 +2267,12 @@ class PickingHeaderService:
                 for line_data in picking_lines_payload:
                     line_dict = {k: v for k, v in line_data.items() if k != "quantity_discrepancy"}
                     line_dict.pop("spo_allocation_id", None)  # Do not link when not approved
+                    # Not linked is not the same as not stated: an unapproved GRN is
+                    # the normal state of an imported one, and it has to stay
+                    # forward-matchable through an edit.
+                    line_dict["spo_number_raw"] = _stated_spo_for_line(
+                        line_data.get("spo_number_raw"), grn.spo_number
+                    )
                     line = PickingLine(**line_dict, picking_header_id=grn_id)
                     self.db.add(line)
         elif grn.picking_status == "approved" and grn.spo_number and str(grn.spo_number).strip():
@@ -1969,6 +2295,9 @@ class PickingHeaderService:
                             "source_warehouse_id": str(line.source_warehouse_id) if line.source_warehouse_id else None,
                             "quantity_expected": line.quantity_expected or 0,
                             "quantity_picked": line.quantity_picked or 0,
+                            # Carried through the delete-and-recreate, or approving an
+                            # imported GRN would erase what its sheet said.
+                            "spo_number_raw": line.spo_number_raw,
                         }
                         for line in existing_lines
                     ]
@@ -2112,10 +2441,30 @@ class PickingHeaderService:
         source_warehouse_id: str,
         quantity: int,
         spo_allocation_id: Optional[str] = None,
+        spo_number_raw: Optional[str] = None,
+        company_id: Optional[str] = None,
     ):
         """Create or update one picking line by (header, product, source_warehouse, spo_allocation_id).
         Allows multiple lines with same (header, product, warehouse) when spo_allocation_id differs (for splitting).
-        Idempotent."""
+        Idempotent.
+
+        ``spo_number_raw`` is what the SHEET said this line was received against.
+        It is written on BOTH branches, so a corrected export refreshes it in place
+        rather than leaving the old claim behind; it is deliberately NOT part of the
+        match filter, because the row identity is still
+        (header, product, source_warehouse, spo_allocation_id).
+
+        ``company_id`` is the GRN header's own company, stated rather than left to
+        the insert hook - the same rule ``_add_picking_line`` follows. An import job
+        with no company snapshot runs system-scoped ("all companies"), where the
+        hook stamps the INCUMBENT company: the import already confines its POOL to
+        the header's company, so without this the row draws company B's capacity
+        and lands in Sorento, invisible on its own GRN. Worse, the consumption query
+        filters on ``company_id`` too, so the mis-stamped row never counts as
+        consumption and a re-import over-draws (AC-FM-27, both halves or neither).
+        It is written on BOTH branches, so a row a previous run mis-stamped is
+        corrected rather than left behind.
+        """
         # Match by (header, product, warehouse, spo_allocation_id) to allow splitting across multiple SPOs
         filters = [
             PickingLine.picking_header_id == picking_header_id,
@@ -2131,6 +2480,9 @@ class PickingHeaderService:
         if line:
             line.quantity_expected = quantity
             line.quantity_picked = quantity
+            line.spo_number_raw = spo_number_raw
+            if company_id:
+                line.company_id = str(company_id)
             self.db.flush()
             return line
         line = PickingLine(
@@ -2140,6 +2492,8 @@ class PickingHeaderService:
             quantity_expected=quantity,
             quantity_picked=quantity,
             spo_allocation_id=spo_allocation_id,
+            spo_number_raw=spo_number_raw,
+            company_id=str(company_id) if company_id else None,
         )
         self.db.add(line)
         self.db.flush()
@@ -2153,8 +2507,18 @@ class PickingHeaderService:
         quantity_expected: int,
         quantity_picked: int,
         spo_allocation_id: Optional[str] = None,
+        spo_number_raw: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> PickingLine:
-        """Create one picking line (used by FIFO when splitting)."""
+        """Create one picking line (used by FIFO when splitting).
+
+        ``company_id`` is the GRN header's own company, stated rather than left to
+        the insert hook: under the ``X-API-Key`` NULL ("all companies") scope the
+        hook stamps the INCUMBENT company, so a row written for a company-B GRN
+        would land in Sorento - invisible on the GRN it belongs to while still
+        consuming that GRN's allocation (AC-FM-27). The same reason forward
+        matching states it on the rows a split creates.
+        """
         line = PickingLine(
             picking_header_id=picking_header_id,
             product_id=product_id,
@@ -2162,7 +2526,9 @@ class PickingHeaderService:
             quantity_expected=quantity_expected,
             quantity_picked=quantity_picked,
             spo_allocation_id=spo_allocation_id,
+            spo_number_raw=spo_number_raw,
             picked_condition="good",
+            company_id=company_id,
         )
         self.db.add(line)
         self.db.flush()
@@ -2174,17 +2540,62 @@ class PickingHeaderService:
         spo_number: str,
         lines_payload: List[Dict[str, Any]],
     ) -> None:
-        """Create picking lines for a GRN, assigning spo_allocation_id via FIFO by SPO number + product.
-        Matches import logic: same SPO number + product, consume from allocations (same warehouse first, then others)."""
+        """Create picking lines for a GRN, assigning spo_allocation_id by drawing on
+        the SPO's allocation pool.
+
+        The pool and the draw are ``app.services.grn_spo_matching``'s, not this
+        method's. This used to hold a THIRD copy of the two-pass
+        warehouse-then-age rule (the import and forward matching hold none now),
+        and it sized availability with ``compute_received_for_allocation``, which
+        counts APPROVED headers only. The shared pool counts every non-rejected
+        header, drafts included - which is what makes forward matching safe, and is
+        what put the two furthest apart. The consequence, in the office rather than
+        in the code: a draft GRN already linked for 60 against a 100-unit
+        allocation was invisible here, so approving a second GRN for 100 through
+        the screen drew the full 100 and left 160 units drawing on that allocation.
+
+        Imported inside the method: ``grn_spo_matching`` imports this module at load
+        time, so a module-level import here would be a cycle.
+
+        Every line it writes also STATES its SPO (``spo_number_raw``), so a GRN that
+        arrives through the UI or the external API before its allocation is
+        forward-matchable, and so this delete-and-recreate does not erase what an
+        imported line already said.
+        """
+        import app.services.grn_spo_matching as matching
+
         spo_key = _spo_match_key(spo_number)
         if not spo_key:
             for line_data in lines_payload:
                 line_dict = {k: v for k, v in line_data.items() if k != "quantity_discrepancy"}
+                line_dict["spo_number_raw"] = _stated_spo_for_line(
+                    line_data.get("spo_number_raw"), spo_number
+                )
                 line = PickingLine(**line_dict, picking_header_id=grn_id)
                 self.db.add(line)
             return
 
+        # The GRN's own company, stated rather than assumed, on BOTH halves: the
+        # ``X-API-Key`` principal resolves to a NULL scope ("all companies"), where
+        # the scope layer adds no predicate at all. Reading, that offers one
+        # company's allocation to another company's GRN line; writing, the insert
+        # hook stamps the INCUMBENT company instead. Fixing only the read half is
+        # worse than leaving both wrong, because a company-B GRN would then draw
+        # correctly and still show none of the rows it drew (AC-FM-27).
+        company_id = (
+            self.db.query(PickingHeader.company_id)
+            .filter(PickingHeader.id == grn_id)
+            .scalar()
+        )
+
+        # One pool per product, shared by every payload line for that product.
+        # Rebuilding it per line would hand the same capacity out twice, because
+        # this GRN is excluded from its own consumption (below) and so the rows
+        # already written for the previous line would not count.
+        pools: Dict[str, List[Any]] = {}
+
         for line_data in lines_payload:
+            stated_spo = _stated_spo_for_line(line_data.get("spo_number_raw"), spo_number)
             product_id = line_data.get("product_id")
             if not product_id:
                 continue
@@ -2194,81 +2605,75 @@ class PickingHeaderService:
             if quantity_expected <= 0 and quantity_picked <= 0:
                 continue
 
-            # SPO allocations for this product, same SPO match key, FIFO by created_at
-            allocations = (
-                self.db.query(SPOAllocation)
-                .filter(
-                    SPOAllocation.product_id == product_id,
-                    SPOAllocation.spo_number.isnot(None),
+            if str(product_id) not in pools:
+                pools[str(product_id)] = matching.build_allocation_pool(
+                    self.db,
+                    product_id=str(product_id),
+                    spo_number=spo_number,
+                    # This path DELETES and recreates this GRN's lines, so it must
+                    # not see the rows it is about to replace as capacity somebody
+                    # else took - the same reason the import excludes itself.
+                    exclude_header_ids={str(grn_id)},
+                    company_id=str(company_id) if company_id else None,
                 )
-                .order_by(SPOAllocation.created_at.asc())
-                .all()
-            )
-            spo_allocations = [
-                a for a in allocations
-                if _spo_match_key(a.spo_number) == spo_key
-            ]
-            # Pool: [alloc_id, alloc_warehouse_id, available]
-            spo_pool: List[List[Any]] = []
-            for alloc in spo_allocations:
-                received = self.compute_received_for_allocation(str(alloc.id))
-                available = alloc.allocated_quantity - received
-                if available > 0:
-                    spo_pool.append([str(alloc.id), alloc.warehouse_id, available])
+            pool = pools[str(product_id)]
 
             # Consume from SPO pool by received qty when present; otherwise expected (draft line with only expected filled).
             remaining = quantity_picked if quantity_picked > 0 else quantity_expected
-            first_chunk = True
 
-            # First pass: same warehouse
-            for entry in spo_pool:
-                alloc_id, alloc_wh, avail = entry
-                if alloc_wh != source_warehouse_id or avail <= 0 or remaining <= 0:
-                    continue
-                take = min(remaining, avail)
-                qty_exp = quantity_expected if first_chunk else 0
+            # Every chunk of a SPLIT carries the quantity IT drew, in BOTH columns.
+            # This used to put the whole `quantity_expected` on the first chunk and
+            # 0 on the rest, which made the GRN-line writers disagree: the import
+            # writes the per-chunk draw, so the same receipt came out as different
+            # rows depending on which writer produced it (AC-FM-19 compares
+            # `quantity_expected`), and every reader that sums that column charged
+            # one line's whole draw to its first allocation. See the convention note
+            # in `app.services.grn_spo_matching`. The cost, stated plainly: a
+            # receipt SPLIT across allocations can no longer carry an
+            # expected-vs-picked discrepancy, because the split is a fact about
+            # what arrived. An unsplit line still can - a single fully-covering
+            # draw keeps the caller's `quantity_expected`, so a short receipt's
+            # shortfall stays visible (AC-FM-30), the same guard forward matching
+            # applies.
+            draws = matching.draw_fifo(
+                pool,
+                warehouse_id=str(source_warehouse_id) if source_warehouse_id else None,
+                quantity=remaining,
+            )
+            if not any(draw.allocation_id for draw in draws):
+                # No allocation covered any of it, so this is not a split at all:
+                # the line is written exactly as the caller stated it, keeping any
+                # expected-vs-picked discrepancy.
                 self._add_picking_line(
                     grn_id, product_id, source_warehouse_id,
-                    qty_exp, take, alloc_id,
+                    quantity_expected, quantity_picked, None, stated_spo,
+                    company_id=str(company_id) if company_id else None,
                 )
-                remaining -= take
-                entry[2] = avail - take
-                first_chunk = False
+                continue
 
-            # Second pass: other warehouses
-            for entry in spo_pool:
-                alloc_id, alloc_wh, avail = entry
-                if alloc_wh == source_warehouse_id or avail <= 0 or remaining <= 0:
-                    continue
-                take = min(remaining, avail)
-                qty_exp = quantity_expected if first_chunk else 0
+            split = len(draws) > 1
+            for draw in draws:
                 self._add_picking_line(
                     grn_id, product_id, source_warehouse_id,
-                    qty_exp, take, alloc_id,
-                )
-                remaining -= take
-                entry[2] = avail - take
-                first_chunk = False
-
-            if remaining > 0:
-                qty_exp = quantity_expected if first_chunk else 0
-                self._add_picking_line(
-                    grn_id, product_id, source_warehouse_id,
-                    qty_exp, remaining, None,
-                )
-            elif first_chunk and (quantity_expected > 0 or quantity_picked > 0):
-                # No SPO consumption (e.g. quantity_picked is 0) but we still need one line
-                self._add_picking_line(
-                    grn_id, product_id, source_warehouse_id,
-                    quantity_expected, quantity_picked, None,
+                    draw.quantity if split else quantity_expected,
+                    draw.quantity, draw.allocation_id, stated_spo,
+                    company_id=str(company_id) if company_id else None,
                 )
 
     def compute_received_for_allocation(self, allocation_id: str) -> int:
-        """Computed on read: sum quantity_expected from picking lines where spo_allocation_id = allocation_id
-        and the picking line's header (GRN) is approved. Not stored in DB."""
+        """Computed on read: sum the DRAWN quantity from picking lines where
+        spo_allocation_id = allocation_id and the picking line's header (GRN) is
+        approved. Not stored in DB.
+
+        The drawn quantity is ``quantity_picked`` - see the convention note in
+        ``app.services.grn_spo_matching``. It has to be the same column
+        ``build_allocation_pool`` measures, or the capacity a line consumes and the
+        receipt it reports disagree: summing ``quantity_expected`` charged a split
+        line's whole document quantity to its FIRST allocation and nothing to the
+        rest, which reported a partial receipt as fully received."""
         from sqlalchemy import func
         total = (
-            self.db.query(func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            self.db.query(func.coalesce(func.sum(PickingLine.quantity_picked), 0))
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
             .filter(
                 PickingLine.spo_allocation_id == allocation_id,
@@ -2280,12 +2685,14 @@ class PickingHeaderService:
         return int(total)
 
     def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
-        """Bulk: for each allocation id, return computed quantity_received (sum quantity_expected from approved GRN lines)."""
+        """Bulk: for each allocation id, return computed quantity_received (the sum
+        of the drawn quantity over approved GRN lines - the same column
+        ``compute_received_for_allocation`` sums)."""
         if not allocation_ids:
             return {}
         from sqlalchemy import func
         rows = (
-            self.db.query(PickingLine.spo_allocation_id, func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            self.db.query(PickingLine.spo_allocation_id, func.coalesce(func.sum(PickingLine.quantity_picked), 0))
             .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
             .filter(
                 PickingLine.spo_allocation_id.in_(allocation_ids),
@@ -2878,13 +3285,14 @@ class StockInquiryService:
             return
         from app.models.sla import ConversationSLATracking
         from app.models.user import User
+        from app.services.sla_scope import open_tracker_scope
 
         rows = (
             self.db.query(ConversationSLATracking)
             .filter(
                 ConversationSLATracking.source_entity_type == "stock_inquiry",
                 ConversationSLATracking.source_entity_id.in_(ids),
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
             )
             .order_by(
                 ConversationSLATracking.source_entity_id,
@@ -2983,6 +3391,10 @@ class StockInquiryService:
         # `column_attrs` skips python properties, so the derived requestor name
         # has to be copied in explicitly or the response returns null.
         data["salesperson_contact_name"] = inquiry.salesperson_contact_name
+        # Same reason - a python property, skipped by column_attrs. The detail page
+        # gates its response affordances on this rather than mirroring the status
+        # list (UAC O1).
+        data["response_write_allowed"] = inquiry.response_write_allowed
         data["last_responded_by_name"] = (
             self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
         )
@@ -3086,14 +3498,14 @@ class StockInquiryService:
                 self.db,
                 source_entity_type="stock_inquiry",
                 source_entity_id=str(inquiry.id),
-                entity_number=getattr(inquiry, "inquiry_number", None),
+                entity_number=display_document_number(inquiry) or None,
                 actor_user_id=actor_user_id,
             )
         except Exception:
             logger.warning("Void in-app notify failed for inquiry %s", inquiry.id, exc_info=True)
 
         try:
-            number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+            number = (display_document_number(inquiry) or str(inquiry.id)).strip()
             reason = (getattr(inquiry, "void_reason", None) or "").strip()
             message_text = (
                 f"Your stock inquiry {number} has been voided. Reason: {reason}"
@@ -3434,7 +3846,13 @@ class StockInquiryService:
 
         full = inquiry_data.model_dump()
         lookup_raw = full.get("inquiry_number")
-        lookup = lookup_raw.strip() if isinstance(lookup_raw, str) else None
+        # Tolerate a revision suffix (UAC N6). The stored number stays bare, but an
+        # external caller echoing back a number it read from one of our payloads
+        # sends "SI-26-0184-R2". Matching that literally finds nothing and this
+        # method then INSERTS a duplicate instead of resubmitting the rejected row -
+        # silent duplication on a live integration path, not a visible 404.
+        lookup = strip_revision_suffix(lookup_raw) if isinstance(lookup_raw, str) else None
+        lookup = lookup.strip() if lookup else None
         if lookup:
             existing = (
                 self.db.query(StockInquiry)
@@ -3719,7 +4137,7 @@ class StockInquiryService:
                 first_name = parts[0] if parts else None
                 last_name = parts[1] if len(parts) > 1 else None
 
-        inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+        inquiry_number = (display_document_number(inquiry) or str(inquiry.id)).strip()
         now_ms = int(time.time() * 1000)
         now_s = int(time.time())
         payload = [
@@ -3809,8 +4227,26 @@ class StockInquiryService:
         inquiry = self.get_inquiry(inquiry_id)
 
         update_data = inquiry_data.model_dump(exclude_unset=True)
-        update_data.pop("status", None)  # Status only via workflow endpoints
+        # Status only via the workflow endpoints; a payload that would MOVE it is
+        # refused rather than silently dropped.
+        _pop_status_or_refuse_move(
+            update_data,
+            current=inquiry.status,
+            label="stock inquiry",
+            actions="submit, approve, reject or reopen",
+        )
         update_data.pop("inquiry_number", None)  # System-assigned; not editable via update API
+
+        # Response gate (UAC O1): the purchasing response is stage output, so it
+        # may only be REWRITTEN while the inquiry is still with purchasing. Every
+        # other field stays editable at any status, and a save that posts the
+        # response back unchanged (the edit form posts the whole entity) is not a
+        # response write.
+        if "purchasing_response" in update_data and response_text_changed(
+            getattr(inquiry, "purchasing_response", None),
+            update_data.get("purchasing_response"),
+        ):
+            assert_response_write_allowed("stock_inquiry", inquiry.status)
 
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -3900,8 +4336,13 @@ class StockInquiryService:
         crm_sender_user_id: Optional[str] = None,
     ):
         """
-        Update inquiry, mark SLA as responded (when applicable), set status=responded,
-        and queue the Respond.io message via RQ.
+        Deliver the purchasing response: mark SLA as responded, set status=responded,
+        record ``last_responded_*`` and queue the Respond.io message via RQ.
+
+        This is the RESPONSE path, not the chat path, so it is gated on status
+        (UAC O1): outside the response stage it raises 422. Plain messaging is a
+        different endpoint (``/conversation/send-message``) and stays open at any
+        status, including closed, rejected and voided inquiries (UAC O2).
 
         DB writes commit synchronously; the external Respond.io call is decoupled
         through the ``respond_io`` queue so a downstream 4xx/5xx no longer rolls
@@ -3918,10 +4359,34 @@ class StockInquiryService:
         log_service = IntegrationLogService(self.db)
 
         inquiry = self.get_inquiry(inquiry_id)
-        # Chat can be sent from any status; workflow transition to "responded" only for purchasing/responded stages.
-        transition_to_responded_workflow = inquiry.status in {"pending_purchasing", "responded"}
+        # The whole call is a response write (it stamps last_responded_* and fires
+        # the purchasing_respond SLA event), so refuse it outside the response
+        # stage rather than gating a single field.
+        assert_response_write_allowed("stock_inquiry", inquiry.status)
+        # Now guaranteed true by the gate above; kept as the one name the workflow
+        # steps below read, and sourced from the same tuple as the gate - through
+        # the same normalizer, or the two could disagree. They used to: the gate
+        # matches on a stripped, lower-cased status while this read the raw column,
+        # so a row holding "Responded" passed the gate and then skipped the flip,
+        # which is the one path on which a payload ``status`` reached the entity.
+        transition_to_responded_workflow = is_response_status_allowed(
+            "stock_inquiry", inquiry.status
+        )
 
         update_data = inquiry_data.model_dump(exclude_unset=True)
+        # Belt and braces on top of that. The flip below overwrites whatever a
+        # payload asked for, so a supplied status was inert - but "inert because a
+        # later line happens to overwrite it" is not a guard, and this endpoint
+        # accepts an API key (n8n). Refused the same way as on the plain update
+        # path, with ``responded`` accepted as the echo of where this call lands,
+        # so a caller asking for exactly what the reply does is not turned away.
+        _pop_status_or_refuse_move(
+            update_data,
+            current=inquiry.status,
+            label="stock inquiry",
+            actions="submit, approve, reject or reopen",
+            also_allowed=("responded",) if transition_to_responded_workflow else (),
+        )
         update_data.pop("inquiry_number", None)
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -4110,7 +4575,7 @@ class StockInquiryService:
         # (template when the 24h window is closed). Best-effort post-commit - a
         # send hiccup must not roll back the approved transition.
         try:
-            inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+            inquiry_number = (display_document_number(inquiry) or str(inquiry.id)).strip()
             portal_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
             approve_extra_vars = {
                 "update": "Approved by project sales manager",
@@ -4173,7 +4638,7 @@ class StockInquiryService:
         if inquiry.status != "pending_project_sales":
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_project_sales.")
-        inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+        inquiry_number = (display_document_number(inquiry) or str(inquiry.id)).strip()
         reason_text = (reason or "").strip()
         if not reason_text:
             from app.services.error_handler import handle_validation_error
@@ -4252,7 +4717,7 @@ class StockInquiryService:
         if inquiry.status not in ("pending_purchasing", "responded"):
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_purchasing or responded.")
-        inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+        inquiry_number = (display_document_number(inquiry) or str(inquiry.id)).strip()
         reason_text = (reason or "").strip()
         if not reason_text:
             from app.services.error_handler import handle_validation_error
@@ -4397,6 +4862,25 @@ class ProductSupplierService:
             raise handle_not_found("Product Supplier", product_supplier_id)
         return product_supplier
     
+    @staticmethod
+    def _assert_priced_in_a_currency(unit_cost, currency) -> None:
+        """A price with no currency is read as ringgit everywhere downstream.
+
+        `scm.money.normalize_currency` treats a blank code as the base currency, which is
+        right for rows that predate the book having more than one currency. It is wrong
+        for a price somebody types today: a yuan figure saved with no code is silently
+        ranked, summed and budgeted as if it were ringgit, understating the buy. Nothing
+        later can detect that, because the number looks perfectly valid. So the pairing is
+        required at the point of entry, where the person still knows what they meant.
+        """
+        if unit_cost is None:
+            return
+        if not (currency or "").strip():
+            raise handle_validation_error(
+                "Enter the currency this price is in. A price with no currency is read as "
+                f"{MONEY_BASE_CURRENCY}, which would understate the cost if it is not."
+            )
+
     def create_product_supplier(self, product_supplier_data: ProductSupplierCreate):
         """Create a new product supplier relationship."""
         # Check if relationship already exists
@@ -4406,8 +4890,16 @@ class ProductSupplierService:
         ).first()
         if existing:
             raise handle_conflict("Product supplier relationship already exists.")
-        
-        product_supplier = ProductSupplier(**product_supplier_data.model_dump())
+
+        self._assert_priced_in_a_currency(
+            product_supplier_data.unit_cost, product_supplier_data.currency
+        )
+        # exclude_none, not a plain dump: `is_primary_supplier` is NOT NULL with a column
+        # default, so passing the unset field through as an explicit None would insert NULL
+        # and fail. Every other field is nullable, where omitted and null mean the same.
+        product_supplier = ProductSupplier(
+            **product_supplier_data.model_dump(exclude_none=True)
+        )
         self.db.add(product_supplier)
         self.db.commit()
         self.db.refresh(product_supplier)
@@ -4422,11 +4914,21 @@ class ProductSupplierService:
     def update_product_supplier(self, product_supplier_id: str, product_supplier_data: ProductSupplierUpdate):
         """Update a product supplier relationship."""
         product_supplier = self.get_product_supplier(product_supplier_id)
-        
+
         update_data = product_supplier_data.model_dump(exclude_unset=True)
+        # Check the MERGED row, not the patch: setting only a price on a row whose currency
+        # is blank is exactly the case the rule exists for, and the patch alone cannot see it.
+        self._assert_priced_in_a_currency(
+            update_data.get("unit_cost", product_supplier.unit_cost),
+            update_data.get("currency", product_supplier.currency),
+        )
         for key, value in update_data.items():
+            # Same NOT NULL column as on create: an explicit null for the primary flag is
+            # not a value, so leave the row's own.
+            if key == "is_primary_supplier" and value is None:
+                continue
             setattr(product_supplier, key, value)
-        
+
         self.db.commit()
         self.db.refresh(product_supplier)
         
@@ -4735,7 +5237,7 @@ class PurchaseRequestService:
 
     def _notify_contact_on_approval_rejected(self, header: PurchaseRequestHeader) -> None:
         """Notify the linked Respond.io contact when a public approval flow rejects the request."""
-        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        request_number = (display_document_number(header) or str(header.id)).strip()
         reason = (getattr(header, "approval_comments", None) or "").strip() or "no reason provided"
         approver = self._resolve_approver_display_name(header)
         view_url = self._build_request_view_url(str(header.id))
@@ -4772,7 +5274,7 @@ class PurchaseRequestService:
 
     def _notify_contact_on_approval_approved(self, header: PurchaseRequestHeader) -> None:
         """Notify the linked Respond.io contact when a public approval flow approves the request."""
-        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        request_number = (display_document_number(header) or str(header.id)).strip()
         approver = self._resolve_approver_display_name(header)
         note = (getattr(header, "approval_comments", None) or "").strip()
         note_part = f" Note: {note}." if note else ""
@@ -4883,7 +5385,7 @@ class PurchaseRequestService:
                 f"(current status: {current_status or 'unknown'})."
             )
 
-        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        request_number = (display_document_number(header) or str(header.id)).strip()
         rt = getattr(header, "request_type", None) or "purchase_request"
         type_word = "sponsorship form" if rt == "sponsorship_form" else "purchase request"
         status_label = self._CS_FINALIZE_STATUS_LABELS.get(new_status, new_status)
@@ -5040,7 +5542,7 @@ class PurchaseRequestService:
                 self.db,
                 source_entity_type=rt,
                 source_entity_id=str(header.id),
-                entity_number=getattr(header, "request_number", None),
+                entity_number=display_document_number(header) or None,
                 actor_user_id=actor_user_id,
             )
         except Exception:
@@ -5050,7 +5552,7 @@ class PurchaseRequestService:
         # (send_text_or_template + integration_log on success AND failure).
         try:
             type_word = "sponsorship form" if rt == "sponsorship_form" else "purchase request"
-            number = (getattr(header, "request_number", None) or str(header.id)).strip()
+            number = (display_document_number(header) or str(header.id)).strip()
             reason = (getattr(header, "void_reason", None) or "").strip()
             message_text = (
                 f"Your {type_word} {number} has been voided. "
@@ -5149,7 +5651,7 @@ class PurchaseRequestService:
                 first_name = parts[0] if parts else None
                 last_name = parts[1] if len(parts) > 1 else None
 
-        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        request_number = (display_document_number(header) or str(header.id)).strip()
         rt = getattr(header, "request_type", None) or ""
         if rt == "sponsorship_form":
             revise_text = f"I want to edit sponsorship form for {request_number}"
@@ -5402,7 +5904,9 @@ class PurchaseRequestService:
         if rn_raw is None:
             lookup = ""
         else:
-            lookup = str(rn_raw).strip()
+            # Tolerate a revision suffix (UAC N6) - see create_inquiry for why a
+            # miss here duplicates the record instead of failing loudly.
+            lookup = (strip_revision_suffix(str(rn_raw)) or "").strip()
         if lookup:
             existing = (
                 self.db.query(PurchaseRequestHeader)
@@ -5515,10 +6019,13 @@ class PurchaseRequestService:
         space_id = getattr(payload, "space_id", None) or None
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
 
-        # Generate request_number if not provided (strip to match upsert lookup)
+        # Generate request_number if not provided (strip to match upsert lookup).
+        # A revision suffix comes off here too (UAC N2): the STORED number is always
+        # bare, so a caller that echoed back "PR-26-0012-R2" for a number we do not
+        # have does not mint a new row whose number carries a revision it never had.
         request_number = getattr(payload, "request_number", None) or None
         if isinstance(request_number, str):
-            request_number = request_number.strip() or None
+            request_number = (strip_revision_suffix(request_number) or "").strip() or None
         if not request_number:
             from app.services.numbering_service import NumberingService
             ref_date = self._parse_date(getattr(payload, "date", None)) or date.today()
@@ -5584,7 +6091,7 @@ class PurchaseRequestService:
         # Capture header fields before any further commits (session may expire objects)
         header_id = str(header.id)
         header_request_type = getattr(header, "request_type", None)
-        header_request_number = getattr(header, "request_number", None) or "N/A"
+        header_request_number = display_document_number(header) or "N/A"
         header_project_title = getattr(header, "project_title", None) or "N/A"
         try:
             self.get_or_create_view_token(header_id)
@@ -5723,7 +6230,7 @@ class PurchaseRequestService:
 
         header_id = str(row.id)
         header_request_type = getattr(row, "request_type", None)
-        header_request_number = getattr(row, "request_number", None) or "N/A"
+        header_request_number = display_document_number(row) or "N/A"
         header_project_title = getattr(row, "project_title", None) or "N/A"
         try:
             self.get_or_create_view_token(header_id)
@@ -6007,7 +6514,7 @@ class PurchaseRequestService:
         if not requested_by_uid:
             return
         type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
-        form_number = getattr(header, "request_number", None) or "N/A"
+        form_number = display_document_number(header) or "N/A"
         project = getattr(header, "project_title", None) or "N/A"
         title = f"{type_label} approved"
         body = f"{type_label} {form_number} (Project: {project}) has been approved."
@@ -6044,7 +6551,7 @@ class PurchaseRequestService:
         if not requested_by_uid:
             return
         type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
-        form_number = getattr(header, "request_number", None) or "N/A"
+        form_number = display_document_number(header) or "N/A"
         project = getattr(header, "project_title", None) or "N/A"
         title = f"{type_label} rejected"
         body = f"{type_label} {form_number} (Project: {project}) has been rejected."
@@ -6165,12 +6672,13 @@ class PurchaseRequestService:
             # Filter by the latest unresolved form-SLA assignee (project-sales
             # before approval, customer-service after) - mirrors complaint.
             from app.models.sla import ConversationSLATracking
+            from app.services.sla_scope import open_tracker_scope
 
             base = self.db.query(ConversationSLATracking.source_entity_id).filter(
                 ConversationSLATracking.source_entity_type.in_(
                     ("purchase_request", "sponsorship_form")
                 ),
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
             )
             val = str(assigned_to).strip()
             if val.lower() == "__unassigned__":
@@ -6334,6 +6842,7 @@ class PurchaseRequestService:
             return
         from app.models.sla import ConversationSLATracking
         from app.models.user import User
+        from app.services.sla_scope import open_tracker_scope
 
         rows = (
             self.db.query(ConversationSLATracking)
@@ -6342,7 +6851,7 @@ class PurchaseRequestService:
                     ("purchase_request", "sponsorship_form")
                 ),
                 ConversationSLATracking.source_entity_id.in_(ids),
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
             )
             .order_by(
                 ConversationSLATracking.source_entity_id,
@@ -6431,6 +6940,7 @@ class PurchaseRequestService:
         dump = data.model_dump(exclude={"products"})
         dump["status"] = "draft"
         dump["source"] = "manual"
+        _strip_number_suffix_in_place(dump, "request_number")
         norm_subject, norm_other = self._normalize_sponsor_subject(
             dump.get("request_type"), dump.get("sponsor_subject")
         )
@@ -6484,9 +6994,27 @@ class PurchaseRequestService:
         return header
 
     def update_request(self, request_id: str, data: PurchaseRequestHeaderUpdate):
-        """Update purchase request header and optionally replace lines."""
+        """Update purchase request header and optionally replace lines.
+
+        Status is NOT editable here - it moves only through the workflow actions
+        (set-pending-approval / approval-decision / reject-submitted / process /
+        close / void), exactly as ``StockInquiryService.update_inquiry`` has
+        always done. ``PurchaseRequestHeaderUpdate`` still exposes ``status``, so
+        without this guard a plain PUT could walk the lifecycle sideways - and a
+        contact revision, which sets the status back to the restart stage, could
+        be stomped straight back to `approved` by an office tab that was mid-edit.
+        A payload that would actually MOVE the status is refused (422), never
+        silently dropped: see ``_pop_status_or_refuse_move``.
+        """
         header = self.get_request(request_id)
         payload = data.model_dump(exclude_unset=True, exclude={"products"})
+        _pop_status_or_refuse_move(
+            payload,
+            current=header.status,
+            label=_request_label(header),
+            actions=_REQUEST_STATUS_ACTIONS,
+        )
+        _strip_number_suffix_in_place(payload, "request_number")
         contact_id = payload.get("contact_id") if "contact_id" in payload else header.contact_id
         space_id = payload.get("space_id") if "space_id" in payload else header.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -6535,6 +7063,18 @@ class PurchaseRequestService:
         """
         Update purchase request (e.g. request_number), then send a reply to the conversation via Respond.io.
         Message is reply_message if provided, otherwise built from request_number.
+
+        The status guard is the SAME one ``update_request`` applies, deliberately:
+        this endpoint is an office edit plus a chat send, and it moves the lifecycle
+        no more than a plain PUT does. ``PurchaseRequestUpdateAndReply`` inherits
+        ``status`` from the header update schema, so without the guard here the
+        hardening on the PUT path was a fence with a gate left open beside it.
+
+        It matters for revisions specifically: a revision sets the status back to
+        the restart stage, and a stale office tab (or an n8n write) that can set
+        ``status`` freely stomps it straight back to the value the revision
+        superseded - the exact defect the guard exists to prevent. A payload
+        echoing the current status still saves, so read-modify-write keeps working.
         """
         import logging
         from app.services.integration_service import IntegrationLogService
@@ -6546,6 +7086,13 @@ class PurchaseRequestService:
 
         header = self.get_request(request_id)
         payload = data.model_dump(exclude_unset=True, exclude={"products", "reply_message"})
+        _pop_status_or_refuse_move(
+            payload,
+            current=header.status,
+            label=_request_label(header),
+            actions=_REQUEST_STATUS_ACTIONS,
+        )
+        _strip_number_suffix_in_place(payload, "request_number")
         contact_id = payload.get("contact_id") if "contact_id" in payload else header.contact_id
         space_id = payload.get("space_id") if "space_id" in payload else header.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -6579,7 +7126,8 @@ class PurchaseRequestService:
         self.db.refresh(header)
 
         reply_message = (getattr(data, "reply_message", None) or "").strip()
-        request_number = getattr(header, "request_number", None) or payload.get("request_number")
+        # The number the CONTACT is told, so it carries the revision (UAC N1/N5).
+        request_number = display_document_number(header) or payload.get("request_number")
         if request_number is not None and isinstance(request_number, str):
             request_number = request_number.strip() or None
         if not reply_message and request_number:

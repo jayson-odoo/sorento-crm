@@ -23,7 +23,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-// DataGrid persists column prefs via this hook (fires network) — stub it.
+// DataGrid persists column prefs via this hook (fires network) - stub it.
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
@@ -198,7 +198,7 @@ describe('ReorderResultsGrid', () => {
     // primary word is readable; (ROP) is a small secondary
     expect(screen.getByText('Reorder point')).toBeInTheDocument();
     expect(screen.getByText('(ROP)')).toBeInTheDocument();
-    // header info tooltips are keyboard-accessible — the plain-language copy is the aria-label
+    // header info tooltips are keyboard-accessible - the plain-language copy is the aria-label
     expect(screen.getByLabelText(/The stock level that triggers a reorder/i)).toBeInTheDocument();
     expect(
       screen.getByLabelText(/Net position = on hand \+ on order − committed/i),

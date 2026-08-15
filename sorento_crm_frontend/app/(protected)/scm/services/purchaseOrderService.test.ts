@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — purchaseOrderService (list incl. drafts, bulk-confirm, create-GR).
+ * SCM M4 Slice B - purchaseOrderService (list incl. drafts, bulk-confirm, create-GR).
  * Pins the FE→BE contract documented at the top of `purchaseOrderService.ts`.
  *   AC-M4.6 (draft POs listed; confirm → active/on-order; create-GR from active)
  */
@@ -42,7 +42,7 @@ function lastInit(): RequestInit {
 
 beforeEach(() => apiFetch.mockReset());
 
-describe('purchaseOrderService — list (AC-M4.6)', () => {
+describe('purchaseOrderService - list (AC-M4.6)', () => {
   it('GETs /purchase-orders with buildDataGridParams page/limit/sort/dir + status filter', async () => {
     apiFetch.mockResolvedValue(ok({ data: [], pagination: { page: 1, total: 0 } }));
     await getPurchaseOrders({
@@ -80,7 +80,7 @@ describe('purchaseOrderService — list (AC-M4.6)', () => {
   });
 });
 
-describe('purchaseOrderService — bulk-confirm (AC-M4.6)', () => {
+describe('purchaseOrderService - bulk-confirm (AC-M4.6)', () => {
   it('POSTs the draft ids to /bulk-confirm and returns the confirmed count', async () => {
     apiFetch.mockResolvedValue(ok({ confirmed_count: 2 }));
     const res = await bulkConfirmPurchaseOrders(['po-1', 'po-2']);
@@ -96,7 +96,7 @@ describe('purchaseOrderService — bulk-confirm (AC-M4.6)', () => {
   });
 });
 
-describe('purchaseOrderService — create-GR (AC-M4.6)', () => {
+describe('purchaseOrderService - create-GR (AC-M4.6)', () => {
   it('POSTs to /purchase-orders/{id}/create-gr and returns the GR reference', async () => {
     apiFetch.mockResolvedValue(ok({ gr_reference: 'GR-2026/07-0003' }));
     const res = await createGrFromPurchaseOrder('po-5');

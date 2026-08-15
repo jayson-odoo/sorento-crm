@@ -49,7 +49,7 @@ export function WarehouseBreakdownTable({ row }: { row: NetPositionRow }) {
       </table>
       {row.imbalance ? (
         <div className="mt-2 text-2xs text-scm-stockout">
-          Imbalance: one warehouse is stocked out while another holds surplus — a network
+          Imbalance: one warehouse is stocked out while another holds surplus - a network
           transfer may clear the shortage without buying.
         </div>
       ) : null}

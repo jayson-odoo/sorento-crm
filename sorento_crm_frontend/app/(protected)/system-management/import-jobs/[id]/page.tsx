@@ -41,6 +41,12 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   attachment_bulk_import: 'Attachment Bulk Import',
   grn_listing_import: 'Upload GRN',
   grn_lines_import: 'Upload GRN Lines',
+  customer_import: 'Customer Import',
+  outstanding_so_import: 'Outstanding Sales Orders Import',
+  outstanding_po_import: 'Outstanding Purchase Orders Import',
+  po_history_import: 'Purchase History Import',
+  sales_history_import: 'Sales History Import',
+  order_inquiry_import: 'Order Inquiry Import',
 };
 
 function getJobTypeLabel(jobType: string): string {

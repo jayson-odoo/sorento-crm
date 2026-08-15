@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission
 from app.rule_engine.registry import get_facts
 from app.rule_engine.schemas import OPERATORS_BY_TYPE
 from app.schemas.rule_facts import RuleFactItem
@@ -25,7 +25,15 @@ async def list_rule_facts(
     sources: Optional[List[str]] = Query(
         None, description="Fact source names to include (repeat or csv), e.g. promotion."
     ),
-    current_user: dict = Depends(require_permission("automation.automations.view")),
+    # Read-only catalogue of whitelisted field names. Two unrelated consumers
+    # need it: the Automation builder and the Dealer Kit collection builder. A
+    # Designer authoring a product rule holds neither automation permission, so
+    # gating on automation alone left them with an empty field list.
+    current_user: dict = Depends(
+        require_any_permission(
+            ["automation.automations.view", "dealer_kit.page.edit"]
+        )
+    ),
     db: Session = Depends(get_db),
 ):
     """Facts for the requested sources — key, label, type, operators, options."""

@@ -76,7 +76,11 @@ class ProductSupplier(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False)
-    standard_lead_time_days = Column(Integer, nullable=True)
+    # NOT NULL in the database, with no default. The model said nullable and the API let
+    # the field be omitted, so creating a link without a lead time raised an IntegrityError
+    # and the caller got a 500 for what is really a missing required field. The column is
+    # the truth; the model is corrected to match it rather than the other way round.
+    standard_lead_time_days = Column(Integer, nullable=False)
     # SCM (M0): sourcing parameters used by the reorder engine.
     moq = Column(Integer, nullable=True)
     order_multiple = Column(Integer, nullable=True)
@@ -281,6 +285,14 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     cartons_count = Column(Integer, default=1, nullable=False)
     weight_per_carton = Column(Numeric(10, 2), nullable=True)
     unit_cost = Column(Numeric(12, 2), nullable=True)
+    # The unit `unit_cost` is stated in (AC-C3.2). Mirrors purchase_order_lines.currency
+    # as String(3) so the incoming and the ordered figure are comparable at all; a cost
+    # with no currency is a number with no meaning.
+    # NULLABLE, and never defaulted: where no currency is knowable (the packing list does
+    # not state one and the linked PO line has none either) it stays NULL. A house default
+    # here would silently assert that ordered and incoming are in the same unit, which is
+    # the whole content of the variance.
+    currency = Column(String(3), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
@@ -317,11 +329,29 @@ class SPOAllocation(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    # Which Supply PO line this allocation draws down. The chain is PO -> SPO -> GRN, and
+    # this table carried no PO reference at all; only picking_lines.po_line_id existed,
+    # which is one step too late (goods-received, after the allocation was decided).
+    # NULLABLE: 860 pre-existing rows have no PO, and stock can arrive against no PO.
+    # The constraint is named explicitly so a create_all schema and a migrated schema agree.
+    # Left implicit, Postgres names it `spo_allocations_po_line_id_fkey` under create_all
+    # while migration 311 creates `fk_spo_allocations_po_line_id`, and anything that drops
+    # the constraint by name then works on one path and fails on the other.
+    po_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "purchase_order_lines.id",
+            ondelete="SET NULL",
+            name="fk_spo_allocations_po_line_id",
+        ),
+        nullable=True,
+    )
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
+    po_line = relationship("PurchaseOrderLine", foreign_keys=[po_line_id])
     warehouse = relationship("Warehouse", back_populates="spo_allocations")
     storage_zone = relationship("StorageZone", back_populates="spo_allocations")
     product = relationship("Product", back_populates="spo_allocations")
@@ -401,6 +431,18 @@ class PickingLine(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     picking_header_id = Column(UUID(as_uuid=False), ForeignKey("picking_headers.id", ondelete="CASCADE"), nullable=False)
     spo_allocation_id = Column(UUID(as_uuid=False), ForeignKey("spo_allocations.id", ondelete="SET NULL"), nullable=True)
+    # What the SHEET said this line was received against - the line's own "Our PO
+    # No." when populated, else the GRN header's single-SPO fallback. Stored
+    # whether or not it matched an allocation, so a line the matcher could not
+    # place still reads as stated instead of as a dash, and so the forward matcher
+    # can revisit it the day its allocation arrives.
+    #
+    # Faithful to the sheet: no case folding, no separator rewriting. The
+    # tolerating is `_spo_match_key`'s job at match time; this column is evidence,
+    # and evidence is not normalised. NULL for a multi-SPO cell (it names no single
+    # allocation, so a stored value would display a claim the scalar matcher can
+    # never honour). Same width as `picking_headers.spo_number`.
+    spo_number_raw = Column(String(255), nullable=True)
     # SCM (M0): soft link to the originating PO line when this pick is a goods-received
     # against a purchase order (drives supplier lead-time / quality snapshots).
     po_line_id = Column(UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"), nullable=True)
@@ -436,6 +478,19 @@ class PickingLine(Base, CompanyScopedMixin):
         Index("ix_picking_lines_product_id", "product_id"),
         Index("ix_picking_lines_spo_allocation_id", "spo_allocation_id"),
         Index("ix_picking_lines_po_line_id", "po_line_id"),
+        # The forward-matching query, exactly: "unlinked lines whose stated SPO
+        # reduces to this match key". Partial, because a linked line is never a
+        # candidate. `upper` and `regexp_replace` are both IMMUTABLE, so the
+        # expression is indexable. It MUST strip the same set as
+        # `procurement_service._spo_match_key` (`[^A-Za-z0-9]`, then uppercase) or
+        # SQL would offer a candidate the Python comparison then rejects - the same
+        # twin obligation the container-number normalizers carry. Migration
+        # 324_grn_line_spo_number_raw emits the identical statement.
+        Index(
+            "ix_picking_lines_spo_number_raw_key",
+            func.upper(func.regexp_replace(spo_number_raw, "[^A-Za-z0-9]", "", "g")),
+            postgresql_where=spo_allocation_id.is_(None),
+        ),
     )
 
 
@@ -561,8 +616,27 @@ class StockInquiry(Base):
     void_reason = Column(Text, nullable=True)
     voided_by = Column(Text, nullable=True)  # users.id of the actor who voided
     voided_at = Column(DateTime(timezone=False), nullable=True)
+    # Portal submission revisions (PLAN-portal-submission-revisions), denormalized so the
+    # list badge and the revision fence cost no per-row query. Contact-initiated
+    # revisions only - the full lineage (including resubmissions) lives in
+    # portal_form_revisions. The reason is read from the latest revision row, never
+    # copied here, so there is nothing to drift.
+    revision_no = Column(Integer, nullable=False, server_default="0", default=0)
+    last_revised_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=True)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=True)
+
+    @property
+    def response_write_allowed(self) -> bool:
+        """Whether ``purchasing_response`` may be written at this status (UAC O1).
+
+        Read straight off ``response_gate`` - the same module the write path raises
+        from - so the flag the UI gates on and the rule the server enforces cannot
+        disagree. Derived live; never a column, nothing to backfill.
+        """
+        from app.services.response_gate import STOCK_INQUIRY, is_response_status_allowed
+
+        return is_response_status_allowed(STOCK_INQUIRY, self.status)
 
     __table_args__ = (
         Index("ix_stock_inquiries_product_code", "product_code"),
@@ -641,6 +715,11 @@ class PurchaseRequestHeader(Base):
     void_reason = Column(Text, nullable=True)
     voided_by = Column(String(100), nullable=True)  # users.id of the actor who voided
     voided_at = Column(DateTime(timezone=False), nullable=True)
+    # Portal submission revisions, denormalized (see StockInquiry.revision_no). One pair
+    # of columns serves BOTH request types - purchase_request and sponsorship_form share
+    # this table.
+    revision_no = Column(Integer, nullable=False, server_default="0", default=0)
+    last_revised_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

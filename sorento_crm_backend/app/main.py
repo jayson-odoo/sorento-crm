@@ -105,7 +105,36 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=content,
+        headers=_cors_headers_for(request),
     )
+
+
+def _cors_headers_for(request: Request) -> dict:
+    """The CORS headers this response would have got if it had come back normally.
+
+    Starlette runs `Exception` handlers in `ServerErrorMiddleware`, which sits OUTSIDE the
+    user middleware stack - so `CORSMiddleware` never sees a 500 raised from a route and the
+    response goes back with no `Access-Control-Allow-Origin`. The browser then refuses to
+    read it and reports `TypeError: Failed to fetch`, which looks like the network died.
+
+    The cost is not cosmetic: a real, logged, diagnosable 500 (a unique-constraint violation
+    on an upload) reached the user as "Failed to fetch", with the actual cause visible only
+    in the server log. Whoever is looking at the screen deserves the status code at least.
+
+    Echoes the request's own origin, and only when it is on the configured allow-list, so
+    this cannot become a wildcard that leaks a credentialed response to any origin.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return {}
+    allowed = settings.cors_origins_list
+    if origin not in allowed and "*" not in allowed:
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
+    }
 
 # Validation error handler to see detailed errors
 @app.exception_handler(RequestValidationError)
@@ -130,6 +159,13 @@ register_lookup_write_listeners()
 # is active in the API; the worker registers it via its own import path.
 from app.services.company_scope import register_company_scope_listeners
 register_company_scope_listeners()
+
+# Dealer Kit collection rules are evaluated by the SAME rule engine as automation
+# triggers, so its `product` fact source has to be on the registry before the
+# first /rule-facts request - otherwise the RuleBuilder renders an empty field
+# list and a Designer cannot author a collection at all.
+from app.services.dealer_kit.product_facts import register_product_facts
+register_product_facts()
 
 
 def _register_activities_adapters() -> None:
@@ -210,6 +246,12 @@ async def startup_event():
         logging.info("Product spec listeners registered")
     except Exception as e:
         logging.error(f"Failed to register product spec listeners: {str(e)}", exc_info=True)
+    try:
+        from app.services.product_spec_write import register_spec_write_backstop
+        register_spec_write_backstop()
+        logging.info("Spec write backstop registered")
+    except Exception as e:
+        logging.error(f"Failed to register spec write backstop: {str(e)}", exc_info=True)
     try:
         # The status engine ships with an empty registry; every entity arrives from
         # a module. `inbound_shipment` is the first adopter in this repo, and it

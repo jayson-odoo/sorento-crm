@@ -210,6 +210,22 @@ def _build_uploaded_by_user_map(db, attachments) -> dict:
     return out
 
 
+def _stamp_company(data: dict, attachment, company_names: dict) -> None:
+    """Put the owning company on one attachment payload (shape only, no DB).
+
+    The company NAME is what a reader has to go on: two companies each hold a
+    current "Container Status 2026.xlsx", and the customer-facing surfaces
+    deliberately withhold the UUID. Names come pre-resolved from
+    ``AttachmentService.company_name_map`` so this stays one query per page.
+
+    A company-less (shared) attachment gets explicit ``None`` on both keys rather
+    than a missing key, so every row in a list has the same shape.
+    """
+    company_id = getattr(attachment, "company_id", None)
+    data["company_id"] = str(company_id) if company_id else None
+    data["company_name"] = company_names.get(str(company_id)) if company_id else None
+
+
 @router.get("/", response_model=ListResponse[AttachmentResponse])
 async def get_attachments(
     page: int = Query(1, ge=1),
@@ -241,6 +257,14 @@ async def get_attachments(
     attachment_type_codes: Optional[List[str]] = Query(
         None,
         description="Several AttachmentType codes/names (csv/JSON/repeated). Unions with `attachment_type_code`; no code resolves → 0 rows.",
+    ),
+    mime_type: Optional[str] = Query(
+        None,
+        description="Filter by the file's own mime type (e.g. `application/pdf`). Case-insensitive; any `;charset=` suffix is ignored. Not the same as attachment_type_id, which is a document class.",
+    ),
+    mime_types: Optional[List[str]] = Query(
+        None,
+        description="Several mime types (csv/JSON/repeated). Unions with `mime_type`.",
     ),
     uploaded_by: Optional[str] = Query(None),
     uploaded_at_from: Optional[datetime] = Query(None),
@@ -285,6 +309,8 @@ async def get_attachments(
             attachment_type_ids=parse_uuid_list(attachment_type_ids, param_name="attachment_type_ids"),
             attachment_type_code=attachment_type_code,
             attachment_type_codes=normalize_list_query_param(attachment_type_codes),
+            mime_type=mime_type,
+            mime_types=normalize_list_query_param(mime_types),
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
@@ -300,9 +326,11 @@ async def get_attachments(
         # Enrich each attachment with uploaded_by_user for display.
         # Batch-resolve users in ONE query to avoid N+1 (was a per-row SELECT).
         user_map = _build_uploaded_by_user_map(db, result["data"])
+        company_names = service.company_name_map(result["data"])
         enriched = []
         for att in result["data"]:
             data = AttachmentResponse.model_validate(att).model_dump()
+            _stamp_company(data, att, company_names)
             uid = getattr(att, "uploaded_by", None)
             user_info = user_map.get(str(uid)) if uid else None
             if user_info:
@@ -338,6 +366,8 @@ async def get_attachment_neighbours(
     attachment_type_ids: Optional[List[str]] = Query(None),
     attachment_type_code: Optional[str] = Query(None),
     attachment_type_codes: Optional[List[str]] = Query(None),
+    mime_type: Optional[str] = Query(None),
+    mime_types: Optional[List[str]] = Query(None),
     uploaded_by: Optional[str] = Query(None),
     uploaded_at_from: Optional[datetime] = Query(None),
     uploaded_at_to: Optional[datetime] = Query(None),
@@ -375,6 +405,8 @@ async def get_attachment_neighbours(
             attachment_type_ids=parse_uuid_list(attachment_type_ids, param_name="attachment_type_ids"),
             attachment_type_code=attachment_type_code,
             attachment_type_codes=normalize_list_query_param(attachment_type_codes),
+            mime_type=mime_type,
+            mime_types=normalize_list_query_param(mime_types),
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
@@ -485,6 +517,7 @@ async def get_drive_contents(
             it["attachment"] for it in result["items"] if it["kind"] == "file"
         ]
         user_map = _build_uploaded_by_user_map(db, file_attachments)
+        company_names = service.company_name_map(file_attachments)
 
         data: list[dict] = []
         for it in result["items"]:
@@ -502,6 +535,7 @@ async def get_drive_contents(
             else:
                 att = it["attachment"]
                 row = DriveFileItem.model_validate(att).model_dump()
+                _stamp_company(row, att, company_names)
                 row["directory_path"] = it.get("directory_path")
                 # Grid thumbnail URL. R2's CDN domain is public, so the stored
                 # thumbnail_path is already a stable, cacheable URL — serve it
@@ -593,6 +627,7 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
 
     attachment_id = str(attachment.id) if attachment.id else attachment.id
     data = AttachmentResponse.model_validate(attachment).model_dump()
+    _stamp_company(data, attachment, service.company_name_map([attachment]))
     # On-demand signing only for single-attachment metadata/detail responses.
     data["file_path"] = _resolve_attachment_file_path(
         data.get("file_path"),
@@ -1008,6 +1043,8 @@ async def create_attachment(
                     detail="target_field_keys must be valid JSON.",
                 )
 
+        service = AttachmentService(db)
+
         # Replace-in-place branch (TCK-2026-000020). Same attachment_id, new
         # bytes / hash / size / uploaded_by / uploaded_at. All four linkage
         # tables (inbound_shipments, promotion_attachments, product_attachments,
@@ -1053,7 +1090,12 @@ async def create_attachment(
                         e,
                         exc_info=True,
                     )
-            return attachment
+            # Stamp the owning company by hand: returning the bare ORM row would
+            # serialize company_name as None while company_id is populated, so the
+            # write echo would disagree with the very next list read.
+            data = AttachmentResponse.model_validate(attachment).model_dump()
+            _stamp_company(data, attachment, service.company_name_map([attachment]))
+            return data
 
         # Create attachment record. file_path stored as CDN base URL for consistency with other attachments.
         attachment_data = AttachmentCreate(
@@ -1076,7 +1118,6 @@ async def create_attachment(
             upload_batch_id=(upload_batch_id or "").strip() or None,
         )
 
-        service = AttachmentService(db)
         attachment = service.create_attachment(attachment_data, current_user["id"])
         # Trigger webhook for normal attachment uploads (including Files menu Promotion type).
         # Only skip promotion-module uploads where entity_type=promotion.
@@ -1102,8 +1143,12 @@ async def create_attachment(
                     e,
                     exc_info=True,
                 )
-        return attachment
-    
+        # Same reason as the replace-in-place branch above: the ORM row alone
+        # carries company_id but no company_name.
+        data = AttachmentResponse.model_validate(attachment).model_dump()
+        _stamp_company(data, attachment, service.company_name_map([attachment]))
+        return data
+
     except HTTPException:
         raise
     except ValueError as e:
@@ -1252,6 +1297,7 @@ async def replace_latest_stock_list(
             )
 
         data = AttachmentResponse.model_validate(attachment).model_dump()
+        _stamp_company(data, attachment, service.company_name_map([attachment]))
         user_info = _enrich_uploaded_by_user(db, attachment)
         if user_info:
             data["uploaded_by_user"] = user_info
@@ -1389,7 +1435,11 @@ async def update_attachment(
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         attachment = service.update_attachment(attachment_id, attachment_data)
-        return attachment
+        # The bare ORM row serializes company_name as None; stamp it so the write
+        # echo matches what the list and detail reads return.
+        data = AttachmentResponse.model_validate(attachment).model_dump()
+        _stamp_company(data, attachment, service.company_name_map([attachment]))
+        return data
     except HTTPException:
         raise
     except Exception as e:

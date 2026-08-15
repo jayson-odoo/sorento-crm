@@ -8,6 +8,7 @@ from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.schemas.external.procurement import SPOAllocationRequest
 from app.models.procurement import SPOAllocation, InboundShipment, InboundShipmentLine
+from app.services.grn_spo_matching import forward_match_grn_lines_for_spo_best_effort
 from app.services.procurement_service import InboundShipmentService
 from app.models.inventory import Warehouse
 from app.api.v1.external.utils import (
@@ -260,6 +261,19 @@ def create_spo_allocations(
             if allocation.inbound_shipment_id
         }:
             inbound_svc.refresh_shipment_line_statuses(shipment_id)
+        # This path builds and commits its rows itself rather than going through
+        # SPOAllocationService, so it needs its own hook: a GRN whose lines stated
+        # one of these SPOs and could not be placed is now placeable. Once per
+        # distinct (SPO number, company), post-commit and best-effort - once per
+        # SPO because a line must not be placed against the first allocation of a
+        # batch before the rest of that batch exists, and per company because this
+        # is the X-API-Key path, whose scope is NULL ("all companies").
+        for spo_number, company_id in {
+            (allocation.spo_number, allocation.company_id)
+            for allocation in allocations
+            if allocation.spo_number
+        }:
+            forward_match_grn_lines_for_spo_best_effort(db, spo_number, company_id=company_id)
 
     return {
         "data": [

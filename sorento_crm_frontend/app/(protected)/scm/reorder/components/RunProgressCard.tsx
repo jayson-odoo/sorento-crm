@@ -18,7 +18,7 @@ export function RunProgressCard({
 }: {
   run: ReorderRun;
   stageIndex: number;
-  /** Still `running` past the poll cap — polling stopped, surface a retry. */
+  /** Still `running` past the poll cap - polling stopped, surface a retry. */
   isStalled?: boolean;
   onReview: () => void;
   onRetry: () => void;

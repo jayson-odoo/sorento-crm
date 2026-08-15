@@ -1,12 +1,12 @@
 /**
  * ============================================================================
- * SCM M4 Slice B — DECISION + PO-FLOW DETERMINISTIC MOCK STORE  (Phase 1 only)
+ * SCM M4 Slice B - DECISION + PO-FLOW DETERMINISTIC MOCK STORE  (Phase 1 only)
  * ============================================================================
  * A single store shared by the reorder decision layer (Accept / Adjust / Reject)
  * and the Purchase Orders list. It exists ONLY so the Phase-1 prototype can
- * demonstrate the full loop — accept a recommendation → a consolidated draft PO
+ * demonstrate the full loop - accept a recommendation → a consolidated draft PO
  * appears in the PO list → bulk Confirm flips it to active (now on-order) →
- * create a GR from the active PO — WITHOUT any backend.
+ * create a GR from the active PO - WITHOUT any backend.
  *
  * Phase 2 deletes this file and flips `USE_SLICE_B_MOCKS` to false in the two
  * services (`reorder/services/decisionService.ts`,
@@ -16,7 +16,7 @@
  * State is persisted in `sessionStorage` (client only) so an accept on the
  * reorder page is visible on the PO list even across a full page reload; a fresh
  * browser session starts from the seed. Deterministic by construction: no
- * `Math.random`, no `Date.now` — PO / GR numbers come from monotonic counters.
+ * `Math.random`, no `Date.now` - PO / GR numbers come from monotonic counters.
  * ============================================================================
  */
 import type { PurchaseOrder } from '../types/scm.types';
@@ -27,14 +27,14 @@ import type {
 } from '../reorder/types/decisions.types';
 import type { ReorderRecommendation } from '../reorder/types/reorder.types';
 
-/** Phase-1 flag — mirrors `USE_M4_MOCKS` (Slice A). Both flip to false in Phase 2. */
+/** Phase-1 flag - mirrors `USE_M4_MOCKS` (Slice A). Both flip to false in Phase 2. */
 export const USE_SLICE_B_MOCKS = false;
 
 // v2: v1 persisted state predates `poSeq`, so a stale session left `poSeq` undefined
 // → `undefined + 1 = NaN` → "PO-2026-0NaN". Bumping the key abandons that state; load()
 // also now merges over freshState() defaults so any missing field is backfilled.
 const STORAGE_KEY = 'scm_copilot_mock_v2';
-/** Fixed "today" — keeps order/expected dates deterministic (no `new Date`). */
+/** Fixed "today" - keeps order/expected dates deterministic (no `new Date`). */
 const TODAY = '2026-07-16';
 
 /** Statuses that count as incoming supply (mirror of `scm.on_order_v`). */
@@ -50,7 +50,7 @@ interface StoreState {
   draftSeq: number;
   grSeq: number;
   lineSeq: number;
-  /** Running canonical PO sequence for THIS year — seed max is 0148. On Confirm a
+  /** Running canonical PO sequence for THIS year - seed max is 0148. On Confirm a
    *  draft is renumbered to `PO-2026-####` from here (M4-D6, numbering rule). */
   poSeq: number;
 }
@@ -140,7 +140,7 @@ function persist() {
   try {
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
-    /* sessionStorage unavailable — in-memory state still works for the session */
+    /* sessionStorage unavailable - in-memory state still works for the session */
   }
 }
 
@@ -154,7 +154,7 @@ function recomputeTotals(po: PurchaseOrder) {
   po.total_qty = po.lines.reduce((sum, l) => sum + l.qty_ordered, 0);
 }
 
-/** Find (or create) the open draft PO for a supplier — consolidation (M4-D4). */
+/** Find (or create) the open draft PO for a supplier - consolidation (M4-D4). */
 function draftForSupplier(rec: ReorderRecommendation, supplierCode: string, supplierName: string): PurchaseOrder {
   let po = state.pos.find((p) => p.status === 'draft_recommendation' && p.supplier_code === supplierCode);
   if (!po) {
@@ -325,7 +325,7 @@ export function mockGetPurchaseOrder(id: string): PurchaseOrder | null {
 /** Confirm draft POs → active (M4-D6). Only `draft_recommendation` rows flip and
  *  each is RENUMBERED from its provisional `PO-DRAFT-####` to the canonical
  *  `PO-YYYY-####` running sequence (the backend assigns this at confirm time via
- *  the PO numbering rule — see alembic 274). Any decision referencing the PO is
+ *  the PO numbering rule - see alembic 274). Any decision referencing the PO is
  *  re-pointed to the new number so the results hyperlink stays correct. Returns
  *  how many were confirmed. */
 export function mockConfirmPurchaseOrders(ids: string[]): number {
@@ -365,7 +365,7 @@ export function mockCreateGr(id: string): { gr_reference: string } | null {
   return { gr_reference: grRef };
 }
 
-/** TEST/DEV ONLY — reset the store to its seed. */
+/** TEST/DEV ONLY - reset the store to its seed. */
 export function __resetCopilotMockStore() {
   state = freshState();
   persist();

@@ -13,6 +13,12 @@ export const WarehouseSchema = z.object({
   location: z.string().max(255, { message: 'Warehouse must not exceed 255 characters.' }).optional().nullable(),
   manager_id: z.string().uuid().optional().nullable(),
   is_active: z.boolean(),
+  // Planning configuration. Both change what the reorder plan buys.
+  counts_as_available: z.boolean(),
+  pool_warehouse_id: z.string().uuid().optional().nullable(),
+  // Dealer or project. Seeded from the code suffix and editable, because the convention
+  // is a convention: the one location it gets wrong has to be fixable without a deploy.
+  segment: z.enum(['dealer', 'project']).optional().nullable(),
 });
 
 export type WarehouseSchemaType = z.infer<typeof WarehouseSchema>;

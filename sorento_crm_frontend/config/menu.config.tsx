@@ -6,6 +6,7 @@ import {
   Bitcoin,
   Bolt,
   Book,
+  BookOpen,
   Briefcase,
   Building,
   Building2,
@@ -338,6 +339,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/user-management/market-segments',
       },
       {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
+      },
+      {
         title: 'Account',
         path: '/user-management/account',
         permission: 'user_management.account.view',
@@ -374,6 +380,16 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'scm.reorder.run',
       },
       {
+        title: 'Loading Plan',
+        path: '/scm/loading-plan',
+        permission: 'scm.reorder.run',
+      },
+      {
+        title: 'Incoming Containers',
+        path: '/scm/incoming',
+        permission: 'scm.reorder.run',
+      },
+      {
         title: 'Policies',
         path: '/scm/policies',
         permission: 'scm.policy.manage',
@@ -392,6 +408,61 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Market Signals',
         path: '/scm/market-signals',
         permission: 'scm.dashboard.view',
+      },
+      {
+        title: 'Simulation',
+        path: '/scm/simulation',
+        permission: 'scm.reorder.run',
+      },
+    ],
+  },
+  {
+    // Dealer Kit — the catalogue page builder.
+    //
+    // Deliberately carries NO `moduleKey` and NO `permission` yet. The sidebar
+    // hides any branch whose moduleKey is absent from the tenant's enabled set,
+    // so declaring `dealer_kit` before the backend seeds its catalogue row would
+    // hide this entry outright. Both gates land in S1 phase 2, together with the
+    // module row and the permission slugs that actually enforce them — a gate
+    // added before its enforcement exists is a gate that lies.
+    title: 'Dealer Kit',
+    icon: BookOpen,
+    children: [
+      {
+        title: 'Catalogue Pages',
+        path: '/dealer-kit',
+      },
+      {
+        title: 'Product Collections',
+        path: '/dealer-kit/collections',
+      },
+      {
+        title: 'Tile Designs',
+        path: '/dealer-kit/tile-designs',
+      },
+      {
+        title: 'Brochure Images',
+        path: '/dealer-kit/brochure-images',
+      },
+      {
+        title: 'Flyers',
+        path: '/dealer-kit/flyer-readings',
+      },
+      {
+        title: 'Editions',
+        path: '/dealer-kit/editions',
+      },
+      {
+        title: 'Bundles',
+        path: '/dealer-kit/bundles',
+      },
+      {
+        title: 'Room Designer',
+        path: '/dealer-kit/design',
+      },
+      {
+        title: 'Design Summary',
+        path: '/dealer-kit/design/summary',
       },
     ],
   },
@@ -1268,6 +1339,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Market Segments',
         path: '/user-management/market-segments',
+      },
+      {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
       },
       {
         title: 'Account',

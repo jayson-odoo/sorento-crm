@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal, Base
 from app.models.base import CompanyScopedMixin
 from app.models.company import Company
+from app.models.dealer_kit import Page as DealerKitPage
 from app.models.product import Brand, ProductCategory
 from app.models.inventory import Warehouse
 from app.models.marketing import CampaignType
@@ -74,6 +75,10 @@ REPRESENTATIVE = [
     (Warehouse, "warehouse_code", dict(warehouse_name="ZZSCOPE wh")),
     (CampaignType, "type_code", dict(type_name="ZZSCOPE ct")),
     (ProductCategory, "category_code", dict(category_name="ZZSCOPE cat")),
+    # Dealer Kit lives in its own Postgres schema. It is in this list because the
+    # do_orm_execute filter matching across a schema boundary is a distinct thing
+    # from matching inside public, and only a real query proves it.
+    (DealerKitPage, "slug", dict(name="ZZSCOPE dk page")),
 ]
 
 
@@ -284,6 +289,27 @@ _COMPANY_ID_ALLOWLIST = {
     # including the ~160 tests and background readers that hold a policy id with no
     # company context at all, and turns each one into an empty result.
     "sla_policies",
+    # Container sizes are per-tenant OR global: a row with a NULL company is a default
+    # this system ships for everyone, and a tenant row overrides it (hence the unique
+    # index on coalesce(company_id, nil)). The mixin's auto-filter would drop every
+    # NULL-company row, leaving a loading plan with no container to pack into, so
+    # `loading_plan_service.container_sizes` reads them unfiltered on purpose.
+    # KNOWN GAP, deliberately left for its own slice rather than changed during a merge:
+    # unfiltered also means one tenant can read another's custom size. The fix is
+    # `company_id IS NULL OR company_id = <scope>` in that one reader, not the mixin.
+    "container_size",
+    # The salesperson master is per-company OR shared, and in the captain's own files it is
+    # shared: the same agent codes sell for both companies, so partitioning the master would
+    # duplicate every agent and split one person's demand class across two rows. A NULL
+    # company therefore means "everyone's", and the mixin's auto-filter drops NULL-company
+    # rows - which here would hide the entire master and leave every imported order with no
+    # agent to classify from. Same shape and same known gap as `container_size`: the day a
+    # tenant needs its own agent, the fix is `company_id IS NULL OR company_id = <scope>` in
+    # `sales_agent_service`, not the mixin. That fix is now WRITEABLE rather than aspirational:
+    # migration 356 replaced the global unique on the code with one on
+    # `(coalesce(company_id, nil), sales_agent)`, exactly `container_size`'s index, so a tenant
+    # row can coexist with the shared row it overrides.
+    "sales_agents",
 }
 
 
@@ -303,22 +329,27 @@ def test_every_company_id_table_is_registered():
         f"Tables have a company_id column but are not CompanyScopedMixin subclasses "
         f"(add the mixin or allowlist them): {offenders}"
     )
-    # Foundation slice shipped 34 owned tables (PLAN §4.1); the certificate
-    # register added `certificates` as the 35th. Its two child tables
-    # (`certificate_revisions`, `certificate_products`) are deliberately NOT
-    # scoped: they are only ever reached through their certificate, which is
-    # scoped, so a second filter would be redundant surface (SEC-2a).
-    # Container status tracking added `shipment_tracking_observations` as the
-    # 36th. Unlike the certificate children this one IS scoped: a carrier
-    # observation names a container, and one tenant's containers must not be
-    # readable through a tenant-agnostic evidence table.
-    # Company-aware assignment routing added `teams` and `agent_teams` as the 37th and
-    # 38th. A team belongs to exactly one company, so the Teams page and every team
-    # picker follow the company switcher; `agent_teams` is scoped as the backstop for
-    # the ad-hoc AgentTeam queries in sla_service that the resolvers' required
-    # company_id argument cannot reach. `access_agents` is deliberately NOT here: one
-    # agent is a single router serving both brands through two ladders.
-    assert len(owned) == 38, f"expected 38 owned tables, found {len(owned)}: {sorted(owned)}"
+    # This is a COUNT, not a list, on purpose: enumerating the owned tables in a comment
+    # is how the number and the prose drifted apart twice already. The rule is what
+    # matters. A table is owned when the row is a fact about ONE company that cannot be
+    # derived from something already scoped:
+    #   - Planning artefacts own their company because a run, a recommendation, a budget or
+    #     an exception batch is a company's own decision queue, and an exception's warehouse
+    #     is nullable (supply in transit names no location to filter through).
+    #   - Fulfilment rows (loading plans, supplier notices, supplier inventory, allocations)
+    #     own it for the same reason: they are that company's shipment, not a place.
+    #   - Certificate children are deliberately NOT owned: they are only reachable through
+    #     the certificate, which is scoped, so a second filter is redundant surface (SEC-2a).
+    #   - `access_agents` is NOT owned: one agent routes both brands through two ladders.
+    # Derived instead of owned: demand_stat / item_classification / the views (via the
+    # warehouse join), supplier_performance (via suppliers), market signals (facts about
+    # the world, not about us).
+    # The Dealer Kit adds 9 owned tables under the same rule: a page, its editions and
+    # tiles, its assets, collections, bundles, a flyer reading, a selection and the
+    # contact -> customer link are each a fact about ONE company's catalogue.
+    # `selection_line` is deliberately NOT owned: it hangs off a scoped parent, so
+    # scoping it too would filter it twice and add nothing.
+    assert len(owned) == 63, f"expected 63 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

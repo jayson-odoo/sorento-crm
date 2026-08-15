@@ -108,11 +108,25 @@ def test_net_position_reconciles_with_no_po_so(conn):
 
 # --- AC-M0.11: decoupling ---------------------------------------------------
 
-def test_views_do_not_reference_decoupled_tables(conn):
-    """No position/consumption view may read inbound_shipments or spo_allocations."""
+def test_only_the_supply_view_reads_the_incoming_stock_tables(conn):
+    """AC-M0.11, superseded on 6 Aug 2026 and narrowed rather than deleted.
+
+    M0 banned every view from reading `inbound_shipments` / `spo_allocations`, on the
+    reasoning that they were an AutoCount-shaped mirror the planning read-model should not
+    couple to. The domain says otherwise: the chain is PO -> SPO -> GRN, and the SPO
+    allocation IS the incoming stock. A purchase order is only an order placed, which the
+    supplier may have shipped nothing against, and the live book proved how badly that reads
+    as supply - 9 open PO lines against 842 allocations (migration 337).
+
+    So `on_order_v` reads them by design. The boundary that remains, and that this test now
+    guards, is that DEMAND and CONSUMPTION must not: their sources are sales orders and the
+    stock ledger, and a shipment table appearing there would mean supply had leaked into the
+    demand half.
+    """
     banned = ("inbound_shipments", "spo_allocations")
+    supply_views = {"on_order_v"}
     offenders = []
-    for v in SCM_VIEWS:
+    for v in SCM_VIEWS - supply_views:
         definition = conn.execute(text(
             "select pg_get_viewdef((:qual)::regclass, true)"
         ), {"qual": f"scm.{v}"}).scalar() or ""
@@ -121,6 +135,19 @@ def test_views_do_not_reference_decoupled_tables(conn):
             if bad in low:
                 offenders.append(f"scm.{v} references {bad}")
     assert not offenders, offenders
+
+    # The mirror assertion, so narrowing the rule cannot become dropping it: the supply view
+    # has to read those tables, or supply has silently gone back to the purchase order.
+    supply_def = (conn.execute(text(
+        "select pg_get_viewdef('scm.on_order_v'::regclass, true)"
+    )).scalar() or "").lower()
+    assert "spo_allocations" in supply_def, (
+        "scm.on_order_v must read spo_allocations: an order placed is not stock incoming"
+    )
+    assert "purchase_order_lines" not in supply_def, (
+        "scm.on_order_v must NOT read purchase_order_lines - counting both double-counts "
+        "every shipped order, since spo_allocations.po_line_id is NULL on every row"
+    )
 
 
 # --- AC-M0.7: numbering format ----------------------------------------------

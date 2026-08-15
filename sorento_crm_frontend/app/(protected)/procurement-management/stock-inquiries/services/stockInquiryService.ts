@@ -10,6 +10,8 @@ import type {
   DataGridApiFetchParams,
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
+import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
+import type { FormPdfExportOptions } from '@/lib/revision-export';
 
 /**
  * Path of the stock-inquiry neighbours endpoint. Consumed by
@@ -52,6 +54,29 @@ export async function getStockInquiry(id: string): Promise<StockInquiryDetail> {
   const response = await apiFetch(`/api/v1/procurement/stock-inquiries/${id}`);
   if (!response.ok) throw new Error('Failed to fetch stock inquiry');
   return response.json();
+}
+
+/**
+ * Revision lineage for the office Revisions panel (UAC H2/H3).
+ *
+ * Contract:
+ *   GET /api/v1/procurement/stock-inquiries/{id}/revisions
+ *   Auth: the existing stock inquiry view permission.
+ *   200: { items: FormRevisionEntry[] }  - oldest first, each entry carrying
+ *        what changed since the version before it plus the voided-stage context.
+ *   Read-only: the office never creates, edits or deletes a revision (UAC H5).
+ */
+export async function getStockInquiryRevisions(
+  id: string,
+): Promise<FormRevisionEntry[]> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${id}/revisions`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load revisions'));
+  }
+  const data = await response.json();
+  return (data?.items ?? []) as FormRevisionEntry[];
 }
 
 export async function createStockInquiry(
@@ -373,15 +398,29 @@ export interface StockInquiryExportDownload {
  * Contract:
  *   POST /api/v1/procurement/stock-inquiries/{id}/export/pdf
  *   Auth: `procurement.stock_inquiries.view`
+ *   Body: OPTIONAL. Omitted body == the current form, as it has always been.
+ *     { revision_id?: string }      - print ONE stored version (round 6, 6.3)
+ *     { include_revisions?: true }  - current form + the whole lineage (6.4)
+ *     The two are mutually exclusive; sending both 400s.
  *   202-ish 200: { id, kind: 'stock_inquiry_pdf', status: 'pending', filename }
  *   The PDF is rendered by the RQ worker and surfaces in My Downloads.
  */
 export async function exportStockInquiryPdf(
   id: string,
+  options?: FormPdfExportOptions | null,
 ): Promise<StockInquiryExportDownload> {
+  // No options, no body: the request stays byte-identical to the one this export
+  // has always sent.
+  const init: RequestInit = options
+    ? {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(options),
+      }
+    : { method: 'POST' };
   const response = await apiFetch(
     `/api/v1/procurement/stock-inquiries/${id}/export/pdf`,
-    { method: 'POST' },
+    init,
   );
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to start PDF export'));

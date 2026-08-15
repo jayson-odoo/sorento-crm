@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getWarehouses, getWarehouse, createWarehouse, updateWarehouse, deleteWarehouse, bulkDeleteWarehouses } from '../services/warehouseService';
+import { getWarehouses, getWarehouse, createWarehouse, updateWarehouse, bulkDeleteWarehouses } from '../services/warehouseService';
 import type { WarehouseFormData } from '../types/warehouse.types';
 
 export function useWarehouses(params: DataGridApiFetchParams) {
@@ -52,17 +52,13 @@ export function useUpdateWarehouse() {
   });
 }
 
-export function useDeleteWarehouse() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteWarehouse(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['warehouses'] });
-      toast.success('Warehouse deleted successfully');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete warehouse'),
-  });
-}
+// There is deliberately no `useDeleteWarehouse`. Single delete goes through the shared
+// `ConfirmDeleteDialog`, which wraps the `onDelete` callback in its OWN mutation and owns the
+// toast plus the query invalidation. A hook that also toasted and invalidated meant every delete
+// reported itself twice, in two positions, and a 409 ("Warehouse has linked stock") said the same
+// thing to the user twice. Pass the bare `deleteWarehouse` service call to the dialog instead.
+// Bulk delete keeps its hook because `WarehouseBulkDeleteDialog` is a plain `Dialog` that owns no
+// mutation of its own, so there is nothing for this one to double up with.
 
 export function useBulkDeleteWarehouses() {
   const queryClient = useQueryClient();

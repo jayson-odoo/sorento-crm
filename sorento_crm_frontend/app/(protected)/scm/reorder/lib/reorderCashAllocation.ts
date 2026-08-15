@@ -1,9 +1,9 @@
 /**
  * ============================================================================
- * SCM M4 — Cash co-pilot CLIENT-SIDE allocator (production, not a mock)
+ * SCM M4 - Cash co-pilot CLIENT-SIDE allocator (production, not a mock)
  * ============================================================================
  * The budget slider recomputes funded/deferred LIVE client-side against each
- * rec's FROZEN `rank_score` (M4-D3) — no per-tick round-trip. The server owns the
+ * rec's FROZEN `rank_score` (M4-D3) - no per-tick round-trip. The server owns the
  * authoritative funding: it computes the same greedy split for `GET
  * ?budget=X` and PERSISTS it on `PUT /budget` ("Apply budget"). This module is
  * the deterministic allocator both the slider and the initial render use; it is
@@ -36,7 +36,7 @@ export interface FundingResult {
   funded: ReorderRecommendation[];
   /** Costed recs the budget skips, annotated `funding_status:'deferred'`. */
   deferred: ReorderRecommendation[];
-  /** Uncosted recs (M4-D16) — un-rankable by cash, `funding_status:'needs_cost'`;
+  /** Uncosted recs (M4-D16) - un-rankable by cash, `funding_status:'needs_cost'`;
    *  they never fund/defer or touch the budget. */
   needsCost: ReorderRecommendation[];
   /** Σ cash_impact of funded costed recs (≤ budget). */
@@ -50,7 +50,7 @@ export interface FundingResult {
 /**
  * Deterministic greedy allocation (M4-D3 + M4-D16). Split buys COSTED vs
  * UNCOSTED: an uncosted buy (cash_impact null) CANNOT be cash-ranked, so it goes
- * to the `needsCost` bucket untouched — it never funds/defers or draws from the
+ * to the `needsCost` bucket untouched - it never funds/defers or draws from the
  * budget. Over the COSTED buys only, walk by rank ascending and fund a buy only
  * if its whole cash_impact fits the remaining budget, else SKIP it and continue
  * to the next that fits (MoQ = all-or-nothing). Budget 0 → all costed deferred.
@@ -70,7 +70,7 @@ export function computeFunding(
 
   for (const rec of ordered) {
     const cost = rec.cash_impact;
-    // Uncosted — un-rankable by cash; parked in the "Needs cost" bucket.
+    // Uncosted - un-rankable by cash; parked in the "Needs cost" bucket.
     if (cost === null) {
       needsCost.push({ ...rec, funding_status: 'needs_cost' });
       continue;
@@ -80,17 +80,17 @@ export function computeFunding(
       fundedCash += cost;
       funded.push({ ...rec, funding_status: 'funded' });
     } else {
-      deferredCash += cost; // overflow (or budget 0) — skip and continue
+      deferredCash += cost; // overflow (or budget 0) - skip and continue
       deferred.push({ ...rec, funding_status: 'deferred' });
     }
   }
 
-  // Deferred shown by soonest stockout first — the highest risk of NOT funding.
+  // Deferred shown by soonest stockout first - the highest risk of NOT funding.
   deferred.sort(
     (a, b) => (a.days_to_stockout ?? Infinity) - (b.days_to_stockout ?? Infinity),
   );
 
-  // Clean 1..N priority per section (M4 slice-B UX) — the raw global rank (e.g.
+  // Clean 1..N priority per section (M4 slice-B UX) - the raw global rank (e.g.
   // 205) confuses; the user wants a sequential position in each list. Assigned
   // AFTER each section's final sort so the number matches the displayed order.
   funded.forEach((r, i) => (r.display_rank = i + 1));
@@ -195,7 +195,7 @@ export function computeFundingM8<T extends M8FundingRow>(
   let remaining = budget;
   for (const row of byRank) {
     if (forcedOver?.has(row.id)) {
-      over.push(row); // manually dragged to Over — stays out regardless of budget
+      over.push(row); // manually dragged to Over - stays out regardless of budget
       continue;
     }
     if (pins.has(row.id)) {
@@ -226,7 +226,7 @@ export function computeFundingM8<T extends M8FundingRow>(
   return { within, over, needsCost, committed, free: budget - committed };
 }
 
-/** Slider ceiling — Σ costed cash with ~10% headroom, rounded up to RM 1,000.
+/** Slider ceiling - Σ costed cash with ~10% headroom, rounded up to RM 1,000.
  *  Falls back to one step when the run has no costed cash (all uncosted). */
 export function sliderMaxFor(recs: ReorderRecommendation[]): number {
   const total = totalCostedCash(recs);
@@ -234,10 +234,26 @@ export function sliderMaxFor(recs: ReorderRecommendation[]): number {
   return Math.ceil((total * 1.1) / 1_000) * 1_000;
 }
 
-/** Default budget — ~60% of the costed total, rounded to a step, so the funded
- *  boundary lands mid-list with a visible funded/deferred split on first render. */
-export function defaultBudgetFor(recs: ReorderRecommendation[]): number {
+/**
+ * The budget the plan opens with.
+ *
+ * The COMPANY's figure when one is configured (`scm.purchasing_budget`, served by
+ * `/scm/config/cash-budget`). Otherwise the plan's own costed total, so nothing is deferred
+ * for a reason nobody gave.
+ *
+ * It used to open at ~60% of the plan's cost, to put a visible cut line mid-list. That
+ * teaches the mechanic at the price of inventing a constraint: a RM 5.9m plan opened with
+ * RM 3.55m "available" and 59 lines under a heading reading Over budget, which is a number
+ * the company never stated presented as if it had. A limit nobody set is not a cautious
+ * default, it is a wrong one - so the plan now shows itself whole and the buyer types the
+ * limit they actually have.
+ */
+export function defaultBudgetFor(
+  recs: ReorderRecommendation[],
+  configuredBudget?: number | null,
+): number {
+  if (configuredBudget != null && configuredBudget > 0) return configuredBudget;
   const total = totalCostedCash(recs);
   if (total <= 0) return 0;
-  return Math.max(BUDGET_STEP, Math.round((total * 0.6) / BUDGET_STEP) * BUDGET_STEP);
+  return Math.ceil(total / BUDGET_STEP) * BUDGET_STEP;
 }

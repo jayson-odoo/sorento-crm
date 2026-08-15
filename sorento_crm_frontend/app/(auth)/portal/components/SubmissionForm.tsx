@@ -3,7 +3,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Sparkles, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  History,
+  Plus,
+  Sparkles,
+  Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -20,6 +29,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import AttachmentPreviewModal, {
@@ -52,13 +62,17 @@ import {
   uploadAttachment,
 } from '../lib/portal-client';
 import { portalDetailPath, portalHomePath, portalVerifyPath } from '../lib/portal-paths';
+import { portalFetchBytes, toPreviewItem } from '../lib/portal-preview';
 import { cleanLineItems } from '../lib/line-items';
+import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import { AsyncCombobox } from './AsyncCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
 import { LookupSelect } from './LookupSelect';
 import { MultiPillInput } from './MultiPillInput';
+import { ReviseAction } from './ReviseAction';
+import { RevisionHistory } from './RevisionHistory';
 import {
   InquiryFormTableRow,
   ProductInquiryFormLayout,
@@ -263,6 +277,25 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
 
 const HAS_LINES: PortalSubmissionKind[] = ['purchase_request', 'sponsorship_form'];
 
+/**
+ * Fields a revision may NOT change, mirroring the backend's
+ * `frozen_on_revise`. The requestor is the routing key: changing it on a
+ * revision would move the form to someone else's queue mid-life, which is a
+ * reassignment rather than an edit, so it stays an office action.
+ */
+const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
+  stock_inquiry: ['salesperson_contact_id', 'salesperson'],
+  purchase_request: ['requested_by_contact_id', 'requested_by'],
+  sponsorship_form: ['requested_by_contact_id', 'requested_by'],
+  complaint: [],
+};
+
+/** Same sentence the server answers with, so a client-side block and a
+ *  server-side one never read differently. Required but with no character
+ *  floor, by explicit decision - any non-empty reason is accepted. */
+const REASON_REQUIRED = 'Tell us what changed and why.';
+const REASON_MAX_LEN = 2000;
+
 function fieldSpansFullWidth(f: FieldDef): boolean {
   return (
     f.widget === 'textarea' ||
@@ -301,6 +334,13 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
   const [staffPreviewOpen, setStaffPreviewOpen] = useState(false);
   const [neighbours, setNeighbours] = useState<PortalSubmissionNeighbours | null>(null);
+  const [reviseMode, setReviseMode] = useState(false);
+  const [reason, setReason] = useState('');
+  const [reasonError, setReasonError] = useState<string | null>(null);
+  const [reviseConfirmOpen, setReviseConfirmOpen] = useState(false);
+  // Bumped after a revision so the form reloads through the same path the first
+  // load uses, rather than a second, divergent "apply the response" branch.
+  const [reloadToken, setReloadToken] = useState(0);
 
   const fieldDefs = FIELDS[kind];
   const showLines = HAS_LINES.includes(kind);
@@ -312,6 +352,51 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       detail.status === 'responded',
     [detail],
   );
+  const revisionPolicy = detail?.revision ?? null;
+  // Where the revision actually lands, named by the backend from this type's
+  // config (UAC E1a). The generic sentence is the fallback for when there is
+  // nothing to name - not the target copy - because a purchase request restarting
+  // at Project Sales must say Project Sales.
+  const restartStageLabel = (revisionPolicy?.restart_stage_label ?? '').trim();
+  const restartSentence = restartStageLabel
+    ? `This ${SUBMISSION_LABELS[kind].toLowerCase()} goes back to ${restartStageLabel}.`
+    : `This ${SUBMISSION_LABELS[kind].toLowerCase()} goes back to the start of its approval flow.`;
+  const revisionsLeftAfter = Math.max(0, (revisionPolicy?.remaining ?? 1) - 1);
+  const frozenFields = useMemo(
+    () => new Set(reviseMode ? FROZEN_ON_REVISE[kind] : []),
+    [kind, reviseMode],
+  );
+  // In revise mode the fields open up even on a submitted form; the frozen ones
+  // stay locked.
+  const editing = isEditable || reviseMode;
+  const revisionHistory = useRevisionHistory(kind, submissionId);
+  const { revise, submitting: revising } = useReviseSubmission(kind, submissionId);
+
+  // Deep link from the long-press preview card: `?revise=1` asks for the composer.
+  // Read and stripped from the URL once, so a refresh does not silently re-enter
+  // it - but only remembered here, never acted on: the policy decides (below).
+  const reviseDeepLink = useRef(false);
+  useEffect(() => {
+    if (!submissionId || typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('revise') !== '1') return;
+    reviseDeepLink.current = true;
+    url.searchParams.delete('revise');
+    window.history.replaceState({}, '', url.pathname + (url.search || '') + url.hash);
+  }, [submissionId]);
+
+  // A bookmarked or shared `?revise=1` link must not unlock the form on a
+  // submission the policy refuses (UAC B2). Wait for the policy to load, then act
+  // on it: the affordance is absent rather than the 422 deferred to submit.
+  useEffect(() => {
+    if (!reviseDeepLink.current) return;
+    if (!revisionPolicy) return; // still loading - decide nothing yet
+    reviseDeepLink.current = false; // one shot, whichever way it goes
+    if (!revisionPolicy.allowed) return;
+    setReviseMode(true);
+    setReason('');
+    setReasonError(null);
+  }, [revisionPolicy]);
 
   useEffect(() => {
     let cancelled = false;
@@ -491,7 +576,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [fieldDefs, kind, router, showLines, submissionId, defaultsFromContact]);
+  }, [fieldDefs, kind, router, showLines, submissionId, defaultsFromContact, reloadToken]);
 
   const cleanedFields = useMemo(() => {
     const out: Record<string, unknown> = {};
@@ -575,7 +660,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     }
   };
 
-  const handleSubmit = async () => {
+  /** Required fields still empty. Shared by submit and revise so the two can
+   *  never disagree about what a complete form is. */
+  const collectMissingRequired = (): { name: string; label: string }[] => {
     const missing: { name: string; label: string }[] = [];
     for (const f of fieldDefs) {
       if (!f.required) continue;
@@ -591,20 +678,29 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     ) {
       missing.push({ name: 'product_lines', label: 'At least one product' });
     }
+    return missing;
+  };
+
+  const reportMissingRequired = (missing: { name: string; label: string }[]) => {
+    setInvalidFields(new Set(missing.map((m) => m.name)));
+    toast.error(
+      `Missing ${missing.length} required field${missing.length === 1 ? '' : 's'}: ${missing
+        .map((m) => m.label)
+        .join(', ')}`,
+    );
+    setTimeout(() => {
+      const node = document.querySelector(
+        `[data-field-name="${missing[0].name}"]`,
+      ) as HTMLElement | null;
+      node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  };
+
+  const handleSubmit = async () => {
+    const missing = collectMissingRequired();
     if (missing.length > 0) {
-      setInvalidFields(new Set(missing.map((m) => m.name)));
-      toast.error(
-        `Missing ${missing.length} required field${missing.length === 1 ? '' : 's'}: ${missing
-          .map((m) => m.label)
-          .join(', ')}`,
-      );
       setConfirmOpen(false);
-      setTimeout(() => {
-        const node = document.querySelector(
-          `[data-field-name="${missing[0].name}"]`,
-        ) as HTMLElement | null;
-        node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-      }, 50);
+      reportMissingRequired(missing);
       return;
     }
     setSubmitting(true);
@@ -651,6 +747,68 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
 
   const setFieldValue = (name: string, value: string | string[]) => {
     setFields((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const exitReviseMode = () => {
+    setReviseMode(false);
+    setReason('');
+    setReasonError(null);
+    setReviseConfirmOpen(false);
+    // Drop any edit made in revise mode by reloading the saved version.
+    setReloadToken((t) => t + 1);
+  };
+
+  /** Gate before the confirm dialog: the reason is the one thing the journey
+   *  asks for, so an empty one never reaches the dialog. */
+  const openReviseConfirm = () => {
+    const missing = collectMissingRequired();
+    if (missing.length > 0) {
+      reportMissingRequired(missing);
+      return;
+    }
+    const trimmed = reason.trim();
+    if (!trimmed) {
+      setReasonError(REASON_REQUIRED);
+      setTimeout(() => {
+        const node = document.querySelector(
+          '[data-field-name="revision_reason"]',
+        ) as HTMLElement | null;
+        node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      }, 50);
+      return;
+    }
+    setReasonError(null);
+    setReviseConfirmOpen(true);
+  };
+
+  const handleRevise = async () => {
+    if (!submissionId) return;
+    try {
+      await revise({
+        reason: reason.trim(),
+        // Echo the version the contact was looking at: a double tap or a
+        // revision sent from another device comes back 409 instead of applying
+        // twice.
+        expectedRevisionNo: revisionPolicy?.used ?? 0,
+        fields: cleanedFields,
+        products: cleanedProducts,
+      });
+      toast.success('Revision sent.');
+      setReviseMode(false);
+      setReason('');
+      setReasonError(null);
+      setReloadToken((t) => t + 1);
+      revisionHistory.reload();
+    } catch (e) {
+      if (e instanceof PortalUnauthorizedError) {
+        router.replace(portalVerifyPath({ slug, reason: 'expired', type: kind, id: submissionId }));
+        return;
+      }
+      // 409 (revised elsewhere) and 422 (policy) both carry one server sentence.
+      toast.error(e instanceof Error ? e.message : 'Failed to send revision.');
+    } finally {
+      setReviseConfirmOpen(false);
+    }
   };
 
   useEffect(() => {
@@ -924,12 +1082,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // of the reply banner, scoped away from the contact's own uploads below.
   // Count is derived from the loaded attachments, never typed.
   const staffAttachments = attachments.filter((a) => a.uploader_kind === 'user');
-  const staffPreviewItems: AttachmentPreviewItem[] = staffAttachments.map((a) => ({
-    id: a.link_id,
-    name: a.filename || 'Attachment',
-    url: a.url ?? '',
-    sizeBytes: a.size,
-  }));
+  const staffPreviewItems: AttachmentPreviewItem[] = staffAttachments.map(toPreviewItem);
 
   // "Requested by" / "Salesperson" contact-select: pre-select the saved id and
   // resolve a NAME to show (never a UUID) - the legacy free-text sibling
@@ -946,50 +1099,31 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return { value: id, label };
   };
 
-  return (
-    <div className="min-h-screen max-w-7xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" asChild>
-          <Link href={portalHomePath({ type: kind })}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Link>
-        </Button>
-        <div className="flex items-center gap-3">
-          {isEditable && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setAiExtractOpen(true)}
-              data-testid="ai-extract-trigger"
-            >
-              <Sparkles className="h-4 w-4 mr-2 text-primary" />
-              AI Extract
-            </Button>
-          )}
-          {detail?.reference && (
-            <span className="text-sm text-muted-foreground">
-              {detail.reference}
-              {neighbours && (
-                <span className="ml-2 text-xs text-muted-foreground/70">
-                  {neighbours.position} / {neighbours.total}
-                </span>
-              )}
-            </span>
-          )}
-          {!detail?.reference && neighbours && (
-            <span className="text-xs text-muted-foreground/70">
-              {neighbours.position} / {neighbours.total}
-            </span>
-          )}
-        </div>
-      </div>
+  // Revisions become their own tab once this type has revisions on and the
+  // submission has been saved (round 6). Everything else stays in Details, so
+  // reading the lineage is one tap instead of a scroll past the whole form.
+  // With revisions off - or on an unsaved form, where there is no lineage to
+  // read - the page keeps today's single flat stack and shows no tab strip at
+  // all: a one-tab tab bar is furniture, not navigation.
+  const revisionsTabbed = Boolean(submissionId) && revisionPolicy?.enabled === true;
 
-      {!isEditable && (
+  const detailsContent = (
+    <>
+      {!editing && (
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
           This submission is not editable.
         </div>
+      )}
+      {submissionId && !reviseMode && (
+        <ReviseAction
+          variant="menu"
+          policy={revisionPolicy}
+          onRevise={() => {
+            setReviseMode(true);
+            setReason('');
+            setReasonError(null);
+          }}
+        />
       )}
       {detail?.rejection_reason && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
@@ -1028,7 +1162,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           fieldDefs={fieldDefs}
           fields={fields}
           setFieldValue={setFieldValue}
-          isEditable={isEditable}
+          isEditable={editing}
+          frozenFields={frozenFields}
           statusBadge={statusBadge}
           onProductItemSelected={handleProductItemSelected}
           resolveContactOption={resolveContactOption}
@@ -1040,7 +1175,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           fieldDefs={fieldDefs}
           fields={fields}
           setFieldValue={setFieldValue}
-          isEditable={isEditable}
+          isEditable={editing}
+          frozenFields={frozenFields}
           statusBadge={statusBadge}
           onProductItemSelected={handleProductItemSelected}
           onDOItemsChanged={handleDOItemsChanged}
@@ -1057,7 +1193,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           fieldDefs={fieldDefs}
           fields={fields}
           setFieldValue={setFieldValue}
-          isEditable={isEditable}
+          isEditable={editing}
+          frozenFields={frozenFields}
           statusBadge={statusBadge}
           onProductItemSelected={handleProductItemSelected}
           resolveContactOption={resolveContactOption}
@@ -1112,7 +1249,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                             optionValue={(o) => o.product_code}
                             optionLabel={(o) => o.product_code}
                             optionMeta={(o) => o.product_name ?? ''}
-                            disabled={!isEditable}
+                            disabled={!editing}
                           />
                         </td>
                         <td className="px-2 py-2">
@@ -1128,7 +1265,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                                 ),
                               )
                             }
-                            disabled={!isEditable}
+                            disabled={!editing}
                           />
                         </td>
                         {kind === 'sponsorship_form' && (
@@ -1149,7 +1286,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                                     ),
                                   )
                                 }
-                                disabled={!isEditable}
+                                disabled={!editing}
                               />
                             </td>
                             <td className="px-2 py-2">
@@ -1169,7 +1306,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                                 placeholder={
                                   computedTotal && !line.total ? computedTotal : ''
                                 }
-                                disabled={!isEditable}
+                                disabled={!editing}
                               />
                             </td>
                           </>
@@ -1185,7 +1322,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                               )
                             }
                             rows={1}
-                            disabled={!isEditable}
+                            disabled={!editing}
                           />
                         </td>
                         <td className="px-2 py-2 text-right">
@@ -1193,7 +1330,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            disabled={!isEditable}
+                            disabled={!editing}
                             onClick={() =>
                               setProducts((prev) => prev.filter((_, i) => i !== index))
                             }
@@ -1234,7 +1371,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               type="button"
               variant="outline"
               size="sm"
-              disabled={!isEditable}
+              disabled={!editing}
               onClick={() => setProducts((prev) => [...prev, {}])}
             >
               <Plus className="h-4 w-4 mr-2" />
@@ -1254,50 +1391,186 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             submissionId={submissionId ?? null}
             attachments={attachments}
             onChange={setAttachments}
-            disabled={!isEditable}
+            disabled={!editing}
             pendingFiles={pendingFiles}
             onPendingFilesChange={setPendingFiles}
           />
         </CardContent>
       </Card>
 
+      {reviseMode && (
+        <Card>
+          <CardContent className="pt-6 space-y-1.5" data-field-name="revision_reason">
+            <Label htmlFor="revision_reason" className="min-w-0">
+              What changed, and why?
+              <span className="ml-0.5 text-destructive">*</span>
+            </Label>
+            <Textarea
+              id="revision_reason"
+              rows={3}
+              maxLength={REASON_MAX_LEN}
+              value={reason}
+              onChange={(e) => {
+                setReason(e.target.value);
+                if (reasonError) setReasonError(null);
+              }}
+              className={reasonError ? 'border-destructive' : ''}
+              disabled={revising}
+            />
+            {reasonError && <p className="text-xs text-destructive">{reasonError}</p>}
+          </CardContent>
+        </Card>
+      )}
+
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="flex flex-wrap gap-2 justify-end pt-2">
-        {submissionId && detail?.is_draft && (
+      {reviseMode ? (
+        <div className="flex flex-wrap gap-2 justify-end pt-2">
+          <Button variant="ghost" onClick={exitReviseMode} disabled={revising}>
+            Cancel
+          </Button>
+          <Button onClick={openReviseConfirm} disabled={revising}>
+            {revising ? 'Sending...' : 'Send revision'}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2 justify-end pt-2">
+          {submissionId && detail?.is_draft && (
+            <Button
+              variant="outline"
+              className="text-destructive border-destructive/50 hover:bg-destructive/10 mr-auto"
+              onClick={() => setConfirmDeleteOpen(true)}
+              disabled={saving || submitting || deleting}
+            >
+              <Trash2 className="size-4 mr-1" />
+              {deleting ? 'Deleting...' : 'Delete draft'}
+            </Button>
+          )}
           <Button
-            variant="outline"
-            className="text-destructive border-destructive/50 hover:bg-destructive/10 mr-auto"
-            onClick={() => setConfirmDeleteOpen(true)}
+            variant="ghost"
+            onClick={() => router.replace(portalHomePath({ type: kind }))}
             disabled={saving || submitting || deleting}
           >
-            <Trash2 className="size-4 mr-1" />
-            {deleting ? 'Deleting...' : 'Delete draft'}
+            Cancel
           </Button>
-        )}
-        <Button
-          variant="ghost"
-          onClick={() => router.replace(portalHomePath({ type: kind }))}
-          disabled={saving || submitting || deleting}
-        >
-          Cancel
-        </Button>
-        {detail?.status !== 'rejected' && detail?.status !== 'responded' && (
+          {detail?.status !== 'rejected' && detail?.status !== 'responded' && (
+            <Button
+              variant="outline"
+              onClick={handleSaveDraft}
+              disabled={!isEditable || saving || submitting}
+            >
+              {saving ? 'Saving...' : 'Save as draft'}
+            </Button>
+          )}
           <Button
-            variant="outline"
-            onClick={handleSaveDraft}
+            onClick={() => setConfirmOpen(true)}
             disabled={!isEditable || saving || submitting}
           >
-            {saving ? 'Saving...' : 'Save as draft'}
+            {submitting ? 'Submitting...' : 'Submit'}
           </Button>
-        )}
-        <Button
-          onClick={() => setConfirmOpen(true)}
-          disabled={!isEditable || saving || submitting}
-        >
-          {submitting ? 'Submitting...' : 'Submit'}
+        </div>
+      )}
+    </>
+  );
+
+  const revisionHistoryCard = submissionId ? (
+    <RevisionHistory
+      entries={revisionHistory.entries}
+      loading={revisionHistory.loading}
+      error={revisionHistory.error}
+      currentAttachments={attachments}
+    />
+  ) : null;
+
+  return (
+    <div className="min-h-screen max-w-7xl mx-auto px-4 py-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" size="sm" asChild>
+          <Link href={portalHomePath({ type: kind })}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Link>
         </Button>
+        <div className="flex items-center gap-3">
+          {editing && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setAiExtractOpen(true)}
+              data-testid="ai-extract-trigger"
+            >
+              <Sparkles className="h-4 w-4 mr-2 text-primary" />
+              AI Extract
+            </Button>
+          )}
+          {detail?.reference && (
+            <span className="text-sm text-muted-foreground">
+              {detail.reference}
+              {neighbours && (
+                <span className="ml-2 text-xs text-muted-foreground/70">
+                  {neighbours.position} / {neighbours.total}
+                </span>
+              )}
+            </span>
+          )}
+          {!detail?.reference && neighbours && (
+            <span className="text-xs text-muted-foreground/70">
+              {neighbours.position} / {neighbours.total}
+            </span>
+          )}
+        </div>
       </div>
+
+      {revisionsTabbed ? (
+        <Tabs defaultValue="details">
+          {/* Same underlined strip the office detail pages use, so a record's
+              tabs look the same whichever side of the system you are on. The
+              list carries its own bottom margin, so the root drops space-y. */}
+          <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
+            <TabsTrigger value="details">
+              <FileText />
+              <span>Details</span>
+            </TabsTrigger>
+            <TabsTrigger value="revisions">
+              <History />
+              <span>Revisions</span>
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="details" className="m-0 space-y-4">
+            {detailsContent}
+          </TabsContent>
+          <TabsContent value="revisions" className="m-0">
+            {revisionHistoryCard}
+          </TabsContent>
+        </Tabs>
+      ) : (
+        <>
+          {detailsContent}
+          {revisionHistoryCard}
+        </>
+      )}
+
+      <AlertDialog open={reviseConfirmOpen} onOpenChange={setReviseConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Send revision {(revisionPolicy?.used ?? 0) + 1}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              The office stops work on the current version. {restartSentence} You will
+              have {revisionsLeftAfter} {revisionsLeftAfter === 1 ? 'revision' : 'revisions'}{' '}
+              left.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={revising}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRevise} disabled={revising}>
+              {revising ? 'Sending...' : 'Send revision'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
@@ -1352,6 +1625,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         open={staffPreviewOpen}
         onOpenChange={setStaffPreviewOpen}
         items={staffPreviewItems}
+        fetchBytes={portalFetchBytes}
       />
 
       {neighbours?.prev_id && (
@@ -1385,6 +1659,9 @@ interface SectionProps {
   fields: Record<string, string | string[]>;
   setFieldValue: (name: string, value: string | string[]) => void;
   isEditable: boolean;
+  /** Fields locked for this render even though the form is editable. Empty
+   *  outside revise mode; carries the requestor while revising. */
+  frozenFields?: Set<string>;
   statusBadge: { label: string; variant: 'warning' | 'destructive' | 'success' | 'secondary' } | null;
   onProductItemSelected: (fieldName: string, item: ProductLookupItem) => void;
   onDOItemsChanged?: (items: DOLookupItem[]) => void;
@@ -1408,6 +1685,7 @@ function StockInquiryFormSection({
   fields,
   setFieldValue,
   isEditable,
+  frozenFields,
   statusBadge,
   onProductItemSelected,
   resolveContactOption,
@@ -1446,7 +1724,7 @@ function StockInquiryFormSection({
             field={fieldByName.salesperson_contact_id}
             value={fields.salesperson_contact_id ?? ''}
             onChange={(v) => setFieldValue('salesperson_contact_id', v)}
-            disabled={!isEditable}
+            disabled={!isEditable || frozenFields?.has('salesperson_contact_id')}
             contactOption={resolveContactOption?.(fieldByName.salesperson_contact_id)}
           />
         </InquiryFormTableRow>
@@ -1643,6 +1921,7 @@ function ComplaintFormSection({
   fields,
   setFieldValue,
   isEditable,
+  frozenFields,
   statusBadge,
   onProductItemSelected,
   onDOItemsChanged,
@@ -1672,7 +1951,7 @@ function ComplaintFormSection({
                 onDOItemsChange={onDOItemsChanged}
                 onDOProductsConfirmed={onDOProductsConfirmed}
                 invalid={invalidFields?.has(f.name)}
-                disabled={!isEditable}
+                disabled={!isEditable || frozenFields?.has(f.name)}
               />
             </div>
           ))}
@@ -1698,6 +1977,7 @@ function PurchaseRequestFormSection({
   fields,
   setFieldValue,
   isEditable,
+  frozenFields,
   statusBadge,
   onProductItemSelected,
   resolveContactOption,
@@ -1732,7 +2012,7 @@ function PurchaseRequestFormSection({
                     value={fields[f.name] ?? ''}
                     onChange={(v) => setFieldValue(f.name, v)}
                     onItemSelect={(item) => onProductItemSelected(f.name, item)}
-                    disabled={!isEditable}
+                    disabled={!isEditable || frozenFields?.has(f.name)}
                     contactOption={resolveContactOption?.(f)}
                   />
                 </div>

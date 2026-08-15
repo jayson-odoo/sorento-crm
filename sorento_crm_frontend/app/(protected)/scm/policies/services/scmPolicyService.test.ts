@@ -1,5 +1,5 @@
 /**
- * SCM Policy service — Phase-2 contract tests (USE_POLICY_MOCKS = false).
+ * SCM Policy service - Phase-2 contract tests (USE_POLICY_MOCKS = false).
  *
  * Pins the request shaping every AC in group I (AC-STD-1/2) and the endpoint
  * contract documented at the top of scmPolicyService.ts:
@@ -79,13 +79,13 @@ const WRITE: ReorderPolicyWrite = {
 
 beforeEach(() => apiFetch.mockReset());
 
-describe('scmPolicyService — Phase-2 (live backend) is active', () => {
+describe('scmPolicyService - Phase-2 (live backend) is active', () => {
   it('USE_POLICY_MOCKS is false so real apiFetch branches run', () => {
     expect(USE_POLICY_MOCKS).toBe(false);
   });
 });
 
-describe('listReorderPolicies — buildDataGridParams shaping (AC-LIST-3)', () => {
+describe('listReorderPolicies - buildDataGridParams shaping (AC-LIST-3)', () => {
   it('sends page (1-based), limit, sort, dir and query', async () => {
     apiFetch.mockResolvedValue(ok({ data: [], total: 0 }));
     await listReorderPolicies({

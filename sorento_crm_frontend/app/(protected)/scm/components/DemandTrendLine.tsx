@@ -9,7 +9,7 @@ import type { XyzClass } from '../types/scm.types';
 
 /**
  * Per-SKU demand trend sparkline. Fetches ~12 MONTHLY buckets of real DO outflow
- * (`/dashboard/demand-series`) when the Product row is expanded — the shape now
+ * (`/dashboard/demand-series`) when the Product row is expanded - the shape now
  * reflects live data. Dependency-free inline SVG, theme-aware via `currentColor`;
  * reinforced by the plain-language Demand-class caption. No animation
  * (reduced-motion friendly). Rendered above the per-warehouse breakdown.
@@ -34,7 +34,7 @@ export function DemandTrendLine({
   const header = (
     <div className="mb-1 flex items-center justify-between gap-2">
       <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-        Demand — last 12 months
+        Demand - last 12 months
       </span>
       <span className="text-2xs text-muted-foreground">{classLabel}</span>
     </div>
@@ -74,7 +74,7 @@ export function DemandTrendLine({
     );
   }
 
-  // viewBox units — stretched to the container width (preserveAspectRatio=none)
+  // viewBox units - stretched to the container width (preserveAspectRatio=none)
   // with a non-scaling stroke so the line stays crisp at any width.
   const W = 320;
   const H = 44;
@@ -99,7 +99,7 @@ export function DemandTrendLine({
         preserveAspectRatio="none"
         className="h-12 w-full"
         role="img"
-        aria-label={`Demand trend over 12 months — ${classLabel}, peak ${fmtInt(peak)} per month`}
+        aria-label={`Demand trend over 12 months - ${classLabel}, peak ${fmtInt(peak)} per month`}
       >
         <polygon points={areaPoints} className="fill-current opacity-10" />
         <polyline

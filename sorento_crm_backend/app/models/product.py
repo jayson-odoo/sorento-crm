@@ -233,4 +233,17 @@ class ProductAttachment(Base, CompanyScopedMixin):
         Index("ix_product_attachments_attachment_id", "attachment_id"),
         Index("uq_product_attachment", "product_id", "attachment_id", unique=True),
         Index("ix_product_attachments_access_levels", "access_levels", postgresql_using="gin"),
+        # At most ONE chosen brochure image per product. `is_primary` is what
+        # decides a catalogue tile's photo (app/services/dealer_kit/product_images.py
+        # orders by it), so two rows flagged at once would put that photo back at
+        # the mercy of row order — the exact defect the picker exists to remove.
+        # Partial, because the overwhelming majority of rows are not primary and
+        # a full unique index would forbid a product having two unchosen photos.
+        Index(
+            "uq_product_attachment_primary",
+            "company_id",
+            "product_id",
+            unique=True,
+            postgresql_where=text("is_primary IS TRUE"),
+        ),
     )

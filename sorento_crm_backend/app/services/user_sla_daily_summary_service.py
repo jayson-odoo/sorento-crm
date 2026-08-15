@@ -14,6 +14,7 @@ from app.models.scheduled_task import ScheduledTask
 from app.models.sla import ConversationSLAEventLog, ConversationSLATracking
 from app.models.user import User, UserStatus
 from app.services.notification_service import NotificationService
+from app.services.sla_scope import open_tracker_scope
 from app.services.sla_service import MALAYSIA_TZ
 
 SUMMARY_TYPE = "user_sla_daily_summary"
@@ -89,7 +90,8 @@ def _outstanding_trackings_for_user(db: Session, user_id: str) -> list[Conversat
         .options(joinedload(ConversationSLATracking.contact))
         .filter(
             ConversationSLATracking.assigned_to_id == user_id,
-            ConversationSLATracking.is_resolved.is_(False),
+            # A voided stage is not outstanding work.
+            *open_tracker_scope(),
         )
         .order_by(ConversationSLATracking.initiated_at.desc())
         .all()

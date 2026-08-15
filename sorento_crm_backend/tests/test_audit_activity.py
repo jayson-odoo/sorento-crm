@@ -176,6 +176,54 @@ def test_q_matches_description(db):
     assert out["items"][0]["description"] == "Order deleted"
 
 
+def test_a_customer_row_reads_as_its_name_and_links_to_the_customer():
+    """Customers became audited without joining the registry, so the timeline showed
+    "Customer 3f2a1b9c" - a raw UUID, which the FE must never render, and no link.
+
+    Seeded on its own session so the shared fixture's row counts stay as they are.
+    """
+    from app.models.base import set_company_scope
+    from app.models.order import Customer
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._pg_fixture import unique_code
+
+    with blank_session() as session:
+        set_company_scope(session, frozenset({DEFAULT_COMPANY_ID}))
+        customer_id = str(uuid.uuid4())
+        session.add(
+            Customer(
+                id=customer_id,
+                customer_code=unique_code("C")[:50],
+                customer_name="Alpha Trading",
+            )
+        )
+        session.commit()
+        # The insert is itself audited now; drop those rows so the one under test is
+        # the only row in the feed.
+        session.query(AuditLog).delete()
+        session.add(
+            AuditLog(
+                id=str(uuid.uuid4()),
+                entity_type="customer",
+                entity_id=customer_id,
+                action="UPDATE",
+                changed_at=datetime(2026, 6, 30, 9, 0, 0),
+                old_values={"phone_number": "03-1111111"},
+                new_values={"phone_number": "03-2222222"},
+            )
+        )
+        session.commit()
+
+        item = get_activity_feed(session)["items"][0]
+        assert item["entity_type"] == "customer"
+        assert item["entity_label"] == "Customer Alpha Trading"
+        assert customer_id not in item["entity_label"]
+        assert item["entity_href"] == f"/order-management/customers/{customer_id}"
+        assert item["changes"] == [
+            {"field": "Phone number", "from": "03-1111111", "to": "03-2222222"}
+        ]
+
+
 # --------------------------------------------------------------------------- #
 # Endpoint wiring + auth deny                                                  #
 # --------------------------------------------------------------------------- #

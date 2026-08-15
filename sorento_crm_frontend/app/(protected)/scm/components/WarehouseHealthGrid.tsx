@@ -16,10 +16,10 @@ import { CompositionBar, HealthLegend, StateChip } from './HealthIndicators';
 import { ProductListDialog } from './ProductListDialog';
 import { ScmPager } from './ScmPager';
 
-/** Attention weight — stockout warehouses float to the top of the grid. */
+/** Attention weight - stockout warehouses float to the top of the grid. */
 const RANK: Record<string, number> = { stockout: 0, dead: 1, low: 2, overstock: 3, incoming: 4, healthy: 5 };
 
-/** Cards per page — 12 divides the 3- and 4-column grid cleanly. */
+/** Cards per page - 12 divides the 3- and 4-column grid cleanly. */
 const WH_PAGE_SIZE = 12;
 
 interface DrillTarget {
@@ -44,14 +44,14 @@ function WarehouseTile({
 
   const openCount = (status: HealthState, label: string) =>
     onOpenDialog({
-      title: `${label} — ${wh.warehouse_name}`,
+      title: `${label} - ${wh.warehouse_name}`,
       warehouse: wh.warehouse_code,
       status,
     });
 
   const openAll = () =>
     onOpenDialog({
-      title: `Products — ${wh.warehouse_name}`,
+      title: `Products - ${wh.warehouse_name}`,
       warehouse: wh.warehouse_code,
     });
 
@@ -176,7 +176,7 @@ function CountStat({
           e.stopPropagation();
           onOpen();
         }}
-        aria-label={`${value} ${label} — view products`}
+        aria-label={`${value} ${label} - view products`}
         className={cn(
           'rounded-sm text-lg font-semibold tabular-nums underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           disabled ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:underline',
@@ -206,7 +206,7 @@ export function WarehouseHealthGrid({
   isLoading: boolean;
   isError: boolean;
   onRetry?: () => void;
-  /** Current dashboard filters — scope the drill-down popups. */
+  /** Current dashboard filters - scope the drill-down popups. */
   filters: ScmFilters;
   activeState?: HealthState | null;
   onToggleHealth: (state: HealthState) => void;

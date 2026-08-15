@@ -24,6 +24,7 @@ from app.schemas.scm_explainer import (
     RunChatResult,
     RunOverviewResult,
 )
+from app.services.scm import reorder_run_service
 from app.services.scm import explainer_service as svc
 
 router = APIRouter()
@@ -48,6 +49,7 @@ def get_run_overview(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
+    reorder_run_service.assert_run_visible(db, run_id)
     text = svc.explain_run(db, run_id)
     db.commit()  # persist the lazily-cached overview
     return {"overview": text}
@@ -64,6 +66,7 @@ def run_chat(
     a live market web search is needed, folds any reading into the grounded answer, and
     attaches a confirm-gated ``proposal`` when a signal maps onto plan lines. No numeric
     write anywhere; a live scan only caches its own signal row (persisted on commit)."""
+    reorder_run_service.assert_run_visible(db, run_id)
     history = [t.model_dump() for t in payload.history]
     result = svc.answer_run_chat(
         db, run_id, payload.question, history, actor=(_user or {}).get("id")
@@ -83,6 +86,7 @@ def get_past_plans(
     """Cross-run history (M8-E3): prior COMPLETED-run lines for a SKU (+ its category
     siblings / variant neighbours) or a category. Read-only; the current run is
     excluded so only PRIOR plans surface."""
+    reorder_run_service.assert_run_visible(db, run_id)
     lines = svc.query_past_plans(
         db,
         product_code=product_code,

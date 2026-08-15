@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.models.sla import ConversationSLATracking, ConversationSLAEventLog
 from app.models.user import User
 from app.services.form_sla_service import FORM_SLA_TYPES
+from app.services.sla_scope import not_voided
 
 
 def _scope_conditions(scope: str):
@@ -47,7 +48,13 @@ def _parse(dt: Optional[str]) -> Optional[datetime]:
 
 
 def _base_filters(scope, date_from, date_to, entity_type, assignee_id):
-    conds = list(_scope_conditions(scope))
+    # Voided stages are out of EVERY dashboard number (UAC F4a). A stage cancelled
+    # because the contact revised the form underneath it was never anyone's to miss:
+    # counting it inflates the breach total on every revision. It keeps
+    # `void_reason` so the exclusion is explainable rather than invisible, and the row
+    # is still readable as history. One funnel - summary, leaderboard, tasks and trend
+    # all come through here.
+    conds = [not_voided()] + list(_scope_conditions(scope))
     df, dt = _parse(date_from), _parse(date_to)
     if df:
         conds.append(ConversationSLATracking.initiated_at >= df)

@@ -17,9 +17,15 @@ from fastapi import HTTPException, status
 
 from app.services.error_handler import handle_not_found
 
-_UUID_RE = re.compile(
+#: Exported so an optional UUID **query** param can be validated declaratively
+#: (`Query(None, pattern=UUID_PATTERN)`), which answers 422 through FastAPI's own
+#: validation handler. A query param has no "missing row" reading, so the 404 the
+#: function below returns would be a lie there.
+UUID_PATTERN = (
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+
+_UUID_RE = re.compile(UUID_PATTERN)
 
 
 def validate_uuid_path(value: str, *, resource: str = "Resource") -> str:

@@ -3,6 +3,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ActivityTimeline from './ActivityTimeline';
+import { ENTITY_TYPE_OPTIONS, entityTypeLabel } from './activityPresenters';
 import type { ActivityItem } from '../types/activity.types';
 
 function renderWithClient(ui: React.ReactElement) {
@@ -97,6 +98,16 @@ describe('ActivityTimeline', () => {
     expect(screen.getByText('Resolved')).toBeInTheDocument();
     expect(screen.getByText('Jane Tan')).toBeInTheDocument();
     expect(screen.queryByText('abc-123')).not.toBeInTheDocument();
+  });
+
+  it('can filter to customers, and labels them without a raw id', () => {
+    // Customers became audited without joining the timeline's entity registry, so
+    // their rows read "Customer 3f2a1b9c" and could not be filtered for at all.
+    expect(ENTITY_TYPE_OPTIONS).toContainEqual({
+      value: 'customer',
+      label: 'Customer',
+    });
+    expect(entityTypeLabel('customer')).toBe('Customer');
   });
 
   it('renders an error state with a retry affordance', () => {

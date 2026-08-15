@@ -164,7 +164,7 @@ const nf0 = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
 const money = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
 /** Format a nullable number, dash when the engine had no value for it. */
 function n(v: number | null | undefined, whole = false): string {
-  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  if (v === null || v === undefined || Number.isNaN(v)) return '-';
   return (whole ? nf0 : nf).format(v);
 }
 
@@ -208,7 +208,7 @@ function StepNumbers({ kind, facts }: { kind: StepDetail; facts?: PlanMethodolog
         : kind === 'rop'
           ? [
               { head: 'Safety stock', cell: (b) => n(b.safetyStock, true) },
-              { head: 'Lead time', cell: (b) => (b.leadTime == null ? '—' : `${n(b.leadTime, true)}d`) },
+              { head: 'Lead time', cell: (b) => (b.leadTime == null ? '-' : `${n(b.leadTime, true)}d`) },
               { head: 'Reorder point', cell: (b) => n(b.reorderPoint, true) },
             ]
           : [

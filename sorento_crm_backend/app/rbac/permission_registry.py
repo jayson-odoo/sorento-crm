@@ -54,6 +54,13 @@ PERMISSION_REGISTRY.append({"slug": "order_management.orders.export", "name": "E
 PERMISSION_REGISTRY.append({"slug": "order_management.orders.bulk_delete", "name": "Bulk Delete Delivery Orders", "description": "Permission to bulk delete delivery orders."})
 PERMISSION_REGISTRY.extend(_crud("order_management", "order_statuses", "Delivery Order Statuses"))
 PERMISSION_REGISTRY.extend(_crud("order_management", "customers", "Customers"))
+PERMISSION_REGISTRY.append({
+    "slug": "order_management.customers.import",
+    "name": "Import Customers",
+    "description": (
+        "Upload a debtor listing to create and update customers for the active company."
+    ),
+})
 
 # Complaint Management
 PERMISSION_REGISTRY.extend(_crud("complaint_management", "complaints", "Complaints"))
@@ -154,6 +161,10 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 PERMISSION_REGISTRY.extend(_with_import_export("master_data", "certificates", "Certificates"))
+# The salesperson master. `.edit` gates the annotation (who a code belongs to, and what
+# its orders count as); there is no add/delete surface, but the four slugs ship together
+# so the slug set matches the AutoCount branch's mirror pages exactly.
+PERMISSION_REGISTRY.extend(_crud("master_data", "sales_agents", "Sales Agents"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_root_causes", "Complaint Root Causes"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Complaint Resolutions"))
 
@@ -420,6 +431,42 @@ PERMISSION_REGISTRY.extend([
             "Create, edit, and delete statuses and transitions, and migrate records "
             "between statuses."
         ),
+    },
+])
+
+
+# SCM (supply chain) — these five were previously created ONLY by migration 274's data
+# seed. Any database built the way CI and `scripts/bootstrap_env` build one (create_all
+# from the ORM, seed reference data, stamp alembic at head) never executes that seed, so
+# the slugs did not exist and every SCM route answered 403 "Permission required:
+# scm.dashboard.view". Declaring them here is what makes them real on a fresh database;
+# migration 274 stays as the path for databases that were already migrated. `sync_permissions`
+# skips slugs that exist, so the two paths cannot conflict.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "scm.dashboard.view",
+        "name": "View SCM dashboard",
+        "description": "View the supply-chain / reorder dashboard and position views.",
+    },
+    {
+        "slug": "scm.reorder.run",
+        "name": "Run reorder engine",
+        "description": "Trigger a reorder run that produces recommendations.",
+    },
+    {
+        "slug": "scm.recommendation.manage",
+        "name": "Manage reorder recommendations",
+        "description": "Review, override, approve, or reject reorder recommendations.",
+    },
+    {
+        "slug": "scm.policy.manage",
+        "name": "Manage reorder policies",
+        "description": "Create, update, and delete reorder / scoring / demand policies.",
+    },
+    {
+        "slug": "scm.config.manage",
+        "name": "Manage SCM configuration",
+        "description": "Manage SCM module configuration, budgets, and reason vocabularies.",
     },
 ])
 

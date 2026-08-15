@@ -26,7 +26,7 @@ by definition (AC-H5).
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import event, false, or_
 from sqlalchemy.orm import Mapper, ORMExecuteState, Session, object_session, with_loader_criteria
@@ -54,6 +54,7 @@ __all__ = [
     "register_company_scope_listeners",
     "build_company_predicate",
     "admin_listing_company_filter",
+    "pending_company_id",
 ]
 
 
@@ -156,6 +157,90 @@ def admin_listing_company_filter(db, column) -> Optional[ColumnElement]:
 _ENFORCE = os.getenv("COMPANY_SCOPE_ENFORCE", "1") != "0"
 
 
+_RAISE_ON_AMBIGUOUS = object()
+
+
+def resolve_write_company_id(
+    scope: CompanyScope, *, ambiguous: Any = _RAISE_ON_AMBIGUOUS
+) -> Optional[str]:
+    """The company an owned row being written belongs to, from the session scope.
+
+    Extracted so a RAW-SQL insert into an owned table can stamp the same company the
+    ORM `before_insert` hook would. Raw SQL bypasses that hook entirely, so an owned
+    row inserted by hand lands with a NULL company_id and is then invisible to every
+    scoped read - the failure looks like missing data, not like a missing stamp.
+
+    ``ambiguous`` is what an UNSET / empty / multi-company scope resolves to. It raises
+    by default, because a request that cannot name one company must not create an owned
+    row. A caller that legitimately has no scope at all - a cron handler, which has no
+    request and no principal - passes the company it means explicitly, at its own call
+    site, where the choice is visible.
+    """
+    if isinstance(scope, frozenset) and len(scope) == 1:
+        return next(iter(scope))
+    # ``None`` = the deliberate system / all-companies principal; see the long note in
+    # ``_stamp_company_id`` for why that write lands in the incumbent company.
+    if scope is None:
+        return DEFAULT_COMPANY_ID
+    if ambiguous is not _RAISE_ON_AMBIGUOUS:
+        return ambiguous
+    if _TEST_LEAVE_NULL_OWNED_INSERT:
+        return None
+    raise AppException(
+        status_code=400,
+        message=(
+            "Cannot create this record without an active company. "
+            "A single active company is required to stamp company_id."
+        ),
+        code="company_scope_required",
+    )
+
+
+#: Returned by ``_stamp_scope`` for an object the auto-stamp will not touch.
+_NO_STAMP = object()
+
+
+def _stamp_scope(target: Any) -> Any:
+    """The scope that governs ``target``'s auto-stamp, or ``_NO_STAMP`` when the
+    ``before_insert`` hook would leave ``company_id`` alone: not an owned row, a
+    company already set, a shared (attachment) row, or enforcement switched off.
+
+    Shared by the hook itself and by ``pending_company_id`` so the two can never
+    disagree about which inserts get stamped.
+    """
+    if not _ENFORCE:
+        return _NO_STAMP
+    if not isinstance(target, CompanyScopedMixin):
+        return _NO_STAMP
+    if getattr(target, "company_id", None) is not None:
+        return _NO_STAMP
+    if _is_shared(type(target)):
+        return _NO_STAMP
+    sess = object_session(target)
+    return get_company_scope(sess) if sess is not None else UNSET
+
+
+def pending_company_id(target: Any) -> Optional[str]:
+    """The company an about-to-be-inserted row will end up in, resolved EARLY.
+
+    ``before_insert`` stamps ``company_id``, but that is a mapper-level hook and so
+    runs after ``before_flush``. A ``before_flush`` listener reading ``company_id``
+    off a brand new row therefore sees ``None`` and records the row as belonging to
+    no company. For the audit log that is not merely incomplete: the admin listing
+    deliberately shows company-less rows to everyone (legacy rows predate the
+    column), so a CREATE row snapshotting ``None`` leaks that entity's values to
+    every other company.
+
+    Returns ``None`` when nothing would be stamped, INCLUDING when the scope cannot
+    name a single company: the stamp itself raises in that case, so the insert never
+    happens. Never invent a company that the write path would not have chosen.
+    """
+    scope = _stamp_scope(target)
+    if scope is _NO_STAMP:
+        return None
+    return resolve_write_company_id(scope, ambiguous=None)
+
+
 def register_company_scope_listeners() -> None:
     """Install the scope SELECT filter + insert auto-stamp. Idempotent."""
     global _INSTALLED
@@ -206,18 +291,11 @@ def register_company_scope_listeners() -> None:
 
     @event.listens_for(Mapper, "before_insert")
     def _stamp_company_id(mapper, connection, target) -> None:  # noqa: ANN001
-        if not isinstance(target, CompanyScopedMixin):
-            return
-        if getattr(target, "company_id", None) is not None:
-            return  # explicit company (imports, backfilled paths) — leave as-is
-        if _is_shared(type(target)):
-            return  # attachments may legitimately be company-less (shared)
-
-        sess = object_session(target)
-        scope = get_company_scope(sess) if sess is not None else UNSET
-
-        if isinstance(scope, frozenset) and len(scope) == 1:
-            target.company_id = next(iter(scope))
+        # Not owned / already stamped / shared (attachments may legitimately be
+        # company-less). ``pending_company_id`` reads the same guard, so an audit
+        # snapshot taken in before_flush lands on the same company as the stamp.
+        scope = _stamp_scope(target)
+        if scope is _NO_STAMP:
             return
 
         # ``None`` = the deliberate system / all-companies principal (a valid
@@ -226,23 +304,14 @@ def register_company_scope_listeners() -> None:
         # company (Sorento) — this matches migration 306's DB DEFAULT and the
         # pre-multi-company behaviour where every write went to the single
         # company. Without this, n8n owned-writes (SPO / GRN / packing-list
-        # creates that come in with no contact identity) would be rejected below
+        # creates that come in with no contact identity) would be rejected
         # → a backward-compat break. Reads under ``None`` already return all
         # companies; writes now land in the incumbent. A Mocha n8n flow that
         # must write Mocha data passes contact identity → single-company scope.
-        if scope is None:
-            target.company_id = DEFAULT_COMPANY_ID
-            return
-
-        # UNSET (resolver never ran / unresolved contact) / empty / multi-company:
-        # genuinely ambiguous — never insert an owned row with a null company (AC-D4).
-        if _TEST_LEAVE_NULL_OWNED_INSERT:
-            return  # test-only: leave company_id null (see flag docs above)
-        raise AppException(
-            status_code=400,
-            message=(
-                "Cannot create this record without an active company. "
-                "A single active company is required to stamp company_id."
-            ),
-            code="company_scope_required",
-        )
+        #
+        # UNSET (resolver never ran / unresolved contact) / empty / multi-company is
+        # genuinely ambiguous, and raises: never insert an owned row with a null
+        # company (AC-D4). ``_TEST_LEAVE_NULL_OWNED_INSERT`` is the test-only escape.
+        company_id = resolve_write_company_id(scope)
+        if company_id is not None:
+            target.company_id = company_id

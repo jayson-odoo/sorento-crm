@@ -111,6 +111,17 @@ SEARCH_POLICY_SEED: list[dict] = [
         ),
     },
     {
+        "policy_key": "human_source_boost",
+        "label": "A spec a person set counts extra",
+        "value": 1.5,
+        "help_text": (
+            "A multiplier on the match, like the flyer boost and deliberately a separate "
+            "knob so the two can be tuned apart. A value somebody set by hand, or a "
+            "supplier confirmed, is the best evidence there is: nobody types a spec that "
+            "is already right. Set it to 1 to treat a hand-set spec like a parsed one."
+        ),
+    },
+    {
         "policy_key": "relevance_floor",
         "label": "Show nothing below a score of",
         "value": 1.5,

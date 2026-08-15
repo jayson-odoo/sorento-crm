@@ -1,8 +1,8 @@
 /**
- * SCM M8 — PlanAssistant (slice E / M8-F6). ONE conversational surface with a SINGLE
+ * SCM M8 - PlanAssistant (slice E / M8-F6). ONE conversational surface with a SINGLE
  * Ask input: the backend auto-decides whether a question needs a live market scan.
  * A grounded answer renders as prose; when a scanned signal maps onto plan lines the
- * chat response carries a CONFIRM-GATED per-line qty proposal rendered inline — nothing
+ * chat response carries a CONFIRM-GATED per-line qty proposal rendered inline - nothing
  * changes until the user confirms a line, which fires a real /adjust override upstream.
  *   M8-E1 one surface · M8-E2 grounded answer · M8-F6 single input + auto-routed proposal
  *
@@ -52,12 +52,12 @@ beforeEach(() => {
   chatMutateAsync.mockReset();
 });
 
-describe('PlanAssistant — one surface, single Ask input (M8-E1 / M8-F6)', () => {
+describe('PlanAssistant - one surface, single Ask input (M8-E1 / M8-F6)', () => {
   it('renders a single Ask input with no separate Search market button and no tabs', () => {
     renderAssistant();
     expect(screen.getByLabelText('Ask the plan assistant')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Ask/i })).toBeInTheDocument();
-    // the standalone market button is gone — the assistant auto-routes market search
+    // the standalone market button is gone - the assistant auto-routes market search
     expect(screen.queryByRole('button', { name: /Search market/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab')).not.toBeInTheDocument();
   });
@@ -68,7 +68,7 @@ describe('PlanAssistant — one surface, single Ask input (M8-E1 / M8-F6)', () =
   });
 });
 
-describe('PlanAssistant — knowledge sources (demo-only, no network)', () => {
+describe('PlanAssistant - knowledge sources (demo-only, no network)', () => {
   it('is collapsed by default and expands to reveal the add controls + caption', () => {
     renderAssistant();
     // collapsed: subtle toggle, no controls yet
@@ -94,7 +94,7 @@ describe('PlanAssistant — knowledge sources (demo-only, no network)', () => {
     // remove it
     fireEvent.click(screen.getByRole('button', { name: /Remove https:\/\/sorento.test\/spec.pdf/i }));
     expect(screen.queryByText('https://sorento.test/spec.pdf')).toBeNull();
-    // purely local — nothing hit the network
+    // purely local - nothing hit the network
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(chatMutateAsync).not.toHaveBeenCalled();
   });
@@ -111,7 +111,7 @@ describe('PlanAssistant — knowledge sources (demo-only, no network)', () => {
   });
 });
 
-describe('PlanAssistant — grounded answer (M8-E2)', () => {
+describe('PlanAssistant - grounded answer (M8-E2)', () => {
   it('sends the question and renders the grounded assistant answer', async () => {
     chatMutateAsync.mockResolvedValue({ answer: 'The basin buy eats the most cash at RM 14,000.' });
     renderAssistant();
@@ -125,10 +125,10 @@ describe('PlanAssistant — grounded answer (M8-E2)', () => {
   });
 });
 
-describe('PlanAssistant — auto-routed confirm-gated market bump (M8-F6 / M8-E5)', () => {
+describe('PlanAssistant - auto-routed confirm-gated market bump (M8-F6 / M8-E5)', () => {
   it('renders the inline proposal card from the chat response and only lands the override on confirm', async () => {
     chatMutateAsync.mockResolvedValue({
-      answer: 'Ceramic prices are trending up into Q4. I mapped that to one plan line — review below.',
+      answer: 'Ceramic prices are trending up into Q4. I mapped that to one plan line - review below.',
       proposal,
     });
     const { onApplyProposalLine } = renderAssistant();
@@ -172,7 +172,7 @@ describe('PlanAssistant — auto-routed confirm-gated market bump (M8-F6 / M8-E5
   });
 });
 
-describe('PlanAssistant — action pipeline: NL instruction -> Apply (M8-F16)', () => {
+describe('PlanAssistant - action pipeline: NL instruction -> Apply (M8-F16)', () => {
   const actionProposal: ActionProposal = {
     summary: 'Buy FT-B only; reject the rest.',
     lines: [
