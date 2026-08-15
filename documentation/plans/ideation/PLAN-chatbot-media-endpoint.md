@@ -1404,8 +1404,14 @@ twice against the three real photos - results in `chatbot-media-endpoint-corpus-
 the Trap C regression it exposed in `chatbot-media-endpoint-trapc-reliability.md`. Extraction
 quality is measured, not asserted, and section 13 states plainly what it still gets wrong.
 
-**Still owed:** the Playwright E2E and browser sign-off of the two operator surfaces, both blocked
-on a CRM login this environment does not have (section 16.4).
+**Since settled (2026-08-15):** the browser sign-off of both operator surfaces, once the captain
+supplied a verification login. Done against a production build, reached by clicking rather than by
+deep URL, and including the failed-load state that finding 16.3 was about, forced by stopping the
+backend. It found one real defect, a limits dialog with no accessible description, now fixed and
+covered by a test. The full account is in the PR body.
+
+**Still owed:** a persisted Playwright spec for those two surfaces. The interactive sign-off stands
+on its own, but nothing yet guards them against regression.
 
 ---
 

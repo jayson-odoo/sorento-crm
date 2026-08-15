@@ -146,13 +146,29 @@ selection is not masking ordering effects on either side.
   explicitly fine unserialised; do not serialise test runs. If the spin-wait blocks far longer than
   a build should take, check for a live `next build` process before assuming the lockdir is stale.
 
+## Browser sign-off: DONE (2026-08-15)
+
+The captain provided a browser-verification login as `E2E_EMAIL` / `E2E_PASSWORD` in the clone at
+`/Users/tehjayson/Documents/foundryx/firstmate/projects/sorento-crm/sorento_crm_frontend/.env.local`
+(gitignored, values never printed). Both operator surfaces were signed off against a production
+build on this lane's ports (backend 8020, frontend 3021), reached by clicking rather than by deep
+URL. The full account is in the PR body under "Browser sign-off of the two operator surfaces",
+including the failed-load state, which was verified by stopping the backend.
+
+Practical notes for anyone repeating it:
+
+- Use an isolated browser session (`AGENT_BROWSER_SESSION=<name>`, or `--session`). The default
+  session is shared, and another lane's run pulled the page to its own port mid-verification.
+- Set the viewport first (`agent-browser set viewport 1400 1600`) and scroll the target into view.
+  A click on an element below the fold reports success and does nothing, which reads exactly like a
+  dead handler and cost real time before it was pinned down.
+- The login helper is `<session scratchpad>/ablogin.sh <url>`. The email input is `name=email`, not
+  `type=email`.
+
 ## Known unmet, not to be papered over
 
-- **Playwright E2E and browser sign-off of the two operator surfaces.** Blocked on the absence of a
-  CRM login: no `*_E2E_EMAIL` / `*_E2E_PASSWORD` in any `.env`, and password resets are refused for
-  the reason above. The switch from `chrome-devtools-axi` to `agent-browser` does not unblock this,
-  because the blocker was credentials, not the driver. PLAN 16.4 states this plainly and the PR must
-  repeat it.
+- **A persisted Playwright spec for the two operator surfaces.** The interactive sign-off is done;
+  a committed regression spec is not written.
 - **RQ worker end-to-end against the `queue_service` socket-timeout change** is unverified.
 - **No corpus re-run through the changed voice path** after the B1 fix.
 
