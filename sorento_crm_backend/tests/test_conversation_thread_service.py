@@ -360,6 +360,24 @@ def test_media_message_persists_a_typed_placeholder(db):
     assert "image" in row.message.lower()
 
 
+def test_attachment_persists_its_filename_so_search_can_find_it(db):
+    item = {
+        "messageId": 1786000010000000,
+        "traffic": "outgoing",
+        "message": {
+            "type": "attachment",
+            "attachment": {"type": "file", "fileName": "PO%20SPO%202023.xlsx"},
+        },
+        "sender": {"source": "api"},
+        "status": [],
+    }
+    svc.fetch_thread_page(db, CONTACT, limit=5, client=FakeRespondClient([item]))
+    row = db.query(ChatHistory).filter(ChatHistory.message_id == "1786000010000000").one()
+    # Percent-decoded: nobody searches for "%20".
+    assert row.message == "[file] PO SPO 2023.xlsx"
+    assert svc.search_thread(db, CONTACT, q="SPO 2023")["total"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------

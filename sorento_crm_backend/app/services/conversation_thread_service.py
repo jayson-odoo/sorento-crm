@@ -45,6 +45,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
+from urllib.parse import unquote
 
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
@@ -159,12 +160,23 @@ def _respond_item(item: dict) -> dict:
 
 
 def _respond_item_text(item: dict) -> str:
-    """Storable text for a Respond message: the body, else a typed placeholder."""
+    """Storable text for a Respond message.
+
+    The body when there is one, else a typed placeholder carrying the filename -
+    "[file] quotation.pdf" is something a person can actually search for, where a
+    bare "[attachment]" is not.
+    """
     message = item.get("message") if isinstance(item.get("message"), dict) else {}
     body = (message.get("text") or "").strip()
     if body:
         return body
     kind = (message.get("type") or "").strip() or "attachment"
+    attachment = message.get("attachment") if isinstance(message.get("attachment"), dict) else None
+    if attachment:
+        name = unquote(str(attachment.get("fileName") or "")).strip()
+        sub = (attachment.get("type") or "").strip()
+        label = sub or kind
+        return f"[{label}] {name}".strip() if name else f"[{label}]"
     return f"[{kind}]"
 
 
