@@ -1,6 +1,8 @@
 # UAC - Onboarding intake, review and provisioning (Slice 1)
 
-**Status:** Approved decisions (captain, 2026-08-14). Slice 1 build.
+**Status:** Approved decisions (captain, 2026-08-14), amended by the hands-on
+review of 2026-08-15: the workbook upload is withdrawn (AC-4 below), the three
+needs are renamed, and each row carries a free-text role.
 **Spec origin:** onboarding-flow design report + captain decisions D1-D7, 2026-08-14. This
 document is the self-contained contract; nothing outside the repo needs to be read to build it.
 **Binding context:** `PRINCIPLES.md` (step 0 journey-first), `docs/ADR-PRODUCT-STANDARDS.md`,
@@ -15,7 +17,7 @@ document is the self-contained contract; nothing outside the repo needs to be re
 
 - The **requester** (a department head at a client company - call her Esther). She has no CRM
   account and will never get one. She already holds the list of people, usually as a
-  spreadsheet somebody else wrote.
+  spreadsheet somebody else wrote - she reads it and types it in.
 - The **captain** (an admin holding `user_management.onboarding.approve`). Today he retypes
   Esther's list into the user form one person at a time, guesses each person's access by
   copying "someone similar", and creates the same people again by hand in respond.io.
@@ -33,20 +35,17 @@ of the submitted people already exist as a user or a contact.
 password, no OTP. The page names her company and who asked her, and shows when the link
 expires. **One decision at this step: none.** She only reads.
 
-**Step 2 - give us the people.** She either drops her existing sheet on the page or types rows
-into the grid. Both land in the *same* editable grid. The parser tolerates what her file
-actually is: four department sections each introduced by a lone label cell, the header row
-repeated under every section, phone numbers written `01X-XXXXXXX`, and email addresses with
-trailing spaces. Rows it could not fully read are still shown, with a per-row chip saying what
-is wrong ("phone not recognised", "no email"). **A bad row is never a rejected file.** The
-single decision here is which file, or what to type.
+**Step 2 - give us the people.** She types rows into the grid, one row per person: name,
+nickname, **role** in her own words ("Sales admin, KL"), phone, email. Nothing is uploaded;
+there is no file to prepare and no file to get wrong. The single decision here is who is on
+the list.
 
 **Step 3 - say what each person needs.** Per row she picks an **access template** by its label
-- "Salesperson", "Sales admin", "Dealer" - and confirms three checkboxes the template
-pre-fills: *System account*, *WhatsApp contact*, *Chat-agent seat*. She can set a template for
-a whole section in one action. She sees **template labels only** - never a role name, never a
-permission slug, never the existing user list. A free-text *notes for the reviewer* box covers
-anything the templates cannot say ("like Ahmad's access but no exports").
+- "Salesperson", "Sales admin", "Dealer" - and confirms a multi-select the template pre-fills:
+*System account*, *Access to chatbot AI*, *Respond.io account*. She sees **template labels
+only** - never a role name, never a permission slug, never the existing user list. Her free-text
+role and a *notes for the reviewer* box cover anything the templates cannot say ("like Ahmad's
+access but no exports").
 
 **Step 4 - submit.** One submit for the whole batch. She holds a confirmation - "18 people
 submitted for review" - and an email saying the same. The **same link** now serves a read-only
@@ -69,8 +68,8 @@ one. **The decisions at this step are per row: keep, edit, or reject.**
 engine and queues the provisioning job. He never leaves the page to create anything by hand.
 
 **Step 4 - watch it land.** Each person row carries a three-lane ledger - *System account /
-WhatsApp contact / Chat-agent seat* - and the page renders it. A lane that failed says why, on
-that person's row, and no failure stops any other person or lane.
+Access to chatbot AI / Respond.io account* - and the page renders it. A lane that failed says
+why, on that person's row, and no failure stops any other person or lane.
 
 **What everyone holds at the end.** Esther holds a status page and a completion email. The
 captain holds a batch of CRM users created with the right roles and companies, and a visible
@@ -82,8 +81,8 @@ email with a 7-day password link.
 ## Scope of Slice 1
 
 **In:** the three tables, the status graph, the intake token, the public intake endpoints, the
-sheet parser, the intake FE page, the review queue and detail FE, approve, the **CRM-user
-provisioning lane**, collision reporting, and the requester/captain notifications.
+intake FE page, the review queue and detail FE, approve, the **CRM-user provisioning lane**,
+collision reporting, and the requester/captain notifications.
 
 **Out, and named so the absence is deliberate:**
 
@@ -105,7 +104,7 @@ provisioning lane**, collision reporting, and the requester/captain notification
 - **AC-1.1** `onboarding_requests` is company-scoped (`CompanyScopedMixin`): a request belongs
   to exactly one company because everything downstream - which companies the user is granted,
   which teams could ever route to them - is company-scoped. The company is chosen at request
-  creation and is **never** a column in the uploaded file.
+  creation and is **never** something the requester supplies.
 - **AC-1.2** `onboarding_people` rows cascade-delete with their request and carry the
   three-lane provisioning ledger *on the person row*, not in a side saga table. Three lanes,
   each with its own step value, its own error text and its own captured artifact id.
@@ -116,6 +115,10 @@ provisioning lane**, collision reporting, and the requester/captain notification
   the captain resolves the template at review time and sees what it currently means. Roles are
   read from the template at **provisioning** time, so what is granted is what the review screen
   showed.
+- **AC-1.4b** Each person row carries a free-text `role_label` (120 characters, nullable): what
+  the requester says this person does. It is prose, never a role id - a picker here would
+  expose the role list AC-5.4 exists to hide, and the reviewer is the one who turns "Sales
+  admin, KL" into an access template. Editable on both screens, shown on the review detail.
 - **AC-1.5** Emails are stored folded (`lower(btrim())`); phones are stored MSISDN-normalised
   via `app/services/phone_utils.normalize_msisdn`. Both are stored **normalised and raw**: the
   raw value is what Esther typed and is what the review screen shows her back, the normalised
@@ -153,37 +156,28 @@ provisioning lane**, collision reporting, and the requester/captain notification
   deliberate difference from the contact portal, which fronts real CRM records.
 - **AC-3.6** Public endpoints live under `/api/v1/public/onboarding/*` and take the token in an
   `X-Onboarding-Token` header **or** a `token` query parameter, mirroring `get_portal_token`.
-- **AC-3.7** The parse endpoint is per-IP rate-limited (fail-open, same shape as
-  `POST /public/portal/request-otp`): it is unauthenticated compute that reads a workbook.
+## AC-4 Sheet parse - WITHDRAWN
 
-## AC-4 Sheet parse (PHONE LIST shape)
+**Upload dropped by captain decision 2026-08-15; requesters type rows in the system.**
 
-Verified against the real file: one sheet, 29 rows, 4 columns, 4 sections, 18 people.
+The whole of AC-4 (workbook reader, `import_field_alias` doc type `onboarding_person`, header
+detection, repeated-header and section-label heuristics, report-furniture filtering, per-row
+parse problems, `POST /public/onboarding/parse` and its per-IP rate limit) is withdrawn. The
+reader, its tests, its fixture workbook and the endpoint are deleted rather than left dormant:
+a parser nothing calls is a parser nobody maintains, and it carried the two review findings
+(parse clobbers typed rows, an all-caps name swallowed as a section) that this decision
+retires.
 
-- **AC-4.1** Headers resolve through `import_field_alias` under doc type `onboarding_person`,
-  seeded with the observed spellings (`STAFF NAME`, `NICK NAME`, `PHONE`, `EMAIL`) plus the
-  obvious variants. A client whose sheet says `MOBILE` is an alias INSERT, not a release.
-- **AC-4.2** The header row is **the first row that resolves a full-name column**, not row 1 -
-  the same rule the customer importer uses, because these sheets carry title lines.
-- **AC-4.3** A row that re-resolves as the header row is a **repeated header** and is skipped
-  silently. It occurs three more times in the sample file and must never be reported as a bad
-  person.
-- **AC-4.4** A row whose only content is a single non-empty cell that resolves to no field is a
-  **section label**. Its text is carried onto every subsequent person row as `section_label`
-  until the next one. This is the only access signal the sheet carries.
-- **AC-4.5** Report furniture (rule lines, `TOTAL`, `PAGE 1 OF 2`, `*** END OF REPORT ***`) is
-  filtered by the customer importer's `_is_report_furniture` rule, matched on the whole cell so
-  a person genuinely called "Total" is still reported rather than swallowed.
-- **AC-4.6** Emails are trimmed before comparison. Half the sample's addresses carry trailing
-  whitespace and a raw compare would split one domain into two.
-- **AC-4.7** Phones are normalised with `normalize_msisdn` (MY default region), so
-  `012-3456789` and `+60123456789` are the same person.
-- **AC-4.8** Warnings, not errors: a row missing an email or carrying an unparseable phone is
-  **returned** with a `RowProblem`, never dropped and never fatal to the file. A file whose
-  header carries no name column at all is the one hard failure, reported as
-  `missing_columns`.
-- **AC-4.9** The parse endpoint writes nothing. It answers with rows plus problems; saving is
-  a separate call.
+Consequences elsewhere in this contract:
+
+- The **Issues** column (per-row parse problems) and the **Section** column (`section_label`)
+  are gone from the grid. `onboarding_people.section_label` stays as a nullable column so the
+  change needs no destructive migration; nothing reads or writes it.
+- The request's `source_file_name` / `source_storage_*` are no longer surfaced. There is no
+  source file.
+- Phone normalisation (`normalize_msisdn`, MY region) and email folding survive - they are
+  properties of a stored value, not of a parser - and live in `onboarding_service` now.
+- The intake email tells the requester to type her list in, not to upload one.
 
 ## AC-5 Intake page (requester)
 
@@ -191,15 +185,20 @@ Verified against the real file: one sheet, 29 rows, 4 columns, 4 sections, 18 pe
   no sidebar.
 - **AC-5.2** Renders at 375px and 1280px. The grid scrolls inside its own container; the page
   body never scrolls horizontally.
-- **AC-5.3** Per-row problem chips, per-row template picker (label + description only), a
-  section-level "apply template to this section" action, three need-flag checkboxes per row
-  pre-filled from the template, a per-row note and a batch note.
+- **AC-5.3** Per-row: name, nickname, free-text **role**, phone, email, a template picker
+  (label + description only), a **Needs multi-select** pre-filled from the template offering
+  *System account* / *Access to chatbot AI* / *Respond.io account*, and a note; plus a batch
+  note. Rows are added with "Add a person" and removed with the standard trash-can button
+  behind the standard confirm dialog. The multi-select is the shared
+  `SearchableMultiSelect` - a stack of checkboxes was this grid's own invention. Every
+  dropdown in the feature sizes its menu to the option text and wraps a long label rather than
+  truncating it.
 - **AC-5.4** The template picker never exposes role names, permission slugs, company ids or
   the user list. The public template endpoint serializes `id`, `name`, `description` and the
   three default flags - nothing else. This is the privacy boundary, enforced in the schema, not
   in the component.
 - **AC-5.5** No UUIDs are rendered anywhere on the page (cursor rule).
-- **AC-5.6** Loading, empty, parse-error, saved and submitted states are all designed; after
+- **AC-5.6** Loading, empty, error, saved and submitted states are all designed; after
   submit the page renders the read-only status view of the same grid.
 
 ## AC-6 Review queue and detail (captain)
@@ -272,14 +271,14 @@ Templates are administered under `.edit`; there is no separate template permissi
 
 ## AC-10 Tests
 
-- **pytest**: parser against a committed fixture workbook reproducing the PHONE LIST shape
-  (4 sections, repeated headers, dashed phones, trailing-whitespace emails); token
-  resolve/expiry/revoke/post-submit-read-only; every public endpoint's happy path, 401 and
+- **pytest**: token resolve/expiry/revoke/post-submit-read-only; the role round trip
+  (typed on her rows, edited by the reviewer, returned on the detail); every public endpoint's happy path, 401 and
   validation error; every admin endpoint's happy path and permission denial; the status
   transitions including the double-approve 409; the provisioning job's create / pre-existing /
   failure / re-run paths; collision detection. Postgres only - **never** sqlite, and every test
   seeds its own FK chain rather than borrowing an existing row.
 - **vitest**: intake grid and review grid components across loading / empty / error / data /
-  submitted states; the template picker's label-only contract; the hooks.
+  submitted states; the template picker's label-only contract; the needs multi-select and its
+  read-only rendering; the hooks.
 - **playwright**: sidebar click -> review queue -> detail -> approve, asserting the
   `/api/v1/*` calls actually fired.

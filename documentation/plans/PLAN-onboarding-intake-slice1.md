@@ -1,8 +1,9 @@
 # PLAN - Onboarding intake, review and CRM-user provisioning (Slice 1)
 
 **Status:** Phases 1 and 2 shipped (FE on the real API, backend + tests green), then
-restandardized onto the repo's list/detail idiom; Phase 3 (review) in progress. Section 2.6's
-endpoint table and 2.7's registry note describe what actually shipped, not the original sketch.
+restandardized onto the repo's list/detail idiom; Phase 3 (review) in progress, with the
+captain's hands-on round of 2026-08-15 applied (section 7). Section 2.6's endpoint table and
+2.7's registry note describe what actually shipped, not the original sketch.
 **Contract:** `documentation/plans/UAC-onboarding-intake.md`. Read that first; it carries the
 Journey and every AC this plan implements. Nothing outside the repo is required.
 
@@ -10,16 +11,14 @@ Journey and every AC this plan implements. Nothing outside the repo is required.
 
 ## 0. Shape of the work
 
-Three tables, one status graph, one token, one parser, two FE surfaces (public intake, admin
-review), one RQ job. The parts that already exist and are being *reused* rather than rebuilt:
+Three tables, one status graph, one token, two FE surfaces (public intake, admin review), one
+RQ job. (A workbook parser was built and then withdrawn - see section 7.) The parts that
+already exist and are being *reused* rather than rebuilt:
 
 | Need | Reused from |
 |---|---|
-| Workbook reading (`.xlsx` + legacy `.xls`) | `app/services/scm/outstanding_reader.py` - `sheet_rows`, `RowProblem` |
-| Header aliasing + furniture filtering | `app/services/import_alias_service.py`, `app/services/customer_import_reader.py._is_report_furniture` |
 | Crockford token alphabet | `app/services/portal_service.py._crockford_token` (extracted to a shared helper) |
 | Token-gated public route shape | `app/api/v1/public/portal.py.get_portal_token` |
-| Per-IP rate limit | `app/services/rate_limit.hit` |
 | Status graph + guarded transitions | `app/services/status_service`, migration `318_dealer_kit_edition`, `dealer_kit/edition_service.py` |
 | User creation with roles/companies | `app/services/user_service.UserService.invite_user` |
 | Invitation email | `app/api/v1/user_management/users.py._send_invitation_link_for_user` |
@@ -50,6 +49,11 @@ shared across worktrees:
 
 `downgrade()` drops the three tables, the graph edges then the statuses, the aliases and the
 permission grants then the permissions - children before parents throughout.
+
+**Migration `361_onboarding_role_label`** follows it: it adds `onboarding_people.role_label` and
+deletes the doc-type-`onboarding_person` aliases seeded above, which existed only for the
+withdrawn reader (section 7). 360's seeder is left alone because it has already run on shared
+databases; 361's downgrade restores the rows. Single head after both: `361_onboarding_role_label`.
 
 ### DDL
 
@@ -86,9 +90,10 @@ onboarding_people
   company_id UUID NULL FK companies,
   row_number INT NOT NULL,
   full_name VARCHAR(200) NOT NULL, nick_name VARCHAR(100) NULL,
+  role_label VARCHAR(120) NULL,                              -- migration 361, free text
   phone_raw VARCHAR(64) NULL, phone VARCHAR(32) NULL,        -- phone = normalised MSISDN
   email_raw VARCHAR(255) NULL, email VARCHAR(255) NULL,      -- email = lower(btrim())
-  section_label VARCHAR(120) NULL,
+  section_label VARCHAR(120) NULL,                           -- retained, no longer written
   template_id UUID NULL FK onboarding_templates ON DELETE SET NULL,
   requester_note TEXT NULL, reviewer_note TEXT NULL,
   needs_system_account BOOL NOT NULL DEFAULT true,
@@ -141,7 +146,17 @@ onboarding token and the portal token cannot drift onto different alphabets.
 `portal_service._crockford_token` becomes a one-line delegate; its behaviour is unchanged and
 its existing tests must stay green.
 
-### 2.3 Parser - `app/services/onboarding_reader.py`
+### 2.3 Parser - REMOVED
+
+`app/services/onboarding_reader.py`, `tests/test_onboarding_reader.py` and the fixture workbook
+are deleted; **upload dropped by captain decision 2026-08-15; requesters type rows in the
+system.** What the sketch below described no longer exists, and is kept only so a reader of the
+git history knows what was withdrawn rather than lost.
+
+<details>
+<summary>The parser as built (withdrawn)</summary>
+
+### 2.3 Parser - `app/services/onboarding_reader.py` (deleted)
 
 Public surface: `read_workbook(file_data, resolver=None, *, db=None) -> OnboardingReadResult`
 with `rows: list[OnboardingPersonRow]`, `problems: list[RowProblem]`, `unmapped_headers`,
@@ -173,6 +188,11 @@ Algorithm, in order:
 
 The parser never touches the database beyond building the `AliasResolver`, so it is testable
 against a file alone.
+
+</details>
+
+`_plausible_msisdn` was the one piece worth keeping - it is a property of a stored phone
+number, not of a parser - and now lives in `onboarding_service`.
 
 ### 2.4 Service - `app/services/onboarding_service.py`
 
@@ -232,7 +252,6 @@ after editing it.
 |---|---|
 | `GET /me` | Request context: company name, requester name, expiry, status, template labels, current rows. Read-only after submit. |
 | `GET /templates` | `id`, `name`, `description`, three default flags. **Nothing else** (AC-5.4). |
-| `POST /parse` | multipart `file` -> rows + problems. Rate-limited per IP, writes nothing. |
 | `PUT /rows` | Save the draft rows. 409 unless status is `sent`. |
 | `POST /submit` | `sent -> submitted`, notifies. |
 
@@ -287,14 +306,12 @@ Built and browser-verified before any of section 2 is written, per the repo's me
 `app/(auth)/onboarding/components/`:
 
 - `IntakeHeader` - company, requester, expiry, status.
-- `PeopleGrid` - the editable grid; per-row problem chips, template picker, three checkboxes,
-  note. One component serving intake and review, with a `mode: 'intake' | 'review'` prop, so
+- `PeopleGrid` - the editable grid; template picker, needs multi-select, role, note. One
+  component serving intake and review, with a `mode: 'intake' | 'review' | 'readonly'` prop, so
   the two screens cannot drift.
-- `SheetDropzone` - drop/browse, parse, merge into the grid.
 - `SubmitBar` + `SubmittedStatusView`.
 
-Mock fixtures in `app/(auth)/onboarding/__mocks__/onboarding.ts` reproducing the PHONE LIST
-shape: 18 people, 4 sections, two rows with problems, one with a collision.
+The dropzone that used to sit above the grid is gone with the upload path (section 7).
 
 **Admin** - `app/(protected)/user-management/onboarding-requests/page.tsx` (DataGrid queue) and
 `[id]/page.tsx` (detail: header meta strip, the same `PeopleGrid` in `review` mode, collision
@@ -316,14 +333,16 @@ plus empty/error states.
 
 ## 4. Tests (Phase 2, not deferred)
 
-- **pytest** - `tests/test_onboarding_reader.py` (against a committed fixture workbook built to
-  the PHONE LIST shape), `tests/test_onboarding_token.py`, `tests/test_onboarding_public_api.py`,
-  `tests/test_onboarding_admin_api.py`, `tests/test_onboarding_provisioning.py`. Postgres only,
-  via `tests/_pg_fixture.blank_session()`; every test seeds its own company/role/template/
-  request chain with a marker prefix and cleans children first. No `LIMIT 1` off a live table.
+- **pytest** - `tests/test_onboarding_service.py` (token, transitions, collisions, the role
+  round trip, provisioning lanes) and `tests/test_onboarding_api.py` (both HTTP surfaces).
+  Postgres only, via `tests/_pg_fixture.blank_session()`; every test seeds its own
+  company/role/template/request chain with a marker prefix and cleans children first. No
+  `LIMIT 1` off a live table. The reader's own suite and its fixture workbook were deleted with
+  the reader (section 7).
 - **vitest** - `PeopleGrid` across loading/empty/error/data/submitted, the template picker's
-  label-only contract, the collision chips, the reject dialog's required reason. `DataGrid`
-  listings mock `useListingColumnPreferences` so rows actually mount.
+  label-only contract, the needs multi-select and its read-only rendering, the role cell, the
+  collision chips, the reject dialog's required reason. `DataGrid` listings mock
+  `useListingColumnPreferences` so rows actually mount.
 - **playwright** - `e2e/onboarding-review.spec.ts`: sidebar -> queue -> detail -> approve,
   asserting the `/api/v1/user-management/onboarding/*` calls the flow makes.
 
@@ -338,7 +357,7 @@ plus empty/error states.
 
 1. UAC + this plan. *(done)*
 2. Phase 1 FE mock, browser-verified at 375 and 1280.
-3. Migration + models + parser + parser tests.
+3. Migration + models.
 4. Token + public routes + tests.
 5. Admin routes + service + status transitions + tests.
 6. Provisioning task + tests.
@@ -348,10 +367,64 @@ plus empty/error states.
 ## 6. Risks
 
 - **Two alembic heads at branch point.** Handled by the tuple `down_revision`; re-check
-  `alembic heads` after any rebase and keep it at one.
+  `alembic heads` after any rebase and keep it at one. After migration 361 the single head is
+  `361_onboarding_role_label`.
 - **The shared dev database is a production copy.** Every write this feature makes is to its
-  own new tables plus the seeded graph/alias/permission rows. Nothing else is touched.
-- **Parser over-eagerness.** A section-label heuristic that is too loose eats a real person.
-  Mitigated by requiring *exactly one* non-empty cell and by the furniture rule matching whole
-  cells only; the fixture test pins both directions (a section label is skipped, a person
-  called "Total" is not).
+  own new tables plus the seeded graph/permission rows. Nothing else is touched.
+
+## 7. Captain's review round, 2026-08-15
+
+Six changes off a hands-on session on the running stack. Internal field names are unchanged
+throughout - `needs_respond_contact`, `needs_agent_seat`, `contact_step`, `agent_step` still
+say what they always said, because this was a vocabulary decision and renaming a column is a
+migration.
+
+1. **Labels.** "WhatsApp contact" is now **Access to chatbot AI**; "Chat-agent seat" is now
+   **Respond.io account**; "System account" is unchanged. Applied to the needs options, the
+   lane ledger, the reviewer's counts strip ("Respond.io accounts N"), the contact collision
+   chip, and this contract's prose. `NEED_LABELS` in `PeopleGrid.tsx` is the one place the
+   three words live.
+2. **Needs is a multi-select.** The checkbox stack is replaced by the shared
+   `SearchableMultiSelect` - the component every other picker in the app uses. The patch it
+   raises carries all three flags, not only the one that moved: the selection IS the answer, so
+   an unticked option has to arrive as `false` rather than as an absent key. Locked and
+   read-only modes render the chosen labels as plain text.
+3. **Dropdowns fit their options and wrap.** `SearchableSelect` and `SearchableMultiSelect`
+   gained an opt-in `wrapOptions`: the menu grows to the widest option (capped at the viewport,
+   never narrower than the trigger) and a long label wraps instead of truncating. Fixed in the
+   shared components rather than forked, and set on the template picker, the needs
+   multi-select, the queue's status filter and the create dialog's company select.
+   `SearchableMultiSelect` also gained `id`, for parity with `SearchableSelect`, so a
+   `<label htmlFor>` can point at its trigger.
+4. **Delete affordance.** The row's text "Remove" button is a ghost trash-can icon button
+   (`Trash2`, `mode="icon"`), still behind `ConfirmDeleteDialog` with the standard copy.
+5. **Role.** `onboarding_people.role_label` (VARCHAR(120), nullable, migration
+   `361_onboarding_role_label`), on `DraftRowIn` / `PersonPatchIn` / `PersonOut` with
+   `max_length=120`, in `EDITABLE_PERSON_FIELDS`, and a Role column in the grid on both
+   screens (`BufferedInput`, commit on blur). Free text on purpose: a role picker would expose
+   the role list AC-5.4 hides.
+6. **Upload dropped by captain decision 2026-08-15; requesters type rows in the system.**
+   Deleted: `app/services/onboarding_reader.py`, `tests/test_onboarding_reader.py`,
+   `tests/fixtures/onboarding_phone_list.xlsx` and its generator,
+   `POST /api/v1/public/onboarding/parse` with its rate-limit settings, the parse schemas, the
+   FE dropzone and `parseSheet`, the Issues and Section columns, `ProblemChips`, and the
+   "Source file" meta item. Migration 361 also deletes the `import_field_alias` rows for doc
+   type `onboarding_person`, which existed only for that reader; the deletion lives in 361
+   rather than in 360, whose seeder has already run on shared databases, and 361's downgrade
+   puts the rows back.
+
+   Two things are deliberately kept. `onboarding_people.section_label` stays as a nullable
+   column - nothing reads or writes it, and dropping a populated column is destructive for no
+   gain. `_plausible_msisdn` moved into `onboarding_service`: it judges a stored phone number,
+   not a spreadsheet.
+
+### Open items (recorded, not built)
+
+- **Access templates have no admin UI.** The CRUD endpoints exist
+  (`GET|POST /user-management/onboarding/templates`, `PUT|DELETE .../templates/{id}`,
+  `POST .../templates/capture-from-user/{user_id}`), and the pickers read them, but there is no
+  page to create or edit one - so today a template is created through the API. The captain
+  asked where he configures them; the honest answer is "not built yet".
+- **Intake-link expiry has no UI control.** `expiry_days` is only settable at creation
+  (default 14) and "Issue a new link" resets to 14 days. Nothing on the create dialog or the
+  detail page lets the captain choose a different window or extend a live link.
