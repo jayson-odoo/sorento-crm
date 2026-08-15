@@ -1,7 +1,7 @@
 """scm plan feedback round 2: cover scope on the policy, debtor code on the sales order
 
 Revision ID: 359_scm_plan_feedback_r2
-Revises: 46cf6ce8b6d0
+Revises: 358_scm_po_spo_history_aliases
 Create Date: 2026-08-15
 
 Two additive columns, ONE revision, shared byte-for-byte by the two branches that need them
@@ -21,7 +21,7 @@ import sqlalchemy as sa
 
 
 revision = "359_scm_plan_feedback_r2"
-down_revision = "46cf6ce8b6d0"
+down_revision = "358_scm_po_spo_history_aliases"
 branch_labels = None
 depends_on = None
 
