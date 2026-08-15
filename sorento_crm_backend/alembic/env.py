@@ -46,6 +46,28 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 target_metadata = Base.metadata
 
+# Schemas autogenerate is allowed to compare. Derived from the models rather than listed,
+# so a module that earns its own schema is covered the day its first model declares one.
+# `None` is the connection's default schema (public in production).
+KNOWN_SCHEMAS = {None} | {
+    table.schema for table in target_metadata.tables.values() if table.schema
+}
+
+
+def include_name(name, type_, parent_names):
+    """Keep autogenerate to the schemas the models actually describe.
+
+    Two separate failures make this necessary. Without ``include_schemas`` alembic
+    compares only the default schema on the DATABASE side while building its metadata
+    table set from EVERY schema, so it proposes re-creating every `scm.*` and
+    `projects.*` table on each run. Turning ``include_schemas`` on alone then surfaces
+    schemas that exist in the database but not in the models (`dealer_kit`) as DROP
+    candidates. Filtering by name is what makes the pair safe.
+    """
+    if type_ == "schema":
+        return name in KNOWN_SCHEMAS
+    return True
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
@@ -55,6 +77,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_schemas=True,
+        include_name=include_name,
     )
 
     with context.begin_transaction():
@@ -71,7 +95,10 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            include_schemas=True,
+            include_name=include_name,
         )
 
         with context.begin_transaction():
