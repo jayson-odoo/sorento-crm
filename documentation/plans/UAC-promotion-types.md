@@ -305,8 +305,9 @@ absent from both.
 
 ### Migration / seed state
 
-`alembic heads` → single head `361_promotion_types` (a merge revision rejoins the
-container-status and human-source-boost heads first). Applied to the local DB: the
+`alembic heads` → single head `361_promotion_types`, chained onto
+`357_merge_grn_spo_fm_heads` (which already rejoined the container-status,
+human-source-boost and GRN lanes). Applied to the local DB: the
 five types seeded, and all 29 existing promotions classified from their file names
 (28 standard, 1 A3 flyer, 0 unclassified).
 

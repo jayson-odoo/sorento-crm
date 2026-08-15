@@ -966,6 +966,7 @@ class PromotionService:
         self.db.add(promotion)
         self.db.commit()
         self.db.refresh(promotion)
+        _stamp_promotion_type_fields(self.db, [promotion])
         publish_embedding_event(
             self.db,
             source_type="promotion",

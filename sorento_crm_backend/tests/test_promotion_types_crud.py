@@ -7,12 +7,10 @@ that tests the code instead of the environment.
 from __future__ import annotations
 
 import importlib.util
-import json
 import uuid
 from pathlib import Path
 
 import pytest
-import sqlalchemy as sa
 
 from app.models.marketing import Promotion, PromotionType
 from app.schemas.marketing import PromotionTypeCreate, PromotionTypeUpdate
@@ -33,38 +31,8 @@ def _load_migration():
     return module
 
 
-SEED_SQL = """
-INSERT INTO promotion_types (
-    id, type_code, type_name, description, show_expired,
-    expired_valid_until_year_end, expired_max_age_days,
-    match_markers, match_priority, is_default, sort_order
-)
-SELECT gen_random_uuid(), :code, :name, :description, :show_expired,
-       :year_end, :max_age, CAST(:markers AS jsonb), :priority,
-       :is_default, :sort_order
-WHERE NOT EXISTS (SELECT 1 FROM promotion_types WHERE type_code = :code)
-"""
-
-
 def _run_seed(db, module):
-    for (
-        code, name, show_expired, year_end, max_age, markers, priority, is_default, sort_order, description,
-    ) in module.SEED_TYPES:
-        db.execute(
-            sa.text(SEED_SQL),
-            {
-                "code": code,
-                "name": name,
-                "description": description,
-                "show_expired": show_expired,
-                "year_end": year_end,
-                "max_age": max_age,
-                "markers": json.dumps(markers),
-                "priority": priority,
-                "is_default": is_default,
-                "sort_order": sort_order,
-            },
-        )
+    module._seed_types(db.connection())
     db.flush()
 
 
@@ -363,6 +331,33 @@ def test_resending_the_same_type_with_another_edit_keeps_the_auto_classification
 
         assert updated.promotion_type_id == str(special.id)
         assert updated.promotion_type_source == "auto"
+
+
+def test_create_returns_the_type_code_and_name_it_was_given():
+    """The create response feeds the UI directly, and it may not show a UUID."""
+    from app.schemas.marketing import PromotionCreate
+    from app.services.marketing_service import PromotionService
+
+    module = _load_migration()
+    with blank_session() as db:
+        _run_seed(db, module)
+        special = db.query(PromotionType).filter(PromotionType.type_code == "special").one()
+
+        created = PromotionService(db).create_promotion(
+            PromotionCreate.model_validate(
+                {
+                    "description": "ZZT created with a type",
+                    "access_levels": ["dealer"],
+                    "promotion_type_id": str(special.id),
+                }
+            ),
+            created_by=None,
+        )
+
+        assert created.promotion_type_id == str(special.id)
+        assert created.promotion_type_source == "manual"
+        assert created.promotion_type_code == "special"
+        assert created.promotion_type_name == special.type_name
 
 
 def test_deleting_a_type_clears_the_source_with_the_classification():

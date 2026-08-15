@@ -11,7 +11,7 @@ skipping rows it already touched. It never overwrites a `manual` row -- a human
 correction outranks the classifier by definition.
 
 Revision ID: 361_promotion_types
-Revises: 360_merge_promo_types
+Revises: 357_merge_grn_spo_fm_heads
 Create Date: 2026-08-14
 """
 import sqlalchemy as sa
@@ -19,7 +19,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 revision = "361_promotion_types"
-down_revision = "360_merge_promo_types"
+down_revision = "357_merge_grn_spo_fm_heads"
 branch_labels = None
 depends_on = None
 
@@ -139,6 +139,12 @@ def upgrade():
     op.create_index("ix_promotions_promotion_type_id", "promotions", ["promotion_type_id"])
 
     conn = op.get_bind()
+    _seed_types(conn)
+    _backfill_promotion_types(conn)
+
+
+def _seed_types(conn):
+    """Insert the five kinds Sorento runs, skipping any `type_code` already there."""
     for (
         code,
         name,
@@ -178,8 +184,6 @@ def upgrade():
                 "sort_order": sort_order,
             },
         )
-
-    _backfill_promotion_types(conn)
 
 
 def _json(value) -> str:
