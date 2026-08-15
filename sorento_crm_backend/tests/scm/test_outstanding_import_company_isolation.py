@@ -61,6 +61,11 @@ _HEADERS = ["S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "STOCK LOCATION"]
 # company-scoped lookup, alongside the item code and the stock location.
 _PO_HEADERS = ["PO NO", "CREDITOR CODE", "ITEM CODE", "QTY ORDERED", "ETA", "STOCK LOCATION"]
 
+# The SO headers plus the debtor code, for the tests about the customer LINK. Kept off
+# `_HEADERS` so the lookup tests above still exercise a file that names no counterparty.
+_SO_DEBTOR_HEADERS = ["S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "DELIVERY DATE",
+                      "STOCK LOCATION"]
+
 
 def _u() -> str:
     return str(uuid.uuid4())
@@ -451,6 +456,69 @@ def test_a_customer_owned_only_by_another_company_does_not_set_the_demand_class(
     _act_as(db, world.a)
 
     assert svc._demand_class_for(db, code) == svc.DEFAULT_DEMAND_CLASS
+
+
+# The SO book now LINKS that customer (`sales_orders.customer_id`), not just reads their
+# segment, so the boundary matters on the write as well as on the classification: an order
+# attributed to another company's debtor names the wrong buyer on every screen that reads
+# it. Same pair of shapes as the creditor code below.
+
+def _so_customer_code(db: Session, so_number: str):
+    """The customer code on the written sales order, read with raw SQL on purpose."""
+    return db.execute(text(
+        "SELECT c.customer_code FROM sales_orders so "
+        "LEFT JOIN customers c ON c.id = so.customer_id "
+        "WHERE so.so_number = :so"
+    ), {"so": so_number}).scalar()
+
+
+def test_a_debtor_code_owned_only_by_another_company_is_never_linked(world):
+    """Company A has no such debtor. The order is left unlinked, and the CODE is kept."""
+    db = world.db
+    item = _code("ITEM")
+    debtor = _code("CUST")[:50]
+    world.product(item, world.a)
+    world.customer(debtor, f"{MARKER} B debtor", world.b, None)
+    so_number = _code("SO")
+
+    _act_as(db, world.a)
+    file = _workbook([[so_number, debtor, item, 10, date(2026, 7, 1), ""]],
+                     headers=_SO_DEBTOR_HEADERS)
+    svc.apply(db, file, SO)
+
+    assert _so_customer_code(db, so_number) is None, \
+        "the sales order was attached to another company's customer"
+    assert db.execute(text("SELECT debtor_code FROM sales_orders WHERE so_number = :s"),
+                      {"s": so_number}).scalar() == debtor
+
+
+def test_a_debtor_code_held_by_both_companies_links_the_active_one(world):
+    """The production duplicate: company A's upload must attach to company A's customer."""
+    db = world.db
+    item = _code("ITEM")
+    debtor = _code("CUST")[:50]
+    world.product(item, world.a)
+    world.customer(debtor, f"{MARKER} A debtor", world.a, None)      # inserted first
+    _seed_duplicate_or_skip(
+        db,
+        Customer(id=_u(), customer_code=debtor, customer_name=f"{MARKER} B debtor",
+                 is_active=True, company_id=world.b),
+        "this schema enforces a globally unique customer_code, so the two companies "
+        "cannot both hold the code",
+    )
+    so_number = _code("SO")
+
+    _act_as(db, world.a)
+    svc.apply(db, _workbook([[so_number, debtor, item, 10, date(2026, 7, 1), ""]],
+                            headers=_SO_DEBTOR_HEADERS), SO)
+
+    name = db.execute(text(
+        "SELECT c.customer_name FROM sales_orders so "
+        "JOIN customers c ON c.id = so.customer_id WHERE so.so_number = :s"
+    ), {"s": so_number}).scalar()
+    assert name == f"{MARKER} A debtor", (
+        "the sales order was attached to another company's customer with the same code"
+    )
 
 
 # --------------------------------------------------------------------------- #

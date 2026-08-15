@@ -99,6 +99,12 @@ class _Binding:
     # later extract corrects them; these are for a value a person may have set by hand, where
     # a weekly re-upload silently overwriting it is the failure.
     header_fill_cols: tuple[tuple[str, str], ...] = ()
+    # The header column the counterparty CODE itself is kept in, when the header has one.
+    # Its presence changes what an unresolvable code MEANS: the code is not lost, so the
+    # order stays attributable ("Debtor 300-R009") and there is nothing to report. Absent
+    # (the PO side), an unresolvable code leaves the document unlinked with no trace, which
+    # is a resolution issue the operator has to see.
+    party_code_header_col: Optional[str] = None
     # The header column fulfilment priority is weighed on, and the header column the
     # project-versus-dealer split is stated in. Both None for purchase orders, which carry
     # no demand at all. `demand_split_col` is the source of truth (plan amendment of
@@ -118,12 +124,15 @@ _BINDINGS: dict[str, _Binding] = {
         number="so_number", header_fk="sales_order_id",
         date="required_date", fulfilled="qty_delivered",
         party_fk="customer_id", party_code="debtor_code",
-        # The SO path deliberately does NOT link the customer yet. The debtor code is read but
-        # nothing consumes `sales_orders.customer_id` from this channel, and reporting an
-        # unresolvable debtor code as an issue before anything reads it is noise on a screen
-        # whose whole job is to show the operator what needs fixing. Linking it is the same
-        # three lines as the PO side the day a consumer exists.
-        party=None, party_code_col="customer_code",
+        # The customer IS linked now, exactly as the PO side links its supplier. It used to
+        # be deliberately skipped because nothing read `sales_orders.customer_id` from this
+        # channel; the plan's demand and trend popovers now name who ordered every line, and
+        # 2,546 of the 2,548 orders this feed created had no customer at all - so every one
+        # of them read "Unnamed customer" while the debtor code was sitting in the file.
+        party=Customer, party_code_col="customer_code",
+        # ... and the code itself is kept on the header whether or not it resolves, so an
+        # order this feed cannot link is still attributable and still fixable later.
+        party_code_header_col="debtor_code",
         # `scm.committed_v` counts exactly one sales-order status, so writing and reading are
         # the same value here.
         write_status="open", live_statuses=("open",),
@@ -131,7 +140,13 @@ _BINDINGS: dict[str, _Binding] = {
         # today, so this is the column that lets a differently-worded export classify its own
         # documents the day it does, without a release. A value already on the header wins,
         # because that is what a person set and the extract is not the record of it.
-        header_fill_cols=(("order_type", "order_type"),),
+        #
+        # `order_date` is FILL-only for a different reason: the extract states the SO date
+        # and the header had none (the trend reads `order_date` over 24 months, so an order
+        # imported without one carries open demand and no history at all - "No order
+        # history" beside 51 open units). It fills the gap; an existing date, wherever it
+        # came from, stands.
+        header_fill_cols=(("order_type", "order_type"), ("order_date", "order_date")),
         demand_class_col="demand_class", demand_split_col="order_type",
         agent_fk="sales_agent_id",
     ),
@@ -390,9 +405,17 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
             continue
         pid_party = parties.get(code)
         if pid_party is None:
-            issues.append(ResolutionIssue(
-                row, bind.party_code, code,
-                f"no {bind.party.__name__.lower()} with this code"))
+            # An unresolvable code is only a PROBLEM when it would otherwise be lost. The
+            # sales book keeps it on the header, so the order stays attributable and there
+            # is nothing for the operator to fix in this file - reporting 2,546 of them
+            # would bury the rows that really did fail. The purchase book has nowhere to
+            # put it, so there it is reported and the document is left unlinked.
+            if bind.party_code_header_col:
+                party_code_by_doc.setdefault(l.doc_number, code)
+            else:
+                issues.append(ResolutionIssue(
+                    row, bind.party_code, code,
+                    f"no {bind.party.__name__.lower()} with this code"))
             continue
         seen_code = party_code_by_doc.get(l.doc_number)
         if seen_code is not None and seen_code != code:
@@ -1084,6 +1107,13 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         party_id = resolved.party_by_doc.get(number)
         if party_id and str(getattr(header, bind.party_fk, None) or "") != str(party_id):
             setattr(header, bind.party_fk, party_id)
+        # The code as printed, kept whether or not it linked. The file is the record of
+        # what the document says, so a restated code overwrites; a file that simply omits
+        # it never blanks one we already hold.
+        if bind.party_code_header_col:
+            code = resolved.party_code_by_doc.get(number)
+            if code:
+                setattr(header, bind.party_code_header_col, code)
         order_ids[number] = header.id
 
     applied = {"added": 0, "updated": 0, "closed": 0, "unchanged": 0}

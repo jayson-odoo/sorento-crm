@@ -81,6 +81,16 @@ def _by_code(db: Session, model, code_col, codes: set[str]) -> dict[str, str]:
     return {str(code): str(row_id) for code, row_id in rows}
 
 
+def _price(value) -> Optional[float]:
+    """A unit price as a comparable number, and None kept as None.
+
+    Compared rather than written unconditionally, like every other column in this feed: a
+    re-upload of an unchanged book must still report zero updates. `Decimal("12.50")` and
+    `12.5` are the same price and must not read as a change.
+    """
+    return None if value is None else float(value)
+
+
 def _has_foreign_lines(db: Session, order_id: str) -> bool:
     """Does this document already carry lines written by a different feed?
 
@@ -269,9 +279,15 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                 source_system=SOURCE_SYSTEM,
                 source_ref=SOURCE_REF,
                 source_doc_no=parsed_order.so_number,
+                # The code in its own column, so a reader can attribute the order without
+                # parsing a note: the plan's demand and trend popovers fall back to
+                # "Debtor 300-R009" when the link failed.
+                debtor_code=parsed_order.debtor_code or None,
                 # The debtor code and the customer's printed name are kept even when the
                 # link fails, because "ROWENDA KITCHEN SDN BHD / 300-R009" is what makes the
-                # link fixable later. Dropping it leaves an order nobody can attribute.
+                # link fixable later. Dropping it leaves an order nobody can attribute. Kept
+                # alongside the column: the note also carries the printed NAME, which no
+                # column holds.
                 internal_note=" / ".join(
                     p for p in (parsed_order.customer_name, parsed_order.debtor_code,
                                 parsed_order.note) if p
@@ -325,6 +341,12 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                 changed = True
             if customer_id and order.customer_id != customer_id:
                 order.customer_id = customer_id
+                changed = True
+            if (parsed_order.debtor_code
+                    and order.debtor_code != parsed_order.debtor_code):
+                # The file is the record of what the document printed, so a restated code
+                # corrects the column. An absent one never blanks a code we already hold.
+                order.debtor_code = parsed_order.debtor_code
                 changed = True
             if order.status != _ORDER_STATUS:
                 if _has_open_quantity(db, str(order.id)):
@@ -380,6 +402,11 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                     warehouse_id=warehouse_id,
                     qty_ordered=qty,
                     qty_delivered=qty,
+                    # What the customer paid. The reader has always parsed it and the write
+                    # dropped it, so every price cell on the plan's "who bought it" drill
+                    # was blank - which is where "sells RM 0.94?" is asked. Absent stays
+                    # absent: a price we do not know is not 0.00.
+                    unit_price=parsed_line.unit_price,
                     required_date=parsed_line.required_date,
                     line_status=_LINE_STATUS,
                     source_system=SOURCE_SYSTEM,
@@ -395,10 +422,11 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                 # `updated_at` touched on 64,526 rows that did not change is a lie the audit
                 # trail then carries for ever.
                 want = (str(product_id), warehouse_id, float(qty), float(qty),
-                        parsed_line.required_date, _LINE_STATUS)
+                        parsed_line.required_date, _LINE_STATUS,
+                        _price(parsed_line.unit_price))
                 have = (str(line.product_id), line.warehouse_id,
                         float(line.qty_ordered or 0), float(line.qty_delivered or 0),
-                        line.required_date, line.line_status)
+                        line.required_date, line.line_status, _price(line.unit_price))
                 if want == have:
                     lines_unchanged += 1
                     outcome.unchanged(row=parsed_line.row_number, identity=identity,
@@ -411,6 +439,7 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                     line.qty_delivered = qty
                     line.required_date = parsed_line.required_date
                     line.line_status = _LINE_STATUS
+                    line.unit_price = parsed_line.unit_price
                     lines_updated += 1
                     outcome.updated(row=parsed_line.row_number, identity=identity,
                                     value=parsed_order.so_number,

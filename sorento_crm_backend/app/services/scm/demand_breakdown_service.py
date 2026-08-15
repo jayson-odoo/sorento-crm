@@ -37,6 +37,7 @@ from app.services.scm.demand import PLAN_DEMAND_ORDER_SQL
 # problem, and the total is reported separately so the cap is never silent.
 DEFAULT_LIMIT = 200
 
+
 def _scope_for(db: Session, rec) -> tuple[list[str], str, Optional[str]]:
     """The locations this row's demand may be drawn from, and what to call that set.
 
