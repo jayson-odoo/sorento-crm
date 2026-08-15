@@ -169,7 +169,16 @@ committed regression guard, so a later change can break it without a test going
 red. The repo-wide replacement for the 40 existing specs is a separate pending
 decision, and this AC joins that queue rather than pre-empting it.
 
+Run and recorded: see the plan's "AC-A10 and AC-A11: the evidence run". The
+library path reached the review screen from sidebar clicks alone, and the only
+write the browser made was `POST /flyer-readings/from-attachment` -> 201.
+
 ### AC-A11 [FE] Both sources work at 375px and 1280px
 **Given** the dialog at both widths
 **When** either source is used
 **Then** nothing is clipped and the confirm button is reachable.
+
+Measured in the same evidence run: no horizontal overflow on either the list or
+the review screen at either width, and `Use this file` enabled and inside the
+viewport at both. Below the breakpoint the sidebar is behind the header menu
+button, so the journey starts with that one extra tap and is otherwise identical.

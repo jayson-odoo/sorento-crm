@@ -307,6 +307,72 @@ Two things worth keeping honest about that trade:
 The 40 pre-existing specs are untouched, along with `playwright.config.ts` and
 the dependency. What replaces them repo-wide is a separate open decision.
 
+## AC-A10 and AC-A11: the evidence run
+
+Run with `agent-browser` 0.27.0, headless, on 15 Aug 2026. Chrome is uninstalled
+on this machine and playwright is not used, so this is the sanctioned tool.
+
+Stack: worktree backend on `:8010` with a single worker, worktree production
+build on `:3011`, real login through the sign-in form (no minted cookie). The
+whole journey is reached by **sidebar clicks only** - never a deep URL - because
+a deep URL hides a missing nav entry, wrong `moduleKey` or broken permission
+gating, which is exactly what AC-A10 is asserting about.
+
+**Run it in your own session.** The shared `default` agent-browser session is
+driven by every other agent on the machine; the first attempt at this walk had
+its tab navigated to another lane's stack (`localhost:3022`) mid-run and failed
+on refs that had been valid a second earlier. Set `AGENT_BROWSER_SESSION` to
+something of your own and the walk is stable. `agent-browser session list` shows
+who else is up.
+
+Steps, both widths:
+
+1. `set viewport <w> <h>` **first** - it resets the browsing context, so a
+   viewport set after login throws the session away.
+2. `open /signin`, fill the form, `Continue`. Below the breakpoint the sidebar is
+   behind the header menu button, so open that first; the clicks after it are the
+   same on both widths.
+3. Sidebar: `Dealer Kit` -> `Flyers`. Lands on `/dealer-kit/flyer-readings`.
+4. `Read a flyer` -> the dialog reports
+   `Upload a file selected=true | Choose from Files selected=false` (AC-A7).
+5. `Choose from Files` -> `Choose a file` opens the shared picker, titled
+   "Choose a flyer". Its list is every attachment in the library and all of it is
+   PDFs (AC-A8), fetched with the six positive mime spellings (AC-A6):
+   `GET /api/v1/resource-management/attachments/?...&mime_types=application%2Fpdf&mime_types=application%2Fx-pdf&mime_types=application%2Facrobat&mime_types=applications%2Fvnd.pdf&mime_types=text%2Fpdf&mime_types=text%2Fx-pdf` -> 200
+6. Pick one file: the picker reports `Selected (1)` (single select), and
+   `Use this file` returns the filename to the dialog, which now reads
+   `Flyer PDF <name> / Change file`.
+7. `Read the flyer` -> the review screen.
+
+What each width produced:
+
+| | 1280x900 | 375x812 |
+|---|---|---|
+| File | `Tera CB2519SS CB2839.pdf` (1 page, 155 KB) | `Mocha A3 Flyer 13032026_compressed (1).pdf` (16 pages, 26.5 MB) |
+| Call | `POST /api/v1/dealer-kit/flyer-readings/from-attachment` -> **201** | same -> **201** |
+| Route reached | `/dealer-kit/flyer-readings/f811b523-...` | `/dealer-kit/flyer-readings/399ecc86-...` |
+| Read time | ~4s | ~54s |
+| `Use this file` | enabled, in viewport | enabled, in viewport |
+| Horizontal overflow, list | none (`scrollWidth 1280 == innerWidth`) | none (375 == 375) |
+| Horizontal overflow, review | none | none |
+| Console errors | none | none |
+
+Backend, same request:
+
+```
+POST /api/v1/dealer-kit/flyer-readings/from-attachment - Status: 201 - Duration: 1.473s
+```
+
+No multipart upload was made in either run: the only flyer-readings write is the
+from-attachment POST, which is the second half of AC-A10.
+
+Two honest notes. The 26.5 MB flyer took **54 seconds**, at the far end of the
+"can take up to a minute" the dialog now promises and a fresh argument for the
+enqueue-and-watch item in the backlog. And both files extracted zero product
+codes, so the review screen shown is its empty-report shape; the matched-code
+report is covered by the extraction suites, not by this walk. Both readings were
+deleted through the API afterwards, so the run left nothing behind.
+
 ## Deviations from this plan, recorded during implementation
 
 1. **A 502 `FLYER_SOURCE_UNREADABLE`** was added to the from-attachment route to
