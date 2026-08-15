@@ -1375,6 +1375,15 @@ class ConversationSLATrackingService:
             return True
         if self._is_admin(user_id):
             return True
+        # Resolving a CONVERSATION ticket NULLs assigned_to_id by design, so an
+        # assignee-only rule locks the resolver out of the very drawer AC-M1
+        # keeps open in front of them (thread, comments, snippet picker, AI
+        # draft) the instant they press Resolve. Read access follows whoever
+        # resolved it; the write paths (send, takeover, reassign, escalate) keep
+        # their own is_resolved guards, so this widens reading only.
+        resolved_by = getattr(tracking, "resolved_by", None)
+        if resolved_by is not None and str(resolved_by) == str(user_id):
+            return True
         if assignee is None:
             return False
         members = self._members_of_teams(self._visible_team_ids(user_id))
@@ -5447,20 +5456,44 @@ class ConversationSLATrackingService:
             last_name=getattr(contact, "last_name", None),
         )
 
+    def _ticket_tracking_in_scope(self, tracking_id: str, viewer_user_id: str):
+        """This conversation ticket, or a 404.
+
+        One 404 for three different refusals - no such row, a form-SLA stage
+        (read from the form record's own chat panel), and a viewer outside the
+        ticket's scope - because a 403 on the third would confirm the id to a
+        stranger. Same rule and same shape as ``get_ticket_detail`` and
+        ``TicketCommentService._tracking_in_scope``.
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        tracking = self.get_tracking(tracking_id, load_event_logs=False)
+        if not tracking or getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            raise handle_not_found("Conversation SLA tracking", tracking_id)
+        if not self.can_user_act_on_tracking(viewer_user_id, tracking):
+            raise handle_not_found("Conversation SLA tracking", tracking_id)
+        return tracking
+
     def fetch_conversation_thread_page(
         self,
         tracking_id: str,
         *,
+        viewer_user_id: str,
         before: Optional[str] = None,
         after: Optional[str] = None,
         around: Optional[str] = None,
         limit: int = 50,
     ) -> dict:
-        """One scroll-back window of this tracking's contact thread (AC-L7)."""
+        """One scroll-back window of this tracking's contact thread (AC-L7).
+
+        Assignee-or-manager scoped like every sibling ticket read: this returns
+        a contact's WhatsApp conversation, so an unscoped version let any
+        authenticated user read any contact's thread from a guessed id.
+        """
         from app.services import conversation_thread_service as thread_service
         from app.services.integration_service import RespondClient
 
-        tracking = self.get_tracking(tracking_id)
+        tracking = self._ticket_tracking_in_scope(tracking_id, viewer_user_id)
         contact = self._thread_contact_for_tracking(tracking)
         if contact is None:
             return {
@@ -5482,16 +5515,24 @@ class ConversationSLATrackingService:
             after=after,
             around=around,
             limit=limit,
-            client=RespondClient(),
+            # Per CONTACT, not the deployment default: a contact on any other
+            # Respond workspace 401s on the default key and the page silently
+            # degrades to the text-only local lane, which is exactly what
+            # AC-L7's lane order was revised to avoid.
+            client=RespondClient.for_identifier(self.db, contact.respond_io_id),
         )
 
     def search_conversation_thread(
-        self, tracking_id: str, *, q: str, limit: int = 100
+        self, tracking_id: str, *, viewer_user_id: str, q: str, limit: int = 100
     ) -> dict:
-        """In-thread message search for this tracking's contact (AC-L8)."""
+        """In-thread message search for this tracking's contact (AC-L8).
+
+        Assignee-or-manager scoped: free text over a stranger's conversation is
+        the worse half of an unscoped thread read.
+        """
         from app.services import conversation_thread_service as thread_service
 
-        tracking = self.get_tracking(tracking_id)
+        tracking = self._ticket_tracking_in_scope(tracking_id, viewer_user_id)
         contact = self._thread_contact_for_tracking(tracking)
         if contact is None:
             return {

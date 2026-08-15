@@ -28,11 +28,13 @@ Two lanes serve the page:
    the anchor, oldest-first.
 2. **``chat_histories`` keyset (fallback + search substrate).** Used when the
    Respond lane is unavailable (no API key, timeout, HTTP error), and always for
-   search. Keyset on ``(sent_at, id)`` over
-   ``ix_chat_histories_channel_contact_sent_id`` - never OFFSET, and ``sent_at``
-   rather than ``created_at`` because ``created_at`` is INGEST order: a
-   backfilled 2026-05 message is written today and would sort as the newest
-   thing in the thread.
+   search. Keyset on ``(sent_at, id)`` under a ``(channel, contact_id)``
+   equality prefix, which is exactly what
+   ``ix_chat_histories_channel_contact_sent_id`` indexes - never OFFSET, and
+   ``sent_at`` rather than ``created_at`` because ``created_at`` is INGEST
+   order: a backfilled 2026-05 message is written today and would sort as the
+   newest thing in the thread. Both leading columns must be in the predicate
+   for that index to be usable at all; see ``_base_query``.
 
 Every Respond page we fetch is written into ``chat_histories`` (idempotent,
 best-effort, never mark-read and never a window-cache write) so that search
@@ -186,7 +188,19 @@ def _respond_item_text(item: dict) -> str:
 
 
 def _base_query(db: Session, contact: ThreadContact):
-    return db.query(ChatHistory).filter(ChatHistory.contact_id == contact.respond_io_id)
+    """Every local-lane read, scoped to one contact ON ONE CHANNEL.
+
+    The channel predicate is not cosmetic: the only composite index over this
+    table is ``ix_chat_histories_channel_contact_sent_id (channel, contact_id,
+    sent_at, id)``, which leads on ``channel`` - a contact-only filter cannot
+    use it and the keyset walk degrades to a scan of the whole table. It is also
+    correct: ``persist_messages`` writes ``contact.channel``, so a thread is a
+    per-channel conversation.
+    """
+    return db.query(ChatHistory).filter(
+        ChatHistory.channel == contact.channel,
+        ChatHistory.contact_id == contact.respond_io_id,
+    )
 
 
 def _anchor_row(db: Session, contact: ThreadContact, message_id: str) -> Optional[ChatHistory]:

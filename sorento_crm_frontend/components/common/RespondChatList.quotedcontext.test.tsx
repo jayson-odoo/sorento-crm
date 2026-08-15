@@ -48,7 +48,9 @@ describe('RespondChatList inbound quote rendering (AC-L6)', () => {
     const blocks = screen.getAllByTestId('quoted-context');
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toHaveTextContent('Your order ships Tuesday.');
-    expect(blocks[0]).toHaveTextContent(/Replying to You/i);
+    // Not "You": the quoted outgoing message may be a colleague's, and here it
+    // carries no known automated source, so it reads as the company.
+    expect(blocks[0]).toHaveTextContent(/Replying to Sorento/i);
     // The body itself is untouched.
     expect(screen.getByText('Which courier?')).toBeInTheDocument();
   });
@@ -95,6 +97,25 @@ describe('RespondChatList inbound quote rendering (AC-L6)', () => {
     render(<RespondChatList items={[reply]} />);
 
     expect(screen.getByTestId('quoted-context')).toHaveTextContent('[image]');
+  });
+
+  it('names an automated sender rather than claiming the reader wrote it', () => {
+    const quoted = msg(1, {
+      traffic: 'outgoing',
+      sender: { source: 'ai_agent' },
+      message: { type: 'text', text: 'Our showroom opens at 10am.' },
+    });
+    const reply = msg(2, {
+      message: { type: 'text', text: 'Thanks' },
+      replyTo: {
+        messageId: quoted.messageId,
+        traffic: 'outgoing',
+        message: { type: 'text', text: 'Our showroom opens at 10am.' },
+      },
+    });
+    render(<RespondChatList items={[quoted, reply]} />);
+
+    expect(screen.getByTestId('quoted-context')).toHaveTextContent(/Replying to AI Agent/i);
   });
 
   it('renders nothing extra on a message with no quote', () => {

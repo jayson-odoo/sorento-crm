@@ -6,8 +6,8 @@
  * the "viewport must not jump" guarantee testable at all.
  */
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import RespondChatList from './RespondChatList';
 import type { ConversationSearchController } from './conversation/useConversationThread';
@@ -54,7 +54,31 @@ function searchController(
   };
 }
 
+/**
+ * jsdom has no `scrollIntoView`; some suites stub it on the prototype and the
+ * stub outlives the test. These suites decide for themselves whether the
+ * component can scroll, because that is what arms the open-time settle guard.
+ */
+function withScrollIntoView() {
+  const scrollIntoView = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    value: scrollIntoView,
+    configurable: true,
+    writable: true,
+  });
+  return scrollIntoView;
+}
+
+function withoutScrollIntoView() {
+  Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+}
+
+/** Longer than the component's post-scroll settle window. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 500));
+
 describe('RespondChatList scroll-back (AC-L7)', () => {
+  beforeEach(withoutScrollIntoView);
+
   it('asks for older messages when the reader reaches the top', () => {
     const onLoadOlder = vi.fn();
     render(<RespondChatList items={[msg(1), msg(2)]} onLoadOlder={onLoadOlder} hasMoreOlder />);
@@ -137,6 +161,186 @@ describe('RespondChatList scroll-back (AC-L7)', () => {
     rerender(<RespondChatList items={[msg(5), msg(6)]} hasMoreOlder />);
 
     expect(container.scrollTop).toBe(300);
+  });
+
+  it('collapses a burst of scroll events into one page request', () => {
+    // FINDING 5: scroll fires per frame and the `isLoadingOlder` prop only
+    // arrives a render later, so the state guard let a burst stack pages.
+    const onLoadOlder = vi.fn();
+    render(<RespondChatList items={[msg(1), msg(2)]} onLoadOlder={onLoadOlder} hasMoreOlder />);
+    const container = screen.getByTestId('chat-scroll-container');
+
+    container.scrollTop = 0;
+    for (let i = 0; i < 6; i += 1) fireEvent.scroll(container);
+
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-arms once the reader scrolls back down', () => {
+    const onLoadOlder = vi.fn();
+    render(<RespondChatList items={[msg(1), msg(2)]} onLoadOlder={onLoadOlder} hasMoreOlder />);
+    const container = screen.getByTestId('chat-scroll-container');
+
+    container.scrollTop = 0;
+    fireEvent.scroll(container);
+    container.scrollTop = 600;
+    fireEvent.scroll(container);
+    container.scrollTop = 0;
+    fireEvent.scroll(container);
+
+    expect(onLoadOlder).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores the scroll events its own opening scroll emits', async () => {
+    // FINDING 5: a smooth scrollIntoView on open emits scroll events at
+    // scrollTop ~ 0, which read as "the reader reached the top".
+    withScrollIntoView();
+    const onLoadOlder = vi.fn();
+    render(
+      <RespondChatList
+        items={[msg(5), msg(6)]}
+        highlightMessageId={String(BASE_US + 5_000_000)}
+        onLoadOlder={onLoadOlder}
+        hasMoreOlder
+      />,
+    );
+    const container = screen.getByTestId('chat-scroll-container');
+
+    container.scrollTop = 0;
+    fireEvent.scroll(container);
+    expect(onLoadOlder).not.toHaveBeenCalled();
+
+    await settle();
+    fireEvent.scroll(container);
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RespondChatList highlighted enquiry (FINDING 2)', () => {
+  const HIGHLIGHT_ID = String(BASE_US + 5_000_000);
+
+  it('scrolls to the enquiry once, and never again when a page is prepended', async () => {
+    const scrollIntoView = withScrollIntoView();
+    const onLoadOlder = vi.fn();
+    const { rerender } = render(
+      <RespondChatList
+        items={[msg(5), msg(6)]}
+        highlightMessageId={HIGHLIGHT_ID}
+        onLoadOlder={onLoadOlder}
+        hasMoreOlder
+      />,
+    );
+    const container = screen.getByTestId('chat-scroll-container');
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+    await settle();
+    stubScrollHeight(container, 1000);
+    container.scrollTop = 20;
+    fireEvent.scroll(container);
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+
+    stubScrollHeight(container, 1500);
+    rerender(
+      <RespondChatList
+        items={[msg(3), msg(4), msg(5), msg(6)]}
+        highlightMessageId={HIGHLIGHT_ID}
+        onLoadOlder={onLoadOlder}
+        hasMoreOlder
+      />,
+    );
+
+    // The reader keeps their place, and is NOT yanked back to the enquiry.
+    expect(container.scrollTop).toBe(520);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it('scrolls again when the drawer switches to another enquiry', async () => {
+    const scrollIntoView = withScrollIntoView();
+    const { rerender } = render(
+      <RespondChatList items={[msg(5), msg(6)]} highlightMessageId={HIGHLIGHT_ID} />,
+    );
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <RespondChatList
+        items={[msg(5), msg(6)]}
+        highlightMessageId={String(BASE_US + 6_000_000)}
+      />,
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('RespondChatList detached window (FINDING 3)', () => {
+  beforeEach(withoutScrollIntoView);
+
+  it('offers no way-back control while the window is on the live tail', () => {
+    render(<RespondChatList items={[msg(1)]} />);
+    expect(screen.queryByTestId('chat-jump-to-latest')).not.toBeInTheDocument();
+  });
+
+  it('offers "Jump to latest" while the window is detached', () => {
+    const onJumpToLatest = vi.fn();
+    render(<RespondChatList items={[msg(1)]} isDetached onJumpToLatest={onJumpToLatest} />);
+
+    const pill = screen.getByTestId('chat-jump-to-latest');
+    fireEvent.click(pill);
+    expect(onJumpToLatest).toHaveBeenCalledTimes(1);
+  });
+
+  it('says how many live messages the detached window is hiding', () => {
+    render(
+      <RespondChatList
+        items={[msg(1)]}
+        isDetached
+        onJumpToLatest={vi.fn()}
+        newerUnseenCount={3}
+      />,
+    );
+    expect(screen.getByTestId('chat-jump-to-latest')).toHaveTextContent('3 new');
+  });
+
+  it('pages forward when the reader reaches the bottom of a detached window', () => {
+    const onLoadNewer = vi.fn();
+    render(
+      <RespondChatList
+        items={[msg(1), msg(2)]}
+        isDetached
+        hasMoreNewer
+        onLoadNewer={onLoadNewer}
+        onJumpToLatest={vi.fn()}
+      />,
+    );
+    const container = screen.getByTestId('chat-scroll-container');
+    stubScrollHeight(container, 1000);
+    Object.defineProperty(container, 'clientHeight', { value: 400, configurable: true });
+
+    container.scrollTop = 950;
+    fireEvent.scroll(container);
+
+    expect(onLoadNewer).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not page forward while the reader is mid-window', () => {
+    const onLoadNewer = vi.fn();
+    render(
+      <RespondChatList
+        items={[msg(1), msg(2)]}
+        isDetached
+        hasMoreNewer
+        onLoadNewer={onLoadNewer}
+        onJumpToLatest={vi.fn()}
+      />,
+    );
+    const container = screen.getByTestId('chat-scroll-container');
+    stubScrollHeight(container, 1000);
+    Object.defineProperty(container, 'clientHeight', { value: 400, configurable: true });
+
+    container.scrollTop = 300;
+    fireEvent.scroll(container);
+
+    expect(onLoadNewer).not.toHaveBeenCalled();
   });
 });
 

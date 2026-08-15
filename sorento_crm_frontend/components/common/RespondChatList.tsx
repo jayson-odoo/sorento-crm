@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowDownToLine,
   Check,
   CheckCheck,
   AlertCircle,
@@ -46,6 +47,17 @@ import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 
 /** Distance from the top that starts the next older page (AC-L7). */
 const LOAD_OLDER_THRESHOLD_PX = 80;
+/** Distance from the bottom that pages a detached window forward. */
+const LOAD_NEWER_THRESHOLD_PX = 80;
+/**
+ * How long our OWN smooth scroll is allowed to keep emitting scroll events
+ * before they count as the reader's. Opening on the enquiry bubble scrolls the
+ * container past the top, and every frame of that animation used to read as
+ * "the reader reached the top" and fetched a page nobody asked for.
+ */
+const PROGRAMMATIC_SCROLL_SETTLE_MS = 400;
+/** How close to the bottom still counts as "reading the live tail". */
+const PIN_TO_BOTTOM_SLACK_PX = 120;
 
 /**
  * An internal note rendered inline in the thread (UAC AC-L1). It is drawer-side
@@ -95,6 +107,18 @@ interface RespondChatListProps {
   isLoadingOlder?: boolean;
   /** Renders the "beginning of the conversation" marker once nothing is older. */
   atConversationStart?: boolean;
+  /**
+   * Detached window (the reader jumped to a search match in the past). It shows
+   * a "Jump to latest" pill - with the count of live messages the window is
+   * hiding - and pages forward when the reader reaches the bottom, so there is
+   * always a visible way back to the live conversation.
+   */
+  isDetached?: boolean;
+  onJumpToLatest?: () => void;
+  newerUnseenCount?: number;
+  onLoadNewer?: () => void;
+  hasMoreNewer?: boolean;
+  isLoadingNewer?: boolean;
   /**
    * In-thread search (AC-L8). Passing a controller adds the search icon to the
    * chat header and the search bar under it; the active match gets a ring and
@@ -187,6 +211,17 @@ function AttachmentBlock({
   );
 }
 
+/**
+ * Who to name as the sender of a quoted OUTGOING message. "You" is a lie
+ * whenever a colleague, the bot or a workflow sent it, so a known automated
+ * sender is named and anything else reads as the company.
+ */
+function quotedAgentLabel(quoted?: RespondMessageRenderable): string {
+  if (!quoted) return 'Sorento';
+  const label = getOutgoingSenderLabel(getNormalizedRespondSource(quoted));
+  return label === 'User' ? 'Sorento' : label;
+}
+
 function ReceiptTicks({ tier }: { tier: ReturnType<typeof getReceiptTier> }) {
   if (tier === 'none') return null;
   if (tier === 'sending') return <Clock className="size-3.5 opacity-70" aria-label="Sending" />;
@@ -204,13 +239,16 @@ function ReceiptTicks({ tier }: { tier: ReturnType<typeof getReceiptTier> }) {
  */
 function QuotedContextBlock({
   context,
+  agentLabel,
   onJump,
 }: {
   context: QuotedContext;
+  /** Who sent the quoted message on OUR side, when it can be named. */
+  agentLabel: string;
   onJump?: () => void;
 }) {
   const senderLabel =
-    context.sender === 'contact' ? 'Contact' : context.sender === 'agent' ? 'You' : null;
+    context.sender === 'contact' ? 'Contact' : context.sender === 'agent' ? agentLabel : null;
   const inner = (
     <>
       <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide opacity-70">
@@ -256,6 +294,12 @@ export default function RespondChatList({
   hasMoreOlder = false,
   isLoadingOlder = false,
   atConversationStart = false,
+  isDetached = false,
+  onJumpToLatest,
+  newerUnseenCount = 0,
+  onLoadNewer,
+  hasMoreNewer = false,
+  isLoadingNewer = false,
   searchController,
   highlightTerm = '',
   comments = [],
@@ -342,15 +386,60 @@ export default function RespondChatList({
   // jump, or a pending one, would be yanked back to the bottom.
   const pinToBottom = !searchController?.open && !activeMatchId;
 
+  /**
+   * Every scroll WE perform, and only ours. The timestamp is what lets
+   * `handleScroll` tell the animation frames of our own smooth scroll apart
+   * from a reader who genuinely dragged to the top.
+   */
+  const lastProgrammaticScrollAt = useRef(0);
+  const scrollNodeIntoView = useCallback(
+    (node: HTMLElement | null | undefined, options: ScrollIntoViewOptions) => {
+      if (!node?.scrollIntoView) return;
+      lastProgrammaticScrollAt.current = Date.now();
+      node.scrollIntoView(options);
+    },
+    [],
+  );
+
+  // The enquiry bubble is scrolled to ONCE per highlighted message, not on every
+  // render that changes the item count: the drawer always passes a highlight id,
+  // so re-running this on each prepended page (or each live poll) dragged the
+  // reader back to the enquiry every time they scrolled up. The item count stays
+  // in the deps because the target bubble mounts asynchronously - the ref, not
+  // the dependency list, is what makes it fire once.
+  const didHighlight = useRef<string | null>(null);
   useEffect(() => {
-    if (activeMatchId) return;
-    if (normalizedHighlightId && highlightRef.current) {
-      highlightRef.current.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-      return;
+    if (activeMatchId || !normalizedHighlightId) return;
+    if (didHighlight.current === normalizedHighlightId) return;
+    const node = highlightRef.current;
+    if (!node) return;
+    didHighlight.current = normalizedHighlightId;
+    scrollNodeIntoView(node, { behavior: 'smooth', block: 'center' });
+  }, [sortedItems.length, normalizedHighlightId, activeMatchId, scrollNodeIntoView]);
+
+  useEffect(() => {
+    if (activeMatchId || !pinToBottom) return;
+    // A highlighted thread anchors on the enquiry, not on the tail. Until that
+    // bubble is loaded there is nothing to anchor to, so the newest message is
+    // still the right place to be.
+    if (normalizedHighlightId) {
+      if (highlightRef.current || didHighlight.current === normalizedHighlightId) return;
     }
-    if (!pinToBottom) return;
-    messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
-  }, [sortedItems.length, normalizedHighlightId, activeMatchId, pinToBottom]);
+    // A page that was just prepended leaves the reader at the top on purpose.
+    if (prependAnchor.current) return;
+    const node = scrollRef.current;
+    const distanceFromBottom = node
+      ? node.scrollHeight - node.scrollTop - node.clientHeight
+      : 0;
+    if (distanceFromBottom > PIN_TO_BOTTOM_SLACK_PX) return;
+    scrollNodeIntoView(messagesEndRef.current, { behavior: 'smooth' });
+  }, [
+    sortedItems.length,
+    normalizedHighlightId,
+    activeMatchId,
+    pinToBottom,
+    scrollNodeIntoView,
+  ]);
 
   // Scroll anchoring: restore the reader's distance from the OLD top edge.
   useLayoutEffect(() => {
@@ -371,19 +460,58 @@ export default function RespondChatList({
 
   useEffect(() => {
     if (!activeMatchId) return;
-    bubbleRefs.current.get(activeMatchId)?.scrollIntoView?.({
+    scrollNodeIntoView(bubbleRefs.current.get(activeMatchId), {
       behavior: 'smooth',
       block: 'center',
     });
-  }, [activeMatchId, sortedItems.length]);
+  }, [activeMatchId, sortedItems.length, scrollNodeIntoView]);
+
+  // In-flight latch for the older lane. A ref, not the `isLoadingOlder` prop:
+  // scroll fires many times per frame and the prop only arrives a render later,
+  // so the state guard let a burst stack three or four pages.
+  const olderRequested = useRef(false);
+  useEffect(() => {
+    if (!isLoadingOlder) olderRequested.current = false;
+  });
+  const newerRequested = useRef(false);
+  useEffect(() => {
+    if (!isLoadingNewer) newerRequested.current = false;
+  });
 
   const handleScroll = useCallback(() => {
     const node = scrollRef.current;
-    if (!node || !onLoadOlder || !hasMoreOlder || isLoadingOlder) return;
-    if (node.scrollTop > LOAD_OLDER_THRESHOLD_PX) return;
-    prependAnchor.current = { scrollHeight: node.scrollHeight, scrollTop: node.scrollTop };
-    onLoadOlder();
-  }, [onLoadOlder, hasMoreOlder, isLoadingOlder]);
+    if (!node) return;
+    if (Date.now() - lastProgrammaticScrollAt.current < PROGRAMMATIC_SCROLL_SETTLE_MS) return;
+
+    if (node.scrollTop <= LOAD_OLDER_THRESHOLD_PX) {
+      if (!onLoadOlder || !hasMoreOlder || isLoadingOlder || olderRequested.current) return;
+      olderRequested.current = true;
+      prependAnchor.current = { scrollHeight: node.scrollHeight, scrollTop: node.scrollTop };
+      onLoadOlder();
+      return;
+    }
+    // Away from the top again: whatever happened to the last request, the
+    // reader can ask for another page next time they get there.
+    olderRequested.current = false;
+
+    if (!isDetached || !onLoadNewer || !hasMoreNewer || isLoadingNewer) return;
+    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    if (distanceFromBottom > LOAD_NEWER_THRESHOLD_PX) {
+      newerRequested.current = false;
+      return;
+    }
+    if (newerRequested.current) return;
+    newerRequested.current = true;
+    onLoadNewer();
+  }, [
+    onLoadOlder,
+    hasMoreOlder,
+    isLoadingOlder,
+    isDetached,
+    onLoadNewer,
+    hasMoreNewer,
+    isLoadingNewer,
+  ]);
 
   const registerBubble = useCallback(
     (id: string) => (node: HTMLDivElement | null) => {
@@ -399,18 +527,21 @@ export default function RespondChatList({
   // a passive quote block would move the thread under a reader who only glanced
   // at the quote. Out of window = the block renders as plain text, not a
   // button, so nothing offers an action it cannot perform.
-  const loadedMessageIds = useMemo(() => {
-    const ids = new Set<string>();
+  const loadedMessages = useMemo(() => {
+    const byId = new Map<string, RespondMessageRenderable>();
     for (const item of sortedItems) {
-      if (item.messageId != null) ids.add(String(item.messageId));
+      if (item.messageId != null) byId.set(String(item.messageId), item);
     }
-    return ids;
+    return byId;
   }, [sortedItems]);
 
-  const jumpToMessage = useCallback((id: string) => {
-    bubbleRefs.current.get(id)?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-    setFlashMessageId(id);
-  }, []);
+  const jumpToMessage = useCallback(
+    (id: string) => {
+      scrollNodeIntoView(bubbleRefs.current.get(id), { behavior: 'smooth', block: 'center' });
+      setFlashMessageId(id);
+    },
+    [scrollNodeIntoView],
+  );
 
   // Clear the flash ring after it has been seen. Reset on every new target so a
   // second jump re-flashes instead of inheriting the first one's timer.
@@ -427,7 +558,7 @@ export default function RespondChatList({
   let lastDateKey = '';
 
   return (
-    <div className="flex flex-col">
+    <div className="relative flex flex-col">
       <div className="flex items-center gap-3 rounded-t-md border border-b-0 bg-[#f0f2f5] dark:bg-[#202c33] px-3 py-2">
         <div className="flex size-9 items-center justify-center rounded-full bg-emerald-600 text-sm font-semibold text-white">
           {contactInitial}
@@ -504,8 +635,15 @@ export default function RespondChatList({
                         Internal
                       </span>
                       <span>{comment.author_name || 'Unknown author'}</span>
-                      <span className="font-normal opacity-80">
-                        {formatDateTimeInMalaysia(comment.created_at)}
+                      {/* Same clock as the message bubbles: a note sitting
+                          between two messages must not read on a different
+                          timezone, and the date pill above already carries the
+                          day. */}
+                      <span
+                        className="font-normal opacity-80"
+                        data-testid="chat-internal-note-time"
+                      >
+                        {entry.ms > 0 ? formatBubbleTime(entry.ms) : ''}
                       </span>
                     </div>
                     <div className="whitespace-pre-wrap break-words leading-snug">
@@ -549,10 +687,10 @@ export default function RespondChatList({
           const isActiveMatch = activeMatchId != null && String(item.messageId ?? '') === activeMatchId;
           const isFlashed =
             flashMessageId != null && String(item.messageId ?? '') === flashMessageId;
-          const quotedTargetId =
-            quotedContext?.messageId && loadedMessageIds.has(quotedContext.messageId)
-              ? quotedContext.messageId
-              : null;
+          const quotedTarget = quotedContext?.messageId
+            ? loadedMessages.get(quotedContext.messageId)
+            : undefined;
+          const quotedTargetId = quotedTarget ? (quotedContext?.messageId ?? null) : null;
 
           return (
             <div
@@ -605,6 +743,7 @@ export default function RespondChatList({
                   {quotedContext ? (
                     <QuotedContextBlock
                       context={quotedContext}
+                      agentLabel={quotedAgentLabel(quotedTarget)}
                       onJump={quotedTargetId ? () => jumpToMessage(quotedTargetId) : undefined}
                     />
                   ) : (
@@ -654,8 +793,37 @@ export default function RespondChatList({
             </div>
           );
         })}
+        {isLoadingNewer && (
+          <div
+            data-testid="chat-newer-loading"
+            className="flex items-center justify-center gap-2 py-2 text-xs text-zinc-500 dark:text-zinc-400"
+          >
+            <Loader2 className="size-3.5 animate-spin" />
+            Loading newer messages
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* The way back from a search jump. Absolutely positioned so it costs the
+          scroll container no height and cannot disturb the anchoring maths. */}
+      {isDetached && onJumpToLatest && (
+        <button
+          type="button"
+          data-testid="chat-jump-to-latest"
+          aria-label="Jump to the latest messages"
+          onClick={onJumpToLatest}
+          className="absolute bottom-3 left-1/2 z-20 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-md hover:bg-zinc-50 dark:border-zinc-700 dark:bg-[#202c33] dark:text-zinc-200 dark:hover:bg-[#2a3942]"
+        >
+          <ArrowDownToLine className="size-3.5" />
+          Jump to latest
+          {newerUnseenCount > 0 && (
+            <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+              {newerUnseenCount} new
+            </span>
+          )}
+        </button>
+      )}
 
       <AttachmentPreviewModal
         open={previewItems.length > 0}

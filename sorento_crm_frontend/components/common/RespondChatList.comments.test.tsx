@@ -10,7 +10,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import RespondChatList, { type ConversationCommentRenderable } from './RespondChatList';
-import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
+import { formatBubbleTime, type RespondMessageRenderable } from '@/lib/respondIoChatRender';
 
 vi.mock('@/components/common/AttachmentPreviewModal', () => ({
   __esModule: true,

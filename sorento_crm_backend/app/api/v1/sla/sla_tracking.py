@@ -2227,10 +2227,14 @@ async def get_sla_tracking_conversation_page(
         None, description="Message id to centre the window on (jump to a search match)"
     ),
     limit: int = Query(50, ge=1, le=200),
-    current_user: dict = Depends(get_current_user_or_api_key),
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """One scroll-back window of the contact thread (UAC AC-L7).
+
+    Assignee-or-manager scoped like the sibling ``GET .../ticket``: this serves
+    a contact's WhatsApp conversation, so an outsider gets a 404 (never a 403,
+    which would confirm the ticket exists).
 
     Items always come back **oldest-to-newest**, whichever direction was asked
     for, so the caller never reverses. ``has_more_older`` is true whenever the
@@ -2257,6 +2261,7 @@ async def get_sla_tracking_conversation_page(
         return await run_in_threadpool(
             lambda: service.fetch_conversation_thread_page(
                 str(tracking_id),
+                viewer_user_id=current_user["id"],
                 before=before,
                 after=after,
                 around=around,
@@ -2276,21 +2281,27 @@ async def search_sla_tracking_conversation(
     tracking_id: UUID,
     q: str = Query("", description="Free text searched inside this contact's messages"),
     limit: int = Query(100, ge=1, le=200),
-    current_user: dict = Depends(get_current_user_or_api_key),
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """In-thread message search for this tracking's contact (UAC AC-L8).
 
     ILIKE over the stored message body, newest-first and capped. Side-effect
     free. Each hit carries the message id the thread jumps to via
-    ``GET .../conversation/page?around=<message_id>``.
+    ``GET .../conversation/page?around=<message_id>``. Assignee-or-manager
+    scoped like the page read - an outsider gets a 404, never a 403.
     """
     from starlette.concurrency import run_in_threadpool
 
     try:
         service = ConversationSLATrackingService(db)
         return await run_in_threadpool(
-            lambda: service.search_conversation_thread(str(tracking_id), q=q, limit=limit)
+            lambda: service.search_conversation_thread(
+                str(tracking_id),
+                viewer_user_id=current_user["id"],
+                q=q,
+                limit=limit,
+            )
         )
     except HTTPException:
         raise
