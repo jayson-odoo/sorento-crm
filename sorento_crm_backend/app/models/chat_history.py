@@ -75,6 +75,16 @@ class ChatHistory(Base):
 
     __table_args__ = (
         Index("ix_chat_histories_channel_contact_sent_id", "channel", "contact_id", "sent_at", "id"),
+        # The Conversations inbox's "latest message per contact" DISTINCT ON
+        # (alembic 330). It does NOT filter on channel - an inbox row is the
+        # contact, whatever channel they last used - so the composite above,
+        # which leads on `channel`, cannot serve it.
+        Index(
+            "ix_chat_histories_contact_sent_desc",
+            "contact_id",
+            sent_at.desc(),
+            id.desc(),
+        ),
         Index("ix_chat_histories_channel_phone_sent", "channel", "phone_number", "sent_at"),
         Index("ix_chat_histories_channel_type_sent", "channel", "type", "sent_at"),
         Index(

@@ -111,6 +111,15 @@ PERMISSION_REGISTRY.extend([
     {"slug": "sla_management.conversation_sla_tracking.takeover", "name": "Takeover SLA task", "description": "Take over a teammate's conversation SLA task (and cancel/reject pending takeovers)."},
 ])
 PERMISSION_REGISTRY.extend(_crud("sla_management", "escalation_logs", "SLA Event Logs"))
+# Conversations inbox (UAC AC-N2). READ access to a contact thread is a
+# PERMISSION, deliberately not ticket assignment: a reassigned-away previous
+# assignee, a mentioned colleague and a manager all have to be able to read.
+# `.reply` is the separate act gate for sending from the inbox - the ticket
+# drawer's own send keeps its assignee-or-manager rule and needs neither slug.
+PERMISSION_REGISTRY.extend([
+    {"slug": "sla_management.conversations.view", "name": "View Conversations", "description": "Read any contact's conversation thread, its notes and its media from the Conversations inbox (read access is a permission, not ticket assignment)."},
+    {"slug": "sla_management.conversations.reply", "name": "Reply in Conversations", "description": "Send a WhatsApp reply to a contact from the Conversations inbox. Stamped onto the sender's own open ticket for that contact when they hold exactly one."},
+])
 # Composer snippets (UAC AC-L4). `.view` is what the ticket composer's "/" picker
 # reads, so it is granted to everyone who works tickets (migration 329 copies the
 # grants from `sla_management.conversation_sla_tracking.view`); add/edit/delete
