@@ -5,33 +5,26 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 /**
  * The shared reassign picker (UAC AC-N7). A reply from a user with no Respond
  * mapping cannot carry a real sender identity, so the picker says who is linked
- * and can filter to them - and says NOTHING when the linkage cannot be read,
- * rather than showing a badge that might be lying.
+ * and can filter to them. The linkage rides on the picker's OWN rows
+ * (`respond_linked` on visible-users), so it is available to every holder of
+ * the picker - it used to come from a second, `user_management.users.view`-gated
+ * call that degraded to no-badge-no-filter for exactly the SLA agents who need
+ * it.
  */
 const visibleUsers = vi.fn();
 vi.mock('../hooks/useTeamPendingSLA', () => ({
   useVisibleUsers: () => visibleUsers(),
 }));
 
-const respondLinked = vi.fn();
-vi.mock('../hooks/useRespondLinkedUsers', () => ({
-  useRespondLinkedUserIds: () => respondLinked(),
-}));
-
 import ReassignDialog from './ReassignDialog';
 
 const USERS = [
-  { id: 'u-1', name: 'Aisyah Rahman', email: 'aisyah@sorento.test' },
-  { id: 'u-2', name: 'Ben Lim', email: 'ben@sorento.test' },
+  { id: 'u-1', name: 'Aisyah Rahman', email: 'aisyah@sorento.test', respond_linked: true },
+  { id: 'u-2', name: 'Ben Lim', email: 'ben@sorento.test', respond_linked: false },
 ];
 
 beforeEach(() => {
   visibleUsers.mockReturnValue({ data: USERS, isLoading: false, error: null });
-  respondLinked.mockReturnValue({
-    linkedIds: new Set(['u-1']),
-    isKnown: true,
-    isLoading: false,
-  });
 });
 
 function renderDialog(props: Partial<React.ComponentProps<typeof ReassignDialog>> = {}) {
@@ -67,14 +60,28 @@ describe('ReassignDialog (AC-N7)', () => {
     expect(screen.queryByText('Ben Lim')).toBeNull();
   });
 
-  it('offers neither badge nor filter when the linkage cannot be read', async () => {
-    respondLinked.mockReturnValue({ linkedIds: new Set(), isKnown: false, isLoading: false });
+  it('badge and filter come from the picker rows, so they are always offered', async () => {
     renderDialog();
 
-    expect(screen.queryByTestId('reassign-respond-linked-filter')).toBeNull();
+    expect(screen.getByTestId('reassign-respond-linked-filter')).toBeDefined();
     openPicker();
     await waitFor(() => expect(screen.getByText('Aisyah Rahman')).toBeDefined());
-    expect(screen.queryByTestId('respond-linked-badge-u-1')).toBeNull();
+    expect(screen.getByTestId('respond-linked-badge-u-1')).toBeDefined();
+  });
+
+  it('nobody linked: the filter empties the list rather than lying about it', async () => {
+    visibleUsers.mockReturnValue({
+      data: USERS.map((u) => ({ ...u, respond_linked: false })),
+      isLoading: false,
+      error: null,
+    });
+    renderDialog();
+    fireEvent.click(screen.getByTestId('reassign-respond-linked-filter'));
+    openPicker();
+
+    await waitFor(() =>
+      expect(screen.getByText('No Respond-linked colleagues.')).toBeDefined(),
+    );
   });
 
   it('confirms with the chosen colleague', async () => {

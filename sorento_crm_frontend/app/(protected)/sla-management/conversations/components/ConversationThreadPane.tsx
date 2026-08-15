@@ -9,9 +9,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import RespondChatList from '@/components/common/RespondChatList';
 import InternalCommentComposer from '@/components/common/conversation/InternalCommentComposer';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
+import { excerptOfMessage } from '@/components/common/conversation/quotedReply';
 import { useConversationEvents } from '@/components/common/conversation/useConversationEvents';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
-import { useCreateTicketComment } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTicketComments';
 import { cn } from '@/lib/utils';
 
 import {
@@ -23,7 +23,10 @@ import {
   useContactMediaProxy,
   useContactThread,
   useContactThreadLoaders,
+  useContactWindow,
+  useCreateContactComment,
   useReplyToContact,
+  useSendContactTemplate,
 } from '../hooks/useConversationsInbox';
 import type { ConversationInboxItem } from '../services/conversationsInboxService';
 import { useQueryClient } from '@tanstack/react-query';
@@ -54,6 +57,9 @@ export default function ConversationThreadPane({
 }: ConversationThreadPaneProps) {
   const contactRef = contact?.contact_ref ?? null;
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
+  const [replyTo, setReplyTo] = useState<
+    { messageId: string | number | null; excerpt: string } | null
+  >(null);
 
   const queryClient = useQueryClient();
 
@@ -83,14 +89,20 @@ export default function ConversationThreadPane({
   const { loadPage, searchMessages } = useContactThreadLoaders(contactRef);
   const mediaProxy = useContactMediaProxy(contactRef);
   const replyMutation = useReplyToContact(contactRef);
+  const templateMutation = useSendContactTemplate(contactRef);
+  // AC-N3 gap closure: the window and the out-of-window template are contact-
+  // keyed now, so the composer smart-sends here exactly as the drawer does
+  // instead of assuming an open window.
+  const windowQuery = useContactWindow(contactRef);
 
-  // A note is written against a TICKET: there is no contact-keyed note create
-  // (recorded as a backend follow-up in the plan's S4.9 note). So the mode is
-  // only offered when this viewer holds exactly one open enquiry for the
-  // contact, which is also the only case where "which ticket owns it" has an
-  // unambiguous answer.
-  const noteTicketId = contact?.my_open_ticket_id ?? null;
-  const commentMutation = useCreateTicketComment(noteTicketId ?? '');
+  // A note is CONTACT-scoped: it needs no ticket, so the mode is offered
+  // unconditionally to anyone who can read the conversation. The ticket-keyed
+  // create is the drawer's; this one lands with `tracking_id` null and renders
+  // in both places.
+  const commentMutation = useCreateContactComment(contactRef);
+  // Snippet `$variables` still resolve against a ticket, so they only have a
+  // subject when the viewer holds exactly one open enquiry for this contact.
+  const snippetTicketId = contact?.my_open_ticket_id ?? null;
 
   const thread = useConversationThread({
     liveItems: threadQuery.data?.items ?? [],
@@ -101,9 +113,10 @@ export default function ConversationThreadPane({
   });
 
   // A different contact is a different conversation: never carry the composer
-  // mode across, and never leave Note selected for someone it is unavailable for.
+  // mode across, and never carry a quote into someone else's thread.
   useEffect(() => {
     setMode('reply');
+    setReplyTo(null);
   }, [contactRef]);
 
   if (!contact) {
@@ -123,8 +136,6 @@ export default function ConversationThreadPane({
       </div>
     );
   }
-
-  const noteAvailable = !!noteTicketId;
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col gap-3', className)}>
@@ -197,6 +208,17 @@ export default function ConversationThreadPane({
             focusNonce={thread.focusNonce}
             comments={commentsQuery.data ?? []}
             mediaProxy={mediaProxy}
+            // Respond has no reply-to parameter, so the quote is emulated as a
+            // ">" prefix the composer builds - same as the drawer.
+            onReply={
+              canReply
+                ? (item) =>
+                    setReplyTo({
+                      messageId: item.messageId ?? null,
+                      excerpt: excerptOfMessage(item),
+                    })
+                : undefined
+            }
           />
         </>
       )}
@@ -227,60 +249,56 @@ export default function ConversationThreadPane({
           role="tab"
           aria-selected={mode === 'note'}
           data-testid="inbox-composer-mode-note"
-          disabled={!noteAvailable}
-          title={
-            noteAvailable
-              ? undefined
-              : 'Notes attach to one of your own open enquiries for this contact.'
-          }
           onClick={() => setMode('note')}
           className={cn(
             'flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors',
             mode === 'note'
               ? 'bg-amber-500 text-white shadow-sm'
               : 'text-muted-foreground hover:text-foreground',
-            !noteAvailable && 'cursor-not-allowed opacity-50 hover:text-muted-foreground',
           )}
         >
           Note
         </button>
       </div>
 
-      {mode === 'note' && noteAvailable && (
+      {mode === 'note' && (
         <InternalCommentComposer
-          onSubmit={async ({ body, mentionedUserIds }) => {
-            const created = await commentMutation.mutateAsync({
-              body,
-              mentioned_user_ids: mentionedUserIds,
-            });
-            // The note list here is contact-keyed, so the ticket-keyed mutation's
-            // own invalidation does not reach it.
-            void queryClient.invalidateQueries({ queryKey: contactCommentsKey(contactRef) });
-            return created;
-          }}
+          onSubmit={({ body, mentionedUserIds }) =>
+            commentMutation.mutateAsync({ body, mentioned_user_ids: mentionedUserIds })
+          }
         />
       )}
 
       {mode === 'reply' && (
         <SharedConversationComposer
-          // No entity owns an inbox reply - it is keyed by the contact. The
-          // ids are only ever used for the window/template queries, which the
-          // override below turns off (there is no contact-keyed window read;
-          // the backend still smart-sends a template out of window).
+          // No entity owns an inbox reply - it is keyed by the contact, so the
+          // window, the template preview and both sends all come through the
+          // overrides below rather than through the entity chat routes.
           entityType="conversation_contact"
           entityId={contactRef ?? ''}
           canReply={canReply}
           mode="conversation"
           attachmentsEnabled
-          showTemplateButton={false}
-          windowStateOverride={{ closed: false }}
+          // The window is a live Respond read, so until it lands the composer
+          // assumes OPEN: showing the template form to someone who is in fact
+          // in-window would make them fill a template for nothing.
+          windowStateOverride={{
+            closed: windowQuery.data ? !windowQuery.data.window.open : false,
+            template: windowQuery.data?.chat_template ?? null,
+          }}
+          templateSendAdapter={(input) => templateMutation.mutateAsync(input)}
           snippetsEnabled
-          snippetTrackingId={noteTicketId}
+          snippetTrackingId={snippetTicketId}
           emojiEnabled
+          replyTo={replyTo}
+          onClearReplyTo={() => setReplyTo(null)}
           sendAdapter={async (payload) => {
             const result = await replyMutation.mutateAsync({
               text: payload.text,
               files: payload.files,
+              reply_to_message_id:
+                payload.replyToMessageId != null ? String(payload.replyToMessageId) : null,
+              reply_to_excerpt: payload.replyToExcerpt ?? null,
             });
             // AC-N2: a stamped send answered one of the sender's own enquiries
             // and stopped its clock. Said quietly - an unstamped send still

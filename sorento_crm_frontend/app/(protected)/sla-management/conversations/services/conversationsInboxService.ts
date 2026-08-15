@@ -32,16 +32,27 @@
  *      WIDER than the ticket-keyed list on purpose (AC-N3): contact-scoped
  *      notes AND every conversation ticket's notes for that contact.
  * 5. GET /conversations/{ref}/media?url=  -> the bytes (allowlisted hosts).
- * 6. POST /conversations/{ref}/reply - JSON `{text}` or multipart
- *      (`text` + repeated `files`). `stamped_ticket_id` is non-null only when
- *      the sender holds EXACTLY ONE open ticket for the contact; zero or
- *      several is an unstamped human send that still goes out, still writes the
- *      outbox and still fires the human-intervention signal - so the FE must
- *      not block on it.
- *
- * NOT AVAILABLE (recorded, backend follow-up): there is no contact-keyed note
- * CREATE and no contact-keyed 24h-window / template read. See the inbox
- * components for how each is handled.
+ * 6. POST /conversations/{ref}/reply - JSON
+ *      `{text, reply_to_message_id?, reply_to_excerpt?}` or multipart (the same
+ *      fields + repeated `files`). The `reply_to_*` pair is AUDIT-ONLY and never
+ *      reaches Respond, which has no reply-to parameter: the composer builds the
+ *      ">" quote prefix into `text`, which is sent verbatim.
+ *      `stamped_ticket_id` is non-null only when the sender holds EXACTLY ONE
+ *      open ticket for the contact; zero or several is an unstamped human send
+ *      that still goes out, still writes the outbox and still fires the
+ *      human-intervention signal - so the FE must not block on it.
+ * 7. POST /conversations/{ref}/comments - `{body, mentioned_user_ids}` -> 201
+ *      with the same `TicketComment` the drawer renders (`tracking_id` null: the
+ *      note belongs to the CONTACT). Gated by `.view`, not by assignment - a
+ *      note is internal staff context. Blank body -> 422, unknown mentioned
+ *      user -> 400 (the whole note is refused).
+ * 8. GET /conversations/{ref}/window -> `{window, chat_template}` - the SAME
+ *      pair the drawer reads off the ticket detail, so it feeds
+ *      `windowStateOverride` directly. NOT DB-only: a live Respond call.
+ * 9. POST /conversations/{ref}/template-message - `{template_id, params}`,
+ *      synchronous, gated by `.reply`. Stamps by the same exactly-one-open-
+ *      ticket rule as the reply. Unknown template -> 404, missing parameter ->
+ *      400, a Respond refusal -> 502 with the outbox row still written.
  * ---------------------------------------------------------------------------
  */
 
@@ -51,7 +62,11 @@ import type {
   ConversationSearchMatch,
   ConversationThreadPage,
 } from '@/components/common/conversation/useConversationThread';
-import type { TicketComment } from '@/app/(protected)/sla-management/conversation-sla-tracking/services/ticketCommentService';
+import type {
+  CreateTicketCommentInput,
+  TicketComment,
+} from '@/app/(protected)/sla-management/conversation-sla-tracking/services/ticketCommentService';
+import type { ChatTemplatePreview } from '@/services/whatsappTemplateService';
 
 const BASE = '/api/v1/sla-management/conversations';
 
@@ -168,9 +183,76 @@ export async function fetchContactMedia(contactRef: string, url: string): Promis
   return response;
 }
 
+/** Write an internal note on the CONTACT (no ticket owns it). */
+export async function createContactComment(
+  contactRef: string,
+  input: CreateTicketCommentInput,
+): Promise<TicketComment> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(contactRef)}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      body: input.body,
+      mentioned_user_ids: input.mentioned_user_ids ?? [],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to add the note'));
+  }
+  return response.json();
+}
+
+/** Composer state for a contact: the 24h window plus the out-of-window template. */
+export interface ContactComposerState {
+  window: { open: boolean; expires_at: string | null };
+  chat_template: ChatTemplatePreview;
+}
+
+export async function getContactWindow(contactRef: string): Promise<ContactComposerState> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(contactRef)}/window`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to check the messaging window'));
+  }
+  return response.json();
+}
+
+export interface ContactTemplateSendResult {
+  ok: boolean;
+  queued: boolean;
+  template_name: string | null;
+  rendered_body: string | null;
+  /** Null = the send was not attached to one of the sender's open enquiries. */
+  stamped_ticket_id: string | null;
+}
+
+/** Send an approved template to the contact. Synchronous: this IS the outcome. */
+export async function sendContactTemplateMessage(
+  contactRef: string,
+  input: { template_id: string; params: Record<string, string> },
+): Promise<ContactTemplateSendResult> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(contactRef)}/template-message`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template_id: input.template_id, params: input.params }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to send template'));
+  }
+  return response.json();
+}
+
 export interface ContactReplyInput {
   text: string;
   files?: File[];
+  /**
+   * Audit-only, exactly like the drawer send: Respond has no reply-to
+   * parameter, so the quote itself is already in `text` as a ">" prefix.
+   */
+  reply_to_message_id?: string | null;
+  reply_to_excerpt?: string | null;
 }
 
 export interface ContactReplyResult {
@@ -190,11 +272,15 @@ export async function replyToContact(
   const files = input.files ?? [];
   const url = `${BASE}/${encodeURIComponent(contactRef)}/reply`;
   const response = await (files.length > 0
-    ? apiFetch(url, { method: 'POST', body: buildReplyFormData(input.text, files) })
+    ? apiFetch(url, { method: 'POST', body: buildReplyFormData(input, files) })
     : apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: input.text }),
+        body: JSON.stringify({
+          text: input.text,
+          reply_to_message_id: input.reply_to_message_id ?? null,
+          reply_to_excerpt: input.reply_to_excerpt ?? null,
+        }),
       }));
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to send message'));
@@ -202,9 +288,15 @@ export async function replyToContact(
   return response.json();
 }
 
-function buildReplyFormData(text: string, files: File[]): FormData {
+function buildReplyFormData(input: ContactReplyInput, files: File[]): FormData {
   const formData = new FormData();
-  formData.append('text', text);
+  formData.append('text', input.text);
+  // Only when set: the multipart lane reads them as plain strings, so an empty
+  // one would arrive as the literal "" rather than as absent.
+  if (input.reply_to_message_id) {
+    formData.append('reply_to_message_id', input.reply_to_message_id);
+  }
+  if (input.reply_to_excerpt) formData.append('reply_to_excerpt', input.reply_to_excerpt);
   for (const file of files) formData.append('files', file);
   return formData;
 }

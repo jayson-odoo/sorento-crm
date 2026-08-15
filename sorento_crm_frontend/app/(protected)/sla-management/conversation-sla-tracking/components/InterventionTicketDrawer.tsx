@@ -37,11 +37,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import RespondChatList from '@/components/common/RespondChatList';
 import InternalCommentComposer from '@/components/common/conversation/InternalCommentComposer';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
+import { excerptOfMessage } from '@/components/common/conversation/quotedReply';
 import { useConversationEvents } from '@/components/common/conversation/useConversationEvents';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 
 import {
   useSlaTrackingConversation,
@@ -96,14 +96,6 @@ const THREAD_POLL_MS = 10_000;
  * where a poke was published while the socket was momentarily down.
  */
 const THREAD_POLL_LIVE_MS = 60_000;
-
-/** Short excerpt of a message, used as the quoted text on a reply. */
-function excerptOf(item: RespondMessageRenderable): string {
-  const text = (item.message?.text ?? '').trim();
-  if (text) return text;
-  const type = String(item.message?.type ?? '').trim();
-  return type ? `[${type}]` : '[attachment]';
-}
 
 /**
  * The intervention ticket, opened in place from the dashboard worklist: enquiry
@@ -447,7 +439,7 @@ export default function InterventionTicketDrawer({
                   comments={commentsQuery.data ?? []}
                   mediaProxy={mediaProxy}
                   onReply={(item) =>
-                    setReplyTo({ messageId: item.messageId ?? null, excerpt: excerptOf(item) })
+                    setReplyTo({ messageId: item.messageId ?? null, excerpt: excerptOfMessage(item) })
                   }
                 />
               </>

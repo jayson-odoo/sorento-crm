@@ -30,12 +30,18 @@ vi.mock('../hooks/useTicketComments', () => ({
 // drawer; the hook has its own test. `liveConnected` false keeps the fast poll,
 // which is the interval the polling assertions below are written against.
 const invalidateQueries = vi.fn();
-const conversationEvents = vi.fn(() => ({ connected: false }));
+interface LiveEventsArgs {
+  contactIds: (string | null | undefined)[];
+  enabled: boolean;
+  onEvent: (event: { type: string }) => void;
+  onReady?: () => void;
+}
+const conversationEvents = vi.fn<(options: LiveEventsArgs) => { connected: boolean }>();
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries }),
 }));
 vi.mock('@/components/common/conversation/useConversationEvents', () => ({
-  useConversationEvents: (...a: unknown[]) => conversationEvents(...(a as [])),
+  useConversationEvents: (options: LiveEventsArgs) => conversationEvents(options),
 }));
 
 // AC-N7: Reassign in the header is permission-gated and uses the SHARED dialog.
@@ -382,9 +388,7 @@ describe('InterventionTicketDrawer', () => {
     renderDrawer();
     await waitFor(() => expect(screen.getByTestId('chat-list')).toBeInTheDocument());
 
-    const { onEvent } = conversationEvents.mock.calls.at(-1)![0] as {
-      onEvent: (e: { type: string }) => void;
-    };
+    const { onEvent } = conversationEvents.mock.calls.at(-1)![0];
     invalidateQueries.mockClear();
     onEvent({ type: 'message' });
 
@@ -402,9 +406,7 @@ describe('InterventionTicketDrawer', () => {
     renderDrawer();
     await waitFor(() => expect(screen.getByTestId('chat-list')).toBeInTheDocument());
 
-    const { onEvent } = conversationEvents.mock.calls.at(-1)![0] as {
-      onEvent: (e: { type: string }) => void;
-    };
+    const { onEvent } = conversationEvents.mock.calls.at(-1)![0];
     invalidateQueries.mockClear();
     onEvent({ type: 'ticket_updated' });
 

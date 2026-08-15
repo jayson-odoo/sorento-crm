@@ -98,6 +98,15 @@ interface SharedConversationComposerProps {
    */
   templateSendTrackingId?: string | null;
   /**
+   * Overrides the manual template send, for surfaces whose template route is
+   * not the entity chat one (the Conversations inbox is keyed by contact, and
+   * its send derives the ticket rather than being given one).
+   */
+  templateSendAdapter?: (input: {
+    template_id: string;
+    params: Record<string, string>;
+  }) => Promise<unknown>;
+  /**
    * Offer the "/" snippet picker (UAC AC-L4). Off by default so the existing
    * entity chat panels are untouched; the intervention-ticket drawer turns it
    * on and supplies the ticket the `$variables` resolve against.
@@ -144,6 +153,7 @@ export default function SharedConversationComposer({
   windowStateOverride = null,
   showTemplateButton = true,
   templateSendTrackingId = null,
+  templateSendAdapter,
   snippetsEnabled = false,
   snippetTrackingId = null,
   emojiEnabled = false,
@@ -751,6 +761,7 @@ export default function SharedConversationComposer({
         entityId={entityId}
         contactId={entityId}
         trackingId={templateSendTrackingId}
+        sendAdapter={templateSendAdapter}
         open={templateDialogOpen}
         onOpenChange={setTemplateDialogOpen}
         onSent={() => {

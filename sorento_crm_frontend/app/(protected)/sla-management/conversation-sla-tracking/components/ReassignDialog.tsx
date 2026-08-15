@@ -15,7 +15,6 @@ import {
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useVisibleUsers } from '../hooks/useTeamPendingSLA';
-import { useRespondLinkedUserIds } from '../hooks/useRespondLinkedUsers';
 import type { VisibleUser } from '../services/conversationSLATrackingService';
 
 function displayUser(u: VisibleUser): string {
@@ -40,9 +39,10 @@ export interface ReassignDialogProps {
  *
  * AC-N7: each colleague says whether they are Respond-linked, and the list can
  * be filtered to those, because a reply from an unlinked user cannot carry a
- * real Respond sender identity. When the linkage cannot be read (the endpoint
- * that carries it needs a permission not every SLA actor holds) both the badge
- * and the filter are simply absent - never a badge that might be lying.
+ * real Respond sender identity. The linkage rides on the picker's OWN rows
+ * (`respond_linked` on visible-users) - it used to come from the shared
+ * user-select endpoint, which is gated by `user_management.users.view` and so
+ * degraded to no-badge-no-filter for exactly the SLA agents who need it.
  */
 export default function ReassignDialog({
   open,
@@ -52,7 +52,6 @@ export default function ReassignDialog({
   onConfirm,
 }: ReassignDialogProps) {
   const { data: users = [], isLoading, error } = useVisibleUsers(open);
-  const { linkedIds, isKnown: linkageKnown } = useRespondLinkedUserIds(open);
   const [selectedId, setSelectedId] = useState<string>('');
   const [linkedOnly, setLinkedOnly] = useState(false);
 
@@ -64,15 +63,15 @@ export default function ReassignDialog({
   }, [open]);
 
   const options = useMemo(() => {
-    const visible = linkedOnly ? users.filter((u) => linkedIds.has(u.id)) : users;
+    const visible = linkedOnly ? users.filter((u) => u.respond_linked) : users;
     return visible.map((u) => ({
       value: u.id,
       label: displayUser(u),
       searchText: `${u.name ?? ''} ${u.email}`.trim(),
       // Carried on the option so `renderOption` can badge it without a lookup.
-      description: linkageKnown && linkedIds.has(u.id) ? 'Respond-linked' : undefined,
+      description: u.respond_linked ? 'Respond-linked' : undefined,
     }));
-  }, [users, linkedOnly, linkedIds, linkageKnown]);
+  }, [users, linkedOnly]);
 
   // A filter that hides the selection would submit someone the user can no
   // longer see. Drop the selection instead of carrying it invisibly.
@@ -92,24 +91,22 @@ export default function ReassignDialog({
         <div className="space-y-2 py-1">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Label htmlFor="reassign-assignee">Assign to</Label>
-            {linkageKnown && (
-              <div className="flex items-center gap-2">
-                <Switch
-                  id="reassign-respond-linked-only"
-                  data-testid="reassign-respond-linked-filter"
-                  size="sm"
-                  checked={linkedOnly}
-                  onCheckedChange={(next) => setLinkedOnly(!!next)}
-                  disabled={submitting}
-                />
-                <Label
-                  htmlFor="reassign-respond-linked-only"
-                  className="text-xs font-normal text-muted-foreground"
-                >
-                  Respond-linked only
-                </Label>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <Switch
+                id="reassign-respond-linked-only"
+                data-testid="reassign-respond-linked-filter"
+                size="sm"
+                checked={linkedOnly}
+                onCheckedChange={(next) => setLinkedOnly(!!next)}
+                disabled={submitting}
+              />
+              <Label
+                htmlFor="reassign-respond-linked-only"
+                className="text-xs font-normal text-muted-foreground"
+              >
+                Respond-linked only
+              </Label>
+            </div>
           </div>
           <SearchableSelect
             id="reassign-assignee"

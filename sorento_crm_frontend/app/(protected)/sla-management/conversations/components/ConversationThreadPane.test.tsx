@@ -3,17 +3,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 /**
- * The Conversations inbox thread pane (UAC AC-N2 / AC-N3 / AC-N4).
+ * The Conversations inbox thread pane (UAC AC-N2 / AC-N3 / AC-N4 / AC-K1).
  *
  * It renders the SAME shared list the ticket drawer does, driven by
  * contact-keyed loaders. Stubbed here so the suite is about the wiring: the
- * media proxy reaching the list, reply gated on the permission, Note gated on
- * the viewer holding exactly one open enquiry for the contact, and the
- * "Select a conversation" empty state.
+ * media proxy reaching the list, reply gated on the permission, the contact-
+ * keyed Note, the contact-keyed window feeding the composer, the per-bubble
+ * reply quote, and the "Select a conversation" empty state.
  */
 const contactThread = vi.fn();
 const contactComments = vi.fn();
+const contactWindow = vi.fn();
 const replyMutateAsync = vi.fn();
+const templateMutateAsync = vi.fn();
 const mediaProxy = vi.fn();
 const commentMutateAsync = vi.fn();
 
@@ -23,6 +25,7 @@ vi.mock('../hooks/useConversationsInbox', () => ({
   contactThreadKey: (ref: string | null) => ['conversation-contact-thread', ref],
   useContactThread: (...a: unknown[]) => contactThread(...a),
   useContactComments: (...a: unknown[]) => contactComments(...a),
+  useContactWindow: (...a: unknown[]) => contactWindow(...a),
   useContactThreadLoaders: () => ({
     loadPage: vi.fn().mockResolvedValue({
       items: [],
@@ -35,17 +38,12 @@ vi.mock('../hooks/useConversationsInbox', () => ({
   }),
   useContactMediaProxy: () => mediaProxy,
   useReplyToContact: () => ({ mutateAsync: replyMutateAsync, isPending: false }),
+  useSendContactTemplate: () => ({ mutateAsync: templateMutateAsync, isPending: false }),
+  useCreateContactComment: (ref: string | null) => ({
+    mutateAsync: (input: unknown) => commentMutateAsync(ref, input),
+  }),
   contactCommentsKey: (ref: string | null) => ['conversation-contact-comments', ref],
 }));
-
-vi.mock(
-  '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTicketComments',
-  () => ({
-    useCreateTicketComment: (id: string) => ({
-      mutateAsync: (input: unknown) => commentMutateAsync(id, input),
-    }),
-  }),
-);
 
 const invalidateQueries = vi.fn();
 vi.mock('@tanstack/react-query', () => ({
@@ -54,55 +52,116 @@ vi.mock('@tanstack/react-query', () => ({
 
 // AC-K1 / AC-K2: the live-thread subscriber, stubbed so this suite stays about
 // the pane. The hook itself is tested in components/common/conversation.
-const conversationEvents = vi.fn(() => ({ connected: false }));
+interface LiveEventsArgs {
+  contactIds: (string | null | undefined)[];
+  enabled: boolean;
+  onEvent: () => void;
+  onReady?: () => void;
+}
+const conversationEvents = vi.fn<(options: LiveEventsArgs) => { connected: boolean }>();
 vi.mock('@/components/common/conversation/useConversationEvents', () => ({
-  useConversationEvents: (...a: unknown[]) => conversationEvents(...(a as [])),
+  useConversationEvents: (options: LiveEventsArgs) => conversationEvents(options),
 }));
 
+interface ChatListStubProps {
+  items: unknown[];
+  contactName?: string | null;
+  comments?: unknown[];
+  mediaProxy?: (url: string) => Promise<Response>;
+  onReply?: (item: { messageId: number; message: { type: string; text: string } }) => void;
+}
+
 vi.mock('@/components/common/RespondChatList', () => ({
-  default: ({
-    items,
-    contactName,
-    comments = [],
-    mediaProxy: proxy,
-  }: {
-    items: unknown[];
-    contactName?: string | null;
-    comments?: unknown[];
-    mediaProxy?: (url: string) => Promise<Response>;
-  }) => (
+  default: ({ items, contactName, comments = [], mediaProxy: proxy, onReply }: ChatListStubProps) => (
     <div
       data-testid="chat-list"
       data-contact={contactName ?? ''}
       data-notes={comments.length}
       data-has-media-proxy={proxy ? 'yes' : 'no'}
+      data-has-reply={onReply ? 'yes' : 'no'}
     >
       {items.length} message(s)
+      {onReply && (
+        <button
+          type="button"
+          data-testid="chat-list-reply"
+          onClick={() =>
+            onReply({ messageId: 42, message: { type: 'text', text: 'quote me' } })
+          }
+        >
+          Reply
+        </button>
+      )}
     </div>
   ),
 }));
+
+interface ComposerStubProps {
+  canReply: boolean;
+  notAvailableMessage?: string;
+  snippetTrackingId?: string | null;
+  showTemplateButton?: boolean;
+  windowStateOverride?: { closed: boolean; template?: unknown } | null;
+  replyTo?: { messageId: string | number | null; excerpt: string } | null;
+  templateSendAdapter?: (input: {
+    template_id: string;
+    params: Record<string, string>;
+  }) => Promise<unknown>;
+  sendAdapter?: (p: {
+    text: string;
+    files: File[];
+    replyToMessageId?: string | number | null;
+    replyToExcerpt?: string | null;
+  }) => Promise<unknown>;
+}
 
 vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
   default: ({
     canReply,
     notAvailableMessage,
     snippetTrackingId,
+    showTemplateButton,
+    windowStateOverride,
+    replyTo,
+    templateSendAdapter,
     sendAdapter,
-  }: {
-    canReply: boolean;
-    notAvailableMessage?: string;
-    snippetTrackingId?: string | null;
-    sendAdapter?: (p: { text: string; files: File[] }) => Promise<unknown>;
-  }) =>
+  }: ComposerStubProps) =>
     canReply ? (
-      <button
-        type="button"
-        data-testid="inbox-composer-send"
-        data-snippet-tracking-id={snippetTrackingId ?? ''}
-        onClick={() => void sendAdapter?.({ text: 'hello', files: [] })}
+      <div
+        data-testid="inbox-composer"
+        data-window-closed={String(!!windowStateOverride?.closed)}
+        data-has-template={String(windowStateOverride?.template != null)}
+        // Undefined means the composer's own default (shown), which is what the
+        // inbox now wants.
+        data-template-button={String(showTemplateButton !== false)}
+        data-reply-to={replyTo ? String(replyTo.messageId) : ''}
+        data-reply-excerpt={replyTo?.excerpt ?? ''}
       >
-        Send
-      </button>
+        <button
+          type="button"
+          data-testid="inbox-composer-send"
+          data-snippet-tracking-id={snippetTrackingId ?? ''}
+          onClick={() =>
+            void sendAdapter?.({
+              text: 'hello',
+              files: [],
+              replyToMessageId: replyTo?.messageId ?? null,
+              replyToExcerpt: replyTo?.excerpt ?? null,
+            })
+          }
+        >
+          Send
+        </button>
+        <button
+          type="button"
+          data-testid="inbox-composer-template"
+          onClick={() =>
+            void templateSendAdapter?.({ template_id: 'tpl-1', params: { '1': 'Aisyah' } })
+          }
+        >
+          Send template
+        </button>
+      </div>
     ) : (
       <p data-testid="inbox-composer-unavailable">{notAvailableMessage}</p>
     ),
@@ -161,7 +220,13 @@ function queryState(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   contactThread.mockReset().mockReturnValue(queryState());
   contactComments.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false });
+  contactWindow.mockReset().mockReturnValue({
+    data: { window: { open: true, expires_at: null }, chat_template: { configured: false } },
+    isLoading: false,
+    isError: false,
+  });
   replyMutateAsync.mockReset().mockResolvedValue({ sent_as: 'text', stamped_ticket_id: 'tkt-1' });
+  templateMutateAsync.mockReset().mockResolvedValue({ ok: true, stamped_ticket_id: 'tkt-1' });
   commentMutateAsync.mockReset().mockResolvedValue({ id: 'c1' });
   toastSuccess.mockReset();
   invalidateQueries.mockReset();
@@ -209,7 +274,12 @@ describe('ConversationThreadPane', () => {
     fireEvent.click(screen.getByTestId('inbox-composer-send'));
 
     await waitFor(() =>
-      expect(replyMutateAsync).toHaveBeenCalledWith({ text: 'hello', files: [] }),
+      expect(replyMutateAsync).toHaveBeenCalledWith({
+        text: 'hello',
+        files: [],
+        reply_to_message_id: null,
+        reply_to_excerpt: null,
+      }),
     );
     expect(toastSuccess).toHaveBeenCalledWith(
       'Sent - counted as the reply to your open enquiry.',
@@ -233,33 +303,103 @@ describe('ConversationThreadPane', () => {
     expect(screen.queryByTestId('inbox-composer-send')).toBeNull();
   });
 
-  it('Note posts against the open enquiry the viewer owns', async () => {
+  it('Note posts against the CONTACT, no ticket involved (AC-N3)', async () => {
     render(<ConversationThreadPane contact={contact()} canReply />);
 
     fireEvent.click(screen.getByTestId('inbox-composer-mode-note'));
     fireEvent.click(screen.getByTestId('inbox-note-submit'));
 
     await waitFor(() =>
-      expect(commentMutateAsync).toHaveBeenCalledWith('tkt-1', {
+      expect(commentMutateAsync).toHaveBeenCalledWith('10025531', {
         body: 'internal note',
         mentioned_user_ids: [],
       }),
     );
   });
 
-  it('Note is unavailable without exactly one open enquiry of the viewer', () => {
+  it('Note is offered even with no open enquiry of the viewer (AC-N3 gap closure)', async () => {
     render(
       <ConversationThreadPane
-        contact={contact({ my_open_ticket_count: 2, my_open_ticket_id: null })}
+        contact={contact({ my_open_ticket_count: 0, my_open_ticket_id: null })}
         canReply
       />,
     );
     const note = screen.getByTestId('inbox-composer-mode-note');
-    expect(note).toBeDisabled();
+    expect(note).not.toBeDisabled();
 
     fireEvent.click(note);
-    expect(screen.queryByTestId('inbox-note-submit')).toBeNull();
-    expect(screen.getByTestId('inbox-composer-send')).toBeDefined();
+    fireEvent.click(screen.getByTestId('inbox-note-submit'));
+
+    await waitFor(() =>
+      expect(commentMutateAsync).toHaveBeenCalledWith('10025531', expect.anything()),
+    );
+  });
+
+  it('Note is offered to a viewer who cannot reply - reading is the only gate', () => {
+    render(<ConversationThreadPane contact={contact()} canReply={false} />);
+    fireEvent.click(screen.getByTestId('inbox-composer-mode-note'));
+    expect(screen.getByTestId('inbox-note-submit')).toBeDefined();
+  });
+
+  // ---- AC-N3 gap closure: window, template, quoted reply ------------------
+
+  it('feeds the contact-keyed window into the composer and offers Send template', () => {
+    contactWindow.mockReturnValue({
+      data: {
+        window: { open: false, expires_at: null },
+        chat_template: { configured: true, slots: [] },
+      },
+      isLoading: false,
+      isError: false,
+    });
+    render(<ConversationThreadPane contact={contact()} canReply />);
+
+    const composer = screen.getByTestId('inbox-composer');
+    expect(composer).toHaveAttribute('data-window-closed', 'true');
+    expect(composer).toHaveAttribute('data-has-template', 'true');
+    expect(composer).toHaveAttribute('data-template-button', 'true');
+  });
+
+  it('assumes an OPEN window until the live Respond read lands', () => {
+    contactWindow.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    render(<ConversationThreadPane contact={contact()} canReply />);
+    expect(screen.getByTestId('inbox-composer')).toHaveAttribute('data-window-closed', 'false');
+  });
+
+  it('sends a template through the contact-keyed route', async () => {
+    render(<ConversationThreadPane contact={contact()} canReply />);
+
+    fireEvent.click(screen.getByTestId('inbox-composer-template'));
+
+    await waitFor(() =>
+      expect(templateMutateAsync).toHaveBeenCalledWith({
+        template_id: 'tpl-1',
+        params: { '1': 'Aisyah' },
+      }),
+    );
+  });
+
+  it('a per-bubble Reply quotes that message on the next send', async () => {
+    render(<ConversationThreadPane contact={contact()} canReply />);
+
+    fireEvent.click(screen.getByTestId('chat-list-reply'));
+    expect(screen.getByTestId('inbox-composer')).toHaveAttribute('data-reply-excerpt', 'quote me');
+
+    fireEvent.click(screen.getByTestId('inbox-composer-send'));
+
+    await waitFor(() =>
+      expect(replyMutateAsync).toHaveBeenCalledWith({
+        text: 'hello',
+        files: [],
+        reply_to_message_id: '42',
+        reply_to_excerpt: 'quote me',
+      }),
+    );
+  });
+
+  it('offers no Reply affordance to a viewer who cannot reply', () => {
+    render(<ConversationThreadPane contact={contact()} canReply={false} />);
+    expect(screen.getByTestId('chat-list')).toHaveAttribute('data-has-reply', 'no');
   });
 
   // ---- AC-K1 / AC-K2: live thread ----------------------------------------
@@ -280,9 +420,7 @@ describe('ConversationThreadPane', () => {
 
   it('AC-K1: a poke refetches the thread, the notes and the list row', () => {
     render(<ConversationThreadPane contact={contact()} canReply />);
-    const { onEvent } = conversationEvents.mock.calls.at(-1)![0] as {
-      onEvent: () => void;
-    };
+    const { onEvent } = conversationEvents.mock.calls.at(-1)![0];
     invalidateQueries.mockClear();
 
     onEvent();

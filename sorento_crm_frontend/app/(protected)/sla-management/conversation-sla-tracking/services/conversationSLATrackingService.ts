@@ -496,6 +496,15 @@ export interface VisibleUser {
   id: string;
   name: string;
   email: string;
+  /**
+   * AC-N7: whether a reply sent by this person can carry a real Respond sender
+   * identity. Resolved server-side by the SAME helper the send path uses, so
+   * the badge can never promise a linkage the send would find unusable. Comes
+   * from this endpoint, NOT from the `user_management.users.view`-gated
+   * user-select one - which is what makes it work for every holder of the
+   * picker rather than only for user-admins.
+   */
+  respond_linked: boolean;
 }
 
 export async function getVisibleUsers(): Promise<VisibleUser[]> {

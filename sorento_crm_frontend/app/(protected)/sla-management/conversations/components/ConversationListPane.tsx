@@ -40,6 +40,12 @@ interface ConversationListPaneProps {
   onTabChange: (tab: ConversationInboxTab) => void;
   selectedRef: string | null;
   onSelect: (item: ConversationInboxItem) => void;
+  /**
+   * Every row currently loaded, whenever that set changes. The parent uses it
+   * to replace a `?contact=` placeholder selection with the real row (name,
+   * phone, Respond id) once the page carrying it arrives.
+   */
+  onRowsLoaded?: (items: ConversationInboxItem[]) => void;
   className?: string;
 }
 
@@ -57,6 +63,7 @@ export default function ConversationListPane({
   onTabChange,
   selectedRef,
   onSelect,
+  onRowsLoaded,
   className,
 }: ConversationListPaneProps) {
   const [searchText, setSearchText] = useState('');
@@ -73,6 +80,10 @@ export default function ConversationListPane({
     () => (query.data?.pages ?? []).flatMap((page) => page.items),
     [query.data],
   );
+
+  useEffect(() => {
+    if (items.length) onRowsLoaded?.(items);
+  }, [items, onRowsLoaded]);
 
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = query;
   const loadMore = useCallback(() => {

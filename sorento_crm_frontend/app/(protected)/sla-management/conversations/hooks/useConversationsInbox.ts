@@ -4,14 +4,19 @@ import { useCallback } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
+import type { CreateTicketCommentInput } from '@/app/(protected)/sla-management/conversation-sla-tracking/services/ticketCommentService';
+
 import {
   CONVERSATION_INBOX_PAGE_SIZE,
+  createContactComment,
   fetchContactMedia,
   getContactComments,
   getContactThreadPage,
+  getContactWindow,
   listConversations,
   replyToContact,
   searchContactThread,
+  sendContactTemplateMessage,
   type ContactReplyInput,
   type ConversationInboxPage,
   type ConversationInboxTab,
@@ -127,6 +132,62 @@ export function useContactComments(contactRef: string | null) {
 }
 
 /**
+ * Write an internal note on the CONTACT (AC-N3 gap closure).
+ *
+ * Contact-scoped, so it needs no ticket - which is what lets the inbox offer
+ * Note unconditionally instead of only to a viewer who happens to hold exactly
+ * one open enquiry. It renders in the drawer for that contact too, by the same
+ * rule that already shows Respond-ingested notes there.
+ */
+export function useCreateContactComment(contactRef: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateTicketCommentInput) =>
+      createContactComment(contactRef as string, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: contactCommentsKey(contactRef) });
+      toast.success('Note added');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to add the note'),
+  });
+}
+
+export const contactWindowKey = (contactRef: string | null) =>
+  ['conversation-contact-window', contactRef] as const;
+
+/**
+ * The 24h window + out-of-window template for this contact (AC-N3 gap closure).
+ *
+ * A LIVE Respond call, not a DB read, so it is cached for a minute rather than
+ * polled. Feeds `SharedConversationComposer`'s `windowStateOverride`, which is
+ * why the inbox composer now renders the template inline exactly as the drawer
+ * does instead of assuming the window is open.
+ */
+export function useContactWindow(contactRef: string | null) {
+  return useQuery({
+    queryKey: contactWindowKey(contactRef),
+    queryFn: () => getContactWindow(contactRef as string),
+    enabled: !!contactRef,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+/** Manual template send from the inbox, stamped by the reply's own rule. */
+export function useSendContactTemplate(contactRef: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { template_id: string; params: Record<string, string> }) =>
+      sendContactTemplateMessage(contactRef as string, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: contactThreadKey(contactRef) });
+      void queryClient.invalidateQueries({ queryKey: contactWindowKey(contactRef) });
+      void queryClient.invalidateQueries({ queryKey: ['conversations-inbox'] });
+    },
+  });
+}
+
+/**
  * Send to the contact from the inbox.
  *
  * `stamped_ticket_id` is surfaced by the caller, never enforced here: an
@@ -139,6 +200,9 @@ export function useReplyToContact(contactRef: string | null) {
     mutationFn: (input: ContactReplyInput) => replyToContact(contactRef as string, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: contactThreadKey(contactRef) });
+      // A send re-opens the 24h window, so the composer must stop offering the
+      // out-of-window template.
+      void queryClient.invalidateQueries({ queryKey: contactWindowKey(contactRef) });
       // The row's snippet and time have just changed.
       void queryClient.invalidateQueries({ queryKey: ['conversations-inbox'] });
     },
