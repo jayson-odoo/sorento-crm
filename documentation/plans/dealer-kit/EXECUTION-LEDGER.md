@@ -28,6 +28,26 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 | **S3 PDF export** | n/a (no new UI surface) | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S7 flyer seeding** | **PASSED** 2026-08-02 | **PASSED** 2026-08-03 | **REVIEWED** 2026-08-03, blockers fixed | **BUILT, REVIEWED** |
 | **S2.5 Edition approval** | **SKIPPED** (see below) | **PASSED** 2026-08-03 | **REVIEWED** 2026-08-03, blockers fixed | **BUILT, REVIEWED** |
+| **Flyer read hardening** (extends S7) | **n/a** - no new screen | **PASSED** 2026-08-15 | **REVIEWED** 2026-08-15, findings fixed | **BUILT, REVIEWED** |
+
+**On the flyer read hardening row.** Detail lives in
+`PLAN-flyer-read-hardening.md`; this is only the gate record.
+
+- **Phase 1 is n/a, not skipped.** No new screen was prototyped because none was
+  added: the existing "Read a flyer" dialog gained a second source, picking a
+  flyer already in the file library instead of only uploading one.
+- **Phase 2 passed.** 27 new backend tests plus the 32 pre-existing upload tests,
+  46 frontend tests, and a live single-worker probe measuring an unrelated
+  request at **26.76 s before the fix and 0.96 s after**, with the read itself at
+  **17.1 s**. That probe is the validation run's; the diagnosis run's own figures
+  (57.5 s before, 0.69 s after, on a quieter machine) are in the plan, and the
+  gap between the two pairs is machine load, which the plan discusses.
+- **Phase 3 reviewed, findings fixed:** the picker's filename precedence, its
+  clipping at 375px, and a documentation pass.
+- **Coverage caveat, so the row is not read as more than it is:** the library
+  path ships with **no committed regression spec**. AC-A10 and AC-A11 are met by
+  a reproducible agent-browser evidence run, whose steps and calls are recorded
+  in the plan and the commit, and the missing guard is logged as a backlog row.
 
 ---
 
