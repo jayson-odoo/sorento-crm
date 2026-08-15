@@ -22,6 +22,13 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M 
   already owns working-window clock normalization. (Decided in lavish review.)
 - Rollout: accept the transition escalation noise - no grace multiplier. Clock pressure
   trains reply-from-CRM. (Decided in lavish review.)
+  **SUPERSEDED 2026-08-15 - INERT LAUNCH (user decision, n8n session): production is
+  inert at launch. Respond close keeps resolving ALL open tickets for the contact and a
+  Respond agent reply keeps marking responded (agent-replied endpoint), both behind the
+  n8n flag `close_resolves_tickets` (ON at launch, OFF after staff training). AC-E4 and
+  AC-C3's no-Respond-call clause are deferred to the flip. #133 lands after the flip (or
+  gated on the same flag). One contact-facing close message per close event, never per
+  ticket. See UAC AC-E4 amendment.**
 
 ## Current state (verified 2026-08-12)
 

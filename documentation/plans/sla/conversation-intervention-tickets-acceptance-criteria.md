@@ -173,6 +173,22 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
   neutral fallback label, never an empty row.
 - **AC-E4 [BE][T]** Given a Respond conversation-close event, When it reaches the CRM (or
   n8n), Then no ticket resolves - resolution is manual CRM resolve only.
+  **DEFERRED TO THE FLAG FLIP (user decision 2026-08-15, relayed from the n8n session:
+  "INERT LAUNCH - the rollout is not a 1 day thing, it needs training").** At launch the
+  n8n `close-convo` lane KEEPS resolving tickets on a Respond close - semantic: resolve
+  ALL open conversation-scope tickets for that contact (this also fixes today's raw SQL,
+  which resolves every conversation row with no `is_resolved` filter and no LIMIT) - and
+  an agent reply in Respond KEEPS marking responded via the `agent-replied` endpoint
+  (contact-first rule). Both sit behind the n8n config flag `close_resolves_tickets`
+  (redis, `ht-cfg-*` pattern). Launch = flag ON. Once staff resolve from the CRM, flag
+  OFF and AC-E4 as written becomes live. Do NOT "fix" the n8n flow back to AC-E4 before
+  the flip. Sequencing consequence: BE hardening #133 (reject conversation-scope
+  `is_resolved` from API-key principals) would BREAK the inert phase - it lands AFTER the
+  flip, or is gated server-side on the same flag. AC-C3's "NO Respond API call is made"
+  clause is likewise deferred: the one-message rule (exactly ONE contact-facing close
+  message per close event, never one per ticket) is the invariant at launch; the
+  open-count gate is inert-by-construction under the flag (count is 0 after resolve-all)
+  and becomes load-bearing only after the flip.
 - **AC-E5 [BE][T]** Given a ticket breaching `due_at`, When the escalation scheduler ticks,
   Then it escalates exactly as today (tier up, notify, event log), independently per ticket.
 
@@ -241,6 +257,16 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
 - **AC-G1 [BE][T]** Given ticket creation, When the assignee has notify toggles on, Then
   in-app (always) + email/WhatsApp (per toggle) notifications fire with a deep link that
   survives the login redirect.
+- **AC-G2 [BE][T]** (added 2026-08-15, user requirement via the n8n session: "verify,
+  not assume" - verified: today's copy is only "<ref> has been assigned to you. Open:
+  <link>", no clock statement) Given a ticket created OUT of working hours, When the
+  assignment notification is built, Then its body TELLS the human that the response
+  clock only starts at the next working window, with the specific times in Malaysia
+  time: "Clock starts <window open, e.g. Mon 09:00> · respond by <due_at, e.g. Mon
+  10:00>". In-hours tickets state "Respond by <due_at MYT>". The SAME line is carried by
+  in-app, email AND WhatsApp (one body builder - email is what people forward, WhatsApp
+  is what they read). Reassign/escalate/takeover notifications carry the same "respond
+  by" line for the current clock.
 
 ### J. Human-send signal to n8n (Journey step 5b) - added 2026-08-14
 
