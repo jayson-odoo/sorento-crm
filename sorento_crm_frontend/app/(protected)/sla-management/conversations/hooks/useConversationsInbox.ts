@@ -19,8 +19,16 @@ import {
 
 /** How often the list re-reads itself while the page is open and focused. */
 export const INBOX_REFRESH_MS = 30_000;
-/** How often the OPEN thread re-reads. Only ever one thread at a time. */
+/**
+ * How often the OPEN thread re-reads with NO live stream. Only ever one thread
+ * at a time. This is the AC-K1 fallback lane.
+ */
 export const THREAD_POLL_MS = 10_000;
+/**
+ * The same poll while the live stream is connected - belt and braces behind the
+ * pokes, not the mechanism.
+ */
+export const THREAD_POLL_LIVE_MS = 60_000;
 
 export const conversationsInboxKey = (tab: ConversationInboxTab, q: string) =>
   ['conversations-inbox', tab, q] as const;
@@ -29,9 +37,11 @@ export const conversationsInboxKey = (tab: ConversationInboxTab, q: string) =>
  * The left list (AC-N1): one keyset page at a time, never the whole set.
  *
  * `useInfiniteQuery` because the cursor is opaque and the "Load more" row has
- * to send back exactly what the last page returned. The 30s interval is the
- * liveness floor - the server-push subscriber (slice S4.2, FE half unbuilt)
- * will make it a fallback rather than the only signal.
+ * to send back exactly what the last page returned. The 30s interval stays as
+ * it is: the live stream (slice S4.2) subscribes only to the OPEN thread, so a
+ * poke refreshes this list for the selected contact and every other row still
+ * relies on the interval. Subscribing the whole visible page would need up to
+ * 30 contacts on a stream the backend caps at 25.
  */
 export function useConversationsInbox(tab: ConversationInboxTab, q: string) {
   return useInfiniteQuery({
@@ -52,14 +62,26 @@ export function useConversationsInbox(tab: ConversationInboxTab, q: string) {
   });
 }
 
-/** The newest window of a contact's thread, polled while the pane is open. */
-export function useContactThread(contactRef: string | null) {
+export const contactThreadKey = (contactRef: string | null) =>
+  ['conversation-contact-thread', contactRef] as const;
+
+/**
+ * The newest window of a contact's thread, polled while the pane is open.
+ *
+ * `refetchIntervalMs` relaxes to `THREAD_POLL_LIVE_MS` once the live stream is
+ * connected - the pokes carry the liveness then, and the poll is only there for
+ * the seconds a reconnect takes.
+ */
+export function useContactThread(
+  contactRef: string | null,
+  options?: { refetchIntervalMs?: number },
+) {
   return useQuery({
-    queryKey: ['conversation-contact-thread', contactRef],
+    queryKey: contactThreadKey(contactRef),
     queryFn: () => getContactThreadPage(contactRef as string, { limit: 50 }),
     enabled: !!contactRef,
     staleTime: 30_000,
-    refetchInterval: THREAD_POLL_MS,
+    refetchInterval: options?.refetchIntervalMs ?? THREAD_POLL_MS,
     refetchIntervalInBackground: false,
     retry: 1,
   });
@@ -116,9 +138,7 @@ export function useReplyToContact(contactRef: string | null) {
   return useMutation({
     mutationFn: (input: ContactReplyInput) => replyToContact(contactRef as string, input),
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: ['conversation-contact-thread', contactRef],
-      });
+      void queryClient.invalidateQueries({ queryKey: contactThreadKey(contactRef) });
       // The row's snippet and time have just changed.
       void queryClient.invalidateQueries({ queryKey: ['conversations-inbox'] });
     },

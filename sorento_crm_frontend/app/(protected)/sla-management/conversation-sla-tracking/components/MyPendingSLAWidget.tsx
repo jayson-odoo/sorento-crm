@@ -291,6 +291,16 @@ export default function MyPendingSLAWidget() {
   // or merge (Phase 1's mock-only merge was removed in S2.7).
   const mineItems = items;
 
+  // AC-K3 stays on polling, deliberately. The live stream (slice S4.2) filters
+  // server-side on `?contacts=` and caps that list at 25, but this worklist
+  // shows every pending ticket the user holds across an unbounded number of
+  // contacts - so subscribing it would either truncate silently or need a
+  // user-keyed stream this component cannot express. The ticket pokes it would
+  // want (`ticket_created` / `ticket_updated`) do reach the OPEN drawer, which
+  // is where the numbers that matter are read, and the drawer's callbacks
+  // (`onSent` / `onResolved` / `onReassigned`) already reload this list on every
+  // action taken from it.
+  //
   // Light polling while any pending takeover is on screen (bar / banner transitions).
   const hasPending = useMemo(() => {
     const a = (items ?? []).some((it) => pendingTakeover(it));

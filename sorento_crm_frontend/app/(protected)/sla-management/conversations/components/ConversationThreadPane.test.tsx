@@ -18,6 +18,9 @@ const mediaProxy = vi.fn();
 const commentMutateAsync = vi.fn();
 
 vi.mock('../hooks/useConversationsInbox', () => ({
+  THREAD_POLL_MS: 10_000,
+  THREAD_POLL_LIVE_MS: 60_000,
+  contactThreadKey: (ref: string | null) => ['conversation-contact-thread', ref],
   useContactThread: (...a: unknown[]) => contactThread(...a),
   useContactComments: (...a: unknown[]) => contactComments(...a),
   useContactThreadLoaders: () => ({
@@ -44,8 +47,16 @@ vi.mock(
   }),
 );
 
+const invalidateQueries = vi.fn();
 vi.mock('@tanstack/react-query', () => ({
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  useQueryClient: () => ({ invalidateQueries }),
+}));
+
+// AC-K1 / AC-K2: the live-thread subscriber, stubbed so this suite stays about
+// the pane. The hook itself is tested in components/common/conversation.
+const conversationEvents = vi.fn(() => ({ connected: false }));
+vi.mock('@/components/common/conversation/useConversationEvents', () => ({
+  useConversationEvents: (...a: unknown[]) => conversationEvents(...(a as [])),
 }));
 
 vi.mock('@/components/common/RespondChatList', () => ({
@@ -153,6 +164,8 @@ beforeEach(() => {
   replyMutateAsync.mockReset().mockResolvedValue({ sent_as: 'text', stamped_ticket_id: 'tkt-1' });
   commentMutateAsync.mockReset().mockResolvedValue({ id: 'c1' });
   toastSuccess.mockReset();
+  invalidateQueries.mockReset();
+  conversationEvents.mockReset().mockReturnValue({ connected: false });
 });
 
 describe('ConversationThreadPane', () => {
@@ -247,6 +260,51 @@ describe('ConversationThreadPane', () => {
     fireEvent.click(note);
     expect(screen.queryByTestId('inbox-note-submit')).toBeNull();
     expect(screen.getByTestId('inbox-composer-send')).toBeDefined();
+  });
+
+  // ---- AC-K1 / AC-K2: live thread ----------------------------------------
+
+  it('AC-K2: no stream until a conversation is open, one for it once there is', () => {
+    const { unmount } = render(<ConversationThreadPane contact={null} canReply />);
+    expect(conversationEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false }),
+    );
+    unmount();
+
+    conversationEvents.mockClear();
+    render(<ConversationThreadPane contact={contact()} canReply />);
+    expect(conversationEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ contactIds: ['10025531'], enabled: true }),
+    );
+  });
+
+  it('AC-K1: a poke refetches the thread, the notes and the list row', () => {
+    render(<ConversationThreadPane contact={contact()} canReply />);
+    const { onEvent } = conversationEvents.mock.calls.at(-1)![0] as {
+      onEvent: () => void;
+    };
+    invalidateQueries.mockClear();
+
+    onEvent();
+
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['conversation-contact-thread', '10025531'],
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['conversation-contact-comments', '10025531'],
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['conversations-inbox'] });
+  });
+
+  it('AC-K1: the thread poll relaxes while the stream is connected', () => {
+    conversationEvents.mockReturnValue({ connected: true });
+    render(<ConversationThreadPane contact={contact()} canReply />);
+    expect(contactThread).toHaveBeenCalledWith('10025531', { refetchIntervalMs: 60_000 });
+  });
+
+  it('AC-K1: the fast poll is the fallback while the stream is down', () => {
+    render(<ConversationThreadPane contact={contact()} canReply />);
+    expect(contactThread).toHaveBeenCalledWith('10025531', { refetchIntervalMs: 10_000 });
   });
 
   it('offers a way back to the list at phone width', () => {

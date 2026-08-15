@@ -21,8 +21,21 @@ vi.mock('../hooks/useInterventionTickets', () => ({
 }));
 
 vi.mock('../hooks/useTicketComments', () => ({
+  ticketCommentsKey: (id: string | null) => ['ticket-comments', id],
   useTicketComments: (...a: unknown[]) => useTicketComments(...a),
   useCreateTicketComment: (...a: unknown[]) => useCreateTicketComment(...a),
+}));
+
+// AC-K1: the live-thread subscriber. Stubbed so the suite stays about the
+// drawer; the hook has its own test. `liveConnected` false keeps the fast poll,
+// which is the interval the polling assertions below are written against.
+const invalidateQueries = vi.fn();
+const conversationEvents = vi.fn(() => ({ connected: false }));
+vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ invalidateQueries }),
+}));
+vi.mock('@/components/common/conversation/useConversationEvents', () => ({
+  useConversationEvents: (...a: unknown[]) => conversationEvents(...(a as [])),
 }));
 
 // AC-N7: Reassign in the header is permission-gated and uses the SHARED dialog.
@@ -241,6 +254,9 @@ beforeEach(() => {
   useDraftInterventionTicketReply.mockReset();
   reassignMutate.mockReset();
   hasPermission.mockReturnValue(true);
+  invalidateQueries.mockReset();
+  conversationEvents.mockReset();
+  conversationEvents.mockReturnValue({ connected: false });
 
   aiDraftMutateAsync = vi.fn().mockResolvedValue({ draft: 'drafted', model: 'gpt-4o', grounded_on: 3, elapsed_ms: 10 });
   useDraftInterventionTicketReply.mockReturnValue({ mutateAsync: aiDraftMutateAsync });
@@ -340,6 +356,72 @@ describe('InterventionTicketDrawer', () => {
     useInterventionTicket.mockReturnValue(mockQuery(undefined));
     renderDrawer({ open: false });
     expect(useSlaTrackingConversation).toHaveBeenCalledWith(null, expect.anything());
+  });
+
+  // ---- AC-K1 / AC-K2: live thread ----------------------------------------
+
+  it('AC-K1: subscribes the live stream to this ticket contact while open', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+    await waitFor(() => expect(screen.getByTestId('chat-list')).toBeInTheDocument());
+    expect(conversationEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ contactIds: ['10025531'], enabled: true }),
+    );
+  });
+
+  it('AC-K2: a closed drawer holds no stream', () => {
+    useInterventionTicket.mockReturnValue(mockQuery(undefined));
+    renderDrawer({ open: false });
+    expect(conversationEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false }),
+    );
+  });
+
+  it('AC-K1: a message poke refetches the thread and the notes, not the ticket', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+    await waitFor(() => expect(screen.getByTestId('chat-list')).toBeInTheDocument());
+
+    const { onEvent } = conversationEvents.mock.calls.at(-1)![0] as {
+      onEvent: (e: { type: string }) => void;
+    };
+    invalidateQueries.mockClear();
+    onEvent({ type: 'message' });
+
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['sla-tracking-conversation', 't1'],
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['ticket-comments', 't1'] });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: ['intervention-ticket', 't1'],
+    });
+  });
+
+  it('AC-K1: a ticket poke refetches the ticket (clocks, assignee, resolution)', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+    await waitFor(() => expect(screen.getByTestId('chat-list')).toBeInTheDocument());
+
+    const { onEvent } = conversationEvents.mock.calls.at(-1)![0] as {
+      onEvent: (e: { type: string }) => void;
+    };
+    invalidateQueries.mockClear();
+    onEvent({ type: 'ticket_updated' });
+
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['intervention-ticket', 't1'],
+    });
+  });
+
+  it('AC-K1: the poll relaxes while the stream is connected', async () => {
+    conversationEvents.mockReturnValue({ connected: true });
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+    await waitFor(() => expect(screen.getByTestId('chat-list')).toBeInTheDocument());
+    expect(useSlaTrackingConversation).toHaveBeenCalledWith(
+      't1',
+      expect.objectContaining({ refetchIntervalMs: 60_000 }),
+    );
   });
 
   it('AC-E7: a blank enquiry text falls back to a neutral header label', async () => {

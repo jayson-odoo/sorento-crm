@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   CheckCircle2,
@@ -36,6 +37,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import RespondChatList from '@/components/common/RespondChatList';
 import InternalCommentComposer from '@/components/common/conversation/InternalCommentComposer';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
+import { useConversationEvents } from '@/components/common/conversation/useConversationEvents';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -53,7 +55,11 @@ import {
   useSendInterventionTicketMessage,
 } from '../hooks/useInterventionTickets';
 import { useReassignSLATracking } from '../hooks/useTeamPendingSLA';
-import { useCreateTicketComment, useTicketComments } from '../hooks/useTicketComments';
+import {
+  ticketCommentsKey,
+  useCreateTicketComment,
+  useTicketComments,
+} from '../hooks/useTicketComments';
 import { contactHistoryHref } from '../lib/historyLinks';
 import ReassignDialog from './ReassignDialog';
 import TicketSlaChips from './TicketSlaChips';
@@ -79,8 +85,17 @@ interface InterventionTicketDrawerProps {
   onReassigned?: () => void;
 }
 
-/** How often an open drawer re-reads the thread (paused in a background tab). */
+/**
+ * How often an open drawer re-reads the thread with NO live stream (paused in a
+ * background tab). This is the fallback lane of AC-K1.
+ */
 const THREAD_POLL_MS = 10_000;
+/**
+ * The same poll while the live stream IS connected. Belt and braces: the stream
+ * already pokes on every inbound message, so this only has to catch the case
+ * where a poke was published while the socket was momentarily down.
+ */
+const THREAD_POLL_LIVE_MS = 60_000;
 
 /** Short excerpt of a message, used as the quoted text on a reply. */
 function excerptOf(item: RespondMessageRenderable): string {
@@ -118,16 +133,55 @@ export default function InterventionTicketDrawer({
   // switch, so nobody can WhatsApp a customer while meaning to leave a note.
   const [composerMode, setComposerMode] = useState<'reply' | 'comment'>('reply');
 
+  const queryClient = useQueryClient();
   const ticketQuery = useInterventionTicket(open ? ticketId : null);
+  const ticket = ticketQuery.data;
+
+  // ---- AC-K1: live thread. One stream, only while this drawer is open on a
+  // contact (AC-K2), and it carries no content - every poke turns straight into
+  // a refetch through the ordinary REST endpoints, which is what makes a
+  // replayed or duplicated event a no-op on screen (AC-K4).
+  const onLiveEvent = useCallback(
+    (event: { type: string }) => {
+      if (!ticketId) return;
+      if (event.type === 'message') {
+        // A NOTE is poked as `message` too (the backend publishes EVENT_MESSAGE
+        // for a comment), so the note list refreshes on the same event.
+        void queryClient.invalidateQueries({ queryKey: ['sla-tracking-conversation', ticketId] });
+        void queryClient.invalidateQueries({ queryKey: ticketCommentsKey(ticketId) });
+        return;
+      }
+      // ticket_created / ticket_updated: clocks, assignee, resolution.
+      void queryClient.invalidateQueries({ queryKey: ['intervention-ticket', ticketId] });
+    },
+    [queryClient, ticketId],
+  );
+  const onLiveReady = useCallback(() => {
+    if (!ticketId) return;
+    // A (re)connect may have missed pokes while the socket was down, so treat
+    // the handshake itself as one.
+    void queryClient.invalidateQueries({ queryKey: ['sla-tracking-conversation', ticketId] });
+    void queryClient.invalidateQueries({ queryKey: ticketCommentsKey(ticketId) });
+    void queryClient.invalidateQueries({ queryKey: ['intervention-ticket', ticketId] });
+  }, [queryClient, ticketId]);
+  const { connected: liveConnected } = useConversationEvents({
+    contactIds: [ticket?.respond_io_id],
+    enabled: open && !!ticketId,
+    onEvent: onLiveEvent,
+    onReady: onLiveReady,
+  });
+
   // The SAME query the SLA detail page's conversation panel uses (one key, one
   // cache entry): a send from here refreshes that panel too, and vice versa.
   // Polls while the drawer is open (and the tab is focused): a contact's reply
   // arrives on their schedule, not on ours, so an assignee reading the thread
   // must see it without hunting for a refresh. Stops the moment the drawer
-  // closes, because the query is disabled with no ticket id.
+  // closes, because the query is disabled with no ticket id. The interval
+  // relaxes while the live stream is up - it is then a safety net, not the
+  // mechanism.
   const threadQuery = useSlaTrackingConversation(open ? ticketId : null, {
     limit: 50,
-    refetchIntervalMs: THREAD_POLL_MS,
+    refetchIntervalMs: liveConnected ? THREAD_POLL_LIVE_MS : THREAD_POLL_MS,
   });
   const sendMutation = useSendInterventionTicketMessage(ticketId ?? '');
   const resolveMutation = useResolveInterventionTicket();
@@ -142,7 +196,6 @@ export default function InterventionTicketDrawer({
     setComposerMode('reply');
   }, [ticketId]);
 
-  const ticket = ticketQuery.data;
   const liveMessages = threadQuery.data?.items ?? [];
 
   // AC-L7 / AC-L8: scroll-back and search live in the SHARED thread hook, so the

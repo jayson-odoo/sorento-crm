@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, ArrowLeft, MessagesSquare } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -9,12 +9,16 @@ import { Skeleton } from '@/components/ui/skeleton';
 import RespondChatList from '@/components/common/RespondChatList';
 import InternalCommentComposer from '@/components/common/conversation/InternalCommentComposer';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
+import { useConversationEvents } from '@/components/common/conversation/useConversationEvents';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
 import { useCreateTicketComment } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTicketComments';
 import { cn } from '@/lib/utils';
 
 import {
   contactCommentsKey,
+  contactThreadKey,
+  THREAD_POLL_LIVE_MS,
+  THREAD_POLL_MS,
   useContactComments,
   useContactMediaProxy,
   useContactThread,
@@ -51,12 +55,34 @@ export default function ConversationThreadPane({
   const contactRef = contact?.contact_ref ?? null;
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
 
-  const threadQuery = useContactThread(contactRef);
+  const queryClient = useQueryClient();
+
+  // ---- AC-K1 / AC-K2: live thread. One stream, only for the contact this pane
+  // has OPEN, closed when the selection changes or the pane unmounts. Every
+  // poke is content-free, so it turns into a refetch and nothing else.
+  const onLiveEvent = useCallback(() => {
+    if (!contactRef) return;
+    // Every type this pane can receive means the same two things here: the
+    // thread may have a new message (a NOTE is poked as `message` too) and the
+    // row's snippet / ticket counts in the list may have moved.
+    void queryClient.invalidateQueries({ queryKey: contactThreadKey(contactRef) });
+    void queryClient.invalidateQueries({ queryKey: contactCommentsKey(contactRef) });
+    void queryClient.invalidateQueries({ queryKey: ['conversations-inbox'] });
+  }, [contactRef, queryClient]);
+  const { connected: liveConnected } = useConversationEvents({
+    contactIds: [contact?.respond_io_id],
+    enabled: !!contactRef,
+    onEvent: onLiveEvent,
+    onReady: onLiveEvent,
+  });
+
+  const threadQuery = useContactThread(contactRef, {
+    refetchIntervalMs: liveConnected ? THREAD_POLL_LIVE_MS : THREAD_POLL_MS,
+  });
   const commentsQuery = useContactComments(contactRef);
   const { loadPage, searchMessages } = useContactThreadLoaders(contactRef);
   const mediaProxy = useContactMediaProxy(contactRef);
   const replyMutation = useReplyToContact(contactRef);
-  const queryClient = useQueryClient();
 
   // A note is written against a TICKET: there is no contact-keyed note create
   // (recorded as a backend follow-up in the plan's S4.9 note). So the mode is
