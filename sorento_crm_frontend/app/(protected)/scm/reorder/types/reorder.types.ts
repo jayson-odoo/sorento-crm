@@ -142,6 +142,10 @@ export interface ReorderRecommendation {
    *  null on a network (aggregated) row (demand then sums across warehouses). */
   product_id?: string | null;
   warehouse_id?: string | null;
+  /** Data-only id - the pool this row's location belongs to
+   *  (`COALESCE(pool_warehouse_id, id)`), so a cover source can be scoped to the row's own
+   *  site. Null on a network row. */
+  pool_warehouse_id?: string | null;
   is_network: boolean;
   /** Populated on network buy rows - the suggested per-warehouse split. */
   allocation: AllocationLine[] | null;

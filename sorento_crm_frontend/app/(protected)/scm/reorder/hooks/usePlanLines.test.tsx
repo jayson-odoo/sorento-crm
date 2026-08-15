@@ -53,7 +53,7 @@ beforeEach(() => {
   getCoveredRecommendations.mockReset().mockResolvedValue([]);
   getNeedsLevelRecommendations.mockReset().mockResolvedValue([]);
   getAllDispositionRecommendations.mockReset().mockResolvedValue([]);
-  getCoverSources.mockReset().mockResolvedValue({});
+  getCoverSources.mockReset().mockResolvedValue({ sources: {}, cover_scope: 'all_locations' });
   getPriceHistory.mockReset().mockResolvedValue({ prices: {}, movement_threshold_pct: 5, stale_after_days: 180 });
   getTrajectory.mockReset().mockResolvedValue({ series: {} });
   getLevelSuggestions.mockReset().mockResolvedValue({ suggestions: {} });

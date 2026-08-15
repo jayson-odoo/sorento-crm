@@ -17,11 +17,61 @@
  * knows what has been decided so far.
  */
 
+/**
+ * Where "use stock" may draw from before buying.
+ *
+ * > "why am I allowed to use stock from other locations? It is either I use stock from BRW,
+ * >  or buy."
+ *
+ * `own_pool` (the default) keeps a row's cover inside its own site: only warehouses sharing
+ * the row's pool are offered. `all_locations` is the behaviour that shipped first, kept
+ * because a single-site company loses nothing by it. The knob is the global reorder policy's
+ * `cover_scope`, read off the run and applied here so the FE never renders a source the
+ * policy has ruled out.
+ */
+export type CoverScope = 'own_pool' | 'all_locations';
+
 export interface CoverSource {
   warehouse_id: string;
   warehouse_code: string;
   segment: string | null;
   qty: number;
+  /**
+   * The pool this location belongs to - `COALESCE(pool_warehouse_id, id)`, so a location
+   * with no pool of its own IS its own pool. Absent on older payloads, which then scope to
+   * the warehouse itself.
+   */
+  pool_warehouse_id?: string | null;
+}
+
+/** How a row's own pool is scoped: the run's setting plus the row's pool. */
+export interface CoverScopeOptions {
+  /** The run's policy value. Absent reads as `all_locations` (what shipped first). */
+  scope?: CoverScope;
+  /** `COALESCE(pool_warehouse_id, id)` of the ROW's warehouse. */
+  poolWarehouseId?: string | null;
+}
+
+/** The pool a source belongs to, falling back to the location itself. */
+function poolOf(s: CoverSource): string {
+  return s.pool_warehouse_id ?? s.warehouse_id;
+}
+
+/**
+ * The sources a row may actually draw on.
+ *
+ * Under `own_pool` a source has to sit in the row's own pool. A row whose own pool is
+ * unknown (a network row carries no warehouse) is NOT filtered to nothing: there is no pool
+ * to compare against, so scoping it would silently delete every option rather than narrow
+ * them.
+ */
+export function sourcesInScope(
+  free: CoverSource[] | undefined,
+  { scope, poolWarehouseId }: CoverScopeOptions = {},
+): CoverSource[] {
+  const list = free ?? [];
+  if (scope !== 'own_pool' || !poolWarehouseId) return list;
+  return list.filter((s) => poolOf(s) === poolWarehouseId);
 }
 
 export interface CoverSourceUse extends CoverSource {
@@ -53,11 +103,12 @@ export function proposeCover(
   lineSegment: string | null,
   free: CoverSource[] | undefined,
   taken: TakenByWarehouse = {},
+  scopeOptions: CoverScopeOptions = {},
 ): CoverProposal {
   if (!(shortage > 0)) return NO_COVER;
 
   const candidates: CoverSourceUse[] = [];
-  for (const s of free ?? []) {
+  for (const s of sourcesInScope(free, scopeOptions)) {
     // Its own stock is already netted. Offering it back is the bug this replaces.
     if (lineWarehouseId && s.warehouse_id === lineWarehouseId) continue;
     const remaining = s.qty - (taken[s.warehouse_id] ?? 0);
@@ -151,6 +202,7 @@ export function coverForLine(
   line: CoverableLine,
   free: CoverSource[] | undefined,
   taken: TakenByWarehouse = {},
+  scopeOptions: CoverScopeOptions = {},
 ): CoverProposal {
   if (line.status === 'covered_by_stock') {
     const committed = line.rec.covered_committed ?? line.order_qty;
@@ -174,5 +226,76 @@ export function coverForLine(
       isSplit: covered > 0 && buyQty > 0,
     };
   }
-  return proposeCover(Math.ceil(line.order_qty), line.warehouse_id, line.rec.segment ?? null, free, taken);
+  return proposeCover(
+    Math.ceil(line.order_qty),
+    line.warehouse_id,
+    line.rec.segment ?? null,
+    free,
+    taken,
+    scopeOptions,
+  );
+}
+
+/**
+ * What the buyer actually asked for, per source, and what that leaves to buy.
+ *
+ * > "use stock should behave like the top-up purchase control - a toggle, and when on,
+ * >  editable per-location quantities feeding the buy qty."
+ *
+ * The ONE place a per-location edit turns into a (cover, buy, sources) triple. Both editing
+ * surfaces route through it - the ledger's COVER BEFORE BUYING rows and the decision cell's
+ * Adjust mixture - so the two can never land on different numbers for the same edit.
+ *
+ * Each source is clamped to what it was offered (0..qty); a warehouse the proposal never
+ * offered is ignored outright rather than invented. The buy is the rest of the SAME shortage
+ * the proposal was built for (`coverQty + buyQty`), floored at 0 - a buyer who covers more
+ * than the gap is not owed a negative order.
+ */
+export interface CoverEdit {
+  coverQty: number;
+  buyQty: number;
+  sources: CoverSourceUse[];
+}
+
+export type SourceEdits = Readonly<Record<string, number>>;
+
+export function applySourceEdits(proposal: CoverProposal, edits: SourceEdits): CoverEdit {
+  const gap = proposal.coverQty + proposal.buyQty;
+  const sources: CoverSourceUse[] = [];
+  let coverQty = 0;
+  for (const s of proposal.sources) {
+    const raw = edits[s.warehouse_id];
+    const wanted = Number.isFinite(raw) ? (raw as number) : 0;
+    const qty = Math.max(0, Math.min(s.qty, wanted));
+    if (qty <= 0) continue;
+    sources.push({ ...s, qty });
+    coverQty += qty;
+  }
+  return { coverQty, buyQty: Math.max(0, gap - coverQty), sources };
+}
+
+/**
+ * Turn ONE total ("use 6 from stock") into per-source edits, taken from the front.
+ *
+ * The proposal already ranked its sources (same segment first, then biggest), so spending
+ * down the front keeps the nearest bins and drops the ones the buyer would have argued about
+ * anyway. Lets the Adjust popup, which asks for a single stock figure, go through
+ * `applySourceEdits` rather than scaling the split itself.
+ */
+export function sourceEditsForTotal(proposal: CoverProposal, total: number): SourceEdits {
+  let remaining = Math.max(0, total);
+  const edits: Record<string, number> = {};
+  for (const s of proposal.sources) {
+    const take = Math.min(s.qty, remaining);
+    edits[s.warehouse_id] = take;
+    remaining -= take;
+  }
+  return edits;
+}
+
+/** The proposal's own quantities as edits - the default every editing surface starts from. */
+export function defaultSourceEdits(proposal: CoverProposal): SourceEdits {
+  const edits: Record<string, number> = {};
+  for (const s of proposal.sources) edits[s.warehouse_id] = s.qty;
+  return edits;
 }

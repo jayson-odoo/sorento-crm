@@ -79,11 +79,17 @@ export function composeMixture(
   needed: number,
   cover: CoverProposal,
   poQty: number,
-  toggles: { stockOn: boolean; poOn: boolean },
+  toggles: { stockOn: boolean; poOn: boolean; stockQty?: number },
 ): MixtureResult {
   const stockOn = toggles.stockOn && cover.coverQty > 0;
-  const stockQty = stockOn ? cover.coverQty : 0;
-  const afterStock = stockOn ? cover.buyQty : needed;
+  // The buyer's own per-location figures when they have edited them, the proposal's own
+  // total otherwise. The gap the two are measured against is the proposal's whole shortage
+  // (`coverQty + buyQty`), which is what makes an edited cover fall straight through into
+  // the buy: cover less, buy more, and never a negative order.
+  const proposed = cover.coverQty;
+  const stockQty = stockOn ? (toggles.stockQty ?? proposed) : 0;
+  const gap = cover.coverQty + cover.buyQty;
+  const afterStock = stockOn ? Math.max(0, gap - stockQty) : needed;
   const { usePo, buy } = poOffset(afterStock, toggles.poOn ? poQty : 0);
   return { stockQty, usePo, buy };
 }

@@ -57,7 +57,7 @@
  */
 import type { SortingState } from '@tanstack/react-table';
 import { apiFetch } from '@/lib/api';
-import type { CoverSource } from '../lib/coverPlan';
+import type { CoverScope, CoverSource } from '../lib/coverPlan';
 import type { LevelSuggestionsPayload } from '../lib/levelSuggestion';
 import type { EconomicsPayload } from '../lib/productHealth';
 import type { PoReceipt } from '../lib/poCover';
@@ -625,14 +625,27 @@ export async function setReorderLevel(
  * Keyed by product, because the pool is SHARED: two lines for the same product draw on the
  * same units. Fetched once and spent down client-side as decisions are made (see
  * `lib/coverPlan`), which is the only place that knows what has been decided so far.
+ *
+ * Each source carries its `pool_warehouse_id` and the response carries the run's
+ * `cover_scope`, because the map is keyed by PRODUCT while the scope question is per ROW:
+ * two rows for the same product can sit in different pools, so the per-row filter has to
+ * happen where the row is known (`coverForLine`).
  */
-export async function getCoverSources(
-  runId: string,
-): Promise<Record<string, CoverSource[]>> {
+export async function getCoverSources(runId: string): Promise<CoverSourcesResponse> {
   const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/cover-sources`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load cover sources'));
-  const body = (await res.json()) as { sources?: Record<string, CoverSource[]> };
-  return body.sources ?? {};
+  const body = (await res.json()) as {
+    sources?: Record<string, CoverSource[]>;
+    cover_scope?: CoverScope;
+  };
+  // An older run payload carries no scope. Reading that as `all_locations` keeps the
+  // behaviour that shipped first rather than silently withdrawing every source.
+  return { sources: body.sources ?? {}, cover_scope: body.cover_scope ?? 'all_locations' };
+}
+
+export interface CoverSourcesResponse {
+  sources: Record<string, CoverSource[]>;
+  cover_scope: CoverScope;
 }
 
 /**
