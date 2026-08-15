@@ -82,7 +82,24 @@ export interface CoverSourceUse extends CoverSource {
 export interface CoverProposal {
   coverQty: number;
   buyQty: number;
+  /**
+   * What the proposal DECIDED to take, and from where. Truncated at the shortage: the
+   * allocation stops the moment the gap is met, so a location holding plenty appears here
+   * with only the units this row needed, and a location the proposal never reached does not
+   * appear at all.
+   */
   sources: CoverSourceUse[];
+  /**
+   * What the row may DRAW ON: every in-scope location, at its real free quantity, whether
+   * the proposal needed it or not.
+   *
+   * The two are different questions and conflating them was a real bug: the ledger rendered
+   * `sources` as if it were the offer, so a take of 10 out of 50 free was labelled "10 free",
+   * a second in-scope location the proposal never reached was invisible, and the input
+   * clamped the buyer to the take. Ranked exactly like `sources` (same segment first, then
+   * biggest), and already net of what earlier decisions spent.
+   */
+  offered: CoverSourceUse[];
   /** Neither whole answer is right: cover what exists and buy the rest. */
   isSplit: boolean;
 }
@@ -91,6 +108,7 @@ export const NO_COVER: CoverProposal = {
   coverQty: 0,
   buyQty: 0,
   sources: [],
+  offered: [],
   isSplit: false,
 };
 
@@ -139,7 +157,13 @@ export function proposeCover(
   }
 
   const buyQty = Math.max(0, shortage - covered);
-  return { coverQty: covered, buyQty, sources: used, isSplit: covered > 0 && buyQty > 0 };
+  return {
+    coverQty: covered,
+    buyQty,
+    sources: used,
+    offered: candidates,
+    isSplit: covered > 0 && buyQty > 0,
+  };
 }
 
 /** Free stock for a product that no decision has spoken for yet. */
@@ -194,19 +218,23 @@ export function coverForLine(
     if (!(committed > 0)) return NO_COVER;
     const covered = Math.min(committed, available);
     const buyQty = Math.max(0, committed - covered);
-    if (covered <= 0) return { coverQty: 0, buyQty, sources: [], isSplit: false };
+    const ownPool = (qty: number): CoverSourceUse => ({
+      warehouse_id: line.warehouse_id ?? '',
+      warehouse_code: line.rec.warehouse_code ?? line.warehouse,
+      segment: line.rec.segment ?? null,
+      qty,
+      cross_segment: false,
+    });
+    // Offered is what the pool HOLDS available; the take is capped at the commitment. A
+    // buyer may draw more of their own pool than the engine proposed, and never more than
+    // is there.
+    const offered = available > 0 ? [ownPool(available)] : [];
+    if (covered <= 0) return { coverQty: 0, buyQty, sources: [], offered, isSplit: false };
     return {
       coverQty: covered,
       buyQty,
-      sources: [
-        {
-          warehouse_id: line.warehouse_id ?? '',
-          warehouse_code: line.rec.warehouse_code ?? line.warehouse,
-          segment: line.rec.segment ?? null,
-          qty: covered,
-          cross_segment: false,
-        },
-      ],
+      sources: [ownPool(covered)],
+      offered,
       isSplit: covered > 0 && buyQty > 0,
     };
   }
@@ -247,9 +275,12 @@ export function applySourceEdits(proposal: CoverProposal, edits: SourceEdits): C
   const gap = proposal.coverQty + proposal.buyQty;
   const sources: CoverSourceUse[] = [];
   let coverQty = 0;
-  for (const s of proposal.sources) {
+  // OFFERED, not `sources`: the buyer may take from a location the proposal never needed,
+  // and up to what that location actually holds. Floored to whole units here rather than at
+  // each call site, so no surface can record a fraction of a unit.
+  for (const s of proposal.offered) {
     const raw = edits[s.warehouse_id];
-    const wanted = Number.isFinite(raw) ? (raw as number) : 0;
+    const wanted = Number.isFinite(raw) ? Math.floor(raw as number) : 0;
     const qty = Math.max(0, Math.min(s.qty, wanted));
     if (qty <= 0) continue;
     sources.push({ ...s, qty });
@@ -269,7 +300,7 @@ export function applySourceEdits(proposal: CoverProposal, edits: SourceEdits): C
 export function sourceEditsForTotal(proposal: CoverProposal, total: number): SourceEdits {
   let remaining = Math.max(0, total);
   const edits: Record<string, number> = {};
-  for (const s of proposal.sources) {
+  for (const s of proposal.offered) {
     const take = Math.min(s.qty, remaining);
     edits[s.warehouse_id] = take;
     remaining -= take;
@@ -277,9 +308,14 @@ export function sourceEditsForTotal(proposal: CoverProposal, total: number): Sou
   return edits;
 }
 
-/** The proposal's own quantities as edits - the default every editing surface starts from. */
+/**
+ * The default every editing surface starts from: the proposal's own take, and zero for an
+ * offered location it did not need. A buyer who touches nothing gets today's answer
+ * (AC-3.5), and still sees the other locations they could have used.
+ */
 export function defaultSourceEdits(proposal: CoverProposal): SourceEdits {
   const edits: Record<string, number> = {};
+  for (const s of proposal.offered) edits[s.warehouse_id] = 0;
   for (const s of proposal.sources) edits[s.warehouse_id] = s.qty;
   return edits;
 }

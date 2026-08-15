@@ -296,3 +296,94 @@ describe('sourceEditsForTotal - one figure spent from the front', () => {
     expect(applySourceEdits(proposal, sourceEditsForTotal(proposal, 999)).coverQty).toBe(6);
   });
 });
+
+/**
+ * OFFERED is not TAKE (AC-3.4).
+ *
+ * `proposeCover` stops allocating the moment the shortage is met, so `sources` is what the
+ * proposal DECIDED to use - a truncated view of what the row may actually draw on. The ledger
+ * asks a different question ("how much may I take from each location, and from which
+ * others?"), so the proposal carries `offered`: every in-scope location with its real free
+ * quantity, whether the proposal needed it or not.
+ *
+ * Live shape: a gap of 10 against BRW-IB holding 50 free and BRW-NTC holding 30.
+ */
+describe('the offered list is what the buyer may draw on', () => {
+  const gapOf10 = () =>
+    proposeCover(10, 'wh-BRW-BB', 'project', [
+      { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50 },
+      { warehouse_id: 'wh-BRW-NTC', warehouse_code: 'BRW-NTC', segment: 'project', qty: 30 },
+    ]);
+
+  it('offers every in-scope location at its REAL free qty, not the take', () => {
+    const p = gapOf10();
+    expect(p.offered.map((s) => [s.warehouse_code, s.qty])).toEqual([
+      ['BRW-IB', 50],
+      ['BRW-NTC', 30],
+    ]);
+    // The take is still what the proposal decided: 10 from the first location.
+    expect(p.sources.map((s) => [s.warehouse_code, s.qty])).toEqual([['BRW-IB', 10]]);
+  });
+
+  it('defaults to the take, and zero for a location the proposal did not need', () => {
+    expect(defaultSourceEdits(gapOf10())).toEqual({ 'wh-BRW-IB': 10, 'wh-BRW-NTC': 0 });
+  });
+
+  it('lets the buyer split across a location the proposal never touched', () => {
+    const p = gapOf10();
+    const applied = applySourceEdits(p, { 'wh-BRW-IB': 4, 'wh-BRW-NTC': 6 });
+    expect(applied).toMatchObject({ coverQty: 10, buyQty: 0 });
+    expect(applied.sources.map((s) => [s.warehouse_code, s.qty])).toEqual([
+      ['BRW-IB', 4],
+      ['BRW-NTC', 6],
+    ]);
+  });
+
+  it('clamps to what the location HOLDS, not to what the proposal took from it', () => {
+    // 40 from a location the proposal only took 10 from is legitimate: it holds 50.
+    const applied = applySourceEdits(gapOf10(), { 'wh-BRW-IB': 40 });
+    expect(applied.coverQty).toBe(40);
+    // 60 is not: it holds 50.
+    expect(applySourceEdits(gapOf10(), { 'wh-BRW-IB': 60 }).coverQty).toBe(50);
+  });
+
+  it('spends a single total across the offered list, front first', () => {
+    const p = gapOf10();
+    expect(sourceEditsForTotal(p, 60)).toEqual({ 'wh-BRW-IB': 50, 'wh-BRW-NTC': 10 });
+  });
+
+  it('records whole units only, so a typed fraction cannot reach a decision', () => {
+    const applied = applySourceEdits(gapOf10(), { 'wh-BRW-IB': 4.7 });
+    expect(applied.coverQty).toBe(4);
+    expect(applied.sources[0].qty).toBe(4);
+  });
+
+  it('offers nothing out of scope, so the offered list obeys the policy too', () => {
+    const p = proposeCover(
+      10,
+      'wh-BRW-BB',
+      'project',
+      [
+        { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50,
+          pool_warehouse_id: 'wh-BRW' },
+        { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', segment: 'project', qty: 30,
+          pool_warehouse_id: 'wh-PJ-SR' },
+      ],
+      {},
+      { scope: 'own_pool', poolWarehouseId: 'wh-BRW' },
+    );
+    expect(p.offered.map((s) => s.warehouse_code)).toEqual(['BRW-IB']);
+  });
+
+  it('offers what an earlier decision left, never what it already spent', () => {
+    const p = proposeCover(
+      10,
+      'wh-BRW-BB',
+      'project',
+      [{ warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50 }],
+      { 'wh-BRW-IB': 45 },
+    );
+    expect(p.offered.map((s) => s.qty)).toEqual([5]);
+    expect(applySourceEdits(p, { 'wh-BRW-IB': 50 }).coverQty).toBe(5);
+  });
+});
