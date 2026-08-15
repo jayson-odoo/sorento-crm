@@ -157,6 +157,8 @@ export interface OnboardingRequestSummary {
 }
 
 export interface OnboardingRequestDetail extends OnboardingRequestSummary {
+  /** Reviewers only. The captain copies this into WhatsApp himself. */
+  intake_url: string | null;
   reviewer_note: string | null;
   requester_note: string | null;
   reviewed_by_name: string | null;

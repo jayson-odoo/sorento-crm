@@ -315,6 +315,58 @@ def test_rejecting_the_batch_requires_a_reason(db):
     assert exc.value.status_code == 422
 
 
+def test_a_person_cannot_be_edited_once_the_batch_has_left_review(db):
+    """The provisioned rows ARE the record of what was created.
+
+    Without this the detail page - which renders the same editable grid in every
+    status - lets a stale tab rewrite a name or an email after the invitation
+    carrying the old one has already gone out.
+    """
+    request = _to_review(db)
+    person_id = str(request.people[0].id)
+    onboarding_service.set_person_verdict(db, person_id, verdict=REVIEW_APPROVED)
+    onboarding_service.approve(db, str(request.id))
+
+    with pytest.raises(AppException) as exc:
+        onboarding_service.update_person(db, person_id, {"full_name": "Someone Else"})
+    assert exc.value.status_code == 409
+
+    db.refresh(request.people[0])
+    assert request.people[0].full_name == "Aisyah"
+
+
+def test_a_verdict_cannot_be_changed_once_the_batch_has_left_review(db):
+    """Rejecting somebody the job has already provisioned contradicts the ledger."""
+    request = _to_review(db)
+    person_id = str(request.people[0].id)
+    onboarding_service.set_person_verdict(db, person_id, verdict=REVIEW_APPROVED)
+    onboarding_service.approve(db, str(request.id))
+
+    with pytest.raises(AppException) as exc:
+        onboarding_service.set_person_verdict(
+            db, person_id, verdict=REVIEW_REJECTED, reason="Changed my mind."
+        )
+    assert exc.value.status_code == 409
+
+    db.refresh(request.people[0])
+    assert request.people[0].review_status == REVIEW_APPROVED
+
+
+def test_a_person_is_still_editable_before_start_review(db):
+    """The reviewer legitimately fixes a typo on a submitted batch."""
+    request = _make_request(db)
+    onboarding_service.send_request(db, str(request.id))
+    onboarding_service.replace_people(
+        db, request, [{"full_name": "Aisyah", "email_raw": f"{unique_code('a')}@mocha.com.my".lower()}]
+    )
+    onboarding_service.submit(db, request)
+
+    person = onboarding_service.update_person(
+        db, str(request.people[0].id), {"full_name": "Nurul Aisyah"}
+    )
+    assert person.full_name == "Nurul Aisyah"
+
+
 # --- collisions ---------------------------------------------------------------
 
 

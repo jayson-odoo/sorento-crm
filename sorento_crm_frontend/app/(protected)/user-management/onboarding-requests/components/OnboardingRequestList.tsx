@@ -19,13 +19,14 @@ import {
 } from '@tanstack/react-table';
 import { ChevronRight, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { NewOnboardingRequestDialog } from './NewOnboardingRequestDialog';
 import {
   ONBOARDING_STATUS_LABELS,
   type OnboardingRequestSummary,
@@ -207,11 +208,15 @@ export function OnboardingRequestList() {
                 ) : null}
               </div>
             }
+            primaryAction={<NewOnboardingRequestDialog />}
           />
         </CardHeader>
-        <CardContent>
+        {/* CardTable, not CardContent: it is the grid wrapper that keeps a wide
+            table scrolling inside itself. Under CardContent the 1180px grid
+            widened the whole page at 375px. */}
+        <CardTable>
           <DataGridTable />
-        </CardContent>
+        </CardTable>
       </Card>
     </DataGrid>
   );

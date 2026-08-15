@@ -71,6 +71,15 @@ DEFAULT_EXPIRY_DAYS = 14
 #: change a batch somebody is already reviewing.
 REQUESTER_WRITABLE = (SENT,)
 
+#: The only statuses in which the REVIEWER may write. Holding
+#: `user_management.onboarding.edit` is not the same as being allowed to rewrite
+#: a batch that has already been provisioned: once the job has run, the person
+#: rows are the record of what was created, and an edit or a late verdict change
+#: silently contradicts the ledger next to it (and the invitation already sent).
+#: `submitted` is included because the reviewer legitimately fixes a typo before
+#: pressing Start review.
+REVIEWER_WRITABLE = (SUBMITTED, IN_REVIEW)
+
 
 class OnboardingAuthError(Exception):
     """The intake token is missing, unknown, expired or revoked."""
@@ -429,6 +438,23 @@ def get_person(db: Session, person_id: str) -> OnboardingPerson:
     return person
 
 
+def _assert_reviewer_writable(db: Session, person: OnboardingPerson) -> None:
+    """Refuse a reviewer write once the batch has left review.
+
+    Checked here rather than only in the UI: the detail page renders the same
+    grid in every status, so a stale tab is enough to reach this.
+    """
+    request = get_request(db, person.request_id)
+    if request.status_key not in REVIEWER_WRITABLE:
+        raise AppException(
+            status_code=409,
+            message=(
+                "This batch is no longer open for review, so it cannot be changed. "
+                "Anything still outstanding needs a new request."
+            ),
+        )
+
+
 def replace_people(
     db: Session, request: OnboardingRequest, rows: Iterable[dict]
 ) -> list[OnboardingPerson]:
@@ -510,6 +536,7 @@ def submit(
 
 def update_person(db: Session, person_id: str, values: dict) -> OnboardingPerson:
     person = get_person(db, person_id)
+    _assert_reviewer_writable(db, person)
     _apply_person_values(person, {k: v for k, v in values.items() if k in EDITABLE_PERSON_FIELDS})
     db.commit()
     db.refresh(person)
@@ -533,6 +560,7 @@ def set_person_verdict(
         raise AppException(status_code=422, message="That is not a review verdict.")
 
     person = get_person(db, person_id)
+    _assert_reviewer_writable(db, person)
     if verdict == REVIEW_REJECTED:
         cleaned = (reason or "").strip()
         if not cleaned:

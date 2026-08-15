@@ -15,7 +15,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Loader2, Trash2 } from 'lucide-react';
+import { CheckCircle2, Copy, Loader2, Send, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -44,7 +44,10 @@ import {
   deleteOnboardingRequest,
   getOnboardingRequest,
   listOnboardingRequests,
+  regenerateOnboardingToken,
   rejectOnboardingPerson,
+  revokeOnboardingRequest,
+  sendOnboardingRequest,
   startOnboardingReview,
   updateOnboardingPerson,
 } from '../../services/onboardingService';
@@ -160,6 +163,33 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const sendMutation = useMutation({
+    mutationFn: () => sendOnboardingRequest(requestId),
+    onSuccess: () => {
+      invalidate();
+      toast.success('The link is live. Copy it and send it to the requester.');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: () => revokeOnboardingRequest(requestId),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Link revoked. It stops working immediately.');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const regenerateMutation = useMutation({
+    mutationFn: () => regenerateOnboardingToken(requestId),
+    onSuccess: () => {
+      invalidate();
+      toast.success('New link issued. The old one no longer works.');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const people = request?.people ?? [];
   const counts = useMemo(
     () => ({
@@ -253,6 +283,73 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
         <MetaItem label="Reviewed by" value={request.reviewed_by_name ?? '—'} />
         <MetaItem label="Source file" value={request.source_file_name ?? 'Typed in'} />
       </dl>
+
+      {/* The link IS the product of creating a request (AC-3.3: revocable,
+          re-sendable). Rendered in every status - after submission it doubles
+          as the requester's status page, so "copy" stays useful throughout. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Intake link</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {request.revoked_at ? (
+            <p className="text-sm text-red-700">
+              This link was revoked on {formatMoment(request.revoked_at)}. Issue a new link to
+              let the requester back in.
+            </p>
+          ) : request.intake_url ? (
+            <p className="text-sm break-all font-mono" title={request.intake_url}>
+              {request.intake_url}
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              The link could not be built. Set the frontend base URL in system settings.
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {request.intake_url && !request.revoked_at ? (
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(request.intake_url!);
+                  toast.success('Link copied. Paste it into WhatsApp or an email.');
+                }}
+              >
+                <Copy className="size-4 mr-2" />
+                Copy link
+              </Button>
+            ) : null}
+            {request.status === 'draft' ? (
+              <Button onClick={() => sendMutation.mutate()} disabled={sendMutation.isPending}>
+                {sendMutation.isPending ? (
+                  <Loader2 className="size-4 mr-2 animate-spin" />
+                ) : (
+                  <Send className="size-4 mr-2" />
+                )}
+                Open the link for filling
+              </Button>
+            ) : null}
+            {!request.revoked_at && ['draft', 'sent'].includes(request.status) ? (
+              <Button
+                variant="outline"
+                onClick={() => revokeMutation.mutate()}
+                disabled={revokeMutation.isPending}
+              >
+                Revoke link
+              </Button>
+            ) : null}
+            {['draft', 'sent'].includes(request.status) ? (
+              <Button
+                variant="outline"
+                onClick={() => regenerateMutation.mutate()}
+                disabled={regenerateMutation.isPending}
+              >
+                Issue a new link
+              </Button>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

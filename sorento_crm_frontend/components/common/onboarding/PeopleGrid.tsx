@@ -48,6 +48,13 @@ export interface PeopleGridProps {
   people: OnboardingPerson[];
   templates: OnboardingTemplateOption[];
   isLoading?: boolean;
+  /**
+   * Review mode with the pens taken away: the collision and ledger columns
+   * still render (they are what a completed batch is FOR), but every input is
+   * disabled and the verdict buttons are hidden. Used once the batch has left
+   * review - the server refuses those writes anyway; this stops offering them.
+   */
+  locked?: boolean;
   onPatchPerson?: (personId: string, patch: OnboardingPersonPatch) => void;
   onRemovePerson?: (personId: string) => void;
   onApprovePerson?: (personId: string) => void;
@@ -153,13 +160,14 @@ export function PeopleGrid({
   people,
   templates,
   isLoading = false,
+  locked = false,
   onPatchPerson,
   onRemovePerson,
   onApprovePerson,
   onRejectPerson,
   emptyMessage = 'No people yet. Upload a sheet or add a row.',
 }: PeopleGridProps) {
-  const editable = mode !== 'readonly';
+  const editable = mode !== 'readonly' && !locked;
   const isReview = mode === 'review';
   const note = noteField(mode);
 
@@ -392,24 +400,26 @@ export function PeopleGrid({
                   {row.original.rejection_reason}
                 </span>
               ) : null}
-              <div className="flex gap-1">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => onApprovePerson?.(row.original.id)}
-                >
-                  Keep
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => onRejectPerson?.(row.original.id)}
-                >
-                  Reject
-                </Button>
-              </div>
+              {editable ? (
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => onApprovePerson?.(row.original.id)}
+                  >
+                    Keep
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => onRejectPerson?.(row.original.id)}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              ) : null}
             </div>
           ),
         },
