@@ -122,6 +122,18 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
   `integration_log` outbox row exists with the actually-attempted payload.
 - **AC-D4 [FE][T]** Given inbound attachments/stickers/quotes in the thread, When rendered,
   Then each shows at least a typed placeholder; unknown types never crash the list.
+- **AC-D5 [BE][T]** (added 2026-08-15, captain dogfooding) Given the assignee attaches a
+  file named `Q3 stock.xlsx`, When it reaches the contact's WhatsApp, Then the document
+  shows THAT filename - never a uuid or a uuid-prefixed name. The storage key keeps its
+  uuid SEGREGATION per the existing `{type}/{id}/{filename}` convention (uuid as a path
+  segment, clean filename as the last segment) so the URL Respond fetches ends in the
+  real name. Applies to every attachment type; the thread bubble shows the clean name
+  too.
+- **AC-D6 [FE][T]** (added 2026-08-15, captain dogfooding) Given an attachment bubble in
+  the ticket thread (sent OR received), When clicked, Then it opens in the EXISTING
+  attachment preview surface (same viewer used across the CRM) - image/pdf inline,
+  office docs per the preview function's current behavior, download as fallback. No
+  raw-URL new-tab as the primary interaction.
 
 ### E. Attribution and clocks (Journey steps 5-7)
 
@@ -352,6 +364,21 @@ channel - quote-prefix emulation stays), sticker sends.
 - **AC-L6 [FE][T]** Given inbound messages that quote an earlier message (webhook
   `replyTo`), When rendered, Then the quoted context shows above the message body
   (read-side parity even though outbound quoting stays emulation).
+- **AC-L7 [BE][FE][T]** (added 2026-08-15, captain dogfooding: "i scoll up already then
+  can't find any older") Given a thread longer than one page, When the assignee scrolls
+  to the top, Then older messages load automatically (cursor pagination - local
+  `chat_histories` first, Respond `list_messages` cursor as fallback/backfill for
+  history predating our ingest) until the true start of the conversation, matching
+  Respond's own scroll-back. Loading indicator at the top; scroll position preserved
+  after prepend; no duplicate bubbles (dedupe by message_id).
+- **AC-L8 [BE][FE][T]** (added 2026-08-15, captain dogfooding) Given the ticket thread,
+  When the assignee opens message search (icon in the drawer header), Then they can
+  type a query and get matches within THIS contact's conversation "just like WhatsApp":
+  match list with highlighted terms, tapping a match jumps the thread to that message
+  (loading intermediate pages if needed) and flash-highlights the bubble, with up/down
+  navigation between matches. Search runs server-side over `chat_histories` (ILIKE
+  v1). Reference implementation: foundryx-shared-service
+  `service_backend/modules/omnichannel` chat search - study it before building.
 
 ### M. Post-resolve reassurance + Respond close semantics (Journey step 7b) - added 2026-08-14
 

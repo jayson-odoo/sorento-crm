@@ -252,12 +252,35 @@ against this).**
   renders "replying to" block above the message body. Outbound quoting stays the
   existing prefix emulation (no API support - verified).
 
+### S4.7 Attachment filename fidelity + in-thread preview (UAC D5-D6) [BE+FE coder]
+(added 2026-08-15 from captain hands-on testing)
+
+- D5 root cause: `upload_chat_attachment` key is `{table}/{id}/{uuid}_{name}` - uuid glued
+  into the URL basename, and WhatsApp names the delivered document from the basename.
+  Fix: uuid as its OWN path segment (`{table}/{id}/{uuid}/{name}`), clean basename;
+  verify both R2 CDN and S3 signed-url branches.
+- D6: attachment bubbles open the EXISTING CRM attachment preview surface on click; no
+  new viewer.
+
+### S4.8 Thread scroll-back + message search (UAC L7-L8) [BE coder + FE coder]
+(added 2026-08-15 from captain hands-on testing)
+
+- L7: cursor pagination on scroll-up - local `chat_histories` first, Respond
+  `list_messages` cursor backfill for pre-ingest history; prepend with scroll anchoring,
+  dedupe on message_id.
+- L8: server-side search over `chat_histories` (ILIKE v1), match list + jump-to-message
+  + up/down navigation + highlight. Reference: foundryx-shared-service
+  `service_backend/modules/omnichannel` chat search (studied before building).
+
 ### Phase 4 execution order (user-approved 2026-08-14)
 
 S4.1 and S4.2 first (they close the two live operational gaps: bot does not pause, thread
 does not update). S4.3-S4.4 next (parity). S4.5-S4.6 last (polish). ALL slices are built
 in full with equal diligence - the order is sequencing, not priority-cutting (user:
 "you must build all with diligence").
+
+Revised 2026-08-15 after captain hands-on testing: S4.7 (defect-class, small) runs
+immediately, then S4.8, then S4.3 -> S4.4 -> S4.5 -> S4.6 as approved.
 
 **n8n change cycle (binding, user 2026-08-14): plan -> build -> test -> promote, and the
 promote step ALWAYS needs the user's explicit call** - per the sorento-crm-n8n working
