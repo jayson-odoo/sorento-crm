@@ -1116,7 +1116,9 @@ def search_specs(
     # evidence and not on the total. Scored on the total, a standing brand preference
     # of 8.0 sat above a floor of 1.5 on its own and the answer to "is there anything
     # here" was permanently yes.
-    floor_missed = (not top) or max(c["_evidence"] for c in top) < floor
+    # Read BEFORE the pop below, which is the only reason the number is still here.
+    top_evidence = max((c["_evidence"] for c in top), default=0.0)
+    floor_missed = (not top) or top_evidence < floor
     for candidate in collapsed:
         candidate.pop("_evidence", None)
 
@@ -1148,6 +1150,15 @@ def search_specs(
         "candidates": shown,
         "floor_missed": floor_missed,
         "top_score": top[0]["score"] if top else 0.0,
+        # The quantity the floor was actually tested against, so a caller can tell
+        # "there is nothing" (0.0) from "something scored and none of it cleared the
+        # bar" (non-zero) - two answers `floor_missed` collapses into one bool while
+        # emptying the list that would otherwise show the difference.
+        #
+        # Deliberately NOT `top_score`, which carries the house preference: a product
+        # nobody described would report a near miss it never earned, which is the
+        # permanently-yes bug the floor itself was moved onto evidence to kill.
+        "top_evidence": top_evidence,
         "asked_for": [{"key": k, "value": v} for k, v in asked.items()],
         "unmet": unmet,
     }
