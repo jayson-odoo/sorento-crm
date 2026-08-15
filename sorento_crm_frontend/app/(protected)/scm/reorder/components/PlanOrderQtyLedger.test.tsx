@@ -591,3 +591,77 @@ describe('order-qty ledger - per-location use stock', () => {
     expect(screen.getByRole('checkbox', { name: /Use stock 6/ })).toBeInTheDocument();
   });
 });
+
+/**
+ * The rows are the OFFER, not the take (AC-3.4).
+ *
+ * The gap is 10 while BRW-IB holds 50 free and BRW-NTC holds 30. The proposal takes 10 from
+ * BRW-IB and stops, so rendering `cover.sources` showed ONE row labelled "10 free" and hid
+ * BRW-NTC entirely - the buyer could neither see the second location nor take more than 10
+ * from the first.
+ */
+describe('order-qty ledger - the offered locations, at what they hold', () => {
+  const bigSources: CoverSource[] = [
+    { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50 },
+    { warehouse_id: 'wh-BRW-NTC', warehouse_code: 'BRW-NTC', segment: 'project', qty: 30 },
+  ];
+  const gapLine = () =>
+    line({ order_qty: 10, recommended_qty: 10, moq: null, order_multiple: null,
+           segment: 'project' });
+
+  it('lists every offered location, at its real free quantity', () => {
+    const l = gapLine();
+    renderLedger({ line: l, cover: coverForLine(l, bigSources) });
+
+    expect(screen.getByText('50 free')).toBeInTheDocument();
+    expect(screen.getByText('30 free')).toBeInTheDocument();
+    expect(screen.queryByText('10 free')).not.toBeInTheDocument();
+  });
+
+  it('defaults to the proposal take, and zero for the location it did not need', () => {
+    const l = gapLine();
+    renderLedger({ line: l, cover: coverForLine(l, bigSources) });
+
+    expect(screen.getByLabelText('Use from BRW-IB')).toHaveValue(10);
+    expect(screen.getByLabelText('Use from BRW-NTC')).toHaveValue(0);
+  });
+
+  it('lets the buyer split across a location the proposal never touched', () => {
+    const l = gapLine();
+    const { onDecide } = renderLedger({ line: l, cover: coverForLine(l, bigSources) });
+
+    fireEvent.change(screen.getByLabelText('Use from BRW-IB'), { target: { value: '4' } });
+    fireEvent.change(screen.getByLabelText('Use from BRW-NTC'), { target: { value: '6' } });
+
+    const last = onDecide.mock.calls.at(-1)![0];
+    expect(last.stock.qty).toBe(10);
+    expect(last.stock.sources.map((s: { warehouse_code: string; qty: number }) => [
+      s.warehouse_code, s.qty,
+    ])).toEqual([['BRW-IB', 4], ['BRW-NTC', 6]]);
+    expect(last.buy).toBeUndefined(); // the whole gap is covered
+  });
+
+  it('clamps to what the location holds, not to what the proposal took', () => {
+    const l = gapLine();
+    renderLedger({ line: l, cover: coverForLine(l, bigSources) });
+
+    const ib = screen.getByLabelText('Use from BRW-IB');
+    fireEvent.change(ib, { target: { value: '40' } });
+    expect(ib).toHaveValue(40); // 40 of the 50 it holds - allowed
+    fireEvent.change(ib, { target: { value: '60' } });
+    expect(ib).toHaveValue(50); // 60 is not
+  });
+
+  it('keeps the inputs mounted when the buyer zeroes every location', () => {
+    // Zeroing is an edit, not an intention to stop covering: unmounting the rows mid-edit
+    // takes the controls away from a buyer who is halfway through moving units.
+    const l = gapLine();
+    const { onDecide } = renderLedger({ line: l, cover: coverForLine(l, bigSources) });
+
+    fireEvent.change(screen.getByLabelText('Use from BRW-IB'), { target: { value: '0' } });
+
+    expect(screen.getByLabelText('Use from BRW-IB')).toBeInTheDocument();
+    expect(screen.getByLabelText('Use from BRW-NTC')).toBeInTheDocument();
+    expect(onDecide.mock.calls.at(-1)![0].buy).toBe(10);
+  });
+});

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { EM_DASH, fmtDecimal, fmtInt, fmtSigned } from '../../lib/format';
@@ -369,18 +369,45 @@ export function OrderQtyLedger({
 
   // Which cover parts are "on": the committed decision when one exists, the engine's own
   // suggested mixture otherwise - never a third guess (UAC B4).
-  const stockOn = decision ? (decision.stock?.qty ?? 0) > 0 : cover.coverQty > 0;
+  //
+  // `stockOn` is LOCAL state, seeded once, exactly as `forecastOn` below is: it is the
+  // buyer's intention, not a reading of the numbers. Deriving it from the decision meant
+  // that zeroing every location (a normal step while moving units between them) read as
+  // "cover is off" and unmounted the inputs from under the buyer mid-edit. Cover 0 with the
+  // toggle ON is a legitimate state: the whole gap is bought, and the rows stay there.
+  const [stockOn, setStockOn] = useState(() =>
+    decision ? (decision.stock?.qty ?? 0) > 0 : cover.coverQty > 0,
+  );
   const poOn = decision ? (decision.po ?? 0) > 0 : poQty > 0;
   // How much to take from EACH offered location. Seeded from the decision already taken, or
   // from the engine's proposal (same-segment first) - so a buyer who never touches these
   // inputs gets exactly today's answer (UAC AC-3.5).
-  const [sourceEdits, setSourceEdits] = useState<SourceEdits>(() => {
+  const seedEdits = (): SourceEdits => {
     const taken = decision?.stock?.sources;
     if (taken?.length) {
-      return Object.fromEntries(taken.map((s) => [s.warehouse_id, s.qty]));
+      const base: Record<string, number> = Object.fromEntries(
+        cover.offered.map((s) => [s.warehouse_id, 0]),
+      );
+      for (const s of taken) base[s.warehouse_id] = s.qty;
+      return base;
     }
     return defaultSourceEdits(cover);
-  });
+  };
+  const [sourceEdits, setSourceEdits] = useState<SourceEdits>(seedEdits);
+  // Re-seed when the OFFER itself changes - another row's decision can free a location up or
+  // spend it down while this popover is open, and a newly offered location left out of the
+  // edits map would silently render as 0 with no way to tell it from a deliberate zero. The
+  // key deliberately excludes this row's own take (usePlanLines hands its own units back),
+  // so committing an edit here never re-seeds over the buyer's typing.
+  const offerKey = cover.offered.map((s) => `${s.warehouse_id}:${s.qty}`).join('|');
+  const seededFor = useRef(offerKey);
+  useEffect(() => {
+    if (seededFor.current === offerKey) return;
+    seededFor.current = offerKey;
+    setSourceEdits(seedEdits());
+    // `seedEdits` closes over the current cover/decision, which is what a re-seed wants.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offerKey]);
   const edited = applySourceEdits(cover, sourceEdits);
   // The forecast add-on has no home in `PlanDecision` beyond the buy total it grows, so its
   // own on/off state is re-derived from the reason a previous toggle left behind (best
@@ -458,8 +485,11 @@ export function OrderQtyLedger({
     });
   };
 
-  const toggleStock = () =>
-    commit({ stockOn: !stockOn, poOn, forecastOn, forecastQty, edits: sourceEdits });
+  const toggleStock = () => {
+    const next = !stockOn;
+    setStockOn(next);
+    commit({ stockOn: next, poOn, forecastOn, forecastQty, edits: sourceEdits });
+  };
   const togglePo = () => commit({ stockOn, poOn: !poOn, forecastOn, forecastQty, edits: sourceEdits });
   const toggleForecast = () => {
     const next = !forecastOn;
@@ -469,7 +499,8 @@ export function OrderQtyLedger({
   // Editing a location re-applies immediately, exactly as the forecast input does: the
   // input IS the edit, there is no separate Record step in this ledger (UAC B4).
   const changeSourceQty = (warehouseId: string, raw: number) => {
-    const max = cover.sources.find((s) => s.warehouse_id === warehouseId)?.qty ?? 0;
+    // What the LOCATION holds free, not what the proposal happened to take from it.
+    const max = cover.offered.find((s) => s.warehouse_id === warehouseId)?.qty ?? 0;
     const clamped = Number.isFinite(raw) ? Math.max(0, Math.min(max, Math.floor(raw))) : 0;
     const edits = { ...sourceEdits, [warehouseId]: clamped };
     setSourceEdits(edits);
@@ -572,7 +603,7 @@ export function OrderQtyLedger({
                         not offered at all - cover is 0 and the whole gap is bought. */}
                     {stockOn ? (
                       <div className="ms-6 space-y-1">
-                        {cover.sources.map((s) => (
+                        {cover.offered.map((s) => (
                           <CoverSourceLine
                             key={s.warehouse_id}
                             code={s.warehouse_code}
