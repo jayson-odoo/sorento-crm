@@ -356,6 +356,18 @@ slot. Two overrides: UAC + PLAN **files** under `documentation/plans/` are the c
 are only the queue), and the frontend mock is built before any backend code (so `/implement` is
 scoped to Phase 2). See the skill map at the bottom of that file.
 
+### Session handoff (instead of autocompact)
+
+Long sessions take a deliberate cut rather than letting autocompact pick one: **`/handoff`**
+writes a resume document to `.claude/handoffs/<UTC ts>-<slug>.md` (gitignored, worktree-local),
+the user runs `/clear`, then **`/resume-handoff`** restores from it - re-reading the artifacts
+the document points at and re-checking its "Assumed, not verified" section before acting. An
+agent cannot clear its own conversation, so the middle step is the user's; an unattended agent
+instead reports `blocked:` with the document path and its supervisor resumes from it. **Never run
+`/compact`** - it is the lossy summary this replaces, not a lighter alternative to it. Upstream
+`/mattpocock-skills:handoff` stays available for work that leaves this checkout (it writes to
+the OS temp dir and has no resume half). See `documentation/agents/session-handoff.md`.
+
 ### Issue tracker
 
 GitHub Issues on `jayson-odoo/sorento-crm`, via the `gh` CLI. See `documentation/agents/issue-tracker.md`.
