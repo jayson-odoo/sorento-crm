@@ -280,6 +280,74 @@ def test_a_near_miss_keeps_its_evidence_after_the_list_is_emptied(client, db):
     assert after["spec_top_score"] > 0.0
 
 
+def test_the_near_miss_case_is_verified_to_have_had_candidates_first(client, db):
+    """The premise of the near-miss case above, asserted instead of assumed.
+
+    That case is produced by RAISING the floor over a phrase, so it only tests what
+    it claims while the phrase still finds something at the shipped floor. Let the
+    catalogue, the derivation or any scoring knob move and the phrase can quietly
+    stop scoring: the list would then be empty for the ordinary true-zero reason,
+    `spec_top_score` would be 0.0, and the assertions there would still hold - a
+    second copy of the true-zero test wearing the near-miss test's name. Nothing
+    would fail, and the one behaviour the field exists for would go uncovered.
+
+    So this pins the BEFORE half explicitly. If the phrase ever stops finding
+    products, this fails and names why, rather than leaving both tests green.
+    """
+    before = _resolve_raw(client, SINK)
+
+    assert before["floor_missed"] is False
+    assert before["spec_candidates"], "the near-miss case needs a phrase that finds products"
+    assert before["spec_top_score"] > 0.0
+
+    _raise_the_floor(db, before["spec_top_score"] + 1.0)
+    after = _resolve_raw(client, SINK)
+
+    # The list emptied because the BAR moved, not because the phrase stopped
+    # earning anything. That distinction is the whole near-miss case.
+    assert after["spec_candidates"] == []
+    assert after["spec_top_score"] == before["spec_top_score"] > 0.0
+
+
+# Five specs the fixture's sinks all state and all contradict: ceramic against
+# stainless steel, three bowls against one or two, and dimensions an order of
+# magnitude out. Each costs `mismatch_penalty` (2.5), which totals more than the
+# 7.4 the words "kitchen sink" earn, so `_evidence` (evidence MINUS penalty) goes
+# below zero for every row.
+CONTRADICTED = [
+    {"key": "material", "value": "ceramic"},
+    {"key": "bowl_count", "value": 3},
+    {"key": "dim_width", "value": 9999},
+    {"key": "dim_height", "value": 9999},
+    {"key": "dim_length", "value": 9999},
+]
+
+
+def test_a_thoroughly_contradicted_turn_reports_evidence_below_zero(client, db):
+    """Negative is a real value of this field, and it is the honest one.
+
+    `_evidence` is `evidence - penalty`, so a turn whose every stated spec is
+    contradicted lands under zero. Reported as-is, "-5.1" and "0.0" stay different
+    answers: the first found products and disqualified them, the second found
+    nothing at all. Clamping at zero collapses the two back into one number, which
+    is the same conflation `spec_top_score` was added to undo, so a clamp must
+    break a test rather than pass quietly as tidying.
+
+    Pins the SHIPPED behaviour, sign included. If a clamp is ever wanted it is a
+    contract change and this test is where it gets argued.
+    """
+    body = client.post(
+        RESOLVE,
+        json={"query": "kitchen sink", "spec_fallback": True, "extracted_specs": CONTRADICTED},
+    ).json()
+
+    assert body["spec_top_score"] < 0.0
+    assert body["floor_missed"] is True
+    assert body["spec_candidates"] == []
+    # Negative does not exempt the turn from the one rule the field carries.
+    assert body["floor_missed"] is (body["spec_top_score"] < _floor(db))
+
+
 @pytest.mark.parametrize(
     "sentence",
     [NONSENSE, SINK, "1.2mm thick double bowl kitchen sink", "kitchen sink"],

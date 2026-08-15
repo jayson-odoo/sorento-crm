@@ -141,6 +141,55 @@ def test_unrecognized_terms_reach_the_wire(client):
     assert predicate["qualifying_total"] == 0
 
 
+def test_a_require_turn_carries_no_spec_top_score(client):
+    """`spec_top_score` belongs to shape A, and shape B must not grow it.
+
+    The field says how much evidence the RELEVANCE FLOOR was tested against, and
+    shape B never runs that floor: `require` is a predicate over a described set,
+    answered by `resolve_product_set`, and it returns before the spec-fallback block
+    that sets the field. So a number here would have no floor behind it and no
+    meaning - and property 1 of this file is that a caller sees the same wire shape
+    it saw yesterday, so a scalar appearing on the predicate path is a contract
+    break whether or not anything reads it. n8n item-mutation chains persist
+    top-level keys across nodes, which is how a stray scalar reaches a customer.
+
+    `spec_fallback` is sent TRUE on purpose: the flag alone must not summon the
+    field once `require` has claimed the turn.
+    """
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which kitchen sinks have stock",
+            "free_terms": ["kitchen sink"],
+            "require": {"stock": True},
+            "spec_fallback": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert "spec_top_score" not in payload
+    # Its two companions from the same block, for the same reason.
+    assert "floor_missed" not in payload
+    assert "spec_candidates" not in payload
+
+    # And the rest of the shape-B answer is exactly what this file already expects.
+    assert payload["predicate"] == {
+        "require": {"stock": True},
+        "qualifying_total": 1,
+        "truncated": False,
+        "unrecognized_terms": [],
+    }
+    matches = [
+        m
+        for resolution in payload["resolutions"]
+        for m in resolution["matches"]
+        if m.get("match_tier") == "spec_search"
+    ]
+    assert [m["canonical_code"] for m in matches] == ["ZZTKS9001"]
+    assert "predicate" not in (payload.get("by_entity_type") or {})
+
+
 def test_an_unknown_require_key_is_a_422(client):
     response = client.post(
         ENDPOINT,
