@@ -136,6 +136,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
               quantity_picked: l.quantity_picked ?? 0,
               source_warehouse_id: l.source_warehouse_id ?? undefined,
               spo_allocation_id: l.spo_allocation_id ?? undefined,
+              spo_number_raw: l.spo_number_raw ?? undefined,
               picked_condition: l.picked_condition ?? undefined,
             }))
           : [{ product_id: '', quantity_expected: 0, quantity_picked: 0, source_warehouse_id: '' }],
@@ -214,6 +215,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
           quantity_picked: l.quantity_picked,
           source_warehouse_id: l.source_warehouse_id || undefined,
           spo_allocation_id: l.spo_allocation_id || undefined,
+          spo_number_raw: l.spo_number_raw ?? undefined,
           picked_condition: l.picked_condition || 'good',
         }));
 

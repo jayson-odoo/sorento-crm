@@ -626,7 +626,22 @@ class TestAfterwards:
 
         logged = (
             db.query(AuditLog)
-            .filter(AuditLog.entity_type == "product", AuditLog.entity_id == product.id)
+            .filter(
+                AuditLog.entity_type == "product",
+                AuditLog.entity_id == product.id,
+                # An overwrite is an UPDATE. Without this the seed row's own CREATE
+                # audit entry also matches (it carries the entered 592 as a NEW
+                # value), and NOTHING orders the two: the query has no ORDER BY,
+                # and `changed_at` cannot break the tie because it defaults to
+                # now(), which is the TRANSACTION timestamp, and the whole test
+                # runs inside one transaction. So "the last row" was decided by
+                # wherever Postgres happened to place the two tuples in the shared
+                # scratch schema's heap, which is a function of everything that ran
+                # before this test. When the free space map handed the UPDATE an
+                # earlier page than the CREATE, `changed[-1]` was the CREATE row,
+                # whose old_values is None, and this failed in CI with a TypeError.
+                AuditLog.action == "UPDATE",
+            )
             .all()
         )
         changed = [row for row in logged if (row.new_values or {}).get("dimensions_height")]

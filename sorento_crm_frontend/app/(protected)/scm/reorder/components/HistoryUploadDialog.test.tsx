@@ -401,6 +401,7 @@ describe('HistoryUploadDialog - purchase history', () => {
      */
     renderDialog('purchase-history');
     await choose();
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());
 
     await waitFor(() => expect(notifyImportQueued).toHaveBeenCalled());
@@ -471,6 +472,7 @@ describe('HistoryUploadDialog - order inquiry', () => {
      */
     renderDialog('order-inquiry');
     await choose('inquiry.xlsx');
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());
 
     await waitFor(() => expect(notifyImportQueued).toHaveBeenCalled());
@@ -514,6 +516,7 @@ describe('HistoryUploadDialog - one delivery, stated on many sheets', () => {
      */
     renderDialog('order-inquiry');
     await choose('inquiry.xlsx');
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());
 
     await waitFor(() => expect(notifyImportQueued).toHaveBeenCalled());

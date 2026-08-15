@@ -312,6 +312,11 @@ class AttachmentResponse(AttachmentBase):
     deleted_by: Optional[str] = None
     storage_status: Optional[str] = None  # accessible | missing | unchecked (read-only audit flag)
     storage_checked_at: Optional[datetime] = None
+    # Owning company. NULL is legitimate (attachments are company-SHARED: a form
+    # attachment belongs to no one company). The name is resolved by the list /
+    # detail serializers, since the model carries no relationship to Company.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
     thumbnail_url: Optional[str] = None  # freshly-signed thumbnail URL for the grid (set by list serializer)
     attachment_type: Optional[AttachmentTypeSimple] = None
     entity_display_name: Optional[str] = None
@@ -323,7 +328,7 @@ class AttachmentResponse(AttachmentBase):
     # link is created by filing the document, not by a user linking two rows.
     linked_certificates: list[LinkedEntityRef] = []
 
-    @field_validator('id', 'uploaded_by', 'deleted_by', 'attachment_type_id', 'entity_id', 'directory_id', mode='before')
+    @field_validator('id', 'uploaded_by', 'deleted_by', 'attachment_type_id', 'entity_id', 'directory_id', 'company_id', mode='before')
     @classmethod
     def convert_uuid_to_string(cls, v):
         """Convert UUID objects to strings."""

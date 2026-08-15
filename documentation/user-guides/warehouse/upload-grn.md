@@ -48,6 +48,8 @@ After the header import finishes:
 | **Qty** / **Quantity** | Yes | Integer, must be greater than `0`. |
 | **Transfer From** / **SPO Number** / **From Doc No.** | Optional | Line-level override of the header's SPO link. |
 
+The SPO number a line states is kept on the line even when its SPO allocations have not been uploaded yet - the line shows the number with an **Unmatched** badge, and the link is made automatically when that SPO's allocations are imported later. Upload order between the GRN and SPO files does not matter.
+
 ## How you'll see progress
 
 The **GRN** page shows two status panels above the table while jobs are running:
