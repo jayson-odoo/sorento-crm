@@ -25,6 +25,36 @@ vi.mock('../hooks/useTicketComments', () => ({
   useCreateTicketComment: (...a: unknown[]) => useCreateTicketComment(...a),
 }));
 
+// AC-N7: Reassign in the header is permission-gated and uses the SHARED dialog.
+const hasPermission = vi.fn(() => true);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (...a: unknown[]) => hasPermission(...(a as [])),
+}));
+
+const reassignMutate = vi.fn();
+vi.mock('../hooks/useTeamPendingSLA', () => ({
+  useReassignSLATracking: () => ({ mutate: reassignMutate, isPending: false }),
+}));
+
+vi.mock('./ReassignDialog', () => ({
+  default: ({
+    open,
+    taskLabel,
+    onConfirm,
+  }: {
+    open: boolean;
+    taskLabel?: string | null;
+    onConfirm: (userId: string) => void;
+  }) =>
+    open ? (
+      <div data-testid="reassign-dialog" data-task-label={taskLabel ?? ''}>
+        <button type="button" data-testid="reassign-confirm" onClick={() => onConfirm('u-2')}>
+          Reassign
+        </button>
+      </div>
+    ) : null,
+}));
+
 // FINDING 9: the thread is the SHARED conversation query (one key with the SLA
 // detail page's panel), not a private copy. The scroll-back / search loaders
 // come through a hook too (layering: UI -> hook -> service), never as direct
@@ -209,6 +239,8 @@ beforeEach(() => {
   useTicketComments.mockReset();
   useCreateTicketComment.mockReset();
   useDraftInterventionTicketReply.mockReset();
+  reassignMutate.mockReset();
+  hasPermission.mockReturnValue(true);
 
   aiDraftMutateAsync = vi.fn().mockResolvedValue({ draft: 'drafted', model: 'gpt-4o', grounded_on: 3, elapsed_ms: 10 });
   useDraftInterventionTicketReply.mockReturnValue({ mutateAsync: aiDraftMutateAsync });
@@ -656,6 +688,45 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
       expect(
         actions.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
+    });
+
+    it('Reassign sits in the same group and opens the shared dialog (AC-N7)', async () => {
+      useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+      renderDrawer();
+
+      const actions = await screen.findByTestId('ticket-header-actions');
+      const reassign = screen.getByTestId('ticket-reassign');
+      expect(actions.contains(reassign)).toBe(true);
+      expect(screen.queryByTestId('reassign-dialog')).not.toBeInTheDocument();
+
+      fireEvent.click(reassign);
+
+      const dialog = screen.getByTestId('reassign-dialog');
+      // Human-readable subject, never a UUID.
+      expect(dialog).toHaveAttribute('data-task-label', 'this enquiry from Aisyah Rahman');
+    });
+
+    it('a confirmed reassign hands THIS ticket over and tells the worklist', async () => {
+      useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+      const { onResolved } = renderDrawer();
+      void onResolved;
+
+      fireEvent.click(await screen.findByTestId('ticket-reassign'));
+      fireEvent.click(screen.getByTestId('reassign-confirm'));
+
+      expect(reassignMutate).toHaveBeenCalledWith(
+        { id: 't1', userId: 'u-2' },
+        expect.anything(),
+      );
+    });
+
+    it('hides Reassign without the reassign permission', async () => {
+      hasPermission.mockReturnValue(false);
+      useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+      renderDrawer();
+
+      await screen.findByTestId('ticket-header-actions');
+      expect(screen.queryByTestId('ticket-reassign')).not.toBeInTheDocument();
     });
 
     it('the resolved-state affordances join the same group', async () => {

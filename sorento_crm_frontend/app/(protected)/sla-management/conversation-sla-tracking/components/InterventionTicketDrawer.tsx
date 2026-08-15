@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AlertCircle, CheckCircle2, History, MessageSquareQuote, Users } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  History,
+  MessageSquareQuote,
+  UserRoundCog,
+  Users,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 import {
@@ -30,6 +37,7 @@ import RespondChatList from '@/components/common/RespondChatList';
 import InternalCommentComposer from '@/components/common/conversation/InternalCommentComposer';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 
@@ -44,8 +52,10 @@ import {
   useResolveInterventionTicket,
   useSendInterventionTicketMessage,
 } from '../hooks/useInterventionTickets';
+import { useReassignSLATracking } from '../hooks/useTeamPendingSLA';
 import { useCreateTicketComment, useTicketComments } from '../hooks/useTicketComments';
 import { contactHistoryHref } from '../lib/historyLinks';
+import ReassignDialog from './ReassignDialog';
 import TicketSlaChips from './TicketSlaChips';
 
 interface InterventionTicketDrawerProps {
@@ -61,6 +71,12 @@ interface InterventionTicketDrawerProps {
    * pre-reply countdown chips until the drawer closes.
    */
   onSent?: () => void;
+  /**
+   * Called after a reassign. The ticket has just left this user's worklist, so
+   * the list behind the drawer has to re-read for the same imperative-load
+   * reason `onSent` exists.
+   */
+  onReassigned?: () => void;
 }
 
 /** How often an open drawer re-reads the thread (paused in a background tab). */
@@ -86,11 +102,18 @@ export default function InterventionTicketDrawer({
   onOpenChange,
   onResolved,
   onSent,
+  onReassigned,
 }: InterventionTicketDrawerProps) {
   const [replyTo, setReplyTo] = useState<{ messageId: string | number | null; excerpt: string } | null>(
     null,
   );
   const [confirmResolve, setConfirmResolve] = useState(false);
+  const [reassignOpen, setReassignOpen] = useState(false);
+  // Same slug the worklist row's Reassign is gated on (AC-B3 / AC-N7).
+  const canReassign = useHasPermission(
+    'sla_management.conversation_sla_tracking.reassign',
+  );
+  const reassignMutation = useReassignSLATracking();
   // Reply talks to the contact; Comment never leaves the CRM. Two modes, one
   // switch, so nobody can WhatsApp a customer while meaning to leave a note.
   const [composerMode, setComposerMode] = useState<'reply' | 'comment'>('reply');
@@ -213,10 +236,24 @@ export default function InterventionTicketDrawer({
                 </Link>
               </Button>
             )}
+            {/* AC-N7: the same dialog the worklist row opens, never a fork. */}
+            {canReassign && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={isResolved ? '' : 'ms-auto'}
+                data-testid="ticket-reassign"
+                disabled={isResolved || reassignMutation.isPending}
+                onClick={() => setReassignOpen(true)}
+              >
+                <UserRoundCog className="size-4" />
+                Reassign
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
-              className={isResolved ? '' : 'ms-auto'}
+              className={isResolved || canReassign ? '' : 'ms-auto'}
               disabled={!ticket?.can_resolve || isResolved}
               onClick={() => setConfirmResolve(true)}
             >
@@ -458,6 +495,28 @@ export default function InterventionTicketDrawer({
           </SheetBody>
         </SheetContent>
       </Sheet>
+
+      <ReassignDialog
+        open={reassignOpen}
+        onOpenChange={setReassignOpen}
+        taskLabel={ticket?.contact_name ? `this enquiry from ${ticket.contact_name}` : null}
+        submitting={reassignMutation.isPending}
+        onConfirm={(userId) => {
+          if (!ticketId) return;
+          reassignMutation.mutate(
+            { id: ticketId, userId },
+            {
+              onSuccess: () => {
+                setReassignOpen(false);
+                // The viewer may no longer be able to act on it: re-read the
+                // ticket so the composer and the actions say so.
+                void ticketQuery.refetch();
+                onReassigned?.();
+              },
+            },
+          );
+        }}
+      />
 
       <AlertDialog open={confirmResolve} onOpenChange={setConfirmResolve}>
         <AlertDialogContent>

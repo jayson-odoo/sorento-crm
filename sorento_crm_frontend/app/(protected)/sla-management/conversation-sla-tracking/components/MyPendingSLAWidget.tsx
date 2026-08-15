@@ -1044,6 +1044,9 @@ export default function MyPendingSLAWidget() {
           void load();
         }}
         onResolved={() => void load()}
+        // A reassign hands the enquiry to someone else: this list is no longer
+        // the owner's, so it has to re-read for the same reason a send does.
+        onReassigned={() => void Promise.all([load(), loadTeam()])}
         // This list is loaded imperatively, so a react-query invalidation in
         // the send mutation would refresh nothing here: a reply must reload it
         // explicitly or the row keeps its pre-reply countdown chips.
