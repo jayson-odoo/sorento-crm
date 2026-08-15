@@ -53,7 +53,7 @@ opinion. Running a step in the wrong seat is a process violation.
    `userSelectService`, `ConfirmDeleteDialog`, `DataGrid`, mutation-hook factories.)
 3. **Phase 1 — Frontend-first (mock).** UI → hook → service → **mock**. Tune every state
    (loading / empty / error / partial / success) with no backend running. Verify in a real
-   browser (Playwright MCP, sidebar-click nav). Document the expected API contract. NO tests yet
+   browser (agent-browser headless, sidebar-click nav). Document the expected API contract. NO tests yet
    (shape may still shift), NO backend code. When the open question is "which of these designs",
    run `/prototype` BEFORE this phase and throw the result away — it is not built to the layering
    rules below and must never become the shipped FE.

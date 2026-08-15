@@ -240,7 +240,7 @@ Before writing raw SQL, check model `__tablename__` values in `app/models/`. Mod
 
 Backend and MCP tests use pytest. Frontend unit/component tests use Vitest. E2E tests use Playwright.
 
-For frontend behavior changes, use Playwright MCP for browser verification. Start the frontend at `http://localhost:3000` and backend at `http://localhost:8000`, then navigate through the app UI rather than jumping straight to deep links so menu/module wiring is exercised too. Check the relevant UI flow, console messages, and network calls before reporting completion.
+For frontend behavior changes, use `agent-browser` (headless) for browser verification: `npx -y agent-browser@0.27.0 <command>`, with `agent-browser skills get core --full` as the command reference. Playwright MCP is retired for verification. Start the frontend at `http://localhost:3000` and backend at `http://localhost:8000`, then navigate through the app UI rather than jumping straight to deep links so menu/module wiring is exercised too. Check the relevant UI flow, `console` output, and `network requests` before reporting completion.
 
 For backend feature changes, add or update pytest coverage that verifies the new behavior. Prefer focused service tests for business rules and route tests for API contracts, permissions, validation, and serialization.
 

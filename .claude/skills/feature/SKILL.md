@@ -119,9 +119,10 @@ Tune every state: loading, empty, error, partial, success. Reuse before
 inventing; a new variant is a prop on the shared component, never a parallel
 one-off. Document the expected API contract at the top of the service file.
 
-Verify in a real browser via Playwright MCP, navigating by **sidebar clicks from
-`/`** — never a deep URL. Check `browser_console_messages`. Screenshot the golden
-path and the edge cases. `browser_close` when done.
+Verify in a real browser via **agent-browser** (headless;
+`npx -y agent-browser@0.27.0 <command>`), navigating by **sidebar clicks from `/`** —
+never a deep URL. Check `console` and `errors`. Screenshot the golden path and the
+edge cases. `close` when done. Playwright MCP is retired for verification.
 
 If the open question is "which of these three designs", run `/prototype` before
 this step and **throw the result away** — it is not built to this repo's layering
