@@ -18,6 +18,7 @@ from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment
+from app.models.scm import ReorderRecommendation
 from app.schemas.scm_reorder import (
     CreateReorderRunRequest,
     ReorderRunAccepted,
@@ -496,32 +497,27 @@ def list_product_images(
     popover has a designed empty state and the frontend reads a missing key as "no photo".
     """
     svc.assert_run_visible(db, run_id)
-    product_ids = [
-        r[0]
-        for r in db.execute(
-            text(
-                "SELECT DISTINCT product_id::text FROM scm.reorder_recommendation "
-                "WHERE run_id::text = :run"
-            ),
-            {"run": run_id},
-        ).fetchall()
-    ]
-    if not product_ids:
-        return {"has_image": {}}
-    # The same three conditions the reader applies, and for the same reasons: a PDF spec
-    # sheet is not a photo, and an attachment deleted in Resource Management does not exist.
-    # An ORM query (not raw SQL) so the company scope filter still runs, and columns only so
-    # no Product or Attachment rows are built for a boolean answer.
+    # ONE statement: the run's product ids are the JOIN, never a list Python carries from a
+    # first query into an `IN (...)` of a second - that list is as long as the plan.
+    #
+    # The three image conditions are the reader's own, for its reasons: a PDF spec sheet is
+    # not a photo, and an attachment deleted in Resource Management does not exist. An ORM
+    # query (not raw SQL) so the company scope filter still runs, and columns only so no
+    # Product or Attachment rows are built for a boolean answer.
     rows = (
-        db.query(ProductAttachment.product_id)
+        db.query(ReorderRecommendation.product_id)
+        .join(
+            ProductAttachment,
+            ProductAttachment.product_id == ReorderRecommendation.product_id,
+        )
         .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
-        .filter(ProductAttachment.product_id.in_(product_ids))
+        .filter(ReorderRecommendation.run_id == run_id)
         .filter(Attachment.mime_type.ilike("image/%"))
         .filter(Attachment.is_deleted.is_(False))
         .distinct()
         .all()
     )
-    return {"has_image": {row[0]: True for row in rows}}
+    return {"has_image": {str(row[0]): True for row in rows}}
 
 
 @router.get("/reorder-runs/{run_id}/product-images/{product_id}")

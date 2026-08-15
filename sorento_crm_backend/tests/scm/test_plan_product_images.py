@@ -20,11 +20,12 @@ buyer about, so the popover can offer the loop back to the picker.
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from tests.scm.conftest import requires_pg, seed_user
 from tests.scm.test_outstanding_import_routes import as_company_user
@@ -154,6 +155,29 @@ def _run_with(db, company_id, products):
     return run_id
 
 
+@contextmanager
+def _statements_touching(db, *tables):
+    """Every SQL statement the request issued that names one of ``tables``.
+
+    Counting SQL is the only way to state "this is one query" as a fact rather than as a
+    reading of the code. The listener sits on the fixture's own connection, which is the
+    one the route's session runs on, so the app's startup chatter on other connections
+    cannot inflate the count.
+    """
+    seen: list[str] = []
+    bind = db.get_bind()
+
+    def _record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        if any(t in statement for t in tables):
+            seen.append(statement)
+
+    event.listen(bind, "before_cursor_execute", _record)
+    try:
+        yield seen
+    finally:
+        event.remove(bind, "before_cursor_execute", _record)
+
+
 def _deny(app, db, gcu, gcuk):
     nobody = seed_user(db, None)
     for dep in (gcu, gcuk):
@@ -216,6 +240,31 @@ def test_the_map_costs_no_signatures(scm_app, monkeypatch):
 
     assert r.status_code == 200, r.text
     assert r.json()["has_image"][str(product.id)] is True
+
+
+def test_the_map_is_one_query_not_a_fetch_then_a_big_in_list(scm_app):
+    """The run's product ids are a JOIN, not something Python carries between two queries.
+
+    Reading every distinct product id of the run into a list and then asking a second
+    question with `IN (<thousands of ids>)` costs a round trip and a statement whose
+    parameter list grows with the plan. The database can answer both halves at once.
+    """
+    app, db, gcu, gcuk = scm_app
+    company_id = next(iter(as_company_user(app, db, gcu, gcuk)))
+    imaged = _product(db, company_id)
+    bare = _product(db, company_id)
+    _photo(db, imaged, company_id)
+    run_id = _run_with(db, company_id, [imaged, bare])
+
+    with _statements_touching(db, "reorder_recommendation", "product_attachments") as seen:
+        with TestClient(app) as c:
+            r = c.get(f"/api/v1/scm/reorder-runs/{run_id}/product-images")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["has_image"] == {str(imaged.id): True}
+    assert len(seen) == 1, "the map must be ONE statement:\n" + "\n\n".join(seen)
+    # And it must be the join, not one of the two halves on its own.
+    assert "reorder_recommendation" in seen[0] and "product_attachments" in seen[0]
 
 
 def test_a_product_nobody_nominated_still_counts_as_having_a_photo(scm_app):
