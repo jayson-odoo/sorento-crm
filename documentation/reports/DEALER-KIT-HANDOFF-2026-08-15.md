@@ -34,7 +34,11 @@ mutation-tested with the failing assertion named.
    working search box (non-match shows the empty state); Bundles has a search box;
    Brochure Images paginates (page 2 shows different rows). The pass also caught a
    live bug: duplicate Dealer Kit sidebar group from the merge - fixed in `7ce4a734a`,
-   rebuilt, re-verified (exactly one group). :3040 and :8040 are UP.
+   rebuilt, re-verified (exactly one group). :3040 and :8040 are UP, started
+   DETACHED (nohup) because harness background tasks were being reaped machine-wide;
+   PID files + logs + restart script live in the session scratchpad
+   (`start-stack.sh` is idempotent - reruns only what is down; `fe3040.pid` /
+   `be8040.pid` name the processes to kill for shutdown).
 2. **Container PDF-export smoke test** (audit blocker AC-I8, pre-deploy gate).
    `CONTAINER-PDF-EXPORT-RUNBOOK.md` names the exact two compose changes: a
    `sorento_network` alias for `frontend_blue`, and `DEALER_KIT_PRINT_BASE_URL` on the
