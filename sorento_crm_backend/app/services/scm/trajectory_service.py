@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
+from app.services.error_handler import AppException
 from app.services.scm.customer_label import (
     CUSTOMER_JOIN_ON,
     CUSTOMER_KEY_SQL,
@@ -233,9 +234,21 @@ def trajectory_for_run(
 #: the cap is never silent.
 DEFAULT_ORDER_LIMIT = 20
 
+#: The (product, side) pairs THIS run planned - the same set `_CUSTOMERS_SQL` builds its
+#: rows from, asked about one pair.
+_RUN_PLANNED_PAIR_SQL = """
+    SELECT 1
+    FROM scm.reorder_recommendation r
+    LEFT JOIN warehouses w ON w.id = r.warehouse_id
+    WHERE r.run_id::text = :run_id
+      AND r.product_id::text = :product_id
+      AND COALESCE(w.segment, 'project') = :segment
+    LIMIT 1
+"""
+
 
 def orders_for_customer(
-    db: Session, *, product_id: str, segment: str, customer_key: str,
+    db: Session, *, run_id: str, product_id: str, segment: str, customer_key: str,
     limit: int = DEFAULT_ORDER_LIMIT, as_of: Optional[date] = None,
 ) -> dict[str, Any]:
     """The sales orders behind one Who-bought-it row, newest first.
@@ -245,7 +258,21 @@ def orders_for_customer(
     A name and a quantity say who buys the product; they do not say at what price, and
     that is the question the row is opened to answer. Same 24-month window and the same
     joins as the row itself, so the lines add up to the quantity above them.
+
+    BOUNDED BY THE RUN, not merely reached through one. The row this drills from was built
+    from the run's own (product, side) pairs, so the drill is refused for any other pair:
+    checking only that the run may be seen turned a visible run into a way to read the
+    order book for a product it never planned, by naming that product in the query string.
     """
+    if db.execute(text(_RUN_PLANNED_PAIR_SQL), {
+        "run_id": run_id, "product_id": product_id, "segment": segment,
+    }).first() is None:
+        raise AppException(
+            status_code=404,
+            message="This plan has no row for that product on that side.",
+            code="NOT_FOUND",
+        )
+
     as_of = as_of or date.today()
     until = _month_shift(as_of, 0)
     since = _month_shift(until, -SERIES_MONTHS)

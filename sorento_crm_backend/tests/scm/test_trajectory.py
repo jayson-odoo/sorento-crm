@@ -181,7 +181,8 @@ def _orders(db_world, customer_key: str, **kw):
     from app.services.scm.trajectory_service import orders_for_customer
 
     return orders_for_customer(
-        db_world["db"], product_id=db_world["product_id"], segment="project",
+        db_world["db"], run_id=db_world["run_id"],
+        product_id=db_world["product_id"], segment="project",
         customer_key=customer_key, as_of=AS_OF, **kw,
     )
 
@@ -209,6 +210,25 @@ def test_the_drill_works_for_an_order_that_names_nobody(db_world):
     assert [l["so_number"] for l in out["lines"]] == [db_world["anon_order"]]
     assert out["lines"][0]["unit_price"] is None, \
         "a line with no price says nothing, never 0.00"
+
+
+def test_the_drill_is_bounded_by_the_pairs_the_run_planned(db_world):
+    """The drill reads the run's own rows, not the order book at large.
+
+    `_CUSTOMERS_SQL` builds every Who-bought-it row from the run's (product, side) pairs;
+    the drill under one of those rows has to be bounded by the same set, or a run somebody
+    may see becomes a way to read the orders of a product it never planned.
+    """
+    from app.services.error_handler import AppException
+    from app.services.scm.trajectory_service import orders_for_customer
+
+    with pytest.raises(AppException) as caught:
+        orders_for_customer(
+            db_world["db"], run_id=db_world["run_id"], product_id=str(uuid.uuid4()),
+            segment="project", customer_key=db_world["customer_id"], as_of=AS_OF,
+        )
+
+    assert caught.value.status_code == 404
 
 
 def test_the_cap_is_reported_rather_than_silent(db_world):

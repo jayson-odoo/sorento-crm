@@ -435,6 +435,10 @@ def get_customer_orders(
     first. `customer_key` is the customer id, `debtor:<code>` for an order whose debtor code
     resolves to nobody we hold, or `none` for an order that names neither, so every row of
     the trend can be opened rather than only the named ones.
+
+    Visibility of the run is not enough on its own: the service also requires (product,
+    side) to be a pair THIS run planned, so the endpoint answers about a row the caller
+    can already see rather than about any product they can name.
     """
     # The two sides a warehouse can carry, and the value an unsegmented one defaults to
     # (`trajectory_service`). Rejected rather than passed through, so a typo comes back as
@@ -443,7 +447,7 @@ def get_customer_orders(
         raise AppException(status_code=422, message="Unknown segment.")
     svc.assert_run_visible(db, run_id)
     return trajectory_service.orders_for_customer(
-        db, product_id=product_id, segment=segment,
+        db, run_id=run_id, product_id=product_id, segment=segment,
         customer_key=customer_key, limit=limit,
     )
 

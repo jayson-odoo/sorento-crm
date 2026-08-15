@@ -48,9 +48,15 @@ def _world(db):
     product = Product(id=_u(), product_code=_code("P"), product_name=f"{MARKER} product",
                       category_id=cat.id, base_uom_id=uom.id, list_price=0,
                       is_active=True, is_discontinued=False)
+    # A second product with its own orders, on NO plan row of this run. The endpoint is
+    # reached from a run, so a run this user may see must not become a key to the order
+    # book for products that run never planned.
+    offplan = Product(id=_u(), product_code=_code("PX"), product_name=f"{MARKER} off-plan",
+                      category_id=cat.id, base_uom_id=uom.id, list_price=0,
+                      is_active=True, is_discontinued=False)
     customer = Customer(id=_u(), customer_code=_code("C")[:20],
                         customer_name=f"{MARKER} Vivo Homes", is_active=True)
-    db.add_all([product, customer])
+    db.add_all([product, offplan, customer])
     db.flush()
     pid, cust = str(product.id), str(customer.id)
 
@@ -61,7 +67,7 @@ def _world(db):
         "VALUES (:i, :c, :c, true, true, 'project', now(), now())"),
         {"i": wid, "c": _code("W")[:20]})
 
-    def order(day, qty, price, *, customer=None, debtor=None):
+    def order(day, qty, price, *, customer=None, debtor=None, product=None):
         oid = _u()
         number = f"{MARKER}-{oid[:8]}"
         db.execute(text(
@@ -73,7 +79,7 @@ def _world(db):
             "INSERT INTO sales_order_lines (id, sales_order_id, product_id, warehouse_id, "
             "qty_ordered, qty_delivered, unit_price, line_status, created_at, updated_at) "
             "VALUES (:i, :so, :p, :w, :q, :q, :up, 'closed', now(), now())"),
-            {"i": _u(), "so": oid, "p": pid, "w": wid, "q": qty, "up": price})
+            {"i": _u(), "so": oid, "p": product or pid, "w": wid, "q": qty, "up": price})
         return number
 
     # LAST month: the trajectory window deliberately excludes the month the run sits in
@@ -84,6 +90,7 @@ def _world(db):
     named = order(when, 60, 0.94, customer=cust)
     by_debtor = order(when, 5, 1.10, debtor=debtor_code)
     anonymous = order(when, 3, None)
+    order(when, 11, 7.50, customer=cust, product=str(offplan.id))
 
     run_id = _u()
     # The run states its company explicitly: `assert_run_visible` filters on it, and the
@@ -98,7 +105,8 @@ def _world(db):
         "VALUES (:i, :r, :p, :w, 'buy', 10, 'proposed')"),
         {"i": _u(), "r": run_id, "p": pid, "w": wid})
     db.flush()
-    return {"run_id": run_id, "product_id": pid, "customer_id": cust,
+    return {"run_id": run_id, "product_id": pid, "off_plan_product_id": str(offplan.id),
+            "customer_id": cust,
             "debtor_code": debtor_code, "named": named, "by_debtor": by_debtor,
             "anonymous": anonymous}
 
@@ -178,6 +186,46 @@ def test_a_missing_customer_key_is_a_bad_request(scm_app):
                     f"?product_id={world['product_id']}&segment=project")
 
     assert res.status_code == 422, res.text
+
+
+def test_a_product_this_run_never_planned_is_not_readable_through_it(scm_app):
+    """Run visibility is not a key to the whole order book.
+
+    The drill is opened from a row of THIS run, and the trend it drills from is built from
+    the run's own (product, side) pairs. Gating on the run alone let a caller name any
+    product in the query string and read its orders through a run that never planned it.
+    """
+    app, db = _client(scm_app, "purchasing")
+    world = _world(db)
+
+    with TestClient(app) as c:
+        res = c.get(
+            f"/api/v1/scm/reorder-runs/{world['run_id']}/customer-orders"
+            f"?product_id={world['off_plan_product_id']}&segment=project"
+            f"&customer_key={world['customer_id']}"
+        )
+
+    assert res.status_code == 404, res.text
+
+
+def test_the_side_has_to_be_the_side_the_run_planned_the_product_on(scm_app):
+    """The pair is (product, side), not a product with a free-text side beside it.
+
+    The product sits on a project warehouse in this run, so asking for its dealer side is
+    asking about a row that does not exist - and an empty list there would read as "nobody
+    bought this on that side", which is a different and untrue statement.
+    """
+    app, db = _client(scm_app, "purchasing")
+    world = _world(db)
+
+    with TestClient(app) as c:
+        res = c.get(
+            f"/api/v1/scm/reorder-runs/{world['run_id']}/customer-orders"
+            f"?product_id={world['product_id']}&segment=dealer"
+            f"&customer_key={world['customer_id']}"
+        )
+
+    assert res.status_code == 404, res.text
 
 
 def test_denied_without_dashboard_view(scm_app):
