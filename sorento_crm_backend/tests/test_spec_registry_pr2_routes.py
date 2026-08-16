@@ -670,6 +670,52 @@ def test_a_word_an_administrator_took_away_is_refused_rather_than_silently_dropp
     assert "brushed_brass" not in (row.user_synonyms or {})
 
 
+def test_a_word_of_a_suppressed_value_is_an_ordinary_new_word(api):
+    """The words go with the value. `antique brass` belonged to a value an administrator
+    took away, so nothing means it any more and it is added like any other new word -
+    rather than being refused by naming a value the dropdown does not offer.
+    """
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(
+        db,
+        "zzt_finish",
+        label="Finish",
+        allowed_values=["brushed_brass", "chrome"],
+        synonyms={"brushed_brass": ["brushed brass", "antique brass"]},
+        suppressed_values=["brushed_brass"],
+        source="seed",
+    )
+
+    response = client.post(f"{_BASE}/zzt_finish/values", json={"value": "antique brass"})
+    assert response.status_code == 200, response.text
+    assert "antique brass" in response.json()["user_values"]
+
+
+def test_the_registry_read_does_not_advertise_words_for_a_suppressed_value(api):
+    """One vocabulary, two consumers: a value reported as not allowed must not arrive
+    with words the ranker and the n8n parser would both go on matching."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(
+        db,
+        "zzt_finish",
+        allowed_values=["brushed_brass", "chrome"],
+        synonyms={"brushed_brass": ["antique brass"], "chrome": ["chrome"]},
+        suppressed_values=["brushed_brass"],
+        source="seed",
+    )
+
+    response = client.get(_BASE)
+    assert response.status_code == 200, response.text
+    key = next(k for k in response.json()["keys"] if k["spec_key"] == "zzt_finish")
+    assert "brushed_brass" not in key["allowed_values"]
+    assert "brushed_brass" not in key["synonyms"]
+    assert key["synonyms"]["chrome"] == ["chrome"]
+
+
 def test_a_merchandiser_may_add_a_word_without_the_registry_edit_grant(api):
     """Journey A step 3, on the route that now carries it."""
     db, _as = api

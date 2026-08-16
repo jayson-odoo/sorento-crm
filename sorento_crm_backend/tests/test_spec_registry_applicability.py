@@ -21,6 +21,7 @@ from app.services.product_spec_registry import (
     applicable_keys_for_code,
     find_similar_key,
     find_similar_value,
+    merged_synonyms,
     normalise_vocabulary,
 )
 from tests._pg_fixture import blank_session
@@ -313,3 +314,40 @@ def test_similar_value_matches_a_synonym_of_another_value(db):
 def test_similar_value_returns_none_for_a_new_word(db):
     row = _key(db, "zzt_finish", allowed_values=["chrome"])
     assert find_similar_value(row, "brushed brass") is None
+
+
+def test_a_suppressed_value_keeps_none_of_its_words(db):
+    """A value that is not in the vocabulary cannot be what a word already means.
+
+    While its synonyms survived, a proposal was refused by naming the suppressed value -
+    which the product dropdown does not offer and `set_spec_value_by_hand` rejects - so
+    the word could neither be picked nor added. The words go with the value.
+    """
+    row = _key(
+        db,
+        "zzt_finish",
+        allowed_values=["brushed_brass", "chrome"],
+        synonyms={"brushed_brass": ["brushed brass", "antique brass"], "chrome": ["chrome"]},
+        suppressed_values=["brushed_brass"],
+    )
+
+    assert merged_synonyms(row) == {"chrome": ["chrome"]}
+    assert find_similar_value(row, "antique brass") is None
+    assert find_similar_value(row, "brushed brass") is None
+    # The live value is untouched.
+    assert find_similar_value(row, "Chrome")["value"] == "chrome"
+
+
+def test_a_value_with_no_allowed_entry_keeps_its_words(db):
+    """`_self` and the boolean/numeric literals are keyed off values no `allowed_values`
+    list holds - 44 seeded keys are shaped that way, and the numeric parser reads
+    `merged_synonyms(row)["_self"]` directly. Only SUPPRESSION silences a value."""
+    row = _key(
+        db,
+        "zzt_depth",
+        data_type="numeric",
+        allowed_values=[],
+        synonyms={"_self": ["depth", "deep"]},
+    )
+
+    assert merged_synonyms(row) == {"_self": ["depth", "deep"]}

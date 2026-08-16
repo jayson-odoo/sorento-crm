@@ -1026,22 +1026,15 @@ async def add_spec_value(
                 f"\"{proposed}\" is already {match['value']} on {row.label}.", match
             )
 
-        # A shipped value stays shipped. Copying one into `user_values` would leave the
-        # same word owned twice, and the seed repair would keep re-asserting its half.
-        if proposed not in {str(v) for v in (row.allowed_values or [])}:
-            row.user_values = [*(row.user_values or []), proposed]
+        row.user_values = [*(row.user_values or []), proposed]
 
-            # A value nobody can say is unsearchable, and a new one has no words yet.
-            # Give it its own name, readably - what the person adding "free_standing"
-            # meant. Only on the path that actually added a value: a synonym for a word
-            # the vocabulary does not hold is unreachable by anything.
-            if not (row.user_synonyms or {}).get(proposed) and not (row.synonyms or {}).get(
-                proposed
-            ):
-                row.user_synonyms = {
-                    **(row.user_synonyms or {}),
-                    proposed: [proposed.replace("_", " ")],
-                }
+        # A value nobody can say is unsearchable, and a new one has no words yet. Give
+        # it its own name, readably - what the person adding "free_standing" meant.
+        if not (row.user_synonyms or {}).get(proposed) and not (row.synonyms or {}).get(proposed):
+            row.user_synonyms = {
+                **(row.user_synonyms or {}),
+                proposed: [proposed.replace("_", " ")],
+            }
 
         _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
 

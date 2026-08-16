@@ -1238,6 +1238,13 @@ def merged_synonyms(row: ProductSpecRegistry) -> dict:
 
     Suppression is applied LAST, so suppressing a word the seed ships and adding it back
     under another value both work, in either order.
+
+    A SUPPRESSED VALUE has no words at all. Keeping them pointed every reader at
+    something nobody can pick or save: `find_similar_value` refused a proposal by naming
+    the suppressed value, the product dropdown said "pick it above" when it was not
+    above, and `GET /spec-registry` advertised words for a value the same response
+    reported as not allowed - in the one vocabulary the ranker and the n8n parser share.
+    Dropped here rather than at each reader, because they all read this map.
     """
     merged = {value: list(words) for value, words in (row.synonyms or {}).items()}
     for value, words in (row.user_synonyms or {}).items():
@@ -1250,7 +1257,8 @@ def merged_synonyms(row: ProductSpecRegistry) -> dict:
             continue
         dropped = {str(w).strip().lower() for w in words}
         merged[value] = [w for w in merged[value] if str(w).strip().lower() not in dropped]
-    return merged
+    silenced = {str(v).strip() for v in (row.suppressed_values or [])}
+    return {value: words for value, words in merged.items() if str(value).strip() not in silenced}
 
 
 def shipped_scopes() -> dict[str, dict]:
