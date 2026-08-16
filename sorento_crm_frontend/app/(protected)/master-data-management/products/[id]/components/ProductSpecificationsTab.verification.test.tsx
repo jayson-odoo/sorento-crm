@@ -74,6 +74,8 @@ function mockHook(detail: ProductSpecDetail, overrides: Partial<ReturnType<typeo
     rows: [],
     registry: [
       { spec_key: 'shape', label: 'Shape', data_type: 'enum', unit: null, allowed_values: [], synonyms: {} },
+      { spec_key: 'dim_height', label: 'Height', data_type: 'numeric', unit: 'mm', allowed_values: [], synonyms: {} },
+      { spec_key: 'finish', label: 'Finish or colour', data_type: 'enum', unit: null, allowed_values: [], synonyms: {} },
     ],
     applicableKeys: [],
     otherKeys: [],
@@ -121,7 +123,21 @@ const NEEDS_REVERIFY: VerificationBlock = {
   invalidated_at: '2026-08-10T10:00:00',
   invalidated_reason: 'values_changed',
   invalidated_by_name: null,
-  invalidated_diff: { changed: [{ spec_key: 'shape', was: 'round', now: 'square' }] },
+  // The wire shape, copied from what `invalidate_on_values_change` writes: each side is
+  // the stored ENTRY (`{ value, unit? }`), never a scalar, and null when the key was
+  // absent on that side. Rendering an entry through a scalar formatter is what put
+  // `[object Object]` on screen.
+  invalidated_diff: {
+    changed: [
+      { spec_key: 'shape', was: { value: 'round' }, now: { value: 'square' } },
+      {
+        spec_key: 'dim_height',
+        was: { value: 770, unit: 'mm' },
+        now: { value: 800, unit: 'mm' },
+      },
+      { spec_key: 'finish', was: null, now: { value: 'matte_black' } },
+    ],
+  },
 };
 
 const MANUAL_UNVERIFY: VerificationBlock = {
@@ -174,6 +190,23 @@ describe('VerificationStrip — renders in every state', () => {
     expect(screen.getByText('Round')).toBeInTheDocument();
     expect(screen.getByText('Square')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Verify' })).toBeInTheDocument();
+  });
+
+  it('needs_reverify: a diff entry renders its readable value, with the unit, never [object Object]', () => {
+    mockHook(baseDetail(NEEDS_REVERIFY));
+    const { container } = render(<ProductSpecificationsTab productId="p-1" />);
+
+    // The unit-bearing key: the entry is unwrapped and the unit comes with it.
+    expect(screen.getByText('Height')).toBeInTheDocument();
+    expect(screen.getByText('770 mm')).toBeInTheDocument();
+    expect(screen.getByText('800 mm')).toBeInTheDocument();
+    // A key that was not there before: absence gets a word, not an empty gap.
+    expect(screen.getByText('Finish or colour')).toBeInTheDocument();
+    expect(screen.getByText('nothing')).toBeInTheDocument();
+    expect(screen.getByText('Matte black')).toBeInTheDocument();
+
+    const strip = container.querySelector('[data-spec-verification]') as HTMLElement;
+    expect(strip.textContent).not.toContain('[object Object]');
   });
 
   it('manual_unverify: "Withdrawn by" line names the withdrawer and keeps the original stamp', () => {

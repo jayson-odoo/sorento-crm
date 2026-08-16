@@ -29,6 +29,10 @@
  *            invalidated_at|null, invalidated_reason|null, invalidated_by_name|null,
  *            invalidated_diff: null | { changed: [{ spec_key, was, now }] } }
  *
+ *     `was` / `now` are the stored spec ENTRIES - `{ value, unit? }` as `spec.values`
+ *     holds them - or null when the key was absent on that side. They are not scalars:
+ *     render them through `readableEntry`, never a scalar formatter.
+ *
  *     `product_id` is the copy of the code in the caller's company scope, so the
  *     row click resolves even though the worklist is keyed on `product_code`.
  *     Default order (C6): needs_reverify first, then unverified grouped by

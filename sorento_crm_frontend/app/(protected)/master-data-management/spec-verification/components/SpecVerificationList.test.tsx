@@ -173,6 +173,37 @@ describe('data state', () => {
     );
   });
 
+  it('the needs-re-verify tooltip reads the diff entries as values, never [object Object]', async () => {
+    // The wire shape of `invalidated_diff.changed`: each side is the stored ENTRY
+    // (`{ value, unit? }`), or null when the key was absent on that side.
+    mockWorklist([
+      row('WC100', 'needs_reverify', {
+        verification: {
+          state: 'needs_reverify',
+          verified_by_name: 'Jay Odoo',
+          verified_at: '2026-08-01T09:00:00',
+          invalidated_at: '2026-08-10T10:00:00',
+          invalidated_reason: 'values_changed',
+          invalidated_by_name: null,
+          invalidated_diff: {
+            changed: [
+              { spec_key: 'material', was: { value: 'glass' }, now: { value: 'ceramic' } },
+              { spec_key: 'dim_height', was: { value: 770, unit: 'mm' }, now: null },
+            ],
+          },
+        },
+      }),
+    ]);
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+
+    const title = screen.getByText('Needs re-verify').getAttribute('title') ?? '';
+    expect(title).not.toContain('[object Object]');
+    expect(title).toContain('2 changed');
+    expect(title).toContain('Material: Glass to Ceramic');
+    expect(title).toContain('Height: 770 mm to nothing');
+  });
+
   it('the per-row action follows the row state: Verify on unverified/needs_reverify, Unverify on verified', async () => {
     mockWorklist();
     renderList();

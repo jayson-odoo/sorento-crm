@@ -12,11 +12,23 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
  */
 export type VerificationState = 'unverified' | 'verified' | 'needs_reverify';
 
-/** One key whose value moved out from under a stamp. */
+/**
+ * One side of a diff row: the stored spec ENTRY, exactly as `spec.values` holds it.
+ *
+ * The diff carries the raw entries rather than scalars, because that is what the
+ * write path compared. Render it with `readableEntry` from `@/lib/spec-readable` -
+ * a scalar formatter renders the literal `[object Object]`.
+ */
+export interface VerificationDiffValue {
+  value: string | number | boolean | null;
+  unit?: string | null;
+}
+
+/** One key whose value moved out from under a stamp. Null means the key was absent. */
 export interface VerificationDiffEntry {
   spec_key: string;
-  was: string | null;
-  now: string | null;
+  was: VerificationDiffValue | null;
+  now: VerificationDiffValue | null;
 }
 
 export interface VerificationBlock {

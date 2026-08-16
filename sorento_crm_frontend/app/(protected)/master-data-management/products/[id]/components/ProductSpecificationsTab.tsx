@@ -25,7 +25,7 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { readableValue } from '@/lib/spec-readable';
+import { readableEntry } from '@/lib/spec-readable';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { AddSpecificationDialog, SpecTable, type SpecKeyDefinition } from '@/components/spec-table';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -204,10 +204,10 @@ function VerificationStrip({
               <li key={entry.spec_key} className="text-sm break-words">
                 <span className="font-medium">{labelFor(entry.spec_key)}</span>: was{' '}
                 <span className="text-muted-foreground">
-                  {readableValue(entry.was) || 'nothing'}
+                  {readableEntry(entry.was) || 'nothing'}
                 </span>
                 , now{' '}
-                <span className="font-medium">{readableValue(entry.now) || 'nothing'}</span>
+                <span className="font-medium">{readableEntry(entry.now) || 'nothing'}</span>
               </li>
             ))}
           </ul>

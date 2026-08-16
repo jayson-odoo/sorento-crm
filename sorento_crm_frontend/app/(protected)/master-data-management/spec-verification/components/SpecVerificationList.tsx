@@ -40,6 +40,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { readable, readableEntry } from '@/lib/spec-readable';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import {
   skippedUnverifyCodes,
@@ -79,8 +80,15 @@ function verificationTitle(block: VerificationBlock): string {
   }
   if (block.state === 'needs_reverify') {
     const changed = block.invalidated_diff?.changed ?? [];
+    // The diff carries the stored ENTRIES (`{ value, unit }`), not scalars, and there
+    // is no registry to hand here for the labels - `readable` is that fallback.
     const diff = changed
-      .map((c) => `${c.spec_key}: ${c.was ?? 'nothing'} to ${c.now ?? 'nothing'}`)
+      .map(
+        (c) =>
+          `${readable(c.spec_key)}: ${readableEntry(c.was) || 'nothing'} to ${
+            readableEntry(c.now) || 'nothing'
+          }`,
+      )
       .join('; ');
     const head = stamp ? `Was verified by ${stamp}.` : 'Was verified.';
     return changed.length ? `${head} ${changed.length} changed - ${diff}` : head;
