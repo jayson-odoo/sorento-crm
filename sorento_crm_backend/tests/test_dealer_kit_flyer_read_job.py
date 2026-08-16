@@ -949,3 +949,138 @@ class TestCreateReadingNeverStrandsARow:
         assert record.status == svc.ReadingStatus.FAILED
         assert record.error_message == "The flyer could not be read: PyMuPDF died"
         assert record.finished_at is not None
+
+
+# --------------------------------------------------------------------------- #
+# Commit d8b37664, case 1 - ``complete_reading`` commits before it refreshes,
+# so a refresh that blows up AFTER that commit belongs to a read that DID
+# happen: the row must keep saying ``done``, not be relabelled ``failed`` for
+# a reading that never happened. Mirrored against a raise that lands BEFORE
+# ``complete_reading`` ever commits, which must still fail the row - proving
+# the re-read guard narrowed the window rather than switching the handler off.
+# --------------------------------------------------------------------------- #
+class TestCreateReadingDoesNotRelabelAReadThatSucceeded:
+    def test_a_postcommit_refresh_failure_keeps_the_row_done_while_a_precommit_raise_still_fails_it(
+        self, api, monkeypatch
+    ) -> None:
+        from app.models.dealer_kit import FlyerReadingRecord
+
+        db, _storage, _reads = api
+        data = _pdf_bytes()
+
+        # Part 1: the window the fix closes. ``create_reading`` refreshes its
+        # own inserted row once (call 1), then ``complete_reading`` commits and
+        # refreshes again (call 2) - make THAT second refresh blow up.
+        real_refresh = db.refresh
+        calls = {"n": 0}
+
+        def _flaky_refresh(instance):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("connection dropped mid-refresh")
+            return real_refresh(instance)
+
+        monkeypatch.setattr(db, "refresh", _flaky_refresh)
+
+        with pytest.raises(RuntimeError, match="connection dropped mid-refresh"):
+            svc.create_reading(
+                db, filename="zzt-refresh-blip.pdf", data=data, user_id=_ADMIN_ID
+            )
+
+        monkeypatch.setattr(db, "refresh", real_refresh)
+
+        succeeded = (
+            db.query(FlyerReadingRecord)
+            .filter(FlyerReadingRecord.filename == "zzt-refresh-blip.pdf")
+            .one()
+        )
+        assert succeeded.status == svc.ReadingStatus.DONE
+        assert succeeded.error_message is None
+        assert succeeded.finished_at is not None
+
+        # Part 2, the mirror: a raise BEFORE ``complete_reading`` ever commits
+        # must still fail the row exactly as it always did - the guard added
+        # for part 1 must not have switched the handler off entirely.
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("PyMuPDF died before commit")
+
+        monkeypatch.setattr(svc, "complete_reading", _boom)
+
+        with pytest.raises(RuntimeError, match="PyMuPDF died before commit"):
+            svc.create_reading(
+                db, filename="zzt-precommit-blip.pdf", data=data, user_id=_ADMIN_ID
+            )
+
+        failed = (
+            db.query(FlyerReadingRecord)
+            .filter(FlyerReadingRecord.filename == "zzt-precommit-blip.pdf")
+            .one()
+        )
+        assert failed.status == svc.ReadingStatus.FAILED
+        assert (
+            failed.error_message
+            == "The flyer could not be read: PyMuPDF died before commit"
+        )
+        assert failed.finished_at is not None
+
+
+# --------------------------------------------------------------------------- #
+# Commit d8b37664, case 2 - the task's outer arm (loading the row, or setting
+# its company scope) used to return ``failed`` in the returned dict WITHOUT
+# ever writing the row, so a reading that could not even be loaded stayed
+# ``processing`` forever with no job left to finish it. It now calls the same
+# ``_mark_failed`` the inner arm uses.
+# --------------------------------------------------------------------------- #
+class TestReadFlyerOuterArmMarksTheRowFailed:
+    def test_a_load_failure_marks_the_row_failed_and_still_discards_the_staged_object(
+        self, api, monkeypatch
+    ) -> None:
+        from app.models.dealer_kit import FlyerReadingRecord
+        from app.tasks import flyer_read_tasks
+
+        db, storage, _reads = api
+        data = _pdf_bytes()
+        provider, key = svc._stage_upload(data)
+        assert key in storage.objects
+
+        record = svc._new_processing_record(
+            filename="zzt-outer-arm.pdf",
+            byte_size=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+            source_attachment_id=None,
+            user_id=_ADMIN_ID,
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+
+        # The first ``_load`` call - loading the row, before the inner
+        # try/except even starts - blows up. The second, made from inside
+        # ``_mark_failed``, is real: it is what lets the row get written.
+        real_load = flyer_read_tasks._load
+        calls = {"n": 0}
+
+        def _flaky_load(db_arg, rid):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("row lookup exploded")
+            return real_load(db_arg, rid)
+
+        monkeypatch.setattr(flyer_read_tasks, "_load", _flaky_load)
+
+        result = flyer_read_tasks.read_flyer(str(record.id), provider, key, _db=db)
+
+        assert result["status"] == "failed"
+        assert result["error"].startswith("The flyer could not be read:")
+
+        persisted = (
+            db.query(FlyerReadingRecord)
+            .filter(FlyerReadingRecord.id == record.id)
+            .one()
+        )
+        assert persisted.status == svc.ReadingStatus.FAILED
+        assert persisted.error_message.startswith("The flyer could not be read:")
+
+        # The staged object is still discarded in the ``finally``, even though
+        # the row it belonged to could not be loaded at all.
+        assert key not in storage.objects
