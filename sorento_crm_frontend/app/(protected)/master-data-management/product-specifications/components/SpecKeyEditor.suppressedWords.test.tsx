@@ -91,4 +91,19 @@ describe('a save that was not about the suppressed value', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('old brass')).toBeInTheDocument();
   });
+
+  it('strikes that row through, the way the values section already strikes the value', () => {
+    // Otherwise the two halves of the form disagree about one value: struck through
+    // above, ordinary-looking below, while the vocabulary carries none of its words.
+    render(
+      <SpecKeyEditor
+        specKey={finishWithASuppressedValue()}
+        onSaved={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Brushed brass')).toHaveClass('line-through');
+    expect(screen.getByText('Chrome')).not.toHaveClass('line-through');
+  });
 });
