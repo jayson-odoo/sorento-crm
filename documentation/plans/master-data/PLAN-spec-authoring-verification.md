@@ -647,6 +647,15 @@ match. Do not propose reverting them.
   cached applicable-keys read, so one merchandiser's add deleted a word another had just added,
   silently - and migration 361 widened who can reach that from registry admins to every holder of
   `master_data.products.edit`.
+- **A word struck off a specification is not available from the product page** (D19). It is not
+  offered in the value dropdown, its alternative spellings are neither matched nor published in
+  the shared vocabulary, and adding it back is refused with a message saying it was taken off and
+  that an administrator can restore it on the specification's own screen. Restoring stays a
+  registry-admin action. Adding must never report success while storing nothing, and must never
+  silently reverse the administrator's decision by un-striking the word. Two deeper defects in
+  the same area are known, deliberately out of scope for this PR, and tracked as **issue #183**:
+  wording left orphaned when an administrator deletes a staff-added value, and a restore
+  republishing a word that has since become a value in its own right.
 
 ### Outstanding - still the captain's call
 

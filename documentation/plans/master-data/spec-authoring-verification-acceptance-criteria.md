@@ -323,11 +323,9 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   cached read, so one person's add deleted another's; the replacing `PATCH` remains only for the
   registry editor, which shows and submits the whole list. The FE runs the same duplicate check
   client-side first, against data it already holds, so the common case never round-trips - but
-  the frontend check is a courtesy, never the guard. A word an administrator **suppressed** on the
-  key is refused the same way (`matched_on: suppressed_value`, 2026-08-16), naming who can put it
-  back: it is absent from the merged vocabulary, so neither the verbatim nor the near-duplicate
-  check sees it, and appending it here would let any holder of `products.edit` silently overturn a
-  decision made on the key itself.
+  the frontend check is a courtesy, never the guard. A word an administrator **struck off** the
+  key is refused the same way (`matched_on: suppressed_value`), naming who can put it back - see
+  D19 in the plan for that ruling and its reasoning.
 - **AC-A.12** `[FE]` GIVEN the spec table component WHEN it is written THEN it is
   **props-driven** - values, vocabulary and callbacks in, **no `apiFetch`, no service import, no
   react-query inside the cells** - and it lives in a folder milestone 2's `(auth)`-group portal
