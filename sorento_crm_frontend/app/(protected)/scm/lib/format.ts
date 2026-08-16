@@ -36,10 +36,44 @@ export function fmtSigned(value: number | null | undefined): string {
  */
 export const BASE_CURRENCY = 'MYR';
 
+/**
+ * Is this figure already in the currency everything is reported in?
+ *
+ * A missing code counts as base: a row predating the book having more than one currency
+ * already meant ringgit. Exported so a caller can decide whether restating a price in base
+ * adds anything, without restating the "blank means base" rule for itself.
+ */
+export function isBaseCurrency(currency: string | null | undefined): boolean {
+  const code = (currency || '').trim().toUpperCase();
+  return code === '' || code === BASE_CURRENCY;
+}
+
+/** The glyph a currency code is written with. Base currency reads `RM`, anything else
+ *  reads its own code, so a figure never claims a currency it is not in. */
+function currencyLabel(currency: string | null | undefined): string {
+  if (isBaseCurrency(currency)) return 'RM';
+  return (currency || '').trim().toUpperCase();
+}
+
 /** Currency valuation, in the base currency. Deferred/uncosted (null) → em dash. */
 export function fmtMoney(value: number | null | undefined): string {
-  if (value === null || value === undefined) return EM_DASH;
-  return `RM ${moneyFmt.format(value)}`;
+  return fmtMoneyIn(value, null);
+}
+
+/**
+ * A whole-ringgit-scale figure in the currency it is actually in: `RM 1,980`, `USD 1,980`.
+ *
+ * The rounded sibling of `fmtSupplierCost`. Cash committed, a budget or a valuation is read
+ * at a glance and its cents are noise, but the currency is not: the PO book is mostly USD,
+ * and `RM 1,980` against a USD purchase order is a wrong number printed as a fact. A row
+ * with no currency code predates the book having more than one, so it already meant ringgit.
+ */
+export function fmtMoneyIn(
+  value: number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return EM_DASH;
+  return `${currencyLabel(currency)} ${moneyFmt.format(value)}`;
 }
 
 const costFmt = new Intl.NumberFormat('en-MY', {
@@ -63,9 +97,7 @@ export function fmtSupplierCost(
   currency: string | null | undefined,
 ): string {
   if (value === null || value === undefined) return EM_DASH;
-  const code = (currency || '').trim().toUpperCase() || BASE_CURRENCY;
-  const label = code === BASE_CURRENCY ? 'RM' : code;
-  return `${label} ${costFmt.format(value)}`;
+  return `${currencyLabel(currency)} ${costFmt.format(value)}`;
 }
 
 /** Short relative "days ago" for last-movement; null → em dash. */
@@ -103,6 +135,25 @@ export function fmtDecimal(value: number | null | undefined, dp = 1): string {
   });
 }
 
+const trimmedFmt = new Map<number, Intl.NumberFormat>();
+
+/**
+ * A number to AT MOST `dp` decimals, trailing zeros trimmed, so 11.0 reads `11`.
+ *
+ * The arithmetic lines ("11 × 45 + 300 = 795") read as arithmetic only when a whole number
+ * is written whole; `fmtDecimal` pads to a fixed width instead, which is right in a column
+ * and wrong in a sentence.
+ */
+export function fmtTrimmedDecimal(value: number | null | undefined, dp = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return EM_DASH;
+  let fmt = trimmedFmt.get(dp);
+  if (!fmt) {
+    fmt = new Intl.NumberFormat('en-MY', { maximumFractionDigits: dp });
+    trimmedFmt.set(dp, fmt);
+  }
+  return fmt.format(Number(value.toFixed(dp)));
+}
+
 /** Percentage from a 0-1 ratio. null → em dash. */
 export function fmtPct(ratio: number | null | undefined, dp = 0): string {
   if (ratio === null || ratio === undefined) return EM_DASH;
@@ -137,4 +188,27 @@ export function fmtDate(iso: string | null | undefined): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return EM_DASH;
   return d.toLocaleDateString(DATE_LOCALE, DATE_PARTS);
+}
+
+/** 24-hour, both parts padded: `21:05`, and `09:28` rather than `9:28`. No am/pm to
+ *  misread, and the same 2-digit reasoning as `DATE_PARTS`. */
+export const TIME_PARTS = {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+} as const;
+
+/**
+ * A date WITH its time, for the stamps where the hour matters (when a simulation last ran,
+ * when a baseline was blessed). Two runs on the same day are otherwise indistinguishable.
+ *
+ * The date half is `fmtDate`'s, part for part: this product writes a date one way, and a
+ * stamp reading `15 Aug 2026` beside a column of `15/08/2026` looks like a deliberate
+ * distinction that nobody made.
+ */
+export function fmtDateTime(iso: string | null | undefined): string {
+  if (!iso) return EM_DASH;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return EM_DASH;
+  return `${d.toLocaleDateString(DATE_LOCALE, DATE_PARTS)}, ${d.toLocaleTimeString(DATE_LOCALE, TIME_PARTS)}`;
 }

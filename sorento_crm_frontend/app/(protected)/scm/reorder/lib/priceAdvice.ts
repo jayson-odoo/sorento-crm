@@ -15,6 +15,8 @@
  * owning the tone of a screen it cannot see.
  */
 
+import { fmtDecimal, fmtSupplierCost } from '../../lib/format';
+
 export interface PricePurchase {
   po_number: string | null;
   issue_date: string | null;
@@ -117,12 +119,9 @@ export function humanAge(days: number | null): string | null {
   return rem > 0 ? `${years} years ${rem} months ago` : `${years} years ago`;
 }
 
+/** One money format on this screen: `RM 105.00`, or the supplier's own code. */
 function money(amount: number, currency: string | null): string {
-  const n = amount.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return currency ? `${currency} ${n}` : n;
+  return fmtSupplierCost(amount, currency);
 }
 
 /** "USD 20.37 on 202012-S0048, 2020-12-15" - the fact, with its receipt. Popup only. */
@@ -173,7 +172,7 @@ export function describePriceAdvice(a: PriceAdvice | undefined, staleAfterDays: 
     case 'stale':
       return `We last paid ${paid}, ${age}. That is past the ${Math.round(staleAfterDays / 30.44)} month mark, so ask for a fresh quote.`;
     case 'moving':
-      return `We last paid ${paid}, ${age}. It ${a.movement_pct !== null && a.movement_pct >= 0 ? 'rose' : 'fell'} ${Math.abs(a.movement_pct ?? 0).toFixed(1)}% from the purchase before it, so confirm the price.`;
+      return `We last paid ${paid}, ${age}. It ${a.movement_pct !== null && a.movement_pct >= 0 ? 'rose' : 'fell'} ${fmtDecimal(Math.abs(a.movement_pct ?? 0), 1)}% from the purchase before it, so confirm the price.`;
     case 'recent':
     default:
       return `We last paid ${paid}, ${age}. Recent enough to reuse.`;
@@ -186,7 +185,7 @@ export function priceFootnotes(a: PriceAdvice | undefined): string[] {
   const out: string[] = [];
   if (a.previous && a.movement_pct !== null) {
     out.push(
-      `Before that: ${describeLastPurchase(a.previous)} (${a.movement_pct >= 0 ? '+' : ''}${a.movement_pct.toFixed(1)}% since).`,
+      `Before that: ${describeLastPurchase(a.previous)} (${a.movement_pct >= 0 ? '+' : ''}${fmtDecimal(a.movement_pct, 1)}% since).`,
     );
   }
   if (a.currency_changed) {
@@ -194,7 +193,7 @@ export function priceFootnotes(a: PriceAdvice | undefined): string[] {
   }
   if (a.standing_gap_pct !== null && a.standing_gap_pct !== 0) {
     out.push(
-      `The plan is costing this ${Math.abs(a.standing_gap_pct).toFixed(1)}% ${a.standing_gap_pct > 0 ? 'below' : 'above'} what we last paid.`,
+      `The plan is costing this ${fmtDecimal(Math.abs(a.standing_gap_pct), 1)}% ${a.standing_gap_pct > 0 ? 'below' : 'above'} what we last paid.`,
     );
   }
   if (a.free_of_charge_lines > 0) {

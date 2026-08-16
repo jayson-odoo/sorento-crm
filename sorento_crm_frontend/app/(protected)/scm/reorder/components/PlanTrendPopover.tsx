@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import type { ApexOptions } from 'apexcharts';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
-import { fmtDate, fmtSupplierCost } from '../../lib/format';
+import { fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
 import {
   TRAJECTORY_ROW_LABEL,
   TRAJECTORY_TONE,
@@ -63,13 +63,32 @@ export function PlanTrendPopover({
   const { labels, thisYear, lastYear } = chartSeries(trend);
   const hasLastYear = lastYear.some((v) => v !== null);
 
+  // Read the chart, not squint at it. At 12 months in a 24rem popover the month labels
+  // collided and the y axis printed a tick per gridline in fractions of a unit, which is
+  // meaningless for a quantity; the legend also sat under the plot, stealing height from
+  // the only thing worth looking at.
   const options: ApexOptions = {
     chart: { type: 'line', toolbar: { show: false }, zoom: { enabled: false } },
     stroke: { curve: 'smooth', width: [2.5, 2], dashArray: [0, 5] },
     colors: ['var(--color-primary, #2563eb)', '#94a3b8'],
-    xaxis: { categories: labels, labels: { style: { fontSize: '10px' } } },
-    yaxis: { labels: { style: { fontSize: '10px' } } },
-    legend: { fontSize: '11px' },
+    xaxis: {
+      categories: labels,
+      labels: { rotate: -45, hideOverlappingLabels: true, style: { fontSize: '10px' } },
+    },
+    // No `tickAmount`: ApexCharts derives yMax from `min + step * tickAmount`, so on a
+    // product whose best month is 1 or 2 units the step is fractional and the axis prints
+    // the same integer twice (0 | 1 | 1 | 2 | 2), with the gridline labelled 1 actually
+    // sitting at 0.5. `forceNiceScale` picks integral steps instead; the formatter blanks
+    // any fractional tick that still gets through rather than rounding it into a lie.
+    yaxis: {
+      min: 0,
+      forceNiceScale: true,
+      labels: {
+        formatter: (v: number) => (Number.isInteger(v) ? fmtInt(v) : ''),
+        style: { fontSize: '10px' },
+      },
+    },
+    legend: { position: 'top', horizontalAlign: 'left', fontSize: '11px' },
     grid: { strokeDashArray: 3 },
     tooltip: { y: { formatter: (v: number) => (v === null ? 'no data' : String(v)) } },
   };
@@ -93,12 +112,21 @@ export function PlanTrendPopover({
         </button>
       </PopoverTrigger>
       <PopoverPortal>
-        <PopoverContent className="w-96 max-w-[92vw] text-xs" align="start">
+        {/* At phone width the chart plus the customer table is taller than the screen, and
+            PopoverContent has no max height of its own, so the bottom of the list simply
+            had no way to be reached. */}
+        <PopoverContent
+          className="w-[30rem] max-w-[92vw] max-h-[85vh] overflow-y-auto text-xs"
+          align="start"
+        >
           <p className="font-medium text-foreground">{describeTrajectory(trend)}</p>
           <p className="mt-1 text-muted-foreground">{describeYearAgo(trend)}</p>
 
-          <div className="mt-2 -mx-1">
-            <ApexChart options={options} series={series} type="line" height={160} />
+          {/* The app-wide Metronic sheet stacks every Apex legend vertically
+              (`css/components/apexcharts.css`), which here costs two lines of chart height
+              for two words. Overridden for this chart only, not globally. */}
+          <div className="mt-2 -mx-1 [&_.apexcharts-legend]:flex-row [&_.apexcharts-legend]:flex-wrap [&_.apexcharts-legend]:gap-x-4">
+            <ApexChart options={options} series={series} type="line" height={240} />
           </div>
 
           {sellingPrice != null ? (
@@ -124,7 +152,7 @@ export function PlanTrendPopover({
                       <td className="max-w-40 truncate py-0.5" title={c.customer_name}>
                         {c.customer_name}
                       </td>
-                      <td className="py-0.5 text-right tabular-nums">{c.qty.toLocaleString()}</td>
+                      <td className="py-0.5 text-right tabular-nums">{fmtInt(c.qty)}</td>
                       <td className="py-0.5 text-right tabular-nums">{fmtDate(c.last_order_date)}</td>
                     </tr>
                   ))}
@@ -141,10 +169,6 @@ export function PlanTrendPopover({
               Who sold it is not in the order data yet.
             </p>
           ) : null}
-
-          <p className="mt-2 border-t pt-2 text-2xs text-muted-foreground">
-            Based on our own orders only.
-          </p>
         </PopoverContent>
       </PopoverPortal>
     </Popover>

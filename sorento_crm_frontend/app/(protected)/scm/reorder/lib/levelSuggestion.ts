@@ -12,6 +12,7 @@
  * Mirrors `app/services/scm/level_suggestion_service.py`, which decides the numbers; this
  * file only turns them into words.
  */
+import { fmtTrimmedDecimal } from '../../lib/format';
 
 export interface LevelBasis {
   months: { month: string; qty: number }[];
@@ -63,7 +64,7 @@ export interface LevelSuggestionsPayload {
   count: number;
 }
 
-const n = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, ''));
+const n = (v: number) => fmtTrimmedDecimal(v, 2);
 
 /** The row's action, with both numbers: "set to 24" means nothing without "now 20". */
 export function levelActionLabel(s: LevelSuggestion): {

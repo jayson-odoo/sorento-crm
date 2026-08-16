@@ -36,6 +36,7 @@ import {
 } from '../services/purchaseHistoryService';
 import { CountTile } from './UploadCountTile';
 import { UploadTestVerdict } from './UploadTestVerdict';
+import { fmtInt } from '../../lib/format';
 
 /**
  * SCM - the three curation feeds: purchase history, sales history, and the Order Inquiry
@@ -119,7 +120,7 @@ function ChipList({
   return (
     <div className="rounded-lg border border-border p-3">
       <h4 className="text-xs font-semibold">
-        {title} ({Math.max(total, items.length).toLocaleString()})
+        {title} ({fmtInt(Math.max(total, items.length))})
       </h4>
       <div className="mt-1.5 flex flex-wrap gap-1">
         {items.slice(0, CHIP_LIMIT).map((item) => (
@@ -129,7 +130,7 @@ function ChipList({
         ))}
         {hidden > 0 ? (
           <span className="px-1.5 py-0.5 text-2xs text-muted-foreground">
-            +{hidden.toLocaleString()} more
+            +{fmtInt(hidden)} more
           </span>
         ) : null}
       </div>
@@ -157,7 +158,7 @@ function HistorySummary({ data }: { data: PurchaseHistoryPreview }) {
         </div>
         <p className="mt-1.5 text-2xs text-muted-foreground">
           {dateText(data.date_from)} to {dateText(data.date_to)}.{' '}
-          {data.so_claims.toLocaleString()}{' '}
+          {fmtInt(data.so_claims)}{' '}
           {plural(data.so_claims, 'order names', 'orders name')} a sales order.
         </p>
       </div>
@@ -195,7 +196,7 @@ function SalesHistorySummary({ data }: { data: SalesHistoryPreview }) {
         </div>
         <p className="mt-1.5 text-2xs text-muted-foreground">
           {dateText(data.date_from)} to {dateText(data.date_to)}.{' '}
-          {data.layout_rows.toLocaleString()}{' '}
+          {fmtInt(data.layout_rows)}{' '}
           {plural(data.layout_rows, 'row is', 'rows are')} a package caption or spacer.
         </p>
       </div>
@@ -237,16 +238,16 @@ function InquirySummary({ data }: { data: OrderInquiryPreview }) {
           <CountTile label="Not ordered yet" value={data.not_ordered} />
         </div>
         <p className="mt-1.5 text-2xs text-muted-foreground">
-          {data.sheets_read.length.toLocaleString()}{' '}
+          {fmtInt(data.sheets_read.length)}{' '}
           {plural(data.sheets_read.length, 'sheet', 'sheets')} read
           {data.sheets_skipped.length
-            ? `, ${data.sheets_skipped.length.toLocaleString()} skipped`
+            ? `, ${fmtInt(data.sheets_skipped.length)} skipped`
             : ''}
           .
         </p>
         {data.rows_restating_an_instalment > 0 ? (
           <p className="mt-1 text-2xs text-muted-foreground">
-            {data.rows_restating_an_instalment.toLocaleString()}{' '}
+            {fmtInt(data.rows_restating_an_instalment)}{' '}
             {plural(data.rows_restating_an_instalment, 'row', 'rows')} restate a delivery
             another sheet already lists, counted once.
           </p>

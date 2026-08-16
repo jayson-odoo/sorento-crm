@@ -11,6 +11,7 @@
  * buyer's own: use stock first, then what is arriving (already inside the net), then what
  * is ordered, and buy only the remainder.
  */
+import { fmtTrimmedDecimal } from '../../lib/format';
 
 export interface PoReceipt {
   po_number: string;
@@ -28,7 +29,7 @@ export function poOffset(buyQty: number, poQty: number): { usePo: number; buy: n
 /** One line per order: the receipt the buyer verifies before trusting "don't order". */
 export function describePoBook(receipts: PoReceipt[]): string[] {
   return receipts.map((r) => {
-    const qty = Number.isInteger(r.remaining) ? String(r.remaining) : r.remaining.toFixed(2);
+    const qty = fmtTrimmedDecimal(r.remaining, 2);
     const when = r.expected_date ? `expected ${r.expected_date}` : 'no promised date';
     return `${qty} still to come on ${r.po_number}, ${when}.`;
   });
