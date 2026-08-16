@@ -2249,7 +2249,9 @@ async def get_sla_tracking_conversation_page(
     around: Optional[str] = Query(
         None, description="Message id to centre the window on (jump to a search match)"
     ),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(
+        50, ge=1, le=200, description="Messages per thread page (a chat window, not a grid page)"
+    ),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -2326,7 +2328,9 @@ async def proxy_ticket_media(
 async def search_sla_tracking_conversation(
     tracking_id: UUID,
     q: str = Query("", description="Free text searched inside this contact's messages"),
-    limit: int = Query(100, ge=1, le=200),
+    limit: int = Query(
+        100, ge=1, le=200, description="Search matches returned (a chat window, not a grid page)"
+    ),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

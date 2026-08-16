@@ -15,6 +15,7 @@ Run:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 
@@ -51,16 +52,18 @@ def scratch_channel(monkeypatch):
     bus.set_transport(None)
 
 
-@pytest.mark.asyncio
-async def test_a_published_poke_reaches_a_live_subscriber(scratch_channel):
-    transport = bus.get_transport()
-    async with transport.subscribe(scratch_channel) as subscription:
-        # Subscribe first: pub/sub has no backlog, an event published before the
-        # subscription exists is gone. That is by design (a reconnecting client
-        # refetches instead of replaying) and this ordering states it.
-        bus.publish(bus.EVENT_MESSAGE, contact_id="10025904")
+def test_a_published_poke_reaches_a_live_subscriber(scratch_channel):
+    async def scenario():
+        transport = bus.get_transport()
+        async with transport.subscribe(scratch_channel) as subscription:
+            # Subscribe first: pub/sub has no backlog, an event published before
+            # the subscription exists is gone. That is by design (a reconnecting
+            # client refetches instead of replaying) and this ordering states it.
+            bus.publish(bus.EVENT_MESSAGE, contact_id="10025904")
 
-        raw = await subscription.next_event(timeout=3.0)
+            return await subscription.next_event(timeout=3.0)
+
+    raw = asyncio.run(scenario())
 
     assert raw is not None, "the live subscriber never saw the published poke"
     event = json.loads(raw)
@@ -68,10 +71,13 @@ async def test_a_published_poke_reaches_a_live_subscriber(scratch_channel):
     assert event["contact_id"] == "10025904"
 
 
-@pytest.mark.asyncio
-async def test_a_quiet_channel_ticks_instead_of_hanging(scratch_channel):
+def test_a_quiet_channel_ticks_instead_of_hanging(scratch_channel):
     """The heartbeat depends on this: no message within the poll window returns
     None, which is what lets the endpoint emit a keep-alive comment."""
-    transport = bus.get_transport()
-    async with transport.subscribe(scratch_channel) as subscription:
-        assert await subscription.next_event(timeout=0.2) is None
+
+    async def scenario():
+        transport = bus.get_transport()
+        async with transport.subscribe(scratch_channel) as subscription:
+            return await subscription.next_event(timeout=0.2)
+
+    assert asyncio.run(scenario()) is None
