@@ -250,8 +250,15 @@ def _rename_index(schema: str, frm: str, to: str) -> None:
     """
     if frm == to:
         return
-    if not _has_index(schema, frm) or _has_index(schema, to):
+    if not _has_index(schema, frm):
         return
+    if _has_index(schema, to):
+        # Both names present means two distinct indexes, not a completed rename. Skipping
+        # would leave the pre-move name in place and report success, which is the silent
+        # catalog drift this revision exists to remove.
+        raise RuntimeError(
+            f'cannot rename index "{schema}"."{frm}" to "{to}": both already exist'
+        )
     op.execute(f'ALTER INDEX "{schema}"."{frm}" RENAME TO "{to}"')
 
 
