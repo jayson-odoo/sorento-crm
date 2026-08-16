@@ -35,6 +35,8 @@ pytestmark = requires_pg
 MARKER = "ZZTPHR"
 FIXTURES = Path(__file__).parent / "fixtures"
 PO_LISTING = FIXTURES / "po_listing_with_detail_sample.xls"
+#: The other shape the same channel reads: the flat PO + SPO extract (S5).
+PO_SPO_HISTORY = FIXTURES / "po_spo_history_sample.xlsx"
 ORDER_INQUIRY = FIXTURES / "order_inquiry_sample.xlsx"
 
 _XLS = "application/vnd.ms-excel"
@@ -44,6 +46,12 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 #: index holds whether or not a production copy already carries them.
 PO_ITEMS = ("CBM1030", "SRTSCBD290A")
 INQUIRY_ITEMS = ("CWB242", "C-FHSS14")
+PO_SPO_ITEMS = (
+    "BRBC22350W-1-SG", "BRC21131XUW-3AS-ENG", "CB4702", "CB4924-CR", "CB4932-BL",
+    "CBF66403", "CBMC5865", "CGB3600WTR", "CGB3601WTR", "RPACC", "SRT373-8-NL",
+    "SRTBF11705", "SRTSA625A-NL", "SRTWB247", "SRTWC287A-RL", "SRTWCY8605-PJ",
+    "SRTWHBWP", "SRTWT9513", "SRTWT9802", "SRTWT9813", "WESERP10B",
+)
 
 
 def _u() -> str:
@@ -70,6 +78,10 @@ def _seed_products(db, codes) -> None:
 
 def _po_file(name: str = "po_listing.xls"):
     return {"file": (name, PO_LISTING.read_bytes(), _XLS)}
+
+
+def _po_spo_file(name: str = "po_spo_history.xlsx"):
+    return {"file": (name, PO_SPO_HISTORY.read_bytes(), _XLSX)}
 
 
 def _inquiry_file(name: str = "order_inquiry.xlsx"):
@@ -162,6 +174,43 @@ def test_re_uploading_the_same_book_creates_nothing_further(scm_app, monkeypatch
     assert first["orders_created"] >= 1
     assert second["orders_created"] == 0
     assert _orders(db) == after_first
+
+
+def test_the_structured_po_spo_export_goes_through_the_same_channel(scm_app, monkeypatch):
+    """S5. One channel, two file shapes: which one arrived is read off the header row.
+
+    Proved on the WIRE rather than only in the service, because detection resolves the
+    header through `import_field_alias` on the request's own session - so this is also the
+    test that fails if migration 358's seed is missing from a database.
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    _seed_products(db, PO_SPO_ITEMS)
+    captured = stub_queue(monkeypatch)
+    client = TestClient(app)
+
+    preview = client.post("/api/v1/scm/purchase-history/preview", files=_po_spo_file())
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert body["ok"] is True
+    assert body["unmapped_headers"] == [], "every one of the 27 columns must resolve"
+    assert body["orders_po"] == 6 and body["orders_spo"] == 3
+
+    r = client.post("/api/v1/scm/purchase-history/apply", files=_po_spo_file())
+    assert r.status_code == 202, r.text
+    run_enqueued(captured, db, monkeypatch)
+
+    row = db.execute(text("SELECT status, total_rows, processed_rows FROM import_jobs "
+                          "WHERE id = :id"),
+                     {"id": queued_job_id(captured)}).first()
+    assert row.status == "finished", row
+    # The invariant every queued channel is held to: every source row carries an outcome,
+    # the grand-total row at the foot of the export included.
+    assert row.total_rows == 33
+    assert row.processed_rows == row.total_rows
+
+    upload = _upload_result(db, captured)
+    assert upload["lines_po"] == 19 and upload["lines_spo"] == 12
 
 
 def test_an_unreadable_file_previews_as_ok_false_rather_than_an_error(scm_app):

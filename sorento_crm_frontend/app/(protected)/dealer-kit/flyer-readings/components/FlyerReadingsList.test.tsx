@@ -114,7 +114,10 @@ describe('FlyerReadingsList', () => {
 
     const empty = await screen.findByTestId('dk-fr-list-empty');
     expect(empty).toHaveTextContent(/no flyer has been read yet/i);
-    expect(empty).toHaveTextContent(/upload a printed flyer as a pdf/i);
+    expect(empty).toHaveTextContent(/read a printed flyer from a pdf/i);
+    // Both ways in are named, because the flyer is usually already in the files.
+    expect(empty).toHaveTextContent(/upload one/i);
+    expect(empty).toHaveTextContent(/pick a flyer already in your files/i);
     // The next step is a button, not a sentence telling somebody to find one.
     expect(screen.getAllByRole('button', { name: /read a flyer/i }).length).toBeGreaterThan(0);
   });

@@ -173,6 +173,30 @@ def sheet_rows(file_data: bytes):
     return sheet.iter_rows(values_only=True)
 
 
+def all_sheet_rows(file_data: bytes) -> list[tuple]:
+    """Every row of the first sheet, materialised, with the workbook CLOSED.
+
+    `sheet_rows` hands back a lazy iterator over an open read-only workbook, which is right
+    for a caller that wants to stop early - but openpyxl's read-only mode holds the zip handle
+    until the workbook is closed, and nothing in a generator's return value can close it. A
+    reader that walks the whole sheet anyway (the purchase-history extract is 27,192 rows)
+    takes the list and gives the handle back.
+    """
+    if file_data[:8] == _OLE2_MAGIC:
+        return list(_xls_rows(file_data))
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(BytesIO(file_data), data_only=True, read_only=True)
+    try:
+        sheet = wb.active
+        if sheet is None:
+            raise ValueError("the workbook has no sheet")
+        return [tuple(row) for row in sheet.iter_rows(values_only=True)]
+    finally:
+        wb.close()
+
+
 def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> ReadResult:
     """Parse the first sheet of an uploaded workbook into lines plus complaints."""
     result = ReadResult(doc_type=doc_type)
@@ -310,10 +334,15 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         # `order_type` it is a header-level fact repeated per line, and like it, it is spent on
         # the demand class - it is the fourth and last source, read only when the document
         # itself says nothing. The write path also stamps it onto the order.
+        # `unit_price` is the sales book's own money column (the alias for `UNIT PRICE` has
+        # been seeded since migration 338) and the demand popover quotes it per line, so
+        # dropping it here left that figure blank on every row the buyer looked at while it
+        # sat in the file. Absent stays absent for the same reason as the cost.
         result.extras[str(row_number)] = {
             "party_code": _clean(rec.get("debtor_code" if doc_type == SO
                                          else "creditor_code")),
             "unit_cost": _to_float(rec.get("unit_cost")),
+            "unit_price": _to_float(rec.get("unit_price")),
             "currency": _clean(rec.get("currency")) or None,
             "order_date": _to_date(rec.get(order_date_field)),
             "order_type": _clean(rec.get("order_type")) or None,

@@ -5,8 +5,13 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 import {
   createReorderRun,
+  getCustomerOrders,
+  getBuyRecommendationsForCash,
+  getCoveredRecommendations,
   getReorderRun,
   getRecommendations,
+  getProductImage,
+  getProductImages,
   listReorderRuns,
 } from './reorderRunService';
 
@@ -178,5 +183,219 @@ describe('reorderRunService - listReorderRuns', () => {
     expect(page.data[0].run_id).toBe('run-b');
     expect(page.data[0].warehouse_codes).toEqual(['WH-KL', 'WH-JB']);
     expect(page.data[0].summary?.recommendation_count).toBe(5);
+  });
+});
+
+describe('reorderRunService - getCustomerOrders (AC-4.1)', () => {
+  it('asks for the run, product, side and customer key it was opened on', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        lines: [
+          {
+            so_number: 'SO414050',
+            order_date: '2026-07-12',
+            qty: 60,
+            unit_price: 0.94,
+            warehouse_code: 'BRW-BB',
+          },
+        ],
+        total: 27,
+        shown: 1,
+      }),
+    );
+    const out = await getCustomerOrders('run-1', 'prod-1', 'project', 'debtor:300-R009');
+
+    const u = calledUrl();
+    expect(u.pathname).toBe('/api/v1/scm/reorder-runs/run-1/customer-orders');
+    expect(u.searchParams.get('product_id')).toBe('prod-1');
+    expect(u.searchParams.get('segment')).toBe('project');
+    // The three-case key travels verbatim: the backend, not the FE, decides what a
+    // `debtor:` prefix means.
+    expect(u.searchParams.get('customer_key')).toBe('debtor:300-R009');
+    expect(u.searchParams.get('limit')).toBe('20');
+    expect(out.total).toBe(27);
+    expect(out.lines[0].unit_price).toBe(0.94);
+  });
+
+  it('surfaces the backend message rather than an empty list', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 422,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ message: 'Unknown segment.' }),
+    } as unknown as Response);
+
+    await expect(
+      getCustomerOrders('run-1', 'prod-1', 'wholesale', 'none'),
+    ).rejects.toThrow('Unknown segment.');
+  });
+});
+
+describe('reorderRunService - getProductImages (AC-7)', () => {
+  it('reads which products have a photo from one endpoint', async () => {
+    apiFetch.mockResolvedValue(ok({ has_image: { p1: true } }));
+
+    const out = await getProductImages('run-9');
+
+    expect(calledUrl().pathname).toBe('/api/v1/scm/reorder-runs/run-9/product-images');
+    expect(out.has_image.p1).toBe(true);
+  });
+
+  it('normalises a body with no images at all, so the caller never guards for it', async () => {
+    apiFetch.mockResolvedValue(ok({}));
+    expect(await getProductImages('run-9')).toEqual({ has_image: {} });
+  });
+
+  it('surfaces the backend message rather than a blank failure', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ message: 'Reorder run not found.' }),
+      text: async () => JSON.stringify({ message: 'Reorder run not found.' }),
+    } as unknown as Response);
+
+    await expect(getProductImages('nope')).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('reorderRunService - getProductImage (AC-7)', () => {
+  it('signs one product photo, on the popover that asked for it', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ url: 'https://cdn.test.invalid/p1.jpg?Signature=stub', is_primary: true }),
+    );
+
+    const out = await getProductImage('run-9', 'p1');
+
+    expect(calledUrl().pathname).toBe('/api/v1/scm/reorder-runs/run-9/product-images/p1');
+    expect(out).toEqual({ url: 'https://cdn.test.invalid/p1.jpg?Signature=stub', is_primary: true });
+  });
+
+  it('reads a product with no photo as a null url, not a failure', async () => {
+    apiFetch.mockResolvedValue(ok({ url: null, is_primary: false }));
+    expect(await getProductImage('run-9', 'p2')).toEqual({ url: null, is_primary: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// paging the whole set: same rows, same order, without the staircase
+// ---------------------------------------------------------------------------
+
+/** A page of `n` rows whose ids name the page they came from. */
+function page(pageNo: number, n: number, totalPages: number) {
+  return ok({
+    data: Array.from({ length: n }, (_, i) => ({ id: `p${pageNo}-r${i}` })),
+    pagination: { page: pageNo, limit: 1000, total: totalPages * n, total_pages: totalPages },
+  });
+}
+
+describe('reorderRunService - fetching every page of a plan', () => {
+  it('returns the pages in order, so the merged list matches the serial loop', async () => {
+    apiFetch
+      .mockResolvedValueOnce(page(1, 2, 3))
+      .mockResolvedValueOnce(page(2, 2, 3))
+      .mockResolvedValueOnce(page(3, 2, 3));
+
+    const rows = await getBuyRecommendationsForCash('run-1');
+
+    expect(rows.map((r) => r.id)).toEqual([
+      'p1-r0', 'p1-r1', 'p2-r0', 'p2-r1', 'p3-r0', 'p3-r1',
+    ]);
+  });
+
+  it('asks for pages 2..N together rather than one after the other', async () => {
+    // Page 1 has to be awaited alone - it is what reports total_pages. Everything after it
+    // is independent, and issuing those serially is what made a big plan a staircase of
+    // round trips. Proven by holding page 2 open: page 3 must already have been requested.
+    let releasePage2: (v: unknown) => void = () => {};
+    const page2 = new Promise((res) => {
+      releasePage2 = res;
+    });
+    apiFetch
+      .mockResolvedValueOnce(page(1, 1, 3))
+      .mockImplementationOnce(() => page2)
+      .mockResolvedValueOnce(page(3, 1, 3));
+
+    const pending = getBuyRecommendationsForCash('run-1');
+    // Page 2 is deliberately still unresolved here. If pages were fetched serially the
+    // count would sit at 2 forever and this would time out.
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
+
+    releasePage2(page(2, 1, 3));
+    const rows = await pending;
+    expect(rows.map((r) => r.id)).toEqual(['p1-r0', 'p2-r0', 'p3-r0']);
+  });
+
+  it('a single-page plan makes exactly one request', async () => {
+    apiFetch.mockResolvedValueOnce(page(1, 3, 1));
+
+    const rows = await getCoveredRecommendations('run-1');
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(rows).toHaveLength(3);
+  });
+});
+
+describe('reorderRunService - the page fetch stays inside the API pool', () => {
+  /**
+   * Pages that resolve on a later tick, recording how many were in flight at once.
+   * `delay` is per page index, so a page can be made to finish out of turn.
+   */
+  function trackedPages(total: number, delay: (n: number) => number = () => 0) {
+    const seen = { now: 0, peak: 0, order: [] as number[] };
+    let asked = 0;
+    apiFetch.mockImplementation(() => {
+      asked += 1;
+      const n = asked;
+      seen.now += 1;
+      seen.peak = Math.max(seen.peak, seen.now);
+      return new Promise((res) => {
+        setTimeout(() => {
+          seen.now -= 1;
+          seen.order.push(n);
+          res(page(n, 1, total));
+        }, delay(n));
+      });
+    });
+    return seen;
+  }
+
+  it('never has more than five pages in flight at once', async () => {
+    // Ten pages. Uncapped this puts nine on the wire together, and with the four type
+    // queries running at the same time that is ~36 database sessions from a single tab
+    // against a pool of 10 + 20 overflow.
+    const seen = trackedPages(10);
+
+    const rows = await getBuyRecommendationsForCash('run-1');
+
+    expect(rows).toHaveLength(10);
+    expect(seen.peak).toBeLessThanOrEqual(5);
+    // And it does use the width it is allowed - a cap that serialised would be no better
+    // than the loop this replaced.
+    expect(seen.peak).toBeGreaterThan(1);
+  });
+
+  it('keeps the pages in order even though they finish out of order', async () => {
+    // Later pages finish FIRST: page 4 after 0ms, page 1 after 30ms.
+    const seen = trackedPages(4, (n) => (4 - n) * 10);
+
+    const rows = await getBuyRecommendationsForCash('run-1');
+
+    expect(rows.map((r) => r.id)).toEqual(['p1-r0', 'p2-r0', 'p3-r0', 'p4-r0']);
+    // The completion order really was not the request order.
+    expect(seen.order).not.toEqual([1, 2, 3, 4]);
+  });
+
+  it('one page failing fails the whole plan rather than returning a short list', async () => {
+    apiFetch
+      .mockResolvedValueOnce(page(1, 1, 3))
+      .mockResolvedValueOnce(page(2, 1, 3))
+      .mockResolvedValueOnce({
+        ok: false,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ detail: 'page 3 exploded' }),
+      } as unknown as Response);
+
+    await expect(getBuyRecommendationsForCash('run-1')).rejects.toThrow('page 3 exploded');
   });
 });

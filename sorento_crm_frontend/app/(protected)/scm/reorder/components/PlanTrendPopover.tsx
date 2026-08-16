@@ -1,28 +1,24 @@
 'use client';
 
+import { useId, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { ApexOptions } from 'apexcharts';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { fmtDate, fmtSupplierCost } from '../../lib/format';
+import { fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
+import { useCustomerOrders } from '../hooks/useReorderRun';
 import {
   TRAJECTORY_ROW_LABEL,
   TRAJECTORY_TONE,
   chartSeries,
   describeTrajectory,
   describeYearAgo,
+  type TrajectoryCustomer,
   type TrajectoryEntry,
 } from '../lib/trajectory';
-
-/**
- * A customer row, widened with `last_order_date` (backend: `trajectory_service.py`).
- *
- * The shared `TrajectoryEntry['customers']` element type does not carry this field yet -
- * kept as a local widening here rather than edited into `lib/trajectory.ts` while that
- * file is in flight elsewhere. Structurally compatible: the backend payload already
- * includes it, so this is purely a read-side type, no runtime cast of substance.
- */
-type CustomerRow = TrajectoryEntry['customers'][number] & { last_order_date?: string | null };
 
 const ApexChart = dynamic(() => import('react-apexcharts').then((mod) => mod.default), {
   ssr: false,
@@ -45,9 +41,156 @@ const TONE_CLASS = {
   warning: 'text-amber-600',
 } as const;
 
+/**
+ * The orders behind ONE customer row, fetched when the row is opened.
+ *
+ * > "sells RM 0.94?"
+ *
+ * A quantity beside a name says who buys it; it does not say at what price, and that is
+ * the question the row is opened to answer. Newest first, capped, with the count of what
+ * is not shown said out loud rather than silently dropped.
+ */
+function CustomerOrderLines({
+  runId,
+  productId,
+  segment,
+  customerKey,
+}: {
+  runId: string | null;
+  productId: string | null;
+  segment: string;
+  customerKey: string;
+}) {
+  const { data, isLoading, isError, error } = useCustomerOrders(
+    runId,
+    productId,
+    segment,
+    customerKey,
+    true,
+  );
+
+  if (isLoading) {
+    return (
+      <div className="space-y-1 py-1">
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-2/3" />
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <p className="py-1 text-2xs text-muted-foreground">
+        {error instanceof Error ? error.message : 'Failed to load the orders.'}
+      </p>
+    );
+  }
+  if (!data || !data.lines.length) {
+    return <p className="py-1 text-2xs text-muted-foreground">No orders in the window.</p>;
+  }
+  return (
+    <div className="py-1">
+      <table className="w-full text-2xs">
+        <tbody>
+          {data.lines.map((l, i) => (
+            <tr key={`${l.so_number}-${i}`}>
+              <td className="max-w-32 truncate py-0.5" title={l.so_number}>
+                {l.so_number}
+              </td>
+              {/* Where the order asked for it. Same pill as the demand popover uses, and
+                  the same honest wording when the order named no location at all. */}
+              <td className="py-0.5">
+                <Badge
+                  variant={l.warehouse_code ? 'secondary' : 'warning'}
+                  size="sm"
+                  className="font-normal"
+                >
+                  {l.warehouse_code ?? 'No location'}
+                </Badge>
+              </td>
+              <td className="py-0.5 text-right tabular-nums">{fmtDate(l.order_date)}</td>
+              <td className="py-0.5 text-right tabular-nums">{fmtInt(l.qty)}</td>
+              <td className="py-0.5 text-right tabular-nums">
+                {fmtSupplierCost(l.unit_price, null)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {data.total > data.shown ? (
+        <p className="pt-0.5 text-2xs text-muted-foreground">
+          {fmtInt(data.total - data.shown)} more
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** One Who-bought-it row: the summary, and the orders behind it on request. */
+function CustomerRow({
+  customer,
+  runId,
+  productId,
+  segment,
+}: {
+  customer: TrajectoryCustomer;
+  runId: string | null;
+  productId: string | null;
+  segment: string;
+}) {
+  const [open, setOpen] = useState(false);
+  // The disclosure and the row it opens are paired by id, so a screen reader following
+  // aria-controls lands on the orders rather than being told a control exists and left to
+  // find what it did. Unique per customer key, because several rows are open at once.
+  const panelId = `plan-trend-orders-${useId()}`;
+  return (
+    <>
+      <tr>
+        <td className="max-w-40 truncate py-0.5">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={panelId}
+            // On the BUTTON, not the cell: the tooltip belongs to the thing the pointer is
+            // actually over, and a title on the cell never shows for a keyboard user.
+            title={customer.customer_name}
+            className="flex w-full items-center gap-1 text-left hover:text-foreground"
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? (
+              <ChevronDown className="size-3 shrink-0" aria-hidden />
+            ) : (
+              <ChevronRight className="size-3 shrink-0" aria-hidden />
+            )}
+            <span className="truncate">{customer.customer_name}</span>
+          </button>
+        </td>
+        <td className="py-0.5 text-right tabular-nums">{fmtInt(customer.qty)}</td>
+        <td className="py-0.5 text-right tabular-nums">{fmtDate(customer.last_order_date)}</td>
+      </tr>
+      {open ? (
+        <tr id={panelId}>
+          <td colSpan={3} className="pl-4">
+            <CustomerOrderLines
+              runId={runId}
+              productId={productId}
+              segment={segment}
+              customerKey={customer.customer_key}
+            />
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
 export function PlanTrendPopover({
   trend,
   sellingPrice,
+  runId = null,
+  productId = null,
+  segment = 'project',
+  outstandingSales = null,
+  seriesMonths = 24,
 }: {
   trend: TrajectoryEntry | undefined;
   /** What this line sells for (realized average, or list price when nothing has sold) -
@@ -55,21 +198,61 @@ export function PlanTrendPopover({
    *  refetched (user markup, 2026-08-12: "similar to SO - what is the trend of purchase").
    *  Omitted when we hold no opinion. */
   sellingPrice?: number | null;
+  /** The run + product + side the customer drill is keyed by. */
+  runId?: string | null;
+  productId?: string | null;
+  segment?: string;
+  /** This row's open sales-order quantity. A product can carry real open demand and no
+   *  dated history at all (the outstanding book only started stating an order date), and
+   *  "No order history" beside 51 open units reads as a defect rather than as a fact. */
+  outstandingSales?: number | null;
+  /** How far back the trend's own series reaches, straight off the payload, so this copy
+   *  cannot drift from the window the backend actually read. */
+  seriesMonths?: number;
 }) {
   if (!trend) {
-    return <span className="text-2xs text-muted-foreground">No order history</span>;
+    const empty = `No orders dated in the last ${seriesMonths} months.`;
+    return (
+      <span className="block text-2xs text-muted-foreground">
+        <span className="block truncate" title={empty}>
+          {empty}
+        </span>
+        {outstandingSales && outstandingSales > 0 ? (
+          <span className="block truncate">Open now: {fmtInt(outstandingSales)} (see Demand)</span>
+        ) : null}
+      </span>
+    );
   }
 
   const { labels, thisYear, lastYear } = chartSeries(trend);
   const hasLastYear = lastYear.some((v) => v !== null);
 
+  // Read the chart, not squint at it. At 12 months in a 24rem popover the month labels
+  // collided and the y axis printed a tick per gridline in fractions of a unit, which is
+  // meaningless for a quantity; the legend also sat under the plot, stealing height from
+  // the only thing worth looking at.
   const options: ApexOptions = {
     chart: { type: 'line', toolbar: { show: false }, zoom: { enabled: false } },
     stroke: { curve: 'smooth', width: [2.5, 2], dashArray: [0, 5] },
     colors: ['var(--color-primary, #2563eb)', '#94a3b8'],
-    xaxis: { categories: labels, labels: { style: { fontSize: '10px' } } },
-    yaxis: { labels: { style: { fontSize: '10px' } } },
-    legend: { fontSize: '11px' },
+    xaxis: {
+      categories: labels,
+      labels: { rotate: -45, hideOverlappingLabels: true, style: { fontSize: '10px' } },
+    },
+    // No `tickAmount`: ApexCharts derives yMax from `min + step * tickAmount`, so on a
+    // product whose best month is 1 or 2 units the step is fractional and the axis prints
+    // the same integer twice (0 | 1 | 1 | 2 | 2), with the gridline labelled 1 actually
+    // sitting at 0.5. `forceNiceScale` picks integral steps instead; the formatter blanks
+    // any fractional tick that still gets through rather than rounding it into a lie.
+    yaxis: {
+      min: 0,
+      forceNiceScale: true,
+      labels: {
+        formatter: (v: number) => (Number.isInteger(v) ? fmtInt(v) : ''),
+        style: { fontSize: '10px' },
+      },
+    },
+    legend: { position: 'top', horizontalAlign: 'left', fontSize: '11px' },
     grid: { strokeDashArray: 3 },
     tooltip: { y: { formatter: (v: number) => (v === null ? 'no data' : String(v)) } },
   };
@@ -93,12 +276,21 @@ export function PlanTrendPopover({
         </button>
       </PopoverTrigger>
       <PopoverPortal>
-        <PopoverContent className="w-96 max-w-[92vw] text-xs" align="start">
+        {/* At phone width the chart plus the customer table is taller than the screen, and
+            PopoverContent has no max height of its own, so the bottom of the list simply
+            had no way to be reached. */}
+        <PopoverContent
+          className="w-[30rem] max-w-[92vw] max-h-[85vh] overflow-y-auto text-xs"
+          align="start"
+        >
           <p className="font-medium text-foreground">{describeTrajectory(trend)}</p>
           <p className="mt-1 text-muted-foreground">{describeYearAgo(trend)}</p>
 
-          <div className="mt-2 -mx-1">
-            <ApexChart options={options} series={series} type="line" height={160} />
+          {/* The app-wide Metronic sheet stacks every Apex legend vertically
+              (`css/components/apexcharts.css`), which here costs two lines of chart height
+              for two words. Overridden for this chart only, not globally. */}
+          <div className="mt-2 -mx-1 [&_.apexcharts-legend]:flex-row [&_.apexcharts-legend]:flex-wrap [&_.apexcharts-legend]:gap-x-4">
+            <ApexChart options={options} series={series} type="line" height={240} />
           </div>
 
           {sellingPrice != null ? (
@@ -119,14 +311,14 @@ export function PlanTrendPopover({
                   </tr>
                 </thead>
                 <tbody>
-                  {(trend.customers as CustomerRow[]).map((c) => (
-                    <tr key={c.customer_name}>
-                      <td className="max-w-40 truncate py-0.5" title={c.customer_name}>
-                        {c.customer_name}
-                      </td>
-                      <td className="py-0.5 text-right tabular-nums">{c.qty.toLocaleString()}</td>
-                      <td className="py-0.5 text-right tabular-nums">{fmtDate(c.last_order_date)}</td>
-                    </tr>
+                  {trend.customers.map((c) => (
+                    <CustomerRow
+                      key={`${c.customer_key ?? ''}:${c.customer_name}`}
+                      customer={c}
+                      runId={runId}
+                      productId={productId}
+                      segment={segment}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -141,10 +333,6 @@ export function PlanTrendPopover({
               Who sold it is not in the order data yet.
             </p>
           ) : null}
-
-          <p className="mt-2 border-t pt-2 text-2xs text-muted-foreground">
-            Based on our own orders only.
-          </p>
         </PopoverContent>
       </PopoverPortal>
     </Popover>

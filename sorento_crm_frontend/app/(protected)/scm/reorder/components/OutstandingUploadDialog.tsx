@@ -33,6 +33,8 @@ import {
   type OutstandingSampleRow,
 } from '../services/outstandingImportService';
 import { CountTile } from './UploadCountTile';
+import { fmtInt } from '../../lib/format';
+import { UploadReadingIndicator } from './UploadReadingIndicator';
 
 /**
  * SCM - the upload channel for the open order book, until AutoCount is integrated.
@@ -85,7 +87,7 @@ function countOf(counts: OutstandingCounts, kind: OutstandingChangeKind): number
 }
 
 function num(value: number | null): string {
-  return value == null ? '-' : value.toLocaleString();
+  return fmtInt(value);
 }
 
 function date(value: string | null): string {
@@ -300,12 +302,7 @@ export function OutstandingUploadDialog({
             aria-label="Outstanding orders file"
           />
 
-          {previewing ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
-              Reading the file...
-            </div>
-          ) : null}
+          <UploadReadingIndicator reading={previewing} />
 
           {preview && !preview.ok ? (
             <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
@@ -335,7 +332,7 @@ export function OutstandingUploadDialog({
                   ))}
                 </div>
                 <p className="mt-1.5 text-2xs text-muted-foreground">
-                  {preview.total_rows.toLocaleString()} rows read
+                  {fmtInt(preview.total_rows)} rows read
                   {file ? ` from ${file.name}` : ''}.
                 </p>
                 {!hasChanges ? (
@@ -347,7 +344,7 @@ export function OutstandingUploadDialog({
 
               <section aria-label="Scope" className="rounded-lg border border-border p-3">
                 <h4 className="text-xs font-semibold">
-                  Covers {scopeCount.toLocaleString()}{' '}
+                  Covers {fmtInt(scopeCount)}{' '}
                   {plural(scopeCount, 'document', 'documents')}
                 </h4>
                 <div className="mt-1.5 flex flex-wrap gap-1">
@@ -361,7 +358,7 @@ export function OutstandingUploadDialog({
                   ))}
                   {scopeCount > SCOPE_CHIP_LIMIT ? (
                     <span className="px-1.5 py-0.5 text-2xs text-muted-foreground">
-                      +{(scopeCount - SCOPE_CHIP_LIMIT).toLocaleString()} more
+                      +{fmtInt(scopeCount - SCOPE_CHIP_LIMIT)} more
                     </span>
                   ) : null}
                 </div>
@@ -374,7 +371,7 @@ export function OutstandingUploadDialog({
                 <div key={group.key} className="space-y-1.5">
                   <h4 className="text-xs font-semibold">
                     {group.label} (showing {group.rows.length} of{' '}
-                    {Math.max(group.total, group.rows.length).toLocaleString()})
+                    {fmtInt(Math.max(group.total, group.rows.length))})
                   </h4>
                   <SampleTable rows={group.rows} />
                 </div>

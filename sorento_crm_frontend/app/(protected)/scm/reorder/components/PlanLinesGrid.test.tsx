@@ -434,11 +434,13 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
     expect(screen.getAllByText('Buy 188').length).toBeGreaterThan(0);
   });
 
-  it('names the source when stock elsewhere covers it outright', () => {
-    // The live BRW-IB case: nothing on hand HERE, but BRW-BB is holding some. The mix and
-    // quantity are the button label; the source detail rides on the title.
+  it('keeps the button label short - the source moved to the hover table', () => {
+    // The live BRW-IB case: nothing on hand HERE, but BRW-BB is holding some. Round 2: the
+    // codes came OUT of the label (they grew with every location and pushed the buy figure
+    // past the truncation) and live in the accept hover's breakdown table instead.
     renderGrid([line({ order_qty: 1 })], {}, elsewhere);
-    expect(screen.getByRole('button', { name: /Stock 1 \(BRW-BB\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Accept for .*Stock 1$/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Stock 1 \(BRW-BB\)/)).not.toBeInTheDocument();
   });
 
   it('proposes the split as ONE button carrying both parts, never a sentence', () => {
@@ -447,8 +449,8 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
     // like a sentence" - the button's own label is the structure now (verb, quantity,
     // repeated per part), not a multi-line prose block.
     renderGrid([line({ order_qty: 188 })], {}, elsewhere);
-    const btn = screen.getByRole('button', { name: /Stock 6 \(BRW-BB, PJ-SR\)/ });
-    expect(btn).toHaveTextContent('Buy 182');
+    const btn = screen.getByRole('button', { name: /Accept for .*Stock 6 \+ Buy 182/ });
+    expect(btn).toHaveTextContent('Stock 6 + Buy 182');
   });
 
   it('says when the engine is superseding CS on a project line', () => {
@@ -489,7 +491,7 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
         stock: { qty: 5, sources: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 5 }] },
       },
     } as PlanDecisionMap, elsewhere);
-    expect(screen.getByText(/Stock 5 \(BRW-BB\)/)).toBeInTheDocument();
+    expect(screen.getByText('Stock 5')).toBeInTheDocument();
   });
 
   it('warns when the only cover crosses the dealer/project boundary', () => {
@@ -560,10 +562,10 @@ describe('PlanLinesGrid - what price to use', () => {
   it('leads with the price to buy at, and the verdict rides under it', () => {
     renderGrid([line()], {}, [], () => stale);
 
-    // The row's unit_cost (10, USD default currency null on the fixture) is the headline;
-    // the verdict badge is the caveat under it.
+    // The row's unit_cost (10, no currency on the fixture, so it reads as base) is the
+    // headline; the verdict badge is the caveat under it.
     expect(screen.getByText('Ask new price')).toBeInTheDocument();
-    expect(screen.getByText('10.00')).toBeInTheDocument();
+    expect(screen.getByText('RM 10.00')).toBeInTheDocument();
   });
 
   it('leaves the cell empty when there is no price opinion, rather than implying all is well', () => {
@@ -750,9 +752,11 @@ describe('product health (2026-08-11 markup)', () => {
 
     // Click the cell's own trigger (the column header is also named "Product health").
     fireEvent.click(screen.getByText('Consider discontinuing'));
-    expect(screen.getByText(/factors argue for discontinuing/i)).toBeInTheDocument();
+    // The verdict is named in one line and the case is the factor list under it - the
+    // prose sentence and the AutoCount footer were removed (AC-5).
+    expect(screen.getByText('Suggestion: Discontinue')).toBeInTheDocument();
     expect(screen.getByText(/nothing left this product/i)).toBeInTheDocument();
-    expect(screen.getByText(/marking it in AutoCount stays your job/i)).toBeInTheDocument();
+    expect(screen.queryByText(/marking it in AutoCount stays your job/i)).not.toBeInTheDocument();
   });
 
   it('a consider-more advisory on a thin margin carries the caveat in the same breath', () => {
@@ -913,5 +917,74 @@ describe('PlanLinesGrid - secondaryActions (the removed tiles\' replacement entr
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Order summary' }));
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PlanLinesGrid - product photo on the row (AC-7)', () => {
+  // > "as IT I do not know what a product looks like"
+  // The icon lives on the product cell, beside the demand and checklist drills, and it is
+  // the ONLY thing on the row that says what the item is.
+
+  function renderWithPhotos(
+    lines: PlanLine[],
+    hasPhotoFor?: (l: PlanLine) => boolean,
+    photoStatus: 'idle' | 'loading' | 'ready' | 'error' = 'ready',
+    onOpenPhoto?: () => void,
+  ) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PlanLinesGrid
+          lines={lines}
+          decisions={{}}
+          onDecide={vi.fn()}
+          onClear={vi.fn()}
+          hasPhotoFor={hasPhotoFor}
+          photoStatus={photoStatus}
+          onOpenPhoto={onOpenPhoto}
+          staleAfterDays={180}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('carries a photo icon on every row', () => {
+    renderWithPhotos([line({ id: 'a', sku: 'BUY-1' }), line({ id: 'b', sku: 'BUY-2', rank: 2 })]);
+    expect(screen.getAllByRole('button', { name: /product photo/i })).toHaveLength(2);
+  });
+
+  it('dims the icon for a product the run found no photo for', () => {
+    renderWithPhotos(
+      [line({ id: 'a', sku: 'HAS-1', product_id: 'p1' }),
+       line({ id: 'b', sku: 'NONE-1', product_id: 'p2', rank: 2 })],
+      (l) => l.product_id === 'p1',
+    );
+
+    const withPhoto = screen.getByText('HAS-1').closest('tr') as HTMLElement;
+    const without = screen.getByText('NONE-1').closest('tr') as HTMLElement;
+
+    expect(
+      within(withPhoto).getByRole('button', { name: /product photo/i }).className,
+    ).not.toContain('text-muted-foreground/50');
+    expect(
+      within(without).getByRole('button', { name: /product photo/i }).className,
+    ).toContain('text-muted-foreground/50');
+  });
+
+  it('nothing is dimmed before the photos have been asked for', () => {
+    // Dimming on `idle` would tell the buyer a product has no photo before anyone looked.
+    renderWithPhotos([line({ sku: 'BUY-1' })], undefined, 'idle');
+    expect(
+      screen.getByRole('button', { name: /product photo/i }).className,
+    ).not.toContain('text-muted-foreground/50');
+  });
+
+  it('starts the run-wide fetch on the FIRST icon opened, not on mount', () => {
+    const onOpenPhoto = vi.fn();
+    renderWithPhotos([line({ sku: 'BUY-1' })], undefined, 'idle', onOpenPhoto);
+
+    expect(onOpenPhoto).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /product photo/i }));
+    expect(onOpenPhoto).toHaveBeenCalledTimes(1);
   });
 });

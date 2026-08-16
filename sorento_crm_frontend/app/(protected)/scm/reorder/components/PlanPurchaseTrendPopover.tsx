@@ -1,7 +1,7 @@
 'use client';
 
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
-import { EM_DASH, fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
+import { EM_DASH, fmtDate, fmtDecimal, fmtInt, fmtSupplierCost } from '../../lib/format';
 import { describePurchaseTrend, type ProductPurchaseTrend } from '../lib/purchaseTrend';
 import { humanAge, type PriceAdvice } from '../lib/priceAdvice';
 
@@ -100,7 +100,7 @@ export function PlanPurchaseTrendPopover({
               Last {fmtSupplierCost(price!.last!.unit_cost, price!.last!.currency)} vs previous{' '}
               {fmtSupplierCost(price!.previous!.unit_cost, price!.previous!.currency)} (
               {price!.movement_pct! >= 0 ? '+' : ''}
-              {price!.movement_pct!.toFixed(1)}%)
+              {fmtDecimal(price!.movement_pct!, 1)}%)
               {price!.last!.issue_date ? `, ${humanAge(price!.age_days)}` : ''}.
             </p>
           ) : null}

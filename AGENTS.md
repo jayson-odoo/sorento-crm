@@ -51,6 +51,7 @@ npm run test
 npm run test:watch
 npm run test:e2e
 npm run format
+npm run format:check
 
 npx prisma db push
 npx prisma generate

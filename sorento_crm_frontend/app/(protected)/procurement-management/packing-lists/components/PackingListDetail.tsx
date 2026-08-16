@@ -28,7 +28,7 @@ import { Input } from '@/components/ui/input';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { toast } from 'sonner';
-import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
+import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import ClearanceDeliveryCard from './ClearanceDeliveryCard';
 import { CLEARANCE_ATTRIBUTE_FIELDS } from '../forms/packing-list-schema';
 
@@ -530,7 +530,7 @@ export default function PackingListDetail({
                 </Button>
               </div>
             )}
-            <ComplaintLinkAttachmentBrowserDialog
+            <LinkAttachmentBrowserDialog
               open={linkAttachmentDialogOpen}
               onOpenChange={setLinkAttachmentDialogOpen}
               entityId={packingListId}

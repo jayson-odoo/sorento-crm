@@ -1,20 +1,36 @@
-"""Upload a printed flyer, get the match report back (S7.3).
+"""Read a printed flyer, get the match report back (S7.3).
 
 The only surface of the seeding feature a designer touches before the review
-screen: drop the PDF in, see what the system found.
+screen: point the system at the PDF, see what it found. Two sources, one result:
+a file off their laptop, or a file the library is already holding.
 
 **Permissions reuse the page split.** Reading a flyer into the Kit is drafting a
 catalogue, so writes carry ``dealer_kit.page.edit`` and reads carry
 ``dealer_kit.page.view``. No new slug: a fourth one would need a grant sweep
 migration before a single existing role held it, and every designer who can
-build a page can already do everything this feature leads to.
+build a page can already do everything this feature leads to. Both sources carry
+the same slug, because they do the same thing.
 
-**Extraction happens inside the request.** The real 36 page flyer takes about a
-second, so a job queue would add a pending state, a polling screen, a failure
-path and a worker restart per code change, and buy nothing. The reasoning stops
-holding at roughly ten seconds of extraction - a much larger document, or the
-artwork rasterisation coming in S7.5 - at which point this becomes an enqueue
-returning 202 with a row to watch, like the catalogue PDF export.
+**Extraction happens inside the request, but never on the event loop.** Measured
+on the real ``_SORENTO A3 FLYER 2025-2026_compressed.pdf`` (20.1 MB, 36 A3 pages,
+998 codes) on a quiet machine, ``extract_flyer`` alone takes 17 to 18 seconds,
+and the whole POST 40 to 60 seconds on a loaded one. This module used to claim
+"about a second", and that number was the entire justification for doing the
+work in the request - so it is written down here as measured, with what it was
+measured against, rather than as a recollection.
+
+The consequence of getting it wrong was not slowness. The upload handler is
+``async def``, so the read ran ON the loop and one flyer froze its whole worker:
+a ``GET /health`` issued during a read waited **57.5 seconds** on a single
+worker. Production runs four (``gunicorn --workers 4``), which is why it read as
+"the system is jamming" from the uploading desktop and as nothing at all from a
+phone on a different worker. The fix is ``run_in_threadpool`` - the heavy half
+now runs where FastAPI would have run a plain ``def`` handler anyway.
+
+A queue is still the right end state and is deliberately NOT built here: it buys
+a pending row, a polling screen, a failure path and a worker restart per code
+change. Take that decision again when artwork rasterisation lands, on these
+numbers, not on a guess.
 
 **The report is never stored.** It is derived from the stored reading against
 the master, on every read. See ``flyer_reading_service``.
@@ -25,6 +41,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -35,6 +52,7 @@ from app.schemas.dealer_kit import (
     DimensionApplyIn,
     DimensionApplyOut,
     DimensionCandidateOut,
+    FlyerReadingFromAttachmentIn,
     FlyerReadingOut,
     PageHeadingOut,
     FlyerReadingSummary,
@@ -199,6 +217,29 @@ _PROMOTION_ID = Query(
 )
 
 
+def _create_and_detail(
+    db: Session,
+    *,
+    filename: Optional[str],
+    data: bytes,
+    user_id: Optional[str],
+    promotion_id: Optional[UUID],
+) -> FlyerReadingOut:
+    """Store a reading and answer with its report, as ONE unit of blocking work.
+
+    Both halves and not just the extraction, deliberately. The report recompute
+    inside ``_detail`` is a further 0.9 seconds against the real flyer's 998
+    codes, and a handler that moved the extraction off the loop and then ran the
+    report on it would have moved the freeze rather than removed it.
+
+    Every second of this is synchronous: PyMuPDF for the reading, boto for the
+    banners, psycopg for the row. Nothing in here is awaitable, which is exactly
+    why it belongs in a thread.
+    """
+    record = svc.create_reading(db, filename=filename, data=data, user_id=user_id)
+    return _detail(db, record, promotion_id)
+
+
 @router.post(
     "/flyer-readings",
     response_model=FlyerReadingOut,
@@ -210,11 +251,65 @@ async def upload_flyer_reading(
     db: Session = Depends(get_db),
     user: dict = Depends(_EDIT),
 ):
+    """A flyer off the designer's laptop.
+
+    Still ``async def``, and that is the one thing about this route that must not
+    change: ``_read_within_limit`` needs ``await file.read(...)`` to refuse an
+    oversized upload as the bytes arrive rather than after they are all in
+    memory. What changed is everything after that line - it now goes to
+    ``run_in_threadpool``, which is what FastAPI does for a plain ``def`` handler
+    and what this half of the route was never getting.
+
+    The behaviour a caller sees is untouched: same 201, same body, same errors,
+    same wait. What changed is that everybody ELSE keeps being served while it
+    happens. See the module docstring for the 57.5 second measurement that made
+    this necessary.
+    """
     data = await _read_within_limit(file)
-    record = svc.create_reading(
-        db, filename=file.filename, data=data, user_id=_user_id(user)
+    return await run_in_threadpool(
+        _create_and_detail,
+        db,
+        filename=file.filename,
+        data=data,
+        user_id=_user_id(user),
+        promotion_id=promotion_id,
     )
-    return _detail(db, record, promotion_id)
+
+
+@router.post(
+    "/flyer-readings/from-attachment",
+    response_model=FlyerReadingOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def read_flyer_from_attachment(
+    payload: FlyerReadingFromAttachmentIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_EDIT),
+):
+    """A flyer the system is already holding.
+
+    Marketing files the season's flyer in Resource Management long before
+    anybody thinks about the Kit, so the alternative to this route is a designer
+    downloading a 20 MB PDF out of the CRM to upload it straight back in.
+
+    Plain ``def``, so FastAPI runs the whole thing in a thread: it does a storage
+    download and then the same extraction as the upload, and must no more sit on
+    the loop than that one does.
+
+    ``dealer_kit.page.edit``, declared the same way as the upload, so a caller
+    without it gets the same 403 naming the same slug. Nothing about the source
+    of the bytes changes who may read a flyer.
+
+    Everything before ``create_reading`` is in the service, in an order that
+    matters (scope, then type, then size, THEN bytes) - see
+    ``flyer_reading_service.create_reading_from_attachment``. From
+    ``create_reading`` on, the two sources are one code path, which is what makes
+    "indistinguishable once created" true rather than aspirational.
+    """
+    record = svc.create_reading_from_attachment(
+        db, attachment_id=str(payload.attachment_id), user_id=_user_id(user)
+    )
+    return _detail(db, record, payload.promotion_id)
 
 
 @router.get("/flyer-readings", response_model=list[FlyerReadingSummary])

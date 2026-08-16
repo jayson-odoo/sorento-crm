@@ -184,7 +184,7 @@ export function FlyerReadingsList() {
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
             {search
               ? 'Try part of the file name.'
-              : 'Upload a printed flyer as a PDF. The product codes on it are matched against the master, and you review what was found before any brochure is created.'}
+              : 'Read a printed flyer from a PDF - upload one, or pick a flyer already in your files. The product codes on it are matched against the master, and you review what was found before any brochure is created.'}
           </p>
           {!search && (
             <Button className="mt-4" size="sm" onClick={() => setUploadOpen(true)}>

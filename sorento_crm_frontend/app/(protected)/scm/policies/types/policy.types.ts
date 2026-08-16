@@ -111,6 +111,24 @@ export interface PlanningMode {
 
 export type PlanningModeWrite = PlanningMode;
 
+/**
+ * Where a plan row's "use stock" may draw from before it buys.
+ *
+ * > "why am I allowed to use stock from other locations? It is either I use stock from BRW,
+ * >  or buy."
+ *
+ * `own_pool` keeps cover inside the row's own site (its pool); `all_locations` offers every
+ * location that holds spare stock. Global setting, on the same GLOBAL reorder_policy row as
+ * the planning mode.
+ */
+export type CoverScope = 'own_pool' | 'all_locations';
+
+export interface CoverScopeSetting {
+  cover_scope: CoverScope;
+}
+
+export type CoverScopeWrite = CoverScopeSetting;
+
 /** Why a scope link did (or did not) win, for the preview teaching surface. */
 export type ResolutionReason =
   | 'most-specific-active'

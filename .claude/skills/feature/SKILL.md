@@ -143,8 +143,10 @@ first.
 `/tdd` drives this loop. `/implement` may drive a ticket end-to-end **at this
 phase only**, and it calls `/tdd` internally.
 
-Tests land here, never deferred to Phase 3: pytest, vitest, one Playwright E2E
-per user flow (real clicks, FE→BE→DB). Re-verify live against the running stack.
+Tests land here, never deferred to Phase 3: pytest, vitest, and per user flow a
+real-clicks FE→BE→DB walk, but **no new Playwright spec**: a recorded
+agent-browser evidence run stands in, per CLAUDE.md "Persisted Playwright spec".
+Re-verify live against the running stack.
 
 Backend tests run on **Postgres only, never sqlite**.
 

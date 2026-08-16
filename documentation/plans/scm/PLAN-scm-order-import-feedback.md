@@ -1,9 +1,12 @@
 # PLAN - SCM order imports: agents, duplicates, async, standard modal
 
-**Status:** S1 + S2 built (branch `feat/scm-order-import-feedback`, PR #143). S3 + S4 built
-(branch `feat/scm-import-async`, stacked on that one). S5 not started. S6 planned, captain's
-go pending. Contract: `UAC-scm-order-import-feedback.md` (same directory). Captain feedback
-sections 1-6 in `firstmate/data/so-import-feedback/captain-feedback.md`.
+**Status:** S1 to S4 merged to main (PR #143, which absorbed #147). S6 merged to main (PR
+#154, branch `feat/scm-agent-master-ui`); browser pass done. S5 is THIS
+PR - branch `feat/scm-po-spo-history-main`, PR #161; developed stacked on S3 + S4, then
+carried onto main so it stands alone; backend only, pytest green, no browser pass needed -
+the channel has no new screen. Contract: `UAC-scm-order-import-feedback.md` (same
+directory). Captain feedback sections 1-6 in
+`firstmate/data/so-import-feedback/captain-feedback.md`.
 
 **Amendments made while building S3 + S4** (each one is a place the plan as written could not
 be followed, recorded here so the contract and the code agree):
@@ -60,6 +63,180 @@ the contract disagreed, recorded so they agree again).
    shows a diff apply would never make. Precedent: the customer importer refuses both modes
    for the same reason (`order_management/customers.py`).
 
+**Amendments made while building S6** (same rule: each is a place the built code and the
+plan as written disagree, recorded so they agree again).
+
+10. **List + edit modal only; no `[id]` detail page.** The AutoCount mirror surface is a list
+    AND a detail page, and S6 item 2 asks for a modal, so the two cannot both be reproduced.
+    The modal wins (it is what the plan specifies, and two annotation fields do not justify a
+    page). Nothing under `master-data-management/sales-agents/[id]/` is touched, so that
+    branch's detail page merges in as an addition rather than a conflict, and it will find
+    both new columns already on `SalesAgentResponse`. Consequence for the list: the mirror's
+    per-row chevron-to-detail becomes a per-row Edit (pencil) that opens the modal.
+    **What that page imports must therefore still exist here**, or "merges as an addition"
+    is false and the next build breaks: `useSalesAgent` (hooks), `getSalesAgent` (service)
+    and the type name `MirrorAnnotationPayload` are all kept, unused by this slice, for
+    exactly that reason. `SalesAgentAnnotationPayload` is an alias of the same type, so both
+    spellings resolve and no call site has to be renamed on merge. The only edit the merger
+    makes to that page is none: it should compile as it stands.
+11. **Three files are created here that the AutoCount branch also creates**, at the same
+    paths and with the same class names. Two are safe to take either copy of:
+    `app/services/autocount_mirror_service.py` (copied VERBATIM, so it cannot drift) and
+    `app/schemas/autocount_mirror.py` (only the sales-agent classes, since this chain has no
+    other mirror table) - resolve by taking that branch's copy plus the extensions S6 item 3
+    names, all already made here: `person_label` (bounded `max_length=100`, the column's own
+    width) + `demand_class` on `MirrorAnnotationUpdate` AND on `SalesAgentResponse`, and
+    `source` widened to accept `import`. The third is
+    `app/api/v1/master_data/sales_agents.py`, and it is **NOT verbatim**: the docstring is
+    rewritten for the annotation surface and the PATCH handler calls
+    `sales_agent_service.annotate` before the mirror annotate. Take THIS branch's copy of
+    that file; the other differs only in lacking those two things.
+12. **The frontend service uses `buildDataGridParams` + `extractApiError`**, where the mirror
+    page hand-rolls a `URLSearchParams` and throws a bare `Error`. The repo rule
+    (ARCHITECTURE-RULES, and a code-review hard-fail) outranks faithfulness to that file.
+    Same reason the source column renders a plain `Badge` off a label map rather than
+    `AutoCountSourceBadge`, which does not exist on this chain: on merge it becomes a
+    one-line swap to that component. The toolbar's Export is switched OFF rather than
+    carried over: it is selection-gated and this list has no selection column, so the
+    mirror page's `exportConfig` renders a button that can never be pressed.
+13. **`demand_class` is typed as a plain string in the PATCH body, not a `Literal`.** A
+    Literal would answer a word outside the vocabulary with FastAPI's field error, and the
+    thing an admin needs to read is the service's message naming the words the fulfilment
+    policy can weigh. So the body is permissive, `sales_agent_service.assert_demand_class`
+    is the only judge (S6 item 4), and a bad word is a 400 carrying that message. The route's
+    own `MirrorAnnotationUpdate` keeps `extra="forbid"`, so an unknown KEY is still a 422.
+14. **List search is the mirror's two columns (code + description), not widened to
+    `person_label`.** The plan asks for search on the code; keeping the mirror's exact
+    search set is what makes the two branches one page rather than two that look alike.
+15. **The screen's class write does NOT go through `set_demand_class`,** which S6 item 2
+    asked for. That function resolves the agent by CODE, with a `.first()` and no ORDER BY,
+    and the code is unique only PER COMPANY: a shared row (`company_id IS NULL`) and a
+    company-owned row may both spell `SEAN III`, so classifying the row the user clicked
+    could flush the class onto the other one and change the wrong salesperson's whole book.
+    The screen writes the class onto the row it fetched by id. The closed vocabulary still
+    has exactly one judge, `assert_demand_class`, called by both paths;
+    `set_demand_class` remains the code-keyed path importers use. Pinned by
+    `test_the_class_lands_on_the_clicked_row_not_a_namesake`.
+16. **Duplicate-hunk merges with the AutoCount branch: menu keeps THIS branch's entry,
+    registry and router keep one line either way.** The captain ruled (2026-08-15) that
+    Sales Agents lives under **User Management** (after Market Segments), not Product
+    Management, so this branch's menu entry in both arrays of
+    `sorento_crm_frontend/config/menu.config.tsx` is the one to keep; DROP autocount's
+    Product Management placement on merge. The `_crud("master_data", "sales_agents", ...)`
+    line in `app/rbac/permission_registry.py` and the `include_router(sales_agents.router,
+    ...)` line in `app/api/v1/master_data/__init__.py` are identical in both branches: keep
+    one copy of each. A duplicated menu entry renders the page twice in the sidebar; a
+    duplicated `_crud` line seeds nothing twice (the sync is idempotent) but reads as a
+    mistake; a duplicated `include_router` mounts the same routes twice and the second
+    silently shadows the first. The URL stays `/master-data-management/sales-agents` (the
+    merged-surface contract); only the sidebar group moved.
+
+**Amendments made while building S5** (same rule again: each is a place the plan as written
+could not be followed, or a fact the file itself corrected). These were written as 10-20 and
+are **renumbered 17-27** here: S6 merged to main first and took 10-16.
+
+17. **The SPO half lands in `purchase_orders` / `purchase_order_lines`, discriminated by
+    `source_system` (`scm_po_history` / `scm_spo_history`), NOT in `spo_allocations`.** The
+    plan left the landing open ("the same table discriminated by doc family or a sibling
+    table, whichever needs no migration"). `spo_allocations` fails on four counts, each
+    measured rather than argued: (a) it IS the supply read model - `scm.on_order_v` selects
+    from it (migration 337) - so 13,550 history rows would sit one status flag away from
+    becoming netting supply, which is the single thing this channel exists to prevent;
+    (b) `spo_allocations.warehouse_id` is NOT NULL and 578 rows of the captain's book name a
+    location this database does not hold, so those rows would be dropped rather than
+    recorded; (c) every allocation needs an `inbound_shipments` parent (`shipment_date` NOT
+    NULL, unique `shipment_number`), so the import would invent ~1,500 shipments that then
+    appear on the incoming-stock and container-status screens as real containers; (d) the
+    unique key `uk_spo_allocations_spo_number_product_warehouse` forbids the same item twice
+    on one SPO, and the file contains 2,253 such groups, up to 75 rows deep. The purchase
+    tables hold exactly what the file states - a creditor document with dated item lines -
+    and history there is inert by construction (closed line + fully received). **No migration
+    was needed for the landing.** One migration was added, and it is data only: 358 seeds the
+    27 header aliases (AC-1.2).
+18. **Routing by prefix is applied to BOTH file shapes, not only the structured one.** The
+    family is a property of the DOCUMENT (`po_listing_reader.doc_family`), and the banded
+    report carries `SPO-2020/01-0001` too. One definition, so the two readers cannot disagree
+    about which family a number belongs to.
+19. **Nine rows disagree with their `Shipping Order` flag, not ten.** Re-measured on the real
+    file 2026-08-14: 13,641 PO + 13,550 SPO + 1 blank-doc grand-total row = 27,192, and the
+    flag disagrees on nine `######-S####` rows (all flagged `Checked`). The routing reads the
+    prefix, so all nine land as purchase orders.
+20. **`Agent` on this book is NOT a salesperson, so it is not fed to the agent master.** Its
+    values are the creditor's own shorthand (`TAIYANG` against `XIAMEN TAIYANG TECHNOLOGY
+    CO.,LTD`, `CAIZOU` against `CAIZHOU PLUMBING PRODUCTS FITTING CO LTD`). Feeding it to
+    `sales_agent_service` as the outstanding SO reader does would have created 38 factories
+    in the salesperson master S1 built. It is aliased under the history doc type, where it
+    resolves and stops.
+21. **No cost and no currency are read from the structured export.** It carries no unit price
+    at all; its `Standard Price` is the item's standard price rather than what the document
+    paid, and the supplier cost ranking compares what was paid. `unit_cost` therefore stays
+    NULL on the structured half (the banded report still supplies it), and `unmatched_creditors`
+    is reported instead of a supplier being invented: this export names the creditor and never
+    its code, and `suppliers.supplier_code` is unique and NOT NULL.
+22. **Two facts the structured export states that the banded report cannot, and which are now
+    written:** the stock location per line (`purchase_order_lines.warehouse_id`, NULL where the
+    code is unknown - a closed line cannot be mis-placed by it, and the codes are reported),
+    and the sales order per LINE (`FromSODocList`), which becomes an `OrderLinkClaim` that
+    NAMES the item and so resolves to that line rather than to the order's first line. The
+    banded report's `**SO:174830**` notes stay order-level. The claim is per line but it is
+    not per OCCURRENCE: `order_link_service` matches on `(so_number, item_code)`, so where a
+    document names the same item on several rows the claim resolves to ONE of them, chosen
+    by whichever the join returns. The file cannot disambiguate that (the rows differ only by
+    container), so nothing better is available and the claim is still true at the level it is
+    stated: this SO relates to that item on that PO. This is an addition to the plan's three
+    S5 items, taken because the alternative was to alias the only precise SO-to-PO pairing in
+    either export as "deliberately ignored". One existing test moved with it:
+    `test_po_listing_reader.py` asserted the line type had NO `so_number` ATTRIBUTE, which
+    was the mechanism rather than the contract; it now asserts the banded report leaves every
+    one of them UNSET, which is the contract (that report cannot say which line a note
+    describes, and nothing in this change lets it guess).
+23. **Line identity is positional.** The structured export has no line-number column, so the
+    n-th line of a document in file order is its identity - the same rule the outstanding book
+    uses (AC-2.2), and necessary rather than cosmetic: `202301-S0001` names `CB4924-CR` twice
+    on two different containers, so a content key would merge two real lines into one.
+24. **The blank-Doc-No row carries `missing_doc_no`, and caption rows carry `not_a_line`.**
+    The 924 rows with a document and no item code are captions inside a document
+    ("EXTRA LOADING : "); the single row with figures and no document is the export's
+    grand-total. `total_rows == lines + captions + problem rows` is asserted, which is the
+    per-channel `processed == total` invariant (amendment 7) restated for this reader.
+
+**Amendments from the S5 review pass.**
+
+25. **BLOCKER, fixed: the outstanding-PO importer could turn history into supply.**
+    `purchase_orders` has two writers. `outstanding_import_service._closed_line` revives a
+    CLOSED line rather than inserting a second row - correct for its own lines (a line that
+    comes back is the same line, and the receipt booked against it belongs to it) - and it
+    matched on `(header, product, warehouse, expected_date)` with no source guard. S5 is what
+    made that reachable: history lines used to carry NULL warehouse and NULL date, and the
+    structured export states both. The sequence was: history writes `202301-S0001` closed,
+    an outstanding-PO extract names the same document, `_existing_lines` cannot see the
+    closed line so the row reads ADDED, and the revive then sets `line_status='open'` with
+    `qty_ordered = received + incoming` - putting a delivered 2023 purchase into
+    `scm.po_ordered_v` permanently. The guard is a `source_system NOT IN
+    (history stamps)` filter on that one query. The stamps moved to
+    `app/services/scm/history_sources.py` so the feed that must not touch history can
+    recognise it without importing the feed that writes it (`scm_so_history` is listed too:
+    the sales book has the same two-writer shape). Pinned by
+    `test_the_outstanding_book_never_revives_a_history_line`, which fails on all three counts
+    with the guard removed.
+26. **DECISION, accepted not guarded: a history upload rewrites the header of a document
+    number it finds, and SPO numbers now occupy the globally-unique `po_number` namespace.**
+    Two consequences, both accepted deliberately. (a) If a live purchase order carries a
+    number the history book also names, its header (issue date, currency, supplier link) is
+    refreshed from the file - the same behaviour the banded report has had since the channel
+    shipped, and the file is the system of record for what was ordered. The LINES are not at
+    risk: they are keyed per document and the history feed only ever writes closed rows.
+    (b) 13,550 `SPO-...` numbers now exist as `purchase_orders.po_number`, which is unique
+    across the table, so a future feed cannot create a purchase order under an SPO number
+    that history already holds. Both are reversible by narrowing the header write to rows
+    this feed's own `source_system` owns; not done now because the captain's book is history
+    for a closed year, and refusing to refresh a header would leave a partly-imported
+    document that no re-upload could correct.
+27. **The `source_system` split has no READER yet.** The PO list collapses both stamps to
+    "import" (`purchase_order_service._IMPORT_SOURCES`), so today the split is provenance for
+    a future filter ("show me shipping orders") rather than a visible distinction. Noted so
+    the next slice does not assume a screen already reads it.
+
 **S1 + S2 ship the agent data with NO surface on it.** `unmapped_agents` is on both the
 preview and the apply response, and nothing renders it: the FE `OutstandingPreview` type does
 not carry the field, so "new agent, unclassified" (AC-6.4) is true of the API and invisible to
@@ -68,12 +245,13 @@ set only through `sales_agent_service.set_demand_class`, with no admin screen un
 Both gaps are deliberate ordering, not oversights, and each is closed by exactly one slice
 below.
 
-**Deviation, S2/AC-1.2 (PO + SPO history aliases): NOT built.** The 27 header spellings of
-`PO & SPO 2023.xlsx` are recorded nowhere this repo can read - the verified-facts note below
-states the column COUNT, not the names, and the file itself is not in the tree. Seeding
-invented spellings would produce alias rows that match nothing while reading as done, so the
-AC moves to S5, which reads that format and must have the real header row in front of it
-anyway. AC-1.1 (the outstanding-SO file) is built in full.
+**Deviation, S2/AC-1.2 (PO + SPO history aliases): NOT built in S2, CLOSED in S5.** The 27
+header spellings of `PO & SPO 2023.xlsx` were recorded nowhere this repo could read - the
+verified-facts note below stated the column COUNT, not the names - and seeding invented
+spellings would have produced alias rows that match nothing while reading as done. The file
+was measured on 2026-08-14 and S5 seeds all 27 (migration 358, doc type `po_spo_history`),
+alongside the reader that needs them. AC-1.1 (the outstanding-SO file) was built in full in
+S2.
 
 ## Verified facts the plan is built on (do not re-derive)
 
@@ -85,10 +263,15 @@ anyway. AC-1.1 (the outstanding-SO file) is built in full.
 - The reader ALREADY keeps duplicate lines (`result.lines.append` is unconditional); only the
   false RowProblem is emitted. `outstanding_diff.py` already groups by (doc, item, location)
   and pairs exact-date-then-date-order.
-- `PO & SPO 2023.xlsx`: one sheet, 27,192 rows, 27 columns, 13,641 PO (`202...`) + 13,550
-  SPO (`SPO...`). `Shipping Order` flag agrees with the prefix except 10 rows - discriminate
+- `PO & SPO 2023.xlsx`: one sheet, 27,192 data rows, 27 columns, 13,641 PO (`202...`) +
+  13,550 SPO (`SPO...`) + 1 grand-total row with no Doc No. `Shipping Order` flag agrees with
+  the prefix except NINE rows (re-measured 2026-08-14; the plan first said ten) - discriminate
   on the Doc No PREFIX, never the flag (a misfiled row would silently become netting supply,
-  ADR-337).
+  ADR-337). Of the 27,191 rows that name a document, 924 name no item code: they are captions
+  inside a document, not lines. 1,487 distinct documents; 4,239 `(doc, item)` groups repeat,
+  up to 111 rows deep, so line identity cannot be a content key. 100% of its item codes
+  resolve against the catalogue; 15 of its 19 stock locations do; its 51 creditor names carry
+  a trailing `(RMB)` currency marker on some rows and not others.
 - `sales_agents` exists (2 rows, no company_id); `salesman_code_users` exists (0 rows,
   user-FK NOT NULL - wrong shape for a master, leave dormant). **Corrected during S1:** the
   table belongs to the UNMERGED AutoCount branch (`sorento_crm-autocount`, model
@@ -173,7 +356,7 @@ needs a running stack and the captain's own two files
 5. Playwright MCP verification against a real stack, sidebar-first, on the captain's own two
    files. Prod build for handoff.
 
-### S5 - PO/SPO history split (backend, extends the existing history channel)
+### S5 - PO/SPO history split (backend, extends the existing history channel). BUILT
 
 The real header row of `PO & SPO 2023.xlsx`, read from the file on 2026-08-14 (the earlier
 draft of this PLAN recorded only the count, which blocked AC-1.2 in S2; the aliases belong
@@ -189,12 +372,23 @@ IB From SOKey, Import Post, Desc2, Width, Standard Price, FromSODocList`
    route by Doc No prefix - `SPO...` -> SPO history writer, else PO history writer.
 2. SPO history lands closed/fully-received exactly like PO history (this is HISTORY, never
    netting supply - same rule the channel already enforces).
-3. pytest: real-shaped fixture with both families; the 10 flag-disagreeing rows follow the
-   prefix; totals reconcile (13,641 + 13,550 + header = 27,192).
+3. pytest: real-shaped fixture with both families; the flag-disagreeing rows follow the
+   prefix; totals reconcile (13,641 + 13,550 + 1 grand-total row = 27,192).
 
-### S6 - The agent master gets a screen (backend + frontend). PLANNED, NOT STARTED
+**As built.** `app/services/scm/purchase_history_reader.py` is the one entry point:
+`read_purchase_history(file_data, resolver)` looks for a row (within the first five)
+resolving `Doc No` + `Item Code` + `Qty` together, which the banded report never has -
+its `Doc No` is in the header band and its `Item Code` in the line band - and hands the
+bytes to the structured parser or to `read_po_listing` accordingly. Both shapes come back
+as one `PoListingResult`. `po_history_service` routes each order on
+`po_listing_reader.doc_family` and stamps `SOURCE_SYSTEM` / `SPO_SOURCE_SYSTEM`; the write
+is otherwise the one it already performed, which is what keeps "closed and fully received"
+a single rule rather than two. Migration 358 seeds the 27 headers under doc type
+`po_spo_history` (replayed by `bootstrap_env`). See amendments 17-24.
 
-Captain's go pending. Everything above assumes the client fills in `demand_class` on 38 rows,
+### S6 - The agent master gets a screen (backend + frontend). BUILT, except the browser pass
+
+Everything above assumes the client fills in `demand_class` on 38 rows,
 and today the only way to do that is `sales_agent_service.set_demand_class` from a Python
 shell. So the classification the whole of AC-3 is built on cannot actually be entered, and
 S1's honest report ("this agent carries no demand class") points the operator at a screen that
@@ -230,6 +424,20 @@ Deliberately MINIMAL - a list and an edit of the two annotation columns, not a C
    a `source='import'` row serialises. vitest: the select offers exactly the two classes plus
    clear, and saving invalidates the list.
 
+**What shipped.** Backend: `app/api/v1/master_data/sales_agents.py` (list, detail,
+`PATCH /{id}/annotation`) mounted at `/api/v1/master-data/sales-agents` in
+`app/api/v1/master_data/__init__.py`, gated `master_data.sales_agents.view` / `.edit` (four
+slugs added to `app/rbac/permission_registry.py`, created by the startup `sync_permissions`);
+`app/schemas/autocount_mirror.py`, `app/services/autocount_mirror_service.py`, and
+`sales_agent_service.annotate`, which writes the class (guarded by `assert_demand_class`)
+and the label onto the fetched row in the same transaction. Frontend:
+`app/(protected)/master-data-management/sales-agents/` (page, list, edit modal, hook,
+service, demand-class vocabulary) plus the sidebar entry under User Management in both
+menu blocks (moved there from Product Management on the captain's call, amendment 16).
+Tests: `tests/test_sales_agents_master_api.py` (16) and three vitest files (16). Browser
+pass done with agent-browser on a prod build: sidebar entry between Market Segments and
+Account, list of 40 rows, modal save and clear both round-trip to the DB.
+
 ## Sequencing note
 
 S1 and S2 are one PR (agent + classification are the same story). S3 + S4 are one PR (async
@@ -248,3 +456,9 @@ Each PR: tests in-phase, browser verification for S4, `/code-review` before hand
   in the allowlist; acceptable for a master table, recorded in the migration docstring.
 - The demand-class map ships empty: until the captain fills it, SO375073-class documents keep
   reporting unclassified. That is the designed behaviour, not a failure.
+- **S6's list is unscoped by company.** Correct today (every row is `company_id IS NULL`, a
+  shared master, and `sales_agents` is deliberately not `CompanyScopedMixin` - the mixin's
+  auto-filter would hide the whole master). The day a company-OWNED row exists, this page is
+  where cross-company visibility first appears: one company's admin would see, and be able to
+  classify, another's agent. The route is the place to add the scope filter, and the namesake
+  test (amendment 15) is the seam that already builds such a row.

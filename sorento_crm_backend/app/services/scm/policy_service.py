@@ -42,6 +42,7 @@ from app.services.scm.analytics_service import (
     _supplier_policy,
     ensure_policy_defaults,
 )
+from app.services.scm.reorder_policy import DEFAULT_COVER_SCOPE
 from app.services.scm.reorder_engine import (
     DEFAULT_LEAD_TIME_DAYS,
     DEFAULT_SUPPLIER_SELECTION,
@@ -83,7 +84,7 @@ _ROW_SELECT = """
            rp.dead_stock_days, rp.overstock_days, rp.min_override, rp.max_override,
            rp.factor_toggles, rp.is_active, rp.priority,
            rp.trajectory_window_retail_months, rp.trajectory_window_project_months,
-           rp.price_stale_after_days, rp.price_movement_threshold_pct,
+           rp.price_stale_after_days, rp.price_movement_threshold_pct, rp.cover_scope,
            p.product_code, p.product_name, pc.category_name, pc.category_code
     FROM scm.reorder_policy rp
     LEFT JOIN products p
@@ -147,6 +148,9 @@ def _serialize(m) -> dict:
         "trajectory_window_project_months": _i(m["trajectory_window_project_months"]),
         "price_stale_after_days": _i(m["price_stale_after_days"]),
         "price_movement_threshold_pct": _f(m["price_movement_threshold_pct"]),
+        # A row written before the column existed reads as the row's own site. NULL must
+        # never surface as "the whole network" - that is the behaviour the knob ends.
+        "cover_scope": m["cover_scope"] or DEFAULT_COVER_SCOPE,
     }
 
 
@@ -321,6 +325,9 @@ def update_policy(db: Session, policy_id: str, body: ReorderPolicyWrite) -> dict
         "trajectory_window_project_months=:trajectory_window_project_months, "
         "price_stale_after_days=:price_stale_after_days, "
         "price_movement_threshold_pct=:price_movement_threshold_pct, "
+        # cover_scope is deliberately NOT in this SET list: it is a global setting owned by
+        # PUT /scm/config/cover-scope, and writing it from here reset it to the schema
+        # default on every unrelated policy save.
         "updated_at=now() WHERE id=:id"
     ), params)
     db.commit()
