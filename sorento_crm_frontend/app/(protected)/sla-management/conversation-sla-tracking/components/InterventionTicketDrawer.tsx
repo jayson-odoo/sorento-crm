@@ -37,7 +37,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import RespondChatList from '@/components/common/RespondChatList';
 import InternalCommentComposer from '@/components/common/conversation/InternalCommentComposer';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
-import { excerptOfMessage } from '@/components/common/conversation/quotedReply';
 import { useConversationEvents } from '@/components/common/conversation/useConversationEvents';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -111,9 +110,6 @@ export default function InterventionTicketDrawer({
   onSent,
   onReassigned,
 }: InterventionTicketDrawerProps) {
-  const [replyTo, setReplyTo] = useState<{ messageId: string | number | null; excerpt: string } | null>(
-    null,
-  );
   const [confirmResolve, setConfirmResolve] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   // Same slug the worklist row's Reassign is gated on (AC-B3 / AC-N7).
@@ -181,10 +177,9 @@ export default function InterventionTicketDrawer({
   const commentMutation = useCreateTicketComment(ticketId ?? '');
   const aiDraftMutation = useDraftInterventionTicketReply(ticketId ?? '');
 
-  // A different ticket means a different enquiry: never carry a quote across,
-  // and never carry comment mode into someone else's conversation.
+  // A different ticket means a different enquiry: never carry comment mode
+  // into someone else's conversation.
   useEffect(() => {
-    setReplyTo(null);
     setComposerMode('reply');
   }, [ticketId]);
 
@@ -226,366 +221,363 @@ export default function InterventionTicketDrawer({
   const historyHref = contactHistoryHref(ticket?.respond_io_id ?? ticket?.contact_phone);
 
   return (
-    <>
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent
-          side="right"
-          className="flex w-full flex-col gap-3 overflow-y-auto p-4 sm:max-w-xl sm:p-6"
-        >
-          <SheetHeader className="pe-8">
-            <div className="flex flex-wrap items-center gap-2">
-              <SheetTitle className="min-w-0 break-words">
-                {ticket?.contact_name ?? (ticketQuery.isLoading ? 'Loading enquiry…' : 'Enquiry')}
-              </SheetTitle>
-              {isResolved && (
-                <Badge
-                  variant="success"
-                  appearance="light"
-                  size="sm"
-                  data-testid="ticket-resolved-badge"
-                >
-                  <CheckCircle2 className="size-3" />
-                  Resolved
-                </Badge>
-              )}
-            </div>
-            <SheetDescription className="text-xs">
-              {ticket?.contact_phone ?? 'Enquiry'}
-            </SheetDescription>
-          </SheetHeader>
-
-          {/* ---- AC-N5: every ticket action lives here, in the header.
-                  They used to sit in a footer under the composer, where they
-                  crowded the toolbar and competed with the global assistant
-                  launcher for the same corner. Own row rather than beside the
-                  title: the sheet's close button owns the top-right corner. ---- */}
-          <div
-            data-testid="ticket-header-actions"
-            className="flex flex-wrap items-center gap-2 border-b pb-3"
-          >
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-3 overflow-y-auto p-4 sm:max-w-xl sm:p-6"
+      >
+        <SheetHeader className="pe-8">
+          <div className="flex flex-wrap items-center gap-2">
+            <SheetTitle className="min-w-0 break-words">
+              {ticket?.contact_name ?? (ticketQuery.isLoading ? 'Loading enquiry…' : 'Enquiry')}
+            </SheetTitle>
             {isResolved && (
-              <p
-                className="me-auto text-xs text-muted-foreground"
-                data-testid="ticket-resolved-at"
-              >
-                Resolved {ticket?.resolved_at ? formatDateTimeInMalaysia(ticket.resolved_at) : ''}
-              </p>
-            )}
-            {/* AC-M2: the one-click path back to the full trail for this contact,
-                offered exactly when the ticket has just left the pending list. */}
-            {isResolved && (
-              <Button variant="outline" size="sm" asChild data-testid="ticket-history-link">
-                <Link href={historyHref}>
-                  <History className="size-4" />
-                  View history
-                </Link>
-              </Button>
-            )}
-            {/* AC-N7: the same dialog the worklist row opens, never a fork. */}
-            {canReassign && (
-              <Button
-                variant="outline"
+              <Badge
+                variant="success"
+                appearance="light"
                 size="sm"
-                className={isResolved ? '' : 'ms-auto'}
-                data-testid="ticket-reassign"
-                disabled={isResolved || reassignMutation.isPending}
-                onClick={() => setReassignOpen(true)}
+                data-testid="ticket-resolved-badge"
               >
-                <UserRoundCog className="size-4" />
-                Reassign
-              </Button>
+                <CheckCircle2 className="size-3" />
+                Resolved
+              </Badge>
             )}
+          </div>
+          <SheetDescription className="text-xs">
+            {ticket?.contact_phone ?? 'Enquiry'}
+          </SheetDescription>
+        </SheetHeader>
+
+        {/* ---- AC-N5: every ticket action lives here, in the header.
+                They used to sit in a footer under the composer, where they
+                crowded the toolbar and competed with the global assistant
+                launcher for the same corner. Own row rather than beside the
+                title: the sheet's close button owns the top-right corner. ---- */}
+        <div
+          data-testid="ticket-header-actions"
+          className="flex flex-wrap items-center gap-2 border-b pb-3"
+        >
+          {isResolved && (
+            <p
+              className="me-auto text-xs text-muted-foreground"
+              data-testid="ticket-resolved-at"
+            >
+              Resolved {ticket?.resolved_at ? formatDateTimeInMalaysia(ticket.resolved_at) : ''}
+            </p>
+          )}
+          {/* AC-M2: the one-click path back to the full trail for this contact,
+              offered exactly when the ticket has just left the pending list. */}
+          {isResolved && (
+            <Button variant="outline" size="sm" asChild data-testid="ticket-history-link">
+              <Link href={historyHref}>
+                <History className="size-4" />
+                View history
+              </Link>
+            </Button>
+          )}
+          {/* AC-N7: the same dialog the worklist row opens, never a fork. */}
+          {canReassign && (
             <Button
               variant="outline"
               size="sm"
-              className={isResolved || canReassign ? '' : 'ms-auto'}
-              disabled={!ticket?.can_resolve || isResolved}
-              onClick={() => setConfirmResolve(true)}
+              className={isResolved ? '' : 'ms-auto'}
+              data-testid="ticket-reassign"
+              disabled={isResolved || reassignMutation.isPending}
+              onClick={() => setReassignOpen(true)}
             >
-              <CheckCircle2 className="size-4" />
-              Resolve ticket
+              <UserRoundCog className="size-4" />
+              Reassign
             </Button>
-          </div>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className={isResolved || canReassign ? '' : 'ms-auto'}
+            disabled={!ticket?.can_resolve || isResolved}
+            onClick={() => setConfirmResolve(true)}
+          >
+            <CheckCircle2 className="size-4" />
+            Resolve ticket
+          </Button>
+        </div>
 
-          <SheetBody className="flex min-h-0 flex-1 flex-col gap-3 py-0">
-            {/* ---- Enquiry reference: what this ticket is actually about ---- */}
-            {ticketQuery.isLoading ? (
-              <Skeleton className="h-24 w-full" />
-            ) : ticketQuery.isError ? (
-              <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                <AlertCircle className="mt-0.5 size-4 shrink-0" />
-                <div className="min-w-0">
-                  <p>
-                    {ticketQuery.error instanceof Error
-                      ? ticketQuery.error.message
-                      : 'Failed to load this ticket.'}
-                  </p>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="mt-2 h-7"
-                    onClick={() => void ticketQuery.refetch()}
-                  >
-                    Try again
-                  </Button>
-                </div>
+        <SheetBody className="flex min-h-0 flex-1 flex-col gap-3 py-0">
+          {/* ---- Enquiry reference: what this ticket is actually about ---- */}
+          {ticketQuery.isLoading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : ticketQuery.isError ? (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <div className="min-w-0">
+                <p>
+                  {ticketQuery.error instanceof Error
+                    ? ticketQuery.error.message
+                    : 'Failed to load this ticket.'}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 h-7"
+                  onClick={() => void ticketQuery.refetch()}
+                >
+                  Try again
+                </Button>
               </div>
-            ) : ticket ? (
-              <div className="rounded-md border bg-muted/30 p-3">
-                {/* AC-N6: the quote is the way INTO the thread. Clicking it
-                    scrolls to the message that started this ticket, fetching
-                    the surrounding page first when the reader has scrolled
-                    past it. Only a button when there is a message to reach. */}
-                {ticket.source_message_id ? (
-                  <button
-                    type="button"
-                    data-testid="enquiry-quote-jump"
-                    aria-label="Show this message in the conversation"
-                    onClick={() => thread.jumpToMessage(ticket.source_message_id)}
-                    className="flex w-full items-start gap-2 rounded text-start transition-colors hover:bg-black/5 dark:hover:bg-white/10"
-                  >
-                    <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 whitespace-pre-wrap break-words text-sm">
-                      {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
-                    </span>
-                  </button>
-                ) : (
-                  <div className="flex items-start gap-2">
-                    <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                    <p className="min-w-0 whitespace-pre-wrap break-words text-sm">
-                      {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
-                    </p>
-                  </div>
-                )}
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1">
-                    <Users className="size-3" />
-                    {ticket.team_label ?? 'Unassigned team'}
+            </div>
+          ) : ticket ? (
+            <div className="rounded-md border bg-muted/30 p-3">
+              {/* AC-N6: the quote is the way INTO the thread. Clicking it
+                  scrolls to the message that started this ticket, fetching
+                  the surrounding page first when the reader has scrolled
+                  past it. Only a button when there is a message to reach. */}
+              {ticket.source_message_id ? (
+                <button
+                  type="button"
+                  data-testid="enquiry-quote-jump"
+                  aria-label="Show this message in the conversation"
+                  onClick={() => thread.jumpToMessage(ticket.source_message_id)}
+                  className="flex w-full items-start gap-2 rounded text-start transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+                >
+                  <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 whitespace-pre-wrap break-words text-sm">
+                    {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
                   </span>
-                  <span>Requested {formatDateTimeInMalaysia(ticket.initiated_at)}</span>
-                  {ticket.policy_name && <span>{ticket.policy_name}</span>}
-                </div>
-                <TicketSlaChips
-                  className="mt-2"
-                  dueAt={ticket.due_at}
-                  dueAtResolution={ticket.due_at_resolution}
-                  isResponded={ticket.is_responded}
-                  respondedAt={ticket.responded_at}
-                  currentTier={ticket.current_tier}
-                  escalatedAt={ticket.escalated_at}
-                />
-                {ticket.escalated_at && ticket.escalation_reason && (
-                  <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
-                    {ticket.escalation_reason}
+                </button>
+              ) : (
+                <div className="flex items-start gap-2">
+                  <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <p className="min-w-0 whitespace-pre-wrap break-words text-sm">
+                    {ticket.source_message_text?.trim() || 'No enquiry text captured.'}
                   </p>
-                )}
-              </div>
-            ) : null}
-
-            {/* ---- The shared contact thread ---- */}
-            {threadQuery.isLoading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
-              </div>
-            ) : threadQuery.isError ? (
-              <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                <AlertCircle className="mt-0.5 size-4 shrink-0" />
-                <div className="min-w-0">
-                  <p>
-                    {threadQuery.error instanceof Error
-                      ? threadQuery.error.message
-                      : 'Failed to load the conversation.'}
-                  </p>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="mt-2 h-7"
-                    onClick={() => void threadQuery.refetch()}
-                  >
-                    Try again
-                  </Button>
                 </div>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <Users className="size-3" />
+                  {ticket.team_label ?? 'Unassigned team'}
+                </span>
+                <span>Requested {formatDateTimeInMalaysia(ticket.initiated_at)}</span>
+                {ticket.policy_name && <span>{ticket.policy_name}</span>}
               </div>
-            ) : (
-              <>
-                {threadQuery.data?.error && (
-                  <p className="text-xs text-muted-foreground">{threadQuery.data.error}</p>
-                )}
-                {thread.error && <p className="text-xs text-destructive">{thread.error}</p>}
-                <RespondChatList
-                  items={thread.items}
-                  contactName={ticket?.contact_name}
-                  contactPhone={ticket?.contact_phone}
-                  emptyHint="No messages in this conversation yet."
-                  maxHeightClass="max-h-[45vh]"
-                  highlightMessageId={ticket?.source_message_id}
-                  highlightLabel="This enquiry"
-                  onLoadOlder={thread.loadOlder}
-                  hasMoreOlder={thread.hasMoreOlder}
-                  isLoadingOlder={thread.isLoadingOlder}
-                  atConversationStart={thread.atConversationStart}
-                  isDetached={thread.isDetached}
-                  onJumpToLatest={thread.jumpToLatest}
-                  newerUnseenCount={thread.newerUnseenCount}
-                  onLoadNewer={thread.loadNewer}
-                  hasMoreNewer={thread.hasMoreNewer}
-                  isLoadingNewer={thread.isLoadingNewer}
-                  searchController={thread.search}
-                  highlightTerm={thread.highlightTerm}
-                  focusMessageId={thread.focusMessageId}
-                  focusNonce={thread.focusNonce}
-                  comments={commentsQuery.data ?? []}
-                  mediaProxy={mediaProxy}
-                  onReply={(item) =>
-                    setReplyTo({ messageId: item.messageId ?? null, excerpt: excerptOfMessage(item) })
-                  }
-                />
-              </>
-            )}
+              <TicketSlaChips
+                className="mt-2"
+                dueAt={ticket.due_at}
+                dueAtResolution={ticket.due_at_resolution}
+                isResponded={ticket.is_responded}
+                respondedAt={ticket.responded_at}
+                currentTier={ticket.current_tier}
+                escalatedAt={ticket.escalated_at}
+              />
+              {ticket.escalated_at && ticket.escalation_reason && (
+                <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                  {ticket.escalation_reason}
+                </p>
+              )}
+            </div>
+          ) : null}
 
-            {/* ---- Mode switch: message the contact, or note to the team ---- */}
-            {ticket && (
-              <div
-                role="tablist"
-                aria-label="Composer mode"
-                className="flex w-full gap-1 rounded-md border bg-muted/40 p-1"
-              >
-                {(['reply', 'comment'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="tab"
-                    aria-selected={composerMode === mode}
-                    data-testid={`composer-mode-${mode}`}
-                    onClick={() => setComposerMode(mode)}
-                    className={cn(
-                      'flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors',
-                      composerMode === mode
-                        ? mode === 'comment'
-                          ? 'bg-amber-500 text-white shadow-sm'
-                          : 'bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    {mode === 'reply' ? 'Reply' : 'Comment'}
-                  </button>
-                ))}
+          {/* ---- The shared contact thread ---- */}
+          {threadQuery.isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : threadQuery.isError ? (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <div className="min-w-0">
+                <p>
+                  {threadQuery.error instanceof Error
+                    ? threadQuery.error.message
+                    : 'Failed to load the conversation.'}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 h-7"
+                  onClick={() => void threadQuery.refetch()}
+                >
+                  Try again
+                </Button>
               </div>
-            )}
-
-            {/* ---- Composer: text + attachments, quoted reply emulated ---- */}
-            {ticket && composerMode === 'comment' && (
-              <InternalCommentComposer
-                disabled={ticket.is_resolved}
-                disabledMessage="This ticket is resolved."
-                onSubmit={({ body, mentionedUserIds }) =>
-                  commentMutation.mutateAsync({
-                    body,
-                    mentioned_user_ids: mentionedUserIds,
-                  })
-                }
+            </div>
+          ) : (
+            <>
+              {threadQuery.data?.error && (
+                <p className="text-xs text-muted-foreground">{threadQuery.data.error}</p>
+              )}
+              {thread.error && <p className="text-xs text-destructive">{thread.error}</p>}
+              <RespondChatList
+                items={thread.items}
+                contactName={ticket?.contact_name}
+                contactPhone={ticket?.contact_phone}
+                emptyHint="No messages in this conversation yet."
+                maxHeightClass="max-h-[45vh]"
+                highlightMessageId={ticket?.source_message_id}
+                highlightLabel="This enquiry"
+                onLoadOlder={thread.loadOlder}
+                hasMoreOlder={thread.hasMoreOlder}
+                isLoadingOlder={thread.isLoadingOlder}
+                atConversationStart={thread.atConversationStart}
+                isDetached={thread.isDetached}
+                onJumpToLatest={thread.jumpToLatest}
+                newerUnseenCount={thread.newerUnseenCount}
+                onLoadNewer={thread.loadNewer}
+                hasMoreNewer={thread.hasMoreNewer}
+                isLoadingNewer={thread.isLoadingNewer}
+                searchController={thread.search}
+                highlightTerm={thread.highlightTerm}
+                focusMessageId={thread.focusMessageId}
+                focusNonce={thread.focusNonce}
+                comments={commentsQuery.data ?? []}
+                mediaProxy={mediaProxy}
               />
-            )}
+            </>
+          )}
 
-            {ticket && composerMode === 'reply' && (
-              <SharedConversationComposer
-                entityType="conversation_sla"
-                entityId={ticket.id}
-                canReply={ticket.can_send && !ticket.is_resolved}
-                mode="conversation"
-                attachmentsEnabled={ticket.send_capabilities.includes('attachment')}
-                // A manual template send is a reply too: stamp THIS ticket, or
-                // the response clock runs on while the contact has an answer.
-                templateSendTrackingId={ticket.id}
-                // Composer parity with Respond's own inbox (UAC AC-L4 / AC-L5).
-                // Snippet variables resolve against THIS ticket, and the AI
-                // draft is grounded on THIS thread - both server-side, so the
-                // drawer only has to say which ticket it is.
-                snippetsEnabled
-                snippetTrackingId={ticket.id}
-                emojiEnabled
-                onAiAssist={async ({ instruction }) => {
-                  const result = await aiDraftMutation.mutateAsync({ instruction });
-                  return result.draft;
-                }}
-                onSent={() => {
-                  void ticketQuery.refetch();
-                  void threadQuery.refetch();
-                  onSent?.();
-                }}
-                replyTo={replyTo}
-                onClearReplyTo={() => setReplyTo(null)}
-                windowStateOverride={{
-                  closed: !ticket.window.open,
-                  template: ticket.chat_template,
-                }}
-                sendAdapter={(payload) =>
-                  sendMutation.mutateAsync({
-                    text: payload.text,
-                    attachments: payload.files,
-                    reply_to_message_id:
-                      payload.replyToMessageId != null ? String(payload.replyToMessageId) : null,
-                    reply_to_excerpt: payload.replyToExcerpt ?? null,
-                  })
-                }
-                notAvailableMessage={
-                  ticket.is_resolved
-                    ? 'This ticket is resolved.'
-                    : 'Replying is not available for this contact.'
-                }
-              />
-            )}
-          </SheetBody>
-        </SheetContent>
-      </Sheet>
-
-      <ReassignDialog
-        open={reassignOpen}
-        onOpenChange={setReassignOpen}
-        taskLabel={ticket?.contact_name ? `this enquiry from ${ticket.contact_name}` : null}
-        submitting={reassignMutation.isPending}
-        onConfirm={(userId) => {
-          if (!ticketId) return;
-          reassignMutation.mutate(
-            { id: ticketId, userId },
-            {
-              onSuccess: () => {
-                setReassignOpen(false);
-                // The viewer may no longer be able to act on it: re-read the
-                // ticket so the composer and the actions say so.
-                void ticketQuery.refetch();
-                onReassigned?.();
-              },
-            },
-          );
-        }}
-      />
-
-      <AlertDialog open={confirmResolve} onOpenChange={setConfirmResolve}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Mark as resolved</AlertDialogTitle>
-            <AlertDialogDescription>
-              This stops the SLA clock for this enquiry only. Other open enquiries from{' '}
-              {ticket?.contact_name ?? 'this contact'} stay open. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={resolveMutation.isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                handleResolve();
-              }}
-              disabled={resolveMutation.isPending}
+          {/* ---- Mode switch: message the contact, or note to the team ---- */}
+          {ticket && (
+            <div
+              role="tablist"
+              aria-label="Composer mode"
+              className="flex w-full gap-1 rounded-md border bg-muted/40 p-1"
             >
-              {resolveMutation.isPending ? 'Resolving…' : 'Confirm'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+              {(['reply', 'comment'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  role="tab"
+                  aria-selected={composerMode === mode}
+                  data-testid={`composer-mode-${mode}`}
+                  onClick={() => setComposerMode(mode)}
+                  className={cn(
+                    'flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors',
+                    composerMode === mode
+                      ? mode === 'comment'
+                        ? 'bg-amber-500 text-white shadow-sm'
+                        : 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {mode === 'reply' ? 'Reply' : 'Comment'}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ---- Composer: text + attachments ---- */}
+          {ticket && composerMode === 'comment' && (
+            <InternalCommentComposer
+              disabled={ticket.is_resolved}
+              disabledMessage="This ticket is resolved."
+              onSubmit={({ body, mentionedUserIds }) =>
+                commentMutation.mutateAsync({
+                  body,
+                  mentioned_user_ids: mentionedUserIds,
+                })
+              }
+            />
+          )}
+
+          {ticket && composerMode === 'reply' && (
+            <SharedConversationComposer
+              entityType="conversation_sla"
+              entityId={ticket.id}
+              canReply={ticket.can_send && !ticket.is_resolved}
+              mode="conversation"
+              attachmentsEnabled={ticket.send_capabilities.includes('attachment')}
+              // A manual template send is a reply too: stamp THIS ticket, or
+              // the response clock runs on while the contact has an answer.
+              templateSendTrackingId={ticket.id}
+              // Composer parity with Respond's own inbox (UAC AC-L4 / AC-L5).
+              // Snippet variables resolve against THIS ticket, and the AI
+              // draft is grounded on THIS thread - both server-side, so the
+              // drawer only has to say which ticket it is.
+              snippetsEnabled
+              snippetTrackingId={ticket.id}
+              emojiEnabled
+              onAiAssist={async ({ instruction }) => {
+                const result = await aiDraftMutation.mutateAsync({ instruction });
+                return result.draft;
+              }}
+              onSent={() => {
+                void ticketQuery.refetch();
+                void threadQuery.refetch();
+                onSent?.();
+              }}
+              windowStateOverride={{
+                closed: !ticket.window.open,
+                template: ticket.chat_template,
+              }}
+              sendAdapter={(payload) =>
+                sendMutation.mutateAsync({
+                  text: payload.text,
+                  attachments: payload.files,
+                })
+              }
+              notAvailableMessage={
+                ticket.is_resolved
+                  ? 'This ticket is resolved.'
+                  : 'Replying is not available for this contact.'
+              }
+            />
+          )}
+        </SheetBody>
+
+        {/* ---- Both of these live INSIDE the Sheet, not after it.
+                Radix decides "did the user click outside me?" by walking the
+                REACT tree, not the DOM (portalled content still bubbles to its
+                React parent). Rendered as siblings of <Sheet>, every pointerdown
+                in the reassign dialog or its dropdown read as an outside click on
+                the drawer, which dismissed it: the panel visibly dropped away and
+                `ticketId` went null, so the Reassign button then did nothing. ---- */}
+        <ReassignDialog
+          open={reassignOpen}
+          onOpenChange={setReassignOpen}
+          taskLabel={ticket?.contact_name ? `this enquiry from ${ticket.contact_name}` : null}
+          submitting={reassignMutation.isPending}
+          onConfirm={(userId) => {
+            if (!ticketId) return;
+            reassignMutation.mutate(
+              { id: ticketId, userId },
+              {
+                onSuccess: () => {
+                  setReassignOpen(false);
+                  // The viewer may no longer be able to act on it: re-read the
+                  // ticket so the composer and the actions say so.
+                  void ticketQuery.refetch();
+                  onReassigned?.();
+                },
+              },
+            );
+          }}
+        />
+
+        <AlertDialog open={confirmResolve} onOpenChange={setConfirmResolve}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Mark as resolved</AlertDialogTitle>
+              <AlertDialogDescription>
+                This stops the SLA clock for this enquiry only. Other open enquiries from{' '}
+                {ticket?.contact_name ?? 'this contact'} stay open. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={resolveMutation.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleResolve();
+                }}
+                disabled={resolveMutation.isPending}
+              >
+                {resolveMutation.isPending ? 'Resolving…' : 'Confirm'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </SheetContent>
+    </Sheet>
   );
 }
