@@ -9,18 +9,35 @@ access matrix and per-field ACL rows. They now require
 `user_management.teams.view` or `user_management.access_agents.view` via
 `Depends(require_permission(...))`.
 
+A follow-up change resolved the plan's deferred Q1, Q2 and Q3 the same way,
+taking the gated total to 24: the eight `contacts` GETs now require the newly
+registered `user_management.contacts.view`, the two cross-module reference
+catalogs (`contact-access-types/`, `market-segments/`) require the equally new,
+deliberately low-privilege `user_management.reference_data.view`, and the full
+settings blob requires `user_management.settings.view`. The two new slugs are
+registered AND granted by migration `359_um_contacts_reference_perms` - a slug
+with no grant path would 403 the feature it was meant to protect. That grant is
+exercised against the migration itself in
+tests/test_migration_359_um_contacts_reference_perms.py.
+
 Structure:
 
-* Work item 3 (UAC1.1-1.3, 2.1-2.2, 3.1-3.2) - one 403 + one 200 per gated route,
-  table-driven.
+* Work item 3 (UAC1.1-1.3, 2.1-2.2, 3.1-3.2, 6a.2, 6c.2) - one 403 + one 200 per
+  gated route, table-driven. 23 of the 24 gated routes live in that table; the
+  24th, `GET /settings/`, needs a seeded settings singleton and is covered
+  alongside its `/app-config` sibling in tests/test_settings_app_config_gate.py.
 * UAC2.3 - the field-access 403 fires before any field-access row is read.
 * Work item 4 (UAC4.1-4.3) - structural coverage: every GET in the seven
   user-management files carries a permission dependency or sits in a commented
   exception allowlist, so a route added tomorrow without a gate fails this test.
-* Work item 5 (UAC3.3, 5.1, 5.2) - the three documented exceptions stay exactly
-  as documented: the active-only contact-access-types catalog is NOT gated, the
-  quick-access read is self-scoped, and the contacts/companies read is gated
-  in the handler body rather than by dependency.
+* Work item 5 (UAC3.3, 5.1, 5.2) - the documented exceptions stay exactly as
+  documented: the quick-access read is self-scoped, and the contacts/companies
+  read is gated in the handler body rather than by dependency. The active-only
+  contact-access-types catalog was a third exception until Q3 was decided; its
+  test now pins the reference-data gate that replaced it, including the negative
+  that matters most (UAC6c.4): holding `access_agents.view` does NOT open the
+  reference catalogs, so the low-privilege slug cannot be quietly collapsed back
+  into the admin one.
 
 Dependency-override + `allow`-set monkeypatch pattern copied from
 tests/test_user_respond_users_permission.py (PR #168).
@@ -37,7 +54,14 @@ from app.api.v1.user_management import router as user_management_router
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.main import app
-from app.models.access import AccessAgent, ContactAccessType, Team, TeamMember
+from app.models.access import (
+    AccessAgent,
+    ContactAccessType,
+    MarketSegment,
+    RespondContact,
+    Team,
+    TeamMember,
+)
 from app.models.base import set_company_scope
 from app.models.user import User, UserQuickAccess, UserStatus
 from app.services.company_scope_resolver import apply_company_scope
@@ -46,6 +70,8 @@ from tests._pg_fixture import blank_session, unique_code
 
 TEAMS_VIEW = "user_management.teams.view"
 ACCESS_AGENTS_VIEW = "user_management.access_agents.view"
+CONTACTS_VIEW = "user_management.contacts.view"
+REFERENCE_DATA_VIEW = "user_management.reference_data.view"
 
 
 @pytest.fixture
@@ -150,6 +176,33 @@ def _seed_contact_access_type(db) -> str:
     return code
 
 
+def _seed_contact(db) -> str:
+    """A respond contact of our own. `phone_number` is UNIQUE NOT NULL on
+    Postgres, so it carries the marker rather than a borrowed real number."""
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=unique_code("phone"),
+        name="ZZT Contact",
+    )
+    db.add(contact)
+    db.flush()
+    return str(contact.id)
+
+
+def _seed_market_segment(db) -> str:
+    code = unique_code("seg").lower().replace("-", "_")[:50]
+    row = MarketSegment(
+        id=str(uuid.uuid4()),
+        code=code,
+        name="ZZT Segment",
+        is_active=True,
+        sort_order=0,
+    )
+    db.add(row)
+    db.flush()
+    return code
+
+
 # --------------------------------------------------------------- work item 3
 
 
@@ -224,21 +277,91 @@ def _contact_access_type_route_specs(db):
     ]
 
 
+def _contacts_route_specs(db):
+    """UAC6a.2 - the eight contacts GETs, all on `user_management.contacts.view`.
+
+    Every 200 check asserts a SHAPE, or a row this test seeded itself; none
+    asserts a count or an identity off whatever the database happened to hold,
+    because CI's database holds nothing.
+    """
+    contact_id = _seed_contact(db)
+    base = "/api/v1/user-management/contacts"
+    return [
+        ("GET /contacts/",
+            f"{base}/",
+            CONTACTS_VIEW,
+            lambda r: contact_id in {row["id"] for row in r.json()["data"]}),
+        ("GET /contacts/{id}",
+            f"{base}/{contact_id}",
+            CONTACTS_VIEW,
+            lambda r: r.json()["id"] == contact_id),
+        ("GET /contacts/cs-routing/candidates",
+            f"{base}/cs-routing/candidates",
+            CONTACTS_VIEW,
+            lambda r: isinstance(r.json()["candidates"], list)),
+        # `use_case` is a REQUIRED query param - without it the route 422s before
+        # the gate is proven either way, so the 403 case needs it too.
+        ("GET /contacts/cs-routing/fields",
+            f"{base}/cs-routing/fields?use_case=purchase_request",
+            CONTACTS_VIEW,
+            lambda r: isinstance(r.json()["fields"], list)),
+        ("GET /contacts/{id}/cs-routing",
+            f"{base}/{contact_id}/cs-routing",
+            CONTACTS_VIEW,
+            lambda r: r.json()["pins"] == []),
+        ("GET /contacts/{id}/market-segments",
+            f"{base}/{contact_id}/market-segments",
+            CONTACTS_VIEW,
+            lambda r: r.json()["codes"] == []),
+        ("GET /contacts/{id}/attachment-types",
+            f"{base}/{contact_id}/attachment-types",
+            CONTACTS_VIEW,
+            lambda r: {"data", "granted_ids"} <= set(r.json())),
+        ("GET /contacts/{id}/access-agents",
+            f"{base}/{contact_id}/access-agents",
+            CONTACTS_VIEW,
+            lambda r: "data" in r.json() and "pagination" in r.json()),
+    ]
+
+
+def _reference_data_route_specs(db):
+    """UAC6c.2 - the two cross-module reference catalogs, on the deliberately
+    low-privilege `user_management.reference_data.view`."""
+    access_type_code = _seed_contact_access_type(db)
+    segment_code = _seed_market_segment(db)
+    return [
+        ("GET /contact-access-types/",
+            "/api/v1/user-management/contact-access-types/",
+            REFERENCE_DATA_VIEW,
+            lambda r: access_type_code in {row["code"] for row in r.json()}),
+        ("GET /market-segments/",
+            "/api/v1/user-management/market-segments/",
+            REFERENCE_DATA_VIEW,
+            lambda r: segment_code in {row["code"] for row in r.json()}),
+    ]
+
+
 def _all_route_specs(db):
     return (
         _team_route_specs(db)
         + _access_agent_route_specs(db)
         + _contact_access_type_route_specs(db)
+        + _contacts_route_specs(db)
+        + _reference_data_route_specs(db)
     )
 
 
 class TestPerRouteGates:
-    """UAC1.1-1.3, 2.1-2.2, 3.1-3.2: one 403 + one 200 per gated route."""
+    """UAC1.1-1.3, 2.1-2.2, 3.1-3.2, 6a.2, 6c.2: one 403 + one 200 per gated route."""
 
     @pytest.fixture(autouse=True)
     def _specs(self, db):
         self.specs = _all_route_specs(db)
-        assert len(self.specs) == 13, "one entry per gated route named in the plan's audit table"
+        # 24 routes are gated; 23 are in this table. `GET /settings/` is the
+        # twenty-fourth and lives in tests/test_settings_app_config_gate.py,
+        # where the settings singleton is seeded with non-null sensitive values
+        # so its 200 body and its /app-config sibling can be asserted together.
+        assert len(self.specs) == 23, "one entry per gated route except GET /settings/"
 
     def test_denied_without_permission(self, api):
         client, allow, _caller = api
@@ -304,34 +427,34 @@ _PLAN_PATH = "documentation/plans/security/PLAN-user-management-read-gates.md"
 # `get_contact_access_agents` names two different handlers: the gated one at
 # `/access-agents/{agent_id}/contact-access` and this deferred one at
 # `/contacts/{contact_id}/access-agents`; a name-keyed map would conflate them).
+#
+# Q1 (the eight `contacts` GETs), Q2 (`GET /settings/`) and Q3 (the two reference
+# catalogs) have since been decided - gate them - so their thirteen entries are
+# gone from here and into the gated set below, on `user_management.contacts.view`,
+# `user_management.settings.view` and `user_management.reference_data.view`
+# respectively.
 _EXCEPTION_ALLOWLIST: dict[str, str] = {
-    # --- Q1: no `user_management.contacts.view` slug exists yet; the screen is
-    # reachable by all 125 assigned users via the topbar Apps dropdown with no
-    # menu-level filter, so gating on any user_management.* slug would silently
-    # narrow access rather than mechanically preserve it. See Q1, PLAN_PATH.
-    "/api/v1/user-management/contacts/": "Q1 deferred - " + _PLAN_PATH,
-    "/api/v1/user-management/contacts/cs-routing/candidates": "Q1 deferred - " + _PLAN_PATH,
-    "/api/v1/user-management/contacts/cs-routing/fields": "Q1 deferred - " + _PLAN_PATH,
-    "/api/v1/user-management/contacts/{contact_id}": "Q1 deferred - " + _PLAN_PATH,
-    "/api/v1/user-management/contacts/{contact_id}/access-agents": "Q1 deferred - " + _PLAN_PATH,
-    "/api/v1/user-management/contacts/{contact_id}/attachment-types": "Q1 deferred - " + _PLAN_PATH,
-    "/api/v1/user-management/contacts/{contact_id}/cs-routing": "Q1 deferred - " + _PLAN_PATH,
-    "/api/v1/user-management/contacts/{contact_id}/market-segments": "Q1 deferred - " + _PLAN_PATH,
     # --- Already gated, but in the handler body (`_require_superadmin`) rather
     # than a dependency - UAC5.2 asserts this still bites.
     "/api/v1/user-management/contacts/{contact_id}/companies": (
         "gated in-body via _require_superadmin, not a dependency - see UAC5.2"
     ),
-    # --- Q2: leaks n8n webhook URLs, SMTP config, default-approver identities and
-    # role ids, but is also read by procurement screens under a role with none of
-    # the candidate user_management.* slugs - gating would be a silent narrowing,
-    # not a pure fix. See Q2, PLAN_PATH.
-    "/api/v1/user-management/settings/": "Q2 deferred - " + _PLAN_PATH,
-    # --- Q3: cross-module reference catalogs consumed by ~10 marketing / forms /
-    # resource-management / master-data screens under roles holding zero
-    # user_management.* grants. See Q3, PLAN_PATH.
-    "/api/v1/user-management/market-segments/": "Q3 deferred - " + _PLAN_PATH,
-    "/api/v1/user-management/contact-access-types/": "Q3 deferred - " + _PLAN_PATH,
+    # --- Q2 is RESOLVED, and this is the half of the resolution that stays
+    # ungated. The full blob at `/settings/` - n8n webhook URLs, SMTP config,
+    # default-approver identities, every role id - is now gated on
+    # `user_management.settings.view`. This six-field projection (currency,
+    # currency_format and the four default-approver id/email fields) is what kept
+    # the three non-admin consumers working: `useCurrencyFormat`,
+    # `use-excel-accept` and `PurchaseRequestDetail` run under procurement roles
+    # holding no `user_management.*` slug at all, so they read the projection
+    # instead. Its `response_model` is what makes "nothing sensitive is in here"
+    # enforceable rather than aspirational, and
+    # tests/test_settings_app_config_gate.py seeds every sensitive column non-null
+    # before asserting the six keys, so the suppression is proven, not assumed.
+    # See UAC6b.2 / UAC6b.3 / UAC6d.2 and Q2 in _PLAN_PATH.
+    "/api/v1/user-management/settings/app-config": (
+        "narrow six-field projection, auth-only by design - see the route docstring"
+    ),
     # --- Self-scoped: filters on `user_id == current_user["id"]`, discloses
     # nothing about anyone else, and fires on every page load for every user
     # from the app shell (a gate would 403 users with no pin/unpin grant).
@@ -389,8 +512,10 @@ def _is_gated(route) -> bool:
 
 class TestStructuralCoverage:
     def test_there_are_user_management_get_routes_to_check(self):
-        # UAC4.2's whole point breaks if this is vacuously empty. 26 is the real
-        # count (13 gated + 13 exceptions) at the time this test was written.
+        # UAC4.2's whole point breaks if this is vacuously empty. 27 is the real
+        # count - 13 gated + 13 exceptions when written; 24 gated + 3 exceptions
+        # once Q1, Q2 and Q3 were decided (Q2 also added /settings/app-config,
+        # the one new GET in the set).
         assert len(_mounted_get_routes()) >= 20
 
     def test_every_get_route_is_gated_or_explicitly_excepted(self):
@@ -403,12 +528,17 @@ class TestStructuralCoverage:
             ungated_unexplained.append(route.path)
         assert not ungated_unexplained, (
             "GET route(s) with neither a permission dependency nor an allowlist "
-            f"entry - a new ungated route (UAC4.2): {ungated_unexplained}"
+            f"entry - a new ungated route (UAC4.2): {ungated_unexplained}. Gate it "
+            f"or add it to _EXCEPTION_ALLOWLIST with a reason; see {_PLAN_PATH}"
         )
 
-    def test_gated_routes_match_the_thirteen_named_in_the_plan(self):
+    def test_gated_routes_match_the_twenty_four_named_in_the_plan(self):
+        """The plan's audit table (13) plus the Q1, Q2 and Q3 decisions (8
+        contacts GETs + the settings blob + 2 reference catalogs). An exact set,
+        not a count: a route that loses its gate fails here even if another route
+        gains one."""
         gated_paths = {r.path for r in _mounted_get_routes() if _is_gated(r)}
-        assert len(gated_paths) == 13
+        assert len(gated_paths) == 24
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",
@@ -423,6 +553,21 @@ class TestStructuralCoverage:
             "/api/v1/user-management/access-agents/{agent_id}/contact-access",
             "/api/v1/user-management/contact-access-types/all",
             "/api/v1/user-management/contact-access-types/{code}",
+            # --- Q1 decided: user_management.contacts.view
+            "/api/v1/user-management/contacts/",
+            "/api/v1/user-management/contacts/cs-routing/candidates",
+            "/api/v1/user-management/contacts/cs-routing/fields",
+            "/api/v1/user-management/contacts/{contact_id}",
+            "/api/v1/user-management/contacts/{contact_id}/access-agents",
+            "/api/v1/user-management/contacts/{contact_id}/attachment-types",
+            "/api/v1/user-management/contacts/{contact_id}/cs-routing",
+            "/api/v1/user-management/contacts/{contact_id}/market-segments",
+            # --- Q2 decided: user_management.settings.view (the narrow
+            # /settings/app-config projection stays open - see the allowlist)
+            "/api/v1/user-management/settings/",
+            # --- Q3 decided: user_management.reference_data.view
+            "/api/v1/user-management/contact-access-types/",
+            "/api/v1/user-management/market-segments/",
         }
 
     def test_allowlist_entries_all_carry_an_inline_reason(self):
@@ -430,6 +575,16 @@ class TestStructuralCoverage:
         assert len(_EXCEPTION_ALLOWLIST) <= 15
         for path, reason in _EXCEPTION_ALLOWLIST.items():
             assert reason and reason.strip(), f"{path} has no reason on record"
+
+    def test_allowlist_is_exactly_the_three_documented_exceptions(self):
+        """UAC6d.1 - the allowlist shrank to exactly these three once Q1-Q3 were
+        decided. Pinned as a set, not a count, so "one route left the allowlist
+        and another quietly joined it" cannot net out to green."""
+        assert set(_EXCEPTION_ALLOWLIST) == {
+            "/api/v1/user-management/quick-access/",
+            "/api/v1/user-management/contacts/{contact_id}/companies",
+            "/api/v1/user-management/settings/app-config",
+        }
 
     def test_allowlist_paths_are_actually_mounted_and_ungated(self):
         # Guards the allowlist itself from rotting into a list of stale/typo'd
@@ -446,17 +601,66 @@ class TestStructuralCoverage:
 # --------------------------------------------------------------- work item 5
 
 
-def test_contact_access_types_active_catalog_stays_ungated(api):
-    """UAC3.3 (REG) - the active-only catalog answers 200 for a caller holding
-    ZERO user_management.* permissions, pinning the documented exception so it
-    cannot silently rot into a gate."""
+_REFERENCE_CATALOG_URLS = (
+    "/api/v1/user-management/contact-access-types/",
+    "/api/v1/user-management/market-segments/",
+)
+
+
+def test_reference_catalogs_take_the_low_privilege_slug_not_the_admin_one(api):
+    """UAC6c.4 - the negative that stops the low-privilege slug being collapsed.
+
+    Q3 decided: the two shared catalogs are gated, but on `reference_data.view`,
+    NOT on the `access_agents.view` their admin siblings use. That distinction is
+    the whole point of the new slug - the ~10 cross-module consumers (promotions,
+    forms, files, trash, attachments, brands, products) run under
+    `marketing_manager` / `marketing_executive`, which hold ZERO
+    `user_management.*` grants, so gating on `access_agents.view` would have
+    broken a picker on pages those roles are fully entitled to.
+
+    So the assertion that matters is the asymmetric one: a caller holding
+    `access_agents.view` and nothing else is DENIED. If someone later "tidies"
+    the two slugs into one, the 200/403 pair for `reference_data.view` alone
+    would still pass - this is the case that would not.
+    """
     client, allow, _caller = api
-    assert allow == set()
 
-    resp = client.get("/api/v1/user-management/contact-access-types/")
+    for url in _REFERENCE_CATALOG_URLS:
+        allow.clear()
+        allow.add(ACCESS_AGENTS_VIEW)
+        denied = client.get(url)
+        assert denied.status_code == 403, (
+            f"{url}: a caller holding only {ACCESS_AGENTS_VIEW} got "
+            f"{denied.status_code} - the reference slug has been collapsed into "
+            "the admin one"
+        )
+        assert REFERENCE_DATA_VIEW in denied.json()["detail"]
 
-    assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
+        allow.clear()
+        allow.add(REFERENCE_DATA_VIEW)
+        resp = client.get(url)
+        assert resp.status_code == 200, f"{url}: {resp.status_code} ({resp.text})"
+        assert isinstance(resp.json(), list)
+
+
+def test_contacts_gets_deny_a_caller_holding_only_the_neighbouring_slugs(api, db):
+    """The mirror of the test above, for Q1. `contacts.view` is its own slug: a
+    caller holding `access_agents.view` + `teams.view` - the two slugs the
+    contacts DETAIL screen's other panels read - still cannot read the contact
+    directory. Names and phone numbers are the payload; adjacency to the screen
+    is not entitlement to them."""
+    client, allow, _caller = api
+    contact_id = _seed_contact(db)
+
+    allow.clear()
+    allow.update({ACCESS_AGENTS_VIEW, TEAMS_VIEW})
+    for url in (
+        "/api/v1/user-management/contacts/",
+        f"/api/v1/user-management/contacts/{contact_id}",
+    ):
+        resp = client.get(url)
+        assert resp.status_code == 403, f"{url}: {resp.status_code} ({resp.text})"
+        assert CONTACTS_VIEW in resp.json()["detail"]
 
 
 def test_quick_access_is_self_scoped(db):
@@ -510,3 +714,32 @@ def test_contacts_companies_denies_non_superadmin(db):
 
     assert resp.status_code == 403
     assert "Superadmin" in resp.text
+
+
+def test_contacts_companies_was_not_grazed_by_the_contacts_view_gate(api, db):
+    """UAC6a.5 - `/contacts/{id}/companies` sits between eight sibling GETs that
+    all took `Depends(require_permission("user_management.contacts.view"))` in
+    one pass of line-targeted edits. It must NOT have picked one up: its gate is
+    the in-body `_require_superadmin`, which is strictly stronger, and a
+    dependency in front of it would have quietly downgraded a superadmin-only
+    read to a directory-read.
+
+    Two halves, and both matter. A caller holding `contacts.view` is still 403'd
+    (so no dependency short-circuited to allow), and the denial still comes from
+    the superadmin check rather than from a permission dependency (so the reason
+    is the one documented, not a coincidence).
+    """
+    client, allow, _caller = api
+    contact_id = _seed_contact(db)
+    url = f"/api/v1/user-management/contacts/{contact_id}/companies"
+
+    allow.clear()
+    allow.add(CONTACTS_VIEW)
+    resp = client.get(url)
+
+    assert resp.status_code == 403, f"{resp.status_code} ({resp.text})"
+    assert "Superadmin" in resp.text
+    assert CONTACTS_VIEW not in resp.text, (
+        "the denial came from a permission dependency, not from _require_superadmin - "
+        "this route was grazed by the contacts.view pass"
+    )

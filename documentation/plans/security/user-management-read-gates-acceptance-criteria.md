@@ -75,11 +75,78 @@ family as `GET /users/me`. A test asserts user A's pins are not visible to user 
 UAC5.2 - `GET /contacts/{contact_id}/companies` needs no new dependency: it already calls
 `_require_superadmin` in the handler body. A test asserts a non-superadmin gets denied.
 
-## Item 6 - deferred, NOT in this PR
+## Item 6 - escalated groups Q1-Q3, decided and now IN this PR
 
-UAC6.1 - The `contacts` router GETs, `GET /settings/`, `GET /market-segments/` and
-`GET /contact-access-types/` are named in the PR body with the concrete screen and role that
-blocks a mechanical answer, and are NOT silently gated or silently widened.
+The four route groups below were escalated rather than guessed, because each had a frontend caller
+under a role holding no candidate slug. The decision came back "gate them", with the grant sets
+recorded in the plan. These ACs cover that second wave.
+
+### Item 6a - Q1, the contacts directory
+
+UAC6a.1 - `user_management.contacts.view` is registered in `app/rbac/permission_registry.py`.
+UAC6a.2 - **Given** a caller WITHOUT it, **when** it calls any of the 8 contacts GETs (`/`,
+`/{id}`, `/cs-routing/candidates`, `/cs-routing/fields`, `/{id}/cs-routing`,
+`/{id}/market-segments`, `/{id}/attachment-types`, `/{id}/access-agents`), **then** each returns
+403 naming the slug; **with** it, each returns 200.
+UAC6a.3 - A migration registers the slug AND explicitly grants it to `admin`, `superadmin`,
+`director`, `warehouse_manager` and the three `integration_*` roles. Registering without granting
+is the failure mode migration 298's docstring warns about, so the grant is the AC, not the
+registration.
+UAC6a.4 - The migration is idempotent, skips a role absent from the database with a log line rather
+than crashing, and leaves `alembic heads` reporting exactly ONE head. Revision id is <= 32 chars.
+UAC6a.5 - `GET /contacts/{contact_id}/companies` is NOT given a dependency; it keeps its in-body
+`_require_superadmin` gate (UAC5.2 still holds).
+UAC6a.6 - The orphan `user_management.contacts.edit` row in the prod DB is **not deleted** and is
+flagged in the PR body.
+
+### Item 6b - Q2, settings
+
+UAC6b.1 - **Given** a caller WITHOUT `user_management.settings.view`, **then** `GET /settings/`
+returns 403; **with** it, 200 and the body is unchanged from today.
+UAC6b.2 - `GET /settings/app-config` returns 200 for a caller holding ZERO permissions.
+UAC6b.3 (REG - SECURITY) - **Given** a `system_settings` row seeded with recognisable non-null
+values in `smtp_*`, the three `n8n_*` webhook URLs and the health notify id fields, **when**
+`/app-config` is read, **then** the response keys are EXACTLY the six documented fields and none of
+those sensitive keys appear. Seeding the sensitive values first is what makes this prove
+suppression rather than pass on an empty row.
+UAC6b.4 - `/app-config` answers correctly when no `system_settings` row exists.
+UAC6b.5 (REG) - The three procurement consumers move onto `/app-config` and keep working for
+`purchasing_manager` / `project_sales_manager`: currency formatting still renders, the PR-detail
+default approver is still offered when sending an approval link, and the Excel accept hook still
+yields its default. No silent degradation.
+UAC6b.6 - Every moved consumer is **rekeyed** off `['system-settings']`. That key is shared with
+the settings admin layout, which still fetches the full blob; leaving a moved consumer on it would
+let react-query serve one shape where the other is expected.
+UAC6b.7 - `hooks/use-excel-accept.ts` behaviour is byte-identical: it reads a field that is not a
+column on `SystemSetting` and never has been, so it has always returned `DEFAULT_ACCEPT`. The field
+is NOT added to the projection or the model.
+
+### Item 6c - Q3, reference data
+
+UAC6c.1 - `user_management.reference_data.view` is registered.
+UAC6c.2 - **Given** a caller WITHOUT it, **then** `GET /contact-access-types/` and
+`GET /market-segments/` return 403; **with** it, 200.
+UAC6c.3 - The same migration grants it to every role holding at least one of
+`forms.forms.view`, `marketing.promotions.view`, `master_data.brands.view`,
+`master_data.products.view`, `resource.attachments.view`, `resource.attachment_directories.view`,
+`resource.attachment_types.view` - **derived in SQL from those slugs**, not hardcoded by role name.
+UAC6c.4 (REG) - The ~10 consuming screens outside user-management (promotions, forms, files, trash,
+attachments, brands, products) keep working for `marketing_manager` and `marketing_executive`, who
+hold zero `user_management.*` grants otherwise. This is the whole reason the slug is new and
+low-privilege rather than reusing `access_agents.view`.
+
+### Item 6d - coverage stays honest
+
+UAC6d.1 - `_EXCEPTION_ALLOWLIST` in the structural test ends as exactly three entries -
+`GET /quick-access/`, `GET /contacts/{contact_id}/companies` and `GET /settings/app-config` - and
+the gated-path assertion is updated from 13 to the new exact set of 24. No assertion is weakened to
+make it pass. The allowlist is itself pinned by a set-equality test, so "one entry left and another
+joined" cannot net out green. (Drafted as two entries before the Q2 projection route existed;
+`app-config` is the third by UAC6d.2.)
+UAC6d.2 - `GET /settings/app-config` is either gated or allowlisted with its reason, like every
+other GET in scope - a new ungated route must not be introduced by the fix for an ungated route.
+
+UAC6.1 (superseded) - the four groups above are no longer deferred; they are gated here.
 UAC6.2 - The 40 ungated WRITE routes in the same seven files are recorded as a follow-up issue,
 with the list, and referenced from the PR body. This PR is read-gates only. **Filed as issue #174.**
 

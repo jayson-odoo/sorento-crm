@@ -20,15 +20,13 @@ def _service(db: Session) -> ContactAccessTypeService:
     return ContactAccessTypeService(db)
 
 
-# Deliberately stays on `get_current_user`, unlike the admin reads below. This is a
-# cross-module reference catalog: ~10 screens outside user-management (marketing
-# promotions, forms, resource-management files/trash/attachments, master-data brands
-# and products) read it under roles that hold zero `user_management.*` grants, so any
-# `user_management.*` slug here breaks them. Pending a decision - see Q3 in
-# `documentation/plans/security/PLAN-user-management-read-gates.md`. Do not "fix".
+# Takes the low-privilege `reference_data.view` slug rather than the
+# `access_agents.view` used by the admin reads below, precisely so the cross-module
+# consumers (marketing promotions, forms, resource-management files, master-data
+# brands and products) keep working without an `access_agents.view` grant.
 @router.get("/", response_model=list)
 async def list_contact_access_types(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.reference_data.view")),
     db: Session = Depends(get_db),
 ):
     """List active contact access types for use in access_levels (promotions, attachments). Returns [{code, name, description, sort_order}]."""

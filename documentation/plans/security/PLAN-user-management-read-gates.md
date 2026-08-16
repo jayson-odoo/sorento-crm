@@ -68,20 +68,73 @@ case and are gated on `access_agents.view` for the same reason - they return acc
 and the fact that an ungated screen happens to call them is the ungated screen's defect, tracked
 as Q1 below, not a reason to leave ACL rows world-readable.
 
+### Gated after escalation (Q1-Q3 decisions, see below)
+
+| # | Route | Returns | Slug applied |
+|---|---|---|---|
+| 14 | `GET /contacts/` | full respond-contact directory (names, phone numbers) | `user_management.contacts.view` |
+| 15 | `GET /contacts/{contact_id}` | one contact | `user_management.contacts.view` |
+| 16 | `GET /contacts/cs-routing/candidates` | tier-1 CS team member roster | `user_management.contacts.view` |
+| 17 | `GET /contacts/cs-routing/fields` | routable predicate field metadata | `user_management.contacts.view` |
+| 18 | `GET /contacts/{contact_id}/cs-routing` | a salesman's CS-PIC pins | `user_management.contacts.view` |
+| 19 | `GET /contacts/{contact_id}/market-segments` | a contact's segment codes | `user_management.contacts.view` |
+| 20 | `GET /contacts/{contact_id}/attachment-types` | document types a contact may retrieve | `user_management.contacts.view` |
+| 21 | `GET /contacts/{contact_id}/access-agents` | which agents may see this contact | `user_management.contacts.view` |
+| 22 | `GET /settings/` | full settings blob (n8n webhook URLs, SMTP, roles list) | `user_management.settings.view` |
+| 23 | `GET /contact-access-types/` | active access-type catalog | `user_management.reference_data.view` |
+| 24 | `GET /market-segments/` | market segment catalog | `user_management.reference_data.view` |
+
+Plus one new route, `GET /settings/app-config`, authenticated but deliberately ungated - the narrow
+projection that keeps the procurement consumers working once row 22 is gated.
+
 ### Documented exceptions - deliberately NOT gated
 
 | Route | Returns | Why not gated |
 |---|---|---|
 | `GET /quick-access/` | the caller's own pinned menu entries | Self-scoped: the query filters `user_id == current_user["id"]`, so it discloses nothing about anyone else - the same family as `GET /users/me` and `GET /users/me/permissions`, which are also `get_current_user`. It also fires on every page load for every user from the app shell (`quick-access-block.tsx:34`, `menu-item-pin-button.tsx:24`), and in both components the `useQuickAccess()` call sits ABOVE the permission bail-out, so a gate would 403 on every page render for every user without pin/unpin. The sibling POST/PATCH/DELETE are correctly gated on `menu.quick_access.pin` / `.unpin`; the read needs no equivalent. |
 | `GET /contacts/{contact_id}/companies` | companies granted to a contact | Already gated, in the handler body: it calls `_require_superadmin(db, current_user)` before doing anything. Adding a dependency would be a second, weaker gate. Covered by a test so the in-body check cannot be dropped unnoticed. |
+| `GET /settings/app-config` (new) | `currency`, `currency_format`, and the four default-approver id/email fields | Authenticated-only by design. It is the projection that lets the procurement consumers keep working now that the full blob is gated, so a permission on it would defeat its own purpose. What makes that safe is the pydantic `response_model`: six declared fields, and anything not declared is dropped on serialization rather than leaking because a dict builder grew a line. Its test seeds the SMTP, n8n webhook and health-notify fields with recognisable values first, so it proves suppression rather than passing on an empty row. |
 
-### Deferred - needs a decision above the implementation seat
+### Q1-Q3 - escalated, decided, and now gated in this PR
 
-Listed here rather than gated, per the brief's rule against silently widening a grant. Each has a
-frontend caller running under a role that lacks any candidate slug, so there is no mechanical
-answer.
+These three groups each had a frontend caller running under a role holding no candidate slug, so
+there was no mechanical answer and the grant set was a product call rather than an engineering one.
+They were escalated rather than guessed. **All three came back "gate them"**, with the grant sets
+below. The problem statements are kept verbatim because they are the reasoning the decision was
+made against.
 
-| Q | Routes | The problem |
+Resolution summary:
+
+- **Q1 - gate the 8 contacts GETs.** New slug `user_management.contacts.view`, granted to `admin`,
+  `superadmin`, `director`, `warehouse_manager` and the three `integration_*` roles. The orphan
+  `user_management.contacts.edit` row found in the prod DB is **left in place, not deleted**, and is
+  flagged in the PR body: it has no repo reference and no grant path, and removing a live permission
+  row is not this PR's call to make.
+- **Q2 - gate `GET /settings/` on `user_management.settings.view`, and add a narrow projection**
+  `GET /settings/app-config` (authenticated, no permission) carrying exactly `currency`,
+  `currency_format` and the four default-approver id/email fields. The three procurement consumers
+  move onto it in this PR, so `purchasing_manager` and `project_sales_manager` keep working with no
+  silent degradation. Nothing sensitive is in the projection, and its `response_model` is what makes
+  that enforceable rather than aspirational.
+- **Q3 - gate both reference reads on a new low-privilege slug** `user_management.reference_data.view`,
+  granted to every role that already holds a view permission for one of the consuming screens
+  (`forms.forms.view`, `marketing.promotions.view`, `master_data.brands.view`,
+  `master_data.products.view`, `resource.attachments.view`, `resource.attachment_directories.view`,
+  `resource.attachment_types.view`). That resolves to `admin`, `superadmin`, `director`,
+  `warehouse_manager`, `warehouse_executive`, `marketing_manager`, `marketing_executive`,
+  `purchasing_manager`, `purchasing_executive` and the three `integration_*` roles. The migration
+  derives that set in SQL from the seven slugs rather than hardcoding role names, so an install with
+  a different role set gets the right answer. Net effect: the two catalogs are no longer readable by
+  any authenticated caller, and no consuming screen breaks.
+
+One correction the Q2 investigation turned up: of the "three consumers" that made gating
+`GET /settings/` risky, only two were ever functional. `hooks/use-excel-accept.ts` reads
+`settings.excel_upload_accept_extensions`, which **is not a column on the `SystemSetting` model and
+never has been**, and the hook already returns `DEFAULT_ACCEPT` on any non-2xx. It is moved onto the
+projection for hygiene (so it stops issuing a request that would now 403 on every import dialog),
+but its behaviour is unchanged and the field is deliberately not added.
+
+| Q | Routes | The problem as escalated |
 |---|---|---|
 | Q1 | `GET /contacts/` and the 7 other `contacts` GETs (`/{id}`, `/{id}/cs-routing`, `/cs-routing/candidates`, `/cs-routing/fields`, `/{id}/market-segments`, `/{id}/attachment-types`, `/{id}/access-agents`) | There is no `user_management.contacts.view` slug in `app/rbac/permission_registry.py` - the contacts resource only has `.portal_link`. (The prod DB additionally carries an orphan `user_management.contacts.edit`, created 2026-08-14, with no reference anywhere in the repo - not usable as precedent.) Registering a new slug is mechanical; deciding who gets granted it is not. Migration `298_external_integration_permissions` is explicit that a new permission reaches no existing role automatically, so the grant set must be chosen deliberately or the feature 403s for everyone but admin. Today the screen is reachable by all 125 assigned users via the topbar Apps dropdown, so "grant it to whoever uses it now" is not an answer. |
 | Q2 | `GET /settings/` | Leaks `n8n_attachment_webhook_url`, `n8n_crm_chat_outbound_webhook_url`, `n8n_stock_inquiry_revise_webhook_url` (bearer-capability URLs), SMTP host/port/username/from, both default-approver names + emails, `health_notify_role_ids`/`_user_ids`, and every role id and name. `smtp_password` is correctly withheld. But gating on `user_management.settings.view` is not a pure narrowing: `hooks/useCurrencyFormat.ts`, `hooks/use-excel-accept.ts` and `PurchaseRequestDetail.tsx:316` read it from procurement screens gated on `procurement.purchase_requests.view`. The first two degrade silently to defaults; the PR-detail approver default would disappear. |
@@ -114,7 +167,15 @@ from the PR body.
 
 ## Behaviour changes beyond the 403
 
-- **The 13 gated routes now reject `X-API-Key` principals.** `require_permission` wraps
+- **A fifth, dead frontend reader of the full blob was found and deleted.**
+  `sorento_crm_frontend/lib/db.ts` held `getSettings()`, which read the full settings endpoint. It
+  had zero callers, as did its only sibling export `isUnique`, so the whole 44-line module went
+  rather than half of it. Verified before deleting: no import of `lib/db`, `./db` or any specifier
+  ending in `/db` anywhere in the frontend, and neither of its own imports (`SystemSetting`,
+  `apiFetch`) was orphaned by the removal. `tsc --noEmit` output is byte-identical before and after
+  (26 pre-existing errors in unrelated scm/products/prompts files, unchanged), and `lib/` lost 3
+  pre-existing `no-unused-vars` errors that lived in the deleted file.
+- **All 24 gated routes now reject `X-API-Key` principals.** `require_permission` wraps
   `get_current_user`, not `get_current_user_or_api_key`, so an automation calling these paths with
   a key rather than a bearer token gets 401 where it previously got 200. Verified safe: no caller
   exists in `sorento_crm_mcp/`, in backend internal HTTP calls, or in any n8n workflow or doc -
@@ -122,7 +183,7 @@ from the PR body.
   (`respond_sync_handler.py:106`, `ai_assistant_service.py:3217`). It also matches the `users.py`
   precedent, where the gated reads use the same dependency. Named here because it is a real
   behaviour change that the audit table's slug column does not convey. Routes that genuinely need
-  key access use `require_permission_with_api_key`; none of these 13 do.
+  key access use `require_permission_with_api_key`; none of these 24 do.
 - **`teams.py` had malformed indentation on exactly the four lines this PR targets** (six spaces
   before `current_user:` instead of four, on all four GET handlers, and on its write handlers too).
   A small tell that these handlers were hand-edited and skipped when the rest of the package was
@@ -144,6 +205,39 @@ stashing the change, re-running, and re-applying:
   `test_agent_field_access_endpoint.py` and `test_market_segment_routing.py::test_member_segment_assignment_endpoints`.
   Each overrides `get_current_user` but never stubs `UserPermissionService.check_user_has_permission`,
   so the new dependency denies. Repaired by granting the slug in the fixture - never by loosening a gate.
+
+## Simplicity audit
+
+Checked against the standing principle: build the simplest thing that solves the problem end to
+end; no new abstraction, indirection or knob unless the direct path is proven inadequate and the
+proof is nameable. Three pieces of this PR add something, and each has to earn it:
+
+- **`user_management.reference_data.view` (new slug).** The direct path was reusing
+  `user_management.access_agents.view`, which the external surface already maps this resource to.
+  Proven inadequate: `marketing_manager` and `marketing_executive`, 18 users, hold zero
+  `user_management.*` grants, and the catalog is read by ~10 screens across promotions, forms,
+  files, trash, attachments, brands and products. That slug would 403 all of them. The proof is the
+  role-grant query, not a preference.
+- **`GET /settings/app-config` (new route).** The direct path was gating `GET /settings/` and
+  accepting the consequences. Proven inadequate: `useCurrencyFormat` and `PurchaseRequestDetail`
+  read it from screens gated on `procurement.purchase_requests.view`, held by roles with no
+  settings grant, so the PR-detail default approver would silently vanish. Kept as narrow as it can
+  be: six fields, pinned by a `response_model` rather than a hand-built dict, no config, no knob.
+- **The structural coverage test.** Not new machinery: it copies the shape of the existing
+  `tests/test_external_permission_coverage.py`. It exists because this PR is itself the second
+  round of "someone missed a route" (PR #168 was the first), so the failure mode is proven, not
+  hypothetical.
+
+Deliberately NOT added, having considered them: no per-resource permission helper, no decorator
+wrapper over `require_permission`, no settings-projection config, no feature flag to stage the
+gates, and no "floor" of admin roles hardcoded into the reference-data grant (an earlier draft had
+one; it was removed because deriving the set in SQL already covers every install that has a role
+able to open the consuming screens).
+
+Deleted rather than kept: `sorento_crm_frontend/lib/db.ts`, a 44-line module whose two exports
+(`isUnique`, `getSettings`) both had zero callers repo-wide. `getSettings` read the full settings
+blob this PR just gated, so leaving it would have left a dead reader of a newly gated endpoint
+looking like a live consumer somebody missed.
 
 ## Risks
 
