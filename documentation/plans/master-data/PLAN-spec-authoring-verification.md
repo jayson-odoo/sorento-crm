@@ -14,7 +14,9 @@ pills) implemented on `fm/spec-pr2-editable-table`, 2026-08-15: AC-A.1 to AC-A.1
 AC-C.4, Phase 1 then Phase 2, with **AC-A.16 (the Playwright e2e spec) outstanding** - browser
 verification moved to `agent-browser` by captain ruling mid-slice and the ruling on committed
 `e2e/` specs is pending, so no new Playwright spec was written. PR 3 in flight in a parallel lane. PR 4 IN PROGRESS on
-`fm/spec-pr4-extraction-prompt` (2026-08-16), contract below.
+`fm/spec-pr4-extraction-prompt` (2026-08-16), contract below; its deploy runbook exists at
+`documentation/plans/master-data/RUNBOOK-flyer-promote.md` (steps 1-6 with the exact pre-flight,
+checksum and post-run SQL, re-measured 2026-08-16).
 
 Also landed out of band: #150, a merge revision joining the `323`/`356` alembic fork that
 PRs #144 and #145 created between them. Not a defect in either; see C8's neighbour note and
@@ -493,6 +495,7 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
   5. Schedule and verify the full-catalogue re-derive.
   6. A later deploy: drop `ProductFlyerText`, after its own `pg_dump`.
   Steps 1-4 are revertible. Step 6 is not.
+  Written up, with the exact SQL, in `documentation/plans/master-data/RUNBOOK-flyer-promote.md`.
 
 **Binding amendment (captain, 2026-08-14): the flyer text pass is lifted, not deleted.** Flyer
 ingestion becomes a **bulk proposals-review-accept feature**, its own slice after PRs 1-4 (own
