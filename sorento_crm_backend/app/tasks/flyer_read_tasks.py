@@ -199,6 +199,13 @@ def _mark_failed(db, reading_id: str, message: str) -> dict:
 
     A row that vanished mid-read is not an error here. The designer deleted it,
     which is an answer, and there is nothing left to write to (AC-J3.4).
+
+    A row that no longer says ``processing`` is not written either, and that is
+    the same guard ``create_reading`` carries: ``complete_reading`` commits the
+    row and only then refreshes it, so a raise after that commit lands here for
+    a read that DID happen. Relabelling it ``failed`` would throw away a
+    finished reading, with banners already in the library, for a reason that is
+    not true. The reloaded status is what comes back instead.
     """
     try:
         db.rollback()
@@ -208,6 +215,14 @@ def _mark_failed(db, reading_id: str, message: str) -> dict:
     record = _load(db, reading_id)
     if record is None:
         return {"reading_id": reading_id, "status": "gone"}
+
+    if record.status != svc.ReadingStatus.PROCESSING:
+        logger.info(
+            "read_flyer: reading %s already reads %s; leaving it alone",
+            reading_id,
+            record.status,
+        )
+        return {"reading_id": reading_id, "status": record.status}
 
     try:
         svc.fail_reading(db, record, message=message)

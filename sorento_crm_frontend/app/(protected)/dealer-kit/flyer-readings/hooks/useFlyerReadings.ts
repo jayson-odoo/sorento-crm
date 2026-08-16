@@ -88,9 +88,19 @@ export function useFlyerReadingQuery(readingId: string, promotionId: string | nu
  * detail cache with, and no reason to send anybody to a screen that has nothing
  * on it - the row appears at the top of the list as Processing, which is where
  * the toast says to look.
+ *
+ * A 202 does NOT mean the read is on its way. The backend answers 202 with a
+ * row already `failed` when it could not queue the job at all (Redis down), and
+ * telling that designer their flyer is being read in the background is telling
+ * them something that will never happen. The row is right here, so it decides
+ * which toast they get.
  */
-function onFlyerReadingCreated(queryClient: QueryClient) {
+function onFlyerReadingCreated(queryClient: QueryClient, reading: FlyerReadingSummary) {
   queryClient.invalidateQueries({ queryKey: [FLYER_READINGS_QUERY_KEY] });
+  if (reading.status === 'failed') {
+    toast.error(reading.errorMessage || 'Could not read that flyer');
+    return;
+  }
   toast.success('Reading the flyer in the background - it will appear in your uploads');
 }
 
@@ -109,7 +119,7 @@ export function useUploadFlyerReading() {
 
   return useMutation<FlyerReadingSummary, Error, { file: File; promotionId?: string | null }>({
     mutationFn: ({ file, promotionId }) => uploadFlyerReading(file, promotionId),
-    onSuccess: () => onFlyerReadingCreated(queryClient),
+    onSuccess: (reading) => onFlyerReadingCreated(queryClient, reading),
     onError: onFlyerReadingFailed,
   });
 }
@@ -128,7 +138,7 @@ export function useCreateFlyerReadingFromAttachment() {
   >({
     mutationFn: ({ attachmentId, promotionId }) =>
       createFlyerReadingFromAttachment(attachmentId, promotionId),
-    onSuccess: () => onFlyerReadingCreated(queryClient),
+    onSuccess: (reading) => onFlyerReadingCreated(queryClient, reading),
     onError: onFlyerReadingFailed,
   });
 }

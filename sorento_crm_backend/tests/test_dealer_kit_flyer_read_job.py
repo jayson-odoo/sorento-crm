@@ -1084,3 +1084,97 @@ class TestReadFlyerOuterArmMarksTheRowFailed:
         # The staged object is still discarded in the ``finally``, even though
         # the row it belonged to could not be loaded at all.
         assert key not in storage.objects
+
+
+# --------------------------------------------------------------------------- #
+# The same window as ``TestCreateReadingDoesNotRelabelAReadThatSucceeded``, on
+# the path production actually runs. ``complete_reading`` commits the row as
+# ``done`` and only then refreshes it, so a raise from that refresh reaches the
+# job's generic arm for a read that HAPPENED - banners in the library, report
+# written. ``_mark_failed`` must leave it alone. Mirrored against a raise that
+# lands before the commit, which must still fail the row.
+# --------------------------------------------------------------------------- #
+class TestReadFlyerDoesNotRelabelAReadThatSucceeded:
+    def test_a_postcommit_refresh_failure_keeps_the_row_done_while_a_precommit_raise_still_fails_it(
+        self, api, monkeypatch
+    ) -> None:
+        from app.models.dealer_kit import FlyerReadingRecord
+        from app.tasks import flyer_read_tasks
+
+        db, storage, _reads = api
+        data = _pdf_bytes()
+
+        def _seed(filename: str):
+            provider, key = svc._stage_upload(data)
+            record = svc._new_processing_record(
+                filename=filename,
+                byte_size=len(data),
+                sha256=hashlib.sha256(data).hexdigest(),
+                source_attachment_id=None,
+                user_id=_ADMIN_ID,
+            )
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+            return record, provider, key
+
+        # Part 1: the window the guard closes. The refresh that blows up is the
+        # one ``complete_reading`` makes AFTER its commit - the row is already
+        # ``done`` in the database by then.
+        record, provider, key = _seed("zzt-job-refresh-blip.pdf")
+        real_refresh = db.refresh
+
+        def _flaky_refresh(instance):
+            if (
+                isinstance(instance, FlyerReadingRecord)
+                and instance.status == svc.ReadingStatus.DONE
+            ):
+                raise RuntimeError("connection dropped mid-refresh")
+            return real_refresh(instance)
+
+        monkeypatch.setattr(db, "refresh", _flaky_refresh)
+
+        result = flyer_read_tasks.read_flyer(str(record.id), provider, key, _db=db)
+
+        monkeypatch.setattr(db, "refresh", real_refresh)
+
+        assert result["status"] == svc.ReadingStatus.DONE
+        assert "error" not in result
+
+        succeeded = (
+            db.query(FlyerReadingRecord)
+            .filter(FlyerReadingRecord.id == record.id)
+            .one()
+        )
+        assert succeeded.status == svc.ReadingStatus.DONE
+        assert succeeded.error_message is None
+        assert succeeded.reading_json is not None
+        # The staged copy is still discarded, exactly as on a clean done run.
+        assert key not in storage.objects
+
+        # Part 2, the mirror: a raise BEFORE ``complete_reading`` commits still
+        # fails the row, so the guard narrowed the window rather than switching
+        # the handler off.
+        second, provider2, key2 = _seed("zzt-job-precommit-blip.pdf")
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("PyMuPDF died before commit")
+
+        monkeypatch.setattr(svc, "complete_reading", _boom)
+
+        result2 = flyer_read_tasks.read_flyer(str(second.id), provider2, key2, _db=db)
+
+        assert result2["status"] == svc.ReadingStatus.FAILED
+
+        failed = (
+            db.query(FlyerReadingRecord)
+            .filter(FlyerReadingRecord.id == second.id)
+            .one()
+        )
+        assert failed.status == svc.ReadingStatus.FAILED
+        assert (
+            failed.error_message
+            == "The flyer could not be read: PyMuPDF died before commit"
+        )
+        assert failed.finished_at is not None
+        assert key2 not in storage.objects

@@ -282,6 +282,30 @@ describe('useUploadFlyerReading', () => {
     );
   });
 
+  it('says the read did not start when the 202 comes back already failed', async () => {
+    // The queue was unreachable, so the backend answered 202 with a row that is
+    // already `failed`. "Reading the flyer in the background" would be a promise
+    // nothing is left to keep.
+    mockUpload.mockResolvedValue({
+      ...ACCEPTED,
+      status: 'failed',
+      errorMessage: 'The flyer could not be queued for reading. Try again in a moment.',
+      finishedAt: '2026-08-01T02:00:01',
+    });
+
+    const { result } = renderHook(() => useUploadFlyerReading(), {
+      wrapper: wrapperWith(freshClient()),
+    });
+
+    result.current.mutate({ file: new File([''], 'flyer.pdf') });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+      'The flyer could not be queued for reading. Try again in a moment.',
+    );
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+  });
+
   it('passes the backend message through, because it says what is wrong with the file', async () => {
     mockUpload.mockRejectedValue(
       new Error('That flyer is larger than the 50 MB limit. Export it at a lower image quality and upload it again.'),
@@ -319,6 +343,27 @@ describe('useCreateFlyerReadingFromAttachment', () => {
     expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
       'Reading the flyer in the background - it will appear in your uploads',
     );
+  });
+
+  it('says the read did not start on an already-failed 202, same as the upload hook', async () => {
+    mockFromAttachment.mockResolvedValue({
+      ...ACCEPTED,
+      status: 'failed',
+      errorMessage: 'The flyer could not be queued for reading. Try again in a moment.',
+      finishedAt: '2026-08-01T02:00:01',
+    });
+
+    const { result } = renderHook(() => useCreateFlyerReadingFromAttachment(), {
+      wrapper: wrapperWith(freshClient()),
+    });
+
+    result.current.mutate({ attachmentId: 'att-1' });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+      'The flyer could not be queued for reading. Try again in a moment.',
+    );
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
   });
 
   it('passes the attachment id and promotion through to the service call', async () => {
