@@ -351,6 +351,10 @@ export function useCustomerOrders(
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: 1,
+  });
+}
+
+/**
  * The photo of one product, fetched when its popover opens (AC-7).
  *
  * Per product rather than per run because the URL is signed: the run-wide call answers only

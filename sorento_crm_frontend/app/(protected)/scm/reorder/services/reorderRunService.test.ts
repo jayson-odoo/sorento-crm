@@ -228,6 +228,9 @@ describe('reorderRunService - getCustomerOrders (AC-4.1)', () => {
     await expect(
       getCustomerOrders('run-1', 'prod-1', 'wholesale', 'none'),
     ).rejects.toThrow('Unknown segment.');
+  });
+});
+
 describe('reorderRunService - getProductImages (AC-7)', () => {
   it('reads which products have a photo from one endpoint', async () => {
     apiFetch.mockResolvedValue(ok({ has_image: { p1: true } }));
