@@ -53,11 +53,6 @@ _PENDING_EMBED_KEY = "_spec_products_to_embed"
 # why it is named rather than inlined.
 INLINE_REDERIVE_LIMIT = 50
 
-# The same line, drawn for the same reason, on the embedding side. One person's edit is
-# a couple of rows and is indexed on the next worker pass; a catalogue import is 22,805
-# and must not run its whole embedding fan-out inside the import's own commit hook.
-INLINE_ENQUEUE_LIMIT = 50
-
 # Only these feed derivation, so only these justify the work. A price edit must not
 # re-derive 22,805 rows' worth of specs.
 DERIVATION_INPUTS = (
@@ -203,17 +198,23 @@ def rederive_codes(codes: set[str]) -> None:
     _rederive_inline(codes)
 
 
-def embed_products_inline(product_ids: set[str]) -> None:
-    """Queue the re-embeds here and now, in a fresh session. Never raises.
+def embed_products(product_ids: set[str]) -> None:
+    """Queue a re-embed per changed product row, in a fresh session. Never raises.
 
     The session has to be a fresh one rather than the caller's: `queue_event` commits,
     so running it inside the writer's transaction would commit that writer's
     half-finished work. Best-effort per id as well as overall, because one product
     whose enqueue fails must not take the rest of the batch with it.
 
-    Public because the worker task calls it once per chunk. Routing is `embed_products`'
-    job, and a chunk that came FROM the queue must not be handed back to it.
+    Drained here rather than handed to the worker above some size, which is what the
+    re-derive twin below does. The reason the twin needs that split does not apply:
+    derivation runs in the REQUEST path, where a catalogue-sized batch would hold a
+    user's save open. Every writer big enough to produce one of those here is already
+    on the worker (the import's derive task, `derive_all`, the backfill script), so a
+    hand-off would only move work from one worker job to another.
     """
+    if not product_ids:
+        return
     try:
         from app.database import SessionLocal
 
@@ -242,45 +243,6 @@ def embed_products_inline(product_ids: set[str]) -> None:
         logger.warning(
             "spec embedding enqueue failed for %s products", len(product_ids), exc_info=True
         )
-
-
-def _enqueue_embed(product_ids: set[str]) -> bool:
-    """Hand the batch to the worker. True when the queue took it."""
-    try:
-        from app.services.queue_service import enqueue_job
-        from app.tasks.product_spec_tasks import enqueue_spec_embeddings
-
-        enqueue_job(
-            enqueue_spec_embeddings,
-            sorted(product_ids),
-            queue_name="imports",
-            run_label="change-listener",
-        )
-        return True
-    except Exception:  # pragma: no cover - Redis down, and the work still has to happen
-        logger.warning(
-            "spec embedding could not be queued for %s products; enqueuing inline",
-            len(product_ids),
-            exc_info=True,
-        )
-        return False
-
-
-def embed_products(product_ids: set[str]) -> None:
-    """Queue a re-embed per changed product row. Never raises.
-
-    Above `INLINE_ENQUEUE_LIMIT` the fan-out goes to the worker instead, on the same
-    argument as `rederive_codes`: an import commits per chunk, so a catalogue-sized
-    batch would otherwise run every enqueue (each of which commits and pushes an RQ
-    job) inside the import's own commit hook. An unreachable queue falls back to
-    enqueuing here rather than dropping the ids - a dropped id is a stale index entry
-    that nothing will ever notice.
-    """
-    if not product_ids:
-        return
-    if len(product_ids) > INLINE_ENQUEUE_LIMIT and _enqueue_embed(product_ids):
-        return
-    embed_products_inline(product_ids)
 
 
 def register_product_spec_listeners() -> None:
