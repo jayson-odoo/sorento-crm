@@ -506,8 +506,20 @@ def _looks_like_promotion_record(obj: Any) -> bool:
 
 
 def _is_active_promotion_obj(obj: Any) -> bool:
+    """Whether the drill-down tools may return this promotion.
+
+    Named for the old rule (active only), but the question it answers now is
+    the serving one. The list tools hand the agent expired-but-usable
+    promotions ("ended on 31/07 but still applies"), and blocking the very next
+    drill-down on those made one surface answer two different ways. The backend
+    stamps `expired_but_usable` from the single serving policy, so an expired
+    promotion whose TYPE still honours it is drillable, while an expired
+    special - which the policy withholds - stays blocked.
+    """
     if not isinstance(obj, dict):
         return False
+    if obj.get("expired_but_usable") is True:
+        return True
     if isinstance(obj.get("is_active"), bool):
         return obj["is_active"]
     status = obj.get("status")

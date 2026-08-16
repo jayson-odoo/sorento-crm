@@ -3,12 +3,19 @@
 The vocabulary that decides what happens to a promotion after its end date, and
 how an uploaded file is classified. Admin-maintained, so a sixth kind of
 promotion is a row here rather than a deploy.
+
+Reads stay open to any authenticated principal (the promotions form and the MCP
+surface both need the vocabulary), but the writes are permission-gated: this
+config decides what the WhatsApp bot tells a customer about an ended promotion,
+so flipping `special.show_expired` back on is an administrative act, not
+something every logged-in account may do. Slugs are registered and granted in
+migration 362.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_user_or_api_key
+from app.dependencies import get_current_user_or_api_key, require_permission
 from app.schemas.common import ListResponse
 from app.schemas.marketing import (
     PromotionTypeCreate,
@@ -59,7 +66,7 @@ async def get_promotion_type(
 @router.post("/", response_model=PromotionTypeResponse, status_code=status.HTTP_201_CREATED)
 async def create_promotion_type(
     type_data: PromotionTypeCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("marketing.promotion_types.add")),
     db: Session = Depends(get_db),
 ):
     try:
@@ -74,7 +81,7 @@ async def create_promotion_type(
 async def update_promotion_type(
     type_id: str,
     type_data: PromotionTypeUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("marketing.promotion_types.edit")),
     db: Session = Depends(get_db),
 ):
     try:
@@ -89,7 +96,7 @@ async def update_promotion_type(
 @router.delete("/{type_id}", status_code=status.HTTP_200_OK)
 async def delete_promotion_type(
     type_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("marketing.promotion_types.delete")),
     db: Session = Depends(get_db),
 ):
     """Hard delete. Promotions of this type become unclassified and are served

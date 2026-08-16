@@ -112,15 +112,55 @@ def _promotion_type_labels(db: Session, type_ids) -> dict[str, tuple]:
     return {str(type_id): (code, name) for type_id, code, name in rows}
 
 
+def _default_type_labels(db: Session) -> tuple:
+    """`(code, name)` of the default type, or `(None, None)` when none is flagged.
+
+    An untyped promotion is not type-less as far as serving goes: it is served
+    under the DEFAULT type's rules (D3). Reporting a blank type for a row the
+    policy just honoured as `standard` contradicts the same payload's own
+    answer, so the display follows the policy rather than the raw column.
+    """
+    row = (
+        db.query(PromotionType.type_code, PromotionType.type_name)
+        .filter(PromotionType.is_default.is_(True))
+        .first()
+    )
+    return (row[0], row[1]) if row else (None, None)
+
+
+def _type_labels_for(raw_type_id, labels: dict, default_labels: tuple) -> tuple:
+    """Label pair for one row: its own type when it has one, else the default's."""
+    if not raw_type_id:
+        return default_labels
+    return labels.get(str(raw_type_id), (None, None))
+
+
 def _stamp_promotion_type_fields(db: Session, promotions, verdict=None) -> None:
     """Copy the type's code/name onto each row, and the expired-but-usable flag.
 
     The API never returns a bare `promotion_type_id` for display -- the UI rule is
-    no UUIDs on screen, and the bot needs the code to phrase the answer.
+    no UUIDs on screen, and the bot needs the code to phrase the answer. An
+    untyped row reports the default type, which is the one that actually decided
+    whether it was served.
     """
     labels = _promotion_type_labels(db, [p.promotion_type_id for p in promotions])
+    default_labels = (
+        _default_type_labels(db)
+        if any(not p.promotion_type_id for p in promotions)
+        else (None, None)
+    )
+    if verdict is None and promotions:
+        # A detail read must answer the same question the list answered: "would
+        # the bot still honour this?". Evaluating the single row against the
+        # same policy keeps `expired_but_usable` truthful everywhere, so a
+        # drill-down cannot contradict the list it came from.
+        verdict = promotion_serving.evaluate_candidates(
+            db, [p.id for p in promotions], datetime.utcnow().date()
+        )
     for promotion in promotions:
-        code, name = labels.get(str(promotion.promotion_type_id), (None, None))
+        code, name = _type_labels_for(
+            promotion.promotion_type_id, labels, default_labels
+        )
         promotion.promotion_type_code = code
         promotion.promotion_type_name = name
         if verdict is not None:
@@ -1537,8 +1577,12 @@ class PromotionProductService:
         # document for the SKU they just asked about.
         parent_pids = list({p.promotion_id for p in products})
         attachments_map = _load_attachments_by_promotion_ids(self.db, parent_pids)
-        parent_type_labels = _promotion_type_labels(
-            self.db, [getattr(p.promotion, "promotion_type_id", None) for p in products]
+        parent_type_ids = [
+            getattr(p.promotion, "promotion_type_id", None) for p in products
+        ]
+        parent_type_labels = _promotion_type_labels(self.db, parent_type_ids)
+        parent_default_labels = (
+            _default_type_labels(self.db) if any(not t for t in parent_type_ids) else (None, None)
         )
         for line in products:
             line.promotion_attachments = attachments_map.get(line.promotion_id, [])
@@ -1546,8 +1590,10 @@ class PromotionProductService:
             # list — lets MCP/n8n say "found but expired" for fallback/historical
             # lines instead of presenting them as live.
             line.is_expired = _promotion_is_expired(line.promotion, today)
-            code, name = parent_type_labels.get(
-                str(getattr(line.promotion, "promotion_type_id", None)), (None, None)
+            code, name = _type_labels_for(
+                getattr(line.promotion, "promotion_type_id", None),
+                parent_type_labels,
+                parent_default_labels,
             )
             line.promotion_type_code = code
             line.promotion_type_name = name
@@ -2268,16 +2314,23 @@ class PromotionAttachmentService:
         offset = (page - 1) * limit
         promotion_attachments = q_final.offset(offset).limit(limit).all()
 
-        attachment_type_labels = _promotion_type_labels(
-            self.db,
-            [getattr(pa.promotion, "promotion_type_id", None) for pa in promotion_attachments],
+        attachment_type_ids = [
+            getattr(pa.promotion, "promotion_type_id", None) for pa in promotion_attachments
+        ]
+        attachment_type_labels = _promotion_type_labels(self.db, attachment_type_ids)
+        attachment_default_labels = (
+            _default_type_labels(self.db)
+            if any(not t for t in attachment_type_ids)
+            else (None, None)
         )
         for pa in promotion_attachments:
             # Row-level expiry of the parent promotion — mirrors the promotions /
             # promotion-products lists so MCP/n8n can say "found but expired".
             pa.is_expired = _promotion_is_expired(pa.promotion, today)
-            code, name = attachment_type_labels.get(
-                str(getattr(pa.promotion, "promotion_type_id", None)), (None, None)
+            code, name = _type_labels_for(
+                getattr(pa.promotion, "promotion_type_id", None),
+                attachment_type_labels,
+                attachment_default_labels,
             )
             pa.promotion_type_code = code
             pa.promotion_type_name = name
