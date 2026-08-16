@@ -358,4 +358,7 @@ looking like a live consumer somebody missed.
   logout loop.
 - **One migration, so there is a head to keep single.** Rows 1-13 needed none, but the Q1/Q3 slugs
   do: `359_um_contacts_reference_perms` (`down_revision` `358_scm_po_spo_history_aliases`, revision
-  id 32 chars or fewer). `alembic heads` must still read a single head at the end.
+  id 32 chars or fewer). `alembic heads` must still read a single head at the end. Main grew
+  `359_scm_plan_feedback_r2` off the same parent while this branch was open, so the two are
+  rejoined by the bookkeeping merge revision `360_merge_um_gates_scm_r2` (no schema change);
+  without it CI's `bootstrap_env` dies on `alembic stamp head` with "Multiple heads are present".
