@@ -394,6 +394,19 @@ export default function SharedConversationComposer({
   // handling and the thread bubble all work unchanged.
   const voice = useVoiceRecorder({ onClip: (file) => addFiles([file]) });
 
+  // Switching contact mid-compose must not carry the draft across: a recording
+  // still running would stage its clip onto whoever is selected by the time it
+  // stops, which is a voice note delivered to the wrong person, and staged
+  // files/text belong to the contact they were written for.
+  const voiceCancelRef = useRef(voice.cancel);
+  voiceCancelRef.current = voice.cancel;
+  useEffect(() => {
+    voiceCancelRef.current();
+    setFiles([]);
+    setReplyText('');
+    setFailedFileName(null);
+  }, [entityId]);
+
   const canSubmit =
     (!!replyText.trim() || (attachmentsEnabled && files.length > 0)) && !voice.recording;
 

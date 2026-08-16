@@ -110,6 +110,9 @@ export function useVoiceRecorder({
   // stream assigned below is one nothing ever stops: a live microphone for the
   // life of the tab.
   const unmountedRef = useRef(false);
+  /** True from the click until the recorder exists, which is the window a
+   *  second click would otherwise open a second microphone in. */
+  const startingRef = useRef(false);
   const tickRef = useRef<number | null>(null);
   const capRef = useRef<number | null>(null);
   // Kept in a ref so the recorder's onstop always calls the CURRENT handler
@@ -148,7 +151,22 @@ export function useVoiceRecorder({
   }, [clearTimers, releaseMic]);
 
   const start = useCallback(async (): Promise<string | null> => {
-    if (recorderRef.current) return null;
+    // `recorderRef` is only assigned AFTER the await below, so it cannot be the
+    // re-entrancy guard: while the permission prompt is open the button still
+    // looks idle, and a second click would open a second stream and orphan the
+    // first - a microphone nothing ever stops. Guard synchronously instead.
+    if (recorderRef.current || startingRef.current) return null;
+    startingRef.current = true;
+    try {
+      return await beginRecording();
+    } finally {
+      startingRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [maxDurationMs, releaseMic, teardown]);
+
+  const beginRecording = async (): Promise<string | null> => {
+    setBlocked(null);
     const mime = pickVoiceMimeType();
     if (!mime || typeof navigator?.mediaDevices?.getUserMedia !== 'function') {
       setSupported(false);
@@ -188,10 +206,21 @@ export function useVoiceRecorder({
       const blob = new Blob(chunks, { type: mime });
       onClipRef.current(new File([blob], voiceFileName(mime), { type: mime }));
     };
+    // The spec says an error is followed by `stop`, but a UA that skips it would
+    // leave the mic held with the UI stuck recording. Release either way.
+    recorder.onerror = () => {
+      cancelledRef.current = true;
+      try {
+        recorder.stop?.();
+      } catch {
+        // ignored - teardown below is what releases the microphone
+      }
+      teardown();
+    };
     recorder.start();
-    setBlocked(null);
     setRecording(true);
     setSeconds(0);
+    clearTimers();
     tickRef.current = window.setInterval(() => setSeconds((value) => value + 1), 1000);
     capRef.current = window.setTimeout(() => {
       // Cap reached: stop and KEEP the clip - the two minutes recorded are the
@@ -203,7 +232,7 @@ export function useVoiceRecorder({
       }
     }, maxDurationMs);
     return null;
-  }, [maxDurationMs, releaseMic, teardown]);
+  };
 
   const finish = useCallback(
     (cancelled: boolean) => {
@@ -242,7 +271,11 @@ export function useVoiceRecorder({
   );
 
   return {
-    available: supported && !blocked,
+    // A blocked microphone leaves the button ENABLED: the user grants permission
+    // in site settings and clicks again. Disabling on `blocked` made the feature
+    // unreachable for the rest of the session, with nothing on screen to say why
+    // or how to get it back. Only "this browser cannot record" is permanent.
+    available: supported,
     reason: !supported ? NOT_SUPPORTED : blocked,
     recording,
     seconds,

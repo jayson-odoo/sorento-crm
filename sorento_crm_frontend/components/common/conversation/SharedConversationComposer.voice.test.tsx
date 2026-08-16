@@ -251,11 +251,44 @@ describe('SharedConversationComposer - voice message (AC-L9)', () => {
     expect(tracks[0].stop).toHaveBeenCalled();
   });
 
+  it('a second click during the permission prompt opens only one microphone', async () => {
+    // The button still looks idle while the prompt is open, so clicking twice is
+    // the ordinary user action; the second stream would be one nothing stops.
+    const grants: (() => void)[] = [];
+    const opened: FakeTrack[] = [];
+    getUserMedia = vi.fn(
+      () =>
+        new Promise<MediaStream>((resolve) => {
+          grants.push(() => {
+            const track: FakeTrack = { stop: vi.fn() };
+            opened.push(track);
+            resolve({ getTracks: () => [track] } as unknown as MediaStream);
+          });
+        }),
+    );
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      configurable: true,
+      writable: true,
+      value: { getUserMedia },
+    });
+
+    renderComposer();
+    const button = await screen.findByTestId('voice-record');
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await act(async () => {
+      grants.forEach((grant) => grant());
+    });
+
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(opened).toHaveLength(1);
+  });
+
   it('releases a microphone granted AFTER the composer unmounted', async () => {
     // The permission prompt is open when the drawer closes: getUserMedia
     // resolves after cleanup has already run, so the stream it hands back is
     // one nothing else will ever stop.
-    let grant: ((stream: MediaStream) => void) | null = null;
+    let grant: (() => void) | null = null;
     const track: FakeTrack = { stop: vi.fn() };
     getUserMedia = vi.fn(
       () =>
@@ -319,18 +352,23 @@ describe('SharedConversationComposer - voice message (AC-L9)', () => {
     expect(button).toHaveAttribute('title', 'Voice recording is not supported in this browser.');
   });
 
-  it('is disabled after the microphone is denied, and says so once', async () => {
+  it('says why after the microphone is denied, and stays clickable so a granted mic works', async () => {
+    // Disabling here would make voice unreachable for the rest of the session:
+    // granting permission in site settings cannot re-enable a dead button, and
+    // nothing on screen would say how to get it back.
     installRecordingStack({ deny: true });
     renderComposer();
 
     fireEvent.click(await screen.findByTestId('voice-record'));
 
-    await waitFor(() => expect(screen.getByTestId('voice-record')).toBeDisabled());
-    expect(toastError).toHaveBeenCalledWith('Microphone access is blocked.');
-    expect(screen.getByTestId('voice-record')).toHaveAttribute(
-      'title',
-      'Microphone access is blocked.',
+    await waitFor(() =>
+      expect(screen.getByTestId('voice-record')).toHaveAttribute(
+        'title',
+        'Microphone access is blocked.',
+      ),
     );
+    expect(toastError).toHaveBeenCalledWith('Microphone access is blocked.');
+    expect(screen.getByTestId('voice-record')).not.toBeDisabled();
   });
 
   it('records the best container Respond.io accepts, never webm when there is a choice', async () => {
