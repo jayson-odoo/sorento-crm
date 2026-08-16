@@ -560,10 +560,10 @@ describe('PlanLinesGrid - what price to use', () => {
   it('leads with the price to buy at, and the verdict rides under it', () => {
     renderGrid([line()], {}, [], () => stale);
 
-    // The row's unit_cost (10, USD default currency null on the fixture) is the headline;
-    // the verdict badge is the caveat under it.
+    // The row's unit_cost (10, no currency on the fixture, so it reads as base) is the
+    // headline; the verdict badge is the caveat under it.
     expect(screen.getByText('Ask new price')).toBeInTheDocument();
-    expect(screen.getByText('10.00')).toBeInTheDocument();
+    expect(screen.getByText('RM 10.00')).toBeInTheDocument();
   });
 
   it('leaves the cell empty when there is no price opinion, rather than implying all is well', () => {
@@ -750,9 +750,11 @@ describe('product health (2026-08-11 markup)', () => {
 
     // Click the cell's own trigger (the column header is also named "Product health").
     fireEvent.click(screen.getByText('Consider discontinuing'));
-    expect(screen.getByText(/factors argue for discontinuing/i)).toBeInTheDocument();
+    // The verdict is named in one line and the case is the factor list under it - the
+    // prose sentence and the AutoCount footer were removed (AC-5).
+    expect(screen.getByText('Suggestion: Discontinue')).toBeInTheDocument();
     expect(screen.getByText(/nothing left this product/i)).toBeInTheDocument();
-    expect(screen.getByText(/marking it in AutoCount stays your job/i)).toBeInTheDocument();
+    expect(screen.queryByText(/marking it in AutoCount stays your job/i)).not.toBeInTheDocument();
   });
 
   it('a consider-more advisory on a thin margin carries the caveat in the same breath', () => {

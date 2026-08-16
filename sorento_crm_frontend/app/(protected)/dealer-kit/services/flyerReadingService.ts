@@ -9,10 +9,17 @@
  *
  * POST   /flyer-readings                     multipart `file`, `?promotionId=`
  *          -> 201 FlyerReading (summary + report)
- *          Read INSIDE the request: the real 36 page flyer takes about a
- *          second, so there is no job, no queue and nothing to poll.
+ *          Read INSIDE the request. Measured on the real 36 page A3 flyer
+ *          (20.1 MB, 998 codes): 17 to 18 s on a quiet machine, 39 to 62 s on
+ *          a loaded one. The caller waits for all of it, so this is a slow
+ *          call, not a fast one - see the plan's Backlog for the queue.
  *          400 when the file is not a PDF, 413 over 50 MB, and both say so in
  *          words - a designer who uploaded the wrong file must be told.
+ * POST   /flyer-readings/from-attachment  {attachmentId, promotionId?}
+ *          -> 201 FlyerReading, identical in every respect to an upload.
+ *          Same permission, same limits, same words on a refusal. An
+ *          attachment outside the caller's company scope is a 404, never a
+ *          403, so the id's existence is not confirmed.
  * GET    /flyer-readings                     -> FlyerReadingSummary[], newest
  *          first, WITHOUT reports: one report per row is one match run per row.
  * GET    /flyer-readings/{id}?promotionId=   -> FlyerReading
@@ -290,6 +297,37 @@ export async function uploadFlyerReading(
   body.append('file', file);
 
   const response = await apiFetch(withPromotion(BASE, promotionId), { method: 'POST', body });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not read that flyer'));
+  }
+  return toReading(await response.json());
+}
+
+/**
+ * Read a flyer the system is already holding.
+ *
+ * The same reading, by the same code path, from a file nobody had to download
+ * and upload back again: only the id travels, and the server takes the
+ * filename, the size and the bytes off the attachment itself. Marketing files
+ * the season's flyer in Resource Management long before anybody opens the Kit,
+ * so this is the common case rather than the exotic one.
+ *
+ * Refusals read exactly as the upload's do - not a PDF, over 50 MB, password
+ * protected - because they come from the same checks. `promotionId` is only
+ * sent when there is one, for the same reason `withPromotion` exists.
+ */
+export async function createFlyerReadingFromAttachment(
+  attachmentId: string,
+  promotionId?: string | null,
+): Promise<FlyerReading> {
+  const body: Record<string, unknown> = { attachmentId };
+  if (promotionId) body.promotionId = promotionId;
+
+  const response = await apiFetch(`${BASE}/from-attachment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Could not read that flyer'));
   }

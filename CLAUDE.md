@@ -55,6 +55,7 @@ npm run test                 # vitest run
 npm run test:watch
 npm run test:e2e             # playwright (e2e/, chromium, baseURL :3000)
 npm run format               # prettier --write .
+npm run format:check         # prettier --check . (currently red: 1743 files predate the config, see BL-008)
 
 npx prisma db push           # apply schema
 npx prisma generate          # regenerate client
@@ -230,7 +231,7 @@ Once the FE prototype is signed off, build the backend to match the contract doc
 - FE: replace mocks with real hooks / services / `api-client` calls. Delete `__mocks__` fixtures unless they're reused by tests.
 - **Tests must land in this phase, not deferred:**
   - **Vitest** (`sorento_crm_frontend/`): component tests for every new component covering loading / empty / error / data states. Hook tests for new query/mutation hooks. Use existing `vitest` + `@testing-library/react` patterns. Single test: `npx vitest run path/to/file.test.ts`.
-  - **Playwright** (`sorento_crm_frontend/e2e/`): one spec per user-facing flow that exercises the FE→BE→DB round-trip (click sidebar → action → assert outcome → assert the right `/api/v1/*` call). Add real fixtures to `e2e/fixtures/` for AI / file flows.
+  - **Playwright** (`sorento_crm_frontend/e2e/`): **a NEW spec is not currently added** - see "Persisted Playwright spec" below for the standing order and what covers a flow instead. The shape a spec would have had is still the target: one per user-facing flow, exercising the FE→BE→DB round-trip (click sidebar → action → assert outcome → assert the right `/api/v1/*` call), with real fixtures in `e2e/fixtures/` for AI / file flows.
   - **pytest** (`sorento_crm_backend/`): endpoint tests for every new route covering happy path + auth denial + validation error. Service-level tests for non-trivial business logic.
 - Re-verify with agent-browser against the real stack: `localhost:3000` (FE) + `localhost:8000` (BE) + worker if relevant. Hit the same flows the prototype demonstrated; states should look identical with live data.
 - Output: backend merged, FE off-mocks, all three test suites green in CI.
@@ -239,7 +240,7 @@ Once the FE prototype is signed off, build the backend to match the contract doc
 
 Run `/code-review` (or `/code-review ultra` for big diffs) on the merged Phase 1 + Phase 2 branch before opening PR for human review. Address findings with `/code-review --fix` or `/simplify` where appropriate. Then open the PR.
 
-- Reviewer checklist: `docs/PR-CHECKLIST.md` plus — "did Phase 1 prototype get a screenshot in the PR description? did Phase 2 add tests (vitest + playwright + pytest)? does the contract doc match what shipped?"
+- Reviewer checklist: `documentation/reference/PR-CHECKLIST.md` plus — "did Phase 1 prototype get a screenshot in the PR description? did Phase 2 add tests (vitest + pytest) and a recorded evidence run for the user flow? does the contract doc match what shipped?"
 
 ### Why this order
 
@@ -251,7 +252,7 @@ Run `/code-review` (or `/code-review ultra` for big diffs) on the merged Phase 1
 
 Frontend changes are not done until verified in a real browser. Type-check + Vitest = code correctness, not feature correctness. UI/flow changes MUST be exercised end-to-end before reporting complete.
 
-**Use `agent-browser` (headless). Playwright MCP is retired for verification - do not use the `mcp__plugin_playwright_playwright__*` tools.** Committed Playwright specs under `e2e/` are a separate question and are unchanged for now.
+**Use `agent-browser` (headless). Playwright MCP is retired for verification - do not use the `mcp__plugin_playwright_playwright__*` tools.** The committed specs under `e2e/` are unchanged and still run, but no NEW one is added - see "Persisted Playwright spec" below.
 
 Two paths, pick one:
 
@@ -287,6 +288,7 @@ repo-specific policy plus the handful of commands that map onto our old MCP flow
 Policy, unchanged from the MCP era:
 
 - Ensure the FE dev server runs at `http://localhost:3000` (`npm run dev` in `sorento_crm_frontend/`, HMR) and BE at `http://localhost:8000`. For a final pre-handoff verification, do it against a prod build (`npm run build && npm start`) — see "Frontend dev loop".
+- **Login for browser verification reads `E2E_EMAIL` / `E2E_PASSWORD` from `sorento_crm_frontend/.env.local` (gitignored).** The per-spec `*_E2E_EMAIL` / `*_E2E_PASSWORD` names used by the older `e2e/` specs (`REQUEST_BATCH_E2E_*`, `STOCK_E2E_*`, ...) are legacy aliases of the same pair. Names and path only ever appear in commits / status lines - never the values.
 - **Always navigate to a feature by clicking through the sidebar / top nav from the home page - never `open` a deep URL directly.** Direct URL navigation hides nav-config bugs (missing entries, wrong `moduleKey`, broken permission gating, hidden behind a collapsed group). The first verification step for any new page is "open the sidebar group it belongs to and confirm the entry renders, then click it."
 - Command flow: `open http://localhost:3000`, `snapshot -i` to find the relevant sidebar group button, `click @ref` to expand, `click @ref` the leaf entry, `snapshot` the destination, then `click` / `fill` / `select` and re-snapshot to assert state.
 - Always check `console` (and `errors`) after the interaction. Treat unexpected error / warning output as a regression.
@@ -314,6 +316,7 @@ If unable to reach a browser (server down, sandboxed, daemon unresponsive), stat
 
 ### 2. Persisted Playwright spec (when the flow deserves regression coverage)
 
+- **Do NOT add a new spec.** A standing order is that no project carries a playwright trace, and a new spec is a new trace. The ~40 pre-existing specs, `playwright.config.ts` and the dependency are untouched and still run; what replaces them repo-wide is an open decision. A flow that would have earned a spec is covered instead by a reproducible **agent-browser evidence run** (the exact steps, the network calls and the outcome written into the plan and the commit, so it can be re-walked), and the missing regression guard is logged in `documentation/backlogs/backlog.md`. The trade is spelled out in `documentation/plans/dealer-kit/PLAN-flyer-read-hardening.md` ("The e2e spec, and why it is not here").
 - Specs live in `sorento_crm_frontend/e2e/`, config in `sorento_crm_frontend/playwright.config.ts` (chromium only, `baseURL` from `PORTAL_E2E_BASE_URL` ?? `http://localhost:3000`, viewport 1400x1600, single worker, no retries).
 - Run all: `npm run test:e2e`. Run one: `npx playwright test e2e/foo.spec.ts`. Headed debug: `npx playwright test --headed --project=chromium`.
 - Fixtures in `e2e/fixtures/` are real committed sample files (per memory rule: AI/file features test against real fixtures, not stubbed mocks). Add new fixtures alongside, do not gitignore them.
@@ -321,8 +324,8 @@ If unable to reach a browser (server down, sandboxed, daemon unresponsive), stat
 
 ### When to use which
 
-- New CRUD page / modal / detail page → agent-browser interactive verification minimum; promote to a spec only when it exercises a non-trivial cross-feature flow worth pinning.
-- AI / file-extraction / portal flows → spec required, real fixture required.
+- New CRUD page / modal / detail page → agent-browser interactive verification minimum.
+- AI / file-extraction / portal flows → a recorded agent-browser evidence run, against a real fixture, is what a spec would have been. No new spec (see above).
 - Pure visual / Tailwind tweak → an agent-browser `screenshot` is sufficient.
 
 ## Frontend dev loop (HMR by default; build only at handoff)
@@ -348,7 +351,7 @@ If unable to reach a browser (server down, sandboxed, daemon unresponsive), stat
 - **Hand-rolled `<table className="table-fixed">` overlaps columns** when content exceeds declared width. Always use shared `DataGrid` with explicit `size`, `tableLayout: { width: 'fixed', columnsResizable: true }`, and `truncate` + `title` for long text (see ARCHITECTURE-RULES).
 - **Vitest + jsdom does not implement `scrollIntoView`.** Guard with optional chain — `ref.current?.scrollIntoView?.({...})` — so component tests don't TypeError.
 - **`DataGridTable` DOES mount rows under jsdom.** The long-standing "it doesn't, so rows are untestable" note was wrong: `DataGrid` calls `useListingColumnPreferences`, which fetches the user's hidden/resized columns and renders skeletons until it answers. Under jsdom nothing answers. Mock it - `vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({ useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }) }))` - and rows, badges, per-row buttons and the pagination footer all assert normally. Proven by moving `BrochureImagePicker` onto the shared grid with all 35 of its tests intact.
-- **When the interactive browser is unreachable, vitest is the fallback - but it is not UI verification.** The persisted-spec path requires `USER_GUIDE_E2E_EMAIL` / `PASSWORD` env vars (not in `.env*`), so it is often not available either. Component-level vitest verifies DOM structure / classes autonomously; do not claim full UI verification from it. Say explicitly that the browser could not be reached.
+- **When the interactive browser is unreachable, vitest is the fallback - but it is not UI verification.** The persisted-spec path needs the browser-verification login pair `E2E_EMAIL` / `E2E_PASSWORD` from `sorento_crm_frontend/.env.local` (per-spec `*_E2E_EMAIL` / `*_E2E_PASSWORD` names are legacy aliases), so it is often not available either. Component-level vitest verifies DOM structure / classes autonomously; do not claim full UI verification from it. Say explicitly that the browser could not be reached.
 - **Don't silently duplicate chat / list panels across domains.** Complaint, stock_inquiry, purchase_request all share the Respond.io chat panel — render lives in shared `components/common/RespondChatList.tsx` so date pills, ticks, and selection rendering can't drift across the three.
 - **AI assistant tool dropdown is sourced from the live MCP server, not the DB catalog.** `/api/v1/system/ai-assistant/tools` calls `MCPRuntimeClient.list_tools()` against `settings.ai_assistant_mcp_url` (default `http://localhost:8765/mcp`). Adding a tool to `sorento_crm_mcp.catalog.CATALOG` is not enough — you must restart the MCP process so FastMCP re-registers tools at startup. The persisted `mcp_tools` table is for AccessAgent ownership (`sync_catalog`), separate from the assistant settings dropdown.
 - **Tools that don't proxy CRM HTTP endpoints need `external=True` on `ToolSpec`.** `_compile_tool` builds an HTTP-backed impl from `spec.method` + `spec.path` and would 404 for an external service like Outline. Set `external=True` on the spec, skip it in the compile loop, and register the real impl with `mcp.add_tool(...)` from a custom handler (see `register_user_guide_tools`). It still ends up in `mcp_tools` via `sync_catalog` so admins can assign it.
@@ -389,6 +392,8 @@ If unable to reach a browser (server down, sandboxed, daemon unresponsive), stat
 - **Prompt-registry save-validation returns a TOP-LEVEL body, not the `AppException` envelope.** `POST .../prompts/{name}/versions` on an unknown `{{token}}` returns `422 {error, unknown_tokens, missing_vars}` via raw `JSONResponse` (bypasses `response_model`) — unknown token = hard block, missing declared var = 201 + soft warn. FE reads those fields directly (can't use `extractApiError`, which is string-only). Declared vars are a fixed property of the KEY in `PROMPT_KEYS`, not free-form.
 - **Form handling-lock "escalated" = `escalated_at` stamped, NOT `current_tier > 1`.** Some form-SLA configs START above tier 1: `project_sales` begins at tier 2 (no tier-1 team); PR/SF approval routes to the configured default approver at THEIR tier (2/3) via `_start_for_config`. So a fresh, never-escalated tracker sits at tier 2/3 with `escalated_at IS NULL`. Keying the lock on `current_tier > 1` falsely showed the "Escalated to Tier N — claim it" banner + disabled CTAs on an approver-assigned form. `escalated_at` is set ONLY by `_escalate_tracker` (alongside `escalation_reason` — always in lockstep), never on initial assignment. Gate both sides on it: FE `resolveHandlingLockState` (`!activeTracker.escalated_at`), BE `handling_lock_service._is_escalated()` (used by `assert_can_act_on_form` + `_assert_claimable`). Type-agnostic across all `FORM_SLA_TYPES`. Assignment to a high tier ≠ escalated; only a real SLA breach that escalates locks the form.
 - **The in-form lock banner and SLA-escalation banner are TWO separate queries** — a manual "Escalate" must invalidate BOTH or the lock banner lags a reload. Lock banner ← `useHandlingLock` → `form-sla-tracking` (key `form-handling-tracker`); SLA banner ← `SlaActiveTrackerControls` → `conversation-sla-tracking/by-source` (key `form-sla-trackers`). The gear-menu escalate handlers invalidated only `form-sla-trackers`, so the SLA banner updated live but the lock banner stayed stale. Fix: `useHandlingLock()` exposes `refresh()`; call it after `escalateFormTracking` in every form detail page (stock-inquiry / complaint / PR-SF). Verify via `agent-browser network requests --filter form-sla-tracking` that the GET refetches right after the escalate POST.
+- **"One client is jammed, another is fine" does NOT rule out a blocked event loop - prod runs 4 gunicorn workers.** `sorento_crm/docker-compose.yml` starts `gunicorn --workers 4 --timeout 120 --keep-alive 5`, so an `async def` route doing heavy synchronous work kills ONE worker for its duration and leaves three serving. The desktop that started the slow request is additionally parked on it and can hold keep-alive connections pinned to the dead worker; a phone on fresh connections lands on a live one and looks healthy. The discriminating measurement is a single-worker local run: poll a cheap endpoint from a second shell while the slow request is in flight. The flyer read measured `GET /health` at **57.5s** that way (`documentation/plans/dealer-kit/PLAN-flyer-read-hardening.md` has the full method). Fix is `run_in_threadpool` from `fastapi.concurrency`, already the idiom in `app/api/v1/resources/attachments.py`, or plain `def` when the handler has no await worth keeping (FastAPI then threadpools the whole handler; portal `ai_extract` and `preview_spec_search`) - keep `async def` only where an `await file.read()` enforces a size ceiling as bytes arrive, as the flyer upload does. Check first that the hot library releases the GIL, or the threadpool buys nothing (PyMuPDF does; measure loop tick lag in a thread to confirm for a new one). About 40 more handlers of this shape are listed in `documentation/plans/ai-extract/PLAN-ai-extract-off-the-loop.md` (BL-009).
+- **A docstring asserting a performance number is load-bearing, and goes stale silently.** The flyer routes justified doing extraction in-request with "the real 36 page flyer takes about a second" and named their own threshold ("stops holding at roughly ten seconds"). Measured: 17-18s quiet. Nothing failed, so nothing caught it, and every later decision inherited the wrong premise. When a comment justifies a design with a number, record what it was measured against and re-measure before reusing it.
 
 ## Agent skills
 

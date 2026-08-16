@@ -118,6 +118,19 @@ describe('coverVerdict', () => {
     expect(v.headline).toBe('Buy 4,056');
   });
 
+  it('keeps a fractional buy quantity fractional', () => {
+    // `buy_qty` is the timeline's peak deficit: floor minus balance, rounded to 4 places
+    // on the server. Both sides of that subtraction can be fractional (a reorder level of
+    // 49.33, a part-delivered order line), so rounding it here would quietly restate the
+    // engine's answer on the one line the planner acts on.
+    expect(coverVerdict(false, 12.5, 'BRW').headline).toBe('Buy 12.5');
+    expect(coverVerdict(false, 0.25, 'BRW').headline).toBe('Buy 0.25');
+  });
+
+  it('writes a whole buy quantity without decimal padding', () => {
+    expect(coverVerdict(false, 300, 'BRW').headline).toBe('Buy 300');
+  });
+
   it('qualifies the verdict when the demand is covered but stock is below the floor', () => {
     const v = coverVerdict(true, 0, 'BRW', {
       at: null,

@@ -3,7 +3,7 @@
 import { ClipboardCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
-import { EM_DASH, fmtInt, fmtMoney } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtSupplierCost } from '../../lib/format';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
 /**
@@ -52,11 +52,10 @@ export function PlanChecklistPopover({
   label?: string;
 }) {
   const basis = rec.last_purchase_basis ?? null;
-  const cost = rec.last_purchase_cost;
-  const price =
-    cost == null
-      ? EM_DASH
-      : `${fmtMoney(cost)}${rec.last_purchase_currency ? ` ${rec.last_purchase_currency}` : ''}`;
+  // One money format, everywhere: `RM 105.00`, or the supplier's own code when the purchase
+  // was not in ringgit. The old build appended the code to a ringgit-glyph figure, so a MYR
+  // purchase read `RM 105 MYR` - the currency stated twice, and rounded on top.
+  const price = fmtSupplierCost(rec.last_purchase_cost, rec.last_purchase_currency);
 
   return (
     <Popover>

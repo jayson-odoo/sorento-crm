@@ -5,6 +5,8 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 import {
   createReorderRun,
+  getBuyRecommendationsForCash,
+  getCoveredRecommendations,
   getReorderRun,
   getRecommendations,
   getProductImage,
@@ -226,5 +228,128 @@ describe('reorderRunService - getProductImage (AC-7)', () => {
   it('reads a product with no photo as a null url, not a failure', async () => {
     apiFetch.mockResolvedValue(ok({ url: null, is_primary: false }));
     expect(await getProductImage('run-9', 'p2')).toEqual({ url: null, is_primary: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// paging the whole set: same rows, same order, without the staircase
+// ---------------------------------------------------------------------------
+
+/** A page of `n` rows whose ids name the page they came from. */
+function page(pageNo: number, n: number, totalPages: number) {
+  return ok({
+    data: Array.from({ length: n }, (_, i) => ({ id: `p${pageNo}-r${i}` })),
+    pagination: { page: pageNo, limit: 1000, total: totalPages * n, total_pages: totalPages },
+  });
+}
+
+describe('reorderRunService - fetching every page of a plan', () => {
+  it('returns the pages in order, so the merged list matches the serial loop', async () => {
+    apiFetch
+      .mockResolvedValueOnce(page(1, 2, 3))
+      .mockResolvedValueOnce(page(2, 2, 3))
+      .mockResolvedValueOnce(page(3, 2, 3));
+
+    const rows = await getBuyRecommendationsForCash('run-1');
+
+    expect(rows.map((r) => r.id)).toEqual([
+      'p1-r0', 'p1-r1', 'p2-r0', 'p2-r1', 'p3-r0', 'p3-r1',
+    ]);
+  });
+
+  it('asks for pages 2..N together rather than one after the other', async () => {
+    // Page 1 has to be awaited alone - it is what reports total_pages. Everything after it
+    // is independent, and issuing those serially is what made a big plan a staircase of
+    // round trips. Proven by holding page 2 open: page 3 must already have been requested.
+    let releasePage2: (v: unknown) => void = () => {};
+    const page2 = new Promise((res) => {
+      releasePage2 = res;
+    });
+    apiFetch
+      .mockResolvedValueOnce(page(1, 1, 3))
+      .mockImplementationOnce(() => page2)
+      .mockResolvedValueOnce(page(3, 1, 3));
+
+    const pending = getBuyRecommendationsForCash('run-1');
+    // Page 2 is deliberately still unresolved here. If pages were fetched serially the
+    // count would sit at 2 forever and this would time out.
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
+
+    releasePage2(page(2, 1, 3));
+    const rows = await pending;
+    expect(rows.map((r) => r.id)).toEqual(['p1-r0', 'p2-r0', 'p3-r0']);
+  });
+
+  it('a single-page plan makes exactly one request', async () => {
+    apiFetch.mockResolvedValueOnce(page(1, 3, 1));
+
+    const rows = await getCoveredRecommendations('run-1');
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(rows).toHaveLength(3);
+  });
+});
+
+describe('reorderRunService - the page fetch stays inside the API pool', () => {
+  /**
+   * Pages that resolve on a later tick, recording how many were in flight at once.
+   * `delay` is per page index, so a page can be made to finish out of turn.
+   */
+  function trackedPages(total: number, delay: (n: number) => number = () => 0) {
+    const seen = { now: 0, peak: 0, order: [] as number[] };
+    let asked = 0;
+    apiFetch.mockImplementation(() => {
+      asked += 1;
+      const n = asked;
+      seen.now += 1;
+      seen.peak = Math.max(seen.peak, seen.now);
+      return new Promise((res) => {
+        setTimeout(() => {
+          seen.now -= 1;
+          seen.order.push(n);
+          res(page(n, 1, total));
+        }, delay(n));
+      });
+    });
+    return seen;
+  }
+
+  it('never has more than five pages in flight at once', async () => {
+    // Ten pages. Uncapped this puts nine on the wire together, and with the four type
+    // queries running at the same time that is ~36 database sessions from a single tab
+    // against a pool of 10 + 20 overflow.
+    const seen = trackedPages(10);
+
+    const rows = await getBuyRecommendationsForCash('run-1');
+
+    expect(rows).toHaveLength(10);
+    expect(seen.peak).toBeLessThanOrEqual(5);
+    // And it does use the width it is allowed - a cap that serialised would be no better
+    // than the loop this replaced.
+    expect(seen.peak).toBeGreaterThan(1);
+  });
+
+  it('keeps the pages in order even though they finish out of order', async () => {
+    // Later pages finish FIRST: page 4 after 0ms, page 1 after 30ms.
+    const seen = trackedPages(4, (n) => (4 - n) * 10);
+
+    const rows = await getBuyRecommendationsForCash('run-1');
+
+    expect(rows.map((r) => r.id)).toEqual(['p1-r0', 'p2-r0', 'p3-r0', 'p4-r0']);
+    // The completion order really was not the request order.
+    expect(seen.order).not.toEqual([1, 2, 3, 4]);
+  });
+
+  it('one page failing fails the whole plan rather than returning a short list', async () => {
+    apiFetch
+      .mockResolvedValueOnce(page(1, 1, 3))
+      .mockResolvedValueOnce(page(2, 1, 3))
+      .mockResolvedValueOnce({
+        ok: false,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ detail: 'page 3 exploded' }),
+      } as unknown as Response);
+
+    await expect(getBuyRecommendationsForCash('run-1')).rejects.toThrow('page 3 exploded');
   });
 });

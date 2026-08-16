@@ -28,6 +28,7 @@ import {
   updateContainerSize,
   type ContainerSize,
 } from '../../services/fulfilmentService';
+import { fmtTrimmedDecimal } from '../../lib/format';
 
 /**
  * Container volumes (AC-E3).
@@ -122,7 +123,7 @@ export function ContainerSizesPanel() {
                   ) : null}
                 </div>
                 <p className="truncate text-2xs text-muted-foreground">
-                  {size.label ?? 'No description'} · {size.cbm.toLocaleString()} cbm
+                  {size.label ?? 'No description'} · {fmtTrimmedDecimal(size.cbm, 3)} cbm
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">

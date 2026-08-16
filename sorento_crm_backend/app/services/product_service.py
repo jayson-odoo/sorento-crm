@@ -545,6 +545,46 @@ class ProductService:
             self._attach_product_alternatives(payload, query)
         return payload
 
+    def specifications_for_products(self, product_ids: List[str]) -> dict:
+        """Derived spec blocks for a page of products, keyed by product id.
+
+        ONE query for the whole page (an IN over the ids already fetched), never
+        one per row: this rides the listing path, where a per-row read would turn
+        a 50-row page into 51 queries for an opt-in field.
+
+        A product with no derived row is simply absent from the map. The caller
+        renders that as an explicit null, because "we have not derived this yet"
+        is a fact worth stating and an omitted key reads as a field the caller
+        forgot to ask for.
+        """
+        from app.models.product_spec import ProductSpecifications
+        from app.services.product_spec_search import values_only
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}
+
+        rows = (
+            self.db.query(ProductSpecifications)
+            .filter(ProductSpecifications.product_id.in_(ids))
+            .all()
+        )
+        return {
+            str(row.product_id): {
+                "values": values_only(row.values),
+                "rendered_text": row.rendered_text,
+                # WHERE each value came from: a flyer-stated spec and a value
+                # guessed out of a description are not the same claim, and a
+                # human-confirmed one outranks both.
+                "sources": {
+                    key: entry["source"]
+                    for key, entry in (row.provenance or {}).items()
+                    if isinstance(entry, dict) and entry.get("source")
+                },
+            }
+            for row in rows
+        }
+
     def _attach_product_alternatives(self, payload: dict, input_code: Optional[str]) -> None:
         """Attach trigram/graph sibling-product alternatives to an empty listing.
 

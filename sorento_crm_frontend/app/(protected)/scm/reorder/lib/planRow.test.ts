@@ -164,6 +164,33 @@ describe('supplierOptionsFor - costed swap options only', () => {
       lead_time_days: 21,
     });
   });
+
+  it('carries the currency of each option, so a price can be written as what it is', () => {
+    // Without it the shortlist prints bare numbers and a USD 8.00 alternative reads
+    // cheaper than an RM 10.00 chosen supplier, which is the opposite of the truth.
+    const usd: SupplierChoice = {
+      ...beta,
+      unit_cost: 8,
+      currency: 'USD',
+      unit_cost_base: 36,
+      base_currency: 'MYR',
+    };
+    const opts = supplierOptionsFor(rec({ supplier: acme, alternatives: [usd] }));
+
+    expect(opts.find((o) => o.value === 'SUP-BETA')).toMatchObject({
+      unit_cost: 8,
+      currency: 'USD',
+      unit_cost_base: 36,
+    });
+  });
+
+  it('leaves the currency absent when the payload carries none', () => {
+    // An older run has no currency on the choice; that figure already meant ringgit and
+    // is rendered as base, never as a bare number.
+    const opts = supplierOptionsFor(rec({ supplier: acme, alternatives: [beta] }));
+
+    expect(opts.find((o) => o.value === 'SUP-BETA')?.currency).toBeNull();
+  });
 });
 
 describe('m8CashImpact - live qty x the price in the budget currency', () => {

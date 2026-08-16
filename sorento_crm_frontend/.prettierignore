@@ -1,0 +1,16 @@
+# Dependencies and build output
+node_modules
+.next
+.next-dev
+out
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# Test artefacts
+playwright-report
+test-results
+coverage
+
+# Lockfile and static assets served as-is (only the top-level public/, not app/api/v1/public)
+package-lock.json
+/public

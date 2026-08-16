@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { EM_DASH } from '../../lib/format';
+import { EM_DASH, fmtDecimal } from '../../lib/format';
 import type { LoadingPlanLine } from '../../services/fulfilmentService';
 
 /**
@@ -26,7 +26,7 @@ function pct(v: number | null): string {
 }
 
 export function RankFactorsPopover({ line }: { line: LoadingPlanLine }) {
-  const score = line.rank_score === null ? EM_DASH : line.rank_score.toFixed(2);
+  const score = fmtDecimal(line.rank_score, 2);
   return (
     <Popover>
       <PopoverTrigger asChild>

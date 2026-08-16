@@ -72,6 +72,38 @@ describe('PlanChecklistPopover', () => {
     expect(screen.queryByText('Bought on')).not.toBeInTheDocument();
   });
 
+  it('writes a foreign last-purchase price in the currency it was paid in', () => {
+    render(<PlanChecklistPopover rec={rec({ last_purchase_cost: 12.5 })} />);
+    open();
+    expect(screen.getByText('USD 12.50')).toBeInTheDocument();
+  });
+
+  it('writes a ringgit last-purchase price the way the rest of the screen does', () => {
+    // The old build rendered `fmtMoney` plus the raw code, so a MYR purchase of 105 read
+    // "RM 105 MYR": the currency stated twice, once as a glyph and once as a code, and
+    // rounded on top. One format, one statement of the currency, cents kept.
+    render(<PlanChecklistPopover rec={rec({ last_purchase_cost: 105, last_purchase_currency: 'MYR' })} />);
+    open();
+    expect(screen.getByText('RM 105.00')).toBeInTheDocument();
+    expect(screen.queryByText(/RM 105 MYR/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/MYR/)).not.toBeInTheDocument();
+  });
+
+  it('reads a price with no currency on file as ringgit, not as a bare number', () => {
+    render(
+      <PlanChecklistPopover rec={rec({ last_purchase_cost: 105, last_purchase_currency: null })} />,
+    );
+    open();
+    expect(screen.getByText('RM 105.00')).toBeInTheDocument();
+  });
+
+  it('shows a dash when there is no last purchase cost but the row is not "never purchased"', () => {
+    render(<PlanChecklistPopover rec={rec({ last_purchase_cost: null })} />);
+    open();
+    expect(screen.getByText('Last purchase')).toBeInTheDocument();
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
+  });
+
   it('fetches nothing: every figure is already frozen on the row', () => {
     const spy = vi.spyOn(globalThis, 'fetch' as never);
     render(<PlanChecklistPopover rec={rec()} />);
