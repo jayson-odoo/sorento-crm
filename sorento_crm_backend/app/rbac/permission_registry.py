@@ -42,9 +42,19 @@ PERMISSION_REGISTRY.extend([
     {"slug": "user_management.account.view", "name": "View Account", "description": "Permission to view own account."},
 ])
 PERMISSION_REGISTRY.append({
+    "slug": "user_management.contacts.view",
+    "name": "View Contacts",
+    "description": "Permission to view respond contacts and their routing, segments and access grants.",
+})
+PERMISSION_REGISTRY.append({
     "slug": "user_management.contacts.portal_link",
     "name": "Get contact portal link",
     "description": "Generate or send a user-submission portal link for a respond contact.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.reference_data.view",
+    "name": "View Reference Data",
+    "description": "Permission to read shared reference catalogs (contact access types, market segments) used by pickers across modules.",
 })
 
 # Delivery Order Management

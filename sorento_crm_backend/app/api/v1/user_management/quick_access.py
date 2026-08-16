@@ -37,6 +37,11 @@ def _get_next_sort_order(db: Session, user_id: str) -> int:
     return r
 
 
+# Intentionally stays on `get_current_user`: the read is self-scoped to
+# `current_user["id"]` (same family as `GET /users/me`) and the app shell fires it on
+# every page load for every user, so a permission gate would 403 users who simply hold
+# no pin/unpin grant. The sibling writes are gated on `menu.quick_access.pin` /
+# `.unpin`. See `documentation/plans/security/PLAN-user-management-read-gates.md`.
 @router.get("/", response_model=list[QuickAccessResponse])
 async def list_quick_access(
     current_user: dict = Depends(get_current_user),

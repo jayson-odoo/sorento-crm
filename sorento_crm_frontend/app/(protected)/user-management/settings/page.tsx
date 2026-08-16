@@ -347,6 +347,7 @@ export default function Page() {
       );
 
       queryClient.invalidateQueries({ queryKey: ['system-settings'] });
+      queryClient.invalidateQueries({ queryKey: ['system-app-config'] });
     },
     onError: (error: Error) => {
       toast.custom(

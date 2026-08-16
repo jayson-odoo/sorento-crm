@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.schemas.user import (
     ContactAccessTypeCreate,
     ContactAccessTypeUpdate,
@@ -20,9 +20,13 @@ def _service(db: Session) -> ContactAccessTypeService:
     return ContactAccessTypeService(db)
 
 
+# Takes the low-privilege `reference_data.view` slug rather than the
+# `access_agents.view` used by the admin reads below, precisely so the cross-module
+# consumers (marketing promotions, forms, resource-management files, master-data
+# brands and products) keep working without an `access_agents.view` grant.
 @router.get("/", response_model=list)
 async def list_contact_access_types(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.reference_data.view")),
     db: Session = Depends(get_db),
 ):
     """List active contact access types for use in access_levels (promotions, attachments). Returns [{code, name, description, sort_order}]."""
@@ -38,7 +42,7 @@ async def list_contact_access_types(
 
 @router.get("/all", response_model=list[ContactAccessTypeResponse])
 async def list_all_contact_access_types(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db),
 ):
     """List all contact access types (including inactive) for admin UI."""
@@ -53,7 +57,7 @@ async def list_all_contact_access_types(
 @router.get("/{code}", response_model=ContactAccessTypeResponse)
 async def get_contact_access_type(
     code: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db),
 ):
     """Get a single contact access type by code."""
