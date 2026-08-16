@@ -334,8 +334,9 @@ exception.
 ### AC-F01 [FE][J07][J08] Plan grain is admin policy and Planning mode is the buyer's selector
 
 Given the buyer plan, when its controls render, then the buyer is offered **Planning mode: Auto /
-Manual** and no per-run Plan grain selector; the active **Plan grain: Product / Location** is read
-from the admin policy setting and shown as the run's configured grain. Given an admin opens
+Manual** and no per-run Plan grain selector; the active **Plan grain: Product / Location** shown
+for an existing run is that run's stamped `decision_grain`, not the current policy value, and the
+admin policy setting is read only when a run is created. Given an admin opens
 settings, when the plan-grain policy field is set, then its value applies to runs created
 afterwards and its rollout default is **Product**. Neither setting renames, hides, or mutates the
 other vocabulary.

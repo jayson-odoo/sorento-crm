@@ -341,7 +341,8 @@ other:
 - **Plan grain: Product / Location** is an admin-level policy setting held as one field in system
   settings, with rollout default **Product**. It is configured in admin settings, never picked by
   the buyer or planner on each run. Every new front-planning run stamps the configured grain when
-  it is created, and changing the setting affects only runs created afterwards. Under Product
+  it is created, and changing the setting affects only runs created afterwards; the grain shown
+  for an existing run is its stamped `decision_grain`, never the live setting. Under Product
   policy the per-location view remains available as a read and drill view, not a decision surface.
 - **Planning mode: Auto / Manual** remains the buyer's selector and retains the existing policy
   vocabulary from `PLAN-scm-planning-mode-ledger.md`.
@@ -431,7 +432,7 @@ channel. On new runs `order_summary_row.suggested_qty` is this value; it replace
 `summary_order_service.write_rows` derivation that sums per-location `rounded_qty` and then
 `math.ceil`s to a whole unit. No Product-versus-Location reconciliation bridge or rounding delta
 exists because both views read the same channel-aware location facts. No AI-generated quantity,
-optimizer, or extra policy knob is added.
+optimizer, or policy knob beyond the section 5.1 plan-grain setting is added.
 
 ### 5.4 Location grain and decision ownership
 
