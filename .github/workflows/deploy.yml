@@ -499,6 +499,21 @@ jobs:
       ]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # One deploy at a time, because there is ONE server and blue/green picks its
+    # target color by reading which color is live. Two runs that read that at the
+    # same moment both pick the same new color, both `docker compose up` it, and
+    # the loser sits on a container id the winner has already recreated - so its
+    # `docker inspect` never reports healthy and it dies on "not healthy after
+    # 240s" while the app is perfectly fine. That is exactly what three merges
+    # inside two minutes did on 2026-08-16 (runs 31925202875 / 31925216893 took
+    # blue then green; 31925234662 also took green and failed).
+    #
+    # Not cancel-in-progress: killing a deploy mid-swap can leave nginx pointing
+    # at a color nobody finished bringing up. Queued runs execute in order, so
+    # the newest commit is still the one that lands last.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
