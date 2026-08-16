@@ -27,7 +27,6 @@ import {
   formatDatePillLabel,
   describeQuotedContext,
   getReceiptTier,
-  splitMessageQuote,
   type MessageAttachmentDescriptor,
   type QuotedContext,
   type RespondMessageRenderable,
@@ -90,12 +89,6 @@ interface RespondChatListProps {
   highlightMessageId?: string | number | null;
   /** Label shown above the highlighted bubble. */
   highlightLabel?: string;
-  /**
-   * When set, each bubble gets a "Reply" affordance that hands the message back
-   * to the parent (the composer then quotes it). Omitted surfaces render exactly
-   * as before.
-   */
-  onReply?: (item: RespondMessageRenderable) => void;
   /**
    * Scroll-back (AC-L7). Supplied together: reaching the top of the scroll
    * container calls `onLoadOlder`, and the prepended page is scroll-anchored so
@@ -316,7 +309,6 @@ export default function RespondChatList({
   maxHeightClass = 'max-h-[60vh]',
   highlightMessageId = null,
   highlightLabel = 'Ticket based on this message',
-  onReply,
   onLoadOlder,
   hasMoreOlder = false,
   isLoadingOlder = false,
@@ -711,12 +703,11 @@ export default function RespondChatList({
 
           const item = entry.item;
           const isOutgoing = item.traffic === 'outgoing';
-          // Direction aware: only OUR outgoing replies carry the ">" quote
-          // convention. A contact message starting with ">" renders verbatim.
-          const { quoted, body: text } = splitMessageQuote(item);
-          // AC-L6: a contact's quote-reply arrives as a STRUCTURED `replyTo`, not
-          // as ">" text. When both exist the structured one wins - it is the real
-          // reference, and two quote blocks on one bubble would just be noise.
+          const text = item.message?.text ?? '';
+          // AC-L6: a contact's quote-reply arrives as a STRUCTURED `replyTo`.
+          // There is no outgoing counterpart - Respond's send API takes no
+          // reply-to, and the ">"-prefix emulation we used to write was removed
+          // rather than left to read like a real quote.
           const quotedContext = describeQuotedContext(item);
           const attachments = describeMessageAttachments(item);
           const displayMs = getRespondMessageDisplayTimeMs(item);
@@ -782,32 +773,13 @@ export default function RespondChatList({
                     <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
                       {senderLabel}
                     </span>
-                    {onReply && (
-                      <button
-                        type="button"
-                        className="ms-auto inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-zinc-500 hover:bg-black/5 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100"
-                        onClick={() => onReply(item)}
-                        aria-label="Reply to this message"
-                      >
-                        <CornerUpLeft className="size-3" />
-                        Reply
-                      </button>
-                    )}
                   </div>
-                  {quotedContext ? (
+                  {quotedContext && (
                     <QuotedContextBlock
                       context={quotedContext}
                       agentLabel={quotedAgentLabel(quotedTarget)}
                       onJump={quotedTargetId ? () => jumpToMessage(quotedTargetId) : undefined}
                     />
-                  ) : (
-                    quoted && (
-                      <div className="mb-1 rounded border-s-2 border-emerald-500 bg-black/5 px-2 py-1 text-xs italic opacity-80 dark:bg-white/5">
-                        <span className="line-clamp-3 whitespace-pre-wrap break-words">
-                          {quoted}
-                        </span>
-                      </div>
-                    )
                   )}
                   {attachments.map((att, i) => (
                     <AttachmentBlock
@@ -836,7 +808,6 @@ export default function RespondChatList({
                   {!text &&
                     options.length === 0 &&
                     attachments.length === 0 &&
-                    !quoted &&
                     !quotedContext && <div className="italic opacity-70">(no text)</div>}
                   <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-zinc-500 dark:text-zinc-300/80">
                     {displayMs > 0 && <span>{formatBubbleTime(displayMs)}</span>}

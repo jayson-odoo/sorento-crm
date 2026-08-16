@@ -30,7 +30,7 @@ export type RespondMessageRenderable = {
    * its message objects carry `replyTo` when the contact quoted an earlier
    * message; the local `chat_histories` lane reconstructs the same shape from
    * `reply_to_message_id` / `reply_to_message`. Outbound quoting has no API
-   * support and stays the ">"-prefix emulation, so this is a READ-side field.
+   * support at all, so this is inbound-only: a READ-side field.
    */
   replyTo?: {
     messageId?: number | string | null;
@@ -230,72 +230,6 @@ export function describeMessageAttachments(
   return out;
 }
 
-/** Prefix each line of a quoted excerpt with, matching the WhatsApp-style ">" convention. */
-export const QUOTE_LINE_PREFIX = '> ';
-
-/** Longest quoted excerpt carried in an outgoing reply before it is elided. */
-export const QUOTE_EXCERPT_MAX_CHARS = 160;
-
-/**
- * Build the outgoing text for a "reply to this message" send.
- *
- * Respond.io's send API has NO reply-to/context parameter (R1), so a reply is
- * emulated: the quoted excerpt is carried as ">"-prefixed lines above the body,
- * which every WhatsApp client renders as quoted text and which
- * `splitQuotedPrefix` turns back into a quote block in our own chat list.
- */
-export function buildQuotedReplyText(quotedText: string, body: string): string {
-  const excerpt = (quotedText ?? '').replace(/\s+/g, ' ').trim();
-  if (!excerpt) return body;
-  const clipped =
-    excerpt.length > QUOTE_EXCERPT_MAX_CHARS
-      ? `${excerpt.slice(0, QUOTE_EXCERPT_MAX_CHARS).trimEnd()}…`
-      : excerpt;
-  return `${QUOTE_LINE_PREFIX}${clipped}\n${body}`;
-}
-
-/**
- * Split a message body into its leading ">"-quoted excerpt (if any) and the
- * reply itself.
- *
- * ONLY valid on OUTGOING text: the ">" prefix is a convention WE write in
- * `buildQuotedReplyText`, so it is only ours to read back. Render inbound
- * traffic through `splitMessageQuote` (or verbatim) - a contact may legitimately
- * start their own message with ">" and those lines are their message, not a
- * quote of ours.
- */
-export function splitQuotedPrefix(text: string): { quoted: string | null; body: string } {
-  const raw = text ?? '';
-  if (!raw.startsWith(QUOTE_LINE_PREFIX.trimEnd())) return { quoted: null, body: raw };
-  const lines = raw.split('\n');
-  const quoted: string[] = [];
-  let i = 0;
-  for (; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (!line.startsWith('>')) break;
-    quoted.push(line.replace(/^>\s?/, ''));
-  }
-  if (quoted.length === 0) return { quoted: null, body: raw };
-  return { quoted: quoted.join('\n').trim(), body: lines.slice(i).join('\n').replace(/^\n+/, '') };
-}
-
-/**
- * The quote block + body to render for ONE message, direction aware.
- *
- * Outgoing (user traffic) is ours, so a leading ">" block is the quoted-reply
- * emulation and is lifted out into its own quote bubble. Inbound (the contact's
- * own words) is rendered verbatim: stripping their leading ">" lines rewrites
- * what they said, and on a message that is entirely ">" lines it would leave the
- * bubble with no body at all.
- */
-export function splitMessageQuote(
-  item: RespondMessageRenderable,
-): { quoted: string | null; body: string } {
-  const raw = item.message?.text ?? '';
-  if (item.traffic !== 'outgoing') return { quoted: null, body: raw };
-  return splitQuotedPrefix(raw);
-}
-
 /** The "replying to" block above a bubble, when the message quotes an earlier one. */
 export type QuotedContext = {
   /** Respond message id of the quoted message, as a string. Null when absent. */
@@ -312,10 +246,12 @@ export const QUOTED_CONTEXT_MAX_CHARS = 180;
 /**
  * The quoted context carried BY the message itself (UAC AC-L6).
  *
- * Distinct from `splitMessageQuote`, which reads OUR own ">"-prefix emulation
- * off outgoing text. This one reads Respond's structured `replyTo`, which is how
- * a contact's quote-reply arrives - there is no ">" in it to parse, and parsing
- * one would be wrong anyway (the contact's own words are never ours to rewrite).
+ * Inbound only. It reads Respond's structured `replyTo`, which is how a
+ * contact's quote-reply arrives - there is no ">" in it to parse, and parsing
+ * one would be wrong anyway (the contact's own words are never ours to
+ * rewrite). There is no outgoing counterpart: Respond's send API takes no
+ * reply-to, and the ">"-prefix emulation we once wrote was removed rather than
+ * left on screen looking like a real quote.
  *
  * A quoted media message has no text, so the excerpt falls back to a typed
  * placeholder ("[image]") rather than rendering an empty block; a quote we hold

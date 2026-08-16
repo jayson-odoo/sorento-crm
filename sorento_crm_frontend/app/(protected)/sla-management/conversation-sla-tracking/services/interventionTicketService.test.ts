@@ -85,16 +85,16 @@ describe('sendInterventionTicketMessage', () => {
     await sendInterventionTicketMessage('t1', {
       text: 'see attached',
       attachments: [file],
-      reply_to_message_id: '123',
-      reply_to_excerpt: 'earlier message',
     });
     const [, init] = mockApiFetch.mock.calls[0];
     expect(init.body).toBeInstanceOf(FormData);
     expect(init.headers).toBeUndefined();
     const fd = init.body as FormData;
     expect(fd.get('text')).toBe('see attached');
-    expect(fd.get('reply_to_message_id')).toBe('123');
-    expect(fd.get('reply_to_excerpt')).toBe('earlier message');
+    // The outbound reply-to emulation was removed on 2026-08-16: nothing here
+    // carries a quote any more, on either lane.
+    expect(fd.get('reply_to_message_id')).toBeNull();
+    expect(fd.get('reply_to_excerpt')).toBeNull();
     expect(fd.getAll('files')).toHaveLength(1);
   });
 

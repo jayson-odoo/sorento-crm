@@ -164,8 +164,12 @@ describe('RespondChatList — WhatsApp-style render', () => {
     expect(screen.queryByText('(no text)')).toBeNull();
   });
 
-  it('an outgoing quoted reply still renders the quote block above the body', () => {
-    const outgoingQuoted: RespondMessageRenderable[] = [
+  // The outbound ">"-prefix emulation was removed on 2026-08-16: Respond's send
+  // API has no reply-to, so the block dressed ordinary text up as a real quote.
+  // A historical message that carries a ">" line now renders it verbatim, which
+  // is exactly what the contact received.
+  it('an outgoing ">" line renders verbatim, with no quote block', () => {
+    const outgoingQuoteLike: RespondMessageRenderable[] = [
       {
         messageId: 2,
         traffic: 'outgoing',
@@ -174,10 +178,14 @@ describe('RespondChatList — WhatsApp-style render', () => {
         sender: { source: 'user' },
       },
     ];
-    const { container } = render(<RespondChatList items={outgoingQuoted} contactName="X" />);
-    expect(screen.getByText('short by 2 boxes')).toBeDefined();
-    expect(screen.getByText('Checking now.')).toBeDefined();
-    expect(container.querySelector('.border-emerald-500')).not.toBeNull();
+    const { container } = render(<RespondChatList items={outgoingQuoteLike} contactName="X" />);
+    expect(screen.getByText('> short by 2 boxes Checking now.')).toBeDefined();
+    expect(container.querySelector('.border-emerald-500')).toBeNull();
+  });
+
+  it('offers no per-bubble Reply affordance anywhere', () => {
+    render(<RespondChatList items={items} contactName="X" />);
+    expect(screen.queryByRole('button', { name: 'Reply to this message' })).toBeNull();
   });
 
   it('an attachment bubble shows the clean filename, never the uuid segment (AC-D5)', () => {

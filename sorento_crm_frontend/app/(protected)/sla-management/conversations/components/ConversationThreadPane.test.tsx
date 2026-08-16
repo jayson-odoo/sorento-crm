@@ -68,30 +68,17 @@ interface ChatListStubProps {
   contactName?: string | null;
   comments?: unknown[];
   mediaProxy?: (url: string) => Promise<Response>;
-  onReply?: (item: { messageId: number; message: { type: string; text: string } }) => void;
 }
 
 vi.mock('@/components/common/RespondChatList', () => ({
-  default: ({ items, contactName, comments = [], mediaProxy: proxy, onReply }: ChatListStubProps) => (
+  default: ({ items, contactName, comments = [], mediaProxy: proxy }: ChatListStubProps) => (
     <div
       data-testid="chat-list"
       data-contact={contactName ?? ''}
       data-notes={comments.length}
       data-has-media-proxy={proxy ? 'yes' : 'no'}
-      data-has-reply={onReply ? 'yes' : 'no'}
     >
       {items.length} message(s)
-      {onReply && (
-        <button
-          type="button"
-          data-testid="chat-list-reply"
-          onClick={() =>
-            onReply({ messageId: 42, message: { type: 'text', text: 'quote me' } })
-          }
-        >
-          Reply
-        </button>
-      )}
     </div>
   ),
 }));
@@ -102,17 +89,11 @@ interface ComposerStubProps {
   snippetTrackingId?: string | null;
   showTemplateButton?: boolean;
   windowStateOverride?: { closed: boolean; template?: unknown } | null;
-  replyTo?: { messageId: string | number | null; excerpt: string } | null;
   templateSendAdapter?: (input: {
     template_id: string;
     params: Record<string, string>;
   }) => Promise<unknown>;
-  sendAdapter?: (p: {
-    text: string;
-    files: File[];
-    replyToMessageId?: string | number | null;
-    replyToExcerpt?: string | null;
-  }) => Promise<unknown>;
+  sendAdapter?: (p: { text: string; files: File[] }) => Promise<unknown>;
 }
 
 vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
@@ -122,7 +103,6 @@ vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
     snippetTrackingId,
     showTemplateButton,
     windowStateOverride,
-    replyTo,
     templateSendAdapter,
     sendAdapter,
   }: ComposerStubProps) =>
@@ -134,21 +114,12 @@ vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
         // Undefined means the composer's own default (shown), which is what the
         // inbox now wants.
         data-template-button={String(showTemplateButton !== false)}
-        data-reply-to={replyTo ? String(replyTo.messageId) : ''}
-        data-reply-excerpt={replyTo?.excerpt ?? ''}
       >
         <button
           type="button"
           data-testid="inbox-composer-send"
           data-snippet-tracking-id={snippetTrackingId ?? ''}
-          onClick={() =>
-            void sendAdapter?.({
-              text: 'hello',
-              files: [],
-              replyToMessageId: replyTo?.messageId ?? null,
-              replyToExcerpt: replyTo?.excerpt ?? null,
-            })
-          }
+          onClick={() => void sendAdapter?.({ text: 'hello', files: [] })}
         >
           Send
         </button>
@@ -274,12 +245,7 @@ describe('ConversationThreadPane', () => {
     fireEvent.click(screen.getByTestId('inbox-composer-send'));
 
     await waitFor(() =>
-      expect(replyMutateAsync).toHaveBeenCalledWith({
-        text: 'hello',
-        files: [],
-        reply_to_message_id: null,
-        reply_to_excerpt: null,
-      }),
+      expect(replyMutateAsync).toHaveBeenCalledWith({ text: 'hello', files: [] }),
     );
     expect(toastSuccess).toHaveBeenCalledWith(
       'Sent - counted as the reply to your open enquiry.',
@@ -379,27 +345,18 @@ describe('ConversationThreadPane', () => {
     );
   });
 
-  it('a per-bubble Reply quotes that message on the next send', async () => {
+  // Outbound reply-to was removed on 2026-08-16 (Respond's send API has no
+  // reply-to, so the ">" quote was theatre). Nothing here offers a per-bubble
+  // Reply, and a send carries text + files only. Inbound quoted context is
+  // untouched - it lives in RespondChatList and has its own suite.
+  it('a send carries text and files only, with no quote reference', async () => {
     render(<ConversationThreadPane contact={contact()} canReply />);
-
-    fireEvent.click(screen.getByTestId('chat-list-reply'));
-    expect(screen.getByTestId('inbox-composer')).toHaveAttribute('data-reply-excerpt', 'quote me');
 
     fireEvent.click(screen.getByTestId('inbox-composer-send'));
 
     await waitFor(() =>
-      expect(replyMutateAsync).toHaveBeenCalledWith({
-        text: 'hello',
-        files: [],
-        reply_to_message_id: '42',
-        reply_to_excerpt: 'quote me',
-      }),
+      expect(replyMutateAsync).toHaveBeenCalledWith({ text: 'hello', files: [] }),
     );
-  });
-
-  it('offers no Reply affordance to a viewer who cannot reply', () => {
-    render(<ConversationThreadPane contact={contact()} canReply={false} />);
-    expect(screen.getByTestId('chat-list')).toHaveAttribute('data-has-reply', 'no');
   });
 
   // ---- AC-K1 / AC-K2: live thread ----------------------------------------

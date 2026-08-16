@@ -3,11 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   describeMessageAttachments,
   describeQuotedContext,
-  buildQuotedReplyText,
   fileNameFromAttachmentUrl,
-  splitMessageQuote,
-  splitQuotedPrefix,
-  QUOTE_EXCERPT_MAX_CHARS,
   QUOTED_CONTEXT_MAX_CHARS,
   type RespondMessageRenderable,
 } from './respondIoChatRender';
@@ -184,92 +180,6 @@ describe('fileNameFromAttachmentUrl', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Quote round-trip (composer -> wire text -> re-parsed in the chat list)
-// ---------------------------------------------------------------------------
-describe('buildQuotedReplyText / splitQuotedPrefix round-trip', () => {
-  it('prefixes the excerpt with ">" and re-parses it back into quoted + body', () => {
-    const wire = buildQuotedReplyText('My delivery yesterday was short by 2 boxes.', 'Checking now.');
-    expect(wire).toBe('> My delivery yesterday was short by 2 boxes.\nChecking now.');
-
-    const { quoted, body } = splitQuotedPrefix(wire);
-    expect(quoted).toBe('My delivery yesterday was short by 2 boxes.');
-    expect(body).toBe('Checking now.');
-  });
-
-  it('collapses newlines/whitespace in the excerpt before quoting', () => {
-    const wire = buildQuotedReplyText('line one\n\n  line two  ', 'reply');
-    expect(wire).toBe('> line one line two\nreply');
-  });
-
-  it('elides an excerpt longer than QUOTE_EXCERPT_MAX_CHARS', () => {
-    const long = 'x'.repeat(QUOTE_EXCERPT_MAX_CHARS + 40);
-    const wire = buildQuotedReplyText(long, 'reply');
-    const { quoted } = splitQuotedPrefix(wire);
-    expect(quoted?.endsWith('…')).toBe(true);
-    expect(quoted?.length).toBeLessThanOrEqual(QUOTE_EXCERPT_MAX_CHARS + 1);
-  });
-
-  it('an empty excerpt is a no-op: body passes through unquoted', () => {
-    expect(buildQuotedReplyText('   ', 'reply')).toBe('reply');
-    expect(splitQuotedPrefix('reply')).toEqual({ quoted: null, body: 'reply' });
-  });
-
-  it('a body with no leading ">" is not misparsed as quoted', () => {
-    expect(splitQuotedPrefix('just a normal message')).toEqual({
-      quoted: null,
-      body: 'just a normal message',
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// splitMessageQuote - the ">" convention is OURS, so it is only parsed out of
-// OUTGOING traffic. An inbound contact message that happens to start with ">"
-// used to lose its leading lines into an italic quote block (and, when every
-// line was quoted, its whole body).
-// ---------------------------------------------------------------------------
-describe('splitMessageQuote (direction aware)', () => {
-  it('outgoing quoted reply still splits into quote + body', () => {
-    const item: RespondMessageRenderable = {
-      messageId: 1,
-      traffic: 'outgoing',
-      message: { type: 'text', text: '> Short by 2 boxes.\nChecking now.' },
-    };
-    expect(splitMessageQuote(item)).toEqual({
-      quoted: 'Short by 2 boxes.',
-      body: 'Checking now.',
-    });
-  });
-
-  it('inbound message starting with ">" renders verbatim, nothing lifted into a quote', () => {
-    const text = '> quoting the price list you sent\nis this still valid?';
-    const item: RespondMessageRenderable = {
-      messageId: 2,
-      traffic: 'incoming',
-      message: { type: 'text', text },
-    };
-    expect(splitMessageQuote(item)).toEqual({ quoted: null, body: text });
-  });
-
-  it('inbound message that is ENTIRELY ">" lines keeps a body (never an empty bubble)', () => {
-    const text = '> line one\n> line two';
-    const item: RespondMessageRenderable = {
-      messageId: 3,
-      traffic: 'incoming',
-      message: { type: 'text', text },
-    };
-    expect(splitMessageQuote(item)).toEqual({ quoted: null, body: text });
-  });
-
-  it('a message with no text at all yields an empty body, never throws', () => {
-    expect(splitMessageQuote({ messageId: 4, traffic: 'incoming' })).toEqual({
-      quoted: null,
-      body: '',
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
 // describeQuotedContext - UAC AC-L6: the STRUCTURED inbound quote, read from
 // Respond's `replyTo`, never parsed out of the body.
 // ---------------------------------------------------------------------------
@@ -322,12 +232,11 @@ describe('describeQuotedContext', () => {
     expect(describeQuotedContext({ replyTo: { messageId: '  ' } })).toBeNull();
   });
 
-  it('is independent of the outgoing ">" emulation, which stays with splitMessageQuote', () => {
+  it('a literal ">" in the body is never read as a quote (no outbound emulation exists)', () => {
     const item: RespondMessageRenderable = {
       traffic: 'outgoing',
       message: { type: 'text', text: '> quoted line\nreply body' },
     };
     expect(describeQuotedContext(item)).toBeNull();
-    expect(splitMessageQuote(item)).toEqual({ quoted: 'quoted line', body: 'reply body' });
   });
 });

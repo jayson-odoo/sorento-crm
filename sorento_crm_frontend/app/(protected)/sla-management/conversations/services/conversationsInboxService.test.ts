@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * The contact-keyed inbox endpoints (UAC AC-N1 / AC-N2 / AC-N3).
  *
  * What matters here is the wire: which URL, which method, which body. The
- * `reply_to_*` pair in particular is audit-only on the backend and is easy to
- * drop silently, and the multipart lane reads its fields as plain form strings.
+ * outbound reply-to emulation was removed on 2026-08-16, so a send is text
+ * (plus files) and nothing else - the backend still accepts the audit-only
+ * `reply_to_*` pair, and nothing here may start sending it again.
  */
 const apiFetch = vi.fn();
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
@@ -103,46 +104,23 @@ describe('sendContactTemplateMessage', () => {
 });
 
 describe('replyToContact', () => {
-  it('carries the quoted-reply reference on the JSON lane', async () => {
+  it('sends only the text on the JSON lane - no reply-to emulation', async () => {
     apiFetch.mockResolvedValue(ok({ sent_as: 'text', stamped_ticket_id: null }));
 
-    await replyToContact('10025531', {
-      text: '> quote me\n\nhello',
-      reply_to_message_id: '42',
-      reply_to_excerpt: 'quote me',
-    });
-
-    expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toEqual({
-      text: '> quote me\n\nhello',
-      reply_to_message_id: '42',
-      reply_to_excerpt: 'quote me',
-    });
-  });
-
-  it('nulls the quote fields when there is no quote', async () => {
-    apiFetch.mockResolvedValue(ok({ sent_as: 'text', stamped_ticket_id: null }));
     await replyToContact('10025531', { text: 'hello' });
-    expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toEqual({
-      text: 'hello',
-      reply_to_message_id: null,
-      reply_to_excerpt: null,
-    });
+
+    expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toEqual({ text: 'hello' });
   });
 
-  it('carries them as form fields on the multipart lane, and omits empty ones', async () => {
+  it('sends only text + files on the multipart lane', async () => {
     apiFetch.mockResolvedValue(ok({ sent_as: 'attachment', stamped_ticket_id: null }));
     const file = new File(['x'], 'quote.pdf', { type: 'application/pdf' });
 
-    await replyToContact('10025531', {
-      text: 'see attached',
-      files: [file],
-      reply_to_message_id: '42',
-    });
+    await replyToContact('10025531', { text: 'see attached', files: [file] });
 
     const form = apiFetch.mock.calls[0][1].body as FormData;
     expect(form.get('text')).toBe('see attached');
-    expect(form.get('reply_to_message_id')).toBe('42');
-    // Absent, NOT the literal empty string the backend would keep.
+    expect(form.get('reply_to_message_id')).toBeNull();
     expect(form.get('reply_to_excerpt')).toBeNull();
     expect(form.getAll('files')).toHaveLength(1);
   });

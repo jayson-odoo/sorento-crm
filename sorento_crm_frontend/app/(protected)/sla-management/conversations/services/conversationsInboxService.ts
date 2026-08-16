@@ -32,11 +32,11 @@
  *      WIDER than the ticket-keyed list on purpose (AC-N3): contact-scoped
  *      notes AND every conversation ticket's notes for that contact.
  * 5. GET /conversations/{ref}/media?url=  -> the bytes (allowlisted hosts).
- * 6. POST /conversations/{ref}/reply - JSON
- *      `{text, reply_to_message_id?, reply_to_excerpt?}` or multipart (the same
- *      fields + repeated `files`). The `reply_to_*` pair is AUDIT-ONLY and never
- *      reaches Respond, which has no reply-to parameter: the composer builds the
- *      ">" quote prefix into `text`, which is sent verbatim.
+ * 6. POST /conversations/{ref}/reply - JSON `{text}` or multipart (`text` +
+ *      repeated `files`). The route still accepts an optional, audit-only
+ *      `reply_to_message_id` / `reply_to_excerpt` pair, but nothing sends it:
+ *      Respond has no reply-to parameter, and the ">" quote-prefix emulation
+ *      was removed on 2026-08-16 rather than left reading like a real quote.
  *      `stamped_ticket_id` is non-null only when the sender holds EXACTLY ONE
  *      open ticket for the contact; zero or several is an unstamped human send
  *      that still goes out, still writes the outbox and still fires the
@@ -247,12 +247,6 @@ export async function sendContactTemplateMessage(
 export interface ContactReplyInput {
   text: string;
   files?: File[];
-  /**
-   * Audit-only, exactly like the drawer send: Respond has no reply-to
-   * parameter, so the quote itself is already in `text` as a ">" prefix.
-   */
-  reply_to_message_id?: string | null;
-  reply_to_excerpt?: string | null;
 }
 
 export interface ContactReplyResult {
@@ -276,11 +270,7 @@ export async function replyToContact(
     : apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: input.text,
-          reply_to_message_id: input.reply_to_message_id ?? null,
-          reply_to_excerpt: input.reply_to_excerpt ?? null,
-        }),
+        body: JSON.stringify({ text: input.text }),
       }));
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to send message'));
@@ -291,12 +281,6 @@ export async function replyToContact(
 function buildReplyFormData(input: ContactReplyInput, files: File[]): FormData {
   const formData = new FormData();
   formData.append('text', input.text);
-  // Only when set: the multipart lane reads them as plain strings, so an empty
-  // one would arrive as the literal "" rather than as absent.
-  if (input.reply_to_message_id) {
-    formData.append('reply_to_message_id', input.reply_to_message_id);
-  }
-  if (input.reply_to_excerpt) formData.append('reply_to_excerpt', input.reply_to_excerpt);
   for (const file of files) formData.append('files', file);
   return formData;
 }

@@ -9,7 +9,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import RespondChatList from '@/components/common/RespondChatList';
 import InternalCommentComposer from '@/components/common/conversation/InternalCommentComposer';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
-import { excerptOfMessage } from '@/components/common/conversation/quotedReply';
 import { useConversationEvents } from '@/components/common/conversation/useConversationEvents';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
 import { cn } from '@/lib/utils';
@@ -57,9 +56,6 @@ export default function ConversationThreadPane({
 }: ConversationThreadPaneProps) {
   const contactRef = contact?.contact_ref ?? null;
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
-  const [replyTo, setReplyTo] = useState<
-    { messageId: string | number | null; excerpt: string } | null
-  >(null);
 
   const queryClient = useQueryClient();
 
@@ -113,10 +109,9 @@ export default function ConversationThreadPane({
   });
 
   // A different contact is a different conversation: never carry the composer
-  // mode across, and never carry a quote into someone else's thread.
+  // mode across.
   useEffect(() => {
     setMode('reply');
-    setReplyTo(null);
   }, [contactRef]);
 
   if (!contact) {
@@ -208,17 +203,6 @@ export default function ConversationThreadPane({
             focusNonce={thread.focusNonce}
             comments={commentsQuery.data ?? []}
             mediaProxy={mediaProxy}
-            // Respond has no reply-to parameter, so the quote is emulated as a
-            // ">" prefix the composer builds - same as the drawer.
-            onReply={
-              canReply
-                ? (item) =>
-                    setReplyTo({
-                      messageId: item.messageId ?? null,
-                      excerpt: excerptOfMessage(item),
-                    })
-                : undefined
-            }
           />
         </>
       )}
@@ -290,15 +274,10 @@ export default function ConversationThreadPane({
           snippetsEnabled
           snippetTrackingId={snippetTicketId}
           emojiEnabled
-          replyTo={replyTo}
-          onClearReplyTo={() => setReplyTo(null)}
           sendAdapter={async (payload) => {
             const result = await replyMutation.mutateAsync({
               text: payload.text,
               files: payload.files,
-              reply_to_message_id:
-                payload.replyToMessageId != null ? String(payload.replyToMessageId) : null,
-              reply_to_excerpt: payload.replyToExcerpt ?? null,
             });
             // AC-N2: a stamped send answered one of the sender's own enquiries
             // and stopped its clock. Said quietly - an unstamped send still

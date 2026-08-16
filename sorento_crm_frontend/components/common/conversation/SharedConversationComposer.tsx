@@ -19,7 +19,6 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import SendTemplateDialog from '@/components/common/whatsapp-template/SendTemplateDialog';
-import { buildQuotedReplyText } from '@/lib/respondIoChatRender';
 import { useMessageSnippetOptions } from '@/app/(protected)/sla-management/message-snippets/hooks/useMessageSnippets';
 import type { MessageSnippetOption } from '@/app/(protected)/sla-management/message-snippets/types/messageSnippet.types';
 import { useConversationWindowState } from './useConversationWindowState';
@@ -57,21 +56,12 @@ interface SharedConversationComposerProps {
    */
   attachmentsEnabled?: boolean;
   /**
-   * Message being replied to. Respond.io has no reply-to parameter, so the
-   * excerpt is carried as a ">" quote prefix on the outgoing text.
-   */
-  replyTo?: { messageId: string | number | null; excerpt: string } | null;
-  onClearReplyTo?: () => void;
-  /**
    * Overrides the default send. Used where the send must be stamped with more
-   * than (entityType, entityId) - e.g. an intervention ticket carrying files and
-   * a quoted message.
+   * than (entityType, entityId) - e.g. an intervention ticket carrying files.
    */
   sendAdapter?: (payload: {
     text: string;
     files: File[];
-    replyToMessageId?: string | number | null;
-    replyToExcerpt?: string | null;
   }) => Promise<{
     sent_as: 'text' | 'template' | 'attachment';
     /**
@@ -147,8 +137,6 @@ export default function SharedConversationComposer({
   onSent,
   notAvailableMessage = 'Reply is only available when a Respond.io conversation is linked to this record.',
   attachmentsEnabled = false,
-  replyTo = null,
-  onClearReplyTo,
   sendAdapter,
   windowStateOverride = null,
   showTemplateButton = true,
@@ -359,21 +347,13 @@ export default function SharedConversationComposer({
     // positional (the backend delivers in order and stops at the first
     // failure), so it must be matched against THIS list, not later state.
     const sentFiles = files;
-    // Respond.io carries no reply-to reference, so a quoted reply ships as a
-    // ">" prefixed excerpt above the body (rendered as a quote by WhatsApp and
-    // by our own chat list).
-    const text = replyTo?.excerpt ? buildQuotedReplyText(replyTo.excerpt, typed) : typed;
+    const text = typed;
     setSending(true);
     setSendError(null);
     setFailedFileName(null);
     try {
       const result = sendAdapter
-        ? await sendAdapter({
-            text,
-            files: sentFiles,
-            replyToMessageId: replyTo?.messageId ?? null,
-            replyToExcerpt: replyTo?.excerpt ?? null,
-          })
+        ? await sendAdapter({ text, files: sentFiles })
         : await sendConversationMessage(entityType, entityId, text);
       // Partial delivery: the text and the delivered files are gone for good
       // (the contact has them), so only what did NOT reach them stays staged -
@@ -390,7 +370,6 @@ export default function SharedConversationComposer({
       setReplyText('');
       setFiles(failed ? sentFiles.slice(deliveredCount) : attachmentsDropped ? sentFiles : []);
       setFailedFileName(failed?.filename ?? null);
-      onClearReplyTo?.();
       if (attachmentsDropped) {
         toast.error(
           sentFiles.length === 1
@@ -458,28 +437,6 @@ export default function SharedConversationComposer({
     setFiles((prev) => [...prev, ...Array.from(picked)]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
-
-  // Quoted message being replied to (Respond has no reply-to field; see handleSend).
-  const replyToChip = replyTo ? (
-    <div
-      className="flex items-start gap-2 rounded-md border-s-2 border-primary bg-muted/40 px-2.5 py-1.5 text-xs"
-      data-testid="composer-reply-to"
-    >
-      <span className="line-clamp-2 flex-1 italic text-muted-foreground">{replyTo.excerpt}</span>
-      {onClearReplyTo && (
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="size-5 shrink-0"
-          aria-label="Cancel reply"
-          onClick={onClearReplyTo}
-        >
-          <X className="size-3.5" />
-        </Button>
-      )}
-    </div>
-  ) : null;
 
   const attachmentChips =
     attachmentsEnabled && files.length > 0 ? (
@@ -581,7 +538,6 @@ export default function SharedConversationComposer({
 
   return (
     <div className="space-y-2">
-      {replyToChip}
       {attachmentChips}
 
       {/* The message field and its typeaheads share one positioning context, so
