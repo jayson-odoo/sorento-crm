@@ -747,3 +747,81 @@ def test_adding_a_word_to_an_unknown_key_is_a_404(api):
 
     response = client.post(f"{_BASE}/zzt_no_such_key/values", json={"value": "chrome"})
     assert response.status_code == 404, response.text
+
+
+# --------------------------------------------------------------------------- #
+# One word, one meaning - the invariant every vocabulary write normalises to
+# --------------------------------------------------------------------------- #
+def test_deleting_a_staff_value_takes_its_spellings_with_it(api):
+    """A word that is GONE leaves nothing behind pointing at it.
+
+    A merchandiser adds `gunmetal` from a product page; a registry admin later drops it
+    from the values list. Its spellings used to survive that save, so the published
+    vocabulary advertised words for a value the same response reported as not allowed,
+    and adding `gunmetal` back was refused by naming itself - a dead end reachable
+    entirely through shipped screens.
+    """
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", label="Finish", allowed_values=["chrome"], source="user")
+
+    added = client.post(f"{_BASE}/zzt_finish/values", json={"value": "gunmetal"})
+    assert added.status_code == 200, added.text
+    assert added.json()["user_synonyms"]["gunmetal"] == ["gunmetal"]
+
+    _as(_REGISTRY_ADMIN)
+    # The registry editor submits the whole list, and its `user_synonyms` still carries
+    # the row it rendered for the value being dropped.
+    dropped = client.patch(
+        f"{_BASE}/zzt_finish",
+        json={"user_values": [], "user_synonyms": {"gunmetal": ["gunmetal"]}},
+    )
+    assert dropped.status_code == 200, dropped.text
+    assert dropped.json()["user_values"] == []
+    assert "gunmetal" not in dropped.json()["user_synonyms"]
+    assert "gunmetal" not in dropped.json()["synonyms"]
+
+    _as(_MERCHANDISER)
+    again = client.post(f"{_BASE}/zzt_finish/values", json={"value": "gunmetal"})
+    assert again.status_code == 200, again.text
+    assert "gunmetal" in again.json()["user_values"]
+
+
+def test_restoring_a_struck_off_value_does_not_republish_a_word_now_taken(api):
+    """One text cannot mean two things on one key, and a restore must not create that.
+
+    A struck-off value's spellings are unpublished, so one of them can legitimately be
+    added as a value in its own right (the accepted consequence of hiding them). Putting
+    the struck-off value back would then have published that text BOTH as a value and as
+    a word for the restored one - the split this registry exists to prevent, arrived at
+    through three individually sanctioned steps.
+    """
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(
+        db,
+        "zzt_finish",
+        label="Finish",
+        allowed_values=["brushed_brass", "chrome"],
+        synonyms={"chrome": ["chrome"]},
+        user_synonyms={"brushed_brass": ["antique brass"]},
+        suppressed_values=["brushed_brass"],
+        source="user",
+    )
+
+    added = client.post(f"{_BASE}/zzt_finish/values", json={"value": "antique brass"})
+    assert added.status_code == 200, added.text
+    assert "antique brass" in added.json()["user_values"]
+
+    _as(_REGISTRY_ADMIN)
+    restored = client.patch(f"{_BASE}/zzt_finish", json={"suppressed_values": []})
+    assert restored.status_code == 200, restored.text
+
+    body = restored.json()
+    assert body["suppressed_values"] == []
+    assert "antique brass" in body["allowed_values"]
+    # Published as a value, and as a word for nothing else.
+    assert "antique brass" not in body["synonyms"].get("brushed_brass", [])
+    assert "antique brass" not in (body["user_synonyms"].get("brushed_brass") or [])

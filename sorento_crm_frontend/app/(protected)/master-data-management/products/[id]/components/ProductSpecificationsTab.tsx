@@ -218,8 +218,6 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   // products.edit, add-a-value takes either grant, creating a key needs the add grant.
   const { permissionSet } = usePermissions();
   const canEdit = permissionSet.has('master_data.products.edit');
-  const canExtendVocabulary =
-    canEdit || permissionSet.has('master_data.spec_registry.edit');
   const canCreateKey = permissionSet.has('master_data.spec_registry.add');
 
   const rederive = async () => {
@@ -364,7 +362,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
                 onSetValue: spec.setValue,
                 onTombstone: spec.tombstone,
                 onRevert: spec.revert,
-                onAddValueToKey: canExtendVocabulary ? spec.addValue : undefined,
+                onAddValueToKey: canEdit ? spec.addValue : undefined,
                 onAddSpecification: () => setAdding(true),
               }}
             />

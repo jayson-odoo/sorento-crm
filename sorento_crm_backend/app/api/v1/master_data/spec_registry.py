@@ -271,6 +271,43 @@ def _validate_reachable(data_type: str, allowed_values, synonyms) -> None:
         )
 
 
+def _normalise_user_vocabulary(row) -> None:
+    """The staff spellings a key may keep. Run by EVERY writer, before it commits.
+
+    Two clauses, both about the same thing - one word, one meaning, and no word left
+    behind pointing at something the same response says is not a value:
+
+      * a spelling is kept only for a value the key actually has, shipped or staff-added.
+        Without this, deleting a staff value from the registry editor left its spellings
+        stored: the published vocabulary then advertised words for a value it reported
+        as not allowed, and adding that word back was refused by naming itself.
+      * a spelling that has become a VALUE of this key in its own right is dropped from
+        whatever other value it used to spell, because a row that publishes one text as
+        both is the split this registry exists to prevent.
+
+    Only `user_synonyms`. The seed's own `synonyms` is left alone: `_self` and the
+    numeric/boolean literals are keyed off values no `allowed_values` list holds.
+    """
+    values = [*(row.allowed_values or []), *(row.user_values or [])]
+    known = {str(v) for v in values}
+    canonical: dict[str, str] = {}
+    for value in values:
+        canonical.setdefault(normalise_vocabulary(value), str(value))
+
+    cleaned: dict[str, list] = {}
+    for value, words in (row.user_synonyms or {}).items():
+        if str(value) not in known:
+            continue
+        kept = [
+            word
+            for word in (words or [])
+            if canonical.get(normalise_vocabulary(word), str(value)) == str(value)
+        ]
+        if kept:
+            cleaned[str(value)] = kept
+    row.user_synonyms = cleaned
+
+
 class PolicyUpdate(BaseModel):
     """One scoring knob. Bounded so a typo cannot make the ranker meaningless."""
 
@@ -920,6 +957,8 @@ def update_spec_key(
             if field in fields and fields[field] is not None:
                 setattr(row, field, fields[field])
 
+        _normalise_user_vocabulary(row)
+
         # A value nobody can say is unsearchable, and a newly added one has no words
         # yet. Rather than refusing the save, give it the obvious word - its own name,
         # readably - which is what the person adding "free_standing" meant anyway. They
@@ -1027,6 +1066,8 @@ def add_spec_value(
             )
 
         row.user_values = [*(row.user_values or []), proposed]
+
+        _normalise_user_vocabulary(row)
 
         # A value nobody can say is unsearchable, and a new one has no words yet. Give
         # it its own name, readably - what the person adding "free_standing" meant.

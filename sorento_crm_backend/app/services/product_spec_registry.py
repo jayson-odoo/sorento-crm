@@ -1239,12 +1239,18 @@ def merged_synonyms(row: ProductSpecRegistry) -> dict:
     Suppression is applied LAST, so suppressing a word the seed ships and adding it back
     under another value both work, in either order.
 
-    A SUPPRESSED VALUE has no words at all. Keeping them pointed every reader at
-    something nobody can pick or save: `find_similar_value` refused a proposal by naming
-    the suppressed value, the product dropdown said "pick it above" when it was not
-    above, and `GET /spec-registry` advertised words for a value the same response
-    reported as not allowed - in the one vocabulary the ranker and the n8n parser share.
-    Dropped here rather than at each reader, because they all read this map.
+    A SUPPRESSED VALUE publishes no words. This is the READ half of one rule whose write
+    half is `_normalise_user_vocabulary`: a value that is GONE loses its spellings when
+    the row is written, and a value that is merely WITHDRAWN keeps them stored but
+    unpublished. The two are not interchangeable - a suppressed value is still in
+    `allowed_values`, so the write deliberately keeps its spellings, and that is what
+    makes putting it back one click rather than a retyping exercise.
+
+    Unpublished matters because every reader takes this map: `find_similar_value` would
+    refuse a proposal by naming the suppressed value, the product dropdown would say
+    "pick it above" when it is not above, and `GET /spec-registry` would advertise words
+    for a value the same response reports as not allowed - in the one vocabulary the
+    ranker and the n8n parser share.
     """
     merged = {value: list(words) for value, words in (row.synonyms or {}).items()}
     for value, words in (row.user_synonyms or {}).items():
