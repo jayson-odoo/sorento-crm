@@ -127,9 +127,10 @@ or committed to another SO is presented as Borrow, not Reserve.
 
 ### AC-B08 [T][J04] The hot-selling worked case is fixed
 
-Given a hot-selling product with need 70, dealer-facing free stock 50, BRW free unclaimed stock
-120, and BRW reorder level 80, when the proposal is calculated, then Reserve is 40, dealer-facing
-Reserve is 0, and the Borrow-or-Buy residual is 30.
+Given a hot-selling product with open quantity 70, no SPO by the required date, dealer-facing
+free stock 50, BRW free unclaimed stock 120, and BRW reorder level 80, when the proposal is
+calculated, then Reserve is 40 from opening stock before any SPO, dealer-facing Reserve is 0, and
+the Borrow-or-Buy residual is 30.
 
 ### AC-B09 [FE][J04] Borrow evidence and reason are mandatory
 
@@ -254,9 +255,11 @@ without displaying a UUID.
 
 ### AC-E01 [BE][J07] Channel uses the existing classification precedence
 
-Given an SO is imported or a Project SO is published, when `_classify_demand` stamps its persisted
-`sales_orders.demand_class`, then it checks stored `order_type`, stated `order_type`, customer market
-segment, and sales-agent demand class in that order. Any textual source containing `project`,
+Given an SO arrives through outstanding-order import (including AutoCount upload) or the Order
+Inquiry sheet import, when its persisted `sales_orders.demand_class` is stamped, then it goes
+through `_classify_demand`, Project SO publish stamps nothing, and the mapper checks stored
+`order_type`, stated `order_type`, customer market segment, and sales-agent demand class in that
+order. Any textual source containing `project`,
 `projects`, or `contract` maps to `project`, including `subcontractor`; every other stated textual
 value maps to `retail`, and no AI or warehouse inference participates.
 
@@ -283,8 +286,11 @@ owner; legacy runs keep their stored values.
 
 Given Project SO decisions in mixed lifecycle states, when Product grain is built, then Project
 need is the sum of current confirmed unplaced Buy on Project-class lines at their fulfilment
-locations; it is not netted again against stock, SPO incoming, or PO supply, and unconfirmed,
-Reserve, Borrow, covered incoming, and already placed quantity are excluded.
+locations, read from `projects.order_inquiry_rows` joined to core SO lines through
+`core_sales_order_line_id`; it is not netted again against stock, SPO incoming, or PO supply, and
+unconfirmed, Reserve, Borrow, covered incoming, and already placed quantity are excluded. A
+sheet-named SO with `demand_origin = 'scm_order_inquiry'` counts through the sheet leg only while
+it has no confirmed decision, so it is never counted twice.
 
 ### AC-E05 [BE][J07] Firm Project Buy bypasses reorder suppression
 
@@ -339,7 +345,8 @@ competing winner.
 
 Given the same product, when Location grain is calculated, then each row reads its own
 per-location reorder level with NULL treated as 0 for this feature; no product-level sum is
-written back over those rows.
+written back over those rows. Its actionable need is Project need plus Retail-only netted need,
+excluding unclassified demand exactly as Product grain does.
 
 ### AC-F06 [FE][J07][J08] There is no level worklist state
 

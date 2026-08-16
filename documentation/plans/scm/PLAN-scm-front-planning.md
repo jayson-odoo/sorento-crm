@@ -157,11 +157,14 @@ quantities.
 For each line, in order:
 
 1. Start with current `open_so_qty`.
-2. Apply only timely SPO coverage from the line's product and location. An SPO arriving after the
-   required date is advisory at that date.
-3. Propose Reserve from eligible free unclaimed stock under section 3.3.
+2. Propose Reserve from eligible free unclaimed opening stock under section 3.3.
+3. Apply timely SPO coverage from the line's product and location, arriving on or before the
+   required date. An SPO arriving after the required date is advisory at that date.
 4. Propose Borrow only from stock outside Reserve eligibility or stock committed to another SO.
 5. Set Buy to the remaining positive residual.
+
+Steps 2 and 3 follow the section 3.5 attribution order: opening stock first, then timely SPO, with
+lines processed by required date, SO number, line number, then internal line ID.
 
 The output is evidence-backed and deterministic for the same snapshot. The system may rank
 candidate locations for presentation, but ranking does not change quantities without the
@@ -212,11 +215,12 @@ Borrow may still deliberately use a non-Reserve source, including dealer stock, 
 the explicit CS confirmation in section 3.4.
 
 **Worked example:** Product P is ABC A at a dealer-facing location, so it is hot-selling. Its
-Project line needs 70 units after timely SPO coverage. Dealer-facing free stock is 50,
-BRW free unclaimed stock is 120, and BRW's reorder level is 80. The cap is `120 - 80 = 40`.
-The proposal is Reserve 40 from BRW and a residual 30 for Borrow or Buy. The 50 dealer-facing
-units and BRW's protected 80 are not consumed by Reserve. If CS selects 10 dealer units as
-Borrow with a reason, Buy becomes 20 and the line balances at confirmation.
+Project line has open quantity 70 and no SPO arrives by its required date. Dealer-facing free
+stock is 50, BRW free unclaimed stock is 120, and BRW's reorder level is 80. The cap is
+`120 - 80 = 40`. The proposal is Reserve 40 from BRW, timely SPO coverage 0, and a residual 30 for
+Borrow or Buy. The 50 dealer-facing units and BRW's protected 80 are not consumed by Reserve. If
+CS selects 10 dealer units as Borrow with a reason, Buy becomes 20 and the line balances at
+confirmation.
 
 ### 3.4 Borrow and discontinued Buy
 
@@ -290,6 +294,12 @@ Order Inquiry is a purchase-requirement handoff, not an independent netting engi
   in the purchase ledger and produce an exception if the new need is lower.
 - The SCM reader counts current confirmed, unplaced Buy directly. It does not subtract customer
   delivery again and does not repeat the pre-order or inbound netting already decided by CS.
+- On new runs the single owner of Project demand is confirmed unplaced Buy in
+  `projects.order_inquiry_rows`, joined to core `sales_order_lines` through
+  `projects.sales_order_lines.core_sales_order_line_id` and the fulfilment warehouse. The legacy
+  sheet leg (`sales_orders.demand_origin = 'scm_order_inquiry'`) is read only for SOs with no
+  confirmed CS decision, so a sheet-named SO that CS later confirms counts once: the confirmed Buy
+  replaces the sheet quantity.
 
 This explicitly replaces two behaviors on the implementation baseline:
 
@@ -326,8 +336,12 @@ The deterministic mapping is:
 - for each textual order-type or market-segment source, any normalized value containing `project`,
   `projects`, or `contract` maps to `project`, including `subcontractor`, and every other stated
   value maps to `retail`;
-- outstanding-order import or Project SO publish stamps the result onto
-  `sales_orders.demand_class`, and that persisted field is the semantic owner read by planning;
+- today two stamp points exist: `outstanding_import_service._classify_demand` at outstanding-order
+  import (including AutoCount upload, where core SOs arrive), and
+  `project_order_inquiry_import_service`, which writes `order_type = 'project'` and
+  `demand_class = 'project'` directly on sheet-created SOs, bypassing the mapper; the target routes
+  that direct stamp through the same mapper. `ProjectSODraftService.publish` writes no core SO and
+  is not a stamp point. The persisted field is the semantic owner read by planning;
 - a missing persisted `demand_class` after those sources are evaluated is a data-quality exception
   and does not create a third demand class.
 
@@ -489,17 +503,20 @@ Reuse `projects.order_inquiries` and `projects.order_inquiry_rows`. Add `supply_
 each standard Buy row and enforce one active unplaced row per active decision and SO line.
 Existing fields such as `so_line_id`, item code, quantity, delivery date, location, state, and
 actor remain useful. The standard new-demand verb is Buy/Order only; legacy coverage verbs are
-not produced for a confirmed decision.
+not produced for a confirmed decision. SCM reads these rows through the section 4 join path and
+precedence over the legacy sheet leg.
 
 ### 6.4 SCM reuse and deltas
 
 - Keep `scm.committed_v` and its consumer `scm.net_position_v` at exactly one aggregate row per
   `(product_id, warehouse_id)`. Add Project, Retail, and unclassified demand columns to that same
   row while retaining the existing aggregate committed column and join keys for current consumers.
-  The Project column reads only current confirmed, unplaced Order Inquiry Buy and passes it through
-  as firm need. The Retail column keeps the existing open-SO basis for normal netting. Front
-  planning reads the split columns; shared stock, SPO, PO, and reorder facts remain single
-  product-location values and never gain a demand-class row dimension.
+  The Project column reads only current confirmed, unplaced Order Inquiry Buy through the
+  section 4 join path and passes it through as firm need; the `demand_origin = 'scm_order_inquiry'`
+  leg contributes only for SOs without a confirmed decision. The Retail column keeps the existing
+  open-SO basis for normal netting. Front planning reads the split columns; shared stock, SPO, PO,
+  and reorder facts remain single product-location values and never gain a demand-class row
+  dimension.
 - Add `front_planning_contract_version` and `decision_grain` (`product` or `location`) to
   `scm.reorder_run`. Existing runs keep both NULL. New runs set contract version `1`, leave
   `decision_grain` NULL until the first decision, and then lock it under the section 5.4 row lock.
@@ -507,9 +524,11 @@ not produced for a confirmed decision.
   read-only without a decision-grain backfill.
 - Keep the existing `scm.reorder_recommendation` identity. For each concrete-location fact used by
   front planning, store its Project, Retail, and unclassified demand breakdown plus references to
-  shared location supply in the existing `inputs` snapshot. Project need bypasses net-position
-  subtraction; Retail retains normal netting after confirmed Project Reserve and Borrow claims
-  reduce free supply. No `demand_class` row key or duplicate supply row is added.
+  shared location supply in the existing `inputs` snapshot. On new runs location need is
+  `project_need + retail_need`: Project need bypasses net-position subtraction, Retail retains
+  normal netting of Retail-class demand only after confirmed Project Reserve and Borrow claims
+  reduce free supply, and unclassified demand is excluded from the actionable need in both grains.
+  No `demand_class` row key or duplicate supply row is added.
 - Keep the existing `scm.order_summary_row` identity and unique key `(run_id, product_id)`. New runs
   still write one row per product. Add nullable Numeric `project_buy_qty`,
   `retail_replenishment_qty`, and `unclassified_demand_qty`, nullable Date
@@ -525,8 +544,10 @@ not produced for a confirmed decision.
 - Re-base the existing `order_summary_row.project_demand`, `dealer_outstanding`, and their line
   counts on persisted `sales_orders.demand_class` for new runs: `summary_order_service
   ._demand_aggregates` classifies open SO lines by `demand_class` instead of exact `order_type`
-  membership, a missing `demand_class` counts as unclassified, and `dealer_outstanding` is exposed
-  as `retail_outstanding` in the new API and UI while the column name stays. The row then carries
+  membership, `summary_order_service.demand_drill` filters by the same persisted `demand_class`
+  with its `dealer` kind exposed as retail, a missing `demand_class` counts as unclassified, and
+  `dealer_outstanding` is exposed as `retail_outstanding` in the new API and UI while the column
+  name stays. The row then carries
   two Project measures with one owner, shown side by side: `project_demand` is open Project-class
   SO quantity and `project_buy_qty` is confirmed unplaced Buy. Legacy runs keep their stored
   values on the old basis, read-only.
@@ -567,11 +588,11 @@ not produced for a confirmed decision.
   changes, generalize and rerun
   `reorder_engine.allocate(chosen_qty, frozen_location_inputs, decimal_places)` with the summary
   row's frozen `uom_decimal_places` and persist its output. The decision boundary rejects
-  `chosen_qty` with more fractional places than that snapshot permits. The allocator converts the
-  accepted total, the frozen location deficits, and demand rates to the same integer minor units of
-  `10^-decimal_places` before comparing or apportioning, so branch selection is unchanged, reuses
-  its deterministic largest-remainder allocation, then converts the children back to decimal
-  quantities. Enforce one
+  `chosen_qty` with more fractional places than that snapshot permits. The allocator scales the
+  accepted total and the frozen location deficits by `10^decimal_places`, rounds only the total to
+  an integer, leaves demand-rate weights unconverted so branch selection and surplus weights are
+  unchanged, reuses its deterministic largest-remainder allocation, then converts the children
+  back to decimal quantities. Enforce one
   row per summary row and warehouse, non-negative quantities, company scope, and a
   transaction-time invariant that child quantities sum exactly to the parent's stored `chosen_qty`.
   Do not rescale a prior split. This is persistence for the PO worklist, not a new allocator or
@@ -603,8 +624,9 @@ pre-code contract only.
   production-shaped fixtures.
 - Pin mapper cases for `project`, `projects`, `contract`, and `subcontractor` as Project and an
   ordinary non-matching stated segment as Retail. Pin stored order type, stated order type,
-  customer market segment, and sales-agent fallback precedence, the import and publish stamps, and
-  the missing persisted-class exception.
+  customer market segment, and sales-agent fallback precedence, the two existing stamp points
+  (outstanding import and the sheet import's direct stamp), that publish does not stamp, and the
+  missing persisted-class exception.
 - Add contract tests that demonstrate the implementation baseline's early inquiry, partial line
   confirmation, and second-approver Borrow behaviors before replacing them.
 - Produce no buyer or CS feature behavior yet.
@@ -642,7 +664,7 @@ pre-code contract only.
 - Add and backfill UOM `decimal_places`, expose it in UOM master-data create and edit with `0..4`
   validation, and preserve the `0` fallback during rollout.
 - Keep one Product row, freeze its UOM `decimal_places` snapshot, add its stacked channel readings
-  and expandable ledgers, re-base `_demand_aggregates` and `project_demand` /
+  and expandable ledgers, re-base `_demand_aggregates`, `demand_drill`, and `project_demand` /
   `dealer_outstanding` (`retail_outstanding` in the API and UI) on `demand_class`, replace the
   `write_rows` per-location rounded sum with `suggested_qty` rounded once at supplier constraints
   and the frozen `uom_decimal_places`, and persist the durable allocator-rerun location split.
