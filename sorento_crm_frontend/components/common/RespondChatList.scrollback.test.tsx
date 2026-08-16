@@ -447,3 +447,96 @@ describe('RespondChatList in-thread search (AC-L8)', () => {
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
   });
 });
+
+/**
+ * Scroll-to-latest (feedback 2026-08-16, item 4).
+ *
+ * WhatsApp's behaviour: a round down-arrow above the composer whenever the
+ * reader is about a viewport up, in EVERY thread surface - not only in a
+ * detached (search-jumped) window, which was the only case that offered a way
+ * back. jsdom reports 0 for every layout box, so the container's metrics are
+ * stubbed: that IS the quantity the control reads.
+ */
+function stubMetrics(node: HTMLElement, { scrollHeight = 1000, clientHeight = 300 } = {}) {
+  Object.defineProperty(node, 'scrollHeight', { value: scrollHeight, configurable: true });
+  Object.defineProperty(node, 'clientHeight', { value: clientHeight, configurable: true });
+}
+
+describe('RespondChatList scroll-to-latest', () => {
+  beforeEach(withoutScrollIntoView);
+
+  it('stays hidden while the reader is on the live tail', () => {
+    render(<RespondChatList items={[msg(1), msg(2)]} />);
+    const container = screen.getByTestId('chat-scroll-container');
+    stubMetrics(container);
+    container.scrollTop = 700; // scrollHeight - clientHeight: at the bottom
+
+    fireEvent.scroll(container);
+
+    expect(screen.queryByTestId('chat-jump-to-latest')).not.toBeInTheDocument();
+  });
+
+  it('appears once the reader is more than a viewport up', () => {
+    render(<RespondChatList items={[msg(1), msg(2)]} />);
+    const container = screen.getByTestId('chat-scroll-container');
+    stubMetrics(container);
+    container.scrollTop = 300; // 400px from the bottom, one viewport is 300
+
+    fireEvent.scroll(container);
+
+    expect(screen.getByTestId('chat-jump-to-latest')).toBeInTheDocument();
+  });
+
+  it('stays hidden just under a viewport up - the tail is still on screen', () => {
+    render(<RespondChatList items={[msg(1), msg(2)]} />);
+    const container = screen.getByTestId('chat-scroll-container');
+    stubMetrics(container);
+    container.scrollTop = 500; // 200px from the bottom
+
+    fireEvent.scroll(container);
+
+    expect(screen.queryByTestId('chat-jump-to-latest')).not.toBeInTheDocument();
+  });
+
+  it('scrolls back to the tail and hides itself again', () => {
+    const scrollIntoView = withScrollIntoView();
+    render(<RespondChatList items={[msg(1), msg(2)]} />);
+    const container = screen.getByTestId('chat-scroll-container');
+    stubMetrics(container);
+    container.scrollTop = 0;
+    fireEvent.scroll(container);
+
+    fireEvent.click(screen.getByTestId('chat-jump-to-latest'));
+
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(screen.queryByTestId('chat-jump-to-latest')).not.toBeInTheDocument();
+  });
+
+  it('a detached window re-attaches instead of merely scrolling', () => {
+    const onJumpToLatest = vi.fn();
+    const scrollIntoView = withScrollIntoView();
+    render(<RespondChatList items={[msg(1)]} isDetached onJumpToLatest={onJumpToLatest} />);
+    const container = screen.getByTestId('chat-scroll-container');
+    stubMetrics(container);
+    container.scrollTop = 0;
+    fireEvent.scroll(container);
+    const before = scrollIntoView.mock.calls.length;
+
+    fireEvent.click(screen.getByTestId('chat-jump-to-latest'));
+
+    expect(onJumpToLatest).toHaveBeenCalledTimes(1);
+    // Re-attaching is the caller's job: the window is replaced, so scrolling
+    // the current (stale) one would land on the wrong message.
+    expect(scrollIntoView.mock.calls.length).toBe(before);
+  });
+
+  it('keeps the unseen-count badge on the one control', () => {
+    render(<RespondChatList items={[msg(1), msg(2)]} newerUnseenCount={4} />);
+    const container = screen.getByTestId('chat-scroll-container');
+    stubMetrics(container);
+    container.scrollTop = 0;
+    fireEvent.scroll(container);
+
+    expect(screen.getByTestId('chat-jump-to-latest')).toHaveTextContent('4 new');
+  });
+});

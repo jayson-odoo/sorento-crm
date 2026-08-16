@@ -57,6 +57,13 @@ const LOAD_NEWER_THRESHOLD_PX = 80;
 const PROGRAMMATIC_SCROLL_SETTLE_MS = 400;
 /** How close to the bottom still counts as "reading the live tail". */
 const PIN_TO_BOTTOM_SLACK_PX = 120;
+/**
+ * How far up the reader has to be before the scroll-to-latest button appears:
+ * roughly one viewport of the thread itself, which is WhatsApp's behaviour. A
+ * fixed pixel figure would pop the button on a short panel and hide it on a
+ * tall one, so it is measured against the container's own height.
+ */
+const SCROLLED_UP_SHOW_JUMP_RATIO = 1;
 
 /**
  * An internal note rendered inline in the thread (UAC AC-L1). It is drawer-side
@@ -351,6 +358,10 @@ export default function RespondChatList({
   // Briefly ringed after a quote-block jump, so the reader sees WHICH bubble the
   // thread moved to (AC-L6).
   const [flashMessageId, setFlashMessageId] = useState<string | null>(null);
+  // The reader is far enough up the thread that the live tail is off screen.
+  // Drives the scroll-to-latest button on EVERY surface, not only a detached
+  // (search-jumped) window.
+  const [scrolledUp, setScrolledUp] = useState(false);
 
   const openPreview = useCallback(
     (attachments: MessageAttachmentDescriptor[], clicked: number, idPrefix: string) => {
@@ -512,6 +523,12 @@ export default function RespondChatList({
   const handleScroll = useCallback(() => {
     const node = scrollRef.current;
     if (!node) return;
+    // Measured on EVERY scroll event, including our own animations: the button
+    // has to be right about where the reader ended up, whoever moved them.
+    setScrolledUp(
+      node.scrollHeight - node.scrollTop - node.clientHeight >
+        node.clientHeight * SCROLLED_UP_SHOW_JUMP_RATIO,
+    );
     if (Date.now() - lastProgrammaticScrollAt.current < PROGRAMMATIC_SCROLL_SETTLE_MS) return;
 
     if (node.scrollTop <= LOAD_OLDER_THRESHOLD_PX) {
@@ -830,20 +847,35 @@ export default function RespondChatList({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* The way back from a search jump. Absolutely positioned so it costs the
-          scroll container no height and cannot disturb the anchoring maths. */}
-      {isDetached && onJumpToLatest && (
+      {/* The way back to the live tail: shown whenever the reader is about a
+          viewport up, not only from a detached (search-jumped) window - being
+          scrolled up in a long thread is the ordinary case, and hunting for the
+          scrollbar is not an answer. ONE control for both: detached windows
+          re-attach through `onJumpToLatest`, an attached one just scrolls.
+          Absolutely positioned so it costs the scroll container no height and
+          cannot disturb the anchoring maths. */}
+      {(scrolledUp || (isDetached && onJumpToLatest)) && (
         <button
           type="button"
           data-testid="chat-jump-to-latest"
           aria-label="Jump to the latest messages"
-          onClick={onJumpToLatest}
-          className="absolute bottom-3 left-1/2 z-20 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-md hover:bg-zinc-50 dark:border-zinc-700 dark:bg-[#202c33] dark:text-zinc-200 dark:hover:bg-[#2a3942]"
+          title="Jump to the latest messages"
+          onClick={() => {
+            if (isDetached && onJumpToLatest) {
+              onJumpToLatest();
+              return;
+            }
+            messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
+            setScrolledUp(false);
+          }}
+          className="absolute bottom-3 end-3 z-20 inline-flex size-9 items-center justify-center rounded-full border bg-white text-zinc-700 shadow-md hover:bg-zinc-50 dark:border-zinc-700 dark:bg-[#202c33] dark:text-zinc-200 dark:hover:bg-[#2a3942]"
         >
-          <ArrowDownToLine className="size-3.5" />
-          Jump to latest
+          <ArrowDownToLine className="size-4" />
           {newerUnseenCount > 0 && (
-            <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+            <span
+              data-testid="chat-unseen-count"
+              className="absolute -top-2 -end-2 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+            >
               {newerUnseenCount} new
             </span>
           )}
