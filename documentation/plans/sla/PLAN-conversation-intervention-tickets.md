@@ -945,6 +945,57 @@ Not verifiable without a browser (the captain was mid-test on :3000, so no login
 taken): the visual placement of the round jump button against a real composer, and the
 thumbnail strip at 375px.
 
+### S4.11 Voice messages in the composer (captain request, 2026-08-16) [FE coder]
+
+UAC AC-L9. Frontend only - no backend, no migration, no new dependency.
+
+**What shipped.** A "Voice" mic button beside Attach in the Reply toolbar (`components/
+common/conversation/SharedConversationComposer.tsx`), gated on the same
+`attachmentsEnabled` capability the Attach button uses - so it exists exactly where the
+surface can send files to the contact, and never in Comment mode, whose composer is a
+different component with no send path to the contact. Click starts, click stops: a mouse
+cannot hold-to-talk comfortably, and a toggle is less code. While recording the toolbar
+shows a pulsing dot, an mm:ss counter, Stop and a discard control, and Send is disabled
+so Enter cannot fire a message that leaves the clip behind. `MediaRecorder` +
+`getUserMedia` live in `components/common/conversation/useVoiceRecorder.ts`, which caps
+the recording at 2 minutes (stopping itself and KEEPING what it captured) and releases
+the microphone on stop, on discard, on an unmount mid-recording and on a recorder that
+refuses to stop. Feature detection runs after mount (the server has no `MediaRecorder`),
+and an unsupported browser or a denied microphone leaves the button disabled with a short
+`title` reason plus a one-off toast, no prose on the surface.
+
+**No new plumbing.** The finished clip is a `File` named `voice-message-<yyyymmdd-hhmmss>.
+<ext>` staged through the SAME `addFiles` the Attach button and paste use, so the send,
+the outbox row, the per-file failure handling and the thread bubble are untouched. The
+staged strip gained an audio branch: an object URL and an `<audio controls>` chip so the
+clip can be heard before it goes out (the existing image-thumbnail lane is unchanged, and
+the lightbox still takes images only).
+
+**Container, settled empirically (2026-08-16), not assumed.** Preference order is
+`audio/mp4` -> `audio/ogg;codecs=opus` -> `audio/webm;codecs=opus`. A real clip in each
+container was pushed through the composer's own upload helper
+(`respond_chat_template_service.upload_chat_attachment`) and `RespondClient.send_attachment`
+to the one outbound-enabled contact, with an `integration_log` written for each. Respond's
+API accepted all three (200 + messageId). Its own file inspection, read back from
+`GET /v2/contact/{id}/message/list`, flagged ONLY the webm clip:
+`"isFileTypeSupported": false` with the mime sniffed as `video/webm`; the mp4 clip read
+`audio/x-m4a` and the ogg clip `audio/ogg; codecs=opus`, neither carrying the flag. That
+lines up with Meta's documented audio formats (aac, mp4, mpeg, amr, ogg-opus; no webm),
+which is why webm is last-resort rather than the default Chrome would otherwise give us.
+
+**Still open (needs the 24h window).** All three attempts then failed DELIVERY with
+"WhatsApp Business: Messaging window has been closed for this contact. The message could
+not be sent." (last inbound 2026-08-14T13:11Z), so the window - not the container -
+stopped them, and delivery-level proof per container is outstanding. Re-run the same
+three sends once the contact has messaged in. If it turns out the captain's browser can
+only record webm AND webm will not deliver, the options are the captain's call: remux the
+Opus packets from webm into an Ogg container in the browser (no transcoding, no ffmpeg),
+or refuse to record on that browser. Neither is built.
+
+Not verifiable without a browser: recording itself. jsdom has no `MediaRecorder` and no
+microphone, so the vitest suite fakes both - it pins the wiring (staging, cancel, cap,
+mic release, disabled states), not the audio.
+
 ## Execution model (per PRINCIPLES.md - named executor per step)
 
 Run through `/feature`. Fable (main session) is the brain and stays autonomous end-to-end:

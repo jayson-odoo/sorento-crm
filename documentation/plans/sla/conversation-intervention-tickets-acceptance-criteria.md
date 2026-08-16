@@ -710,6 +710,33 @@ channel - quote-prefix emulation stays), sticker sends.
   `has_more_newer: false`), and a "Jump to latest" pill - carrying the count of
   live messages the window is hiding - returns to the tail in one tap. Without
   those, an inbound message was invisible with nothing on screen saying why.
+- **AC-L9 [FE][T]** (added 2026-08-16, captain request: "can we support voice message?")
+  Given the composer in Reply mode, When the assignee clicks the mic, Then recording
+  starts with an elapsed counter and a discard control; clicking Stop stages the clip as
+  an ordinary attachment (playable in the staged strip, removable) which the next Send
+  carries alongside the typed text. Recording stops itself at 2 minutes and keeps what it
+  captured. The mic is offered ONLY where the surface can send files to the contact, and
+  never in Comment mode - a note cannot reach the contact. When the browser cannot record,
+  or the microphone is denied, the control is disabled with a short reason (no prose in
+  the UI). The microphone is released on stop, on discard, and on unmount.
+
+  **As built (2026-08-16).** No new send path: the clip is a `File` staged through the
+  SAME `addFiles` the Attach button and paste use, so the send, the outbox row, the
+  per-file failure handling and the thread bubble are all unchanged. Click-to-start /
+  click-to-stop, not hold-to-talk (a mouse cannot hold comfortably). Send is disabled
+  while recording, so Enter cannot fire a message that leaves the clip behind.
+
+  **Container choice, verified live against Respond.io 2026-08-16.** Recording prefers
+  `audio/mp4`, then `audio/ogg;codecs=opus`, then `audio/webm;codecs=opus`. The same
+  upload-and-send path the composer uses was exercised with a real clip in each container
+  to the one outbound-enabled contact: Respond's API accepted all three (200 + messageId),
+  but its own file inspection flagged ONLY the webm one - `isFileTypeSupported: false`,
+  sniffed as `video/webm` - while the mp4 clip read `audio/x-m4a` and the ogg clip
+  `audio/ogg; codecs=opus` with no flag. That matches Meta's documented audio formats
+  (aac, mp4, mpeg, amr, ogg-opus; no webm). All three then failed DELIVERY with
+  "WhatsApp Business: Messaging window has been closed for this contact. The message could
+  not be sent.", so the 24h window, not the container, is what stopped them: an
+  in-window delivery re-run is still outstanding, and webm remains last-resort only.
 
 ### M. Post-resolve reassurance + Respond close semantics (Journey step 7b) - added 2026-08-14
 

@@ -10,6 +10,7 @@ import {
   LayoutTemplate,
   FileText,
   Info,
+  Mic,
   Paperclip,
   Sparkles,
   StickyNote,
@@ -25,6 +26,7 @@ import AttachmentPreviewModal, {
 import { useMessageSnippetOptions } from '@/app/(protected)/sla-management/message-snippets/hooks/useMessageSnippets';
 import type { MessageSnippetOption } from '@/app/(protected)/sla-management/message-snippets/types/messageSnippet.types';
 import { useConversationWindowState } from './useConversationWindowState';
+import { formatElapsed, useVoiceRecorder } from './useVoiceRecorder';
 import EmojiPickerButton from './EmojiPickerButton';
 import SnippetPicker, { activeSlashFragment, filterSnippets } from './SnippetPicker';
 import {
@@ -341,20 +343,22 @@ export default function SharedConversationComposer({
     return false;
   };
 
-  // ---- Staged image previews -------------------------------------------
+  // ---- Staged image / audio previews ------------------------------------
   // A pasted screenshot is unrecognisable as a filename ("image.png"), so the
-  // staged strip shows the picture itself. A staged file has no URL of its own,
-  // so each image gets an object URL. Minted in an EFFECT, never in render: a
+  // staged strip shows the picture itself, and a voice clip gets a player so it
+  // can be heard before it goes to the contact. A staged file has no URL of its
+  // own, so each gets an object URL. Minted in an EFFECT, never in render: a
   // render that React discards (concurrent, StrictMode) would leak every URL it
   // created, because no cleanup is ever committed for it.
-  const [stagedImageUrls, setStagedImageUrls] = useState<(string | null)[]>([]);
+  const [stagedFileUrls, setStagedFileUrls] = useState<(string | null)[]>([]);
   useEffect(() => {
     const urls = files.map((file) =>
-      file.type.startsWith('image/') && typeof URL?.createObjectURL === 'function'
+      (file.type.startsWith('image/') || file.type.startsWith('audio/')) &&
+      typeof URL?.createObjectURL === 'function'
         ? URL.createObjectURL(file)
         : null,
     );
-    setStagedImageUrls(urls);
+    setStagedFileUrls(urls);
     return () => {
       urls.forEach((url) => url && URL.revokeObjectURL?.(url));
     };
@@ -364,18 +368,34 @@ export default function SharedConversationComposer({
   const stagedPreviewItems = useMemo(() => {
     const out: { fileIndex: number; item: AttachmentPreviewItem }[] = [];
     files.forEach((file, index) => {
-      const url = stagedImageUrls[index];
-      if (!url) return;
+      const url = stagedFileUrls[index];
+      // Images only: a clip plays in its own chip, it has nothing to show in a
+      // lightbox.
+      if (!url || !file.type.startsWith('image/')) return;
       out.push({ fileIndex: index, item: { id: `staged-${index}`, name: file.name, url } });
     });
     return out;
-  }, [files, stagedImageUrls]);
+  }, [files, stagedFileUrls]);
   const previewStartIndex = Math.max(
     0,
     stagedPreviewItems.findIndex((entry) => entry.fileIndex === previewFileIndex),
   );
 
-  const canSubmit = !!replyText.trim() || (attachmentsEnabled && files.length > 0);
+  const addFiles = (picked: FileList | File[] | null | undefined) => {
+    if (sending) return;
+    if (!picked?.length) return;
+    setFiles((prev) => [...prev, ...Array.from(picked)]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // ---- Voice message (UAC AC-L9) ----------------------------------------
+  // A clip is just another attachment: it lands in `files` through the SAME
+  // path the Attach button and paste use, so sending, the outbox, the failure
+  // handling and the thread bubble all work unchanged.
+  const voice = useVoiceRecorder({ onClip: (file) => addFiles([file]) });
+
+  const canSubmit =
+    (!!replyText.trim() || (attachmentsEnabled && files.length > 0)) && !voice.recording;
 
   const handleSend = async () => {
     const typed = replyText.trim();
@@ -468,13 +488,6 @@ export default function SharedConversationComposer({
     </Button>
   );
 
-  const addFiles = (picked: FileList | File[] | null | undefined) => {
-    if (sending) return;
-    if (!picked?.length) return;
-    setFiles((prev) => [...prev, ...Array.from(picked)]);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
   /**
    * Pasting into the message box (Cmd/Ctrl+V) stages whatever files the
    * clipboard carries - a screenshot, a copied file - through the SAME path as
@@ -501,7 +514,44 @@ export default function SharedConversationComposer({
       <div className="flex flex-wrap items-start gap-1.5" data-testid="composer-attachments">
         {files.map((file, idx) => {
           const notSent = failedFileName === file.name;
-          const thumbUrl = stagedImageUrls[idx];
+          const objectUrl = stagedFileUrls[idx];
+          const isAudio = file.type.startsWith('audio/');
+          if (objectUrl && isAudio) {
+            // A voice clip stages as a player: the whole point is hearing it
+            // before the contact does.
+            return (
+              <span
+                key={`${file.name}-${idx}`}
+                data-testid={notSent ? 'composer-attachment-failed' : 'composer-attachment'}
+                className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-xs${
+                  notSent ? ' border-destructive text-destructive' : ''
+                }`}
+                title={notSent ? `${file.name} - not sent` : file.name}
+              >
+                <Mic className="size-3 shrink-0" />
+                {/* A voice note has no caption track to offer. */}
+                <audio
+                  controls
+                  src={objectUrl}
+                  data-testid="composer-voice-playback"
+                  aria-label={`Play ${file.name}`}
+                  className="h-8 max-w-[220px]"
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="size-4 shrink-0"
+                  aria-label={`Remove ${file.name}`}
+                  disabled={sending}
+                  onClick={() => removeStagedFile(idx, notSent)}
+                >
+                  <X className="size-3" />
+                </Button>
+              </span>
+            );
+          }
+          const thumbUrl = objectUrl;
           if (thumbUrl) {
             // An image stages as a thumbnail; clicking it opens the SAME
             // preview surface the thread bubbles use.
@@ -591,6 +641,63 @@ export default function SharedConversationComposer({
         Attach
       </Button>
     </>
+  ) : null;
+
+  /**
+   * Record a voice message (UAC AC-L9). Click to start, click to stop; the clip
+   * is staged as an attachment, so it only exists where files can be sent at
+   * all - and never in Comment mode, which cannot reach the contact.
+   */
+  const voiceButton = attachmentsEnabled ? (
+    voice.recording ? (
+      <div
+        data-testid="voice-recording"
+        className="inline-flex items-center gap-2 rounded-md border border-destructive/50 px-2 py-1"
+      >
+        <span className="size-2 shrink-0 animate-pulse rounded-full bg-destructive" />
+        <span className="text-xs tabular-nums" data-testid="voice-elapsed">
+          {formatElapsed(voice.seconds)}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-6"
+          data-testid="voice-stop"
+          onClick={() => voice.stop()}
+        >
+          Stop
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-5"
+          aria-label="Discard recording"
+          data-testid="voice-cancel"
+          onClick={() => voice.cancel()}
+        >
+          <X className="size-3" />
+        </Button>
+      </div>
+    ) : (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        data-testid="voice-record"
+        aria-label="Record voice message"
+        title={voice.reason ?? undefined}
+        disabled={sending || !voice.available}
+        onClick={async () => {
+          const problem = await voice.start();
+          if (problem) toast.error(problem);
+        }}
+      >
+        <Mic className="size-4 mr-1" />
+        Voice
+      </Button>
+    )
   ) : null;
 
   // Split the template body into text + slot tokens so we can render the message
@@ -713,8 +820,9 @@ export default function SharedConversationComposer({
       {/* Send-time no_chat_template fallback (rare race after preview said OK). */}
       {sendError && noTemplateNotice(sendError.settingsUrl, sendError.message)}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {attachButton}
+        {voiceButton}
 
         {snippetsEnabled && (
           <Button
