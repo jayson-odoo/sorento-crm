@@ -306,3 +306,146 @@ def test_batch_accepts_fifty_entries(api, db):
 
     assert response.status_code == 200, response.text
     assert response.json()["rows_written"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# BLOCKER - the batch route must validate against the registry like the single
+# PUT `.../values/{spec_key}` does (data_type coercion, merged-allowed-values check,
+# registry-forced unit). Today it only checks the spec_key EXISTS (see the pre-flight
+# comment above `set_spec_values_in_one_batch`) and hands the raw value straight to
+# `apply_spec_values`, which itself does no registry validation at all
+# (`product_spec_write._prepare` only checks op / blank-value / source) - so an out-of
+# -vocabulary enum value, a non-numeric "numeric" value, an arbitrary caller unit and
+# an un-coerced boolean spelling all currently WRITE, unchanged, straight to the row.
+#
+# The PUT route's own violations 400 (`_spec_reject`, see
+# test_put_rejects_a_non_number_for_a_numeric_key /
+# test_put_rejects_an_empty_string_for_a_free_text_key in
+# tests/test_product_specifications_routes.py). The batch route is asked to answer
+# 422 for these two instead - a body that named a value the registry cannot accept is
+# the wrong SHAPE for this call, not merely a bad business state - so these are
+# deliberately NOT copy-pasted onto the PUT route's 400.
+# --------------------------------------------------------------------------- #
+def test_batch_rejects_an_enum_value_outside_the_merged_vocabulary(api, db):
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _registry_key(db, "material", allowed_values=["brass", "ceramic"])
+    product = _product(db, "ZZT-BA-ENUMBAD")
+    db.commit()
+
+    response = _batch(
+        client, product.id, [{"spec_key": "material", "value": "plastic", "evidence": "x"}]
+    )
+
+    assert response.status_code == 422, response.text
+    message = response.json().get("message", "")
+    assert message, "must carry a readable message, not a bare status"
+    assert "material" in message.lower() or "plastic" in message.lower()
+
+    spec = _spec_for(db, "ZZT-BA-ENUMBAD")
+    assert spec is None or "material" not in (spec.values or {})
+
+
+def test_batch_rejects_a_non_numeric_value_for_a_numeric_key(api, db):
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _registry_key(db, "trap_length", data_type="numeric", unit="mm")
+    product = _product(db, "ZZT-BA-NUMBAD")
+    db.commit()
+
+    response = _batch(
+        client,
+        product.id,
+        [{"spec_key": "trap_length", "value": "not-a-number", "evidence": "x"}],
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json().get("message")
+
+    spec = _spec_for(db, "ZZT-BA-NUMBAD")
+    assert spec is None or "trap_length" not in (spec.values or {})
+
+
+def test_batch_atomic_a_registry_violation_writes_nothing_from_the_whole_batch(api, db):
+    """The same atomicity guarantee the existing atomic tests pin, for a REGISTRY
+    violation rather than a blank value or an unknown key: one bad entry must still
+    take the other, otherwise-valid entries down with it."""
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _registry_key(db, "material", allowed_values=["brass", "ceramic"])
+    _registry_key(db, "finish", allowed_values=["chrome", "black"])
+    product = _product(db, "ZZT-BA-ATOMIC-ENUM")
+    db.commit()
+
+    response = _batch(
+        client,
+        product.id,
+        [
+            {"spec_key": "material", "value": "brass", "evidence": "Brass Body"},
+            {"spec_key": "finish", "value": "polka_dot", "evidence": "Not a real finish"},
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+    spec = _spec_for(db, "ZZT-BA-ATOMIC-ENUM")
+    assert spec is None or "material" not in (spec.values or {})
+
+
+def test_batch_ignores_the_callers_unit_and_stores_the_registrys_own_unit(api, db):
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _registry_key(db, "trap_length", data_type="numeric", unit="mm")
+    product = _product(db, "ZZT-BA-UNIT")
+    db.commit()
+
+    response = _batch(
+        client,
+        product.id,
+        [{"spec_key": "trap_length", "value": 250, "unit": "cm", "evidence": "S-Trap 250"}],
+    )
+
+    assert response.status_code == 200, response.text
+    spec = _spec_for(db, "ZZT-BA-UNIT")
+    assert spec.values["trap_length"]["value"] == 250
+    assert spec.values["trap_length"]["unit"] == "mm", (
+        "the REGISTRY's unit must win - the caller cannot smuggle in a different one"
+    )
+
+
+@pytest.mark.parametrize("spelling", ["true", "Yes", "1", "TRUE"])
+def test_batch_accepts_the_same_truthy_boolean_spellings_the_put_route_accepts(
+    api, db, spelling
+):
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _registry_key(db, "has_drainer", data_type="boolean")
+    product = _product(db, f"ZZT-BA-BOOL-{spelling.upper()}")
+    db.commit()
+
+    response = _batch(
+        client,
+        product.id,
+        [{"spec_key": "has_drainer", "value": spelling, "evidence": "Drainer board"}],
+    )
+
+    assert response.status_code == 200, response.text
+    spec = _spec_for(db, f"ZZT-BA-BOOL-{spelling.upper()}")
+    assert spec.values["has_drainer"]["value"] is True
+
+
+def test_batch_coerces_a_non_truthy_boolean_spelling_to_false(api, db):
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _registry_key(db, "has_drainer", data_type="boolean")
+    product = _product(db, "ZZT-BA-BOOL-FALSE")
+    db.commit()
+
+    response = _batch(
+        client,
+        product.id,
+        [{"spec_key": "has_drainer", "value": "no", "evidence": "No drainer"}],
+    )
+
+    assert response.status_code == 200, response.text
+    spec = _spec_for(db, "ZZT-BA-BOOL-FALSE")
+    assert spec.values["has_drainer"]["value"] is False

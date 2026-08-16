@@ -294,6 +294,53 @@ def test_a_second_upgrade_changes_nothing(db, seeded):
 
 
 # --------------------------------------------------------------------------- #
+# `rendered_text` and `derived_hash` are declared untouched by the module docstring
+# ("`values`, `rendered_text` and `derived_hash` are NOT touched") but the existing
+# checksum assertions only ever compare `values` - `rendered_text`/`derived_hash` were
+# never pinned at all, so a future edit to `_PROMOTE`/`_DEMOTE` that widened the
+# `UPDATE ... SET` clause to touch either column would sail through every existing
+# assertion in this file. Seeded with distinct, non-empty values here (rather than the
+# `_spec_row` default `rendered_text=""` / unset `derived_hash`) so a regression that
+# clears either column is actually visible rather than trivially "still empty".
+# --------------------------------------------------------------------------- #
+def test_upgrade_and_downgrade_leave_rendered_text_and_derived_hash_byte_identical(db):
+    product = _product(db, "ZZT-PROMOTE-HASH")
+    row = ProductSpecifications(
+        id=str(uuid.uuid4()),
+        product_id=product.id,
+        values={"finish": {"value": "chrome"}},
+        provenance={"finish": {"source": "flyer", "confidence": 1.0, "evidence": "CHROME"}},
+        status="derived",
+        rendered_text="Sorento. Chrome finish.",
+        derived_hash="zzt-promote-hash-fixture-27",
+    )
+    db.add(row)
+    db.commit()
+
+    def _hash_snapshot() -> tuple[str, str]:
+        db.expire_all()
+        current = db.query(ProductSpecifications).filter_by(product_id=product.id).first()
+        return current.rendered_text, current.derived_hash
+
+    before = _hash_snapshot()
+    assert before == ("Sorento. Chrome finish.", "zzt-promote-hash-fixture-27")
+
+    _run_upgrade(db)
+    after_upgrade = _hash_snapshot()
+    assert after_upgrade == before, "upgrade must not touch rendered_text or derived_hash"
+
+    # Confirm the row really was promoted, or the assertion above is vacuous.
+    db.expire_all()
+    promoted = db.query(ProductSpecifications).filter_by(product_id=product.id).first()
+    assert promoted.provenance["finish"]["source"] == "human"
+    assert promoted.status == "authored"
+
+    _run_downgrade(db)
+    after_downgrade = _hash_snapshot()
+    assert after_downgrade == before, "downgrade must not touch rendered_text or derived_hash either"
+
+
+# --------------------------------------------------------------------------- #
 # downgrade
 # --------------------------------------------------------------------------- #
 def test_downgrade_restores_the_seeded_provenance_and_status_exactly(db, seeded):

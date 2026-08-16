@@ -528,3 +528,194 @@ def test_kind_conflict_for_a_description_first_key_stored_derived(api, db, monke
     assert proposal["value"] == 680
     assert proposal["kind"] == "conflict"
     assert proposal["stored_value"] == 700
+
+
+# --------------------------------------------------------------------------- #
+# multi-value `finish` must survive as ONE proposal, not be silently dropped.
+#
+# `propose_from_text` already turns "ROSE GOLD + MATT BLACK" into
+# `finish: ["rose_gold", "black"]` - proven directly against `product_spec_derivation.
+# propose_from_text` and against a normal `derive_for_code` run over the SAME text in
+# the description (both store the list; see the module docstring's MULTI_VALUE_KEYS).
+# But `extract_spec_proposals` re-validates every rule-pass hit through
+# `product_spec_understanding._validated_pairs` -> `_coerce`, which only ever
+# `str()`s a scalar - `str(["rose_gold", "black"])` matches nothing in the enum's
+# allowed values, so `_coerce` returns None and the whole proposal is dropped on the
+# floor. The text said something real about the product and the review screen never
+# shows it.
+# --------------------------------------------------------------------------- #
+def test_extract_reports_a_multi_value_finish_as_one_proposal_carrying_the_list(
+    api, db, monkeypatch
+):
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _no_model(monkeypatch)
+    product = _product(db, "ZZT-EX-MULTIFINISH", "SORENTO ONE PIECE WC ZZT-EX-MULTIFINISH")
+    db.commit()
+    derive_for_code(db, "ZZT-EX-MULTIFINISH", commit=True)
+
+    response = _extract(client, product.id, "ROSE GOLD + MATT BLACK")
+
+    assert response.status_code == 200, response.text
+    by_key = _by_key(response.json())
+    assert "finish" in by_key, "a real, two-tone finish must not be silently dropped"
+    proposal = by_key["finish"]
+    assert proposal["value"] == ["rose_gold", "black"]
+    assert proposal["kind"] == "new"
+
+
+def test_applying_a_multi_value_finish_proposal_stores_what_derivation_would_store(
+    api, db, monkeypatch
+):
+    """A normal `derive_for_code` over a description naming two finishes stores
+    `finish: {"value": ["rose_gold", "black"]}` (proven directly against `derive_for_
+    code` - see the module docstring above). Accepting the SAME reading through the
+    extract-then-batch-apply path must store the identical shape, not a stringified
+    version of it and not nothing at all."""
+    client, allow = api
+    allow.add("master_data.products.edit")
+    product = _product(db, "ZZT-EX-MULTIFINISH-APPLY", "SORENTO ONE PIECE WC ZZT-EX-MULTIFINISH-APPLY")
+    db.commit()
+    derive_for_code(db, "ZZT-EX-MULTIFINISH-APPLY", commit=True)
+
+    response = client.post(
+        f"{ENDPOINT}/by-product/{product.id}/values/batch",
+        json={
+            "entries": [
+                {
+                    "spec_key": "finish",
+                    "value": ["rose_gold", "black"],
+                    "evidence": "ROSE GOLD + MATT BLACK",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    stored = (
+        db.query(ProductSpecifications)
+        .join(Product, Product.id == ProductSpecifications.product_id)
+        .filter(Product.product_code == "ZZT-EX-MULTIFINISH-APPLY")
+        .first()
+    )
+    db.expire_all()
+    assert stored.values["finish"]["value"] == ["rose_gold", "black"], (
+        "the batch write must store the SAME list shape derivation stores, not a "
+        "stringified value and not a dropped key"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# BLOCKER - scope gate: a proposed value for a GATE key (e.g. `class`) must not
+# override the product's OWN stored gate value when deciding whether a different
+# proposed key is in scope.
+#
+# `_in_scope` builds its gate by starting from `stored_values` and then, for EVERY
+# candidate including one proposing the gate key itself, doing
+# `gate.values[entry["key"]] = {"value": entry["value"]}` UNCONDITIONALLY - so a
+# candidate that proposes `class` overwrites the product's real, derived class before
+# `_apply_scope` ever runs. `bowl_count` (`applies_when: {"class": ["Kitchen
+# Sink"]}`, product_spec_registry.py) is the sharpest case: a Water Closet's pasted
+# text that ALSO gets read as naming "Kitchen Sink" must not smuggle a bowl_count
+# proposal past its own gate on the strength of its own candidate class.
+# --------------------------------------------------------------------------- #
+def test_in_scope_gates_on_the_products_stored_class_not_a_candidates_own_proposed_class():
+    """Direct unit test of `_in_scope`'s gate accumulator - no DB, no model, matching
+    the shape of `test_apply_scope_*` in tests/test_product_spec_propose_from_text.py,
+    which exercises the shared `_apply_scope` the same way through a different
+    accumulator."""
+    from app.services.product_spec_extract import _in_scope
+    from app.services.product_spec_registry import shipped_scopes
+
+    candidates = [
+        {"key": "class", "value": "Kitchen Sink"},
+        {"key": "bowl_count", "value": 2},
+    ]
+    stored_values = {"class": {"value": "Water Closet"}}
+    stored_provenance = {
+        "class": {"source": "derived", "confidence": 1.0, "evidence": "TOILET"}
+    }
+
+    kept = _in_scope(candidates, stored_values, stored_provenance, shipped_scopes())
+
+    kept_keys = {entry["key"] for entry in kept}
+    assert "bowl_count" not in kept_keys, (
+        "bowl_count only applies to Kitchen Sink - the product's REAL stored class is "
+        "Water Closet, and a candidate's own proposed class must not gate past itself"
+    )
+
+
+def test_extract_scope_gate_uses_the_products_stored_class_not_a_models_proposed_one(
+    api, db, monkeypatch
+):
+    """Same defect, end-to-end through the real route: the model reads the pasted
+    text as naming BOTH a class and a bowl count, but the product's own stored class
+    (Water Closet, from its real description) is what must decide whether bowl_count
+    is in scope - not the model's candidate class."""
+    client, allow = api
+    allow.add("master_data.products.edit")
+    # `class` is open-vocabulary (allowed_values: [] in the seed) - `_coerce` checks a
+    # proposed value against what the CATALOG already holds (`open_vocabulary_values`),
+    # so a second, unrelated Kitchen Sink product is seeded here to make "Kitchen
+    # Sink" a value the model's proposal survives validation as, rather than being
+    # dropped as an unknown value before ever reaching the scope gate this test pins.
+    _product(db, "ZZT-EX-SCOPEGATE-KS", "SORENTO CERAMIC KITCHEN SINK ZZT-EX-SCOPEGATE-KS")
+    db.commit()
+    derive_for_code(db, "ZZT-EX-SCOPEGATE-KS", commit=True)
+
+    _model_returning(
+        {
+            "specs": [
+                {"key": "class", "value": "Kitchen Sink", "evidence": "kitchen sink style"},
+                {"key": "bowl_count", "value": 2, "evidence": "2 bowl"},
+            ]
+        },
+        monkeypatch,
+    )
+    product = _product(db, "ZZT-EX-SCOPEGATE-WC", "SORENTO ONE PIECE WC ZZT-EX-SCOPEGATE-WC")
+    db.commit()
+    derive_for_code(db, "ZZT-EX-SCOPEGATE-WC", commit=True)
+
+    response = _extract(client, product.id, "Kitchen sink style, 2 bowl")
+
+    assert response.status_code == 200, response.text
+    by_key = _by_key(response.json())
+    assert "bowl_count" not in by_key, (
+        "the product's own stored class is Water Closet - bowl_count (Kitchen Sink "
+        "only) must be gated on THAT, never on a proposed class override"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# extractor model resolution: `extract_specs_from_text` must resolve the
+# `spec_extractor` agent's own provider/model, not `spec_understanding`'s.
+#
+# `_resolve_provider` (product_spec_understanding.py) hardcodes
+# `agent_model(db, AGENT_NAME)` where `AGENT_NAME = "spec_understanding"` - the SAME
+# call `understand_phrase` makes - regardless of which function invoked it. The system
+# PROMPT is already correctly asked for under `EXTRACTOR_AGENT_NAME = "spec_extractor"`
+# (`get_prompt(db, EXTRACTOR_AGENT_NAME)` inside `extract_specs_from_text`), so the
+# mismatch is easy to miss: the words the model reads are the extractor's, but the
+# MODEL it reads them with is silently whatever an admin configured for the
+# understanding agent instead.
+# --------------------------------------------------------------------------- #
+def test_extract_specs_from_text_resolves_the_spec_extractor_agents_own_model(db, monkeypatch):
+    import app.services.product_spec_understanding as understanding
+
+    calls: list[str] = []
+
+    def _recording_agent_model(db_arg, name, label="production"):
+        calls.append(name)
+        return None, None
+
+    monkeypatch.setattr(understanding, "agent_model", _recording_agent_model)
+    # Belt as well as braces: force the "no configured key either" branch so this
+    # cannot fall through to a real provider call regardless of local .env contents.
+    monkeypatch.setattr(understanding.settings, "openai_api_key", "")
+
+    understanding.extract_specs_from_text(db, "Brass Body", vocabulary=([], {}, {}))
+
+    assert "spec_extractor" in calls, (
+        f"extract_specs_from_text must resolve the spec_extractor agent's own model, "
+        f"asked for: {calls!r}"
+    )

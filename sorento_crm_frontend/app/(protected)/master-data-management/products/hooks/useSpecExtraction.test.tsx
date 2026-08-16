@@ -15,6 +15,7 @@ vi.mock('../../product-specifications/services/productSpecService', () => ({
   applySpecProposals: vi.fn(),
 }));
 
+import { toast } from 'sonner';
 import {
   applySpecProposals,
   extractSpecProposals,
@@ -143,6 +144,44 @@ describe('apply payload', () => {
     // The unticked conflict never makes it into the batch.
     const sentKeys = mockApply.mock.calls[0][1].map((entry: { spec_key: string }) => entry.spec_key);
     expect(sentKeys).not.toContain('finish');
+  });
+});
+
+describe('apply success toast reports the specification count, not the row fan-out', () => {
+  it('says "2 specifications saved" when 2 keys fanned out to 4 written rows', async () => {
+    mockExtract.mockResolvedValue({
+      product_code: 'SRT-WC-1001',
+      engine: 'semantic',
+      model: 'gpt-4o',
+      proposals: PROPOSALS,
+      unchanged: 0,
+    });
+    // `rows_written` counts every COMPANY COPY of the code the write fanned out to
+    // (2 keys x 2 copies = 4). The user ticked and applied 2 specifications; the
+    // toast must count what they did, not the write's internal fan-out.
+    mockApply.mockResolvedValue({
+      product_code: 'SRT-WC-1001',
+      rows_written: 4,
+      spec_keys: ['seat_material', 'dim_height'],
+    });
+    const client = makeClient();
+    const { result } = renderHook(() => useSpecExtraction('p-1', 'SRT-WC-1001'), {
+      wrapper: wrapper(client),
+    });
+
+    await act(async () => {
+      await result.current.extract('Washdown with rimless, matt black finish');
+    });
+    await waitFor(() => expect(result.current.proposals).toHaveLength(3));
+
+    await act(async () => {
+      await result.current.apply();
+    });
+
+    expect(toast.success).toHaveBeenCalledWith(
+      '2 specifications saved',
+      expect.objectContaining({ description: expect.any(String) }),
+    );
   });
 });
 

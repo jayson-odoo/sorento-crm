@@ -56,6 +56,36 @@ describe('badge copy (AC-B.7)', () => {
   });
 });
 
+describe('a tombstoned conflict badges its own copy, not a dangling sentence', () => {
+  // A tombstone conflict has NO stored value at all - the person removed the spec,
+  // they did not set one the flyer now disagrees with. `stored_value: null` here is
+  // that removal, not "unknown". Rendered through the generic "Conflicts with your
+  // value X" sentence, `readableValue(null, undefined)` returns "" and the badge
+  // reads "Conflicts with your value " - a trailing space with nothing after it.
+  const TOMBSTONE_CONFLICT: SpecProposal = {
+    spec_key: 'has_drainer',
+    label: 'Has a drainer board',
+    data_type: 'boolean',
+    value: true,
+    unit: null,
+    evidence: 'DRAINER',
+    kind: 'conflict',
+    stored_value: null,
+    stored_unit: null,
+    stored_source: 'human',
+  };
+
+  it('badges exactly "Conflicts with your removal of this spec"', () => {
+    renderReview({ proposals: [TOMBSTONE_CONFLICT], selectedKeys: [] });
+
+    expect(
+      screen.getByText('Conflicts with your removal of this spec'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Conflicts with your value')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Conflicts with your value\s*$/)).not.toBeInTheDocument();
+  });
+});
+
 describe('conflicts arrive unticked by default (AC-B.7)', () => {
   it('leaves the conflict row unchecked when the parent seeds selection excluding it', () => {
     renderReview();
