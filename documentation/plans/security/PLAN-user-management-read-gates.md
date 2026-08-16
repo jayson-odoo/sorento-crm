@@ -1,6 +1,9 @@
 # PLAN - user-management read gates
 
-**Status:** In progress. Phase 2 (backend + tests) only; no Phase 1, no frontend change.
+**Status:** In progress. Phase 2 (backend + tests) plus the frontend work the gates forced: the
+three consumers moved onto the `/settings/app-config` projection and its cache-invalidation fix,
+the menu / user-detail-tab permission alignment (`menu.config.tsx`, `users/[id]/layout.tsx`), the
+`TraceSettingsCard` load-failure hardening, and the deletion of `lib/db.ts`. No Phase 1 prototype.
 **UAC:** `documentation/plans/security/user-management-read-gates-acceptance-criteria.md`
 **Classification:** CORE (`user_management` is base-platform; not an installable module).
 **Branch:** `fm/user-management-read-gates-audit`
@@ -172,9 +175,28 @@ anyone was stranded.
 One correction the Q2 investigation turned up: of the "three consumers" that made gating
 `GET /settings/` risky, only two were ever functional. `hooks/use-excel-accept.ts` reads
 `settings.excel_upload_accept_extensions`, which **is not a column on the `SystemSetting` model and
-never has been**, and the hook already returns `DEFAULT_ACCEPT` on any non-2xx. It is moved onto the
-projection for hygiene (so it stops issuing a request that would now 403 on every import dialog),
-but its behaviour is unchanged and the field is deliberately not added.
+never has been**, and the hook already returns `DEFAULT_ACCEPT` on any non-2xx. Review then took that
+one step further: `AppConfigResponse` pins six fields, so pydantic drops the key before it can reach
+the client - the read cannot succeed by construction, not by accident. The fetch is therefore gone
+and the hook returns the constant; behaviour is unchanged, the column is still not added, and the
+projection is still not widened. Making the extensions configurable needs a column first.
+
+Two consumer screens read a route gated on a slug outside their own screen's gate, and they are
+treated differently on purpose. The AI Agents detail screen (`access_agents.view`) renders
+`MemberMarketSegmentEditor`, which reads `GET /teams/{team_id}/members/{user_id}/market-segments`
+(`teams.view`); it is left exactly as it is, because every role holding `access_agents.view` on the
+live database also holds `teams.view` (admin, director, warehouse_manager and the three
+`integration_*`), so the panel works for every role that can reach the screen - that pairing is
+UAC1.4 in the acceptance criteria, and hiding a working panel would be inventing a problem. The user
+detail page's Activity Logs tab is the opposite case: it reads `GET /system-logs/users/{user_id}`
+(`logs.view`), which a role holding only `users.view` does not have, so the tab is rendered only
+when the caller holds `logs.view` rather than always erroring on click. Neither gate is widened.
+
+The two catalogs are gated on different slugs and the sidebar has to match route by route, not
+screen by screen: `/user-management/market-segments` reads `GET /market-segments/`
+(`reference_data.view`), while `/user-management/contact-access-types` reads
+`GET /contact-access-types/all` - the admin variant, gated on `access_agents.view`, not the
+`reference_data.view` catalog read. The menu entries carry those two slugs respectively.
 
 | Q | Routes | The problem as escalated |
 |---|---|---|

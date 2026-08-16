@@ -334,7 +334,7 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Contact Access Types',
         path: '/user-management/contact-access-types',
-        permission: 'user_management.reference_data.view',
+        permission: 'user_management.access_agents.view',
       },
       {
         title: 'Market Segments',
