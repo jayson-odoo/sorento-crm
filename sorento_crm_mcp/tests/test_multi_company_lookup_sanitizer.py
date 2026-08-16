@@ -246,3 +246,26 @@ def test_incoming_stock_list_sanitizer_drops_row_company_id():
     assert "company_id" not in sanitized["data"][0]
     assert sanitized["data"][0]["company_name"] == "Mocha"
     assert sanitized["lookup_companies"] == [_company_block()]
+
+
+def test_resource_attachments_list_sanitizer_keeps_row_company_id():
+    """The global file library puts `company_id` on its rows ON PURPOSE.
+
+    `_stamp_company` (`app/api/v1/resources/attachments.py`) sets both keys on
+    every attachment row, and that tool is not one of the eleven this feature
+    labelled - so the company_id strip must be scoped to those eleven rather
+    than run over every tool, or it silently undoes a deliberate field on a
+    neighbouring tool.
+    """
+    raw = json.dumps({
+        "data": [{
+            "id": "att-1", "stored_filename": "Container Status 2026.xlsx",
+            "company_id": "00000000-0000-0000-0000-000000000002",
+            "company_name": "Mocha",
+        }],
+    })
+
+    sanitized = json.loads(_sanitize_tool_response("crm_resource_attachments_list", raw))
+
+    assert sanitized["data"][0]["company_id"] == "00000000-0000-0000-0000-000000000002"
+    assert sanitized["data"][0]["company_name"] == "Mocha"

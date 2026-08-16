@@ -366,7 +366,9 @@ def stamp_lookup_companies(
     the union cannot exceed one, so there is nothing to find out.
 
     Best-effort: labelling is additive, so any failure warns and leaves the
-    payload exactly as it was rather than turning a working list into a 500.
+    payload exactly as it was rather than turning a working list into a 500,
+    and the queries run in a SAVEPOINT so a failed one cannot poison the
+    caller's transaction either.
     """
     try:
         scope = get_company_scope(db)
@@ -379,34 +381,42 @@ def stamp_lookup_companies(
         rows = list(rows or [])
 
         company_ids: set[str] = set()
+        names: dict = {}
         ids = {str(pid) for pid in (product_ids or []) if pid}
-        if ids:
-            from app.models.product import Product
+        # Both queries run inside a SAVEPOINT. Swallowing the exception is only
+        # half of "never fatal": on Postgres a failed statement (a non-UUID
+        # product id is the realistic one) aborts the WHOLE transaction, so a
+        # bare try/except would leave the rest of the request on a session
+        # where every later query dies with "current transaction is aborted".
+        # The savepoint rolls the failure back locally instead.
+        with db.begin_nested():
+            if ids:
+                from app.models.product import Product
 
-            company_ids.update(
-                str(cid)
-                for (cid,) in db.query(Product.company_id)
-                .filter(Product.id.in_(ids))
-                .distinct()
+                company_ids.update(
+                    str(cid)
+                    for (cid,) in db.query(Product.company_id)
+                    .filter(Product.id.in_(ids))
+                    .distinct()
+                    .all()
+                    if cid
+                )
+            for row in rows:
+                cid = _lookup_row_company_id(row, row_company_id)
+                if cid:
+                    company_ids.add(cid)
+
+            if len(company_ids) <= 1:
+                return
+
+            from app.models.company import Company
+
+            names = {
+                str(cid): name
+                for cid, name in db.query(Company.id, Company.name)
+                .filter(Company.id.in_(company_ids))
                 .all()
-                if cid
-            )
-        for row in rows:
-            cid = _lookup_row_company_id(row, row_company_id)
-            if cid:
-                company_ids.add(cid)
-
-        if len(company_ids) <= 1:
-            return
-
-        from app.models.company import Company
-
-        names = {
-            str(cid): name
-            for cid, name in db.query(Company.id, Company.name)
-            .filter(Company.id.in_(company_ids))
-            .all()
-        }
+            }
 
         for row in rows:
             cid = _lookup_row_company_id(row, row_company_id)

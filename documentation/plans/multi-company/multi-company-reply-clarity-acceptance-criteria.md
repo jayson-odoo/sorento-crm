@@ -1,6 +1,6 @@
 # Multi-company reply clarity (backend half): acceptance criteria
 
-Status: in progress on branch `fm/mc-label-backend`.
+Status: built and reviewed on `fm/mc-label-backend` (2026-08-17); PR pending.
 Plan: `documentation/plans/multi-company/PLAN-multi-company-reply-clarity-backend.md`
 Source: scout report `multicompany-response-clarity/report.md` (firstmate data dir),
 sections 2.2, 3, 4 PR-A, 5.1, 6. Captain decisions 2026-08-16: rollout (c) = every

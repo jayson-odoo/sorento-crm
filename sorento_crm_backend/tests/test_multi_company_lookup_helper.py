@@ -19,6 +19,7 @@ from sqlalchemy import event
 from app.main import app  # noqa: E402,F401
 
 from app.models.base import set_company_scope
+from app.models.company import Company
 from app.services.company_scope import DEFAULT_COMPANY_ID, stamp_lookup_companies
 
 from tests._mc_lookup_seed import MOCHA_ID, product, seed_mocha
@@ -254,10 +255,20 @@ def test_row_company_id_callable_for_rows_with_no_company_id_attribute(db):
 def test_best_effort_never_raises_on_bad_product_id(db):
     """A non-UUID product id would blow up a raw `Product.id.in_([...])`
     comparison at the database - the helper must swallow it and leave the
-    payload untouched rather than turning an additive label into a 500."""
+    payload untouched rather than turning an additive label into a 500.
+
+    Swallowing the exception is only half the job: on Postgres a failed
+    statement aborts the whole transaction, so a helper that catches and
+    returns still hands the caller a session where every later query dies with
+    "current transaction is aborted". The queries therefore run inside a
+    SAVEPOINT, and the assertion below is that the session is still usable
+    afterwards - that is what makes the label additive rather than fatal.
+    """
     _two_company_scope(db)
     payload: dict = {"data": []}
 
     stamp_lookup_companies(db, payload, [], product_ids=["not-a-uuid"])
 
     assert "lookup_companies" not in payload
+    # The rest of the request still has to work on this session.
+    assert db.query(Company).filter(Company.id == MOCHA_ID).first() is not None

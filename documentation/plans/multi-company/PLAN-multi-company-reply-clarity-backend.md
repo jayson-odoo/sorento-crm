@@ -1,6 +1,6 @@
 # PLAN - Multi-company reply clarity, backend half
 
-**Status:** in progress on `fm/mc-label-backend` (2026-08-16).
+**Status:** built and reviewed on `fm/mc-label-backend` (2026-08-17); PR pending.
 **UAC:** `documentation/plans/multi-company/multi-company-reply-clarity-acceptance-criteria.md`
 **Classification:** CORE (touches core list endpoints + the MCP presenter). No migration,
 no new permission, no FE.
@@ -115,6 +115,11 @@ ids at all) take their company set from the CURRENT PAGE's rows - a deliberate
 decision: there is no requested product set to widen it with, so their empty
 result carries no `lookup_companies` and page 2 can name a different set than
 page 1.
+
+The same is true PER AXIS, not just per tool: `list_orders`'s `product_query` and
+`list_stock`'s `entities` resolve to codes and SQL clauses rather than product
+ids, so a lookup that arrives on one of those axes has no id set to widen the
+union with and is rows-only too (its empty result names no company).
 
 Every early return that fires AFTER the requested product set is known stamps
 its own empty payload too (review round F1), so an empty answer names the
