@@ -78,9 +78,10 @@ export function PolicyFormDialog({
    * as the date is edited. A mis-dated supersede is a dialog that did not show
    * its own arithmetic.
    *
-   * An incumbent that ALREADY has an end date is not moved by this write (the
-   * server refuses to supersede a closed policy), so its existing end is stated
-   * as-is rather than a close date it will never take.
+   * The incumbent is always open ended here: AC-P21 means the server refuses to
+   * supersede a policy that already has an end date, so both entry points
+   * (`PoliciesTab` row actions, the policy detail header) hide Supersede once
+   * `effective_to` is set, and this dialog is never opened on a closed one.
    *
    * AC-P21: the successor must start STRICTLY after the incumbent's own start,
    * so a computed close date earlier than that start describes a write the
@@ -89,18 +90,14 @@ export function PolicyFormDialog({
    * by `min`, so the preview stays silent rather than stating the impossible.
    */
   const successorLabel = version.trim() || 'the new version';
-  const incumbentAlreadyClosed = !!incumbent?.effective_to;
   const earliestStart = incumbent ? nextCivilDay(incumbent.effective_from) : null;
   const computedClose = previousCivilDay(effectiveFrom);
   const closeIsBeforeIncumbentStart =
     !!incumbent && !!computedClose && computedClose < incumbent.effective_from;
-  const incumbentEnd = incumbent?.effective_to ?? computedClose;
+  // `computedClose` is null until `effectiveFrom` holds a civil date, so it is
+  // the whole "the admin has entered a start" test as well.
   const showResultingWindow =
-    mode === 'supersede' &&
-    !!incumbent &&
-    !!effectiveFrom &&
-    !!incumbentEnd &&
-    (incumbentAlreadyClosed || !closeIsBeforeIncumbentStart);
+    mode === 'supersede' && !!incumbent && !!computedClose && !closeIsBeforeIncumbentStart;
 
   return (
     <FormDialogScaffold
@@ -129,9 +126,8 @@ export function PolicyFormDialog({
           </div>
           {showResultingWindow ? (
             <div>
-              <span className="font-medium">{incumbent.version}</span>{' '}
-              {incumbentAlreadyClosed ? 'already ends' : 'closes'}{' '}
-              <span className="font-medium tabular-nums">{incumbentEnd}</span>;{' '}
+              <span className="font-medium">{incumbent.version}</span> closes{' '}
+              <span className="font-medium tabular-nums">{computedClose}</span>;{' '}
               <span className="font-medium">{successorLabel}</span> runs from{' '}
               <span className="font-medium tabular-nums">{effectiveFrom}</span>
               {effectiveTo ? (

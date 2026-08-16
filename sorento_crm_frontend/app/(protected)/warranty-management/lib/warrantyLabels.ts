@@ -93,13 +93,6 @@ function shiftCivilDay(iso: string | null | undefined, days: number): string | n
   return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
 }
 
-/** The policy window, both ends inclusive, open-ended when there is no end. */
-export function formatEffectiveRange(policy: WarrantyPolicyRow): string {
-  return policy.effective_to
-    ? `${formatCivilDate(policy.effective_from)} - ${formatCivilDate(policy.effective_to)}`
-    : `${formatCivilDate(policy.effective_from)} onwards`;
-}
-
 /** Today, as a civil `YYYY-MM-DD`, for comparing against a DATE column. */
 function todayCivil(): string {
   const now = new Date();
@@ -108,7 +101,7 @@ function todayCivil(): string {
 }
 
 /** Whether the policy governs a purchase made today. Both ends INCLUSIVE (AC-P2b). */
-export function isInForceToday(policy: WarrantyPolicyRow): boolean {
+function isInForceToday(policy: WarrantyPolicyRow): boolean {
   const today = todayCivil();
   return policy.effective_from <= today && (policy.effective_to === null || policy.effective_to >= today);
 }

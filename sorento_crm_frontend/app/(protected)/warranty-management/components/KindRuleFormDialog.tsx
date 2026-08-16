@@ -48,17 +48,11 @@ export function KindRuleFormDialog({
   // so an existing row may carry a match type outside the four this screen
   // knows, and the admin has to SEE it before deciding whether to touch it.
   const [matchType, setMatchType] = useState<string>('model_prefix');
-  // Whether the admin actually chose a match type in THIS dialog session. On an
-  // edit, an untouched field is left out of the PATCH entirely (partial
-  // semantics) so the stored value cannot be silently rewritten by a picker the
-  // admin never opened. Create always sends it - the field is required there.
-  const [matchTypeTouched, setMatchTypeTouched] = useState(false);
   const [matchValue, setMatchValue] = useState('');
   const [priority, setPriority] = useState('0');
 
   useEffect(() => {
     if (!open) return;
-    setMatchTypeTouched(false);
     if (initial) {
       setKindId(initial.kind_id);
       setMatchType(initial.match_type);
@@ -112,9 +106,11 @@ export function KindRuleFormDialog({
           match_value: matchValue.trim(),
           priority: Number(priority) || 0,
         };
-        // Create is strict (the field is required); an edit sends it only when
-        // the admin actually chose one.
-        if (!isEdit || matchTypeTouched) {
+        // Create is strict (the field is required). An edit that leaves the
+        // match type at the stored value omits it from the PATCH entirely
+        // (partial semantics), so a value this screen does not know cannot be
+        // silently rewritten by a picker the admin never opened.
+        if (!isEdit || matchType !== initial.match_type) {
           body.match_type = matchType as KindRuleMatchType;
         }
         await onSubmit(body);
@@ -136,11 +132,7 @@ export function KindRuleFormDialog({
           <SearchableSelect
             id="rule-match-type"
             value={matchType}
-            onChange={(v) => {
-              if (v === matchType) return;
-              setMatchType(v);
-              setMatchTypeTouched(true);
-            }}
+            onChange={setMatchType}
             options={matchTypeOptions}
           />
         </div>
