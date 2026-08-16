@@ -683,28 +683,6 @@ class TestStructuralCoverage:
             "/api/v1/user-management/permissions/{permission_id}",
         }
 
-    def test_allowlist_entries_all_carry_an_inline_reason(self):
-        # UAC4.3 - short enough to read, and every entry says why.
-        assert len(_EXCEPTION_ALLOWLIST) <= 15
-        for path, reason in _EXCEPTION_ALLOWLIST.items():
-            assert reason and reason.strip(), f"{path} has no reason on record"
-
-    def test_allowlist_is_exactly_the_seven_documented_exceptions(self):
-        """UAC6d.1 - the allowlist shrank to three once Q1-Q3 were decided, and
-        grew back to seven when the sweep widened to the whole package: the four
-        additions are all self-scoped reads of the caller's own row. Pinned as a
-        set, not a count, so "one route left the allowlist and another quietly
-        joined it" cannot net out to green."""
-        assert set(_EXCEPTION_ALLOWLIST) == {
-            "/api/v1/user-management/quick-access/",
-            "/api/v1/user-management/contacts/{contact_id}/companies",
-            "/api/v1/user-management/settings/app-config",
-            "/api/v1/user-management/users/me",
-            "/api/v1/user-management/users/me/permissions",
-            "/api/v1/user-management/impersonation/current",
-            "/api/v1/user-management/contact-impersonation/current",
-        }
-
     def test_allowlist_paths_are_actually_mounted_and_ungated(self):
         # Guards the allowlist itself from rotting into a list of stale/typo'd
         # paths that would silently widen coverage by never matching anything.

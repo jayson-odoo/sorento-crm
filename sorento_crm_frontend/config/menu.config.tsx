@@ -329,14 +329,17 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Internal Users',
         path: '/user-management/contact-access-agents',
+        permission: 'user_management.access_agents.view',
       },
       {
         title: 'Contact Access Types',
         path: '/user-management/contact-access-types',
+        permission: 'user_management.reference_data.view',
       },
       {
         title: 'Market Segments',
         path: '/user-management/market-segments',
+        permission: 'user_management.reference_data.view',
       },
       {
         title: 'Sales Agents',

@@ -17,10 +17,14 @@ Two grant strategies are under test and they fail in different ways:
   migration must skip it with a log line, not crash - and the local database
   proves that case is real rather than hypothetical, because it carries `admin`
   and no `superadmin` row at all.
-* `user_management.reference_data.view` DERIVES its role set in SQL from seven
+* `user_management.reference_data.view` DERIVES its role set in SQL from nine
   consumer slugs, so its failure mode is the derivation being wrong. A role
   holding one consumer slug must get the grant and a role holding none must not:
-  that pair is what proves the SELECT, and neither half proves it alone.
+  that pair is what proves the SELECT, and neither half proves it alone. Two of
+  the nine (`user_management.contacts.view`, `user_management.access_agents.view`)
+  front in-package screens reading the same catalogs, and contacts.view is granted
+  by this very migration - so the derivation has to run after that grant, which
+  test_a_role_granted_contacts_view_in_this_run_also_derives_reference_data pins.
 
 Everything runs against a blank Postgres schema (`blank_session`) inside a
 transaction that is rolled back, and every role/permission is seeded by this
@@ -50,7 +54,7 @@ from ._pg_fixture import blank_session
 CONTACTS_VIEW = "user_management.contacts.view"
 REFERENCE_DATA_VIEW = "user_management.reference_data.view"
 
-# The seven consuming screens' view slugs. Copied deliberately rather than
+# The nine consuming screens' view slugs. Copied deliberately rather than
 # imported from the migration: if someone edits that list, this test should
 # disagree with them and make them say so, not silently follow along.
 CONSUMER_SLUGS = [
@@ -61,6 +65,8 @@ CONSUMER_SLUGS = [
     "resource.attachments.view",
     "resource.attachment_directories.view",
     "resource.attachment_types.view",
+    CONTACTS_VIEW,
+    "user_management.access_agents.view",
 ]
 
 # The subset of the migration's hardcoded contacts list that this test seeds.
@@ -270,12 +276,16 @@ def test_reference_data_is_derived_from_the_consumer_slugs(seeded):
 
 def test_neither_slug_reaches_a_role_that_qualifies_for_neither(seeded):
     """The other half of the derivation pair, plus the independence of the two
-    grants. The bystander holds a real permission that is not a consumer slug and
-    is not in the contacts list, so it must gain nothing - without this, a
-    migration that granted to every role would pass every positive test above.
-    `director` is the sharper case: it IS in the contacts list and holds no
-    consumer slug, so contacts.view yes and reference_data.view no, which is what
-    proves the second grant did not silently reuse the first's role set.
+    grants. The bystander holds a real permission (`user_management.teams.view`)
+    that is not a consumer slug and is not in the contacts list, so it must gain
+    nothing - without this, a migration that granted to every role would pass
+    every positive test above.
+
+    The independence of the two grants is proved from the other side: a role
+    seeded holding only a cross-module consumer slug qualifies for
+    reference_data.view and is NOT in the contacts list, so it must not receive
+    contacts.view. If the second grant silently reused the first's role set, or
+    the first reused the second's, one of these two halves fails.
     """
     db, fixtures = seeded
     _run_upgrade(db)
@@ -284,12 +294,41 @@ def test_neither_slug_reaches_a_role_that_qualifies_for_neither(seeded):
     assert not _holds(db, bystander, CONTACTS_VIEW)
     assert not _holds(db, bystander, REFERENCE_DATA_VIEW), (
         "the derivation granted the low-privilege reference slug to a role holding "
-        "none of the seven consumer slugs - it is not deriving, it is granting to all"
+        "none of the nine consumer slugs - it is not deriving, it is granting to all"
     )
 
+    forms_consumer = fixtures["consumers"]["forms.forms.view"]
+    assert _holds(db, forms_consumer, REFERENCE_DATA_VIEW)
+    assert not _holds(db, forms_consumer, CONTACTS_VIEW), (
+        "a role holding only a consuming screen's view slug was handed the contact "
+        "directory - the hardcoded contacts list has picked up the derived role set"
+    )
+
+
+def test_a_role_granted_contacts_view_in_this_run_also_derives_reference_data(seeded):
+    """`contacts.view` is itself a consumer slug (the contact detail page reads
+    both catalogs), and this migration is what grants it. So the derivation has
+    to run AFTER the contacts grant, in the same transaction, or every role that
+    gains contacts.view here opens a contact detail page with an empty, 403ing
+    market-segment picker.
+
+    `director` is the case that proves it: seeded holding no permission at all,
+    it can only reach reference_data.view through the contacts.view this run
+    gave it.
+    """
+    db, fixtures = seeded
     director = fixtures["roles"]["director"]
+    assert not _holds(db, director, CONTACTS_VIEW), (
+        "the fixture must seed director with no grants - the in-run ordering is the point"
+    )
+
+    _run_upgrade(db)
+
     assert _holds(db, director, CONTACTS_VIEW)
-    assert not _holds(db, director, REFERENCE_DATA_VIEW)
+    assert _holds(db, director, REFERENCE_DATA_VIEW), (
+        "the derivation ran before the contacts grant, so roles granted contacts.view "
+        "by this migration never derive reference_data.view"
+    )
 
 
 # ---------------------------------------------------------------- idempotency
@@ -301,8 +340,12 @@ def test_running_upgrade_twice_inserts_no_extra_rows(seeded):
     db, _ = seeded
     _run_upgrade(db)
     first = {slug: _grant_count(db, slug) for slug in (CONTACTS_VIEW, REFERENCE_DATA_VIEW)}
-    assert first[CONTACTS_VIEW] == len(SEEDED_CONTACTS_ROLES)
-    assert first[REFERENCE_DATA_VIEW] == len(CONSUMER_SLUGS)
+    # The four named roles, plus the consumer role the fixture seeds already
+    # holding contacts.view - it is one of the nine consumer slugs now.
+    assert first[CONTACTS_VIEW] == len(SEEDED_CONTACTS_ROLES) + 1
+    # One consumer role per slug, plus the contacts roles that derive it through
+    # the contacts.view this run grants them.
+    assert first[REFERENCE_DATA_VIEW] == len(CONSUMER_SLUGS) + len(SEEDED_CONTACTS_ROLES)
 
     _run_upgrade(db)
     second = {slug: _grant_count(db, slug) for slug in (CONTACTS_VIEW, REFERENCE_DATA_VIEW)}
@@ -319,17 +362,18 @@ def test_fresh_install_with_no_consumer_grants_upgrades_cleanly():
     The derivation returns an empty set, `_grant` is handed nothing, and the
     migration has to finish anyway - a `WHERE role_id = ANY('{}')` or an
     unguarded `raise` here would break every fresh install and no
-    prod-copy-backed test would ever see it. `admin` is seeded so the run still
-    has something to do for the contacts half, which keeps this test about the
-    empty derivation rather than about an empty database.
+    prod-copy-backed test would ever see it. The one seeded role is deliberately
+    NOT in the contacts list: contacts.view is a consumer slug now, so seeding a
+    role the migration grants it to would make the derivation non-empty and this
+    test would stop testing the empty case.
     """
     with blank_session() as db:
-        admin = _role(db, "admin")
+        outsider = _role(db, f"zzt_fresh_install_{uuid.uuid4().hex[:8]}")
         db.flush()
 
         _run_upgrade(db)  # must not raise
 
-        assert _holds(db, admin, CONTACTS_VIEW)
+        assert not _holds(db, outsider, CONTACTS_VIEW)
         assert _grant_count(db, REFERENCE_DATA_VIEW) == 0, (
             "reference_data.view was granted to somebody on an install where no role "
             "holds any consuming screen's view permission"

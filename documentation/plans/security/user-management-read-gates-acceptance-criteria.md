@@ -140,9 +140,12 @@ low-privilege rather than reusing `access_agents.view`.
 UAC6d.1 - `_EXCEPTION_ALLOWLIST` in the structural test ends as exactly three entries -
 `GET /quick-access/`, `GET /contacts/{contact_id}/companies` and `GET /settings/app-config` - and
 the gated-path assertion is updated from 13 to the new exact set of 24. No assertion is weakened to
-make it pass. The allowlist is itself pinned by a set-equality test, so "one entry left and another
-joined" cannot net out green. (Drafted as two entries before the Q2 projection route existed;
-`app-config` is the third by UAC6d.2.)
+make it pass. (Drafted as two entries before the Q2 projection route existed; `app-config` is the
+third by UAC6d.2.) The allowlist is pinned by asserting each entry is a mounted, ungated GET, and
+by the exact gated-path set which is its complement - an entry that quietly joins the allowlist
+therefore has to have left the gated set, where it fails. A set-equality assertion over the
+allowlist literal was drafted here as well and is deliberately NOT shipped: it restated a literal
+declared in the same test file, so it proved nothing about the application.
 UAC6d.2 - `GET /settings/app-config` is either gated or allowlisted with its reason, like every
 other GET in scope - a new ungated route must not be introduced by the fix for an ungated route.
 
@@ -175,7 +178,8 @@ ungated, so `_EXCEPTION_ALLOWLIST` ends at exactly SEVEN entries: the three of U
 self-scoped reads of the caller's own row - `GET /users/me`, `GET /users/me/permissions`
 (`current_user["id"]`), `GET /impersonation/current` and `GET /contact-impersonation/current` (both
 filter `admin_user_id == real_user["id"]` with `ended_at IS NULL`). Each carries its inline reason.
-The set-equality pin stands.
+The mounted-and-ungated pin plus the exact gated set stand as the guard; see UAC6d.1 on why the
+allowlist literal is not additionally restated as a set-equality assertion.
 UAC7.6 - the gated-path exact set goes from 24 to THIRTY-EIGHT: 24 + the 2 system-logs reads + the
 12 `users.py` / `roles.py` / `permissions.py` reads that were already correctly gated and that the
 seven-name scope never saw. Nothing about those 12 changed; they are new to the assertion, not to

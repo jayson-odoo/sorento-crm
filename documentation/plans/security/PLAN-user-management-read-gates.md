@@ -155,6 +155,20 @@ Resolution summary:
   a different role set gets the right answer. Net effect: the two catalogs are no longer readable by
   any authenticated caller, and no consuming screen breaks.
 
+Review follow-up on that derivation: the consumer list is now NINE slugs, not seven -
+`user_management.contacts.view` and `user_management.access_agents.view` were added, because the
+in-package screens read the same two catalogs (the contact detail page's market-segment section and
+its edit dialog, the access-agents member segment editor). `contacts.view` is granted by this very
+migration, so the derivation must stay ordered after that grant and inside the same transaction;
+a test pins that direction. The review that raised this also claimed a concrete stranded role, and
+that half was wrong: on the live database all six grantees of `contacts.view` (admin, director,
+warehouse_manager and the three `integration_*`) already hold all seven original consumer slugs and
+therefore already derived `reference_data.view`. The "director" it cited is the migration test's
+synthetic fixture role, seeded holding no consumer slug precisely to prove the negative direction of
+the derivation. The change is made on the structural argument - the stated rule is "every role that
+can open a consuming screen", and two consuming screens were missing from the list - not because
+anyone was stranded.
+
 One correction the Q2 investigation turned up: of the "three consumers" that made gating
 `GET /settings/` risky, only two were ever functional. `hooks/use-excel-accept.ts` reads
 `settings.excel_upload_accept_extensions`, which **is not a column on the `SystemSetting` model and

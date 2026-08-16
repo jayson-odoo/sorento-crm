@@ -20,10 +20,12 @@ the requirement.
 catalogs, `GET /contact-access-types/` and `GET /market-segments/`. These are
 read by roughly ten screens OUTSIDE user-management - marketing promotions,
 forms, resource-management files / attachment directories / attachment types,
-master-data brands and products - so a grant list narrower than "everyone who
-can open one of those screens" would break a picker on a page the role is
-otherwise fully entitled to. The grant set is therefore DERIVED IN SQL: every
-role holding at least one of
+master-data brands and products - plus the in-package screens that front the
+same two catalogs (the contact detail page's market-segment section and edit
+dialog, and the access-agents member segment editor), so a grant list narrower
+than "everyone who can open one of those screens" would break a picker on a page
+the role is otherwise fully entitled to. The grant set is therefore DERIVED IN
+SQL: every role holding at least one of
 
     forms.forms.view
     marketing.promotions.view
@@ -32,6 +34,12 @@ role holding at least one of
     resource.attachments.view
     resource.attachment_directories.view
     resource.attachment_types.view
+    user_management.contacts.view
+    user_management.access_agents.view
+
+The derivation deliberately runs AFTER the contacts.view grant below and in the
+same transaction, so a role this migration itself grants contacts.view to is
+visible to the SELECT and receives reference_data.view in the same run.
 
 On the production-shaped role set that resolves to admin, superadmin, director,
 warehouse_manager, marketing_manager, marketing_executive, purchasing_manager,
@@ -87,6 +95,8 @@ _REFERENCE_CONSUMER_SLUGS = [
     "resource.attachments.view",
     "resource.attachment_directories.view",
     "resource.attachment_types.view",
+    _CONTACTS_VIEW,
+    "user_management.access_agents.view",
 ]
 
 
@@ -156,6 +166,8 @@ def upgrade():
         contacts_granted = _grant(session, set(contacts_roles.values()), permission_ids[_CONTACTS_VIEW])
 
         # --- reference_data.view: role set derived from the consumer slugs --
+        # Must stay AFTER the contacts grant above: contacts.view is itself a
+        # consumer slug, so a role granted it in this run has to be visible here.
         derived_rows = session.execute(
             sa.text(
                 "SELECT DISTINCT r.id, r.slug FROM user_roles r "
