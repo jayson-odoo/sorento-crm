@@ -344,24 +344,21 @@ export default function SharedConversationComposer({
   // ---- Staged image previews -------------------------------------------
   // A pasted screenshot is unrecognisable as a filename ("image.png"), so the
   // staged strip shows the picture itself. A staged file has no URL of its own,
-  // so each image gets an object URL, revoked as soon as the list changes or
-  // the composer unmounts - the cleanup runs on the PREVIOUS array, which is
-  // exactly the set that just stopped being displayed.
-  const stagedImageUrls = useMemo(
-    () =>
-      files.map((file) =>
-        file.type.startsWith('image/') && typeof URL?.createObjectURL === 'function'
-          ? URL.createObjectURL(file)
-          : null,
-      ),
-    [files],
-  );
-  useEffect(
-    () => () => {
-      stagedImageUrls.forEach((url) => url && URL.revokeObjectURL?.(url));
-    },
-    [stagedImageUrls],
-  );
+  // so each image gets an object URL. Minted in an EFFECT, never in render: a
+  // render that React discards (concurrent, StrictMode) would leak every URL it
+  // created, because no cleanup is ever committed for it.
+  const [stagedImageUrls, setStagedImageUrls] = useState<(string | null)[]>([]);
+  useEffect(() => {
+    const urls = files.map((file) =>
+      file.type.startsWith('image/') && typeof URL?.createObjectURL === 'function'
+        ? URL.createObjectURL(file)
+        : null,
+    );
+    setStagedImageUrls(urls);
+    return () => {
+      urls.forEach((url) => url && URL.revokeObjectURL?.(url));
+    };
+  }, [files]);
   /** Which staged file the preview is open on (index into `files`), or null. */
   const [previewFileIndex, setPreviewFileIndex] = useState<number | null>(null);
   const stagedPreviewItems = useMemo(() => {

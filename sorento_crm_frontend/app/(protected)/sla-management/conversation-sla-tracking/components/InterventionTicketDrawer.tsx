@@ -303,6 +303,7 @@ export default function InterventionTicketDrawer({
                 className="mt-2"
                 dueAt={ticket.due_at}
                 dueAtResolution={ticket.due_at_resolution}
+                extensionCount={ticket.extension_count}
                 isResponded={ticket.is_responded}
                 respondedAt={ticket.responded_at}
                 currentTier={ticket.current_tier}

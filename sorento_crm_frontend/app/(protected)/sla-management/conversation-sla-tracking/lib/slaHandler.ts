@@ -30,6 +30,14 @@ export interface SlaHandler {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The first candidate that is a name a person can read: non-blank, not a raw
+ * UUID. The backend falls back to the raw `resolved_by` column when no user
+ * row matches, so every surface that prints a handler has to filter, not just
+ * the ones that call `slaHandler`. */
+export function humanName(...candidates: (string | null | undefined)[]): string | null {
+  return firstHumanValue(candidates);
+}
+
 function firstHumanValue(candidates: (string | null | undefined)[]): string | null {
   for (const candidate of candidates) {
     const value = (candidate ?? '').trim();

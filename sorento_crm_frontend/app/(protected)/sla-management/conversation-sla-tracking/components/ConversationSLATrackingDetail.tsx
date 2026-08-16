@@ -53,7 +53,7 @@ import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import SlaTrackingChatRecords from './SlaTrackingChatRecords';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
-import { slaHandler } from '../lib/slaHandler';
+import { humanName, slaHandler } from '../lib/slaHandler';
 
 const RESPOND_IO_INBOX_BASE_URL = 'https://app.respond.io/space/364817/inbox';
 
@@ -1060,7 +1060,9 @@ export default function ConversationSLATrackingDetail({
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Resolved By</p>
-                      <p className="font-medium">{tracking.resolved_by_user_name || tracking.resolved_by || '-'}</p>
+                      <p className="font-medium">
+                        {humanName(tracking.resolved_by_user_name, tracking.resolved_by) || '-'}
+                      </p>
                     </div>
                     {tracking.average_resolution_time !== null && tracking.average_resolution_time !== undefined && (
                       <div>
