@@ -25,6 +25,15 @@ DEFAULT_DEAD_STOCK_DAYS = 180
 # when no global policy row carries an ``overstock_days`` value.
 DEFAULT_OVERSTOCK_DAYS = 120
 
+# The two values of ``scm.reorder_policy.cover_scope``: where "use stock" may draw from
+# before buying. ``own_pool`` keeps a row's cover inside its own site, ``all_locations`` is
+# the behaviour that shipped first. Unset resolves to ``own_pool`` (captain: "either I use
+# stock from BRW, or buy"), never to the whole network.
+OWN_POOL = "own_pool"
+ALL_LOCATIONS = "all_locations"
+COVER_SCOPES = (OWN_POOL, ALL_LOCATIONS)
+DEFAULT_COVER_SCOPE = OWN_POOL
+
 PlanningMode = Literal["auto", "manual"]
 # policy_type values that resolve to each universal planning mode (S1). Only
 # 'reorder_level' reads as manual; everything else (reorder_point, periodic_review,
@@ -38,9 +47,12 @@ def global_policy_row(db: Session):
 
     Active rows win over inactive ones; among ties the oldest (``created_at ASC``)
     wins — deterministic, and stable as new duplicates get appended.
+
+    Columns are appended, never reordered: callers read this by index.
     """
     return db.execute(text(
-        "SELECT id, dead_stock_days, overstock_days, policy_type FROM scm.reorder_policy "
+        "SELECT id, dead_stock_days, overstock_days, policy_type, cover_scope "
+        "FROM scm.reorder_policy "
         "WHERE scope_type = 'global' ORDER BY is_active DESC, created_at ASC LIMIT 1"
     )).fetchone()
 
@@ -64,6 +76,17 @@ def resolve_global_planning_mode(db: Session) -> PlanningMode:
     """The mode the NEXT reorder run will use, derived from the global row."""
     row = global_policy_row(db)
     return planning_mode_from_policy_type(row[3] if row else None)
+
+
+def resolve_global_cover_scope(db: Session) -> str:
+    """Where "use stock" may draw from, per the canonical global row.
+
+    An unset value resolves to ``own_pool`` (the captain's answer: "either I use stock from
+    BRW, or buy"), so a row that predates the column never silently offers the whole network.
+    """
+    row = global_policy_row(db)
+    value = row[4] if row else None
+    return value if value in COVER_SCOPES else DEFAULT_COVER_SCOPE
 
 
 def resolve_global_dead_stock_days(db: Session) -> Optional[int]:

@@ -25,6 +25,9 @@ ScopeType = Literal["sku", "product_class", "abc_xyz_cell", "global"]
 PolicyType = Literal["reorder_point", "periodic_review", "min_max"]
 SafetyStockMethod = Literal["fixed_days", "statistical", "manual"]
 SupplierSelection = Literal["primary", "best_score", "lowest_cost"]
+# Where a plan row may cover a shortage from before it buys. `own_pool` is the default
+# everywhere (captain: "either I use stock from BRW, or buy"); anything else is a 422.
+CoverScope = Literal["own_pool", "all_locations"]
 ResolutionReason = Literal["most-specific-active", "priority-tiebreak", "no-match", "inactive"]
 
 
@@ -92,6 +95,12 @@ class ReorderPolicyRow(ReorderPolicyWrite):
     """One reorder-policy row as returned by list / create / update / resolve."""
     id: str
     scope_label: str  # human-readable target, no UUID; "—" for global
+    # READ-ONLY here. `cover_scope` is a GLOBAL setting with exactly one writer
+    # (PUT /scm/config/cover-scope): it is deliberately absent from the write schema above,
+    # because a grid save that omitted it would otherwise reset the global value to the
+    # field default. Declared explicitly all the same - a field the response model does not
+    # declare is dropped, so inheriting it was never an option.
+    cover_scope: CoverScope = "own_pool"
 
 
 class ReorderPolicyPage(BaseModel):

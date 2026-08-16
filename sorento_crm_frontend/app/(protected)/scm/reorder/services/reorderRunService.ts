@@ -57,7 +57,7 @@
  */
 import type { SortingState } from '@tanstack/react-table';
 import { apiFetch } from '@/lib/api';
-import type { CoverSource } from '../lib/coverPlan';
+import type { CoverScope, CoverSource } from '../lib/coverPlan';
 import type { LevelSuggestionsPayload } from '../lib/levelSuggestion';
 import type { EconomicsPayload } from '../lib/productHealth';
 import type { PoReceipt } from '../lib/poCover';
@@ -367,21 +367,76 @@ export async function getRecommendations(
 export async function getAllDispositionRecommendations(
   runId: string,
 ): Promise<ReorderRecommendation[]> {
+  return fetchEveryPage(runId, 'disposition');
+}
+
+/**
+ * Every page of one recommendation type, in run order, with pages 2..N fetched TOGETHER.
+ *
+ * Page 1 is awaited alone because it is what reports `total_pages` - there is no way to know
+ * how many pages exist without it. Every remaining page is then requested in parallel, which
+ * is the whole point: they have no dependency on each other, and awaiting them one at a time
+ * turned a plan into a staircase of round trips. Measured on the live 4,634-row run (2,150
+ * buy + 2,092 disposition, so three pages of each), the six recommendation requests finished
+ * in sequence at 6.0 / 6.6 / 11.5 / 11.6 / 13.7 / 16.3 s - the grid could not render until
+ * the last of them landed. The cost grows with the plan: a 10,000-row set is ten pages, so
+ * ten serial round trips per type.
+ *
+ * Order is preserved (`Promise.all` resolves positionally), so the merged list is identical
+ * to what the serial loop produced - this changes when the rows arrive, never which rows or
+ * in what order.
+ */
+async function fetchEveryPage(
+  runId: string,
+  type: 'buy' | 'covered' | 'disposition' | 'needs_level',
+): Promise<ReorderRecommendation[]> {
   const PAGE = 1000; // endpoint's max `limit`
-  const first = await getRecommendations(runId, {
-    pageIndex: 0,
-    pageSize: PAGE,
-    type: 'disposition',
-  });
-  const out = [...first.data];
-  for (let page = 1; page < first.pagination.total_pages; page += 1) {
-    const next = await getRecommendations(runId, {
-      pageIndex: page,
-      pageSize: PAGE,
-      type: 'disposition',
-    });
-    out.push(...next.data);
-  }
+  const first = await getRecommendations(runId, { pageIndex: 0, pageSize: PAGE, type });
+  const pageIndexes: number[] = [];
+  for (let page = 1; page < first.pagination.total_pages; page += 1) pageIndexes.push(page);
+
+  const rest = await inFlightAtMost(MAX_CONCURRENT_PAGES, pageIndexes, (page) =>
+    getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type }),
+  );
+  return [...first.data, ...rest.flatMap((p) => p.data)];
+}
+
+/**
+ * How many pages of ONE type may be in flight at once.
+ *
+ * Uncapped parallelism is not free on the server side. The four type queries run at the
+ * same time, so a ten-page plan would put roughly thirty-six requests on the wire together,
+ * and every one of them takes a database session for as long as it runs. The API pool is
+ * `pool_size=10, max_overflow=20`, so a single tab opening a single plan could exhaust it
+ * and make every other request on the instance queue behind it. Five per type keeps the
+ * round trips shallow (which is the whole point of fetching them together) while staying
+ * inside what the pool can serve.
+ */
+const MAX_CONCURRENT_PAGES = 5;
+
+/**
+ * Map over `items` with at most `limit` calls running at once, results in input order.
+ *
+ * A rejection rejects the whole call, exactly as `Promise.all` would: a plan missing one of
+ * its pages is not a smaller plan, it is a wrong one, and returning the pages that happened
+ * to succeed would quietly under-report the buyer's work.
+ */
+async function inFlightAtMost<T, R>(
+  limit: number,
+  items: T[],
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const mine = next;
+      next += 1;
+      if (mine >= items.length) return;
+      out[mine] = await run(items[mine]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return out;
 }
 
@@ -449,14 +504,7 @@ export async function getBuyRecommendationsForCash(
   // Σ of all costed buys, so a truncated set would cap the slider well below the
   // plan's true cash impact. Page past the endpoint's 1000-row limit like the
   // disposition set does.
-  const PAGE = 1000; // endpoint's max `limit`
-  const first = await getRecommendations(runId, { pageIndex: 0, pageSize: PAGE, type: 'buy' });
-  const out = [...first.data];
-  for (let page = 1; page < first.pagination.total_pages; page += 1) {
-    const next = await getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type: 'buy' });
-    out.push(...next.data);
-  }
-  return out;
+  return fetchEveryPage(runId, 'buy');
 }
 
 /** Every `covered` row for a run: demand the location's own stock already covers.
@@ -467,14 +515,7 @@ export async function getBuyRecommendationsForCash(
 export async function getCoveredRecommendations(
   runId: string,
 ): Promise<ReorderRecommendation[]> {
-  const PAGE = 1000;
-  const first = await getRecommendations(runId, { pageIndex: 0, pageSize: PAGE, type: 'covered' });
-  const out = [...first.data];
-  for (let page = 1; page < first.pagination.total_pages; page += 1) {
-    const next = await getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type: 'covered' });
-    out.push(...next.data);
-  }
-  return out;
+  return fetchEveryPage(runId, 'covered');
 }
 
 /** Resolve a covered-by-stock row: keep the stock, or turn it into a purchase.
@@ -569,22 +610,7 @@ export async function applyBudget(runId: string, budget: number): Promise<ApplyB
 export async function getNeedsLevelRecommendations(
   runId: string,
 ): Promise<ReorderRecommendation[]> {
-  const PAGE = 1000;
-  const first = await getRecommendations(runId, {
-    pageIndex: 0,
-    pageSize: PAGE,
-    type: 'needs_level',
-  });
-  const out = [...first.data];
-  for (let page = 1; page < first.pagination.total_pages; page += 1) {
-    const next = await getRecommendations(runId, {
-      pageIndex: page,
-      pageSize: PAGE,
-      type: 'needs_level',
-    });
-    out.push(...next.data);
-  }
-  return out;
+  return fetchEveryPage(runId, 'needs_level');
 }
 
 /** Take our suggested level as the buyer's own, for one (product, location).
@@ -625,14 +651,28 @@ export async function setReorderLevel(
  * Keyed by product, because the pool is SHARED: two lines for the same product draw on the
  * same units. Fetched once and spent down client-side as decisions are made (see
  * `lib/coverPlan`), which is the only place that knows what has been decided so far.
+ *
+ * Each source carries its `pool_warehouse_id` and the response carries the run's
+ * `cover_scope`, because the map is keyed by PRODUCT while the scope question is per ROW:
+ * two rows for the same product can sit in different pools, so the per-row filter has to
+ * happen where the row is known (`coverForLine`).
  */
-export async function getCoverSources(
-  runId: string,
-): Promise<Record<string, CoverSource[]>> {
+export async function getCoverSources(runId: string): Promise<CoverSourcesResponse> {
   const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/cover-sources`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load cover sources'));
-  const body = (await res.json()) as { sources?: Record<string, CoverSource[]> };
-  return body.sources ?? {};
+  const body = (await res.json()) as {
+    sources?: Record<string, CoverSource[]>;
+    cover_scope?: CoverScope;
+  };
+  // An older run payload carries no scope. That reads as `own_pool`, the policy's own
+  // default: not knowing what this run is allowed to draw on has to narrow the offer, never
+  // open the whole network up.
+  return { sources: body.sources ?? {}, cover_scope: body.cover_scope ?? 'own_pool' };
+}
+
+export interface CoverSourcesResponse {
+  sources: Record<string, CoverSource[]>;
+  cover_scope: CoverScope;
 }
 
 /**
@@ -708,6 +748,43 @@ export async function amendLevelSuggestion(input: {
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to amend the level suggestion'));
   return res.json();
+}
+
+/**
+ * Which products on the run have a photo to show: `{product_id: true}` (AC-7).
+ *
+ * Only the question the icon asks, because the icon is on EVERY row: the answer costs no
+ * signature, so a plan of four thousand lines is one cheap call rather than four thousand
+ * signed URLs the buyer will never open. The picture itself is `getProductImage` below, on
+ * the popover that wants it.
+ *
+ * A product with nothing to show is ABSENT from the map rather than mapped to false.
+ */
+export async function getProductImages(
+  runId: string,
+): Promise<{ has_image: Record<string, boolean> }> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/product-images`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the product photos'));
+  const body = (await res.json()) as { has_image?: Record<string, boolean> };
+  return { has_image: body.has_image ?? {} };
+}
+
+/**
+ * The photo of ONE product on the run, signed on the open of its popover (AC-7).
+ *
+ * `is_primary` says whether anyone ever nominated this picture in Dealer Kit -> Brochure
+ * images. The reader falls back to the first catalogue image when nobody has, which is the
+ * right thing to show and still worth telling the buyer, so the popover keeps the way back
+ * to the picker on screen.
+ */
+export async function getProductImage(
+  runId: string,
+  productId: string,
+): Promise<{ url: string | null; is_primary: boolean }> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/product-images/${productId}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the product photo'));
+  const body = (await res.json()) as { url?: string | null; is_primary?: boolean };
+  return { url: body.url ?? null, is_primary: !!body.is_primary };
 }
 
 /**

@@ -197,7 +197,7 @@ def _placed_supply(db: Session, product_ids: Sequence[str]) -> dict[str, list[_P
                    (COALESCE(pol.qty_ordered, 0) - COALESCE(pol.qty_received, 0)) AS qty
             FROM purchase_order_lines pol
             JOIN purchase_orders po ON po.id = pol.purchase_order_id
-            WHERE pol.product_id::text = ANY(:pids)
+            WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
               AND pol.line_status = 'open'
               -- Placed, not drafted. `draft_recommendation` is a plan the engine
               -- staged and nobody has sent; amending it is ordinary editing, not a
@@ -274,7 +274,7 @@ def _readings(db: Session, product_ids: Sequence[str]) -> dict[str, ItemReading]
                  ORDER BY c.computed_at DESC NULLS LAST
                  LIMIT 1
             ) ic ON true
-            WHERE p.id::text = ANY(:pids)
+            WHERE p.id = ANY(CAST(:pids AS uuid[]))
             """
         ),
         {"pids": pids},
@@ -308,7 +308,7 @@ def _demand_classes(db: Session, product_ids: Sequence[str]) -> dict[str, str]:
                    count(*) AS n
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
-            WHERE sol.product_id::text = ANY(:pids)
+            WHERE sol.product_id = ANY(CAST(:pids AS uuid[]))
               AND sol.line_status = 'open'
               AND so.order_type IS NOT NULL
             GROUP BY 1, 2
@@ -571,7 +571,8 @@ def _warehouse_codes(db: Session, ids) -> dict[str, str]:
     if not ids:
         return {}
     rows = db.execute(
-        text("SELECT id::text AS id, warehouse_code FROM warehouses WHERE id::text = ANY(:ids)"),
+        text("SELECT id::text AS id, warehouse_code FROM warehouses "
+        "WHERE id = ANY(CAST(:ids AS uuid[]))"),
         {"ids": ids},
     ).mappings().all()
     return {r["id"]: r["warehouse_code"] for r in rows}
@@ -582,7 +583,8 @@ def _po_numbers(db: Session, ids) -> dict[str, str]:
     if not ids:
         return {}
     rows = db.execute(
-        text("SELECT id::text AS id, po_number FROM purchase_orders WHERE id::text = ANY(:ids)"),
+        text("SELECT id::text AS id, po_number FROM purchase_orders "
+        "WHERE id = ANY(CAST(:ids AS uuid[]))"),
         {"ids": ids},
     ).mappings().all()
     return {r["id"]: r["po_number"] for r in rows}
@@ -596,7 +598,7 @@ def _actor_names(db: Session, ids) -> dict[str, str]:
     rows = db.execute(
         text(
             "SELECT id::text AS id, COALESCE(NULLIF(TRIM(name), ''), email) AS label "
-            "FROM users WHERE id::text = ANY(:ids)"
+            "FROM users WHERE id = ANY(:ids)"
         ),
         {"ids": ids},
     ).mappings().all()

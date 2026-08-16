@@ -11,18 +11,30 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 const hooks = vi.hoisted(() => ({
   usePlanningMode: vi.fn(),
   useSavePlanningMode: vi.fn(),
+  useCoverScope: vi.fn(),
+  useSaveCoverScope: vi.fn(),
 }));
 vi.mock('../hooks/usePolicies', () => hooks);
 
 import { PlanningModePanel } from './PlanningModePanel';
 
 const mutateAsync = vi.fn();
+const mutateCover = vi.fn();
 
 beforeEach(() => {
   hooks.usePlanningMode.mockReset();
   hooks.useSavePlanningMode.mockReset();
+  hooks.useCoverScope.mockReset();
+  hooks.useSaveCoverScope.mockReset();
   mutateAsync.mockReset().mockResolvedValue({ mode: 'manual' });
+  mutateCover.mockReset();
   hooks.useSavePlanningMode.mockReturnValue({ mutateAsync, isPending: false });
+  hooks.useSaveCoverScope.mockReturnValue({ mutate: mutateCover, isPending: false });
+  hooks.useCoverScope.mockReturnValue({
+    data: { cover_scope: 'own_pool' },
+    isLoading: false,
+    isError: false,
+  });
 });
 
 describe('PlanningModePanel', () => {
@@ -111,5 +123,54 @@ describe('PlanningModePanel', () => {
     render(<PlanningModePanel />);
     fireEvent.click(screen.getByRole('radio', { name: /Auto/i }));
     expect(screen.queryByText(/Switch to/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Cover from - where a plan row may take stock from before it buys (AC-3.2).
+ *
+ * > "why am I allowed to use stock from other locations? It is either I use stock from BRW,
+ * >  or buy."
+ */
+describe('PlanningModePanel - Cover from', () => {
+  beforeEach(() => {
+    hooks.usePlanningMode.mockReturnValue({
+      data: { mode: 'auto' }, isLoading: false, isError: false,
+    });
+  });
+
+  it('renders the saved scope', () => {
+    render(<PlanningModePanel />);
+    expect(screen.getByText('Cover from')).toBeInTheDocument();
+    expect(screen.getByRole('combobox')).toHaveTextContent('Own site only');
+  });
+
+  it('renders the other scope when that is what is saved', () => {
+    hooks.useCoverScope.mockReturnValue({
+      data: { cover_scope: 'all_locations' }, isLoading: false, isError: false,
+    });
+    render(<PlanningModePanel />);
+    expect(screen.getByRole('combobox')).toHaveTextContent('Any location');
+  });
+
+  it('shows a skeleton while the setting loads, never a guessed value', () => {
+    hooks.useCoverScope.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    render(<PlanningModePanel />);
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('renders the error state', () => {
+    hooks.useCoverScope.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    render(<PlanningModePanel />);
+    expect(screen.getByText(/Failed to load the cover setting/i)).toBeInTheDocument();
+  });
+
+  it('picking the other option saves it', async () => {
+    render(<PlanningModePanel />);
+    fireEvent.click(screen.getByRole('combobox'));
+    fireEvent.click(await screen.findByText('Any location'));
+    await waitFor(() =>
+      expect(mutateCover).toHaveBeenCalledWith({ cover_scope: 'all_locations' }),
+    );
   });
 });

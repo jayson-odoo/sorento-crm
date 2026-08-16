@@ -46,7 +46,7 @@ _TREND_SQL = """
 WITH pairs AS (
     SELECT DISTINCT r.product_id
     FROM scm.reorder_recommendation r
-    WHERE r.run_id::text = :run_id
+    WHERE r.run_id = CAST(:run_id AS uuid)
 )
 SELECT pol.product_id::text AS product_id,
        po.issue_date AS issue_date,
@@ -63,7 +63,7 @@ _LINES_SQL = """
 WITH pairs AS (
     SELECT DISTINCT r.product_id
     FROM scm.reorder_recommendation r
-    WHERE r.run_id::text = :run_id
+    WHERE r.run_id = CAST(:run_id AS uuid)
 ),
 purchases AS (
     SELECT pol.product_id::text AS product_id,
@@ -120,7 +120,7 @@ def purchase_trend_for_run(
         r[0]: {"product_id": r[0]}
         for r in db.execute(text(
             "SELECT DISTINCT r.product_id::text FROM scm.reorder_recommendation r "
-            "WHERE r.run_id::text = :run_id"
+            "WHERE r.run_id = CAST(:run_id AS uuid)"
         ), {"run_id": run_id})
     }
 

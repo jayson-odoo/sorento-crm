@@ -6,6 +6,7 @@ import {
   createReorderPolicy,
   deleteReorderPolicy,
   getClassification,
+  getCoverScope,
   getClassScopeOptions,
   getPlanningMode,
   getProductScopeOptions,
@@ -14,6 +15,7 @@ import {
   listReorderPolicies,
   resolvePolicy,
   saveClassification,
+  saveCoverScope,
   savePlanningMode,
   saveSupplierScoring,
   updateReorderPolicy,
@@ -21,6 +23,7 @@ import {
 } from '../services/scmPolicyService';
 import type {
   AbcXyzWrite,
+  CoverScopeWrite,
   PlanningModeWrite,
   ReorderPolicyWrite,
   SupplierScoringWrite,
@@ -30,6 +33,7 @@ const REORDER_KEY = ['scm', 'policies', 'reorder'] as const;
 const CLASSIFICATION_KEY = ['scm', 'policies', 'classification'] as const;
 const SUPPLIER_KEY = ['scm', 'policies', 'supplier-scoring'] as const;
 const PLANNING_MODE_KEY = ['scm', 'policies', 'planning-mode'] as const;
+const COVER_SCOPE_KEY = ['scm', 'policies', 'cover-scope'] as const;
 
 const optionOpts = { staleTime: 5 * 60_000, refetchOnWindowFocus: false, retry: 1 } as const;
 
@@ -144,6 +148,29 @@ export function useSavePlanningMode() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: PLANNING_MODE_KEY });
       toast.success('Planning mode saved - applies from the next run');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+// ── Cover scope (where "use stock" may draw from) ───────────────────────────
+
+export function useCoverScope() {
+  return useQuery({
+    queryKey: COVER_SCOPE_KEY,
+    queryFn: getCoverScope,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+export function useSaveCoverScope() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CoverScopeWrite) => saveCoverScope(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: COVER_SCOPE_KEY });
+      toast.success('Cover setting saved');
     },
     onError: (e: Error) => toast.error(e.message),
   });

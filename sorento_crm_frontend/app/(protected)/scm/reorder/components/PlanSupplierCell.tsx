@@ -1,7 +1,7 @@
 'use client';
 
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
-import { EM_DASH } from '../../lib/format';
+import { BASE_CURRENCY, EM_DASH, fmtSupplierCost, isBaseCurrency } from '../../lib/format';
 import type { PlanRowSupplier, PlanRowSupplierOption } from '../lib/planRow';
 import {
   describeCheaper,
@@ -97,7 +97,15 @@ export function PlanSupplierCell({
                   <li key={a.value} className="flex justify-between gap-2">
                     <span className="truncate" title={a.label}>{a.label}</span>
                     <span className="shrink-0 tabular-nums">
-                      {a.unit_cost.toFixed(2)}
+                      {/* The price in the money it is quoted in, and beside it the same
+                          price restated in base when the two differ - which is the pair
+                          the ranking compared. Printed bare, a USD 8.00 option reads
+                          cheaper than an RM 10.00 one while costing about three times as
+                          much. */}
+                      {fmtSupplierCost(a.unit_cost, a.currency)}
+                      {a.unit_cost_base !== null && !isBaseCurrency(a.currency)
+                        ? ` (${fmtSupplierCost(a.unit_cost_base, BASE_CURRENCY)})`
+                        : ''}
                       {a.lead_time_days > 0 ? `, ${a.lead_time_days}d` : ''}
                     </span>
                   </li>
