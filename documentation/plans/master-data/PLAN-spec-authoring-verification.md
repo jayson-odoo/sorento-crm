@@ -13,7 +13,8 @@ half of AC-D.17; backend only, Phase 1 exception per the PR-map note). PR 2 (Edi
 pills) implemented on `fm/spec-pr2-editable-table`, 2026-08-15: AC-A.1 to AC-A.15 and AC-C.1 to
 AC-C.4, Phase 1 then Phase 2, with **AC-A.16 (the Playwright e2e spec) outstanding** - browser
 verification moved to `agent-browser` by captain ruling mid-slice and the ruling on committed
-`e2e/` specs is pending, so no new Playwright spec was written. PRs 3-4 pending.
+`e2e/` specs is pending, so no new Playwright spec was written. PR 3 in flight in a parallel lane. PR 4 IN PROGRESS on
+`fm/spec-pr4-extraction-prompt` (2026-08-16), contract below.
 
 Also landed out of band: #150, a merge revision joining the `323`/`356` alembic fork that
 PRs #144 and #145 created between them. Not a defect in either; see C8's neighbour note and
@@ -515,6 +516,148 @@ changes PR 4's retirement list in exactly one way, and it is binding on whoever 
   PR 1.
 - Everything else in this PR stands unchanged: promote-then-discard (D2), the migration runbook
   above, the paste-once prompt box, and the `ProductFlyerText` drop.
+
+#### PR 4 implementation contract (main session, 2026-08-16; charted against main at `eb2cf0ce`)
+
+Verified before this was written: PR 1's source-keyed boost branch is present
+(`product_spec_search.py:822-824`, `source_boosts` keyed by source with `flyer` on its own knob),
+so runbook step 1 passes and the promote migration may ship. Main carries TWO alembic heads
+(`363_merge_flyer_promo_um`, `365_merge_scm_plan_feedback`) and
+`tests/test_alembic_revision_ids.py::test_migration_graph_has_a_single_head` is red on main; this
+PR joins them with an empty merge revision before the promote revision.
+
+**Document input (captain's intent, judged here).** The dealer-kit flyer read (PR #184) is a
+whole-A3-flyer card extractor (background job, R2 attachment, card geometry, per-code report). It
+is not a generic document-to-text path for one product's supplier PDF or photo, and
+`AIExtractService` renders PDFs to images for a vision model against a registered form schema,
+not the spec registry. Neither reuse is straightforward, so **this PR ships paste-text only** and
+reports the document input as a follow-up finding. No new extraction subsystem is built.
+
+**Two engines, one endpoint.** Proposals come from (1) the lifted rule pass
+`propose_from_text(text, code)` - deterministic, always run, the flyer-tuned knowledge - and (2)
+the LLM sibling `extract_specs_from_text` in `product_spec_understanding`, run when a model is
+reachable, adding keys the rule pass did not fire. When no model is reachable the response is
+`engine: "deterministic"` (AC-B.5), otherwise `engine: "semantic"` with `model` named. Both go
+through the same validation (`_vocabulary` / `_coerce` / `_validated_pairs`) and the same
+`_apply_scope` gate as derivation, so neither can propose invented vocabulary or an out-of-class
+key (AC-B.4). `understand_phrase` is not touched.
+
+**Backend routes** (in `app/api/v1/master_data/product_specifications.py`, style of the file:
+inline permission `Depends(require_permission_with_api_key(...))`, hand-built dict responses):
+
+- `POST /product-specifications/by-product/{product_id}/extract` - `master_data.products.edit`.
+  Body `{"text": str}`. 422 with a readable message when blank or over 8,000 characters (no
+  truncation). Writes nothing to `product_specifications` or `product_flyer_text` (AC-B.1/B.2; the
+  usage log row `understand_phrase` already writes for `spec_search` is acceptable and is not a
+  spec write). Response:
+  ```json
+  {"product_code": "SRT...", "engine": "semantic" | "deterministic", "model": "gpt-4o" | null,
+   "proposals": [{"spec_key": "finish", "label": "Finish", "data_type": "enum",
+                  "value": "matt black", "unit": null, "evidence": "Matt Black finish",
+                  "kind": "new" | "change" | "conflict",
+                  "stored_value": "chrome" | null, "stored_unit": null,
+                  "stored_source": "derived" | "human" | ... | null}],
+   "unchanged": 3}
+  ```
+  `kind` is computed server-side (AC-B.3): stored key absent -> `new`; stored equal after
+  coercion (`_canonical_entry`) -> omitted, counted in `unchanged`; stored provenance authored
+  (`AUTHORED_SOURCES`) or tombstoned (`absent: true`) -> `conflict`; stored non-authored and
+  different -> `change`, EXCEPT a key in `_DESCRIPTION_FIRST_KEYS` whose stored value came from the
+  description, which is `conflict` (this is the lifted "the description beats the flyer for
+  sizes" rule, expressed as default-unticked rather than silently applied). One proposal per key;
+  `finish` (the multi-value key) may propose a joined value exactly as derivation stores it.
+- `POST /product-specifications/by-product/{product_id}/values/batch` - `master_data.products.edit`.
+  Body `{"entries": [{"spec_key", "value", "unit"?, "evidence"}]}` (1..50 entries; empty is 422).
+  ONE `apply_spec_values(db, code, entries, actor=...)` call with `op="set"`,
+  `source="human"`, evidence `"read from text: <evidence>"` (AC-B.9); atomic - any bad entry
+  fails the whole batch through the choke point's own validation. Response `{product_code,
+  rows_written, spec_keys}` as the service returns it. Nothing else new; the FE refetches
+  `by-product` afterwards.
+- `PUT .../flyer-text` and the four `/findability/*` routes are DELETED; the by-product response
+  drops `flyer_text` (AC-B.14). `product_flyer_import.py` (zero callers) and
+  `spec_findability.py` are deleted with `tests/test_spec_findability.py`. The findability
+  tables and `ProductFlyerText` model stay (runbook step 6 is a later deploy).
+
+**`propose_from_text(text, code, *, rules_by_key=None, scopes_by_key=None) -> list[dict]`** in
+`product_spec_derivation.py` (AC-B.18): pure, no session, writes nothing. Runs `apply_rules`
+over `{"flyer": text}` plus the code passes, keeps the source-major order and the `source:
+"flyer"` rule scope, applies the same value post-processing (units, `_MM_KEYS`, `MULTI_VALUE_KEYS`)
+and `_apply_scope`, and returns `[{"spec_key", "value", "unit", "evidence", "origin":
+"flyer"|"code", "description_first": bool}]` where `description_first` is membership in
+`_DESCRIPTION_FIRST_KEYS`. `derive()` and `derive_for_code()` lose their `flyer_text` parameter,
+`derive_all` its preload, and `_input_hash` its `flyer_text` part (so the fingerprint changes and
+AC-B.13's full re-derive is real); `DERIVATION_VERSION` bumps. The seven flyer tests in
+`tests/test_product_spec_derivation.py` (:861, :881, :951, :967, :994, :1007, :1019) are lifted
+onto `propose_from_text` where they test the pass and deleted where they test the flyer beating or
+losing to the description inside one derivation (that ordering no longer exists inside
+derivation; its survivor is the `description_first` flag). Shipped rules with `"source":
+"flyer"` in `product_spec_registry.py` stay - they feed the proposal path - and the rule editor's
+"Flyer only" scope stays.
+
+**Prompt key** `spec_extractor` in `PROMPT_KEYS`: `active=True`, `variables=[]`, hardcoded
+fallback (the extraction system prompt: read the pasted text onto the given vocabulary, JSON
+`{"specs": [{"key","value","evidence"}]}`, never invent keys or values, quote the words). No
+seed migration - `spec_understanding` was added the same way and `get_prompt` falls back to the
+hardcoded text when no row exists. Dry-run hiding (C10): the assistant dry-run must not run a
+non-assistant key through the chat pipeline. Add `dry_runnable: bool` to `PromptKeySpec` (True
+only for the assistant-pipeline keys), surface it from `list_keys()`, have `POST .../test`
+refuse with 400 when it is False, and have the FE `PromptDetail` pass
+`disabled={!meta.active || !meta.dry_runnable}` with the matching reason. `spec_understanding`,
+`scm_market_advisory`, `ideate_extractor` and `spec_extractor` are not dry-runnable.
+
+**Migrations** (`alembic/versions/`, ids <= 32 chars, one head after):
+1. `366_merge_flyer_promo_scm_heads` - empty merge of `363_merge_flyer_promo_um` +
+   `365_merge_scm_plan_feedback` (repo template: `365_merge_scm_plan_feedback.py`).
+2. `367_promote_flyer_provenance` - down_revision `366_...`. UPDATE `product_specifications` SET
+   `provenance` = the same object with every entry whose `source = 'flyer'` rewritten to
+   `{"source": "human", "confidence": <kept>, "evidence": "flyer: " || <original evidence>,
+   "migrated_from": "flyer"}` (other entries byte-identical), and `status = 'authored'` where
+   `status = 'derived'` and the row now holds an authored entry - WHERE the row holds at least one
+   `source = 'flyer'` entry (mismatch-based, so a second run updates 0 rows and a prior partial run
+   is completed by the next run). `values`, `rendered_text` and `derived_hash` are NOT touched.
+   `downgrade()` is exact: entries with `migrated_from = 'flyer'` go back to
+   `{"source": "flyer", "confidence", "evidence": <with the "flyer: " prefix stripped>}` and
+   `status` returns to `derived` where `authored` and no other authored entry remains. The
+   docstring states the blast radius (3,353 entries, 1,389 rows, 695 codes measured 2026-08-13)
+   and both migrations log before/after counts through `logging`. The pytest runs the upgrade
+   twice against a seeded blank schema, asserts the second run changes nothing, asserts an
+   `md5(values::text)` checksum per row is identical before and after, repairs a hand-made
+   half-promoted row, and asserts the downgrade restores the seeded provenance exactly.
+
+**Runbook doc**: `documentation/plans/master-data/RUNBOOK-flyer-promote.md` - the six steps
+verbatim from this plan with the exact SQL for the pre-flight count, the checksum, and the
+post-run assertions, the `pg_dump` command, and how the full re-derive is started (`Read the
+catalogue again` on the master spec screen, which spawns `derive_product_specs`, or the RQ task
+directly) with the counts to compare. Steps 1-4 ship in this PR's deploy; step 5 is run after;
+step 6 is a later deploy and is NOT executed here.
+
+**Frontend** (Phase 1 against fixtures, then wired):
+- `components/spec-proposals/SpecProposalReview.tsx` - the shared review (AC-B.8): props
+  `{proposals: SpecProposal[]; selectedKeys: string[]; onSelectionChange(keys: string[]): void;
+  disabled?: boolean}`. `SpecProposal` = the response row above; `kind` is data. Renders on the
+  shared `DataGrid` (D10) with `buildSelectColumn`, one row per proposal, badge copy exactly
+  **New** / **Changes X to Y** / **Conflicts with your value X**, evidence in a truncated cell with
+  `title`. Owns no product identity and imports no service. The parent seeds the selection with
+  every non-conflict key (AC-B.7). Fixtures in `components/spec-proposals/__mocks__/`.
+- `SpecExtractPanel` in `products/[id]/components/` replaces `FlyerCard` at the same position on
+  the Specifications tab: a `Textarea` and one button "Read specs from this" (Journey B). States:
+  idle, reading (button busy, textarea locked), proposals (review + "Apply N" + "Discard"), zero
+  proposals ("Nothing new in this text" with the `unchanged` count), degraded (`engine ===
+  'deterministic'` shows one short line that the rules alone read it), error (Alert with the
+  extracted message, text kept), applying (busy), applied (toast, panel resets, table refetches).
+  Text lives in component state only. Gated on `master_data.products.edit` like the table.
+- Service: `extractSpecProposals(productId, text)` and `applySpecProposals(productId, entries)`
+  in `productSpecService.ts`, added to the contract banner; `setFlyerText`, `getFlyers`,
+  `runFindability`, `getFindabilityRuns`, `getFindabilityRun`, `FindabilityRun`,
+  `FindabilityResult`, `flyer_text` on `ProductSpecDetail`, `FindabilityPanel` and the "Flyer
+  check" tab in `SpecWorkbench` are deleted. Hooks: `useSpecExtraction(productId)` beside
+  `useProductSpecTable`, invalidating the same two query keys on apply.
+- `StoredSpecProvenance` gains `migrated_from?: string`; `SpecSourceBadge` shows a
+  `migrated_from === 'flyer'` value as "Set by hand" with the evidence line already reading
+  "flyer: ..." (AC-B.15) - no new pill colour.
+- Phase 1 mocks: the two service functions return fixtures keyed on the pasted text
+  (`"nothing new"` -> zero proposals, `"no model"` -> deterministic, `"fail"` -> error, anything
+  else -> the three-kind result), swapped for real calls at the service boundary in Phase 2.
 
 ---
 
