@@ -17,6 +17,7 @@
  * product that still sells; that is a pricing conversation, not a discontinuation.
  */
 import type { TrajectoryEntry } from './trajectory';
+import { fmtTrimmedDecimal } from '../../lib/format';
 
 export interface ProductEconomics {
   product_id: string;
@@ -79,8 +80,7 @@ export interface DiscontinueAdvice {
   factors: string[];
 }
 
-const fmt = (v: number) =>
-  v.toLocaleString(undefined, { maximumFractionDigits: 1 });
+const fmt = (v: number) => fmtTrimmedDecimal(v, 1);
 
 export function discontinueAdvice(
   econ: ProductEconomics | undefined,

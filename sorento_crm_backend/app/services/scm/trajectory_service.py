@@ -64,7 +64,7 @@ WITH pairs AS (
     SELECT DISTINCT r.product_id, COALESCE(w.segment, 'project') AS segment
     FROM scm.reorder_recommendation r
     LEFT JOIN warehouses w ON w.id = r.warehouse_id
-    WHERE r.run_id::text = :run_id
+    WHERE r.run_id = CAST(:run_id AS uuid)
 )
 SELECT sol.product_id::text AS product_id,
        COALESCE(w.segment, 'project') AS segment,
@@ -86,7 +86,7 @@ WITH pairs AS (
     SELECT DISTINCT r.product_id, COALESCE(w.segment, 'project') AS segment
     FROM scm.reorder_recommendation r
     LEFT JOIN warehouses w ON w.id = r.warehouse_id
-    WHERE r.run_id::text = :run_id
+    WHERE r.run_id = CAST(:run_id AS uuid)
 )
 SELECT product_id, segment, customer_name, customer_key, qty, last_order_date FROM (
     SELECT sol.product_id::text AS product_id,

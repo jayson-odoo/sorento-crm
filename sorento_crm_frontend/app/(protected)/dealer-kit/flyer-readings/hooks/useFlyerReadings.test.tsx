@@ -21,12 +21,15 @@ vi.mock('../../services/flyerReadingService', () => ({
   listFlyerReadings: vi.fn(),
   getFlyerReading: vi.fn(),
   uploadFlyerReading: vi.fn(),
+  createFlyerReadingFromAttachment: vi.fn(),
   seedFromFlyerReading: vi.fn(),
   deleteFlyerReading: vi.fn(),
+  applyDimensions: vi.fn(),
 }));
 
 import { toast } from 'sonner';
 import {
+  createFlyerReadingFromAttachment,
   getFlyerReading,
   listFlyerReadings,
   seedFromFlyerReading,
@@ -35,6 +38,7 @@ import {
 } from '../../services/flyerReadingService';
 import {
   FLYER_READINGS_QUERY_KEY,
+  useCreateFlyerReadingFromAttachment,
   useFlyerReadingQuery,
   useFlyerReadingsQuery,
   useSeedFromFlyerReading,
@@ -44,6 +48,7 @@ import {
 const mockList = vi.mocked(listFlyerReadings);
 const mockGet = vi.mocked(getFlyerReading);
 const mockUpload = vi.mocked(uploadFlyerReading);
+const mockFromAttachment = vi.mocked(createFlyerReadingFromAttachment);
 const mockSeed = vi.mocked(seedFromFlyerReading);
 
 const READING: FlyerReading = {
@@ -166,6 +171,53 @@ describe('useUploadFlyerReading', () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith(expect.stringContaining('50 MB limit'));
+  });
+});
+
+describe('useCreateFlyerReadingFromAttachment', () => {
+  it('seeds the detail cache from its own response, exactly like the upload hook', async () => {
+    mockFromAttachment.mockResolvedValue(READING);
+    const client = freshClient();
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    const { result } = renderHook(() => useCreateFlyerReadingFromAttachment(), {
+      wrapper: wrapperWith(client),
+    });
+
+    result.current.mutate({ attachmentId: 'att-1' });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // Same key shape the upload hook seeds - `onFlyerReadingCreated` is shared
+    // by both, and this is the assertion that would catch the two drifting.
+    expect(client.getQueryData([FLYER_READINGS_QUERY_KEY, 'r-1', ''])).toEqual(READING);
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: [FLYER_READINGS_QUERY_KEY] });
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Read 3 pages');
+  });
+
+  it('passes the attachment id and promotion through to the service call', async () => {
+    mockFromAttachment.mockResolvedValue(READING);
+    const { result } = renderHook(() => useCreateFlyerReadingFromAttachment(), {
+      wrapper: wrapperWith(freshClient()),
+    });
+
+    result.current.mutate({ attachmentId: 'att-1', promotionId: 'promo-7' });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockFromAttachment).toHaveBeenCalledWith('att-1', 'promo-7');
+  });
+
+  it('passes the backend message through on failure, same as the upload hook', async () => {
+    mockFromAttachment.mockRejectedValue(new Error('That PDF is password protected.'));
+
+    const { result } = renderHook(() => useCreateFlyerReadingFromAttachment(), {
+      wrapper: wrapperWith(freshClient()),
+    });
+
+    result.current.mutate({ attachmentId: 'att-1' });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('That PDF is password protected.');
   });
 });
 

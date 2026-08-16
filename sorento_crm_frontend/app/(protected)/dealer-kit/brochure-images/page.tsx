@@ -39,6 +39,12 @@ export default function DealerKitBrochureImagesPage() {
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
+          {/* Where the chosen image ends up. Said here because the buyer sent from the
+              reorder plan's empty photo state arrives on this page with no other clue that
+              the two screens are the same setting. */}
+          <p className="text-sm text-muted-foreground">
+            The image chosen here is the product&apos;s primary photo everywhere in the CRM.
+          </p>
         </ToolbarHeading>
       </Toolbar>
 

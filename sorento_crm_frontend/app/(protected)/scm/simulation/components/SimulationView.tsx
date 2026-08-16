@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { EM_DASH } from '../../lib/format';
+import { fmtDateTime } from '../../lib/format';
 import {
   useBlessBaseline,
   useRunSimulation,
@@ -23,12 +23,7 @@ import { SimulationPlanningTab } from './SimulationPlanningTab';
 
 function fmtDate(iso: string | null): string {
   if (!iso) return 'never';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return EM_DASH;
-  return d.toLocaleString('en-MY', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
+  return fmtDateTime(iso);
 }
 
 const COUNT_LABEL: Record<ScenarioStatus, string> = {

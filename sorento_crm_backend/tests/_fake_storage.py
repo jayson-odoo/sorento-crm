@@ -28,6 +28,7 @@ class FakeStorage:
         self.objects: dict[str, tuple[bytes, str | None]] = {}
         self.signing_fails = False
         self.deleting_fails = False
+        self.downloading_fails = False
 
     def upload_file(self, *, file_content: bytes, file_path: str, content_type=None):
         self.objects[file_path] = (file_content, content_type)
@@ -37,6 +38,19 @@ class FakeStorage:
         if self.signing_fails:
             raise RuntimeError("no signing key on this environment")
         return f"https://cdn.test/{key}?sig=zzt"
+
+    def download_file(self, key: str) -> bytes:
+        """The bytes behind a stored key, for read paths that fetch content back.
+
+        ``downloading_fails`` mirrors ``signing_fails``/``deleting_fails``: a
+        caller (e.g. the flyer from-attachment route) has to survive a storage
+        outage, and a test needs a way to produce one without a live bucket.
+        """
+        if self.downloading_fails:
+            raise RuntimeError("the bucket is unreachable")
+        if key not in self.objects:
+            raise RuntimeError(f"no such object: {key}")
+        return self.objects[key][0]
 
     def delete_file(self, key: str) -> bool:
         """Forget an object, so "the bytes went too" is an assertion and not a hope.

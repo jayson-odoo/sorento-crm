@@ -10,6 +10,7 @@ import {
   getCoveredRecommendations,
   getNeedsLevelRecommendations,
   getCustomerOrders,
+  getProductImage,
   getRecommendationDemand,
   getReorderRun,
   getRecommendations,
@@ -350,6 +351,29 @@ export function useCustomerOrders(
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: 1,
+ * The photo of one product, fetched when its popover opens (AC-7).
+ *
+ * Per product rather than per run because the URL is signed: the run-wide call answers only
+ * which icons are lit, and the signature is bought here, once, for the row the buyer asked
+ * about. Cached for ten minutes - a signed URL outlives that comfortably, and re-opening the
+ * same row must not re-sign.
+ *
+ * `meta.silent` keeps a failed photo out of the global error toast. A picture is context, not
+ * an input to a decision, and the popover says so in place.
+ */
+export function useProductPhoto(
+  runId: string | null,
+  productId: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'product-image', runId, productId],
+    queryFn: () => getProductImage(runId as string, productId as string),
+    enabled: enabled && !!runId && !!productId,
+    staleTime: 600_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+    meta: { silent: true },
   });
 }
 

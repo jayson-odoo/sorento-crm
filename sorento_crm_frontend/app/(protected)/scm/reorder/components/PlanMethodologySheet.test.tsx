@@ -52,6 +52,30 @@ describe('PlanMethodologySheet', () => {
     expect(within(strip).getByText('WH-KL')).toBeInTheDocument();
   });
 
+  it("writes this run's cash figures through the shared money format (AC-2.2)", () => {
+    // The sheet used to carry its own Intl formatters and a literal "RM".
+    render(
+      <PlanMethodologySheet
+        runContext={{ dateLabel: '16 Jul 2026', timeLabel: '06:00' }}
+        facts={{
+          topBuys: [],
+          withinCount: 12,
+          overCount: 3,
+          committed: 226464,
+          free: 73536,
+          budget: 300000,
+        }}
+      />,
+    );
+    openPanel();
+    fireEvent.click(screen.getAllByText(/See this run's numbers/)[0]);
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('RM 300,000')).toBeInTheDocument();
+    expect(within(dialog).getByText('RM 226,464')).toBeInTheDocument();
+    expect(within(dialog).getByText('RM 73,536')).toBeInTheDocument();
+  });
+
   it('degrades gracefully with no run context', () => {
     render(<PlanMethodologySheet runContext={null} />);
     openPanel();
