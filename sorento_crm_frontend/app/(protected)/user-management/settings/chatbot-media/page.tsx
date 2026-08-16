@@ -281,6 +281,22 @@ export default function ChatbotMediaSettingsPage() {
             error={numberError.burstWindowSeconds}
             onChange={(v) => set('burstWindowSeconds', v)}
           />
+          <NumberField
+            id="media-sync-wait"
+            label="Synchronous wait seconds"
+            hint="How long a reply waits for extraction before it returns pending, which is what bounds the per-contact lock."
+            value={draft.syncWaitSeconds}
+            error={numberError.syncWaitSeconds}
+            onChange={(v) => set('syncWaitSeconds', v)}
+          />
+          <NumberField
+            id="media-extraction-timeout"
+            label="Extraction timeout seconds"
+            hint="Must stay under 120 so a paused turn cannot outlive its lock."
+            value={draft.extractionTimeoutSeconds}
+            error={numberError.extractionTimeoutSeconds}
+            onChange={(v) => set('extractionTimeoutSeconds', v)}
+          />
         </CardContent>
       </Card>
 
@@ -330,22 +346,6 @@ export default function ChatbotMediaSettingsPage() {
               value={draft.maxEntities}
               error={numberError.maxEntities}
               onChange={(v) => set('maxEntities', v)}
-            />
-            <NumberField
-              id="media-sync-wait"
-              label="Synchronous wait seconds"
-              hint="How long a reply waits for extraction before it returns pending, which is what bounds the per-contact lock."
-              value={draft.syncWaitSeconds}
-              error={numberError.syncWaitSeconds}
-              onChange={(v) => set('syncWaitSeconds', v)}
-            />
-            <NumberField
-              id="media-extraction-timeout"
-              label="Extraction timeout seconds"
-              hint="Must stay under 120 so a paused turn cannot outlive its lock."
-              value={draft.extractionTimeoutSeconds}
-              error={numberError.extractionTimeoutSeconds}
-              onChange={(v) => set('extractionTimeoutSeconds', v)}
             />
           </div>
           {draft.imageDegradedModel.trim() === '' ? (

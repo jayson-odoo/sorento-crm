@@ -827,3 +827,100 @@ def test_a_replayed_acceptance_carries_the_warning_it_first_issued(monkeypatch):
         kinds = {n["kind"] for n in first.json()["notices"]}
         assert "warn_80" in kinds
         assert second.json()["notices"] == first.json()["notices"]
+
+
+# --------------------------------------------------------------------------- #
+# A queue outage costs the contact nothing                                    #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_failed_enqueue_leaves_the_allowance_untouched(monkeypatch):
+    """The enqueue is the one accepted-path failure where nothing ran.
+
+    A refusal never spends the allowance, and neither may an item that never
+    reached the worker: no provider was called, so the ledger row is re-stamped
+    `not_queued` (outside `QUOTA_CONSUMING_OUTCOMES`) and the contact can send
+    the photo again. The job itself is still `failed` - a queue outage is a
+    failed job, not a 500.
+    """
+    from app.models.media import MediaExtractionJob
+    from app.services.media_access_service import count_usage
+
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        contact = _contact(db, "queueout")
+        _allow(db, contact, "image", monthly_limit=50)
+
+        def _queue_is_down(*_args, **_kwargs):
+            raise RuntimeError("redis refused the connection")
+
+        monkeypatch.setattr(
+            "app.api.v1.external.media.enqueue_job", _queue_is_down
+        )
+
+        response = client.post(
+            ENDPOINT,
+            json=_body(respond_io_id=contact.respond_io_id, message_id="q-1"),
+            headers={"X-API-Key": "k"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["decision"] == "accepted"
+        assert body["status"] == "failed"
+
+        row = _usage_row(db, contact.respond_io_id, "q-1")
+        assert row.outcome == "not_queued"
+        assert count_usage(db, contact.respond_io_id, "image", row.period_key) == 0
+
+        job = (
+            db.query(MediaExtractionJob)
+            .filter(MediaExtractionJob.usage_id == row.id)
+            .one()
+        )
+        assert job.status == "failed"
+
+        # The queue comes back: the next message is the contact's first spend.
+        monkeypatch.setattr(
+            "app.api.v1.external.media.enqueue_job",
+            lambda *a, **kw: MagicMock(id=str(uuid.uuid4())),
+        )
+        second = client.post(
+            ENDPOINT,
+            json=_body(respond_io_id=contact.respond_io_id, message_id="q-2"),
+            headers={"X-API-Key": "k"},
+        )
+
+        assert second.json()["quota"]["used"] == 1
+        assert second.json()["quota"]["remaining"] == 49
+
+
+def test_a_replayed_failed_enqueue_still_reports_the_accept_decision(monkeypatch):
+    """n8n's `retryOnFail` replays the poisoned message: the decision WAS
+    accept, so the replay must not read as a refusal, and it must still cost
+    the contact nothing."""
+    from app.services.media_access_service import count_usage
+
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        contact = _contact(db, "queueoutrep")
+        _allow(db, contact, "image", monthly_limit=50)
+
+        def _queue_is_down(*_args, **_kwargs):
+            raise RuntimeError("redis refused the connection")
+
+        monkeypatch.setattr(
+            "app.api.v1.external.media.enqueue_job", _queue_is_down
+        )
+
+        payload = _body(respond_io_id=contact.respond_io_id, message_id="qr-1")
+        first = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        second = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+
+        assert first.json()["decision"] == "accepted"
+        assert second.json()["idempotent_replay"] is True
+        assert second.json()["decision"] == "accepted"
+        assert second.json()["status"] == "failed"
+
+        row = _usage_row(db, contact.respond_io_id, "qr-1")
+        assert count_usage(db, contact.respond_io_id, "image", row.period_key) == 0

@@ -50,6 +50,7 @@ from app.services.media_access_service import (
     MediaRequest,
     _now_utc,
     decide_and_record,
+    mark_usage_outcome,
     resolve_media_settings,
 )
 from app.services.queue_service import enqueue_job
@@ -260,6 +261,12 @@ def _enqueue(
     The row is already committed, so the worker cannot pick up an id that is not
     there yet. Follows the `attachments.py` precedent: the DB row first, then
     enqueue with the RQ id pre-assigned to the DB id, then store it back.
+
+    A queue outage is a failed job, not a 500 - and it must not also be a spent
+    allowance. The ledger row is already committed as `accepted`, so the same
+    outcome flip the worker uses for a failed extraction is applied here with
+    `not_queued`, which is outside `QUOTA_CONSUMING_OUTCOMES`: nothing ran and
+    no provider was called, so the contact keeps the item and can send again.
     """
     try:
         rq_job = enqueue_job(
@@ -274,6 +281,7 @@ def _enqueue(
         error = "Could not queue the extraction."
         job.status = "failed"
         job.error = error
+        mark_usage_outcome(db, job.usage_id, "not_queued")
         db.commit()
         return "failed", error
     job.rq_job_id = getattr(rq_job, "id", None)

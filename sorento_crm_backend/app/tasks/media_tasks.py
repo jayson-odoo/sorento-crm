@@ -28,7 +28,10 @@ from typing import Any, Optional
 
 from app.database import SessionLocal
 from app.models.media import ContactMediaUsage, MediaExtractionJob
-from app.services.media_access_service import resolve_media_settings
+from app.services.media_access_service import (
+    mark_usage_outcome,
+    resolve_media_settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,13 +178,7 @@ def process_media_extraction(job_id: str) -> None:
 def _mark_usage_failed(db, job: MediaExtractionJob) -> None:
     """Flip the ledger outcome to `failed`. Still consumes quota, deliberately:
     the provider was called and the money was spent."""
-    usage = (
-        db.query(ContactMediaUsage)
-        .filter(ContactMediaUsage.id == job.usage_id)
-        .first()
-    )
-    if usage is not None and usage.outcome == "accepted":
-        usage.outcome = "failed"
+    mark_usage_outcome(db, job.usage_id, "failed")
 
 
 def build_callback_body(db, job: MediaExtractionJob) -> dict:

@@ -293,6 +293,24 @@ def count_usage(
     )
 
 
+def mark_usage_outcome(db: Session, usage_id: Optional[str], outcome: str) -> None:
+    """Re-stamp an accepted ledger row once its fate is known.
+
+    The only writer of `outcome` after the insert, so whether an item consumes
+    the contact's allowance stays decided in one place: `failed` still consumes
+    (the provider was called and the money was spent), `not_queued` does not
+    (nothing ran, so nothing was spent). Only an `accepted` row is re-stamped -
+    a refusal was already final and a second terminal write must not move it.
+    """
+    if usage_id is None:
+        return
+    usage = (
+        db.query(ContactMediaUsage).filter(ContactMediaUsage.id == usage_id).first()
+    )
+    if usage is not None and usage.outcome == "accepted":
+        usage.outcome = outcome
+
+
 # --------------------------------------------------------------------------- #
 # The operator surface (PLAN 3.6)                                             #
 # --------------------------------------------------------------------------- #
@@ -477,6 +495,7 @@ class MediaDecision:
 _OUTCOME_TO_DECISION = {
     "accepted": "accepted",
     "failed": "accepted",
+    "not_queued": "accepted",
     "refused_gate": "denied_gate",
     "refused_burst": "denied_burst",
     "refused_quota": "denied_quota",

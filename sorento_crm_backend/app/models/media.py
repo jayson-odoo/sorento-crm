@@ -44,9 +44,10 @@ from app.database import Base
 # on three tables.
 MEDIA_MODALITIES = ("image", "voice")
 
-# The `outcome` vocabulary is: accepted, failed, refused_gate, refused_burst,
-# refused_quota, refused_duration. Only the first two consume monthly quota - a
-# contact refused fifty times still shows their full allowance.
+# The `outcome` vocabulary is: accepted, failed, not_queued, refused_gate,
+# refused_burst, refused_quota, refused_duration. Only the first two consume
+# monthly quota - a contact refused fifty times still shows their full
+# allowance, and neither does one whose item never reached the worker.
 QUOTA_CONSUMING_OUTCOMES = ("accepted", "failed")
 
 
