@@ -26,9 +26,13 @@
  *   GET /api/v1/master-data/spec-registry/applicable-keys?code={productCode}
  *     -> { code, keys: [{ spec_key, label, data_type, unit, allowed_values,
  *          synonyms, applicable, held }] }
- *        `applicable` mirrors derivation's `applies_when` gate; `held` counts a
- *        tombstone as held. 404 on an unknown code - deliberately not an empty
- *        list, which would read as "this product may carry nothing".
+ *        `applicable` mirrors derivation's `applies_when` gate; `held` is "has a
+ *        value" and nothing else, so a REMOVED key is reported not held - its
+ *        tombstone stays in `provenance` so re-derivation will not refill it, but
+ *        the add picker offers it again and setting a value replaces the stamp.
+ *        The code is matched case-insensitively. 404 on an unknown code -
+ *        deliberately not an empty list, which would read as "this product may
+ *        carry nothing".
  *
  *   GET /api/v1/master-data/spec-registry/similar?label={label}
  *     -> { label, match: { spec_key, label, matched_on, matched_text } | null }
@@ -173,7 +177,7 @@ export interface ApplicableSpecKey {
   synonyms: Record<string, string[]>;
   /** The `applies_when` gate, evaluated the way derivation evaluates it. */
   applicable: boolean;
-  /** Already on the product. A tombstone counts: it is on the table with a revert. */
+  /** Already on the product, meaning it has a value. A removed key is reported not held. */
   held: boolean;
 }
 
@@ -326,7 +330,7 @@ export async function updateSpecKey(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to save the spec key'));
+    await throwSpecWriteError(response, 'Failed to save the spec key');
   }
   return response.json();
 }

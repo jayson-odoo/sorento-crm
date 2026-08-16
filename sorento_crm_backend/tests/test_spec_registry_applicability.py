@@ -197,6 +197,24 @@ def test_inactive_keys_are_left_out(db):
     assert "zzt_retired" not in keys
 
 
+def test_the_code_is_matched_case_insensitively(db):
+    """The same code in another case is the same product, as `keys-for-product` reads it.
+
+    An exact match 404s, and the picker renders a 404 as "this product may carry
+    nothing" - a sentence about the product rather than about the lookup. The held
+    set has to come back with it, or the picker offers a key the product already has.
+    """
+    _key(db, "zzt_finish", allowed_values=["chrome"])
+    _key(db, "zzt_material", allowed_values=["ceramic"])
+    product = _product(db, "ZZT-AK-CASE1")
+    _spec(db, product, {"zzt_finish": {"value": "chrome"}}, {"zzt_finish": {"source": "derived"}})
+
+    keys = {row["spec_key"]: row for row in applicable_keys_for_code(db, "zzt-ak-case1")}
+    assert keys["zzt_finish"]["applicable"] is True
+    assert keys["zzt_finish"]["held"] is True
+    assert keys["zzt_material"]["held"] is False
+
+
 def test_an_unknown_code_raises_rather_than_returning_an_empty_list(db):
     """An empty list reads as "this product may carry nothing", which is a lie."""
     from app.services.error_handler import AppException

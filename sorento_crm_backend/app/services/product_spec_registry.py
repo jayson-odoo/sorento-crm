@@ -1328,6 +1328,8 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
     Keeping this in one place rather than two is the point: change the rule in
     derivation and the picker changes with it.
     """
+    from sqlalchemy import func
+
     from app.models.base import company_scope
     from app.models.product import Product
     from app.models.product_spec import ProductSpecifications
@@ -1339,7 +1341,9 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
     # than of one company's copy of it, so which copy the caller can see must not change
     # which keys the picker offers.
     with company_scope(db, None):
-        product = db.query(Product).filter(Product.product_code == code).first()
+        product = (
+            db.query(Product).filter(func.upper(Product.product_code) == code.upper()).first()
+        )
         if product is None:
             # Not an empty list. An empty list reads as "this product may carry
             # nothing", which is a sentence about the product rather than about the
@@ -1352,8 +1356,7 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
 
         spec = (
             db.query(ProductSpecifications)
-            .join(Product, Product.id == ProductSpecifications.product_id)
-            .filter(Product.product_code == code)
+            .filter(ProductSpecifications.product_id == product.id)
             .first()
         )
 
