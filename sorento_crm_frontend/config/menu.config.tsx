@@ -329,7 +329,7 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Internal Users',
         path: '/user-management/contact-access-agents',
-        permission: 'user_management.access_agents.view',
+        permission: 'user_management.contacts.view',
       },
       {
         title: 'Contact Access Types',

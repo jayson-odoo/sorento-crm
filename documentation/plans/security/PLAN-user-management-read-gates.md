@@ -23,12 +23,17 @@ Two facts make this worse than it reads:
    `app/(protected)/user-management/**` (that component is used only by `system-management/*`).
    Every one of these pages renders and fires its fetches on a direct URL. The backend dependency
    is the entire gate.
-2. **Two doors are permission-free by construction.** `/user-management/contacts` has no menu
+2. **Two doors were permission-free by construction.** `/user-management/contacts` has no menu
    entry at all and is linked from the global topbar Apps dropdown
-   (`app/components/partials/topbar/apps-dropdown-menu.tsx:33`), rendered for every authenticated
-   user with no filter. `/user-management/contact-access-agents` has a menu entry with no
-   `permission:` key and renders the same `ContactsList`. Between them, nine of the routes below
-   are reachable by any logged-in account.
+   (`app/components/partials/topbar/apps-dropdown-menu.tsx`), which rendered for every
+   authenticated user with no filter. `/user-management/contact-access-agents` had a menu entry
+   with no `permission:` key and renders the same `ContactsList`. Between them, nine of the routes
+   below were reachable by any logged-in account. Both doors are closed here: the dropdown's two
+   entries carry the slugs their destinations read, and the `Internal Users` leaf carries
+   `user_management.contacts.view` - the slug of `GET /contacts/`, which is the ONLY route its page
+   reads. The directory name says access-agents, but the components that would read those routes
+   (`ContactAccessAgentsList`, `ContactAccessAgentsGroupedList`) have no importer anywhere - see
+   row 6 below. Gate the route the page reads, never the one its folder is named after.
 
 Live role grants (prod-copy DB, read-only query): only `admin`, `director`, `warehouse_manager`
 and the three `integration_*` roles hold any `user_management.*.view`. `customer_service`,
@@ -50,7 +55,7 @@ Slug column reads `-` where the route is not gated in this PR. "Screen gate toda
 | 3 | `GET /teams/{team_id}/members` | staff roster of a team | `/user-management/teams/[id]` | `teams.view` | `user_management.teams.view` |
 | 4 | `GET /teams/{team_id}/members/{user_id}/market-segments` | member's segment codes | `/user-management/access-agents/[id]` (`MemberMarketSegmentEditor`) | `access_agents.view` | `user_management.teams.view` |
 | 5 | `GET /access-agents/` | agent inventory | `/user-management/access-agents`, `[id]`, **and `/user-management/contacts/[id]`** (`ContactAccessAgentsTable`, `limit=1000`) | `access_agents.view`; **none** on contacts | `user_management.access_agents.view` |
-| 6 | `GET /access-agents/contact-access` | whole agent-to-contact matrix | none live (two orphaned components under the permission-free `contact-access-agents` route) | none | `user_management.access_agents.view` |
+| 6 | `GET /access-agents/contact-access` | whole agent-to-contact matrix | none live (two orphaned components under the `contact-access-agents` route, which renders `ContactsList` instead - so that route's menu entry now carries `contacts.view`, not this slug) | none | `user_management.access_agents.view` |
 | 7 | `GET /access-agents/neighbours` | prev/next id + total | `/user-management/access-agents/[id]` | `access_agents.view` | `user_management.access_agents.view` |
 | 8 | `GET /access-agents/{agent_id}` | one agent | `/user-management/access-agents`, `[id]` | `access_agents.view` | `user_management.access_agents.view` |
 | 9 | `GET /access-agents/{agent_id}/teams` | assignments + team member names/emails/respond ids + round-robin state | `/user-management/access-agents`, `[id]` | `access_agents.view` | `user_management.access_agents.view` |
