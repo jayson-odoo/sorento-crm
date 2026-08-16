@@ -312,8 +312,15 @@ export default function ChatbotMediaSettingsPage() {
                 id="media-image-provider"
                 value={draft.imageProvider}
                 onChange={(v) => {
+                  // BOTH image models are cleared, not just the standard one. A model
+                  // id belongs to the provider it was picked from, so a kept degraded
+                  // model sends the previous provider's id to the new provider and only
+                  // contacts past their allowance fail, which is the hardest failure to
+                  // attribute. Blank is the shipped state and means "refuse instead of
+                  // degrading", so clearing is honest rather than lossy.
                   set('imageProvider', v);
                   set('imageModel', '');
+                  set('imageDegradedModel', '');
                 }}
                 options={PROVIDER_OPTIONS}
                 clearable

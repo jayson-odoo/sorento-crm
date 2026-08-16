@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 Element.prototype.scrollIntoView = vi.fn();
@@ -337,6 +337,76 @@ describe('ChatbotMediaSettingsPage voice degraded model', () => {
 
     expect(modelField('media-voice-degraded-model').text).toHaveValue('');
     expect(field.trigger).toHaveTextContent('Not set');
+  });
+});
+
+/**
+ * Switching the image provider. A model id belongs to the provider it was picked from,
+ * so both image model fields have to clear together: the standard one already did, and
+ * a degraded one left behind sent the previous provider's id to the new provider, where
+ * only contacts past their monthly allowance hit the unknown model. Blank is the shipped
+ * state for the degraded tier, so clearing hands the operator the inline warning rather
+ * than a silently wrong model.
+ */
+describe('ChatbotMediaSettingsPage image provider switch', () => {
+  async function chooseProvider(label: string) {
+    fireEvent.click(document.getElementById('media-image-provider') as HTMLElement);
+    await waitFor(() =>
+      expect(document.querySelectorAll('[role="option"]').length).toBeGreaterThan(0),
+    );
+    const option = [...document.querySelectorAll('[role="option"]')].find(
+      (opt) => (opt.textContent ?? '').trim() === label,
+    );
+    if (!option) throw new Error(`no provider option ${label}`);
+    fireEvent.click(option);
+  }
+
+  it('clears BOTH image models, and the degraded warning takes over', async () => {
+    mockQuery.mockReturnValue({
+      data: settings({
+        media_image_provider: 'openai',
+        media_image_model: 'gpt-4o',
+        media_image_degraded_model: 'gpt-4o-mini',
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient();
+
+    expect(modelField('media-image-model').text).toHaveValue('gpt-4o');
+    expect(modelField('media-image-degraded-model').text).toHaveValue('gpt-4o-mini');
+    expect(screen.queryByText(/no degraded model set/i)).not.toBeInTheDocument();
+
+    await chooseProvider('Google Gemini');
+
+    await waitFor(() =>
+      expect(document.getElementById('media-image-provider')).toHaveTextContent('Google Gemini'),
+    );
+    expect(modelField('media-image-model').text).toHaveValue('');
+    // The bug: `gpt-4o-mini` survived here, so a Gemini provider was built with an
+    // OpenAI model id and only over-allowance reads failed.
+    expect(modelField('media-image-degraded-model').text).toHaveValue('');
+    expect(screen.getByText(/no degraded model set/i)).toBeInTheDocument();
+  });
+
+  it('leaves the voice degraded model alone, which is a different provider list', async () => {
+    mockQuery.mockReturnValue({
+      data: settings({
+        media_image_provider: 'openai',
+        media_image_degraded_model: 'gpt-4o-mini',
+        media_voice_degraded_model: 'gpt-4o-mini-transcribe',
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient();
+
+    await chooseProvider('Google Gemini');
+
+    await waitFor(() => expect(modelField('media-image-degraded-model').text).toHaveValue(''));
+    expect(modelField('media-voice-degraded-model').text).toHaveValue(
+      'gpt-4o-mini-transcribe',
+    );
   });
 });
 
