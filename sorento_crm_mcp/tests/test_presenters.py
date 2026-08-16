@@ -935,6 +935,28 @@ def test_ac_c3_empty_intro_names_three_or_more_companies():
     assert out["intro"] == "No matching results found for A, B or C."
 
 
+def test_ac_c3_empty_intro_plain_when_a_company_name_is_missing():
+    """F4 (review round): naming only the companies we happen to have a name for
+    turns "I checked two companies" into a confident, wrong "I checked Sorento".
+    A partial `lookup_companies` falls back to the plain intro."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [], "empty": True,
+        "lookup_companies": [
+            {"id": "00000000-0000-0000-0000-000000000001", "name": "Sorento"},
+            {"id": "00000000-0000-0000-0000-000000000002", "name": None},
+        ],
+    })
+    assert out["intro"] == "No matching results found."
+
+
+def test_ac_c3_empty_intro_plain_when_every_company_name_is_missing():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [], "empty": True,
+        "lookup_companies": [{"id": "00000000-0000-0000-0000-000000000001"}],
+    })
+    assert out["intro"] == "No matching results found."
+
+
 def test_ac_c3_empty_intro_unchanged_without_lookup_companies():
     out = env("crm_master_products_list", {"data": [], "empty": True})
     assert out["intro"] == "No matching results found."
@@ -944,9 +966,13 @@ def test_ac_c3_empty_intro_unchanged_without_lookup_companies():
 
 
 def test_ac_c4_byte_identical_when_company_keys_null_vs_absent_stock():
+    # Realistic single-company shape: the row DOES carry its own company_id
+    # (the ORM column, filled by `from_attributes`); only `company_name` and
+    # `lookup_companies` are null because the lookup spanned one company.
     with_nulls = {
         "data": [{
             "product_code": "A", "warehouse": "BRW", "quantity_on_hand": 5,
+            "company_id": "00000000-0000-0000-0000-000000000001",
             "company_name": None,
         }],
         "lookup_companies": None,
@@ -963,6 +989,7 @@ def test_ac_c4_byte_identical_when_company_keys_null_vs_absent_orders():
     with_nulls = {
         "data": [{
             "order_number": "X1", "lines": [{"quantity": 1, "product": {"product_code": "AAA"}}],
+            "company_id": "00000000-0000-0000-0000-000000000001",
             "company_name": None,
         }],
         "lookup_companies": None,

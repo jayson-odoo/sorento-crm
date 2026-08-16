@@ -78,6 +78,28 @@ def test_ac_b2_none_in_either_company_still_names_both_in_lookup_companies(db):
     ]
 
 
+def test_ac_b2_unresolvable_warehouse_filter_still_names_both_companies(db):
+    """F1 (review round): the early return for an unresolvable warehouse filter
+    fires AFTER the requested product set is known, so it has to carry
+    `lookup_companies` too - an empty reply that cannot name the companies it
+    searched is the exact defect AC-B2 exists to stop."""
+    p_sorento = product(db, company_id=DEFAULT_COMPANY_ID)
+    p_mocha = product(db, company_id=MOCHA_ID)
+    db.commit()
+
+    result = StockService(db).list_stock(
+        product_ids=[p_sorento.id, p_mocha.id],
+        warehouse_id="ZZT-NO-SUCH-WAREHOUSE",
+    )
+
+    assert result["data"] == []
+    assert result["empty"] is True
+    assert result.get("lookup_companies") == [
+        {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
+    ]
+
+
 # --- AC-B3: found in one of several -------------------------------------------
 
 

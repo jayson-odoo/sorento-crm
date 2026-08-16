@@ -103,13 +103,16 @@ def test_out_of_scope_product_id_contributes_nothing(db):
 # never fires here. The word boundary keeps `user_companies` /
 # `respond_contact_companies` out.
 _COMPANIES_TABLE = re.compile(r"\bcompanies\b")
+# `\b` will not match inside `promotion_products` (the preceding `_` is a word
+# character), so this counts queries against the products table only.
+_PRODUCTS_TABLE = re.compile(r"\bproducts\b")
 
 
-def _count_companies_queries(db, fn) -> int:
+def _count_table_queries(db, pattern, fn) -> int:
     statements: list[str] = []
 
     def _capture(conn, cursor, statement, *_a, **_kw):
-        if _COMPANIES_TABLE.search(statement.lower()):
+        if pattern.search(statement.lower()):
             statements.append(statement)
 
     connection = db.get_bind()
@@ -119,6 +122,10 @@ def _count_companies_queries(db, fn) -> int:
     finally:
         event.remove(connection, "before_cursor_execute", _capture)
     return len(statements)
+
+
+def _count_companies_queries(db, fn) -> int:
+    return _count_table_queries(db, _COMPANIES_TABLE, fn)
 
 
 def test_one_batched_companies_query_when_union_gt_1(db):
@@ -147,6 +154,32 @@ def test_no_companies_query_when_union_lte_1(db):
         db, lambda: stamp_lookup_companies(db, payload, [], product_ids=[p.id])
     )
     assert count == 0, f"expected no companies query for a single-company union, saw {count}"
+
+
+# --- F3 (review round): a single-company scope skips the queries entirely ----
+
+
+def test_single_company_scope_issues_no_query_at_all(db):
+    """A caller scoped to exactly one company cannot produce a union larger than
+    one, so the helper must answer without spending either query - not even the
+    products lookup that would tell it what it already knows."""
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    p_one = product(db, company_id=DEFAULT_COMPANY_ID)
+    p_two = product(db, company_id=DEFAULT_COMPANY_ID)
+    db.commit()
+
+    payload: dict = {"data": []}
+    # Read the ids OUTSIDE the counted run: `db.commit()` expires the instances,
+    # so touching `.id` inside would count a refresh SELECT against products
+    # that the helper never issued.
+    asked_for = [p_one.id, p_two.id]
+
+    def _run():
+        stamp_lookup_companies(db, payload, [], product_ids=asked_for)
+
+    assert _count_table_queries(db, _PRODUCTS_TABLE, _run) == 0
+    assert _count_table_queries(db, _COMPANIES_TABLE, _run) == 0
+    assert "lookup_companies" not in payload
 
 
 # --- row shapes: dict / ORM / row_company_id callable -----------------------

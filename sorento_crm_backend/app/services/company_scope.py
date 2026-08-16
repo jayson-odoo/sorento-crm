@@ -362,10 +362,20 @@ def stamp_lookup_companies(
     optional callable for rows whose company lives somewhere other than
     ``.company_id``.
 
+    A caller scoped to a single company short-circuits before any query at all:
+    the union cannot exceed one, so there is nothing to find out.
+
     Best-effort: labelling is additive, so any failure warns and leaves the
     payload exactly as it was rather than turning a working list into a 500.
     """
     try:
+        scope = get_company_scope(db)
+        if isinstance(scope, frozenset) and len(scope) == 1:
+            # A caller who can see exactly one company cannot produce a union
+            # bigger than one, whatever was asked for or returned. Answer here,
+            # before spending the products query that could only confirm it.
+            return
+
         rows = list(rows or [])
 
         company_ids: set[str] = set()

@@ -896,16 +896,19 @@ def _company_names(lookup_companies: Any) -> str | None:
     """Join the backend's `lookup_companies` names: Mocha or Sorento; A, B or C.
 
     Order is the backend's (already sorted by name); this only joins.
+
+    Returns None unless EVERY entry has a name. Naming only the companies we
+    happen to have a name for would turn "I checked your two companies" into a
+    confident, wrong "I checked Sorento" - so an entry with a missing name
+    drops the whole clause and the reply falls back to the plain intro.
     """
-    if not isinstance(lookup_companies, list):
+    if not isinstance(lookup_companies, list) or not lookup_companies:
         return None
-    names = [
-        str(c.get("name")).strip()
-        for c in lookup_companies
-        if isinstance(c, dict) and _filled(c.get("name"))
-    ]
-    if not names:
+    if not all(
+        isinstance(c, dict) and _filled(c.get("name")) for c in lookup_companies
+    ):
         return None
+    names = [str(c.get("name")).strip() for c in lookup_companies]
     if len(names) == 1:
         return names[0]
     return ", ".join(names[:-1]) + " or " + names[-1]

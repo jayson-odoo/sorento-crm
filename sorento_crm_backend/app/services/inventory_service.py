@@ -647,6 +647,14 @@ class StockService:
             resolve_entities_to_filters,
         )
 
+        # Resolved input product id(s) - used on the data-miss (empty) path to find
+        # data-bearing variant/neighbour alternatives (section 3.3), and by the
+        # per-company labelling on EVERY exit, including the early returns below,
+        # so an empty answer can still name the companies it searched.
+        resolved_input_product_ids: set[str] = {
+            str(pid) for pid in (product_ids or []) if pid
+        }
+
         entity_buckets: Optional[EntityFilterBuckets] = None
         if entities:
             entity_buckets = resolve_entities_to_filters(
@@ -663,17 +671,16 @@ class StockService:
                 # from `entities`, return empty rather than fall through to the
                 # unfiltered full listing — caller would otherwise read it as
                 # "no match" while seeing every row.
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                     "resolved_entities": entity_buckets.as_echo(),
                 }
-
-        # Resolved input product id(s) — used ONLY on the data-miss (empty) path to
-        # find data-bearing variant/neighbour alternatives (§3.3). A non-empty result
-        # never touches this, so the happy path stays byte-identical (AC-R1).
-        resolved_input_product_ids: set[str] = set()
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=resolved_input_product_ids
+                )
+                return payload
 
         q = self.db.query(Stock).options(
             selectinload(Stock.product),
@@ -691,26 +698,33 @@ class StockService:
         )
         if resolved_wh_ids is not None:
             if not resolved_wh_ids:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=resolved_input_product_ids
+                )
+                return payload
             q = q.filter(Stock.warehouse_id.in_(resolved_wh_ids))
 
         if product_id:
             resolved_pid = _resolve_stock_product_id(self.db, product_id)
             if resolved_pid is None:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=resolved_input_product_ids
+                )
+                return payload
             resolved_input_product_ids.add(str(resolved_pid))
             q = q.filter(Stock.product_id == resolved_pid)
 
         if product_ids:
-            resolved_input_product_ids.update(str(pid) for pid in product_ids)
             q = q.filter(Stock.product_id.in_(product_ids))
 
         if entity_buckets is not None and entity_buckets.product_codes:

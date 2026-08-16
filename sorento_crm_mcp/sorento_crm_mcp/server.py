@@ -1224,6 +1224,34 @@ def _slim_grn_response(data: Any) -> Any:
     return data
 
 
+def _drop_company_id(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {k: _drop_company_id(v) for k, v in node.items() if k != "company_id"}
+    if isinstance(node, list):
+        return [_drop_company_id(item) for item in node]
+    return node
+
+
+def _strip_row_company_ids(data: Any) -> Any:
+    """Drop the raw `company_id` UUID from every row of every tool response.
+
+    The multi-company labelling put `company_id` on the affected row schemas,
+    and the rows are ORM instances, so `from_attributes` now fills it on EVERY
+    row. It is a UUID, and no UUID belongs in an agent-facing row (the same
+    rule `_ORDERS_LIST_DROP_ROW_KEYS` and `_PROMOTIONS_LIST_DROP_KEYS` enforce
+    per tool) - `company_name` is the readable form the presenter shows.
+    Recurses into nested rows (`product`, `promotion`, lines, attachments),
+    because those are ORM rows of their own. Top-level `lookup_companies` is
+    untouched: it is the envelope's company list and n8n matches on its ids.
+    """
+    if not isinstance(data, dict):
+        return data
+    rows = data.get("data")
+    if not isinstance(rows, list):
+        return data
+    return {**data, "data": [_drop_company_id(row) for row in rows]}
+
+
 def _sanitize_tool_response(
     tool_name: str,
     raw: str,
@@ -1241,6 +1269,8 @@ def _sanitize_tool_response(
       object on each row to its literal-text identifiers.
     * For `crm_procurement_grn_*` tools, slim picking response (rename to
       document_number/receiving_date, drop internal status/cost/inspection).
+    * For EVERY tool, drop `company_id` from the rows (see
+      `_strip_row_company_ids`).
     """
     data = _json_loads_safe(raw)
     if data is None:
@@ -1288,6 +1318,9 @@ def _sanitize_tool_response(
     for rule_tool, narrowing_keys, drop_keys in _BROWSE_ATTACHMENT_STRIP_RULES:
         if tool_name == rule_tool and _is_browse_mode(query, narrowing_keys):
             data = _strip_inline_attachment_keys(data, drop_keys)
+    # Generic, every tool, last: the per-company label ships `company_name` on
+    # the rows; the id it was resolved from stays out of the agent's context.
+    data = _strip_row_company_ids(data)
     return json.dumps(data)
 
 

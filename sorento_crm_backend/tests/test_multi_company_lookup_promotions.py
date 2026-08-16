@@ -154,6 +154,28 @@ def test_promotion_products_list_ac_b2_none_in_either_company(db):
     ]
 
 
+def test_promotion_products_list_ac_b2_stale_promotion_filter_still_names_both(db):
+    """F1 (review round): `crm_marketing_promotion_products_list` exposes BOTH
+    `promotion_ids` and `product_ids`, so an agent can hand us a stale promotion
+    reference alongside a two-company product set. That early return fires with
+    the product set already known, and must still name both companies."""
+    p_sorento = product(db, company_id=DEFAULT_COMPANY_ID)
+    p_mocha = product(db, company_id=MOCHA_ID)
+    db.commit()
+
+    result = PromotionProductService(db).list_promotion_products(
+        product_ids_filter=[p_sorento.id, p_mocha.id],
+        promotion_ids=["ZZT-PROMO-THAT-IS-GONE"],
+    )
+
+    assert result["data"] == []
+    assert result["empty"] is True
+    assert result.get("lookup_companies") == [
+        {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
+    ]
+
+
 def test_promotion_products_list_ac_b4_single_company_lookup_is_unlabelled(db):
     p_sorento = product(db, company_id=DEFAULT_COMPANY_ID)
     promo_sorento = promotion(db, company_id=DEFAULT_COMPANY_ID)

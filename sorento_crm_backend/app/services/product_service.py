@@ -550,12 +550,14 @@ class ProductService:
                 ),
             )
             if not entity_buckets.product_codes:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                     "resolved_entities": entity_buckets.as_echo(),
                 }
+                stamp_lookup_companies(self.db, payload, [], product_ids=product_ids)
+                return payload
 
         q = self._build_list_query(
             query=query,
@@ -2567,13 +2569,18 @@ class ProductAttachmentService:
             resolve_or_empty,
         )
 
+        # Track which product(s) the caller scoped to, so an empty result can offer
+        # data-bearing variant/neighbour alternatives (§3.4 M5 entity-axis) and so
+        # EVERY exit, early returns included, can label per company.
+        _scoped_product_ids: set[str] = {str(pid) for pid in (product_ids or []) if pid}
+
         entity_buckets = resolve_or_empty(self.db, entities)
         if entity_buckets is not None and not entity_buckets.product_codes:
-            return empty_payload(entity_buckets, page=page, limit=limit)
-
-        # Track which product(s) the caller scoped to, so an empty result can offer
-        # data-bearing variant/neighbour alternatives (§3.4 M5 entity-axis).
-        _scoped_product_ids: set[str] = set()
+            payload = empty_payload(entity_buckets, page=page, limit=limit)
+            stamp_lookup_companies(
+                self.db, payload, [], product_ids=_scoped_product_ids
+            )
+            return payload
 
         q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
@@ -2600,11 +2607,15 @@ class ProductAttachmentService:
         if product_id:
             resolved_product_ids = self._resolve_product_identifiers(product_id)
             if not resolved_product_ids:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=_scoped_product_ids
+                )
+                return payload
             q = q.filter(ProductAttachment.product_id.in_(resolved_product_ids))
             _scoped_product_ids.update(str(pid) for pid in resolved_product_ids)
 
@@ -2613,7 +2624,6 @@ class ProductAttachmentService:
 
         if product_ids:
             q = q.filter(ProductAttachment.product_id.in_(product_ids))
-            _scoped_product_ids.update(str(pid) for pid in product_ids)
         if attachment_ids:
             q = q.filter(ProductAttachment.attachment_id.in_(attachment_ids))
         if attachment_type_ids:

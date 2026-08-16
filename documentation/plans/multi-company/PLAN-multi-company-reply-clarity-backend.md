@@ -110,6 +110,18 @@ holds at `certificate_query_service.py:282`.
 | orders_list | `order_service.list_orders` :57, payload :473 | `_product_uuid_filter` (:106) | `Order.company_id` |
 | orders_by_product_list | `list_orders_by_product` :1063, payload :1425 | `_product_uuid_filter` (:1091) / resolved `product_ids` (:1197) | `Order.company_id` |
 
+Rows-only tools (`incoming_stock_shipments`, and any tool that takes no product
+ids at all) take their company set from the CURRENT PAGE's rows - a deliberate
+decision: there is no requested product set to widen it with, so their empty
+result carries no `lookup_companies` and page 2 can name a different set than
+page 1.
+
+Every early return that fires AFTER the requested product set is known stamps
+its own empty payload too (review round F1), so an empty answer names the
+companies searched no matter which guard produced it. The exception is a guard
+that fires BECAUSE nothing resolved (the two incoming-stock product guards):
+the requested set is empty there, so there is no company to name.
+
 The routes need no change: `ListResponse` declares the key, and the alternatives
 `JSONResponse` bypass paths already pass the raw dict through.
 

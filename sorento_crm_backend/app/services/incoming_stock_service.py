@@ -227,6 +227,11 @@ class IncomingStockService:
                     resolved_ids.extend(ids)
             resolved_ids = list(dict.fromkeys(resolved_ids))
             if not resolved_ids:
+                # No `stamp_lookup_companies` here (nor on the two guards below):
+                # this exit is reached only when NOTHING the caller asked for
+                # resolved, so the requested product set is empty and there is no
+                # company to name. The labelled empty path is the one at the end
+                # of the method, where the products did resolve.
                 return {"data": [], "empty": True, "matched_candidates": []}
             product_filters.append(Product.id.in_(resolved_ids))
         if query and query.strip():
@@ -542,6 +547,8 @@ class IncomingStockService:
         resolved_pids = list(dict.fromkeys(resolved_pids))
         if (product_ids or []) and not resolved_pids:
             # Caller asked for products that don't resolve → nothing incoming.
+            # Nothing resolved means no company to name either, so this exit
+            # carries no `lookup_companies` (see incoming_for_product).
             return {
                 "data": [],
                 "empty": True,

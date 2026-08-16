@@ -86,6 +86,27 @@ def test_orders_list_ac_b2_none_in_either_company(db):
     ]
 
 
+def test_orders_list_ac_b2_unresolvable_customer_filter_still_names_both(db):
+    """F1 (review round): the unresolvable-customer early return fires with the
+    requested product set already captured, so it must carry `lookup_companies`
+    like the ordinary empty path does."""
+    p_sorento = product(db, company_id=DEFAULT_COMPANY_ID)
+    p_mocha = product(db, company_id=MOCHA_ID)
+    db.commit()
+
+    result = OrderService(db).list_orders(
+        product_ids=[p_sorento.id, p_mocha.id],
+        customer_id="ZZT-NO-SUCH-CUSTOMER",
+    )
+
+    assert result["data"] == []
+    assert result["empty"] is True
+    assert result.get("lookup_companies") == [
+        {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
+    ]
+
+
 def test_orders_list_ac_b4_single_company_lookup_is_unlabelled(db):
     p_sorento = product(db, company_id=DEFAULT_COMPANY_ID)
     wh_sorento = warehouse(db, company_id=DEFAULT_COMPANY_ID)
