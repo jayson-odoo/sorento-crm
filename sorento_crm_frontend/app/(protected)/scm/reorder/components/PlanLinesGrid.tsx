@@ -889,7 +889,10 @@ export function PlanLinesGrid({
     [],
   );
 
-  const Toolbar = () => (
+  // A plain element, NOT a component defined in the render body: that would be a new
+  // component type on every render, so React would unmount the toolbar and the search
+  // input would lose focus after each keystroke.
+  const toolbar = (
     <CardHeader className="block">
       <DataGridListToolbar
         table={table}
@@ -1012,7 +1015,7 @@ export function PlanLinesGrid({
       onRowClick={(row) => setDetailRec(row.rec)}
     >
       <Card>
-        <Toolbar />
+        {toolbar}
         <CardTable>
           <ScrollArea>
             <DataGridTable />
