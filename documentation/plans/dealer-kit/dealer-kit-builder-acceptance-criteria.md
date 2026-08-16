@@ -89,7 +89,7 @@ Convention: **Given / When / Then**. An AC passes only when the Then is observed
 
 - **AC-G1** `[BE]` Given a saved page doc, Then it contains **no prices and no access decisions** — only bindings. (Inspect the JSON: a price string in a saved doc is a defect.)
 - **AC-G2** `[E2E]` Given the same published page, When viewed by a staff user, a `dealer` access-level principal, and an `end_user` principal, Then each sees the price appropriate to their audience per the existing `access_levels` rules — from one document.
-- **AC-G3** `[E2E]` Given a product whose `access_levels` exclude the viewer, Then it is absent from the rendered collection for that viewer — not rendered-then-hidden client-side.
+- **AC-G3** `[E2E]` Given a product whose brand's `access_levels` exclude the viewer (`Product` carries no access level of its own), Then it is absent from the rendered collection for that viewer — not rendered-then-hidden client-side.
   Corrected 2026-08-15: the brand filter is enforced in `collection_service.resolve_tiles_bulk`, which every collection/tile render goes through, including the public catalogue and PDF paths. `bundle_service.resolve_bundle` and `selection_service._resolve_lines` do **not** yet apply it. Not currently a public leak (`CatalogueRenderer` has no bundle-rendering branch, so a bundle is not reachable from a public render today), but it is open scope, recorded here rather than claimed as met for those two paths.
 - **AC-G4** `[E2E]` Given a discontinued or inactive product inside a bound collection, Then it is excluded from render (rule documented in the plan) rather than rendering as a dead tile.
 - **AC-G5** `[FE]` Given the public render, Then `app/(public)/c/[company]/[slug]/page.tsx` and

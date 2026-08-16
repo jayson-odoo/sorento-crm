@@ -381,33 +381,13 @@ def _visible_product_ids(
 ) -> set[str]:
     """Which of these products this viewer's BRAND access permits (AC-G3).
 
-    ``Product`` itself carries no access level - the repo's visibility contract
-    is on ``Brand.access_levels`` (see the ``?|`` overlap pattern in
-    ``references.py``'s promotion-domain product search). A product with no
-    brand at all is unrestricted and always visible; a brand whose levels do
-    not intersect the viewer's codes makes every one of its products ABSENT
-    from the tile list, not merely hidden.
-
-    A brand with an EMPTY (or NULL) ``access_levels`` is unrestricted too,
-    mirroring the "no levels recorded = public" convention
-    ``product_images._may_see`` uses for an untagged attachment. This has to be
-    an explicit case rather than falling out of the ``?|`` overlap: overlap
-    against an empty array is false for every viewer including staff-adjacent
-    ones, so ``BrandCreate.access_levels`` defaulting to ``[]`` would otherwise
-    make a brand created without ticking a level vanish from every non-staff
-    catalogue the moment it was saved.
-
-    Staff - the internal builder and the office copy - see everything, exactly
-    as staff see trade imagery in ``product_images._may_see``. Everyone else
-    falls back to ``PUBLIC_ACCESS_CODE`` when they carry no codes at all, the
-    same fallback that module uses.
-
-    One brand query per bulk call, keyed on the union's distinct brand ids,
-    whatever the collection count within that call. A caller that resolved
-    several collections by looping ``resolve_tiles`` one at a time would pay
-    one of these per collection instead of one for the document - the only
-    caller doing that today is staff-only tooling, which short-circuits above
-    before this query ever runs.
+    ``Product`` carries no access level of its own - the visibility contract is
+    ``Brand.access_levels``. A product this viewer may not have is ABSENT from
+    the tile list, not merely hidden. Unrestricted: a product with no brand, and
+    a brand with empty or NULL levels (``BrandCreate`` defaults to ``[]``, and
+    an overlap test alone would hide such a brand from everyone). Staff see
+    everything; a viewer with no codes falls back to ``PUBLIC_ACCESS_CODE``, as
+    ``product_images._may_see`` does.
     """
     if viewer.is_staff:
         return {product.id for product in products}

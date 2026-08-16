@@ -331,12 +331,11 @@ def test_the_default_brand_access_levels_stay_visible_to_everyone():
 
 def test_a_brand_gated_only_on_a_dealer_tier_code_is_present_for_a_dealer_export_and_absent_for_a_consumer_export():
     """A staff-requested "dealer" export must reach EVERY brand's dealer tier,
-    not just the bare `dealer` code - `viewer_for` built from
-    `audience_access_codes` is exercised the same way a real export render
-    does it, against a brand gated on a CABANA-style per-brand tier code that
-    is neither `dealer` nor `end_user`."""
+    not just the bare `dealer` code. `viewer_for` is exercised the same way a
+    real export render does it, against a brand gated on a CABANA-style
+    per-brand tier code that is neither `dealer` nor `end_user`."""
     from app.models.access import ContactAccessType
-    from app.services.dealer_kit.export_service import audience_access_codes, viewer_for
+    from app.services.dealer_kit.export_service import viewer_for
 
     with pg_session() as db:
         tier_code = f"zzt_{uuid.uuid4().hex[:8]}_dealer"
@@ -347,9 +346,8 @@ def test_a_brand_gated_only_on_a_dealer_tier_code_is_present_for_a_dealer_export
         product = _product(db, brand_id=brand.id)
         collection = _collection(db, pinned_product_ids=[product.id])
 
-        codes = audience_access_codes(db)
-        dealer_viewer = viewer_for(_ExportRequest("dealer"), codes)
-        consumer_viewer = viewer_for(_ExportRequest("consumer"), codes)
+        dealer_viewer = viewer_for(db, _ExportRequest("dealer"))
+        consumer_viewer = viewer_for(db, _ExportRequest("consumer"))
 
         dealer_ids = {
             tile["product_id"]
