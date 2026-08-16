@@ -994,6 +994,32 @@ async def add_spec_value(
         if proposed in {str(v) for v in merged_allowed_values(row)}:
             return _serialise(row)
 
+        # A word an administrator TOOK AWAY. It is absent from the merged vocabulary, so
+        # neither check above sees it, and adding it back here would hand every holder
+        # of `products.edit` a silent override of a decision made on the key itself.
+        # Refusing is also the only honest answer: a value that stayed shipped-but-
+        # suppressed could not then be saved on the product, and the save would name the
+        # very action the user had just been told succeeded.
+        suppressed = next(
+            (
+                str(v)
+                for v in (row.suppressed_values or [])
+                if normalise_vocabulary(v) == normalise_vocabulary(proposed)
+            ),
+            None,
+        )
+        if suppressed is not None:
+            return _similar_refusal(
+                f"\"{proposed}\" was taken off {row.label}, so it is not one of its "
+                "values. An administrator can put it back on the specification's own "
+                "screen.",
+                {
+                    "value": suppressed,
+                    "matched_on": "suppressed_value",
+                    "matched_text": suppressed,
+                },
+            )
+
         match = find_similar_value(row, proposed)
         if match:
             return _similar_refusal(
@@ -1005,13 +1031,17 @@ async def add_spec_value(
         if proposed not in {str(v) for v in (row.allowed_values or [])}:
             row.user_values = [*(row.user_values or []), proposed]
 
-        # A value nobody can say is unsearchable, and a new one has no words yet. Give
-        # it its own name, readably - what the person adding "free_standing" meant.
-        if not (row.user_synonyms or {}).get(proposed) and not (row.synonyms or {}).get(proposed):
-            row.user_synonyms = {
-                **(row.user_synonyms or {}),
-                proposed: [proposed.replace("_", " ")],
-            }
+            # A value nobody can say is unsearchable, and a new one has no words yet.
+            # Give it its own name, readably - what the person adding "free_standing"
+            # meant. Only on the path that actually added a value: a synonym for a word
+            # the vocabulary does not hold is unreachable by anything.
+            if not (row.user_synonyms or {}).get(proposed) and not (row.synonyms or {}).get(
+                proposed
+            ):
+                row.user_synonyms = {
+                    **(row.user_synonyms or {}),
+                    proposed: [proposed.replace("_", " ")],
+                }
 
         _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
 

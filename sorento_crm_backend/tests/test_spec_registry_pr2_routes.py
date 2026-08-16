@@ -635,6 +635,41 @@ def test_a_shipped_word_is_never_copied_into_the_staff_list(api):
     assert response.json()["user_values"] == []
 
 
+def test_a_word_an_administrator_took_away_is_refused_rather_than_silently_dropped(api):
+    """A suppressed shipped value is in neither the merged vocabulary nor the guard's
+    reach, so the add used to answer 200 and store nothing - and the follow-on save
+    then failed with "add it to the specification first", naming the action the toast
+    had just reported. It is also not this route's decision to reverse: suppression is
+    a statement made on the key, and every holder of `products.edit` can reach here.
+    """
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(
+        db,
+        "zzt_finish",
+        label="Finish",
+        allowed_values=["brushed_brass"],
+        suppressed_values=["brushed_brass"],
+        synonyms={},
+        source="seed",
+    )
+
+    response = client.post(f"{_BASE}/zzt_finish/values", json={"value": "brushed_brass"})
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["match"]["value"] == "brushed_brass"
+    assert "was taken off Finish" in body["error"]
+
+    from app.models.product_spec import ProductSpecRegistry
+
+    db.expire_all()
+    row = db.query(ProductSpecRegistry).filter_by(spec_key="zzt_finish").first()
+    assert row.suppressed_values == ["brushed_brass"]
+    assert row.user_values == []
+    assert "brushed_brass" not in (row.user_synonyms or {})
+
+
 def test_a_merchandiser_may_add_a_word_without_the_registry_edit_grant(api):
     """Journey A step 3, on the route that now carries it."""
     db, _as = api
