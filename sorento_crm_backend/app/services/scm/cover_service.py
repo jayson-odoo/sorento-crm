@@ -36,6 +36,20 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.scm.reorder_policy import ALL_LOCATIONS, COVER_SCOPES, DEFAULT_COVER_SCOPE, OWN_POOL
+
+__all__ = [
+    "ALL_LOCATIONS",
+    "COVER_SCOPES",
+    "CoverProposal",
+    "CoverSource",
+    "DEFAULT_COVER_SCOPE",
+    "OWN_POOL",
+    "free_stock_by_product",
+    "propose_cover",
+    "sources_in_scope",
+]
+
 
 @dataclass(frozen=True)
 class CoverSource:
@@ -49,6 +63,11 @@ class CoverSource:
     #: stock covering project demand is a real option and a real decision, so it is offered
     #: and flagged rather than mixed in silently.
     cross_segment: bool
+    #: The pool this location belongs to - `COALESCE(pool_warehouse_id, id)`, so a location
+    #: with no pool of its own IS its own pool. Carried on every source because the cover
+    #: endpoint is keyed by PRODUCT while the scope question is per ROW: two rows of the same
+    #: product can sit in different pools, so the filter cannot be applied once for all.
+    pool_warehouse_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -75,12 +94,13 @@ WITH plan_demand AS (
     WHERE r.run_id = CAST(:run_id AS uuid)
     GROUP BY r.product_id, r.warehouse_id
 )
-SELECT s.product_id::text                         AS product_id,
-       s.warehouse_id::text                       AS warehouse_id,
-       w.warehouse_code                           AS warehouse_code,
-       w.segment                                  AS segment,
-       s.quantity_on_hand::numeric                AS on_hand,
-       COALESCE(d.demand, 0)::numeric             AS demand
+SELECT s.product_id::text                              AS product_id,
+       s.warehouse_id::text                            AS warehouse_id,
+       w.warehouse_code                                AS warehouse_code,
+       w.segment                                       AS segment,
+       COALESCE(w.pool_warehouse_id, w.id)::text       AS pool_warehouse_id,
+       s.quantity_on_hand::numeric                     AS on_hand,
+       COALESCE(d.demand, 0)::numeric                  AS demand
 FROM stock s
 JOIN warehouses w ON w.id = s.warehouse_id
 LEFT JOIN plan_demand d
@@ -128,11 +148,38 @@ def free_stock_by_product(
                 segment=r["segment"],
                 qty=free,
                 cross_segment=False,
+                pool_warehouse_id=r["pool_warehouse_id"],
             )
         )
     for sources in out.values():
         sources.sort(key=lambda s: (-s.qty, s.warehouse_code))
     return out
+
+
+def sources_in_scope(
+    free: list[CoverSource],
+    cover_scope: Optional[str],
+    line_pool_warehouse_id: Optional[str],
+) -> list[CoverSource]:
+    """The sources the policy actually allows this row to draw on.
+
+    Under `own_pool` a source has to sit in the ROW's pool. A row whose own pool is unknown
+    (a network row carries no warehouse) is NOT filtered to nothing: there is no pool to
+    compare against, and scoping it would silently delete every option rather than narrow
+    them. A source with no pool of its own IS its own pool, which is what
+    `COALESCE(pool_warehouse_id, id)` means one layer down.
+
+    An absent or unrecognised `cover_scope` reads as ``own_pool``, matching
+    ``DEFAULT_COVER_SCOPE``. Only the explicit ``all_locations`` opens the whole network:
+    testing for ``!= OWN_POOL`` failed OPEN, so a caller that omitted the argument offered
+    every site rather than the one the policy allows.
+    """
+    if cover_scope == ALL_LOCATIONS or not line_pool_warehouse_id:
+        return list(free)
+    return [
+        s for s in free
+        if (s.pool_warehouse_id or s.warehouse_id) == line_pool_warehouse_id
+    ]
 
 
 def propose_cover(
@@ -142,6 +189,8 @@ def propose_cover(
     free: list[CoverSource],
     *,
     already_taken: Optional[dict[str, float]] = None,
+    cover_scope: Optional[str] = None,
+    line_pool_warehouse_id: Optional[str] = None,
 ) -> CoverProposal:
     """How much of `shortage` other locations can cover, and from where.
 
@@ -152,13 +201,25 @@ def propose_cover(
     `already_taken` is what earlier decisions in this same pass have consumed, keyed by
     warehouse. Without it two lines are each told the same units are free and the second
     decision quietly cannot be honoured.
+
+    `cover_scope` is the global policy's answer to "may this row use another site's stock at
+    all". `own_pool` narrows the offer to the row's own pool BEFORE anything else, so an
+    out-of-scope location is never proposed, never ranked and never counted. It is also the
+    default: absent or unrecognised reads as `own_pool`, never as the whole network. The row's
+    own warehouse is still excluded either way: scope narrows the offer, it never re-admits
+    stock that is already inside the net.
+
+    No production caller: the allocation runs client-side because the free pool is shared and
+    only the client knows what has been decided so far (see the module docstring). This
+    function is the MIRROR-OF-RECORD for `scm/reorder/lib/coverPlan.ts` and is exercised by
+    tests alone - when the two disagree, this one states the intended rule.
     """
     if shortage <= 0:
         return CoverProposal(cover_qty=0.0, buy_qty=0.0, sources=[])
 
     taken = already_taken or {}
     candidates: list[CoverSource] = []
-    for s in free:
+    for s in sources_in_scope(free, cover_scope, line_pool_warehouse_id):
         if line_warehouse_id is not None and s.warehouse_id == line_warehouse_id:
             # Its own stock is already inside the net. Offering it back would double count.
             continue
@@ -172,6 +233,7 @@ def propose_cover(
                 segment=s.segment,
                 qty=remaining,
                 cross_segment=bool(line_segment and s.segment and s.segment != line_segment),
+                pool_warehouse_id=s.pool_warehouse_id,
             )
         )
 
@@ -190,6 +252,7 @@ def propose_cover(
                 segment=s.segment,
                 qty=take,
                 cross_segment=s.cross_segment,
+                pool_warehouse_id=s.pool_warehouse_id,
             )
         )
         covered += take

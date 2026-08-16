@@ -44,6 +44,7 @@ vi.mock('../services/reorderRunService', () => ({
 }));
 
 import { usePlanLines } from './usePlanLines';
+import { applySourceEdits } from '../lib/coverPlan';
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -55,7 +56,7 @@ beforeEach(() => {
   getCoveredRecommendations.mockReset().mockResolvedValue([]);
   getNeedsLevelRecommendations.mockReset().mockResolvedValue([]);
   getAllDispositionRecommendations.mockReset().mockResolvedValue([]);
-  getCoverSources.mockReset().mockResolvedValue({});
+  getCoverSources.mockReset().mockResolvedValue({ sources: {}, cover_scope: 'all_locations' });
   getPriceHistory.mockReset().mockResolvedValue({ prices: {}, movement_threshold_pct: 5, stale_after_days: 180 });
   getTrajectory.mockReset().mockResolvedValue({ series: {} });
   getLevelSuggestions.mockReset().mockResolvedValue({ suggestions: {} });
@@ -101,6 +102,76 @@ describe('usePlanLines - purchase trend is lazy, not eager', () => {
     renderHook(() => usePlanLines(null, false), { wrapper });
     expect(getPurchaseTrend).not.toHaveBeenCalled();
     expect(getBuyRecommendationsForCash).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A decision spends only what its OWN row needed (review finding 2, round 2).
+ *
+ * The pool is shared: `takenByProduct` subtracts every decided source from what the next row
+ * of the same product is offered. A cover edit that was clamped to the source's free stock but
+ * not to the row's own gap therefore reserved units this row could never use, and the next row
+ * was told they were gone.
+ */
+describe('usePlanLines - one row cannot reserve stock it does not need', () => {
+  function buyRec(over: Record<string, unknown> = {}) {
+    return {
+      id: 'r1', type: 'buy', sku: 'SKU-1', product_name: 'Product one',
+      abc_class: null, xyz_class: null, warehouse_code: 'DC1', warehouse_name: 'DC1',
+      product_id: 'p1', warehouse_id: 'wh-DC1', is_network: false, allocation: null,
+      order_qty: 10, recommended_qty: 10, reorder_point: 10, min_qty: null, max_qty: null,
+      order_up_to: 20, net_position: -10, days_of_cover: null, reason: 'reorder_point',
+      reason_label: '', confidence: 'low', sample_size: 0,
+      supplier: { supplier_code: 'S1', supplier_name: 'Acme', unit_cost: 10,
+                  lead_time_days: 30, composite_score: 0, is_primary: true },
+      alternatives: [], is_exception: false, disposition_action: null, transfer_flag: null,
+      forecast_daily_demand: 1, lead_time_days: 30, lead_time_source: 'default',
+      safety_stock: 0, safety_stock_method: null, safety_stock_fallback: null,
+      service_level: null, safety_days: 0, review_days: 30, demand_window_days: 90,
+      moq: null, order_multiple: null, policy_type: 'reorder_point', supplier_selection: 'primary',
+      unit_cost: 10, cash_impact: 100, rank: 1, rank_score: 0, funding_status: null,
+      days_to_stockout: null, rank_factors: [], segment: 'project',
+      on_hand: 0, incoming_spo: 0, outstanding_po: 0, outstanding_sales: 10,
+      reorder_level: null, master_reorder_level: null,
+      ...over,
+    };
+  }
+
+  it('leaves the next row the stock the first row never needed', async () => {
+    getBuyRecommendationsForCash.mockResolvedValue([
+      buyRec(),
+      buyRec({ id: 'r2', warehouse_code: 'PJ', warehouse_id: 'wh-PJ', rank: 2 }),
+    ]);
+    getCoverSources.mockResolvedValue({
+      sources: {
+        p1: [{ warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50 }],
+      },
+      cover_scope: 'all_locations',
+    });
+
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.lines).toHaveLength(2));
+
+    const first = result.current.lines.find((l) => l.id === 'r1')!;
+    // The buyer types 40 into a location holding 50, against a gap of 10.
+    const edited = applySourceEdits(result.current.coverFor(first), { 'wh-BRW-IB': 40 });
+    expect(edited.coverQty).toBe(10);
+    act(() =>
+      result.current.decide(first, {
+        stock: {
+          qty: edited.coverQty,
+          sources: edited.sources.map((s) => ({
+            warehouse_id: s.warehouse_id,
+            warehouse_code: s.warehouse_code,
+            qty: s.qty,
+          })),
+        },
+      }),
+    );
+
+    const second = result.current.lines.find((l) => l.id === 'r2')!;
+    // 50 free less the 10 the first row actually took, never less the 40 it typed.
+    expect(result.current.coverFor(second).offered.map((s) => s.qty)).toEqual([40]);
   });
 });
 

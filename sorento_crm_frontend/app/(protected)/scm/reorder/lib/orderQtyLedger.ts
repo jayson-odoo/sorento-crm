@@ -59,6 +59,31 @@ export function roundOrderQty(
   return q;
 }
 
+/** The two rounding rules a line carries, as they sit on `PlanLine.order_qty_inputs`. */
+export interface OrderQtyRounding {
+  moq: number | null;
+  order_multiple: number | null;
+}
+
+/**
+ * The rounding a RECORDED buy goes through, wherever the buyer typed it.
+ *
+ * The ledger replayed `roundOrderQty` and the two other controls did not, so accepting a
+ * suggestion (`Buy 14`) and reaching the same mixture through the ledger (`Buy 20`) recorded
+ * different, and in one case illegal, orders for the same row. Every surface that turns a
+ * number into a `PlanDecision.buy` calls THIS, so a decision can never carry a quantity the
+ * supplier would refuse.
+ *
+ * Nothing to buy stays nothing: a positive MoQ against a zero remainder would otherwise
+ * invent an order for a row the buyer just covered outright. That is the same guard
+ * `reorder_engine.order_qty` applies before it rounds (`if recommended <= 0: return 0.0`),
+ * which is why `roundOrderQty` itself does not carry it.
+ */
+export function roundBuyQty(qty: number, rounding: OrderQtyRounding): number {
+  if (!(qty > 0)) return 0;
+  return roundOrderQty(qty, rounding.moq, rounding.order_multiple);
+}
+
 export interface MixtureResult {
   /** Units drawn from the cover pool right now (0 when the stock toggle is off). */
   stockQty: number;
@@ -79,11 +104,17 @@ export function composeMixture(
   needed: number,
   cover: CoverProposal,
   poQty: number,
-  toggles: { stockOn: boolean; poOn: boolean },
+  toggles: { stockOn: boolean; poOn: boolean; stockQty?: number },
 ): MixtureResult {
   const stockOn = toggles.stockOn && cover.coverQty > 0;
-  const stockQty = stockOn ? cover.coverQty : 0;
-  const afterStock = stockOn ? cover.buyQty : needed;
+  // The buyer's own per-location figures when they have edited them, the proposal's own
+  // total otherwise. The gap the two are measured against is the proposal's whole shortage
+  // (`coverQty + buyQty`), which is what makes an edited cover fall straight through into
+  // the buy: cover less, buy more, and never a negative order.
+  const proposed = cover.coverQty;
+  const stockQty = stockOn ? (toggles.stockQty ?? proposed) : 0;
+  const gap = cover.coverQty + cover.buyQty;
+  const afterStock = stockOn ? Math.max(0, gap - stockQty) : needed;
   const { usePo, buy } = poOffset(afterStock, toggles.poOn ? poQty : 0);
   return { stockQty, usePo, buy };
 }
