@@ -630,6 +630,21 @@ match. Do not propose reverting them.
   **"Reset"** (back to derived). These replace the earlier sentence-length labels "This product
   does not have this spec" and "Use what the rules read".
 
+### Settled by the captain at PR 2 review (2026-08-16)
+
+- **A near-duplicate is refused outright - there is NO override** (D17). D11's acknowledge flag
+  is withdrawn, and the plumbing is deleted rather than left unreachable: no `acknowledge_similar`
+  on the create or update payloads, no `acknowledge_field` in the 422 body, which keeps
+  `{error, match}`. Two names for one thing leave a registry answering half of every customer
+  question each, and a flag nothing sends only made the code disagree with the product.
+- **Adding one word APPENDS server-side** (D18). `POST /spec-registry/{spec_key}/values` takes
+  `{value}` alone, re-reads the row under `FOR UPDATE` and appends, gated on the same either-grant
+  as the vocabulary-only PATCH field. The PATCH keeps its replace semantics for the registry
+  editor, which shows and submits the whole list. The product page was rebuilding that list from a
+  cached applicable-keys read, so one merchandiser's add deleted a word another had just added,
+  silently - and migration 361 widened who can reach that from registry admins to every holder of
+  `master_data.products.edit`.
+
 ### Outstanding - still the captain's call
 
 None. Every question raised during planning has been answered.

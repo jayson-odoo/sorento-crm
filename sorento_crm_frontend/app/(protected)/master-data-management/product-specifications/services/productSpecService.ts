@@ -45,20 +45,25 @@
  *     `absent` = "this product does not have this spec", survives re-derivation.
  *     `revert` = hand the key back to the rules.
  *
- *   POST  /api/v1/master-data/spec-registry            (create a key)
- *   PATCH /api/v1/master-data/spec-registry/{specKey}  (add a word to a key)
+ *   POST  /api/v1/master-data/spec-registry                   (create a key)
+ *   POST  /api/v1/master-data/spec-registry/{specKey}/values  body { value }
+ *     ONE word, appended server-side under a row lock. The PATCH below REPLACES
+ *     `user_values`, so sending a list rebuilt from a cached read deletes whatever
+ *     somebody else added in between; this route never takes the list from a client.
+ *   PATCH /api/v1/master-data/spec-registry/{specKey}         (the registry editor,
+ *     which shows the whole list and submits the whole list)
  *
  * THE 422 THAT IS NOT AN ERROR ENVELOPE
  *
- * Both writes above refuse a near-duplicate with a TOP-LEVEL body, not the
+ * The writes above refuse a near-duplicate with a TOP-LEVEL body, not the
  * AppException envelope, because the client has to render WHICH existing thing it
  * collided with:
  *
- *     422 { error: string, match: {...}, acknowledge_field: 'acknowledge_similar' }
+ *     422 { error: string, match: {...} }
  *
- * Resending with `acknowledge_similar: true` is what gets through. `extractApiError`
- * cannot read this - it is string-only - so these two calls parse the body
- * themselves and throw a `SpecSimilarError` carrying the match.
+ * There is no way past it: a colliding word is refused, full stop. `extractApiError`
+ * cannot read this body - it is string-only - so these calls parse it themselves and
+ * throw a `SpecSimilarError` carrying the sentence that names the collision.
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -211,19 +216,16 @@ export async function getSimilarSpecKey(label: string): Promise<SimilarKeyMatch 
 }
 
 /**
- * The server refused a near-duplicate and said which existing thing it collided with.
+ * The server refused a near-duplicate, in the sentence that names the collision.
  *
- * Its own error type because the caller has to do something with `match` - offer the
- * existing word - which a message string cannot carry. `extractApiError` is string-only
- * and would flatten exactly the part that matters.
+ * Its own error type because the refusal is a product answer rather than a failure -
+ * "that word is already black on Finish" - and the caller distinguishes it from a
+ * network or permission error. There is no way past it.
  */
 export class SpecSimilarError extends Error {
-  readonly match: Record<string, unknown>;
-
-  constructor(message: string, match: Record<string, unknown>) {
+  constructor(message: string) {
     super(message);
     this.name = 'SpecSimilarError';
-    this.match = match;
   }
 }
 
@@ -231,8 +233,8 @@ export class SpecSimilarError extends Error {
  * Raise the near-duplicate refusal as itself, and anything else as a plain error.
  *
  * `extractApiError` is still what handles every ordinary failure below; this reads the
- * body first ONLY for the 422 shape it cannot represent, because that response's whole
- * payload is the `match` object and a string would throw it away.
+ * body first ONLY for the 422 shape it cannot represent, because the sentence naming
+ * the collision lives in `error` rather than in `detail`.
  */
 async function throwSpecWriteError(response: Response, fallback: string): Promise<never> {
   if (response.status === 422) {
@@ -243,7 +245,7 @@ async function throwSpecWriteError(response: Response, fallback: string): Promis
       body = null;
     }
     if (body?.match) {
-      throw new SpecSimilarError(String(body.error ?? fallback), body.match);
+      throw new SpecSimilarError(String(body.error ?? fallback));
     }
   }
   throw new Error(await extractApiError(response, fallback));
@@ -259,8 +261,6 @@ export async function createSpecKey(body: {
   user_synonyms?: Record<string, string[]>;
   rank_weight?: number;
   is_active?: boolean;
-  /** Resend with true to get past the server's near-duplicate refusal. */
-  acknowledge_similar?: boolean;
 }): Promise<SpecRegistryKey> {
   const response = await apiFetch('/api/v1/master-data/spec-registry', {
     method: 'POST',
@@ -274,26 +274,23 @@ export async function createSpecKey(body: {
 }
 
 /**
- * Add a word to a key's vocabulary, from the product page.
+ * Add ONE word to a key's vocabulary, from the product page.
  *
- * A separate call rather than `updateSpecKey` with one field, because the two are
- * different permissions: this is `master_data.products.edit` (a merchandiser
- * correcting a spec), while everything else on that route needs
- * `master_data.spec_registry.edit`. Naming it separately is what keeps the caller
- * from quietly widening its own payload.
+ * A separate call rather than `updateSpecKey` with one field, for two reasons. The
+ * permissions differ: this is `master_data.products.edit` (a merchandiser correcting a
+ * spec), while everything else on the PATCH route needs `master_data.spec_registry.edit`.
+ * And the semantics differ: PATCH REPLACES the list, so a caller sending a list it
+ * rebuilt from an earlier read silently deletes any word added in between. The word
+ * travels alone and the server appends it.
  */
 export async function addValueToSpecKey(
   specKey: string,
-  userValues: string[],
-  options: { acknowledgeSimilar?: boolean } = {},
+  value: string,
 ): Promise<SpecRegistryKey> {
-  const response = await apiFetch(`/api/v1/master-data/spec-registry/${specKey}`, {
-    method: 'PATCH',
+  const response = await apiFetch(`/api/v1/master-data/spec-registry/${specKey}/values`, {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      user_values: userValues,
-      ...(options.acknowledgeSimilar ? { acknowledge_similar: true } : {}),
-    }),
+    body: JSON.stringify({ value }),
   });
   if (!response.ok) {
     await throwSpecWriteError(response, 'Failed to add the value');

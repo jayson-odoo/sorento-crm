@@ -305,18 +305,22 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   question and then the key is on the product with its editor open. It is gated on
   `master_data.spec_registry.add` (D7); a user without the grant sees the picker **without**
   the create entry plus one line saying who to ask. A typed name that already IS a key points
-  at that key instead.
+  at that key instead; a name the product ALREADY CARRIES says so plainly, with nothing to
+  click, since its row is on the table behind the dialog (2026-08-16).
 - **AC-A.10** `[FE][BE]` GIVEN a proposed new key label WHEN the create dialog validates THEN a
   new `GET /spec-registry/similar` runs a normalised match against every existing `spec_key`,
   label **and merged synonym**, and on a hit offers the existing key instead. The guard is also
   enforced server-side on `POST /spec-registry`, so no other client can bypass it.
 - **AC-A.11** `[FE][BE]` GIVEN a value dropdown with no match WHEN the create row is used THEN
-  the value is added to that key's `user_values` after a normalised near-duplicate check against
-  merged values **and** merged synonyms - **enforced on the server** (D11): the `PATCH` route
-  rejects a near-duplicate `user_values` addition with a 422 carrying the match, and accepts it
-  only with an explicit acknowledge flag, mirroring the key-creation guard in AC-A.10. The FE
-  runs the same check client-side first, against data it already holds, so the common case never
-  round-trips - but the frontend check is a courtesy, never the guard.
+  the word is sent ALONE to `POST /spec-registry/{spec_key}/values`, which re-reads the row under
+  `FOR UPDATE` and **appends** it after a normalised near-duplicate check against merged values
+  **and** merged synonyms - **enforced on the server** (D11). A near-duplicate is refused with a
+  422 carrying the match and **there is no way past it** (D17, 2026-08-16): the acknowledge flag
+  is withdrawn. The client never sends the list (D18, 2026-08-16) - it was rebuilding it from a
+  cached read, so one person's add deleted another's; the replacing `PATCH` remains only for the
+  registry editor, which shows and submits the whole list. The FE runs the same duplicate check
+  client-side first, against data it already holds, so the common case never round-trips - but
+  the frontend check is a courtesy, never the guard.
 - **AC-A.12** `[FE]` GIVEN the spec table component WHEN it is written THEN it is
   **props-driven** - values, vocabulary and callbacks in, **no `apiFetch`, no service import, no
   react-query inside the cells** - and it lives in a folder milestone 2's `(auth)`-group portal

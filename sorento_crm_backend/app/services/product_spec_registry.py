@@ -1356,7 +1356,8 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
 
         spec = (
             db.query(ProductSpecifications)
-            .filter(ProductSpecifications.product_id == product.id)
+            .join(Product, Product.id == ProductSpecifications.product_id)
+            .filter(Product.product_code == product.product_code)
             .first()
         )
 

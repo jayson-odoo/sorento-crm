@@ -9,10 +9,12 @@ What is under test here is the part a service test structurally cannot reach:
    `GET /spec-registry`.
 2. **The duplicate guards are the SERVER'S** (D11, AC-A.10, AC-A.11). The dialog's
    check is a latency courtesy; these assert that a client which skips it is refused,
-   and that an explicit acknowledgement is what gets past.
+   and that there is no way to ask to be let past.
 3. **The split-by-field PATCH permission.** Adding a word to a key's vocabulary from
    the product page is a merchandiser's job; retuning `rank_weight` is not. One route
    serves both, so the check has to be on the FIELDS, not on the route.
+5. **Adding one word appends.** `POST {spec_key}/values` takes the word alone, so a
+   client cannot hand back a list it read before somebody else added to it.
 4. **Static paths beat parametric ones.** `/applicable-keys` and `/similar` sit on a
    router that already declares `GET /{spec_key}/products`; declared in the wrong
    order they would be read as a spec key forever.
@@ -348,7 +350,10 @@ def test_creating_a_near_duplicate_key_is_refused_server_side(api):
     assert body["match"]["spec_key"] == "zzt_finish"
 
 
-def test_creating_a_near_duplicate_key_goes_through_with_an_acknowledgement(api):
+def test_a_near_duplicate_key_cannot_be_acknowledged_past(api):
+    """The refusal is the product answer, not a speed bump: two names for one thing
+    leave a registry that answers half of every customer question each. A client that
+    asks to override is refused exactly as one that does not."""
     db, _as = api
     _as(_REGISTRY_ADMIN)
     client = TestClient(app)
@@ -364,10 +369,12 @@ def test_creating_a_near_duplicate_key_goes_through_with_an_acknowledgement(api)
             "acknowledge_similar": True,
         },
     )
-    assert response.status_code == 201, response.text
+    assert response.status_code == 422, response.text
+    assert response.json()["match"]["spec_key"] == "zzt_finish"
+    assert "acknowledge_field" not in response.json()
 
 
-def test_a_genuinely_new_key_needs_no_acknowledgement(api):
+def test_a_genuinely_new_key_is_created(api):
     db, _as = api
     _as(_REGISTRY_ADMIN)
     client = TestClient(app)
@@ -412,7 +419,9 @@ def test_a_value_colliding_with_a_synonym_is_refused_too(api):
     assert response.json()["match"]["value"] == "black"
 
 
-def test_adding_a_near_duplicate_value_goes_through_with_an_acknowledgement(api):
+def test_a_near_duplicate_value_cannot_be_acknowledged_past(api):
+    """`matte black` as a value of its own is a value nothing can ever match. Asking
+    to add it anyway does not make it matchable, so there is no way to ask."""
     db, _as = api
     _as(_MERCHANDISER)
     client = TestClient(app)
@@ -422,10 +431,11 @@ def test_adding_a_near_duplicate_value_goes_through_with_an_acknowledgement(api)
         f"{_BASE}/zzt_finish",
         json={"user_values": ["Brushed Brass"], "acknowledge_similar": True},
     )
-    assert response.status_code == 200, response.text
+    assert response.status_code == 422, response.text
+    assert response.json()["match"]["value"] == "brushed_brass"
 
 
-def test_a_new_value_needs_no_acknowledgement(api):
+def test_a_new_value_is_added(api):
     db, _as = api
     _as(_MERCHANDISER)
     client = TestClient(app)
@@ -546,3 +556,113 @@ def test_an_outsider_may_not_patch_at_all(api):
         client.patch(f"{_BASE}/zzt_finish", json={"user_values": ["brushed_brass"]}).status_code
         == 403
     )
+
+
+# --------------------------------------------------------------------------- #
+# Adding ONE word - append server-side, never a list rebuilt from a stale read
+# --------------------------------------------------------------------------- #
+def test_adding_a_word_does_not_drop_a_word_added_since_the_page_loaded(api):
+    """The data-loss case. Two people add a word to the same key from two product
+    pages; the second page's registry snapshot predates the first person's write.
+
+    Under the replacing PATCH the second request carried the whole list as that stale
+    snapshot knew it, so the first person's word was deleted by a request that was
+    only ever meant to add. Sending the word alone is what makes that impossible.
+    """
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=[], user_values=["chrome"], source="user")
+
+    assert client.post(f"{_BASE}/zzt_finish/values", json={"value": "gunmetal"}).status_code == 200
+
+    # B never read `gunmetal`: its snapshot is the one taken before A wrote. The API
+    # gives it no way to send that snapshot back.
+    response = client.post(f"{_BASE}/zzt_finish/values", json={"value": "brushed_brass"})
+    assert response.status_code == 200, response.text
+
+    values = response.json()["user_values"]
+    assert values == ["chrome", "gunmetal", "brushed_brass"]
+
+
+def test_adding_a_near_duplicate_word_is_refused_with_the_match(api):
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["black"], synonyms={"black": ["matte black"]})
+
+    response = client.post(f"{_BASE}/zzt_finish/values", json={"value": "Matte Black"})
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["match"]["value"] == "black"
+    assert "acknowledge_field" not in body
+
+
+def test_a_near_duplicate_word_cannot_be_acknowledged_past_on_the_add_route(api):
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["brushed_brass"], source="user")
+
+    response = client.post(
+        f"{_BASE}/zzt_finish/values",
+        json={"value": "Brushed Brass", "acknowledge_similar": True},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_adding_a_word_the_key_already_holds_verbatim_is_a_no_op(api):
+    """A double click is not an error, and it must not store the word twice."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=[], user_values=["chrome"], source="user")
+
+    response = client.post(f"{_BASE}/zzt_finish/values", json={"value": "chrome"})
+    assert response.status_code == 200, response.text
+    assert response.json()["user_values"] == ["chrome"]
+
+
+def test_a_shipped_word_is_never_copied_into_the_staff_list(api):
+    """It ships; owning it twice would leave the seed repair re-asserting its half."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"], source="seed")
+
+    response = client.post(f"{_BASE}/zzt_finish/values", json={"value": "chrome"})
+    assert response.status_code == 200, response.text
+    assert response.json()["user_values"] == []
+
+
+def test_a_merchandiser_may_add_a_word_without_the_registry_edit_grant(api):
+    """Journey A step 3, on the route that now carries it."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"], source="user")
+
+    response = client.post(f"{_BASE}/zzt_finish/values", json={"value": "brushed_brass"})
+    assert response.status_code == 200, response.text
+    assert "brushed_brass" in response.json()["user_values"]
+
+
+def test_an_outsider_may_not_add_a_word(api):
+    db, _as = api
+    _as(_OUTSIDER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"], source="user")
+
+    assert (
+        client.post(f"{_BASE}/zzt_finish/values", json={"value": "brushed_brass"}).status_code
+        == 403
+    )
+
+
+def test_adding_a_word_to_an_unknown_key_is_a_404(api):
+    _db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+
+    response = client.post(f"{_BASE}/zzt_no_such_key/values", json={"value": "chrome"})
+    assert response.status_code == 404, response.text

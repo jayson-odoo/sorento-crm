@@ -45,6 +45,8 @@ export interface UseProductSpecTableResult {
   applicableKeys: SpecKeyDefinition[];
   /** Everything else it does not hold - the picker's "show everything". */
   otherKeys: SpecKeyDefinition[];
+  /** Already on the table. Not offerable, and not creatable under the same name. */
+  heldKeys: SpecKeyDefinition[];
   isLoading: boolean;
   error: string | null;
   refetch: () => void;
@@ -108,6 +110,10 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     () => allKeys.filter((key) => !key.applicable && !key.held).map(toDefinition),
     [allKeys],
   );
+  const heldKeys = useMemo(
+    () => allKeys.filter((key) => key.held).map(toDefinition),
+    [allKeys],
+  );
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: DETAIL_KEY(productId) });
@@ -138,15 +144,11 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
   });
 
   const addValueMutation = useMutation({
-    mutationFn: async ({ specKey, value }: { specKey: string; value: string }) => {
-      const existing = allKeys.find((key) => key.spec_key === specKey);
-      // The FULL user list, not just the new word: the API replaces `user_values`
-      // rather than appending, so sending one word would take every other away.
-      const current = (existing?.allowed_values ?? []).filter(
-        (candidate) => candidate !== value,
-      );
-      await addValueToSpecKey(specKey, [...current, value]);
-    },
+    // The word alone. The server appends it under a row lock, so a word somebody else
+    // added since this page loaded is still there afterwards - which sending a list
+    // rebuilt from `allKeys` could not promise.
+    mutationFn: ({ specKey, value }: { specKey: string; value: string }) =>
+      addValueToSpecKey(specKey, value),
     onSuccess: (_data, { specKey, value }) => {
       if (productCode) {
         queryClient.invalidateQueries({ queryKey: APPLICABLE_KEY(productCode) });
@@ -177,6 +179,7 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     registry,
     applicableKeys,
     otherKeys,
+    heldKeys,
     isLoading: detailQuery.isPending || (Boolean(productCode) && keysQuery.isPending),
     error: detailQuery.error
       ? (detailQuery.error as Error).message

@@ -210,7 +210,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   /** A key just picked from the dialog, so the table opens its editor on that row. */
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const spec = useProductSpecTable(productId);
-  const { detail, rows, registry, applicableKeys, otherKeys, isLoading, error } = spec;
+  const { detail, rows, registry, applicableKeys, otherKeys, heldKeys, isLoading, error } = spec;
 
   // The server is the guard; these only decide what to SHOW. A user without the grant
   // gets no affordance that would 403 at submit - the same rule the dialog's own
@@ -377,6 +377,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
         onOpenChange={setAdding}
         applicableKeys={applicableKeys}
         otherKeys={otherKeys}
+        heldKeys={heldKeys}
         canCreateKey={canCreateKey}
         // Picking a key opens its editor on the row rather than writing a blank value:
         // an empty value is not a value, and the API refuses one for the same reason -

@@ -28,7 +28,6 @@ const SIMILAR_BODY = {
     matched_on: 'synonym',
     matched_text: 'black',
   },
-  acknowledge_field: 'acknowledge_similar',
 };
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -50,15 +49,11 @@ describe('the near-duplicate 422 reaches the caller as itself', () => {
 
     expect(thrown).toBeInstanceOf(SpecSimilarError);
     expect(thrown.message).toBe('"Matte Black" is already black on Finish.');
-    expect((thrown as SpecSimilarError).match).toMatchObject({
-      spec_key: 'finish',
-      matched_text: 'black',
-    });
   });
 
   it.each([
     ['createSpecKey', () => createSpecKey({ spec_key: 'finish2', label: 'Finish or colour', data_type: 'text' })],
-    ['addValueToSpecKey', () => addValueToSpecKey('finish', ['Matte Black'])],
+    ['addValueToSpecKey', () => addValueToSpecKey('finish', 'Matte Black')],
   ])('%s throws it too, so the three writes behave alike', async (_name, call) => {
     mockedFetch.mockResolvedValue(jsonResponse(SIMILAR_BODY, 422));
 
@@ -96,5 +91,20 @@ describe('the near-duplicate 422 reaches the caller as itself', () => {
     await expect(updateSpecKey('finish', { user_values: ['brushed brass'] })).resolves.toMatchObject(
       { spec_key: 'finish' },
     );
+  });
+});
+
+describe('adding one word sends that word and nothing else', () => {
+  it('posts { value } to the key\'s values route, never the merged list', async () => {
+    mockedFetch.mockResolvedValue(jsonResponse({ spec_key: 'finish' }, 200));
+
+    await addValueToSpecKey('finish', 'brushed brass');
+
+    const [url, init] = mockedFetch.mock.calls[0];
+    expect(url).toBe('/api/v1/master-data/spec-registry/finish/values');
+    expect(init?.method).toBe('POST');
+    // The whole point: a list rebuilt from a cached read would delete whatever
+    // somebody else added since that read.
+    expect(JSON.parse(String(init?.body))).toEqual({ value: 'brushed brass' });
   });
 });

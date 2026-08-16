@@ -24,6 +24,7 @@ vi.mock('../../product-specifications/services/productSpecService', () => ({
 }));
 
 import {
+  addValueToSpecKey,
   getApplicableSpecKeys,
   getProductSpecDetail,
 } from '../../product-specifications/services/productSpecService';
@@ -31,6 +32,7 @@ import { useProductSpecTable } from './useProductSpecTable';
 
 const mockDetail = getProductSpecDetail as unknown as ReturnType<typeof vi.fn>;
 const mockKeys = getApplicableSpecKeys as unknown as ReturnType<typeof vi.fn>;
+const mockAddValue = addValueToSpecKey as unknown as ReturnType<typeof vi.fn>;
 
 const DETAIL = {
   product_id: 'p-1',
@@ -66,5 +68,37 @@ describe('useProductSpecTable error state', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.error).toBeNull();
+  });
+});
+
+describe('useProductSpecTable addValue', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('sends the new word alone, not the vocabulary its own snapshot knows', async () => {
+    mockDetail.mockResolvedValue(DETAIL);
+    mockKeys.mockResolvedValue({
+      keys: [
+        {
+          spec_key: 'finish',
+          label: 'Finish',
+          data_type: 'enum',
+          unit: null,
+          // The snapshot this page loaded with. Rebuilding the payload from it is
+          // what deleted a word somebody else added in the meantime.
+          allowed_values: ['chrome'],
+          synonyms: {},
+          applicable: true,
+          held: false,
+        },
+      ],
+    });
+    mockAddValue.mockResolvedValue({ spec_key: 'finish' });
+
+    const { result } = renderHook(() => useProductSpecTable('p-1'), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await result.current.addValue('finish', 'brushed brass');
+
+    expect(mockAddValue).toHaveBeenCalledWith('finish', 'brushed brass');
   });
 });

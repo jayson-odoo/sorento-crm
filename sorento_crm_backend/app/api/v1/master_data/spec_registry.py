@@ -216,9 +216,6 @@ class SpecKeyUpdate(BaseModel):
     # Calibration rather than vocabulary - "bowl count is not only for kitchen sinks"
     # is a merchandising call - so it is editable and no longer seed-repaired.
     applies_when: Optional[dict[str, list[str]]] = None
-    # "Yes, I know it looks like an existing word - add it anyway." Not a field on the
-    # row: it only ever answers the near-duplicate refusal below (D11).
-    acknowledge_similar: bool = False
 
 
 class SpecKeyCreate(BaseModel):
@@ -233,8 +230,6 @@ class SpecKeyCreate(BaseModel):
     applies_when: dict[str, list[str]] = Field(default_factory=dict)
     rank_weight: float = Field(default=1.0, ge=0, le=100)
     is_active: bool = True
-    # See SpecKeyUpdate: the answer to the near-duplicate refusal, never stored.
-    acknowledge_similar: bool = False
 
 
 def _reject(message: str, code: str):
@@ -250,17 +245,12 @@ def _similar_refusal(message: str, match: dict) -> JSONResponse:
     is already Finish or colour, use it instead" - and an envelope carrying only a
     string cannot say WHICH key. Mirrors the prompt-registry save-validation shape,
     which returns its `unknown_tokens` the same way and for the same reason.
+
+    There is no way past it. A near-duplicate is refused, full stop: the collision is
+    two names for one thing, and a registry holding both answers half of every customer
+    question each, with nothing on any screen saying why.
     """
-    return JSONResponse(
-        status_code=422,
-        content={
-            "error": message,
-            "match": match,
-            # The field to resend `true` in. Named rather than documented elsewhere,
-            # so a client reading only this response knows the way through.
-            "acknowledge_field": "acknowledge_similar",
-        },
-    )
+    return JSONResponse(status_code=422, content={"error": message, "match": match})
 
 
 def _validate_reachable(data_type: str, allowed_values, synonyms) -> None:
@@ -738,14 +728,13 @@ async def create_spec_key(
         # happens - and a registry holding both answers half of every customer
         # question each, with nothing on any screen saying why. Enforced here rather
         # than only in the dialog, because the dialog is one client (D11).
-        if not payload.acknowledge_similar:
-            match = find_similar_key(db, payload.label)
-            if match is None:
-                match = find_similar_key(db, payload.spec_key)
-            if match:
-                return _similar_refusal(
-                    f"\"{payload.label}\" already exists as {match['label']}.", match
-                )
+        match = find_similar_key(db, payload.label)
+        if match is None:
+            match = find_similar_key(db, payload.spec_key)
+        if match:
+            return _similar_refusal(
+                f"\"{payload.label}\" already exists as {match['label']}.", match
+            )
 
         _validate_reachable(payload.data_type, payload.allowed_values, payload.user_synonyms)
 
@@ -779,7 +768,7 @@ async def create_spec_key(
 # from the product page while correcting a spec. Retuning `rank_weight` or rewriting the
 # derivation rules is calibration against an eval baseline, and it is not. One route
 # serves both, so the grant has to turn on the FIELDS in the payload.
-_VOCABULARY_ONLY_FIELDS = {"user_values", "acknowledge_similar"}
+_VOCABULARY_ONLY_FIELDS = {"user_values"}
 
 
 @router.patch("/{spec_key}")
@@ -820,7 +809,7 @@ async def update_spec_key(
                     detail="Permission required: master_data.spec_registry.edit",
                 )
 
-        if "user_values" in fields and not fields.get("acknowledge_similar"):
+        if "user_values" in fields:
             # Server-side, mirroring the key guard (D11). The dialog runs the same
             # comparison against data it already holds so the common case never round
             # trips, but the dialog is a courtesy and this is the guard. PATCH replaces
@@ -941,6 +930,88 @@ async def update_spec_key(
                 if not words.get(value) and not (row.synonyms or {}).get(value):
                     words[value] = [str(value).replace("_", " ")]
             row.user_synonyms = words
+
+        _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
+
+        db.commit()
+        db.refresh(row)
+        return _serialise(row)
+    except Exception as e:
+        if type(e).__name__ in {"AppException", "HTTPException"}:
+            raise
+        raise handle_internal_error(str(e))
+
+
+class SpecValueAdd(BaseModel):
+    """One word, and nothing else. The list is the server's to hold."""
+
+    value: str = Field(min_length=1, max_length=150)
+
+
+@router.post("/{spec_key}/values")
+async def add_spec_value(
+    spec_key: str,
+    payload: SpecValueAdd = Body(...),
+    # The same either-grant the vocabulary-only PATCH field takes: adding a word from
+    # the product page is a merchandiser's job (Journey A step 3).
+    current_user: dict = Depends(
+        require_any_permission_with_api_key(
+            ["master_data.spec_registry.edit", "master_data.products.edit"]
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    """Append ONE word to a key's vocabulary, without the caller holding the list.
+
+    The PATCH above replaces `user_values`, which is right for the registry editor -
+    it shows the whole list and submits the whole list. It is wrong for a merchandiser
+    adding one word from a product page: that client rebuilds the list from a response
+    it fetched some time ago, so a word another person added in between is absent from
+    the payload and is deleted by a request that was only ever meant to add.
+
+    So the word arrives alone and the row is re-read under `FOR UPDATE`: two people
+    adding at once serialise instead of overwriting each other, and the near-duplicate
+    guard runs against the vocabulary as it is NOW rather than as the caller last saw
+    it. There is no acknowledgement bypass - a collision is refused, full stop.
+    """
+    try:
+        row = (
+            db.query(ProductSpecRegistry)
+            .filter_by(spec_key=spec_key)
+            .with_for_update()
+            .first()
+        )
+        if row is None:
+            raise handle_not_found("Spec key", spec_key)
+
+        proposed = payload.value.strip()
+        if not proposed:
+            raise _reject("A value needs a word.", "spec_registry_empty_value")
+
+        # Already there verbatim: the word IS in the vocabulary, which is what the
+        # caller asked for. Refusing it as a duplicate of itself would turn a double
+        # click into an error.
+        if proposed in {str(v) for v in merged_allowed_values(row)}:
+            return _serialise(row)
+
+        match = find_similar_value(row, proposed)
+        if match:
+            return _similar_refusal(
+                f"\"{proposed}\" is already {match['value']} on {row.label}.", match
+            )
+
+        # A shipped value stays shipped. Copying one into `user_values` would leave the
+        # same word owned twice, and the seed repair would keep re-asserting its half.
+        if proposed not in {str(v) for v in (row.allowed_values or [])}:
+            row.user_values = [*(row.user_values or []), proposed]
+
+        # A value nobody can say is unsearchable, and a new one has no words yet. Give
+        # it its own name, readably - what the person adding "free_standing" meant.
+        if not (row.user_synonyms or {}).get(proposed) and not (row.synonyms or {}).get(proposed):
+            row.user_synonyms = {
+                **(row.user_synonyms or {}),
+                proposed: [proposed.replace("_", " ")],
+            }
 
         _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
 
