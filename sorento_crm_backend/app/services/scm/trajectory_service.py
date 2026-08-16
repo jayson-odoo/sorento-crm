@@ -125,7 +125,7 @@ _CUSTOMER_ORDERS_SQL = """
     FROM sales_order_lines sol
     JOIN sales_orders so ON so.id = sol.sales_order_id
     LEFT JOIN warehouses w ON w.id = sol.warehouse_id
-    WHERE sol.product_id::text = :product_id
+    WHERE sol.product_id = CAST(:product_id AS uuid)
       AND COALESCE(w.segment, 'project') = :segment
       AND so.order_date >= :since AND so.order_date < :until
       AND {customer}
@@ -240,8 +240,8 @@ _RUN_PLANNED_PAIR_SQL = """
     SELECT 1
     FROM scm.reorder_recommendation r
     LEFT JOIN warehouses w ON w.id = r.warehouse_id
-    WHERE r.run_id::text = :run_id
-      AND r.product_id::text = :product_id
+    WHERE r.run_id = CAST(:run_id AS uuid)
+      AND r.product_id = CAST(:product_id AS uuid)
       AND COALESCE(w.segment, 'project') = :segment
     LIMIT 1
 """
