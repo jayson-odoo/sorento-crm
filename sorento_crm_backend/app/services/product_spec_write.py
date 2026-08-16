@@ -353,8 +353,10 @@ def apply_spec_values(
     prepared = [_prepare(entry, actor) for entry in entries]
 
     # Imported at call time: derivation imports this module, and this is the one edge
-    # that would close the cycle.
+    # that would close the cycle. Verification imports the hash from here, so it is on
+    # the same footing.
     from app.services.product_spec_derivation import derive_for_code
+    from app.services.product_spec_verification import invalidate_on_values_change
 
     with company_scope(db, None):
         products = db.query(Product).filter(Product.product_code == product_code).all()
@@ -397,6 +399,12 @@ def apply_spec_values(
         )
 
         rows_written = 0
+        # Every copy of a code holds the same values, so one before/after pair speaks
+        # for all of them. Captured around the write rather than re-read afterwards:
+        # `write_spec_row` replaces the column, and a verification stamp has to be
+        # withdrawn against what it was actually made against.
+        before_values: dict | None = None
+        after_values: dict | None = None
         for product in products:
             spec = existing.get(product.id)
             if spec is None:
@@ -404,9 +412,12 @@ def apply_spec_values(
                 db.add(spec)
 
             values = dict(spec.values or {})
+            if before_values is None:
+                before_values = dict(values)
             provenance = dict(spec.provenance or {})
             for entry in prepared:
                 _apply(values, provenance, entry)
+            after_values = values
 
             # `derived_hash=None` is required, not tidiness: derivation's
             # skip-if-unchanged path would otherwise suppress the conflict computation
@@ -421,6 +432,14 @@ def apply_spec_values(
             rows_written += 1
 
         db.flush()
+        # A stamp is made against a set of values, so a person changing one withdraws
+        # it - in the same transaction as the write, not on the next catalogue run.
+        invalidate_on_values_change(
+            db,
+            product_code,
+            before_values=before_values or {},
+            after_values=after_values or {},
+        )
         # In the caller's transaction, so a conflict surfaces in the same click.
         derive_for_code(db, product_code, commit=False)
 

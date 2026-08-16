@@ -1390,7 +1390,16 @@ def derive_for_code(
         exceptions.append(conflict)
 
     written = 0
+    # Every copy of a code is written the same values, so one before/after pair speaks
+    # for all of them. Read BEFORE `write_spec_row` replaces the column: a verification
+    # stamp has to be withdrawn against what it was actually made against. The
+    # skip-if-unchanged return above never reaches here, which is the point - a re-run
+    # that changes nothing must not withdraw anything (AC-D.3).
+    before_values: dict | None = None
+    after_values: dict | None = None
     for spec, values, provenance in merged:
+        if before_values is None:
+            before_values = dict(spec.values or {})
         write_spec_row(
             spec,
             values=values,
@@ -1398,6 +1407,7 @@ def derive_for_code(
             has_exceptions=bool(exceptions),
             derived_hash=fingerprint,
         )
+        after_values = values
         written += 1
 
     # Rebuild this code's open exceptions rather than appending, so a fixed input
@@ -1417,6 +1427,17 @@ def derive_for_code(
                 stored=flagged["stored"],
             )
         )
+
+    # Imported at call time: this module is imported by the write service, and this is
+    # the edge that would close the cycle.
+    from app.services.product_spec_verification import invalidate_on_values_change
+
+    invalidate_on_values_change(
+        db,
+        product_code,
+        before_values=before_values or {},
+        after_values=after_values or {},
+    )
 
     db.flush()
     if commit:
