@@ -793,3 +793,92 @@ describe('MyPendingSLAWidget recently-resolved affordance (AC-M2)', () => {
     );
   });
 });
+
+// ---- Deadline urgency + extended marker (feedback 2026-08-16, item 6) ----
+// The scenario: marketing extends a deadline while waiting on a supplier, then
+// forgets. Nothing on the row used to distinguish "due in a week" from "due in
+// ten minutes" until it was already red, and nothing said the deadline had been
+// moved at all.
+describe('MyPendingSLAWidget deadline urgency', () => {
+  beforeEach(() => {
+    getMyPendingSLA.mockReset();
+    getTeamPendingSLA.mockReset();
+    getVisibleUsers.mockReset();
+    getTakeoverState.mockReset();
+    push.mockReset();
+    replace.mockReset();
+    searchParam = null;
+    extraParams = {};
+    deniedSlugs = new Set();
+    getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
+    getVisibleUsers.mockResolvedValue([]);
+    getTakeoverState.mockResolvedValue({});
+  });
+
+  const dueIn = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+
+  it('a deadline days away reads neutral', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      { ...formItem, due_at: dueIn(3 * 24 * 60), active_due_at: dueIn(3 * 24 * 60) },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Purchase request');
+    const label = screen.getByText(/Respond by:/i);
+    expect(label.className).toMatch(/text-muted-foreground/);
+  });
+
+  it('a deadline inside four hours reads amber, before it has breached', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      { ...formItem, due_at: dueIn(45), active_due_at: dueIn(45) },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Purchase request');
+    expect(screen.getByText(/Respond by:/i).className).toMatch(/amber/);
+  });
+
+  it('a passed deadline reads red', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      { ...formItem, due_at: dueIn(-10), active_due_at: dueIn(-10) },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Purchase request');
+    expect(screen.getByText(/Respond by:/i).className).toMatch(/text-destructive/);
+  });
+
+  it('an extended row is marked, and the marker carries the new due date', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      {
+        ...formItem,
+        is_responded: true,
+        due_kind: 'resolve',
+        due_at_resolution: dueIn(5 * 24 * 60),
+        active_due_at: dueIn(5 * 24 * 60),
+        extension_count: 1,
+      },
+    ]);
+    renderWidget();
+
+    const marker = await screen.findByTestId('row-extended-marker');
+    expect(marker).toHaveTextContent('Extended');
+    expect(marker.getAttribute('title')).toMatch(/^Deadline extended to /);
+  });
+
+  it('a never-extended row carries no marker', async () => {
+    getMyPendingSLA.mockResolvedValue([formItem]);
+    renderWidget();
+
+    await screen.findByText('Purchase request');
+    expect(screen.queryByTestId('row-extended-marker')).not.toBeInTheDocument();
+  });
+
+  it('an extended intervention ticket shows the marker on its chips', async () => {
+    getMyPendingSLA.mockResolvedValue([{ ...ticketOne, extension_count: 2 }]);
+    renderWidget();
+
+    const chip = await screen.findByTestId('sla-extended-chip');
+    expect(chip).toHaveTextContent('Extended ×2');
+  });
+});

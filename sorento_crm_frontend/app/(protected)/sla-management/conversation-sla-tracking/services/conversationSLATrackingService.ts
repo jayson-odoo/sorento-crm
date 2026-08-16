@@ -167,6 +167,10 @@ export interface MyPendingSLAItem {
   responded_at?: string | null;
   is_responded: boolean;
   current_tier: number;
+  /** How many times the resolution deadline has been extended (0 = never).
+   *  Drives the row's "Extended" marker: a deadline somebody pushed out is one
+   *  somebody is waiting on, and it must not read like an ordinary due date. */
+  extension_count?: number;
   policy_name: string | null;
   /** Pending takeover on this row, if any (inline "being taken over" indicator). */
   takeover?: TakeoverInfo | null;
@@ -453,6 +457,8 @@ export interface TeamPendingItem {
   responded_at?: string | null;
   is_responded: boolean;
   current_tier: number;
+  /** Times the resolution deadline has been extended (see MyPendingSLAItem). */
+  extension_count?: number;
   policy_name: string | null;
   next_action: string | null;
   /** Pending takeover on this row (running bar / observer-locked state). */

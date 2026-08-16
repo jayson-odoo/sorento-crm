@@ -140,6 +140,27 @@ def test_ticket_row_carries_every_new_field(db):
     assert row["is_form_sla"] is False
 
 
+def test_extension_count_reaches_the_worklist_row(db):
+    """Feedback 2026-08-16 (item 6b): the widget marks a row whose resolution
+    deadline was pushed out, so the counter the extend service already keeps has
+    to be on the row. Zero on a fresh ticket, never absent."""
+    seed = _seed(db)
+    service = ConversationSLATrackingService(db)
+
+    tracking = service.create_tracking(
+        _ticket_payload(seed, source_message_id="wamid.msg-ext", source_message_text="Waiting")
+    )
+
+    rows = service.list_my_pending(seed["assignee_id"])
+    assert _row_by_id(rows, str(tracking.id))["extension_count"] == 0
+
+    tracking.extension_count = 2
+    db.commit()
+
+    rows = service.list_my_pending(seed["assignee_id"])
+    assert _row_by_id(rows, str(tracking.id))["extension_count"] == 2
+
+
 def test_two_tickets_for_one_contact_both_appear_no_dedup(db):
     seed = _seed(db)
     service = ConversationSLATrackingService(db)

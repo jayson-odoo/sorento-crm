@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import {
   AlertCircle,
   Ban,
+  CalendarPlus,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -69,7 +70,7 @@ import { TakeoverCountdown } from './TakeoverCountdown';
 import ExtendDueButton from './ExtendDueButton';
 import { myResolvedHistoryHref } from '../lib/historyLinks';
 import InterventionTicketDrawer from './InterventionTicketDrawer';
-import TicketSlaChips from './TicketSlaChips';
+import TicketSlaChips, { AT_RISK_MS } from './TicketSlaChips';
 import { CoverageManager } from '@/app/(protected)/account/notifications/components';
 
 // Same inbox base used by the SLA detail page; conversation rows deep-link here
@@ -130,13 +131,31 @@ function respondId(item: AnyTask): string | null {
   return (item as MyPendingSLAItem).respond_io_id ?? null;
 }
 
-function dueLabel(due: string | null): { text: string; overdue: boolean } {
-  if (!due) return { text: 'No due date', overdue: false };
+function dueLabel(due: string | null): {
+  text: string;
+  overdue: boolean;
+  /** Same three-step urgency the ticket chips use, on the same threshold. */
+  urgency: 'none' | 'normal' | 'soon' | 'overdue';
+} {
+  if (!due) return { text: 'No due date', overdue: false, urgency: 'none' };
   // Backend emits naive-UTC deadlines; parse as UTC and render in Malaysia wall-clock.
-  const d = parseDateTimeAsUTC(due);
-  const overdue = d.getTime() < Date.now();
-  return { text: formatDateTimeInMalaysia(due), overdue };
+  const msLeft = parseDateTimeAsUTC(due).getTime() - Date.now();
+  return {
+    text: formatDateTimeInMalaysia(due),
+    overdue: msLeft < 0,
+    urgency: msLeft < 0 ? 'overdue' : msLeft < AT_RISK_MS ? 'soon' : 'normal',
+  };
 }
+
+/** Text colour for a row's deadline. Red is already the overdue signal; amber
+ *  is the one that was missing, and it is the whole point of item (a): an
+ *  extended deadline must start warning before the day it breaches. */
+const DUE_URGENCY_CLASS: Record<'none' | 'normal' | 'soon' | 'overdue', string> = {
+  none: 'text-muted-foreground',
+  normal: 'text-muted-foreground',
+  soon: 'font-medium text-amber-700 dark:text-amber-400',
+  overdue: 'font-medium text-destructive',
+};
 
 /** Free-text haystack for the search box: entity number (reference) for form rows,
  * contact name (reference) for conversation rows, plus type + assignee/team. */
@@ -500,6 +519,8 @@ export default function MyPendingSLAWidget() {
         : `Tier ${item.current_tier} · ${form ? mineItem.next_action ?? 'Action required' : 'Reply'}`;
     const atMaxTier = item.current_tier >= MAX_TIER;
     const highlighted = !!highlightId && item.id === highlightId;
+    // A row whose resolution deadline was pushed out says so, on both tabs.
+    const extensionCount = item.extension_count ?? 0;
 
     return (
       <li
@@ -547,13 +568,25 @@ export default function MyPendingSLAWidget() {
                   respondedAt={ticket.responded_at}
                   currentTier={ticket.current_tier}
                   escalatedAt={ticket.escalated_at}
+                  extensionCount={ticket.extension_count}
                 />
               )}
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
+              {!ticket && (extensionCount ?? 0) > 0 && (
+                <span
+                  data-testid="row-extended-marker"
+                  className="inline-flex items-center gap-1 rounded-full border border-sky-400/50 bg-sky-50 px-2 py-0.5 text-[11px] leading-4 text-sky-700 dark:bg-sky-950/30 dark:text-sky-400"
+                  title={`Deadline extended to ${due.text}`}
+                >
+                  <CalendarPlus className="size-3" />
+                  Extended
+                  {extensionCount > 1 ? ` ×${extensionCount}` : ''}
+                </span>
+              )}
               {!ticket && (
                 <span
-                  className={`text-xs ${due.overdue ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
+                  className={`text-xs ${DUE_URGENCY_CLASS[due.urgency]}`}
                   title={due.text}
                 >
                   {primaryLabel}: {due.text}

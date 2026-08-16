@@ -1303,6 +1303,11 @@ class ConversationSLATrackingService:
                 "due_kind": "resolve" if bool(r.is_responded) else "respond",
                 "is_responded": bool(r.is_responded),
                 "current_tier": r.current_tier,
+                # How many times the resolution deadline has been moved. The
+                # widget marks an extended row so a deadline somebody pushed out
+                # (and then forgot for a week) is visible before it breaches -
+                # the counter is already maintained by the extend service.
+                "extension_count": int(getattr(r, "extension_count", 0) or 0),
                 "policy_name": r.policy.name if r.policy else None,
                 # SLA-config-driven next action for form rows (e.g. "Send for
                 # approval", "Approve", "Mark resolved"); None for conversation rows.
@@ -1618,6 +1623,8 @@ class ConversationSLATrackingService:
                     "due_kind": "resolve" if bool(r.is_responded) else "respond",
                     "is_responded": bool(r.is_responded),
                     "current_tier": r.current_tier,
+                    # Same "someone moved this deadline" marker My Pending shows.
+                    "extension_count": int(getattr(r, "extension_count", 0) or 0),
                     "policy_name": r.policy.name if r.policy else None,
                     "next_action": action_by_row.get(str(r.id)),
                 }
@@ -6255,6 +6262,9 @@ class ConversationSLATrackingService:
             "responded_at": (
                 tracking.responded_at.isoformat() if tracking.responded_at else None
             ),
+            # Same counter the worklist row reads: the drawer's chips mark an
+            # extended deadline too, so extending from the drawer shows there.
+            "extension_count": int(getattr(tracking, "extension_count", 0) or 0),
             "is_resolved": is_resolved,
             "resolved_at": (
                 tracking.resolved_at.isoformat() if tracking.resolved_at else None

@@ -1,13 +1,21 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Clock, TrendingUp } from 'lucide-react';
+import { AlertTriangle, CalendarPlus, CheckCircle2, Clock, TrendingUp } from 'lucide-react';
 
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 
 const TICK_MS = 30_000;
-/** Under this much time left a countdown reads as at-risk (amber). */
-const AT_RISK_MS = 15 * 60_000;
+/**
+ * Under this much time left a countdown reads as at-risk (amber).
+ *
+ * Four hours, about half a working day: the question the colour answers is
+ * "can I still deal with this today", and the old 15 minutes answered "is it
+ * about to breach", which is too late to be a warning. It matters most on an
+ * EXTENDED deadline - a week of green followed by red on the day is exactly
+ * the case the extension was supposed to make visible.
+ */
+export const AT_RISK_MS = 4 * 60 * 60_000;
 
 interface TicketSlaChipsProps {
   dueAt: string | null;
@@ -17,6 +25,12 @@ interface TicketSlaChipsProps {
   currentTier: number;
   /** Stamped only by a real escalation - a high tier alone is not escalated. */
   escalatedAt?: string | null;
+  /**
+   * How many times the resolution deadline has been extended
+   * (`conversation_sla_tracking.extension_count`). Above zero the row says so,
+   * because a deadline someone moved is one someone is waiting on.
+   */
+  extensionCount?: number | null;
   className?: string;
 }
 
@@ -54,6 +68,7 @@ export default function TicketSlaChips({
   respondedAt,
   currentTier,
   escalatedAt,
+  extensionCount = 0,
   className = '',
 }: TicketSlaChipsProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -102,6 +117,22 @@ export default function TicketSlaChips({
       </span>
 
       <span className={`${base} border-border text-muted-foreground`}>Tier {currentTier}</span>
+
+      {(extensionCount ?? 0) > 0 && (
+        <span
+          data-testid="sla-extended-chip"
+          className={`${base} border-sky-400/50 bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-400`}
+          title={
+            dueAtResolution
+              ? `Deadline extended to ${formatDateTimeInMalaysia(dueAtResolution)}`
+              : 'Deadline extended'
+          }
+        >
+          <CalendarPlus className="size-3" />
+          Extended
+          {(extensionCount ?? 0) > 1 ? ` ×${extensionCount}` : ''}
+        </span>
+      )}
 
       {escalatedAt && (
         <span

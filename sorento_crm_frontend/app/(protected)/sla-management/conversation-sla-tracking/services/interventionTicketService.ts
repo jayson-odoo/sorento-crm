@@ -200,6 +200,8 @@ export interface InterventionTicketDetail {
   responded_at: string | null;
   is_resolved: boolean;
   resolved_at: string | null;
+  /** Times the resolution deadline has been extended (0 = never). */
+  extension_count?: number;
   /** Viewer-relative gates, server-computed (assignee / RBAC). */
   can_send: boolean;
   can_resolve: boolean;

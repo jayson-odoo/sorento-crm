@@ -149,6 +149,23 @@ def test_detail_carries_the_enquiry_header_fields(db):
     assert detail["can_resolve"] is True
     assert detail["send_capabilities"] == ["text", "attachment"]
     assert detail["window"] == {"open": False, "expires_at": None}
+    # Feedback 2026-08-16 (item 6): the drawer chips mark an extended deadline,
+    # so the counter has to reach the wire - a fresh ticket has never been moved.
+    assert detail["extension_count"] == 0
+
+
+def test_detail_reports_how_many_times_the_deadline_was_extended(db):
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    tracking.extension_count = 2
+    db.commit()
+    service = ConversationSLATrackingService(db)
+
+    detail = service.get_ticket_detail(
+        str(tracking.id), viewer_user_id=seed["assignee_id"], sender_name="Agent One"
+    )
+
+    assert detail["extension_count"] == 2
 
 
 def test_resolved_ticket_cannot_send_or_resolve_again(db):
