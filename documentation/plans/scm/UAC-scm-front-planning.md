@@ -21,13 +21,13 @@ formulas have the meanings defined in the linked plan.
 5. **J05 - Confirm once.** CS confirms the entire balanced Project SO in one atomic action.
 6. **J06 - Hand off Buy.** Purchasing receives only the confirmed, unplaced Buy residual in Order
    Inquiry and can trace it to the decision.
-7. **J07 - Plan by product and channel.** The buyer works up to two rows per product. Retail sums
-   retail-class need across locations and Project sums project-class need across locations, with
-   supplier constraints applied once to each actionable product-channel row.
+7. **J07 - Plan by product and channel.** The buyer works one row per product, with stacked
+   Project, Retail, and unclassified readings, expandable channel ledgers, and supplier constraints
+   applied once to the actionable product total.
 8. **J08 - Drill by location.** The buyer switches to Location grain to inspect or work the same
    frozen product-location facts with the demand-channel split visible; the run keeps only one
    actionable grain.
-9. **J09 - Key and follow through.** The chosen product-channel quantity is split through the
+9. **J09 - Key and follow through.** The chosen product quantity is split through the
    existing recommendation allocation, keyed once, and carried through placement and receipt.
 
 The successful journey ends with balanced SO lines, Buy-only Order Inquiry demand, reproducible
@@ -246,26 +246,28 @@ without displaying a UUID.
 
 ## Group E: Deterministic channels and Product grain
 
-### AC-E01 [BE][J07] Channel derives from the SO market segment
+### AC-E01 [BE][J07] Channel uses the existing classification precedence
 
-Given an SO market segment, when the order is imported or a Project SO is published, then
-any normalized stated value containing `project`, `projects`, or `contract` maps to persisted
-`sales_orders.demand_class = project`, every other stated value maps to `retail`, and no AI,
-salesperson, warehouse, or free-text inference participates.
+Given an SO is imported or a Project SO is published, when `_classify_demand` stamps its persisted
+`sales_orders.demand_class`, then it checks stored `order_type`, stated `order_type`, customer market
+segment, and sales-agent demand class in that order. Any textual source containing `project`,
+`projects`, or `contract` maps to `project`, including `subcontractor`; every other stated textual
+value maps to `retail`, and no AI or warehouse inference participates.
 
 ### AC-E02 [BE][J07] Location never classifies demand
 
 Given a Project-class SO line fulfilled from BRW or a Retail-class line fulfilled from any other
 location, when planning runs, then the persisted demand class remains authoritative and the line is
-included in that channel at its actual location; an absent market segment is a data-quality
-exception rather than a third demand class.
+included in that channel at its actual location. A market segment may be absent when another
+precedence source supplies the class; only a missing persisted demand class is a classification
+exception. It remains visible as unclassified demand rather than becoming a third demand class.
 
-### AC-E03 [FE][J07] Product grain is Product x Channel
+### AC-E03 [FE][J07] Product grain has one row per product
 
 Given a frozen SCM run containing multiple locations and channels for one product, when **Plan
-grain: Product** is selected, then the product has at most two actionable rows: Retail aggregates
-all Retail-class location need and Project aggregates all Project-class location need; exceptions
-are shown separately and never form a third channel row.
+grain: Product** is selected, then the product has exactly one row. Its SO and Suggested columns
+show stacked Project, Retail, and unclassified readings, and its expandable ledgers preserve each
+channel's evidence without making channel part of row identity.
 
 ### AC-E04 [BE][J07] Project demand is confirmed unplaced Buy
 
@@ -282,16 +284,18 @@ suppressed by the Retail reorder level.
 
 ### AC-E06 [BE][J07] Supplier constraints are applied once
 
-Given frozen location need rows for one product and channel, when its suggested quantity is
-calculated, then channel need is summed across locations first and MOQ and order multiple are
-applied once to that product-channel row. Shared stock, SPO, PO, and reorder facts are not summed
-again across channels.
+Given frozen location need for one product, when its suggested quantity is calculated, then firm
+Project Buy and normally netted Retail replenishment are summed across locations first, and MOQ and
+order multiple are applied once to that product total. Unclassified demand remains visible but
+cannot enter the actionable suggestion until classified. Shared stock, SPO, PO, and reorder facts
+are counted once.
 
 ### AC-E07 [FE][J07] Product evidence is drillable
 
 Given a product row, when Project or Retail is expanded, then the buyer can trace Project to SO
 lines and decision/inquiry revisions and Retail to location stock, velocity, incoming, reorder,
-and allocation evidence.
+and allocation evidence. Unclassified demand expands to the affected SO lines and the missing-class
+exception.
 
 ## Group F: Dual plan grains and allocation
 
@@ -304,9 +308,9 @@ hide, or mutate the other vocabulary.
 ### AC-F02 [E2E][J08] Location grain remains selectable
 
 Given a frozen run with `decision_grain = location`, when **Plan grain: Location** is selected,
-then the same product-location facts show separate Project and Retail need beside shared stock,
-SPO, PO, reorder, decisions, overrides, net positions, and allocation evidence; Product grain has
-not retired or replaced Location grain.
+then the same product-location facts show separate Project, Retail, and unclassified demand beside
+shared stock, SPO, PO, reorder, decisions, overrides, net positions, and allocation evidence;
+Product grain has not retired or replaced Location grain.
 
 ### AC-F03 [BE][J07][J08] Both grains share one frozen input set
 
@@ -334,42 +338,47 @@ Given absent or NULL location levels, when either grain renders, then no inferre
 ### AC-F07 [BE][J07][J08] Frozen location facts retain channel
 
 Given demand and supply at one product and location, when the run freezes its read-model facts, then
-Project and Retail need are separate by persisted demand class while stock, SPO incoming, PO supply,
-and reorder level remain one shared location fact; Project need is confirmed unplaced Buy and Retail
-need uses normal netting after confirmed Project Reserve and Borrow claims are removed.
+one aggregate product-location row has separate Project, Retail, and unclassified demand columns,
+while stock, SPO incoming, PO supply, and reorder level remain single shared values. Project need is
+confirmed unplaced Buy and Retail need uses normal netting after confirmed Project Reserve and
+Borrow claims are removed. Existing `scm.committed_v` and `scm.net_position_v` cardinality and join
+keys remain unchanged.
 
-### AC-F08 [FE][J08] Location drill explains the product-channel row
+### AC-F08 [FE][J08] Location drill explains the Product row
 
-Given either plan grain, when a buyer opens a product-channel row, then the UI shows its member
-locations, channel need, shared supply evidence without duplication, the once-rounded suggested
-quantity, the chosen quantity, and the chosen quantity's split back to locations.
+Given either plan grain, when a buyer opens a Product row, then the UI shows its member locations,
+channel breakdown, shared supply evidence without duplication, the once-rounded suggested quantity,
+the chosen quantity, and the chosen quantity's split back to locations.
 
 ### AC-F09 [BE][J07][J08] Exactly one grain is actionable per run
 
 Given a new front-planning run has no saved decisions, when the buyer first saves in Product or
-Location grain, then that grain is locked as `decision_grain`; Product uses product-channel
-`order_summary_row` decisions, Location uses channel-aware recommendation decisions and overrides,
-and PO worklists ignore the other grain. Legacy runs accept no new decisions in either grain.
+Location grain, then that grain is locked as `decision_grain`; Product uses the single
+`order_summary_row` decision keyed by `(run_id, product_id)`, Location uses the existing
+recommendation decisions and overrides, and PO worklists ignore the other grain. Neither worklist
+nor response contracts add a channel key. Legacy runs accept no new decisions in either grain.
 
 ### AC-F10 [E2E][J07][J08] A decided run cannot change actionable grain
 
 Given the first Product or Location decision has been saved on a new run, when a buyer tries to
 make the other grain actionable for that frozen run, then the change is rejected and all existing
 decisions and overrides remain immutable; the buyer must create a new current run. Given a legacy
-run, when either grain is opened, then its all-channel history is read-only and unchanged.
+run, when either grain is opened, then its history is read-only and its unavailable channel
+breakdown is not inferred or backfilled.
 
-### AC-F11 [T][J07] Product-channel rounding is demonstrable
+### AC-F11 [T][J07] Product rounding is demonstrable
 
-Given two locations in one channel each contribute unrounded need 1 and the supplier
-multiple is 10, when Product grain is calculated, then the actionable product-channel row sums need
-to 2 and rounds once to suggested quantity 10; it does not round each location first.
+Given Project and Retail need across two locations contribute a total unrounded need of 2 and the
+supplier multiple is 10, when Product grain is calculated, then its single Product row rounds once
+to suggested quantity 10; it does not round each location or channel first.
 
 ### AC-F12 [BE][T][J07][J08][J09] The chosen split is durable and balanced
 
-Given a buyer saves a chosen quantity on a Product x Channel row, when its PO worklist split is
-persisted, then the existing allocator reruns deterministically with `chosen_qty` as its total and
-the frozen channel-aware location inputs, stores only the resulting location quantities, and those
-quantities sum exactly to `chosen_qty`; no rescaling formula is used.
+Given a buyer saves a decimal chosen quantity valid at the product UOM precision on a Product row,
+when its PO worklist split is persisted, then the generalized existing allocator reruns
+deterministically with the stored `chosen_qty`, frozen location inputs, and product UOM precision.
+It stores decimal location quantities rounded at that precision, those quantities sum exactly to
+the stored `chosen_qty`, and no rescaling formula is used.
 
 ## Group G: Audit, lifecycle, and usability
 
