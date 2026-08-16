@@ -383,10 +383,14 @@ class SpecExtractRequest(BaseModel):
 class SpecBatchEntry(BaseModel):
     """One accepted proposal, on its way to the write choke point."""
 
-    spec_key: str
+    # Bounded rather than free: a `spec_key` is a registry column and an `evidence`
+    # string is one sentence a value was read from. Neither is a place for a pasted
+    # document, and an unbounded string here would be written into `provenance` on
+    # every company copy of the code and rendered in a table cell for ever after.
+    spec_key: str = Field(max_length=100)
     value: Any
     unit: Optional[str] = None
-    evidence: str = ""
+    evidence: str = Field(default="", max_length=500)
 
 
 class SpecBatchRequest(BaseModel):
@@ -400,12 +404,16 @@ def extract_spec_proposals_from_text(
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Read pasted text and PROPOSE. Writes nothing, anywhere.
+    """Read pasted text and PROPOSE. Writes no specification data, anywhere.
 
     Not a shortcut for the batch write below: the whole point is that a machine reading
     of marketing copy is shown to a person beside what is already stored, and only what
     they tick is written. The pasted text lives in this request and in the component's
     own state, and is never persisted (AC-B.1).
+
+    The one row a call can write is the usage-log row the model call books against
+    itself, stamped with the caller so a reading made here is counted beside every
+    other model call. Telemetry about the call, never a claim about the product.
 
     Plain ``def``, so FastAPI runs it in a thread: the model round trip is blocking, and
     on the event loop it freezes the whole worker (same fix as the preview route).
@@ -430,7 +438,9 @@ def extract_spec_proposals_from_text(
         raise handle_not_found("Product", product_id)
 
     try:
-        return extract_spec_proposals(db, product, text)
+        return extract_spec_proposals(
+            db, product, text, user_id=(current_user or {}).get("id")
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -472,6 +482,16 @@ def set_spec_values_in_one_batch(
     # out-of-vocabulary value would be written as a word the ranker has never heard of.
     # Every entry is checked first, so one bad entry writes none of the batch.
     keys = [entry.spec_key.strip() for entry in payload.entries]
+    # One key twice in one batch is two different claims about the same thing, and the
+    # choke point would apply them in list order and keep the last silently - the user
+    # ticked two rows and one of them would vanish without a word. Refused whole.
+    duplicated = sorted({key for key in keys if keys.count(key) > 1})
+    if duplicated:
+        raise _spec_reject_unprocessable(
+            "The same specification appears more than once in this batch: "
+            + ", ".join(duplicated)
+            + ". Send one value per specification."
+        )
     known = {
         row.spec_key: row
         for row in db.query(ProductSpecRegistry)

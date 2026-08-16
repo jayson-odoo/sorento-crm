@@ -1,4 +1,8 @@
-"""Turn a pasted piece of text into PROPOSALS about one product. Writes nothing.
+"""Turn a pasted piece of text into PROPOSALS about one product. Writes no spec data.
+
+Nothing about the product is written here (AC-B.1). The one row that IS written, and
+only when a model answered, is the `AIAssistantUsageLog` the model call books against
+itself - telemetry about the call, not a claim about the product.
 
 Journey B: a merchandiser holds a flyer card or a supplier's paragraph, pastes it, and
 gets back a short list they can accept or reject. The list is short because anything the
@@ -49,8 +53,15 @@ from app.services.product_spec_write import AUTHORED_SOURCES, _canonical_entry
 MAX_TEXT_LENGTH = 8000
 
 
-def extract_spec_proposals(db: Session, product: Product, text: str) -> dict:
-    """`{product_code, engine, model, proposals, unchanged}` for one product."""
+def extract_spec_proposals(
+    db: Session, product: Product, text: str, *, user_id: str | None = None
+) -> dict:
+    """`{product_code, engine, model, proposals, unchanged}` for one product.
+
+    `user_id` is only ever the actor stamped on the model call's usage-log row, so a
+    reading made from the product page is counted beside every other model call. It
+    reaches nothing else, and no product data is written here (AC-B.1).
+    """
     described, index, open_values = _vocabulary(db)
     scopes_by_key = configured_scopes(db)
 
@@ -61,7 +72,7 @@ def extract_spec_proposals(db: Session, product: Product, text: str) -> dict:
         scopes_by_key=scopes_by_key,
     )
     extraction = extract_specs_from_text(
-        db, text, vocabulary=(described, index, open_values)
+        db, text, vocabulary=(described, index, open_values), user_id=user_id
     )
 
     # The rule pass first, so its evidence (the words it matched) wins where both
@@ -70,6 +81,11 @@ def extract_spec_proposals(db: Session, product: Product, text: str) -> dict:
     evidence: dict[str, str] = {}
     for hit in rule_hits:
         key = hit["spec_key"]
+        # A `code`-origin hit was read off the product's own code, not off the pasted
+        # text, and derivation already reads the code every run - proposing it here
+        # would present something the person never pasted as a reading of what they did.
+        if hit.get("origin") == "code":
+            continue
         if key in evidence:
             continue
         evidence[key] = hit.get("evidence") or ""

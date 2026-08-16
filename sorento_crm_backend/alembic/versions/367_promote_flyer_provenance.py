@@ -152,11 +152,17 @@ _DEMOTE = sa.text(
                    e.key,
                    CASE
                      WHEN e.value->>'migrated_from' = 'flyer'
-                     THEN jsonb_build_object(
-                            'source', 'flyer',
-                            'confidence', e.value->'confidence',
-                            'evidence',
-                            regexp_replace(coalesce(e.value->>'evidence', ''), '^flyer: ', '')
+                     -- `jsonb_strip_nulls` mirrors the upgrade: an entry that carried
+                     -- no `confidence` was promoted WITHOUT the key, and building it
+                     -- back unstripped would restore it as an explicit JSON null - a
+                     -- shape neither the promote nor derivation ever writes.
+                     THEN jsonb_strip_nulls(
+                            jsonb_build_object(
+                              'source', 'flyer',
+                              'confidence', e.value->'confidence',
+                              'evidence',
+                              regexp_replace(coalesce(e.value->>'evidence', ''), '^flyer: ', '')
+                            )
                           )
                      ELSE e.value
                    END
@@ -231,9 +237,13 @@ def downgrade() -> None:
     which is the state the promotion was completing anyway.
 
     The evidence prefix is stripped rather than assumed absent, so an entry that carried
-    no evidence at all comes back with an empty string instead of no key. That is the
-    single byte this downgrade cannot round-trip, and it is inert - nothing reads
-    evidence for anything but display.
+    no evidence at all comes back with an empty string instead of no key. Nor can it
+    restore a key the promote never carried forward: the upgrade rebuilds a flyer entry
+    from `source`, `confidence` and `evidence` alone, so anything else somebody had put
+    on one is dropped there and gone by the time this runs. Both are inert today - all
+    3,351 flyer entries carry exactly `confidence`, `evidence` and `source`, and nothing
+    reads evidence for anything but display - and both are stated rather than
+    discovered.
     """
     bind = op.get_bind()
 

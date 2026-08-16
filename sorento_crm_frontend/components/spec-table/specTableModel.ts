@@ -26,10 +26,10 @@ export interface StoredSpecProvenance {
   /**
    * Where an authored value came from before it was authored.
    *
-   * `flyer` on the 3,353 entries the promote migration re-stamped: the flyer stopped
-   * being something derivation reads, so its values became authored ones rather than
-   * disappearing on the next run (D2). Carried so a person can tell why a value they
-   * never typed says "Set by hand" (AC-B.15).
+   * `flyer` on the 3,351 (re-measured 2026-08-16) entries the promote migration
+   * re-stamped: the flyer stopped being something derivation reads, so its values
+   * became authored ones rather than disappearing on the next run (D2). Carried so a
+   * person can tell why a value they never typed says "Set by hand" (AC-B.15).
    */
   migrated_from?: string;
 }

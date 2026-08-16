@@ -10,4 +10,5 @@ export type {
   SpecProposalKind,
   SpecProposalReviewProps,
   SpecProposalScalar,
+  SpecProposalValue,
 } from './types';

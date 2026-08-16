@@ -594,10 +594,20 @@ inline permission `Depends(require_permission_with_api_key(...))`, hand-built di
   `kind` is computed server-side (AC-B.3): stored key absent -> `new`; stored equal after
   coercion (`_canonical_entry`) -> omitted, counted in `unchanged`; stored provenance authored
   (`AUTHORED_SOURCES`) or tombstoned (`absent: true`) -> `conflict`; stored non-authored and
-  different -> `change`, EXCEPT a key in `_DESCRIPTION_FIRST_KEYS` whose stored value came from the
-  description, which is `conflict` (this is the lifted "the description beats the flyer for
+  different -> `change`, EXCEPT a key in `_DESCRIPTION_FIRST_KEYS` that is stored non-authored,
+  which is `conflict` (membership in that set alone: provenance does not record which text a
+  stored value was read from) (this is the lifted "the description beats the flyer for
   sizes" rule, expressed as default-unticked rather than silently applied). One proposal per key;
   `finish` (the multi-value key) may propose a joined value exactly as derivation stores it.
+  **Amended at the second review (2026-08-17), two points.** (a) A rule hit whose `origin` is
+  `code` is DROPPED before validation: `propose_from_text` fires the code passes against the
+  product's own code regardless of what was pasted, derivation already reads the code every run,
+  and presenting it as a reading of the pasted text is not what "read this text" means. (b) The
+  usage-log sentence above is now a positive requirement rather than a tolerated side effect:
+  `extract_specs_from_text` writes exactly ONE `AIAssistantUsageLog` row on a semantic call,
+  `feature="spec_extract"`, stamped with the caller, the same try/commit/rollback-on-failure
+  escape hatch `understand_phrase` uses for `spec_search`, never raising. On the deterministic
+  path it writes nothing at all.
 - `POST /product-specifications/by-product/{product_id}/values/batch` - `master_data.products.edit`.
   Body `{"entries": [{"spec_key", "value", "unit"?, "evidence"}]}` (1..50 entries; empty is 422).
   ONE `apply_spec_values(db, code, entries, actor=...)` call with `op="set"`,
@@ -616,6 +626,12 @@ inline permission `Depends(require_permission_with_api_key(...))`, hand-built di
   value is accepted only for `MULTI_VALUE_KEYS` (`finish`), coerced element-wise and kept as a
   list, so accepting a two-tone proposal stores exactly what a re-derivation of the same words
   stores. Evidence collapses to `"read from text"` when the entry's own evidence is blank.
+  **Amended at the second review (2026-08-17).** Three more refusals, all 422 and all before
+  anything is written: a `spec_key` over 100 characters, an `evidence` over 500 (both Pydantic
+  bounds on `SpecBatchEntry` - a provenance entry is one sentence, not a place to park a pasted
+  document), and the same `spec_key` twice in ONE batch, named in the message. Two entries for
+  one key are two claims about one thing; the choke point would apply them in list order and keep
+  the last silently, so the user's other tick would vanish without a word.
 - `PUT .../flyer-text` and the four `/findability/*` routes are DELETED; the by-product response
   drops `flyer_text` (AC-B.14). `product_flyer_import.py` (zero callers) and
   `spec_findability.py` are deleted with `tests/test_spec_findability.py`. The findability
@@ -691,10 +707,19 @@ step 6 is a later deploy and is NOT executed here.
   **New** / **Changes X to Y** / **Conflicts with your value X**, evidence in a truncated cell with
   `title`. Owns no product identity and imports no service. The parent seeds the selection with
   every non-conflict key (AC-B.7). Fixtures in `components/spec-proposals/__mocks__/`.
+  **Amended at the second review (2026-08-17).** `SpecProposal['value']` (and `stored_value`)
+  accept `SpecProposalScalar | SpecProposalScalar[]`, because a multi-value key arrives as a
+  LIST from the route above, and `readableValue` reads an array element-wise and joins with
+  ", " - so a two-tone finish badges "Changes Chrome to Matte black, Rose gold" rather than
+  printing the array. The same widening reaches `SpecProposalEntry['value']` so the accepted
+  list passes through to `entries[].value` unchanged.
 - `SpecExtractPanel` in `products/[id]/components/` replaces `FlyerCard` at the same position on
   the Specifications tab: a `Textarea` and one button "Read specs from this" (Journey B). States:
   idle, reading (button busy, textarea locked), proposals (review + "Apply N" + "Discard"), zero
-  proposals ("Nothing new in this text" with the `unchanged` count), degraded (`engine ===
+  proposals ("Nothing new in this text" with the `unchanged` count; **amended at the second
+  review, 2026-08-17:** with `unchanged` also 0 it reads "Nothing recognisable in this text"
+  and shows no count line, because "0 values it states are already stored" claims the text was
+  understood and merely agreed), degraded (`engine ===
   'deterministic'` shows one short line that the rules alone read it), error (Alert with the
   extracted message, text kept), applying (busy), applied (toast, panel resets, table refetches).
   Text lives in component state only. Gated on `master_data.products.edit` like the table.

@@ -286,11 +286,18 @@ Re-run every query in 5a.
   shuffling as values that only ever came from the flyer stop being re-derived. The 3 `authored`
   rows are a floor, not a ceiling: promoted rows whose status the migration lifted from `derived`
   to `authored` are counted from step 3, not here.
-- **Exception counts** are the number to watch. Flyer-only values are now authored, and an
-  authored value that a rule disagrees with raises `human_override_conflict` (AC-B.16, D8) instead
-  of being overwritten. A rise in that one reason is the intended consequence of promotion, not a
-  regression. A rise in `shape_mismatch` or `implausible_dimension` is not, and should be
-  investigated.
+- **Exception counts** are the number to watch, and the expected rise is measured rather than
+  guessed. Flyer-only values are now authored, and an authored value that a rule disagrees with
+  raises `human_override_conflict` (AC-B.16, D8) instead of being overwritten. A rise in that one
+  reason is the intended consequence of promotion, not a regression. A rise in `shape_mismatch` or
+  `implausible_dimension` is not, and should be investigated.
+
+  **Expect about 464 new `human_override_conflict` rows, on 464 spec rows** - the count goes from
+  1 to roughly 465. That is a replay of the promote plus the re-derive against the copy of
+  production, not an estimate. Nearly all of them are `finish`, where the code suffix reads one
+  colour and the description word reads another, so the promoted flyer value and the rule now
+  disagree in the open. The number is here so an operator can tell 464 from 4,640: an order of
+  magnitude more means something other than the promotion moved, and is worth stopping for.
 
 Record both sets in the PR or the deploy log. AC-B.13 is satisfied by the pair being written down,
 not by the re-derive merely having run.

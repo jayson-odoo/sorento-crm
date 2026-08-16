@@ -79,26 +79,36 @@
  *          proposals: SpecProposal[],
  *          unchanged: number }
  *        Gated on `master_data.products.edit`, not on any spec_registry grant.
- *        WRITES NOTHING (AC-B.1, B.2): the pasted text reaches the request body and
- *        goes no further, so the flyer row count and the spec `updated_at` are
- *        unchanged across a call. There is no "save the text" anywhere.
+ *        WRITES NO SPECIFICATION DATA (AC-B.1, B.2): the pasted text reaches the
+ *        request body and goes no further, so the flyer row count and the spec
+ *        `updated_at` are unchanged across a call. There is no "save the text"
+ *        anywhere. The one row a call can write is an AI usage-log row, and only when
+ *        a model answered - the same bookkeeping every other model call books against
+ *        itself, telemetry about the call rather than a claim about the product.
  *        `kind` on each proposal is decided SERVER-SIDE (AC-B.3), never here, because
  *        milestone 2's supplier review reads the same field off a different endpoint
  *        and two copies of the rule would drift: stored key absent -> `new`; stored
  *        equal after coercion -> OMITTED entirely and counted in `unchanged`; stored
  *        authored or tombstoned -> `conflict`; stored non-authored and different ->
- *        `change`, except a size key the description already stated, which is a
- *        `conflict`. One proposal per key.
+ *        `change`, except a size key (the description-first set), which is a
+ *        `conflict` on the key alone - provenance does not record which text a stored
+ *        value was read from. One proposal per key.
  *        `engine: 'deterministic'` means no model was reachable and the rules alone
  *        read it - a 200 marked as such, never a 502 (AC-B.5).
  *        422 { detail } with a readable message when the text is blank or longer than
  *        8,000 characters. Never truncated.
  *
  *   POST .../by-product/{productId}/values/batch
- *     body { entries: [{ spec_key: string, value: string | number | boolean,
+ *     body { entries: [{ spec_key: string, value: SpecProposalValue,
  *                        unit?: string | null, evidence: string }] }
  *     -> { product_code: string, rows_written: number, spec_keys: string[] }
- *        1..50 entries; an empty list is a 422. ONE call through `apply_spec_values`
+ *        `value` is the proposal's value UNCHANGED, a list included: a multi-value key
+ *        (a two-tone finish) is coerced element-wise and stored as the list, so it
+ *        stores what a re-derivation of the same words would.
+ *        1..50 entries; an empty list is a 422. So is a `spec_key` over 100 characters,
+ *        an `evidence` over 500, and the same `spec_key` twice in one batch - one key
+ *        twice is two claims about one thing, and the second would silently win.
+ *        ONE call through `apply_spec_values`
  *        with `source: 'human'` and evidence `read from text: <evidence>` (AC-B.9):
  *        N per-key calls would produce N fan-outs, N rendered-text rebuilds and N
  *        verification diffs for one user action. Atomic - one bad entry fails the
@@ -118,7 +128,7 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { SimilarKeyMatch, SpecDataType } from '@/components/spec-table';
-import type { SpecProposal } from '@/components/spec-proposals';
+import type { SpecProposal, SpecProposalValue } from '@/components/spec-proposals';
 import type {
   SpecDerivationRule,
   SpecSearchPolicyRow,
@@ -586,7 +596,13 @@ export interface SpecExtractionResult {
 /** One accepted proposal, as the batch write takes it. */
 export interface SpecProposalEntry {
   spec_key: string;
-  value: string | number | boolean;
+  /**
+   * The proposed value, unchanged. A LIST where the key holds more than one value (a
+   * two-tone finish): the batch route coerces it element-wise and stores the list, so
+   * flattening it here would store something a re-derivation of the same words would
+   * not.
+   */
+  value: SpecProposalValue;
   unit?: string | null;
   /** The words it was read from. Stored as the value's evidence. */
   evidence: string;

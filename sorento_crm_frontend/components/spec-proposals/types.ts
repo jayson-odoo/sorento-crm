@@ -12,6 +12,15 @@
 export type SpecProposalScalar = string | number | boolean;
 
 /**
+ * One value, or the several a multi-value key holds.
+ *
+ * A two-tone finish is one proposal carrying a LIST, because that is what derivation
+ * stores for the keys it allows more than one of - so accepting the proposal stores
+ * exactly what a re-derivation of the same words would. Scalar everywhere else.
+ */
+export type SpecProposalValue = SpecProposalScalar | SpecProposalScalar[];
+
+/**
  * How a proposal stands against what the product already holds.
  *
  * Computed SERVER-SIDE and carried here as data (AC-B.3), never re-decided in the
@@ -27,13 +36,13 @@ export interface SpecProposal {
   label: string;
   /** The registry's type, for callers that render the value themselves. */
   data_type: string;
-  value: SpecProposalScalar;
+  value: SpecProposalValue;
   unit: string | null;
   /** The exact words the value was read from. */
   evidence: string;
   kind: SpecProposalKind;
   /** What the product holds now. Null on a `new` proposal, by definition. */
-  stored_value: SpecProposalScalar | null;
+  stored_value: SpecProposalValue | null;
   stored_unit: string | null;
   /** derived | flyer | code | category | human | supplier, or null when unstamped. */
   stored_source: string | null;

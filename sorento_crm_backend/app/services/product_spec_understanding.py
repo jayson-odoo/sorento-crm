@@ -624,8 +624,9 @@ def extract_specs_from_text(
     *,
     vocabulary: tuple[list[dict], dict[str, Any], dict[str, list[str]]] | None = None,
     allow_model: bool = True,
+    user_id: str | None = None,
 ) -> Extraction:
-    """Read a statement about ONE product onto the registry. Never writes anything.
+    """Read a statement about ONE product onto the registry. Writes no product data.
 
     The sibling entry point AC-B.4 asks for: it shares `_vocabulary`, `_coerce` and
     `_validated_pairs` with `understand_phrase`, so neither can propose vocabulary the
@@ -638,12 +639,20 @@ def extract_specs_from_text(
     gets (AC-B.5). `vocabulary` is accepted so a caller that already rendered the
     registry does not pay for it twice - the open-vocabulary values behind it are a
     DISTINCT per key.
+
+    The ONE thing it does write is an `AIAssistantUsageLog` row, and only when a model
+    actually answered: the same bookkeeping `understand_phrase` writes for
+    `spec_search`, under `feature="spec_extract"`, so a model call made from the
+    product page is billed and counted beside every other one. Best effort, exactly as
+    there - a failed insert is rolled back and warned about, never raised, because
+    losing the reading over its own bookkeeping would be the worse outcome. Nothing
+    about the product's specifications is touched (AC-B.1).
     """
     text = (text or "").strip()
     if not text or not allow_model:
         return Extraction()
 
-    provider, _provider_name, model_name = _resolve_provider(db, EXTRACTOR_AGENT_NAME)
+    provider, provider_name, model_name = _resolve_provider(db, EXTRACTOR_AGENT_NAME)
     if provider is None:
         return Extraction()
 
@@ -661,6 +670,7 @@ def extract_specs_from_text(
         },
     ]
 
+    started = time.monotonic()
     try:
         result = provider.chat(
             messages,
@@ -672,6 +682,8 @@ def extract_specs_from_text(
     except Exception as exc:  # noqa: BLE001 - any provider failure degrades, never raises
         logger.warning("spec extraction failed, using the rule pass alone: %s", exc)
         return Extraction()
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
 
     items = (payload.get("specs") if isinstance(payload, dict) else None) or []
     # The words the model read each value from, kept beside the validation rather than
@@ -686,5 +698,25 @@ def extract_specs_from_text(
     specs = _validated_pairs(items, index, open_values, one_per_key=True)
     for entry in specs:
         entry["evidence"] = evidence_by_key.get(entry["key"], "")
+
+    try:
+        db.add(
+            AIAssistantUsageLog(
+                user_id=user_id,
+                feature="spec_extract",
+                provider=provider_name,
+                model=model_name,
+                prompt_tokens=int(result.prompt_tokens or 0),
+                completion_tokens=int(result.completion_tokens or 0),
+                total_tokens=int(result.total_tokens or 0),
+                tool_calls_count=0,
+                response_time_ms=elapsed_ms,
+                was_answered=bool(specs),
+            )
+        )
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 - never fail a reading over bookkeeping
+        logger.warning("spec extraction: usage log failed: %s", exc)
+        db.rollback()
 
     return Extraction(specs=specs, source="semantic", model=model_name)

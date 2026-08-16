@@ -102,12 +102,22 @@ export default function SpecExtractPanel({
               className="rounded-md border border-dashed p-4 text-center"
               data-spec-extract-empty
             >
-              <p className="text-sm font-medium text-foreground">Nothing new in this text</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {result.unchanged === 1
-                  ? '1 value it states is already stored.'
-                  : `${result.unchanged} values it states are already stored.`}
+              {/* Two different answers, and saying the first one for both is a
+                  claim the reading never made: "0 values it states are already
+                  stored" reads as if the text WAS understood and merely agreed
+                  with the product. Nothing was recognised at all. */}
+              <p className="text-sm font-medium text-foreground">
+                {result.unchanged === 0
+                  ? 'Nothing recognisable in this text'
+                  : 'Nothing new in this text'}
               </p>
+              {result.unchanged > 0 && (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {result.unchanged === 1
+                    ? '1 value it states is already stored.'
+                    : `${result.unchanged} values it states are already stored.`}
+                </p>
+              )}
               <Button
                 variant="outline"
                 size="sm"
