@@ -520,6 +520,35 @@ changes PR 4's retirement list in exactly one way, and it is binding on whoever 
 - Everything else in this PR stands unchanged: promote-then-discard (D2), the migration runbook
   above, the paste-once prompt box, and the `ProductFlyerText` drop.
 
+#### PR 4 evidence run (AC-B.17 stand-in, recorded 2026-08-17)
+
+Standing order: no new Playwright spec; this reproducible agent-browser run is the regression
+record (guard logged as BL-012). Stack: FE dev :3021, BE :8020, local prod-copy DB. Product:
+`BRWTF6429564BW-A-ENG` (7 derived spec rows). Steps, each with the network call observed:
+
+1. Sign in, sidebar Product Management > Products > All Products, search the code, open the row,
+   open the Specifications tab. `GET /api/v1/master-data/product-specifications/by-product/{id}` 200.
+2. Paste a card-like text stating one new value (swivel spout), one differing value (chrome vs
+   stored black) and one restated value (exposed mounting). Press "Read specs from this".
+   `POST .../by-product/{id}/extract` 200 with `{engine: "semantic", model, proposals: 3,
+   unchanged: 5}`; badges New / New / "Changes Black to Chrome"; zero flyer-text calls in the
+   whole session.
+3. Untick two rows, press "Apply 1". `POST .../by-product/{id}/values/batch` 200
+   (`{rows_written: 2, spec_keys: ["spout_type"]}` - two company copies, AC-F.4), then the
+   `by-product` refetch; the row lands with the "Set by hand" pill and evidence
+   "read from text: SWIVEL"; status pill Derived -> Authored.
+4. "Needs a human (0)" stays empty (a new key cannot conflict), console and `errors` clean at
+   every step. Repeated the paste-extract cycle at 375x812: page never scrolls sideways, the
+   grid scrolls inside its own container; Discard closes with no network call (nothing persisted).
+5. Prompts screen: `spec_extractor` offers no dry-run and states the not-in-pipeline reason;
+   `agent_system` still offers the dry-run box.
+6. Cleanup: row action Reset (confirm dialog) restored both company copies to the original
+   7-key derived state, verified by DB read.
+
+Note for re-walkers: a `conflict`-kind proposal needs an authored or tombstoned stored value;
+the catalogue holds zero authored entries at baseline (measurement 3), so the run exercises
+`change` (ticked by default) and pins `conflict` behaviour in vitest/pytest instead.
+
 #### PR 4 implementation contract (main session, 2026-08-16; charted against main at `eb2cf0ce`)
 
 Verified before this was written: PR 1's source-keyed boost branch is present
