@@ -70,7 +70,8 @@ _COUNT_FLYER = sa.text(
            count(DISTINCT s.id) AS rows
       FROM product_specifications s
       CROSS JOIN LATERAL jsonb_each(s.provenance) AS e(key, value)
-     WHERE e.value->>'source' = 'flyer'
+     WHERE jsonb_typeof(s.provenance) = 'object'
+       AND e.value->>'source' = 'flyer'
     """
 )
 
@@ -81,7 +82,8 @@ _COUNT_MIGRATED = sa.text(
            count(DISTINCT s.id) AS rows
       FROM product_specifications s
       CROSS JOIN LATERAL jsonb_each(s.provenance) AS e(key, value)
-     WHERE e.value->>'migrated_from' = 'flyer'
+     WHERE jsonb_typeof(s.provenance) = 'object'
+       AND e.value->>'migrated_from' = 'flyer'
     """
 )
 
