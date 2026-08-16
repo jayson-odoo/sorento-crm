@@ -20,15 +20,23 @@ with no grant path would 403 the feature it was meant to protect. That grant is
 exercised against the migration itself in
 tests/test_migration_359_um_contacts_reference_perms.py.
 
+A third pass added the two `system_logs` reads (`GET /system-logs/` and
+`GET /system-logs/users/{user_id}`) on the already-registered
+`user_management.logs.view`, taking the total to 26. An independent review found
+them - the structural sweep below could not, because its scope was a hardcoded
+set of seven module names and `system_logs.py` is an eighth. That scope is now
+the whole `app.api.v1.user_management` package, matched on the module path
+prefix, so the next file to arrive is in scope with nothing to remember.
+
 Structure:
 
 * Work item 3 (UAC1.1-1.3, 2.1-2.2, 3.1-3.2, 6a.2, 6c.2) - one 403 + one 200 per
-  gated route, table-driven. 23 of the 24 gated routes live in that table; the
-  24th, `GET /settings/`, needs a seeded settings singleton and is covered
+  gated route, table-driven. 25 of the 26 gated routes live in that table; the
+  26th, `GET /settings/`, needs a seeded settings singleton and is covered
   alongside its `/app-config` sibling in tests/test_settings_app_config_gate.py.
 * UAC2.3 - the field-access 403 fires before any field-access row is read.
-* Work item 4 (UAC4.1-4.3) - structural coverage: every GET in the seven
-  user-management files carries a permission dependency or sits in a commented
+* Work item 4 (UAC4.1-4.3) - structural coverage: every GET in the
+  user-management package carries a permission dependency or sits in a commented
   exception allowlist, so a route added tomorrow without a gate fails this test.
 * Work item 5 (UAC3.3, 5.1, 5.2) - the documented exceptions stay exactly as
   documented: the quick-access read is self-scoped, and the contacts/companies
@@ -63,7 +71,7 @@ from app.models.access import (
     TeamMember,
 )
 from app.models.base import set_company_scope
-from app.models.user import User, UserQuickAccess, UserStatus
+from app.models.user import SystemLog, User, UserQuickAccess, UserStatus
 from app.services.company_scope_resolver import apply_company_scope
 from app.services.user_service import AccessAgentService
 from tests._pg_fixture import blank_session, unique_code
@@ -72,6 +80,7 @@ TEAMS_VIEW = "user_management.teams.view"
 ACCESS_AGENTS_VIEW = "user_management.access_agents.view"
 CONTACTS_VIEW = "user_management.contacts.view"
 REFERENCE_DATA_VIEW = "user_management.reference_data.view"
+LOGS_VIEW = "user_management.logs.view"
 
 
 @pytest.fixture
@@ -201,6 +210,31 @@ def _seed_market_segment(db) -> str:
     db.add(row)
     db.flush()
     return code
+
+
+def _seed_system_log(db) -> tuple[str, str]:
+    """One log row of our own, owned by a user of our own.
+
+    `system_logs.user_id` is a NOT NULL FK to `users.id`, and CI's database holds
+    no users at all, so the owner is seeded here rather than borrowed.
+    """
+    user = User(
+        id=unique_code("user-log"),
+        email=f"{unique_code('log')}@zzt.test",
+        name="ZZT Log Owner",
+        status=UserStatus.ACTIVE.value,
+    )
+    db.add(user)
+    db.flush()
+    log = SystemLog(
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        event="zzt.read_gates.probe",
+        description="ZZT system log",
+    )
+    db.add(log)
+    db.flush()
+    return str(user.id), str(log.id)
 
 
 # --------------------------------------------------------------- work item 3
@@ -341,6 +375,28 @@ def _reference_data_route_specs(db):
     ]
 
 
+def _system_log_route_specs(db):
+    """The two system-logs reads, on `user_management.logs.view`.
+
+    Missed by the original pass and found by widening the structural sweep below
+    to the whole package - they live in an eighth module the old hardcoded scope
+    could not see. The slug is not new: it is already registered and is already
+    the `permission:` on the `/user-management/logs` menu entry.
+    """
+    log_user_id, log_id = _seed_system_log(db)
+    base = "/api/v1/user-management/system-logs"
+    return [
+        ("GET /system-logs/",
+            f"{base}/",
+            LOGS_VIEW,
+            lambda r: log_id in {row["id"] for row in r.json()["data"]}),
+        ("GET /system-logs/users/{user_id}",
+            f"{base}/users/{log_user_id}",
+            LOGS_VIEW,
+            lambda r: {row["id"] for row in r.json()["data"]} == {log_id}),
+    ]
+
+
 def _all_route_specs(db):
     return (
         _team_route_specs(db)
@@ -348,6 +404,7 @@ def _all_route_specs(db):
         + _contact_access_type_route_specs(db)
         + _contacts_route_specs(db)
         + _reference_data_route_specs(db)
+        + _system_log_route_specs(db)
     )
 
 
@@ -357,11 +414,15 @@ class TestPerRouteGates:
     @pytest.fixture(autouse=True)
     def _specs(self, db):
         self.specs = _all_route_specs(db)
-        # 24 routes are gated; 23 are in this table. `GET /settings/` is the
-        # twenty-fourth and lives in tests/test_settings_app_config_gate.py,
-        # where the settings singleton is seeded with non-null sensitive values
-        # so its 200 body and its /app-config sibling can be asserted together.
-        assert len(self.specs) == 23, "one entry per gated route except GET /settings/"
+        # 26 routes are gated by this PR series; 25 are in this table.
+        # `GET /settings/` is the twenty-sixth and lives in
+        # tests/test_settings_app_config_gate.py, where the settings singleton is
+        # seeded with non-null sensitive values so its 200 body and its
+        # /app-config sibling can be asserted together. (The structural sweep
+        # below covers 38 gated routes in total - the other 12 are the
+        # users/roles/permissions reads that were already gated before this work
+        # and have their own tests.)
+        assert len(self.specs) == 25, "one entry per gated route except GET /settings/"
 
     def test_denied_without_permission(self, api):
         client, allow, _caller = api
@@ -409,20 +470,19 @@ def test_field_access_403_fires_before_any_field_access_row_is_read(api, monkeyp
 
 # --------------------------------------------------------------- work item 4
 
-# Files in scope for the structural coverage sweep (PLAN row list + Q1-Q3).
-_IN_SCOPE_MODULES = {
-    "app.api.v1.user_management.contacts",
-    "app.api.v1.user_management.teams",
-    "app.api.v1.user_management.access_agents",
-    "app.api.v1.user_management.contact_access_types",
-    "app.api.v1.user_management.market_segments",
-    "app.api.v1.user_management.quick_access",
-    "app.api.v1.user_management.settings",
-}
+# Scope of the structural coverage sweep: EVERY module in the
+# `app.api.v1.user_management` package, matched on the module path prefix.
+#
+# It used to be a hardcoded set of the seven files the plan's audit table walked,
+# and that set is precisely why the two `system_logs` GETs were missed - they
+# live in an eighth module, so the test whose whole job is to catch an ungated
+# GET could not see them. A prefix match means a router file added tomorrow is in
+# scope the moment it is mounted, with nothing to remember to update.
+_IN_SCOPE_MODULE_PREFIX = "app.api.v1.user_management."
 
 _PLAN_PATH = "documentation/plans/security/PLAN-user-management-read-gates.md"
 
-# Every GET in the seven files that is deliberately NOT behind a permission
+# Every GET in the package that is deliberately NOT behind a permission
 # dependency, keyed on the exact ROUTE PATH (not endpoint function name -
 # `get_contact_access_agents` names two different handlers: the gated one at
 # `/access-agents/{agent_id}/contact-access` and this deferred one at
@@ -433,6 +493,11 @@ _PLAN_PATH = "documentation/plans/security/PLAN-user-management-read-gates.md"
 # gone from here and into the gated set below, on `user_management.contacts.view`,
 # `user_management.settings.view` and `user_management.reference_data.view`
 # respectively.
+#
+# Widening the sweep to the whole package brought in four more genuinely ungated
+# GETs, all self-scoped reads of the caller's OWN row - listed below with the
+# filter that makes each self-scoped, because "self-scoped" is a claim about the
+# handler body that has to be re-checked whenever the body changes.
 _EXCEPTION_ALLOWLIST: dict[str, str] = {
     # --- Already gated, but in the handler body (`_require_superadmin`) rather
     # than a dependency - UAC5.2 asserts this still bites.
@@ -459,11 +524,33 @@ _EXCEPTION_ALLOWLIST: dict[str, str] = {
     # nothing about anyone else, and fires on every page load for every user
     # from the app shell (a gate would 403 users with no pin/unpin grant).
     "/api/v1/user-management/quick-access/": "self-scoped - see UAC5.1",
+    # --- Self-scoped: the caller's own profile, read via `current_user["id"]`.
+    "/api/v1/user-management/users/me": (
+        "self-scoped - returns the caller's own profile (current_user['id'])"
+    ),
+    # --- Self-scoped: the caller's own effective permission slugs. The frontend
+    # RBAC layer reads it on every session, and it discloses only what the caller
+    # can already discover by clicking around.
+    "/api/v1/user-management/users/me/permissions": (
+        "self-scoped - the caller's own permission slugs (current_user['id'])"
+    ),
+    # --- Self-scoped: filters `ImpersonationSession.admin_user_id == real_user['id']`
+    # and `ended_at IS NULL`, so it can only ever return the caller's own active
+    # session. `get_real_user` rather than `get_current_user`, so an impersonated
+    # session cannot read it as somebody else either.
+    "/api/v1/user-management/impersonation/current": (
+        "self-scoped - filters admin_user_id == real_user['id']"
+    ),
+    # --- Self-scoped, same shape:
+    # `ContactImpersonationSession.admin_user_id == real_user['id']` + `ended_at IS NULL`.
+    "/api/v1/user-management/contact-impersonation/current": (
+        "self-scoped - filters admin_user_id == real_user['id']"
+    ),
 }
 
 
 def _mounted_get_routes():
-    """The real flattened GET APIRoute objects for the seven in-scope files.
+    """The real flattened GET APIRoute objects for the whole user-management package.
 
     Mounted onto a throwaway app (rather than read off `app.main.app.routes`)
     for the same reasons as tests/test_external_permission_coverage.py: a
@@ -478,7 +565,7 @@ def _mounted_get_routes():
         for r in probe.routes
         if hasattr(r, "path")
         and "GET" in getattr(r, "methods", set())
-        and getattr(r.endpoint, "__module__", "") in _IN_SCOPE_MODULES
+        and getattr(r.endpoint, "__module__", "").startswith(_IN_SCOPE_MODULE_PREFIX)
     ]
 
 
@@ -512,11 +599,12 @@ def _is_gated(route) -> bool:
 
 class TestStructuralCoverage:
     def test_there_are_user_management_get_routes_to_check(self):
-        # UAC4.2's whole point breaks if this is vacuously empty. 27 is the real
-        # count - 13 gated + 13 exceptions when written; 24 gated + 3 exceptions
-        # once Q1, Q2 and Q3 were decided (Q2 also added /settings/app-config,
-        # the one new GET in the set).
-        assert len(_mounted_get_routes()) >= 20
+        # UAC4.2's whole point breaks if this is vacuously empty. 45 is the real
+        # count now the sweep covers the whole package - 38 gated + 7 exceptions.
+        # (It was 27 under the old seven-name scope: 13 gated + 13 exceptions
+        # when written, then 24 gated + 3 exceptions once Q1, Q2 and Q3 were
+        # decided, Q2 also adding /settings/app-config.)
+        assert len(_mounted_get_routes()) >= 40
 
     def test_every_get_route_is_gated_or_explicitly_excepted(self):
         ungated_unexplained = []
@@ -532,13 +620,19 @@ class TestStructuralCoverage:
             f"or add it to _EXCEPTION_ALLOWLIST with a reason; see {_PLAN_PATH}"
         )
 
-    def test_gated_routes_match_the_twenty_four_named_in_the_plan(self):
-        """The plan's audit table (13) plus the Q1, Q2 and Q3 decisions (8
-        contacts GETs + the settings blob + 2 reference catalogs). An exact set,
-        not a count: a route that loses its gate fails here even if another route
-        gains one."""
+    def test_gated_routes_match_the_thirty_eight_mounted_in_the_package(self):
+        """Every gated GET in the package, as an exact set rather than a count:
+        a route that loses its gate fails here even if another route gains one.
+
+        Two groups. The 26 this PR series is responsible for - the plan's audit
+        table (13), the Q1/Q2/Q3 decisions (8 contacts GETs + the settings blob +
+        2 reference catalogs) and the 2 system-logs reads - and the 12 in
+        `users.py` / `roles.py` / `permissions.py` that were already correctly
+        gated before any of it. Those 12 are new to this assertion only because
+        the sweep now covers the whole package; nothing about them changed.
+        """
         gated_paths = {r.path for r in _mounted_get_routes() if _is_gated(r)}
-        assert len(gated_paths) == 24
+        assert len(gated_paths) == 38
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",
@@ -568,6 +662,25 @@ class TestStructuralCoverage:
             # --- Q3 decided: user_management.reference_data.view
             "/api/v1/user-management/contact-access-types/",
             "/api/v1/user-management/market-segments/",
+            # --- Found by widening this sweep to the whole package:
+            # user_management.logs.view, the slug the /user-management/logs menu
+            # entry already advertises.
+            "/api/v1/user-management/system-logs/",
+            "/api/v1/user-management/system-logs/users/{user_id}",
+            # --- Gated long before this PR series, in modules the old
+            # seven-name scope never looked at.
+            "/api/v1/user-management/users/",
+            "/api/v1/user-management/users/respond-users",
+            "/api/v1/user-management/users/select",
+            "/api/v1/user-management/users/{user_id}",
+            "/api/v1/user-management/users/{user_id}/companies",
+            "/api/v1/user-management/users/{user_id}/roles",
+            "/api/v1/user-management/roles/",
+            "/api/v1/user-management/roles/select",
+            "/api/v1/user-management/roles/{role_id}",
+            "/api/v1/user-management/permissions/",
+            "/api/v1/user-management/permissions/select",
+            "/api/v1/user-management/permissions/{permission_id}",
         }
 
     def test_allowlist_entries_all_carry_an_inline_reason(self):
@@ -576,14 +689,20 @@ class TestStructuralCoverage:
         for path, reason in _EXCEPTION_ALLOWLIST.items():
             assert reason and reason.strip(), f"{path} has no reason on record"
 
-    def test_allowlist_is_exactly_the_three_documented_exceptions(self):
-        """UAC6d.1 - the allowlist shrank to exactly these three once Q1-Q3 were
-        decided. Pinned as a set, not a count, so "one route left the allowlist
-        and another quietly joined it" cannot net out to green."""
+    def test_allowlist_is_exactly_the_seven_documented_exceptions(self):
+        """UAC6d.1 - the allowlist shrank to three once Q1-Q3 were decided, and
+        grew back to seven when the sweep widened to the whole package: the four
+        additions are all self-scoped reads of the caller's own row. Pinned as a
+        set, not a count, so "one route left the allowlist and another quietly
+        joined it" cannot net out to green."""
         assert set(_EXCEPTION_ALLOWLIST) == {
             "/api/v1/user-management/quick-access/",
             "/api/v1/user-management/contacts/{contact_id}/companies",
             "/api/v1/user-management/settings/app-config",
+            "/api/v1/user-management/users/me",
+            "/api/v1/user-management/users/me/permissions",
+            "/api/v1/user-management/impersonation/current",
+            "/api/v1/user-management/contact-impersonation/current",
         }
 
     def test_allowlist_paths_are_actually_mounted_and_ungated(self):

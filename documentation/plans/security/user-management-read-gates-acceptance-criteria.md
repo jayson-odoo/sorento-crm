@@ -150,6 +150,39 @@ UAC6.1 (superseded) - the four groups above are no longer deferred; they are gat
 UAC6.2 - The 40 ungated WRITE routes in the same seven files are recorded as a follow-up issue,
 with the list, and referenced from the PR body. This PR is read-gates only. **Filed as issue #174.**
 
+## Item 7 - the system-logs reads, and the scope hole that hid them
+
+Added after implementation, from an independent review. It found two more GETs of the same defect
+class, and the reason the sweep in Item 4 did not: `_IN_SCOPE_MODULES` was a hardcoded set of the
+seven module names the plan's audit table walked, and `system_logs.py` is an eighth. A coverage
+test that only looks where someone remembered to point it has the same failure mode as the per-route
+tests it exists to backstop.
+
+UAC7.1 - **Given** a caller WITHOUT `user_management.logs.view`, **when** it calls
+`GET /api/v1/user-management/system-logs/` or `GET /api/v1/user-management/system-logs/users/{user_id}`,
+**then** the response is 403 and the detail names the slug.
+UAC7.2 - **Given** a caller WITH the slug, **then** both return 200. No new slug and no migration:
+`user_management.logs.view` is already registered and is already the `permission:` on the
+`/user-management/logs` menu entry, so the gate matches what the UI already advertises.
+UAC7.3 - `POST /system-logs/` is untouched. Writes are out of scope for this PR and are tracked in
+issue #174.
+UAC7.4 (supersedes UAC4.1) - **Given** the mounted user-management router, **when** the coverage
+test enumerates GET routes, **then** its scope is EVERY module in the `app.api.v1.user_management`
+package, matched on the module path prefix, so a router file added tomorrow is in scope without
+anyone editing a list. UAC4.2 and UAC4.3 are unchanged and now bite over the whole package.
+UAC7.5 (supersedes UAC6d.1's counts) - the widened scope brings in GETs that are legitimately
+ungated, so `_EXCEPTION_ALLOWLIST` ends at exactly SEVEN entries: the three of UAC6d.1 plus four
+self-scoped reads of the caller's own row - `GET /users/me`, `GET /users/me/permissions`
+(`current_user["id"]`), `GET /impersonation/current` and `GET /contact-impersonation/current` (both
+filter `admin_user_id == real_user["id"]` with `ended_at IS NULL`). Each carries its inline reason.
+The set-equality pin stands.
+UAC7.6 - the gated-path exact set goes from 24 to THIRTY-EIGHT: 24 + the 2 system-logs reads + the
+12 `users.py` / `roles.py` / `permissions.py` reads that were already correctly gated and that the
+seven-name scope never saw. Nothing about those 12 changed; they are new to the assertion, not to
+the codebase. No assertion is weakened to reach green.
+UAC7.7 (REG) - the widened sweep is proven non-vacuous by mutation: reverting ONE of the two
+system-logs gates makes the coverage test fail naming that exact route path.
+
 ---
 
 ## Cross-cutting

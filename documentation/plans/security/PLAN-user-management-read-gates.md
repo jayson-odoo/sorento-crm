@@ -87,12 +87,40 @@ as Q1 below, not a reason to leave ACL rows world-readable.
 Plus one new route, `GET /settings/app-config`, authenticated but deliberately ungated - the narrow
 projection that keeps the procurement consumers working once row 22 is gated.
 
+### Gated after an independent review found the scope hole (rows 25-26)
+
+| # | Route | Returns | Screens today | Screen gate today | Slug applied |
+|---|---|---|---|---|---|
+| 25 | `GET /system-logs/` | the whole system audit log - event, description, entity id/type, IP address, and the acting user's name/email/avatar | `/user-management/logs` | `logs.view` | `user_management.logs.view` |
+| 26 | `GET /system-logs/users/{user_id}` | the same, for one user (it delegates straight to row 25) | `/user-management/users/[id]` activity panel | `users.view` | `user_management.logs.view` |
+
+No new slug and no migration: `user_management.logs.view` is already in
+`permission_registry.py` and is already the `permission:` on the `/user-management/logs` menu entry,
+so the dependency simply makes the menu's claim true. `POST /system-logs/` in the same file is left
+alone - writes are issue #174.
+
+**Why these two were missed, which matters more than the two routes.** The structural coverage test
+in work item 4 exists precisely to catch this, and could not: its `_IN_SCOPE_MODULES` was a
+hardcoded set of the seven module names this plan's audit table walked, and `system_logs.py` is an
+eighth. A sweep that only looks where someone remembered to point it inherits the failure mode of
+the per-route tests it backstops. The scope is now the whole `app.api.v1.user_management` package,
+matched on the module path prefix, so a router file added tomorrow is in scope with nothing to
+update. See UAC Item 7.
+
+That widening pulls in four more genuinely ungated GETs, all self-scoped, all added to the
+allowlist with their filter recorded (see the exceptions table below), and twelve already-gated
+reads in `users.py` / `roles.py` / `permissions.py` - so the gated-path exact set goes 24 -> 38.
+
 ### Documented exceptions - deliberately NOT gated
 
 | Route | Returns | Why not gated |
 |---|---|---|
 | `GET /quick-access/` | the caller's own pinned menu entries | Self-scoped: the query filters `user_id == current_user["id"]`, so it discloses nothing about anyone else - the same family as `GET /users/me` and `GET /users/me/permissions`, which are also `get_current_user`. It also fires on every page load for every user from the app shell (`quick-access-block.tsx:34`, `menu-item-pin-button.tsx:24`), and in both components the `useQuickAccess()` call sits ABOVE the permission bail-out, so a gate would 403 on every page render for every user without pin/unpin. The sibling POST/PATCH/DELETE are correctly gated on `menu.quick_access.pin` / `.unpin`; the read needs no equivalent. |
 | `GET /contacts/{contact_id}/companies` | companies granted to a contact | Already gated, in the handler body: it calls `_require_superadmin(db, current_user)` before doing anything. Adding a dependency would be a second, weaker gate. Covered by a test so the in-body check cannot be dropped unnoticed. |
+| `GET /users/me` | the caller's own profile | Self-scoped: reads `current_user["id"]`. Same family as `/quick-access/`. |
+| `GET /users/me/permissions` | the caller's own effective permission slugs | Self-scoped: reads `current_user["id"]`. It is what the frontend RBAC layer runs on, and it discloses only what the caller could discover by clicking around. |
+| `GET /impersonation/current` | the caller's own active impersonation session, if any | Self-scoped: filters `ImpersonationSession.admin_user_id == real_user["id"]` and `ended_at IS NULL`. It takes `get_real_user`, not `get_current_user`, so an impersonated session cannot read it as somebody else either. |
+| `GET /contact-impersonation/current` | the caller's own active contact-impersonation session, if any | Self-scoped, same shape: `ContactImpersonationSession.admin_user_id == real_user["id"]` + `ended_at IS NULL`, on `get_real_user`. |
 | `GET /settings/app-config` (new) | `currency`, `currency_format`, and the four default-approver id/email fields | Authenticated-only by design. It is the projection that lets the procurement consumers keep working now that the full blob is gated, so a permission on it would defeat its own purpose. What makes that safe is the pydantic `response_model`: six declared fields, and anything not declared is dropped on serialization rather than leaking because a dict builder grew a line. Its test seeds the SMTP, n8n webhook and health-notify fields with recognisable values first, so it proves suppression rather than passing on an empty row. |
 
 ### Q1-Q3 - escalated, decided, and now gated in this PR
@@ -160,9 +188,10 @@ from the PR body.
    `get_current_user`, monkeypatch `UserPermissionService.check_user_has_permission` against an
    `allow` set, Postgres `blank_session()` for the DB.
 3. One structural coverage test over the mounted router, modelled on
-   `tests/test_external_permission_coverage.py`: every GET in the seven files carries a permission
-   dependency or sits in a commented exception allowlist. This is what stops route 14 from
-   repeating route 1's history.
+   `tests/test_external_permission_coverage.py`: every GET in the `app.api.v1.user_management`
+   package carries a permission dependency or sits in a commented exception allowlist. This is what
+   stops route 14 from repeating route 1's history. (Scoped to seven named modules at first, which
+   is how rows 25-26 slipped through; it is a package-prefix match now.)
 4. Two exception tests: quick-access self-scoping, and the contacts/companies superadmin check.
 
 ## Behaviour changes beyond the 403
