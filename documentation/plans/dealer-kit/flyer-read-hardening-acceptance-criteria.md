@@ -3,6 +3,11 @@
 Status: met. See the PLAN's "After the fix" table for the measurements.
 Plan: `documentation/plans/dealer-kit/PLAN-flyer-read-hardening.md`
 Supersedes nothing. Extends `flyer-seeding-acceptance-criteria.md` (S7.3, S7.4).
+Superseded in part: AC-J1 to AC-J3 below assume the read happens inside the
+request. It is now an RQ job answering 202, and
+`flyer-read-background-job-acceptance-criteria.md` owns that contract. The
+off-loop guarantee those ACs won still holds for everything that still runs
+in-request.
 
 ## Journey
 

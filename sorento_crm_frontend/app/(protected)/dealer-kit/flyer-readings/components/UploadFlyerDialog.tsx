@@ -61,11 +61,13 @@ const PDF_MIME_TYPES = [
  * navigate to yet: the row is already at the top of the Flyers list saying
  * Processing, and that is where the toast points.
  *
- * The backend refuses a non-PDF with a 400 and anything over 50 MB with a 413,
- * both in words and identically for both sources, so those messages are shown
- * as they arrive rather than replaced with a generic one. A refusal only the
- * bytes can produce (password protected) cannot be shown here - it happens
- * after this dialog is gone - and lands on the row as Failed instead.
+ * What the backend can still refuse while this dialog is open is what it can
+ * decide without opening the file: anything over 50 MB is a 413 on both sources,
+ * and a library file whose recorded mime is not a PDF is a 400. Those messages
+ * are shown as they arrive rather than replaced with a generic one. Everything
+ * only the bytes can reveal - an uploaded file that is not really a PDF, a
+ * password protected one - happens after this dialog is gone and lands on the
+ * row as Failed with the same words.
  */
 export function UploadFlyerDialog({
   open,

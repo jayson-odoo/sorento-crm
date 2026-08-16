@@ -248,12 +248,12 @@ number is old. Recomputing 998 codes costs 0.4s and three statements. The regres
 for this changes the master between two GETs of the same reading and expects the answer to
 move.
 
-**Extraction runs inside the request.** The "36 A3 pages take about a second" figure recorded
-here was never measured, and it was wrong: the real flyer takes 17 to 18 seconds in
-`extract_flyer`, which is past the ten second threshold this note itself named as the point a
-queue wins. The decision, the measurements and the reason a queue is still deliberately not
-built now live in `PLAN-flyer-read-hardening.md` and in the `flyer_reading_service` module
-docstring. Do not re-derive the number from this paragraph.
+**Extraction no longer runs inside the request.** The "36 A3 pages take about a second" figure
+recorded here was never measured, and it was wrong: the real flyer takes 17 to 18 seconds in
+`extract_flyer`. It is now an RQ job on the `flyer_read` queue and the POST answers 202. The
+measurements, the gateway timeout that forced it and the whole design live in
+`PLAN-flyer-read-background-job.md` and in the `flyer_reading_service` module docstring, which
+own it. Do not re-derive anything from this paragraph.
 
 Decisions worth keeping:
 

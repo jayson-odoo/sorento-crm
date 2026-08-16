@@ -1,6 +1,7 @@
 # PLAN: flyer read as a background job
 
-Status: in progress (branch `fm/flyer-read-background-job`).
+Status: implemented, verified, reviewed. Ready for PR.
+Branch `fm/flyer-read-background-job`.
 UAC: `documentation/plans/dealer-kit/flyer-read-background-job-acceptance-criteria.md`
 Supersedes the in-request half of `PLAN-flyer-read-hardening.md` (PR #164) and
 closes backlog row BL-004. The library picker half of that plan is untouched.

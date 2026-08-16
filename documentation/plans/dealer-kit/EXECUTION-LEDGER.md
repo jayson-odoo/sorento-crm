@@ -748,10 +748,10 @@ surfaces, one flag, enforced in the service AND by a partial unique index. Infer
 filenames was rejected: it would identify the right image for 509 of 535 and a generator or a
 tile fed the wrong picture is a confident, expensive error.
 
-**S7.1 to S7.4 - extract, match, review, seed.** Extraction is pure and runs inside the request
-(so no queue, no polling screen, no failure path; the "a second for 36 pages" recorded here was
-never measured and is wrong - see `PLAN-flyer-read-hardening.md` for the measurements and for why
-the queue is still deliberately not built). The reading is
+**S7.1 to S7.4 - extract, match, review, seed.** Extraction is pure; at the time it ran inside
+the request, and the "a second for 36 pages" recorded here was never measured and is wrong. It
+is now an RQ job answering 202 - see `PLAN-flyer-read-background-job.md`, which owns the
+measurements, the gateway timeout that forced the queue, and the status column. The reading is
 PERSISTED and the match report is DERIVED on every read - a stored report is only true for the
 master it was computed against and goes stale in the direction that costs money. The seed is a
 draft BY CONSTRUCTION: no draft flag was added, because a version with no label pointing at it

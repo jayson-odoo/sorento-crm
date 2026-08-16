@@ -1,7 +1,8 @@
 # UAC: flyer read as a background job
 
 Plan: `documentation/plans/dealer-kit/PLAN-flyer-read-background-job.md`
-Status: draft, contract for the branch `fm/flyer-read-background-job`.
+Status: met. Contract for the branch `fm/flyer-read-background-job`; see the
+PLAN's "Evidence run (S4)" for what was observed.
 Supersedes the "read inside the request" half of
 `flyer-read-hardening-acceptance-criteria.md` (AC-J1 to AC-J3 there); everything
 about the library picker (AC-A*) stands unchanged.
