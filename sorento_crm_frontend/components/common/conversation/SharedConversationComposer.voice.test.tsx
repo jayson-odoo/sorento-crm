@@ -251,6 +251,34 @@ describe('SharedConversationComposer - voice message (AC-L9)', () => {
     expect(tracks[0].stop).toHaveBeenCalled();
   });
 
+  it('releases a microphone granted AFTER the composer unmounted', async () => {
+    // The permission prompt is open when the drawer closes: getUserMedia
+    // resolves after cleanup has already run, so the stream it hands back is
+    // one nothing else will ever stop.
+    let grant: ((stream: MediaStream) => void) | null = null;
+    const track: FakeTrack = { stop: vi.fn() };
+    getUserMedia = vi.fn(
+      () =>
+        new Promise<MediaStream>((resolve) => {
+          grant = () => resolve({ getTracks: () => [track] } as unknown as MediaStream);
+        }),
+    );
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      configurable: true,
+      writable: true,
+      value: { getUserMedia },
+    });
+
+    const { unmount } = renderComposer();
+    fireEvent.click(await screen.findByTestId('voice-record'));
+    unmount();
+    await act(async () => {
+      grant?.();
+    });
+
+    expect(track.stop).toHaveBeenCalled();
+  });
+
   it('stops itself at the 2 minute cap and keeps what was recorded', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderComposer();

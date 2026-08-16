@@ -105,6 +105,11 @@ export function useVoiceRecorder({
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const cancelledRef = useRef(false);
+  // getUserMedia can resolve AFTER unmount - the permission prompt is open when
+  // the drawer closes. The cleanup has already run by then, so without this the
+  // stream assigned below is one nothing ever stops: a live microphone for the
+  // life of the tab.
+  const unmountedRef = useRef(false);
   const tickRef = useRef<number | null>(null);
   const capRef = useRef<number | null>(null);
   // Kept in a ref so the recorder's onstop always calls the CURRENT handler
@@ -155,6 +160,10 @@ export function useVoiceRecorder({
     } catch {
       setBlocked(BLOCKED);
       return BLOCKED;
+    }
+    if (unmountedRef.current) {
+      stream.getTracks?.().forEach((track) => track.stop?.());
+      return null;
     }
     streamRef.current = stream;
     cancelledRef.current = false;
@@ -217,6 +226,7 @@ export function useVoiceRecorder({
   // and release the microphone.
   useEffect(
     () => () => {
+      unmountedRef.current = true;
       cancelledRef.current = true;
       try {
         recorderRef.current?.stop?.();
