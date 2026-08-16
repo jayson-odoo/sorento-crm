@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { fmtInt } from '../../lib/format';
 import {
   getOrderSummary,
   getOrderSummaryDemand,
@@ -90,7 +91,7 @@ export function useRecordOrderDecision(q: OrderSummaryQuery = {}) {
     onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: orderSummaryKey(q) });
       toast.success(
-        `${result.product_code} - ordering ${result.chosen_qty.toLocaleString('en-MY')} from ${result.chosen_supplier_name}`,
+        `${result.product_code} - ordering ${fmtInt(result.chosen_qty)} from ${result.chosen_supplier_name}`,
       );
     },
     onError: (e: Error) => toast.error(e.message),

@@ -45,10 +45,12 @@ import {
   BASE_CURRENCY,
   EM_DASH,
   fmtDate,
+  fmtDecimal,
   fmtInt,
   fmtMoney,
   fmtPct,
   fmtSupplierCost,
+  fmtTrimmedDecimal,
 } from '../../lib/format';
 import { ConfidenceBadge } from '../../components/HealthIndicators';
 import type {
@@ -70,8 +72,7 @@ import type {
 
 /** Compact number for the arithmetic - trims trailing zeros so 11.0 reads "11". */
 function dec(v: number | null | undefined): string {
-  if (v === null || v === undefined) return EM_DASH;
-  return Number(v.toFixed(2)).toLocaleString('en-MY', { maximumFractionDigits: 2 });
+  return fmtTrimmedDecimal(v, 2);
 }
 
 const REASON_NOUN: Record<string, string> = {
@@ -180,7 +181,7 @@ function RankExplanation({ rec }: { rec: ReorderRecommendation }) {
         <span className="text-muted-foreground">
           {isNeedsCost
             ? "Can't be cash-ranked or funded until a supplier cost is added."
-            : `Score ${rec.rank_score != null ? rec.rank_score.toFixed(2) : EM_DASH} · cash impact ${
+            : `Score ${fmtDecimal(rec.rank_score, 2)} · cash impact ${
                 rec.cash_impact != null ? fmtMoney(rec.cash_impact) : 'unknown (uncosted)'
               }`}
         </span>

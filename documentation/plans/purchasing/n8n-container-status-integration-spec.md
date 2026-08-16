@@ -290,8 +290,12 @@ Three things to know, each of which has already caused a wrong answer:
    (`https://<cdn>/import-sources/<uuid>/Container Status 2026.xlsx`); n8n signs on the way out.
    Pass `resolve_signed_urls=true` if a ready-to-open link is wanted instead.
 
-Exactly **one** Container Status workbook is live at any time - each import trashes the previous, so
-this call returns a single row. `Uploaded` and `last_updated_at` carry its date.
+Exactly **one** Container Status workbook is live at any time **per company** - each import trashes
+that company's previous ones (`enforce_single_current`, see
+`PLAN-container-status-per-company.md`). A contact granted a single company gets a single row; a
+contact granted several gets one row per company, each rendered with a `Company` line so two files
+both named "Container Status 2026.xlsx" stay distinguishable. `Uploaded` and `last_updated_at`
+carry each row's date.
 
 **Every attachment carries its own `uploadedAt`**, so a consumer handing over one of several files
 can say how current THAT file is:
@@ -316,7 +320,8 @@ n8n/luxon for display, undoing the conversion.
 several identically-named files was sent - but `render` is the CUSTOMER view, and the uuid went out
 on WhatsApp under every document, on every resource-attachment answer, beside the file itself. The
 id is still on the raw (non-render) response and in the CRM UI, which is where anyone debugging is
-already looking.
+already looking. With the id gone, the `Company` line is the handle that tells identically-named
+per-company workbooks apart; it renders only when the row carries a company.
 
 ### N3 - the escalation enum
 

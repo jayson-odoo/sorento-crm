@@ -1,13 +1,15 @@
 /**
- * The two curation feeds' dialog: preview, confirm, and what each state says.
+ * The curation feeds' dialog: test, confirm, and what each state says.
  *
- * What is asserted here is what the SCREEN promises, not what the parser does. Three claims
+ * What is asserted here is what the SCREEN promises, not what the parser does. Four claims
  * carry most of the weight:
  *
- * 1. Nothing is written from a single click. Choosing a file previews it; Confirm is what
- *    writes, and it is disabled until there is something readable to write.
- * 2. A file that could not be read says WHY, and does not offer to be applied.
- * 3. The problems are NAMED, not only counted - the unmatched item codes and the sales
+ * 1. Choosing a file runs NOTHING. Test reads it; Confirm queues the write. The old dialog
+ *    previewed on drop, which is the behaviour the captain asked us to remove.
+ * 2. Confirm QUEUES: `notifyImportQueued()` so the upload drawer follows the job, the dialog
+ *    closes, and no counts are claimed - the write happens on the worker.
+ * 3. A file that could not be read says WHY, and does not offer to be queued.
+ * 4. The problems are NAMED, not only counted - the unmatched item codes and the sales
  *    orders we have not received yet are the lists somebody acts on.
  */
 import React from 'react';
@@ -27,6 +29,14 @@ if (!window.matchMedia) {
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+}));
+
+const push = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+
+const notifyImportQueued = vi.fn();
+vi.mock('@/components/upload-activity/useImportJobDrawer', () => ({
+  useImportJobDrawer: () => ({ notifyImportQueued }),
 }));
 
 const previewPurchaseHistory = vi.fn();
@@ -57,15 +67,18 @@ import { HistoryUploadDialog } from './HistoryUploadDialog';
 import type { UploadTestResult } from './UploadTestVerdict';
 import type {
   OrderInquiryPreview,
-  OrderInquiryResult,
   PurchaseHistoryPreview,
-  PurchaseHistoryResult,
 } from '../services/purchaseHistoryService';
+import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 // Distinct numbers throughout, so a `getByText` on one figure can never match another.
 
-const LINKS = { examined: 90, resolved: 12, so_side: 30, po_side: 40, still_open: 78 };
+const QUEUED: ImportQueuedResult = {
+  message: 'Purchase history upload queued.',
+  job_id: 'job-hist-1',
+  id: 'row-1',
+};
 
 function historyPreview(over: Partial<PurchaseHistoryPreview> = {}): PurchaseHistoryPreview {
   return {
@@ -85,15 +98,6 @@ function historyPreview(over: Partial<PurchaseHistoryPreview> = {}): PurchaseHis
   };
 }
 
-function historyResult(over: Partial<PurchaseHistoryResult> = {}): PurchaseHistoryResult {
-  return {
-    ...historyPreview(),
-    orders_created: 1500,
-    lines_created: 12900,
-    links: LINKS,
-    ...over,
-  };
-}
 
 function inquiryPreview(over: Partial<OrderInquiryPreview> = {}): OrderInquiryPreview {
   return {
@@ -115,18 +119,6 @@ function inquiryPreview(over: Partial<OrderInquiryPreview> = {}): OrderInquiryPr
   };
 }
 
-function inquiryResult(over: Partial<OrderInquiryResult> = {}): OrderInquiryResult {
-  return {
-    ...inquiryPreview(),
-    locations_written: 71,
-    claims_written: 62,
-    lines_created: 88,
-    lines_refreshed: 0,
-    lines_withdrawn: 3,
-    links: LINKS,
-    ...over,
-  };
-}
 
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -138,9 +130,17 @@ function dropzone(): HTMLInputElement {
   return document.querySelector('input[type="file"]') as HTMLInputElement;
 }
 
-async function choose(name = 'book.xls') {
+/** Pick a file. Runs nothing - that is the point of the change. */
+async function pick(name = 'book.xls') {
   fireEvent.change(dropzone(), { target: { files: [file(name)] } });
-  await waitFor(() => expect(confirmButton()).toBeInTheDocument());
+  await waitFor(() => expect(testButton()).toBeEnabled());
+}
+
+/** Pick a file AND press Test, which is what every assertion about the summary needs. */
+async function choose(name = 'book.xls') {
+  await pick(name);
+  fireEvent.click(testButton());
+  await waitFor(() => expect(testButton()).toBeEnabled());
 }
 
 function confirmButton(): HTMLButtonElement {
@@ -167,17 +167,24 @@ function testButton(): HTMLButtonElement {
   return screen.getByRole('button', { name: /^Test$/i }) as HTMLButtonElement;
 }
 
-function renderDialog(kind: 'purchase-history' | 'order-inquiry', onApplied = vi.fn()) {
-  return render(
-    <HistoryUploadDialog open kind={kind} onOpenChange={vi.fn()} onApplied={onApplied} />,
+function renderDialog(
+  kind: 'purchase-history' | 'order-inquiry',
+  onQueued = vi.fn(),
+  onOpenChange = vi.fn(),
+) {
+  render(
+    <HistoryUploadDialog open kind={kind} onOpenChange={onOpenChange} onQueued={onQueued} />,
   );
+  return { onQueued, onOpenChange };
 }
 
 beforeEach(() => {
   previewPurchaseHistory.mockReset().mockResolvedValue(historyPreview());
-  applyPurchaseHistory.mockReset().mockResolvedValue(historyResult());
+  applyPurchaseHistory.mockReset().mockResolvedValue(QUEUED);
   previewOrderInquiry.mockReset().mockResolvedValue(inquiryPreview());
-  applyOrderInquiry.mockReset().mockResolvedValue(inquiryResult());
+  applyOrderInquiry.mockReset().mockResolvedValue(QUEUED);
+  notifyImportQueued.mockReset();
+  push.mockReset();
   getOutstandingUploadConfig
     .mockReset()
     .mockResolvedValue({ allowed_extensions: ['.xlsx', '.xlsm', '.xls'] });
@@ -192,19 +199,18 @@ describe('HistoryUploadDialog - Test', () => {
     renderDialog('purchase-history');
     expect(testButton()).toBeDisabled();
 
-    await choose();
-    await waitFor(() => expect(testButton()).toBeEnabled());
-
+    await pick();
     fireEvent.click(testButton());
+
     await waitFor(() => expect(testPurchaseHistory).toHaveBeenCalledTimes(1));
+    // Both reads on one press: the rich preview AND the standard verdict.
+    expect(previewPurchaseHistory).toHaveBeenCalledTimes(1);
     expect(applyPurchaseHistory).not.toHaveBeenCalled();
   });
 
   it('shows the green verdict when there is nothing to fix', async () => {
     renderDialog('purchase-history');
     await choose();
-    await waitFor(() => expect(testButton()).toBeEnabled());
-    fireEvent.click(testButton());
 
     expect(await screen.findByText('No errors')).toBeInTheDocument();
   });
@@ -219,8 +225,6 @@ describe('HistoryUploadDialog - Test', () => {
     );
     renderDialog('purchase-history');
     await choose();
-    await waitFor(() => expect(testButton()).toBeEnabled());
-    fireEvent.click(testButton());
 
     expect(await screen.findByText('Errors (1)')).toBeInTheDocument();
     expect(screen.getByText('Warnings (1)')).toBeInTheDocument();
@@ -234,8 +238,6 @@ describe('HistoryUploadDialog - Test', () => {
     );
     renderDialog('purchase-history');
     await choose();
-    await waitFor(() => expect(testButton()).toBeEnabled());
-    fireEvent.click(testButton());
 
     expect(await screen.findByText('No errors')).toBeInTheDocument();
     expect(screen.getByText('Warnings (1)')).toBeInTheDocument();
@@ -243,12 +245,13 @@ describe('HistoryUploadDialog - Test', () => {
   });
 
   it('does not force a Test before Confirm', async () => {
-    // Testing is a tool, not ceremony. The preview already read the file.
+    // Testing is a tool, not ceremony - the same rule as the GRN and customer importers.
     renderDialog('purchase-history');
-    await choose();
+    await pick();
 
-    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    expect(confirmButton()).toBeEnabled();
     expect(testPurchaseHistory).not.toHaveBeenCalled();
+    expect(previewPurchaseHistory).not.toHaveBeenCalled();
   });
 
   it('drops the verdict when a different file is chosen', async () => {
@@ -256,18 +259,16 @@ describe('HistoryUploadDialog - Test', () => {
     // uploads a bad file believing it was tested.
     renderDialog('purchase-history');
     await choose('first.xls');
-    await waitFor(() => expect(testButton()).toBeEnabled());
-    fireEvent.click(testButton());
     expect(await screen.findByText('No errors')).toBeInTheDocument();
 
-    await choose('second.xls');
+    await pick('second.xls');
     await waitFor(() => expect(screen.queryByText('No errors')).toBeNull());
   });
 });
 
 // ── 1. nothing is written from a single click ───────────────────────────────
 
-describe('HistoryUploadDialog - the two-step promise', () => {
+describe('HistoryUploadDialog - test, then upload', () => {
   it('opens with nothing chosen and Confirm disabled', () => {
     renderDialog('purchase-history');
 
@@ -276,26 +277,54 @@ describe('HistoryUploadDialog - the two-step promise', () => {
     expect(applyPurchaseHistory).not.toHaveBeenCalled();
   });
 
-  it('previews the chosen file and still writes nothing', async () => {
+  it('reads NOTHING when a file is chosen', async () => {
+    renderDialog('purchase-history');
+    await pick();
+
+    await Promise.resolve();
+    expect(previewPurchaseHistory).not.toHaveBeenCalled();
+    expect(testPurchaseHistory).not.toHaveBeenCalled();
+    expect(applyPurchaseHistory).not.toHaveBeenCalled();
+  });
+
+  it('reads the file on Test, and Test writes nothing', async () => {
     renderDialog('purchase-history');
     await choose();
 
     await waitFor(() => expect(previewPurchaseHistory).toHaveBeenCalledTimes(1));
     expect(applyPurchaseHistory).not.toHaveBeenCalled();
-    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    expect(confirmButton()).toBeEnabled();
   });
 
-  it('writes only on Confirm, and reports it applied', async () => {
-    const onApplied = vi.fn();
-    renderDialog('purchase-history', onApplied);
+  it('queues on Confirm: drawer, close, and no counts it cannot have', async () => {
+    const { onQueued, onOpenChange } = renderDialog('purchase-history');
     await choose();
-    await waitFor(() => expect(confirmButton()).toBeEnabled());
 
     fireEvent.click(confirmButton());
 
     await waitFor(() => expect(applyPurchaseHistory).toHaveBeenCalledTimes(1));
-    expect(onApplied).toHaveBeenCalledWith(historyResult());
-    expect(await screen.findByText('Upload applied.')).toBeInTheDocument();
+    // The drawer is what follows the job; without it the operator is told "queued" and has
+    // nowhere to watch it.
+    expect(notifyImportQueued).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onQueued).toHaveBeenCalledWith(QUEUED);
+    expect(screen.queryByText('Upload applied.')).toBeNull();
+  });
+
+  it('surfaces the extracted backend message when queueing is refused', async () => {
+    applyPurchaseHistory.mockRejectedValue(
+      new Error('Select a single company before uploading this file.'),
+    );
+    const { onQueued } = renderDialog('purchase-history');
+    await choose();
+
+    fireEvent.click(confirmButton());
+
+    expect(
+      await screen.findByText('Select a single company before uploading this file.'),
+    ).toBeInTheDocument();
+    expect(onQueued).not.toHaveBeenCalled();
+    expect(notifyImportQueued).not.toHaveBeenCalled();
   });
 });
 
@@ -316,12 +345,17 @@ describe('HistoryUploadDialog - an unreadable file', () => {
   });
 
   it('surfaces a failed request as an error rather than an empty dialog', async () => {
+    /**
+     * A failed READ does not disable Confirm. Test is a tool, not a gate, so a file whose
+     * Test could not reach the server may still be queued - and the job then reports what
+     * the worker made of it. What must not happen is silence.
+     */
     previewPurchaseHistory.mockRejectedValue(new Error('Backend is down'));
     renderDialog('purchase-history');
     await choose();
 
     expect(await screen.findByText('Backend is down')).toBeInTheDocument();
-    expect(confirmButton()).toBeDisabled();
+    expect(applyPurchaseHistory).not.toHaveBeenCalled();
   });
 });
 
@@ -359,14 +393,20 @@ describe('HistoryUploadDialog - purchase history', () => {
     ).toBeInTheDocument();
   });
 
-  it('switches the tiles from "would" to "did" once applied', async () => {
+  it('never claims what the upload DID - that lands on the job', async () => {
+    /**
+     * The tiles used to switch from "would" to "did" on the response. The write is on the
+     * worker now, so those numbers do not exist when this dialog closes: claiming them would
+     * be inventing them. The job page reports them, and the drawer is already pointed at it.
+     */
     renderDialog('purchase-history');
     await choose();
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());
 
-    expect(await screen.findByText('Orders written')).toBeInTheDocument();
-    expect(screen.getByText('Lines written')).toBeInTheDocument();
-    expect(within(tile('Lines written')).getByText('12,900')).toBeInTheDocument();
+    await waitFor(() => expect(notifyImportQueued).toHaveBeenCalled());
+    expect(screen.queryByText('Orders written')).toBeNull();
+    expect(screen.queryByText('Lines written')).toBeNull();
   });
 });
 
@@ -424,19 +464,19 @@ describe('HistoryUploadDialog - order inquiry', () => {
     expect(await screen.findByText('BRW-ZZ')).toBeInTheDocument();
   });
 
-  it('reports what the link resolver did, once applied', async () => {
-    // The half nothing else would say: this upload can complete a pairing claimed by a file
-    // somebody else uploaded weeks ago.
+  it('leaves the link resolution to the job, which is where it now happens', async () => {
+    /**
+     * The resolve runs inside the queued job (it must: it is a write). So the pairing this
+     * upload completed is reported on the job's result rather than here - the half nothing
+     * else would say is still said, just not by a dialog that has already closed.
+     */
     renderDialog('order-inquiry');
     await choose('inquiry.xlsx');
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());
 
-    const section = await screen.findByRole('region', { name: /Order links/i });
-    expect(within(section).getByText('Resolved now')).toBeInTheDocument();
-    expect(within(within(section).getByText('Resolved now').closest('[data-slot="count-tile"]')!)
-      .getByText('12')).toBeInTheDocument();
-    expect(within(within(section).getByText('Still waiting').closest('[data-slot="count-tile"]')!)
-      .getByText('78')).toBeInTheDocument();
+    await waitFor(() => expect(notifyImportQueued).toHaveBeenCalled());
+    expect(screen.queryByRole('region', { name: /Order links/i })).toBeNull();
   });
 });
 
@@ -467,14 +507,19 @@ describe('HistoryUploadDialog - one delivery, stated on many sheets', () => {
     ).toBeInTheDocument();
   });
 
-  it('says what it withdrew, once applied', async () => {
-    // Deleting demand silently is the one thing an import must never do.
+  it('reports a withdrawal on the JOB, not here - but never silently', async () => {
+    /**
+     * Deleting demand silently is the one thing an import must never do, and it still does
+     * not: every withdrawn instalment is recorded as its own per-row outcome
+     * (`line_withdrawn`) on the job. What changed is where it is read, because the deletion
+     * happens on the worker.
+     */
     renderDialog('order-inquiry');
     await choose('inquiry.xlsx');
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());
 
-    expect(
-      await screen.findByText(/3 deliveries this sheet no longer lists were withdrawn/),
-    ).toBeInTheDocument();
+    await waitFor(() => expect(notifyImportQueued).toHaveBeenCalled());
+    expect(screen.queryByText(/no longer lists/)).toBeNull();
   });
 });

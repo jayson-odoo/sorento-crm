@@ -119,6 +119,78 @@ describe('PoWorklistView - it is a worklist, not a decision', () => {
   });
 });
 
+describe('PoWorklistView - committed cash reads like money everywhere else (AC-2.2)', () => {
+  it('writes a ringgit total with the same glyph the rest of the screens use', () => {
+    // It used to print the raw code (`MYR 226,464`), which is the plan screen writing
+    // money a second way.
+    renderView(state());
+    const r = rowFor('SRTWC8613-RL');
+    expect(within(r).getByText('RM 226,464.00')).toBeInTheDocument();
+  });
+
+  it('names a foreign currency rather than claiming ringgit', () => {
+    renderView(
+      state({
+        data: {
+          run_id: 'run-2026-w32',
+          as_of: '2026-08-04',
+          rows: [row({ last_po_currency: 'USD', cash_committed: 226464 })],
+        },
+      }),
+    );
+    const r = rowFor('SRTWC8613-RL');
+    expect(within(r).getByText('USD 226,464.00')).toBeInTheDocument();
+  });
+
+  it('keeps the cents, on a column somebody totals by eye', () => {
+    // qty x unit cost lands on cents far more often than not, and a rounded column does
+    // not add up to the figure beside it.
+    renderView(
+      state({
+        data: {
+          run_id: 'run-2026-w32',
+          as_of: '2026-08-04',
+          rows: [row({ cash_committed: 226464.5 })],
+        },
+      }),
+    );
+    const r = rowFor('SRTWC8613-RL');
+    expect(within(r).getByText('RM 226,464.50')).toBeInTheDocument();
+  });
+
+  it('reads a cost with no currency on file as ringgit, not as "no cost recorded"', () => {
+    // The row guard used to treat a missing currency as a missing cost. Under the shared
+    // formatter a blank currency means base, so a real committed figure was being hidden
+    // behind "no cost recorded" - the one thing this column exists to show.
+    renderView(
+      state({
+        data: {
+          run_id: 'run-2026-w32',
+          as_of: '2026-08-04',
+          rows: [row({ cash_committed: 226464.5, last_po_currency: null })],
+        },
+      }),
+    );
+    const r = rowFor('SRTWC8613-RL');
+    expect(within(r).getByText('RM 226,464.50')).toBeInTheDocument();
+    expect(within(r).queryByText('no cost recorded')).not.toBeInTheDocument();
+  });
+
+  it('says no cost is recorded rather than printing a zero', () => {
+    renderView(
+      state({
+        data: {
+          run_id: 'run-2026-w32',
+          as_of: '2026-08-04',
+          rows: [row({ cash_committed: null, last_po_cost: null, last_po_currency: null })],
+        },
+      }),
+    );
+    const r = rowFor('SRTWC8613-RL');
+    expect(within(r).getByText('no cost recorded')).toBeInTheDocument();
+  });
+});
+
 describe('PoWorklistView - the use-pool decision (AC-E2.5)', () => {
   it('renders a zero-quantity decision as a row saying no PO is needed', () => {
     renderView(

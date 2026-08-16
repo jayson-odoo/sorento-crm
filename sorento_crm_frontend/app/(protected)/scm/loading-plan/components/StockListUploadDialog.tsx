@@ -23,6 +23,7 @@ import {
   type StockListPreview,
   type StockListResult,
 } from '../../services/fulfilmentService';
+import { fmtInt } from '../../lib/format';
 
 /**
  * The supplier's own stock list.
@@ -112,7 +113,7 @@ export function StockListUploadDialog({
               </div>
               {summary.items_unmeasured > 0 ? (
                 <p className="text-2xs text-muted-foreground">
-                  {summary.items_unmeasured.toLocaleString()}{' '}
+                  {fmtInt(summary.items_unmeasured)}{' '}
                   {summary.items_unmeasured === 1 ? 'carries' : 'of them carry'} no volume, so
                   {summary.items_unmeasured === 1 ? ' it cannot' : ' they cannot'} be fitted to a
                   container until the supplier sends one.
@@ -120,7 +121,7 @@ export function StockListUploadDialog({
               ) : null}
               {summary.items_unmatched > 0 ? (
                 <p className="text-2xs text-muted-foreground">
-                  {summary.items_unmatched.toLocaleString()}{' '}
+                  {fmtInt(summary.items_unmatched)}{' '}
                   {summary.items_unmatched === 1
                     ? 'model number is not in the catalogue. It is kept, but nothing can be loaded against it.'
                     : 'model numbers are not in the catalogue. They are kept, but nothing can be loaded against them.'}
@@ -134,9 +135,9 @@ export function StockListUploadDialog({
           {result ? (
             <Alert>
               <AlertDescription>
-                Saved {result.rows_written.toLocaleString()} items
+                Saved {fmtInt(result.rows_written)} items
                 {result.rows_replaced > 0
-                  ? `, replacing ${result.rows_replaced.toLocaleString()}`
+                  ? `, replacing ${fmtInt(result.rows_replaced)}`
                   : ''}
                 .
               </AlertDescription>
@@ -145,20 +146,18 @@ export function StockListUploadDialog({
         </DialogBody>
 
         <DialogFooter>
-          {upload.runTest ? (
-            <Button
-              variant="outline"
-              onClick={() => void upload.runTest?.()}
-              disabled={!upload.file || upload.testing || upload.applying}
-            >
-              {upload.testing ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <TestTube className="size-4" />
-              )}
-              Test
-            </Button>
-          ) : null}
+          <Button
+            variant="outline"
+            onClick={() => void upload.runTest()}
+            disabled={!upload.file || upload.testing || upload.applying}
+          >
+            {upload.testing ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <TestTube className="size-4" />
+            )}
+            Test
+          </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {result ? 'Close' : 'Cancel'}
           </Button>

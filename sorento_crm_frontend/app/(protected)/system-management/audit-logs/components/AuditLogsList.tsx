@@ -42,9 +42,12 @@ const ENTITY_TYPE_ALL = '__all__';
 // Entity types the audit trigger records (stored value = table/entity name). A
 // fixed list beats free text so a singular/plural typo ("user" vs "users") can't
 // silently return zero rows. Keep in sync with the __audit_track__ models.
-const ENTITY_TYPES = [
+// Exported so a test can pin the list: a model that starts being audited without
+// an entry here is simply unfilterable, with nothing on screen to say so.
+export const ENTITY_TYPES = [
   'product',
   'orders',
+  'customer',
   'suppliers',
   'purchase_request',
   'complaint',

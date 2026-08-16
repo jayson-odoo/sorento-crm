@@ -1,7 +1,7 @@
 """Resources service for business logic."""
 import logging
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from typing import Any, Optional, List
 
 logger = logging.getLogger(__name__)
@@ -188,10 +188,10 @@ class AttachmentDirectoryService:
         """Return all directory IDs in the subtree rooted at directory_id
         (including the directory itself).
 
-        Delegates to the portable ORM walker so the same code path runs on
-        Postgres (prod) and sqlite (the pytest harness) — the previous raw
-        ``id::text`` recursive CTE was Postgres-only and broke the unified-Drive
-        tests that exercise folder delete/restore + move cycle-guard on sqlite.
+        Delegates to the portable ORM walker rather than the raw ``id::text``
+        recursive CTE it replaced. (The original note here said the walker existed
+        to keep sqlite working; tests run on Postgres ONLY - see PRINCIPLES.md -
+        so what it actually buys now is one readable code path, not portability.)
         ``include_deleted`` default stays ``True`` to preserve prior behaviour for
         restore/permanent-delete callers that must see already-soft-deleted rows.
         """
@@ -489,6 +489,8 @@ class AttachmentService:
         attachment_type_ids: Optional[list[str]] = None,
         attachment_type_code: Optional[str] = None,
         attachment_type_codes: Optional[list[str]] = None,
+        mime_type: Optional[str] = None,
+        mime_types: Optional[list[str]] = None,
         uploaded_by: Optional[str] = None,
         uploaded_at_from: Optional[Any] = None,
         uploaded_at_to: Optional[Any] = None,
@@ -511,6 +513,11 @@ class AttachmentService:
         ``attachment_type_id`` / ``attachment_type_code`` are the singular forms;
         ``attachment_type_ids`` / ``attachment_type_codes`` take a list and union
         with their singular twin (OR within each pair, AND across the two pairs).
+
+        ``mime_type`` / ``mime_types`` follow the same singular-plus-plural
+        convention and filter on the FILE's own type, which is a different
+        question from ``attachment_type_id`` (a document class: catalogue,
+        certificate, ...). A picker that can only read PDFs asks this one.
         """
         from app.services.entity_filter_helpers import (
             attach_echo,
@@ -530,6 +537,8 @@ class AttachmentService:
             attachment_type_ids=attachment_type_ids,
             attachment_type_code=attachment_type_code,
             attachment_type_codes=attachment_type_codes,
+            mime_type=mime_type,
+            mime_types=mime_types,
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
@@ -560,6 +569,38 @@ class AttachmentService:
             },
             entity_buckets,
         )
+
+    def company_name_map(self, attachments) -> dict:
+        """``company_id`` -> company name for a page of attachment rows.
+
+        ONE query per page, not per row: the serializers stamp the owning company
+        on every attachment payload, and `Attachment` has no relationship to
+        `Company` (the mixin only gives it the FK column), so without a batched
+        lookup this would be an N+1 on the file library's busiest endpoint.
+
+        Attachments are company-SHARED, so a NULL `company_id` is legitimate and
+        simply contributes no entry. Best-effort: a failed lookup returns an empty
+        map, which renders the row without a company rather than failing the list.
+        """
+        ids = {
+            str(getattr(att, "company_id", None))
+            for att in (attachments or [])
+            if getattr(att, "company_id", None)
+        }
+        if not ids:
+            return {}
+        try:
+            from app.models.company import Company
+
+            return {
+                str(cid): name
+                for cid, name in self.db.query(Company.id, Company.name)
+                .filter(Company.id.in_(ids))
+                .all()
+            }
+        except Exception:  # noqa: BLE001 - attribution is additive, never fatal
+            logger.warning("Could not resolve company names for attachments", exc_info=True)
+            return {}
 
     def _resolve_attachment_type_code(self, code: str) -> Optional[str]:
         """Resolve one attachment-type code/name to its AttachmentType id.
@@ -608,6 +649,8 @@ class AttachmentService:
         attachment_type_ids: Optional[list[str]] = None,
         attachment_type_code: Optional[str] = None,
         attachment_type_codes: Optional[list[str]] = None,
+        mime_type: Optional[str] = None,
+        mime_types: Optional[list[str]] = None,
         uploaded_by: Optional[str] = None,
         uploaded_at_from: Optional[Any] = None,
         uploaded_at_to: Optional[Any] = None,
@@ -697,6 +740,27 @@ class AttachmentService:
                 q = q.filter(Attachment.id == "00000000-0000-0000-0000-000000000000")
             else:
                 q = q.filter(Attachment.attachment_type_id.in_(sorted(resolved)))
+
+        # The FILE's type, not the document class above. Singular and plural union
+        # exactly like the type pair, and both omitted leaves the query untouched -
+        # this endpoint has many callers and none of them asked for a new filter.
+        #
+        # Compared case-insensitively and with any `;parameter` suffix dropped
+        # from both sides: a mime type is case-insensitive per RFC 2045, and the
+        # same PDF is recorded as `application/pdf` by one uploader and
+        # `application/pdf; charset=binary` by another. A caller asking for
+        # `application/pdf` means both, and a picker that missed the second would
+        # hide a perfectly readable file.
+        wanted_mimes = {
+            str(m).split(";")[0].strip().lower()
+            for m in ([mime_type] + list(mime_types or []))
+            if m and str(m).split(";")[0].strip()
+        }
+        if wanted_mimes:
+            base_mime = func.lower(
+                func.trim(func.split_part(Attachment.mime_type, ";", 1))
+            )
+            q = q.filter(base_mime.in_(sorted(wanted_mimes)))
         if direct_access_only:
             if visible_attachment_type_ids is not None:
                 # A contact was resolved and holds per-contact grants, so the
@@ -827,6 +891,8 @@ class AttachmentService:
         attachment_type_ids: Optional[list[str]] = None,
         attachment_type_code: Optional[str] = None,
         attachment_type_codes: Optional[list[str]] = None,
+        mime_type: Optional[str] = None,
+        mime_types: Optional[list[str]] = None,
         uploaded_by: Optional[str] = None,
         uploaded_at_from: Optional[Any] = None,
         uploaded_at_to: Optional[Any] = None,
@@ -864,6 +930,8 @@ class AttachmentService:
             attachment_type_ids=attachment_type_ids,
             attachment_type_code=attachment_type_code,
             attachment_type_codes=attachment_type_codes,
+            mime_type=mime_type,
+            mime_types=mime_types,
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
@@ -1999,7 +2067,16 @@ class AttachmentService:
     
     def get_file_content(self, attachment_id: str) -> bytes:
         """Retrieve file bytes from whichever storage provider hosts this attachment."""
-        attachment = self.get_attachment(attachment_id)
+        return self.get_file_content_for(self.get_attachment(attachment_id))
+
+    def get_file_content_for(self, attachment) -> bytes:
+        """The same fetch, for a caller that is already holding the row.
+
+        Split out so a caller that has just loaded and validated an attachment
+        (the dealer-kit from-attachment read does exactly that) does not pay a
+        second SELECT for the row it is holding. One implementation of the
+        provider dispatch, two ways in.
+        """
         if not attachment.file_path:
             raise Exception("Attachment has no file path")
 

@@ -1,10 +1,11 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import {
   applyDimensions,
+  createFlyerReadingFromAttachment,
   getFlyerReading,
   listFlyerReadings,
   seedFromFlyerReading,
@@ -56,30 +57,64 @@ export function useFlyerReadingQuery(readingId: string, promotionId: string | nu
 }
 
 /**
- * Read a flyer. Synchronous on the server, so this resolves with the report.
+ * What happens after a flyer has been read, whichever source it came from.
+ *
+ * Shared by both create hooks on purpose: the two sources produce the same
+ * reading, so anything one of them did to the cache and not the other would be
+ * a difference the designer could see.
  *
  * The detail cache is seeded from the response rather than invalidated: the
- * upload already paid for a match run, and a refetch on arrival would pay for a
+ * read already paid for a match run, and a refetch on arrival would pay for a
  * second one and blank the screen it just filled.
+ */
+function onFlyerReadingCreated(
+  queryClient: QueryClient,
+  reading: FlyerReading,
+  promotionId?: string | null,
+) {
+  queryClient.setQueryData([FLYER_READINGS_QUERY_KEY, reading.id, promotionId ?? ''], reading);
+  queryClient.invalidateQueries({ queryKey: [FLYER_READINGS_QUERY_KEY] });
+  toast.success(`Read ${reading.pageCount} page${reading.pageCount === 1 ? '' : 's'}`);
+}
+
+function onFlyerReadingFailed(error: Error) {
+  // The backend says "not a PDF" and "larger than the 50 MB limit" in words,
+  // so the message is passed through rather than replaced.
+  toast.error(error.message || 'Could not read that flyer');
+}
+
+/**
+ * Read a flyer off the designer's machine. Synchronous on the server, so this
+ * resolves with the report.
  */
 export function useUploadFlyerReading() {
   const queryClient = useQueryClient();
 
   return useMutation<FlyerReading, Error, { file: File; promotionId?: string | null }>({
     mutationFn: ({ file, promotionId }) => uploadFlyerReading(file, promotionId),
-    onSuccess: (reading, { promotionId }) => {
-      queryClient.setQueryData(
-        [FLYER_READINGS_QUERY_KEY, reading.id, promotionId ?? ''],
-        reading,
-      );
-      queryClient.invalidateQueries({ queryKey: [FLYER_READINGS_QUERY_KEY] });
-      toast.success(`Read ${reading.pageCount} page${reading.pageCount === 1 ? '' : 's'}`);
-    },
-    onError: (error) => {
-      // The backend says "not a PDF" and "larger than the 50 MB limit" in
-      // words, so the message is passed through rather than replaced.
-      toast.error(error.message || 'Could not read that flyer');
-    },
+    onSuccess: (reading, { promotionId }) =>
+      onFlyerReadingCreated(queryClient, reading, promotionId),
+    onError: onFlyerReadingFailed,
+  });
+}
+
+/**
+ * Read a flyer the file library already holds. Only the attachment id travels;
+ * everything else the server takes off the attachment.
+ */
+export function useCreateFlyerReadingFromAttachment() {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    FlyerReading,
+    Error,
+    { attachmentId: string; promotionId?: string | null }
+  >({
+    mutationFn: ({ attachmentId, promotionId }) =>
+      createFlyerReadingFromAttachment(attachmentId, promotionId),
+    onSuccess: (reading, { promotionId }) =>
+      onFlyerReadingCreated(queryClient, reading, promotionId),
+    onError: onFlyerReadingFailed,
   });
 }
 

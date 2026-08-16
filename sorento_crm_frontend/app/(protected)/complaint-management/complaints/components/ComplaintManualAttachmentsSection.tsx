@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/table';
 import { formatDate } from '@/lib/helpers';
 import { useDeleteComplaintAttachment, useDeleteComplaintResponseAttachment } from '../hooks/useComplaints';
-import ComplaintLinkAttachmentBrowserDialog from './ComplaintLinkAttachmentBrowserDialog';
+import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import { linkComplaintAttachment } from '../services/complaintService';
 import type { ComplaintAttachment } from '../types/complaint.types';
 import { attachmentUploaderLabel } from '@/app/(protected)/master-data-management/shared/lib/attachment-attribution';
@@ -239,7 +239,7 @@ export default function ComplaintManualAttachmentsSection({
         </AlertDialogContent>
       </AlertDialog>
       {linkDialogOpen && (
-        <ComplaintLinkAttachmentBrowserDialog
+        <LinkAttachmentBrowserDialog
           open={linkDialogOpen}
           onOpenChange={setLinkDialogOpen}
           entityId={complaintId}

@@ -24,6 +24,7 @@ export const ENTITY_TYPE_OPTIONS: {
   { value: 'stock_inquiry', label: 'Stock Inquiry' },
   { value: 'purchase_request', label: 'Purchase Request' },
   { value: 'product', label: 'Product' },
+  { value: 'customer', label: 'Customer' },
   { value: 'attachment', label: 'Attachment' },
 ];
 

@@ -327,7 +327,51 @@ def test_resource_attachments_carry_the_upload_date_when_present():
     assert [f["value"] for f in out["items"][0]["fields"]] == [
         "Container Status 2026.xlsx", "2026-08-07",
     ]
-    assert out["items"][1]["fields"][1]["value"] == "2026-08-01"
+    # Looked up by label, not by index: a fixture that later carries a company
+    # would shift the position and silently assert against the wrong field.
+    assert next(
+        f["value"] for f in out["items"][1]["fields"] if f["label"] == "Uploaded"
+    ) == "2026-08-01"
+
+
+def test_resource_attachments_same_name_different_company_are_distinguishable():
+    """AC-D2. A contact granted both Mocha and Sorento gets a current workbook
+    from EACH, and each company names its sheet the same thing - the File ID is
+    deliberately withheld from this render, so the Company field is the only
+    handle left to tell the two apart.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "http://x/sorento.xlsx",
+             "company_name": "Sorento"},
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "http://x/mocha.xlsx",
+             "company_name": "Mocha"},
+        ],
+    })
+    assert len(out["items"]) == 2
+    company_by_item = [
+        next(f["value"] for f in item["fields"] if f["label"] == "Company")
+        for item in out["items"]
+    ]
+    assert company_by_item == ["Sorento", "Mocha"]
+    assert company_by_item[0] != company_by_item[1], (
+        "same filename, different company - the two items must not read identically"
+    )
+
+
+def test_resource_attachments_no_company_renders_no_company_line():
+    """AC-D3. A shared / company-less attachment (`company_name` absent or
+    None) must render with NO Company field at all, never an empty one."""
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "Shared Catalogue.pdf", "file_path": "http://x/shared.pdf"},
+            {"original_filename": "Also Shared.pdf", "file_path": "http://x/also.pdf",
+             "company_name": None},
+        ],
+    })
+    for item in out["items"]:
+        labels = [f["label"] for f in item["fields"]]
+        assert "Company" not in labels
 
 
 def test_resource_attachments_do_not_expose_the_row_id():

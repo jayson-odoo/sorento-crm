@@ -1,6 +1,8 @@
 'use client';
 
-import { LoaderCircle } from 'lucide-react';
+import { LoaderCircle, TestTube } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,12 +15,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FileDropzone } from '@/components/common/FileDropzone';
+import { ImportFeedbackSections } from '@/components/common/ImportFeedbackSections';
+import { useImportJobDrawer } from '@/components/upload-activity/useImportJobDrawer';
+import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { MAX_SIZE_MB, useTwoStepUpload } from '../hooks/useTwoStepUpload';
 import {
   applyOutstandingImport,
   previewOutstandingImport,
-  type OutstandingApplyResult,
+  type OutstandingAgentNotice,
   type OutstandingChangeKind,
   type OutstandingCounts,
   type OutstandingImportKind,
@@ -28,19 +33,25 @@ import {
   type OutstandingSampleRow,
 } from '../services/outstandingImportService';
 import { CountTile } from './UploadCountTile';
+import { fmtInt } from '../../lib/format';
 
 /**
  * SCM - the upload channel for the open order book, until AutoCount is integrated.
  *
- * Two steps, never one click: choosing a file PREVIEWS it (writes nothing) and the
- * user confirms the diff before anything is saved. The whole reorder plan is computed
- * from this data, so a wrong file quietly imported is a week of unpicking.
+ * Test, then upload - the same three presses as the GRN, SPO and customer importers.
+ * Choosing a file runs nothing; Test reads it and shows the diff; Confirm queues the write
+ * as an import job and hands the watching to the upload drawer. The whole reorder plan is
+ * computed from this data, so a wrong file quietly imported is a week of unpicking.
  *
  * The diff shows a count for every change kind INCLUDING `unchanged` (a diff that
  * shows only changes is indistinguishable from one that silently failed to read the
  * file), sample rows as evidence, the documents the file covers, and every row it
  * could not read or match. None of those problems blocks a file that is otherwise
  * usable - only a header missing required columns does.
+ *
+ * What the upload DID is not shown here any more: the write happens on the worker, so the
+ * counts do not exist when this dialog closes. They land on the job page, which is where
+ * every other importer in this system reports its outcome.
  */
 
 const TITLES: Record<OutstandingImportKind, string> = {
@@ -75,7 +86,7 @@ function countOf(counts: OutstandingCounts, kind: OutstandingChangeKind): number
 }
 
 function num(value: number | null): string {
-  return value == null ? '-' : value.toLocaleString();
+  return fmtInt(value);
 }
 
 function date(value: string | null): string {
@@ -147,76 +158,59 @@ function ProblemSections({
   unmappedHeaders,
   rowProblems,
   resolutionIssues,
+  unmappedAgents,
 }: {
   unmappedHeaders: string[];
   rowProblems: OutstandingRowProblem[];
   resolutionIssues: OutstandingResolutionIssue[];
+  unmappedAgents: OutstandingAgentNotice[];
 }) {
-  if (!unmappedHeaders.length && !rowProblems.length && !resolutionIssues.length) return null;
-
+  /**
+   * An adapter onto the shared rendering, not a panel of its own: the GRN, SPO and customer
+   * import dialogs show the same four kinds of thing and had four different-looking ways of
+   * showing them.
+   *
+   * `skippedCount` is deliberately NOT passed. This channel's row problems are a mixture -
+   * a row the reader could not use IS dropped, but "this document states no order type" is
+   * a document that imported perfectly well - so a heading claiming N rows skipped would be
+   * wrong for half the list. The count that IS a skip count lives on the job.
+   */
   return (
-    <div className="space-y-3">
-      {unmappedHeaders.length ? (
-        <div className="rounded-lg border border-border p-3">
-          <h4 className="text-xs font-semibold">
-            Columns we did not recognise ({unmappedHeaders.length})
-          </h4>
-          <div className="mt-1.5 flex flex-wrap gap-1">
-            {unmappedHeaders.map((header) => (
-              <span
-                key={header}
-                className="rounded bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground"
-              >
-                {header}
-              </span>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {rowProblems.length ? (
-        <div className="rounded-lg border border-border p-3">
-          <h4 className="text-xs font-semibold">
-            Rows we could not read ({rowProblems.length})
-          </h4>
-          <ul className="mt-1.5 space-y-1">
-            {rowProblems.map((problem) => (
-              <li
-                key={`${problem.row_number}-${problem.reason}`}
-                className="flex flex-wrap items-baseline gap-x-1.5 text-2xs text-muted-foreground"
-              >
-                <span className="font-medium text-foreground">Row {problem.row_number}</span>
-                <span>{problem.reason}</span>
-                {problem.value ? (
-                  <span className="rounded bg-muted px-1 py-0.5 font-mono">{problem.value}</span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {resolutionIssues.length ? (
-        <div className="rounded-lg border border-border p-3">
-          <h4 className="text-xs font-semibold">
-            Rows we could not match ({resolutionIssues.length})
-          </h4>
-          <ul className="mt-1.5 space-y-1">
-            {resolutionIssues.map((issue) => (
-              <li
-                key={`${issue.row_number}-${issue.field}-${issue.value}`}
-                className="flex flex-wrap items-baseline gap-x-1.5 text-2xs text-muted-foreground"
-              >
-                <span className="font-medium text-foreground">Row {issue.row_number}</span>
-                <span>{issue.field}</span>
-                <span className="rounded bg-muted px-1 py-0.5 font-mono">{issue.value}</span>
-                <span>{issue.reason}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </div>
+    <ImportFeedbackSections
+      unrecognisedColumns={unmappedHeaders}
+      rejectedRows={rowProblems.map((problem) => ({
+        row: problem.row_number || null,
+        reason: problem.reason,
+        value: problem.value || null,
+      }))}
+      notices={[
+        {
+          key: 'resolution',
+          title: 'Rows we could not match',
+          items: resolutionIssues.map((issue, index) => ({
+            key: `${issue.row_number}-${issue.field}-${issue.value}-${index}`,
+            lead: `Row ${issue.row_number}`,
+            code: issue.value,
+            text: `${issue.field}: ${issue.reason}`,
+          })),
+        },
+        {
+          key: 'agents',
+          // Worded as the backend words it, and kept OUT of the rejected rows: nothing was
+          // skipped and no row failed, so listing these among the failures would make a
+          // clean file read as a broken one.
+          title: 'Agents with no demand class',
+          // No hint line under it: the title says what the list is and each row carries the
+          // backend's own reason, so a sentence explaining the consequence is teaching text
+          // in a report screen.
+          items: unmappedAgents.map((agent) => ({
+            key: agent.code,
+            code: agent.code,
+            text: agent.reason,
+          })),
+        },
+      ]}
+    />
   );
 }
 
@@ -226,28 +220,47 @@ export interface OutstandingUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   kind: OutstandingImportKind;
-  /** Fired once the write succeeds, so the page can refresh what it derives from it. */
-  onApplied?: (result: OutstandingApplyResult) => void;
+  /** Fired once the job is queued, so a page can react to the upload having started. */
+  onQueued?: (queued: ImportQueuedResult) => void;
 }
 
 export function OutstandingUploadDialog({
   open,
   onOpenChange,
   kind,
-  onApplied,
+  onQueued,
 }: OutstandingUploadDialogProps) {
-  const upload = useTwoStepUpload<OutstandingPreview, OutstandingApplyResult>({
+  const router = useRouter();
+  const { notifyImportQueued } = useImportJobDrawer();
+  const upload = useTwoStepUpload<OutstandingPreview, ImportQueuedResult>({
     open,
     preview: (f) => previewOutstandingImport(kind, f),
     apply: (f) => applyOutstandingImport(kind, f),
-    onApplied,
+    onApplied: (queued) => {
+      // The work is not tied to this tab: open the drawer, close the dialog, and let the
+      // job be followed there.
+      notifyImportQueued();
+      onOpenChange(false);
+      toast.success('Upload queued. Processing in the background.', {
+        duration: 6000,
+        action: {
+          label: 'View job',
+          onClick: () => router.push(`/system-management/import-jobs/${queued.job_id}`),
+        },
+      });
+      onQueued?.(queued);
+    },
   });
-  const { file, preview, result, previewing, applying, error } = upload;
+  const { file, preview, previewing, applying, error } = upload;
 
   const hasChanges = !!preview && ACTIONABLE_KINDS.some((k) => countOf(preview.counts, k) > 0);
-  // A file that reads fine but changes nothing is not worth writing, so the shared
-  // "picked, readable, idle" test is narrowed here rather than in the hook.
-  const canConfirm = upload.canConfirm && hasChanges;
+  /**
+   * Confirmable once a file is picked. Deliberately NOT "once it has been tested and shows
+   * changes": Test is a tool, not a gate, and the same rule holds in every other import
+   * dialog. A file already tested and known to change nothing is the one case worth
+   * blocking, because there is nothing for the job to do.
+   */
+  const canConfirm = upload.canConfirm && (!preview || hasChanges);
 
   const sampleGroups = preview
     ? CHANGE_LABELS.map(([key, label]) => ({
@@ -268,7 +281,7 @@ export function OutstandingUploadDialog({
           {/* One line, and it earns its place twice over: it is the promise the two-step
               flow makes, and it is the dialog's accessible description. Without a
               description Radix warns that the content has no `aria-describedby`. */}
-          <DialogDescription>Nothing is saved until you confirm the changes.</DialogDescription>
+          <DialogDescription>Test reads the file. Confirm queues the upload.</DialogDescription>
         </DialogHeader>
 
         <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">
@@ -278,146 +291,127 @@ export function OutstandingUploadDialog({
             </Alert>
           ) : null}
 
-          {result ? (
-            <div className="space-y-3">
-              <p className="text-sm font-medium">Upload applied.</p>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <CountTile label="Added" value={result.applied.added} />
-                <CountTile label="Updated" value={result.applied.updated} />
-                <CountTile label="Closed" value={result.applied.closed} />
-                <CountTile label="Unchanged" value={result.applied.unchanged} />
+          <FileDropzone
+            files={file ? [file] : []}
+            onFilesChange={(next) => upload.choose(next[0] ?? null)}
+            onReject={upload.reject}
+            accept={upload.accept}
+            maxSizeMb={MAX_SIZE_MB}
+            disabled={previewing || applying}
+            aria-label="Outstanding orders file"
+          />
+
+          {previewing ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              Reading the file...
+            </div>
+          ) : null}
+
+          {preview && !preview.ok ? (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+              <p className="text-sm font-medium">This file is missing required columns.</p>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {preview.missing_columns.map((column) => (
+                  <span
+                    key={column}
+                    className="rounded bg-muted px-1.5 py-0.5 text-2xs font-mono"
+                  >
+                    {column}
+                  </span>
+                ))}
               </div>
-              <p className="text-2xs text-muted-foreground">
-                {result.scope_documents.length.toLocaleString()}{' '}
-                {plural(result.scope_documents.length, 'document', 'documents')} in this file.
+              <p className="mt-1.5 text-2xs text-muted-foreground">
+                Add them to the export, then upload it again.
               </p>
+            </div>
+          ) : null}
+
+          {preview && preview.ok ? (
+            <div className="space-y-4">
+              <div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                  {CHANGE_LABELS.map(([key, label]) => (
+                    <CountTile key={key} label={label} value={countOf(preview.counts, key)} />
+                  ))}
+                </div>
+                <p className="mt-1.5 text-2xs text-muted-foreground">
+                  {fmtInt(preview.total_rows)} rows read
+                  {file ? ` from ${file.name}` : ''}.
+                </p>
+                {!hasChanges ? (
+                  <p className="mt-1.5 text-sm font-medium">
+                    Nothing would change - every line already matches what we hold.
+                  </p>
+                ) : null}
+              </div>
+
+              <section aria-label="Scope" className="rounded-lg border border-border p-3">
+                <h4 className="text-xs font-semibold">
+                  Covers {fmtInt(scopeCount)}{' '}
+                  {plural(scopeCount, 'document', 'documents')}
+                </h4>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {preview.scope_documents.slice(0, SCOPE_CHIP_LIMIT).map((doc) => (
+                    <span
+                      key={doc}
+                      className="rounded bg-muted px-1.5 py-0.5 text-2xs font-medium"
+                    >
+                      {doc}
+                    </span>
+                  ))}
+                  {scopeCount > SCOPE_CHIP_LIMIT ? (
+                    <span className="px-1.5 py-0.5 text-2xs text-muted-foreground">
+                      +{fmtInt(scopeCount - SCOPE_CHIP_LIMIT)} more
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-1.5 text-2xs text-muted-foreground">
+                  Orders not in this file are untouched.
+                </p>
+              </section>
+
+              {sampleGroups.map((group) => (
+                <div key={group.key} className="space-y-1.5">
+                  <h4 className="text-xs font-semibold">
+                    {group.label} (showing {group.rows.length} of{' '}
+                    {fmtInt(Math.max(group.total, group.rows.length))})
+                  </h4>
+                  <SampleTable rows={group.rows} />
+                </div>
+              ))}
+
               <ProblemSections
-                unmappedHeaders={[]}
-                rowProblems={result.row_problems}
-                resolutionIssues={result.resolution_issues}
+                unmappedHeaders={preview.unmapped_headers}
+                rowProblems={preview.row_problems}
+                resolutionIssues={preview.resolution_issues}
+                unmappedAgents={preview.unmapped_agents ?? []}
               />
             </div>
-          ) : (
-            <>
-              <FileDropzone
-                files={file ? [file] : []}
-                onFilesChange={(next) => void upload.choose(next[0] ?? null)}
-                onReject={upload.reject}
-                accept={upload.accept}
-                maxSizeMb={MAX_SIZE_MB}
-                disabled={previewing || applying}
-                aria-label="Outstanding orders file"
-              />
-
-              {previewing ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden />
-                  Reading the file...
-                </div>
-              ) : null}
-
-              {preview && !preview.ok ? (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-                  <p className="text-sm font-medium">This file is missing required columns.</p>
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {preview.missing_columns.map((column) => (
-                      <span
-                        key={column}
-                        className="rounded bg-muted px-1.5 py-0.5 text-2xs font-mono"
-                      >
-                        {column}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="mt-1.5 text-2xs text-muted-foreground">
-                    Add them to the export, then upload it again.
-                  </p>
-                </div>
-              ) : null}
-
-              {preview && preview.ok ? (
-                <div className="space-y-4">
-                  <div>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-                      {CHANGE_LABELS.map(([key, label]) => (
-                        <CountTile key={key} label={label} value={countOf(preview.counts, key)} />
-                      ))}
-                    </div>
-                    <p className="mt-1.5 text-2xs text-muted-foreground">
-                      {preview.total_rows.toLocaleString()} rows read
-                      {file ? ` from ${file.name}` : ''}.
-                    </p>
-                    {!hasChanges ? (
-                      <p className="mt-1.5 text-sm font-medium">
-                        Nothing would change - every line already matches what we hold.
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <section aria-label="Scope" className="rounded-lg border border-border p-3">
-                    <h4 className="text-xs font-semibold">
-                      Covers {scopeCount.toLocaleString()}{' '}
-                      {plural(scopeCount, 'document', 'documents')}
-                    </h4>
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {preview.scope_documents.slice(0, SCOPE_CHIP_LIMIT).map((doc) => (
-                        <span
-                          key={doc}
-                          className="rounded bg-muted px-1.5 py-0.5 text-2xs font-medium"
-                        >
-                          {doc}
-                        </span>
-                      ))}
-                      {scopeCount > SCOPE_CHIP_LIMIT ? (
-                        <span className="px-1.5 py-0.5 text-2xs text-muted-foreground">
-                          +{(scopeCount - SCOPE_CHIP_LIMIT).toLocaleString()} more
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-1.5 text-2xs text-muted-foreground">
-                      Orders not in this file are untouched.
-                    </p>
-                  </section>
-
-                  {sampleGroups.map((group) => (
-                    <div key={group.key} className="space-y-1.5">
-                      <h4 className="text-xs font-semibold">
-                        {group.label} (showing {group.rows.length} of{' '}
-                        {Math.max(group.total, group.rows.length).toLocaleString()})
-                      </h4>
-                      <SampleTable rows={group.rows} />
-                    </div>
-                  ))}
-
-                  <ProblemSections
-                    unmappedHeaders={preview.unmapped_headers}
-                    rowProblems={preview.row_problems}
-                    resolutionIssues={preview.resolution_issues}
-                  />
-                </div>
-              ) : null}
-            </>
-          )}
+          ) : null}
         </DialogBody>
 
         <DialogFooter>
-          {result ? (
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
-          ) : (
-            <>
-              <Button
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-                disabled={applying}
-              >
-                Cancel
-              </Button>
-              <Button onClick={() => void upload.confirm()} disabled={!canConfirm}>
-                {applying ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null}
-                Confirm upload
-              </Button>
-            </>
-          )}
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={applying}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void upload.runTest()}
+            disabled={!file || previewing || applying || upload.testing}
+          >
+            {upload.testing ? (
+              <LoaderCircle className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <TestTube className="size-4" aria-hidden />
+            )}
+            Test
+          </Button>
+          <Button onClick={() => void upload.confirm()} disabled={!canConfirm}>
+            {applying ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null}
+            Confirm upload
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

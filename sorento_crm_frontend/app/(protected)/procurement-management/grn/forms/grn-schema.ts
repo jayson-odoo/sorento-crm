@@ -6,6 +6,9 @@ export const pickingLineSchema = z.object({
   quantity_picked: z.coerce.number().int().min(0, 'Quantity received must be 0 or more'),
   source_warehouse_id: z.string().min(1, 'Location is required'),
   spo_allocation_id: z.string().optional(),
+  // Carried, never edited: it is what the imported sheet said this line was
+  // received against, and an edit that dropped it would erase that evidence.
+  spo_number_raw: z.string().nullish(),
   picked_condition: z.string().optional(),
 });
 

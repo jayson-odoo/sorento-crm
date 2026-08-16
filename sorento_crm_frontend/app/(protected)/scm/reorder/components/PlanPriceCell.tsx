@@ -2,7 +2,7 @@
 
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
-import { EM_DASH } from '../../lib/format';
+import { EM_DASH, fmtSupplierCost } from '../../lib/format';
 import {
   PRICE_ADVICE_LABEL,
   PRICE_ADVICE_TONE,
@@ -33,12 +33,9 @@ const TONE_VARIANT = {
   ok: 'success',
 } as const;
 
+/** One money format on this screen: `RM 105.00`, or the supplier's own code. */
 function money(amount: number, currency: string | null): string {
-  const n = amount.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return currency ? `${currency} ${n}` : n;
+  return fmtSupplierCost(amount, currency);
 }
 
 export function PlanPriceCell({

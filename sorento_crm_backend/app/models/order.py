@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     UniqueConstraint,
+    event,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -47,6 +48,47 @@ class OrderStatus(Base):
 
 class Customer(Base, CompanyScopedMixin):
     __tablename__ = "customers"
+    # Who changed this customer, and from what. Every write path is ORM
+    # (CustomerService for the edit form, the order import's debtor upsert, the
+    # customer import), so one flush listener covers all of them - but only in a
+    # process that HAS that listener. app/main.py registers it at startup, so the
+    # API covers the edit form; worker.py registers the company-scope listeners
+    # only, so nothing an RQ job writes is audited per row today. That is why the
+    # customer import writes its own coarse job-level row.
+    __audit_track__ = True
+    # Singular, matching the coarse row the customer import already writes.
+    # `_CUSTOMER_ENTITY_TYPE` in app/tasks/import_tasks.py suppresses the per-row
+    # audit by this exact string, so the two are pinned together by a test - a
+    # mismatch would silently restore 4,000 rows per import.
+    __audit_entity_type__ = "customer"
+    # Identity, contact details and commercial classification: the fields a person
+    # sets and later has to account for. Left out on purpose: `id` is the audit
+    # row's own entity_id, `company_id` its own column, and created/updated
+    # bookkeeping is what `changed_at` + `user_id` already say - repeating them
+    # inside every diff is noise, not history.
+    __audit_columns__ = [
+        "customer_code",
+        "customer_name",
+        "email",
+        "phone_number",
+        "mobile_number",
+        "is_active",
+        "registered_name",
+        "trading_name",
+        "registration_number",
+        "industry",
+        "website",
+        "billing_address",
+        "country",
+        "tax_id",
+        "notes",
+        "account_owner_user_id",
+        "customer_type",
+        "salutation",
+        "first_name",
+        "last_name",
+        "market_segment_code",
+    ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     # Not column-unique. Real customers can share a single code across
@@ -109,6 +151,21 @@ class Customer(Base, CompanyScopedMixin):
             unique=True,
         ),
     )
+
+
+@event.listens_for(Customer, "init")
+def _assign_customer_id(target, args, kwargs):  # noqa: ANN001
+    """Give a new customer its id at construction, not at flush.
+
+    The audit listener runs in ``before_flush``, where a primary key still waiting on
+    its column default reads as ``None``; the row is then skipped as "no PK yet" and
+    the create goes unrecorded. The importer already assigned the id by hand for its
+    own reasons - doing it here instead means every construction site is audited,
+    including ones written later, rather than whichever ones remembered.
+
+    A caller that supplies its own id keeps it.
+    """
+    kwargs.setdefault("id", str(uuid.uuid4()))
 
 
 class CustomerContact(Base, CompanyScopedMixin):
@@ -294,6 +351,11 @@ class SalesOrder(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     so_number = Column(String(100), unique=True, nullable=False)
     customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
+    # Who sold it, as the salesperson master (`sales_agents`), resolved from the agent code
+    # the extract states. Nullable because most orders predate the column and no export is
+    # required to carry an agent; `SET NULL` because deleting a salesperson must not delete
+    # their orders. It is also the fourth and last source the demand class is read from.
+    sales_agent_id = Column(UUID(as_uuid=False), ForeignKey("sales_agents.id", ondelete="SET NULL"), nullable=True)
     order_date = Column(Date, nullable=True)
     # Customer-requested delivery / ship-by date (M1-D14). Distinct from order_date
     # (when the SO was raised); drives the FE "requested_delivery_date" column.
@@ -334,6 +396,7 @@ class SalesOrder(Base, CompanyScopedMixin):
         Index("ix_sales_orders_customer_id", "customer_id"),
         Index("ix_sales_orders_so_number", "so_number"),
         Index("ix_sales_orders_status", "status"),
+        Index("ix_sales_orders_sales_agent_id", "sales_agent_id"),
     )
 
 

@@ -1,6 +1,7 @@
 import { AlertCircle, AlertTriangle, CheckCircle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { fmtInt } from '../../lib/format';
 
 /**
  * The Test verdict, rendered the way every other importer in this system renders it.
@@ -23,7 +24,7 @@ export interface UploadTestResult {
 }
 
 function num(v: unknown): string | null {
-  return typeof v === 'number' ? v.toLocaleString() : null;
+  return typeof v === 'number' ? fmtInt(v) : null;
 }
 
 export function UploadTestVerdict({ result }: { result: UploadTestResult }) {

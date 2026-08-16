@@ -246,11 +246,22 @@ def approve(db: Session, shipment_id: str, decisions: list[dict], *,
         raise AppException(422, "Nothing was allocated.")
 
     from app.schemas.procurement import SPOAllocationCreate
+    # Imported here, not at module level: `grn_spo_matching` imports
+    # `procurement_service` at load time, so a top-level import would be a cycle.
+    from app.services.grn_spo_matching import forward_match_grn_lines_for_spo_best_effort
     from app.services.procurement_service import SPOAllocationService
 
     service = SPOAllocationService(db)
     written = 0
     advanced: dict[str, float] = {}
+    # (spo_number, company_id) pairs to forward match ONCE, when every allocation
+    # this decision writes exists. One approval writes one allocation PER SPLIT -
+    # several warehouses under one SPO number - so a hook fired per allocation row
+    # runs while the rest of the decision does not exist yet, and places a waiting
+    # GRN line against whichever allocation happened to be written first instead of
+    # the one covering its warehouse (AC-FM-19). The SPO Excel import sweeps the
+    # same way, for the same reason.
+    forward_match_targets: set[tuple[str, Optional[str]]] = set()
 
     for decision in decisions:
         line = lines.get(str(decision.get("shipment_line_id") or ""))
@@ -306,7 +317,7 @@ def approve(db: Session, shipment_id: str, decisions: list[dict], *,
                 po_line.qty_received = float(po_line.qty_received or 0) + qty
                 advanced[str(po_line.id)] = advanced.get(str(po_line.id), 0.0) + qty
 
-            service.create_allocation(
+            allocation = service.create_allocation(
                 SPOAllocationCreate(
                     spo_number=shipment.shipment_number,
                     inbound_shipment_id=str(shipment.id),
@@ -318,10 +329,34 @@ def approve(db: Session, shipment_id: str, decisions: list[dict], *,
                 # `spo_allocations.created_by` is a UUID column holding a USER ID, not the
                 # person's name as the SCM tables use it. An empty string is not a uuid.
                 created_by=actor_id,
+                # Not per row - see `forward_match_targets` above.
+                forward_match=False,
             )
+            target_spo = (
+                str(allocation.spo_number) if allocation.spo_number is not None else ""
+            )
+            if target_spo:
+                forward_match_targets.add(
+                    (
+                        target_spo,
+                        str(allocation.company_id)
+                        if allocation.company_id is not None
+                        else None,
+                    )
+                )
             written += 1
 
     db.flush()
+
+    # Every allocation this decision writes now exists, so a GRN line that stated
+    # this SPO and could not be placed when it was imported is placeable - against
+    # the allocation that actually covers its warehouse. Post-commit and
+    # best-effort: a side effect must not fail an approval already written.
+    for target_spo, target_company in forward_match_targets:
+        forward_match_grn_lines_for_spo_best_effort(
+            db, target_spo, company_id=target_company
+        )
+
     return {
         "shipment_id": str(shipment.id),
         "allocations_written": written,

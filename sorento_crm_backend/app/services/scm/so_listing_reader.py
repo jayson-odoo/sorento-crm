@@ -101,6 +101,10 @@ class SoListingResult:
     #: Captions and spacers: neither an item code nor a quantity. Counted, never reported as
     #: failures, because nine thousand "problems" reads as a broken file.
     layout_rows: int = 0
+    #: WHICH rows those were. Row numbers, not just a count, because a queued import records
+    #: an outcome per source row: with the count alone the 9,144 package captions in the
+    #: client's own export are 9,144 rows the job can never account for.
+    layout_row_numbers: list[int] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -173,6 +177,7 @@ def read_so_listing(file_data: bytes, resolver: AliasResolver) -> SoListingResul
         # A row with no item AND no quantity is a caption or a spacer, not a failure.
         if not item and not ordered:
             result.layout_rows += 1
+            result.layout_row_numbers.append(row_number)
             continue
 
         missing = [f for f, v in (("so_number", doc), ("item_code", item)) if not v]

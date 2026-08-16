@@ -92,30 +92,32 @@ def economics_for_run(db: Session, run_id: str,
                SUM(ol.quantity) AS qty
           FROM order_lines ol
           JOIN orders o ON o.id = ol.order_id
-         WHERE ol.product_id::text = ANY(:pids)
+         WHERE ol.product_id = ANY(CAST(:pids AS uuid[]))
            AND o.is_cancelled = false
            AND o.order_date >= :start AND o.order_date < :end
          GROUP BY ol.product_id
     """), {"pids": pids, "start": start, "end": end}).mappings().all()}
 
     list_prices = {r["product_id"]: r["list_price"] for r in db.execute(text(
-        "SELECT id::text AS product_id, list_price FROM products WHERE id::text = ANY(:pids)"
+        "SELECT id::text AS product_id, list_price FROM products "
+        "WHERE id = ANY(CAST(:pids AS uuid[]))"
     ), {"pids": pids}).mappings().all()}
 
     on_hand = {r["product_id"]: float(r["qty"] or 0) for r in db.execute(text(
         "SELECT product_id::text AS product_id, SUM(quantity_on_hand) AS qty "
-        "FROM stock WHERE product_id::text = ANY(:pids) GROUP BY product_id"
+        "FROM stock WHERE product_id = ANY(CAST(:pids AS uuid[])) GROUP BY product_id"
     ), {"pids": pids}).mappings().all()}
 
     moved = {r["product_id"]: float(r["qty"] or 0) for r in db.execute(text(
         "SELECT product_id::text AS product_id, SUM(qty_out) AS qty "
-        "FROM scm.consumption_v WHERE product_id::text = ANY(:pids) "
+        "FROM scm.consumption_v WHERE product_id = ANY(CAST(:pids AS uuid[])) "
         "AND day >= :start AND day < :end GROUP BY product_id"
     ), {"pids": pids, "start": start, "end": end}).mappings().all()}
 
     decisions = {r["product_id"]: dict(r) for r in db.execute(text(
         "SELECT product_id::text AS product_id, decision, decided_at "
-        "FROM scm.product_lifecycle_decision WHERE product_id::text = ANY(:pids)"
+        "FROM scm.product_lifecycle_decision "
+        "WHERE product_id = ANY(CAST(:pids AS uuid[]))"
     ), {"pids": pids}).mappings().all()}
 
     out: dict[str, Any] = {}
@@ -172,7 +174,7 @@ def record_lifecycle_decision(db: Session, *, product_id: str, decision: Optiona
     if decision is not None and decision not in LIFECYCLE_DECISIONS:
         raise AppException(status_code=422,
                            message=f"decision must be one of {', '.join(LIFECYCLE_DECISIONS)}.")
-    exists = db.execute(text("SELECT 1 FROM products WHERE id::text = :p"),
+    exists = db.execute(text("SELECT 1 FROM products WHERE id = CAST(:p AS uuid)"),
                         {"p": product_id}).first()
     if exists is None:
         raise AppException(status_code=404, message="Product not found.")
@@ -180,7 +182,8 @@ def record_lifecycle_decision(db: Session, *, product_id: str, decision: Optiona
     now = datetime.utcnow()
     if decision is None:
         db.execute(text(
-            "DELETE FROM scm.product_lifecycle_decision WHERE product_id::text = :p"),
+            "DELETE FROM scm.product_lifecycle_decision "
+            "WHERE product_id = CAST(:p AS uuid)"),
             {"p": product_id})
     else:
         db.execute(text("""
