@@ -48,11 +48,24 @@ agree identifier for identifier.
    off. Re-runnable shard scripts are in the session scratchpad under `shards/`
    (`run-{head,base}-{1,2,3}.sh`); the HEAD-only test files must stay out of the baseline lists.
    Expect 0 new failures. Two known pre-existing ones are listed in the PR body.
-2. **Collect the codex cross-model review** of `354_projects_schema_move.py`, left running to
-   `scratchpad/codex-354.txt`. It is the independent second opinion the captain asked for.
-3. **Then report to the captain for the merge decision.** Do not merge.
+2. **Then report to the captain for the merge decision.** Do not merge.
 4. At deploy time: `alembic upgrade head`, then the catalog checks in DEPLOY runbook section 0,
    then the prod backfill dry-run before `--apply`.
+
+## Reviews done
+
+Two independent passes, and they found different things, which is the argument for running both.
+
+- A Claude reviewer compared `Base.metadata` against a live catalog and found that declaring
+  `schema="projects"` renamed 46 convention-derived indexes in the metadata only, so a migrated
+  database and a bootstrapped one disagreed on 81 index and 159 constraint names and autogenerate
+  churned 92 index ops forever. Also found the lookup bindings keyed on a bare table name. Both
+  fixed in `5101d0a86` and `4dd1553bb`.
+- A codex pass over `354_projects_schema_move.py` found a silent no-op inside `_rename_index`
+  (fixed in `84b947e3d`) and proposed three pieces of defensive machinery, all measured and
+  rejected: the 63-byte assertion (longest real name is 53), and two allowlists to replace the
+  catalog scan (no name in the catalog matches a table stem without being Postgres-derived, and a
+  test already pins that). Rejections are recorded in that commit message with the measurement.
 
 ## Known, out of scope, worth a ticket
 
