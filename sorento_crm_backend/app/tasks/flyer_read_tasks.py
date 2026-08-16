@@ -212,7 +212,14 @@ def _mark_failed(db, reading_id: str, message: str) -> dict:
     except Exception:  # noqa: BLE001
         logger.exception("read_flyer: rollback before failing %s did not work", reading_id)
 
-    record = _load(db, reading_id)
+    try:
+        record = _load(db, reading_id)
+    except Exception:  # noqa: BLE001 - the database is gone; the queue still must not be
+        logger.exception(
+            "read_flyer: reading %s could not be re-read to fail it", reading_id
+        )
+        return {"reading_id": reading_id, "status": "unrecorded", "error": message}
+
     if record is None:
         return {"reading_id": reading_id, "status": "gone"}
 

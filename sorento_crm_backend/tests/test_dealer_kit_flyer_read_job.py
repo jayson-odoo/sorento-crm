@@ -41,7 +41,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 # MUST be first app import - resolves a circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
@@ -1178,3 +1178,118 @@ class TestReadFlyerDoesNotRelabelAReadThatSucceeded:
         )
         assert failed.finished_at is not None
         assert key2 not in storage.objects
+
+
+# --------------------------------------------------------------------------- #
+# The job never re-raises: a database that is gone takes the reload inside
+# ``_mark_failed`` with it, and a raise from there would reach RQ's failure
+# registry with the staged bytes already discarded - the one outcome the whole
+# module docstring promises does not happen.
+# --------------------------------------------------------------------------- #
+class TestReadFlyerNeverPoisonsTheQueue:
+    def test_a_database_that_cannot_be_read_at_all_still_returns_a_dict(
+        self, api, monkeypatch
+    ) -> None:
+        from app.tasks import flyer_read_tasks
+
+        db, storage, _reads = api
+        data = _pdf_bytes()
+        provider, key = svc._stage_upload(data)
+
+        record = svc._new_processing_record(
+            filename="zzt-no-database.pdf",
+            byte_size=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+            source_attachment_id=None,
+            user_id=_ADMIN_ID,
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+
+        def _gone(*_args, **_kwargs):
+            raise OperationalError("SELECT 1", {}, Exception("connection closed"))
+
+        monkeypatch.setattr(flyer_read_tasks, "_load", _gone)
+
+        result = flyer_read_tasks.read_flyer(str(record.id), provider, key, _db=db)
+
+        assert result["status"] == "unrecorded"
+        assert result["error"].startswith("The flyer could not be read:")
+        assert key not in storage.objects
+
+
+# --------------------------------------------------------------------------- #
+# A reading that has not been read cannot be built from. Both call sites of
+# ``_assert_read`` - the seed and the dimensions apply - and both of its
+# refusals, through the routes rather than the function.
+# --------------------------------------------------------------------------- #
+class TestBuildingFromAnUnreadFlyerIsRefused:
+    def test_seeding_a_processing_reading_is_409_telling_the_caller_to_wait(
+        self, api
+    ) -> None:
+        _db, _storage, _reads = api
+
+        with TestClient(app) as c:
+            res = _upload(c, filename="zzt-seed-while-processing.pdf")
+            assert res.status_code == 202, res.text
+            reading_id = res.json()["id"]
+
+            # The job is deliberately NOT run: this is the stale tab that seeds
+            # while the worker is still reading.
+            seeded = c.post(
+                f"/api/v1/dealer-kit/flyer-readings/{reading_id}/seed",
+                json={
+                    "name": unique_code("ZZT Catalogue"),
+                    "slug": unique_code("zzt-cat").lower(),
+                },
+            )
+
+        assert seeded.status_code == 409, seeded.text
+        assert "still being read" in seeded.text
+        assert "Try again once it says Done." in seeded.text
+
+    def test_seeding_a_failed_reading_is_409_carrying_the_recorded_reason(
+        self, api
+    ) -> None:
+        _db, _storage, _reads = api
+
+        with TestClient(app) as c:
+            res = _upload(
+                c, filename="zzt-seed-after-failure.pdf", data=b"PK\x03\x04 not a pdf"
+            )
+            assert res.status_code == 202, res.text
+            reading_id = res.json()["id"]
+            assert [job["status"] for job in finish_reads()] == ["failed"]
+
+            recorded = _get(c, reading_id)["errorMessage"]
+
+            seeded = c.post(
+                f"/api/v1/dealer-kit/flyer-readings/{reading_id}/seed",
+                json={
+                    "name": unique_code("ZZT Catalogue"),
+                    "slug": unique_code("zzt-cat").lower(),
+                },
+            )
+
+        assert seeded.status_code == 409, seeded.text
+        # "wait" would be the wrong advice here, and the row's own reason is
+        # what tells the designer to export a readable file instead.
+        assert "nothing to build from it" in seeded.text
+        assert recorded in seeded.json()["message"]
+
+    def test_applying_dimensions_from_a_processing_reading_is_409(self, api) -> None:
+        _db, _storage, _reads = api
+
+        with TestClient(app) as c:
+            res = _upload(c, filename="zzt-dimensions-while-processing.pdf")
+            assert res.status_code == 202, res.text
+            reading_id = res.json()["id"]
+
+            applied = c.post(
+                f"/api/v1/dealer-kit/flyer-readings/{reading_id}/dimensions/apply",
+                json={"codes": ["SRTJC8041"]},
+            )
+
+        assert applied.status_code == 409, applied.text
+        assert "still being read" in applied.text
