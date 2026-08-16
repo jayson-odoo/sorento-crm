@@ -52,10 +52,10 @@ Before CS opens the sheet, the system already knows:
    timely or late incoming are not purchasing demand.
 9. The next SCM run reads the confirmed unplaced Buy once. The buyer can select **Plan grain:
    Product** or **Plan grain: Location**, separately from **Planning mode: Auto / Manual**.
-10. Product grain shows up to two rows per product: Retail sums BRW member locations and Project
-    sums BRW-xx project locations. Supplier MOQ and order multiple are applied once to each
-    product-channel row. Location grain is the drill and other selectable mode over the same
-    location rows. The selected decision grain is the only actionable grain for that run.
+10. Product grain shows up to two rows per product: Retail sums Retail-class need across locations
+    and Project sums Project-class need across locations. Supplier MOQ and order multiple are
+    applied once to each product-channel row. Location grain shows the same frozen location facts
+    with channel split visible. The selected decision grain is the only actionable grain.
 11. PO linkage, keying, receipt, cancellation, and amendment events reduce or replace the open
     Buy balance through the existing planning ledger rules.
 
@@ -250,8 +250,10 @@ availability_by_date(p, w, d)
 ```
 
 The line proposal derives timely SPO coverage from this location timeline using the existing
-deterministic SO ordering. The calculation may explain which SPO rows contributed, but it creates
-no `spo_allocation -> sales_order_line` ownership and no `order_link_claim` chain. An SPO arriving
+deterministic SO ordering, except that this contract changes the shared timeline tie-break so
+supply is processed before demand on the same date. An SPO arriving on the required date therefore
+counts at that date. The calculation may explain which SPO rows contributed, but it creates no
+`spo_allocation -> sales_order_line` ownership and no `order_link_claim` chain. An SPO arriving
 after a line's required date is advisory for that need and contributes no coverage at that date.
 For the line balance, the stock leg is represented only by Reserve or Borrow and the incoming leg
 only by timely SPO coverage, so the combined availability formula never counts either unit twice.
@@ -300,63 +302,73 @@ classification and no salesperson, warehouse, or free-text inference.
 
 The deterministic mapping is:
 
-- normalized market-segment values `project`, `projects`, and `contract` map to
-  `demand_class = project`;
+- any normalized stated market-segment value containing `project`, `projects`, or `contract` maps
+  to `demand_class = project`, including values such as `subcontractor` under the existing mapper;
 - every other stated market-segment value maps to `demand_class = retail`;
 - the value is stamped onto `sales_orders.demand_class` at outstanding-order import or Project SO
   publish and that persisted field is the semantic owner read by planning;
 - an absent market segment is a data-quality exception and does not create a third demand class.
 
-Project demand is expected at BRW-xx project locations and Retail demand at BRW. A mismatch becomes
-an exception row. Location never overrides the persisted class and is not a third classification
-rule. The mapping reuses `app.services.scm.demand_class.class_of`; it is not a new configurable
-rules engine.
+Channel is not a location set. A Project SO may be fulfilled from BRW and remains Project; a Retail
+SO may use another location and remains Retail. Every demand line carries its parent SO's persisted
+class at its actual fulfilment location. The mapping reuses the unchanged substring semantics in
+`app.services.scm.demand_class.class_of`; it is not a new configurable rules engine.
 
 ### 5.3 Product x Channel grain
 
 Product grain shows up to two rows per product for the company and frozen run:
 
-- **Retail:** member location rows are BRW rows carrying Retail demand;
-- **Project:** member location rows are BRW-xx project-location rows carrying Project demand.
+- **Retail:** normal netted Retail-class need summed across every fulfilment location;
+- **Project:** confirmed unplaced Buy for Project-class lines summed across every fulfilment
+  location, without another stock, SPO, PO, or delivery netting pass.
 
-Each product-channel row sums its member location rows for SO outstanding, PO, dated SPO incoming,
-stock, reorder level, and pre-constraint suggested need. It also shows chosen quantity, supplier,
-cash impact, lifecycle state, and a drill to the member locations and source records. Classification
-or location mismatches appear in a separate exception list, never as a third channel row.
+The shared location read model freezes one row per product, location, and demand class. Demand is
+channel-specific, while stock, dated SPO incoming, PO supply, and reorder level remain shared facts
+of the product-location and are not assigned to either channel. Location grain displays those facts
+once with Project and Retail need beside them. Product grain sums only channel need across
+locations; its drill shows shared supply evidence without adding that evidence once per channel.
 
-Project Buy is firm committed demand. A reorder threshold cannot suppress it. For each channel `c`:
+At each location `w`:
 
 ```text
-channel_outstanding(p, c) = SUM(member location SO outstanding)
-channel_po(p, c) = SUM(member location PO)
-channel_spo(p, c) = SUM(member location dated SPO incoming)
-channel_stock(p, c) = SUM(member location stock)
-channel_reorder_level(p, c) = SUM(COALESCE(member location reorder level, 0))
-channel_raw_need(p, c) = SUM(member location pre-constraint suggested need)
+project_need(p, w)
+  = confirmed unplaced Buy for Project-class lines fulfilled from w
+
+retail_free_supply(p, w)
+  = existing shared free-supply calculation
+  - confirmed Project Reserve and Borrow claims against w
+
+retail_need(p, w)
+  = existing normal netting of Retail-class outstanding SO against retail_free_supply
+
+product_channel_raw_need(p, c)
+  = SUM(channel need(p, w)) across locations w
 
 product_channel_suggested_qty(p, c)
-  = apply_supplier_MOQ_and_multiple_once(channel_raw_need(p, c))
+  = apply_supplier_MOQ_and_multiple_once(product_channel_raw_need(p, c))
 ```
 
-Applying supplier constraints once to the actionable product-channel row avoids buying one MOQ for
-every location. No Product-versus-Location reconciliation bridge or rounding delta exists because
-both views are presentations of the same member-location rows and only the product-channel row
-applies supplier constraints. No AI-generated quantity, optimizer, or extra policy knob is added.
+Project Buy is firm demand: Retail free-supply netting never reduces it. Applying supplier
+constraints once to the actionable product-channel row avoids buying one MOQ for every location.
+No Product-versus-Location reconciliation bridge or rounding delta exists because both views read
+the same channel-aware location facts. No AI-generated quantity, optimizer, or extra policy knob is
+added.
 
 ### 5.4 Location grain and decision ownership
 
 Location grain remains a permanent selectable and actionable Buy mode. It reads the existing
-member-location net positions and each location's own reorder level. It is the drill and other
-selectable mode over the same rows aggregated by Product x Channel. It retains the existing
-recommendation decision and override workflow. Both views use the same run, as-of time, demand,
-stock, incoming, policy, supplier facts, and source revision.
+recommendation workflow extended with the frozen demand-class split. At each product-location it
+shows Project need, Retail need, and shared stock, SPO, PO, reorder, and policy evidence. It retains
+the existing decision and override workflow. Both grains use the same run, as-of time, facts,
+supplier inputs, and source revision.
 
-Each run has exactly one actionable `decision_grain`:
+Each new front-planning run has exactly one actionable `decision_grain`:
 
 - `product`: the Product x Channel `scm.order_summary_row` owns the chosen quantity. Its PO-worklist
-  split reuses the existing recommendation `allocation` output for member locations and persists
-  only the final location quantities needed to replay the decision. Those quantities must sum to
-  `chosen_qty`. Location recommendations are read-only under this grain.
+  split reruns the existing `reorder_engine.allocate` deterministically with `chosen_qty` as the
+  total and the frozen channel-aware location deficit and demand-rate inputs. The resulting location
+  quantities are persisted and must sum to `chosen_qty`; no proportional rescaling formula is added.
+  Location recommendations are read-only under this grain.
 - `location`: existing `scm.reorder_recommendation` decisions and
   `scm.recommendation_override` rows remain actionable. The Product row is a read-only aggregate
   of their chosen quantities.
@@ -367,23 +379,27 @@ decision, a new current run must be created from a new frozen input snapshot; th
 of its decisions remain immutable and auditable. PO worklists read only the run's selected grain.
 This preserves two real Buy planning modes without allowing both to order the same requirement.
 
+Runs created before this contract are legacy. They keep their existing recommendations, overrides,
+and product-wide summary rows unchanged and read-only. They accept no new Product or Location
+decision, `decision_grain` is not backfilled, and the buyer must create a new front-planning run to
+act. Legacy summary rows display as **All channel (legacy)** rather than being classified,
+duplicated, or migrated.
+
 ### 5.5 Reorder-level rule
 
-Product reorder level is the deterministic sum of per-location levels. Each Product x Channel row
-sums only its member locations, and the two channel rows together sum all locations for the product:
+Product reorder level is a shared product fact and the deterministic sum of per-location levels.
+It is calculated once, not once per demand channel:
 
 ```text
-product_channel_reorder_level
-  = SUM(COALESCE(scm.reorder_level.level, 0)) for channel member locations
-
-product_reorder_level = SUM(product_channel_reorder_level)
+product_reorder_level
+  = SUM(COALESCE(scm.reorder_level.level, 0)) for concrete locations
 ```
 
 An absent location row and a NULL location value both contribute 0. Product-wide
 `warehouse_id = NULL` rows are not used as a competing level for this view. There is no inferred
 winner, buyer worklist, migration to one product row, or **Needs level** state in Product grain.
-Location grain continues to read the individual per-location values and applies the same NULL as
-0 rule for this feature.
+Location grain continues to read the individual per-location values and applies the same NULL as 0
+rule. Product channel rows may reference this shared evidence but must not add it together twice.
 
 ## 6. Target data model
 
@@ -438,29 +454,47 @@ not produced for a confirmed decision.
 
 ### 6.4 SCM reuse and deltas
 
-- Add `decision_grain` (`product` or `location`) to `scm.reorder_run`. It is NULL until the first
-  decision and immutable after that decision.
-- `scm.reorder_recommendation` continues to hold location-grain rows. Its existing
-  decisions, overrides, `allocation`, and frozen `inputs` remain the actionable Location mode and
-  provide the member-location input and allocation output reused by Product mode.
-- Change `scm.order_summary_row` from `(run, product)` to `(run, product, demand_class)`, where
-  `demand_class` is constrained to `project` or `retail`. Replace the unique key accordingly. The
-  row owns `chosen_qty` when `decision_grain = product`; under Location it is a read-only aggregate.
-  Reuse `on_hand`, `qty_on_order`, `qty_in_transit`, and `suggested_qty` for the channel sums and
-  once-rounded result. Add only `so_outstanding_qty`, `reorder_level`,
-  `pre_constraint_suggested_qty`, `earliest_need_date`, and `channel_calculation_basis` to freeze
-  the remaining summed inputs and member-location evidence.
+- Extend `scm.committed_v` from `(product_id, warehouse_id)` to
+  `(product_id, warehouse_id, demand_class)`. Its Project branch reads only current confirmed,
+  unplaced Order Inquiry Buy and passes that quantity through as firm need. Its Retail branch keeps
+  the existing open-SO quantity and normal netting. The run reader joins shared stock, SPO, PO, and
+  reorder facts by product and location; those supply facts do not gain a demand class.
+- Add `front_planning_contract_version` and `decision_grain` (`product` or `location`) to
+  `scm.reorder_run`. Existing runs keep both NULL. New runs set contract version `1`, leave
+  `decision_grain` NULL until the first decision, and then lock it. Decision services reject every
+  write when the contract version is NULL, so legacy runs are read-only without a decision-grain
+  backfill.
+- Add nullable `demand_class` to `scm.reorder_recommendation`. New contract-version-1 facts use
+  `project` or `retail`, require a concrete `warehouse_id`, and freeze the product x location x
+  channel need plus references to the shared location supply in existing `inputs`. Project need
+  bypasses net-position subtraction; Retail retains the existing engine netting after Project
+  Reserve and Borrow claims reduce free supply. Existing recommendations keep NULL and remain
+  unchanged and read-only.
+- Add nullable `demand_class` to `scm.order_summary_row`. New runs write one row per
+  `(run, product, demand_class)` and constrain new values to `project` or `retail`. Replace the
+  current unique index with a unique partial index on `(run_id, product_id)` where class is NULL and
+  another on `(run_id, product_id, demand_class)` where class is present. Existing product-wide rows
+  remain NULL, unchanged, and render as **All channel (legacy)**. They are not split, duplicated, or
+  defaulted. New channel rows reuse `suggested_qty`, `chosen_qty`, supplier, cash, and keying fields;
+  add only `channel_need_qty`, `channel_line_count`, `earliest_need_date`, and
+  `channel_calculation_basis`. Existing `on_hand`, `project_demand`, `dealer_outstanding`,
+  `qty_on_order`, `qty_in_transit`, `shortfall`, `shortfall_at`,
+  `project_demand_line_count`, `dealer_outstanding_line_count`, and `max_days_outstanding` become
+  nullable legacy-only fields. New channel rows read shared supply from the frozen location facts,
+  preventing supply from being added once per channel.
 - Add the narrow child `scm.order_summary_location_allocation` with `order_summary_row_id`,
-  `reorder_recommendation_id`, `warehouse_id`, and `allocated_qty`. It copies the final split from
-  the existing recommendation allocation output when a Product decision is saved. Enforce one row
-  per summary row and warehouse, non-negative quantities, company scope, and a transaction-time
-  invariant that child quantities sum to the parent's `chosen_qty`. This is persistence for the PO
-  worklist, not a new allocator or subsystem.
+  `reorder_recommendation_id`, `warehouse_id`, and `allocated_qty`. When Product `chosen_qty`
+  changes, rerun existing `reorder_engine.allocate(chosen_qty, frozen_location_inputs)` and persist
+  its output. Enforce one row per summary row and warehouse, non-negative quantities, company scope,
+  and a transaction-time invariant that child quantities sum to the parent's `chosen_qty`. Do not
+  rescale a prior split. This is persistence for the PO worklist, not a new allocator or subsystem.
 - `scm.reorder_level` remains per location. No consolidation migration or product-level winner
   is added. The product value is calculated as the sum in section 5.5.
 - `scm.item_classification` supplies the existing ABC hot-selling fact.
 - Persisted core `sales_orders.demand_class` supplies channel ownership. The import and Project SO
-  publish paths stamp it through the existing `demand_class.class_of` mapping.
+  publish paths stamp it through the unchanged substring behavior of `demand_class.class_of`.
+
+The intentional NULL values above are durable legacy markers, not a deferred semantic backfill.
 
 All new durable rows are company-scoped, follow existing audit conventions, and use service-layer
 transactions. No new service boundary, rules engine, optimizer, or LLM quantity path is needed.
@@ -473,9 +507,11 @@ pre-code contract only.
 
 ### Stage 0: Contract and data readiness
 
-- Confirm the core SO-line link, market-segment mapping and stamp points, BRW and BRW-xx membership,
-  dealer-facing locations, ABC availability and evidence behavior, and SPO location/date source against
-  production-shaped fixtures.
+- Confirm the core SO-line link, substring market-segment mapping and stamp points, demand class on
+  `scm.committed_v`, dealer-facing locations, ABC evidence, legacy-run identification, and SPO
+  location/date source against production-shaped fixtures.
+- Pin mapper cases for `project`, `projects`, `contract`, and `subcontractor` as Project and an
+  ordinary non-matching stated segment as Retail, including the import and publish stamps.
 - Add contract tests that demonstrate the implementation baseline's early inquiry, partial line
   confirmation, and second-approver Borrow behaviors before replacing them.
 - Produce no buyer or CS feature behavior yet.
@@ -497,14 +533,20 @@ pre-code contract only.
 - Implement deterministic incoming, Reserve, Borrow, and Buy suggestions.
 - Implement the hot-selling BRW rule, Borrow and discontinued reasons, atomic SO confirmation,
   revision supersession, and Buy-only inquiry rows.
+- Change the shared coverage timeline to process supply before demand on the same date and pin the
+  zero-stock, demand-10, same-day-SPO-10 case at zero shortfall.
 - Replace early publish derivation, per-line partial confirmation, independent inquiry netting,
   and second-approver Borrow on the named implementation branch.
 
 ### Stage 2: Product and channel plan view
 
 - Add the independent Plan grain selector and retain Planning mode.
-- Add Product x Channel rows for Retail BRW and Project BRW-xx sets, one-round supplier quantity,
-  exception rows, member-location drills, and the durable chosen-quantity split.
+- Extend the shared committed read model and frozen recommendation facts to product x location x
+  channel, with shared supply, firm Project Buy, normally netted Retail need, and location drills.
+- Add Product x Channel rows across all locations, one-round supplier quantity, legacy read-only
+  rendering, and the durable allocator-rerun location split.
+- Pin mixed-channel same-location demand, Project Buy pass-through, chosen-quantity allocator rerun,
+  NULL-class legacy summary rendering, and rejection of every legacy-run decision write.
 - Keep both grains actionable, lock one decision grain per run, and make PO worklists consume only
   that grain.
 
@@ -543,11 +585,15 @@ No browser run is required for this documentation-only PR.
 | Hot dealer stock is silently reserved | Existing ABC A test, dealer stock excluded, and BRW floor cap |
 | Borrow harms another commitment | Donor impact shown and frozen, explicit CS confirmation, required reason |
 | Discontinued commitment is blocked or hidden | Buy allowed with visible warning and required frozen reason |
-| Channel total changes by heuristic | Persisted demand class stamped by the shared market-segment mapping; no AI or location inference |
-| Product and Location modes disagree silently | Product x Channel sums the same frozen member-location rows shown by Location grain |
+| Channel total changes by heuristic | Persisted demand class stamped by the tested shared substring mapper; no AI or location inference |
+| Project Buy is netted twice | Project branch of the channel-aware read model passes confirmed unplaced Buy through without stock or incoming subtraction |
+| Shared supply is doubled by channel | Location facts own stock, SPO, PO, and reorder once; channel rows aggregate need only |
+| Product and Location modes disagree silently | Both grains read the same frozen product x location x channel facts |
 | Both plan grains create purchases | One locked actionable decision grain per run; PO worklists ignore the comparison grain |
 | Product grain accidentally applies MOQ once per location | Each product-channel row aggregates member need and rounds once |
-| Product choice cannot be replayed by location | Narrow child persists the reused recommendation split and must sum to chosen quantity |
+| Product choice cannot be replayed by location | Existing allocator reruns with chosen quantity; narrow child persists an exactly balanced split |
+| Legacy decisions become actionable twice | Legacy runs and all-channel rows remain unchanged and read-only; only new versioned runs accept decisions |
+| Same-day incoming is treated inconsistently | Shared timeline processes supply before demand on the same date |
 | Product level overrides location ownership | Deterministic sum only; individual rows remain authoritative in Location grain |
 | Amendment creates duplicate Buy | Revision supersession plus idempotent active inquiry row and placed-supply exception ledger |
 | Cross-company facts leak | Company-scoped reads, writes, uniqueness, permissions, and isolation tests |
@@ -570,14 +616,14 @@ or plan language where different.
 | Decision | Captain answer |
 |---|---|
 | Q1 | Order Inquiry carries only the confirmed Buy residual. |
-| Q2 | Incoming SPO to the line location is dated location supply. Availability by date is stock plus SPO arriving by that date minus outstanding SO at that location. There is no allocated-incoming concept; an SPO arriving after the required date is advisory and contributes no coverage at that date. |
+| Q2 | Incoming SPO to the line location is dated location supply. Availability by date is stock plus SPO arriving by that date minus outstanding SO at that location. Supply is processed before demand on the same date, so same-day SPO counts. There is no allocated-incoming concept; later SPO is advisory and contributes no coverage at the required date. |
 | Q3 | Borrow needs explicit CS confirmation with donor impact shown and a required reason. There is no second approver. |
 | Q4 | Buying a discontinued product for committed customer demand is allowed, with a warning and required reason. |
 | Q5 | Dealer hot-selling is determined by an existing ABC A row at an active, available warehouse with `segment = dealer`. Reserve cannot consume dealer-facing free stock for such a product and may use the `pool_warehouse_id` BRW pool only above BRW's per-location reorder level. For other products, own fulfilment free stock and shared BRW are Reserve; outside or already committed stock is Borrow. |
 | Q6 | Confirmation is one atomic Project SO-level transaction covering all lines. Before it, the whole SO is Needs CS review and outside purchasing. Every line must satisfy the balance invariant at the same commit. |
 | Q7 | Product reorder level is the sum of per-location reorder levels. NULL or absent contributes 0. There is no inferred winner, worklist, or Needs level state; Location grain keeps reading each location level. |
-| Q8 | Product and Location remain selectable and actionable Plan grain modes over the same member-location rows. Product is Product x Channel: Retail sums BRW rows and Project sums BRW-xx rows, with MOQ and rounding once per actionable product-channel row. There is no Product-versus-Location reconciliation bridge. One decision grain is locked per frozen run, separately from Planning mode: Auto / Manual. |
-| Q9 | Persisted `sales_orders.demand_class` is the semantic owner, stamped at import or Project SO publish. `project`, `projects`, and `contract` map to Project; every other stated market segment maps to Retail. Location disagreement is an exception, never another classification rule. No AI is used. |
+| Q8 | Product and Location remain selectable and actionable Plan grain modes over the same frozen product x location x channel facts. Product x Retail sums Retail need across locations and Product x Project sums firm Project Buy across locations; supply remains shared by location. MOQ and rounding apply once per actionable product-channel row. One decision grain is locked per new run, separately from Planning mode: Auto / Manual; legacy runs are read-only. |
+| Q9 | Persisted `sales_orders.demand_class` is the semantic owner, stamped at import or Project SO publish. The unchanged mapper treats any stated value containing `project`, `projects`, or `contract` as Project and every other stated value as Retail. Warehouse never classifies demand. No AI is used. |
 
 ## 12. Supersession notes
 
@@ -592,5 +638,7 @@ planning:
 - retirement of the per-location plan is rejected; both plan grains remain;
 - exact-line incoming allocation is replaced by dated product-location availability;
 - Product-versus-Location reconciliation is replaced by Product x Channel aggregation over the
-  same member-location rows;
+  same channel-aware location facts;
+- location-set channel classification is replaced by persisted SO demand class across all
+  locations;
 - product-level reorder level is a sum, not a selected or migrated winner.
