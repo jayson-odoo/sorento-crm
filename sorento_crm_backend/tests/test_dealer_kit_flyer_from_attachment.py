@@ -2,7 +2,8 @@
 
 Covers `documentation/plans/dealer-kit/flyer-read-hardening-acceptance-criteria.md`:
 
-* AC-J2 - the read runs off the event loop (pinned by shape, not a wall clock).
+* AC-J2 - what still runs in the request runs off the event loop (pinned by
+  shape, not a wall clock).
 * AC-J3 - the dealer-kit routers carry exactly one `async def` route + its helper.
 * AC-A1 - a reading can be created from an existing attachment.
 * AC-A2 - the same permission (`dealer_kit.page.edit`) guards both sources.
@@ -16,7 +17,21 @@ Covers `documentation/plans/dealer-kit/flyer-read-hardening-acceptance-criteria.
   exhaustively covered by test_dealer_kit_flyer_readings.py, untouched by this
   branch).
 * Edge cases the coder flagged: a malformed attachmentId is a 422 at the edge,
-  and a storage download failure is a 502 FLYER_SOURCE_UNREADABLE, not a 500.
+  and a storage download failure says FLYER_SOURCE_UNREADABLE, not a bare 500.
+
+**The read is a background job now**
+(`documentation/plans/dealer-kit/PLAN-flyer-read-background-job.md`). Both POSTs
+answer 202 with the row in `processing`, so this file's assertions split in two,
+and WHERE each refusal is answered is itself the contract:
+
+* Everything the ATTACHMENT ROW alone can decide is still answered by the
+  request - out of scope or trashed 404, a recorded non-PDF mime 400, a recorded
+  size over the ceiling 413, no stored copy 422. Those tests are unchanged, which
+  is the point: moving the read out must not move these.
+* Everything only the BYTES can reveal - a locked PDF, a recorded size that lied,
+  a bucket that will not answer - now lands on the row as `failed` with the same
+  words the request used to say. Those tests run the job inline
+  (`tests/_flyer_read.py`) and read the reason off the reading.
 
 Postgres only, on a blank scratch schema (tests/_pg_fixture.py). Every row is
 ZZT-scoped except the product code, which has to be one the fixture flyer
@@ -36,6 +51,7 @@ from fastapi.testclient import TestClient
 from app.main import app  # noqa: E402
 
 from tests._fake_storage import patch_storage
+from tests._flyer_read import finish_reads, patch_flyer_read
 from tests._pg_fixture import blank_session, unique_code
 
 FIXTURE_PDF = Path(__file__).parent / "fixtures" / "dealer_kit" / "flyer_sample.pdf"
@@ -119,6 +135,10 @@ def api(monkeypatch):
     with blank_session() as db:
         _seed_roles(db)
         storage = patch_storage(monkeypatch)
+        # The reads this suite queues are run inline, on THIS session, by
+        # `finish_reads()`. No Redis, no worker, and everything the job writes is
+        # visible to the next assertion.
+        patch_flyer_read(monkeypatch, db)
         here = {"company": _SORENTO}
 
         def _override_get_db():
@@ -225,6 +245,37 @@ def _codes(entries) -> list[str]:
     return [entry["code"] for entry in entries]
 
 
+def _detail(client: TestClient, reading_id, **params) -> dict:
+    """The reading as the review screen sees it, report and all."""
+    res = client.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}", params=params)
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def _queue_from_attachment(client: TestClient, attachment_id, **extra) -> str:
+    """POST -> 202 -> the id of the row that is now being read."""
+    res = _from_attachment(client, attachment_id, **extra)
+    assert res.status_code == 202, res.text
+    body = res.json()
+    assert body["status"] == "processing", body
+    return body["id"]
+
+
+def _read_from_attachment(client: TestClient, attachment_id, **extra) -> dict:
+    """Queue a library read, run the job, and answer with the finished detail."""
+    reading_id = _queue_from_attachment(client, attachment_id, **extra)
+    finish_reads()
+    return _detail(client, reading_id)
+
+
+def _read_upload(client: TestClient, **kwargs) -> dict:
+    """The same, from the upload route."""
+    res = _upload(client, **kwargs)
+    assert res.status_code == 202, res.text
+    finish_reads()
+    return _detail(client, res.json()["id"])
+
+
 def _locked_pdf_bytes() -> bytes:
     import pymupdf
 
@@ -237,20 +288,26 @@ def _locked_pdf_bytes() -> bytes:
 # AC-J2: the extraction runs off the event loop, pinned by shape
 # --------------------------------------------------------------------------- #
 class TestOffTheLoop:
-    def test_ac_j2_create_reading_is_called_off_the_event_loop(self, api, monkeypatch) -> None:
-        """The regression this whole slice exists to prevent (AC-J1/J2).
+    def test_ac_j2_k1_the_enqueue_is_called_off_the_event_loop(self, api, monkeypatch) -> None:
+        """The regression this slice exists to prevent, on what is left of it.
 
-        Patches the ROUTE module's ``svc.create_reading`` (not a fresh import)
-        so the spy intercepts the exact call the upload route makes, and asserts
-        ``asyncio.get_running_loop()`` RAISES inside it - i.e. it is executing in
-        a worker thread, not on the loop the TestClient's request is served
-        from. A wall-clock threshold would be flaky on CI hardware; the SHAPE of
-        "off the loop or not" never is.
+        The extraction has moved to the worker, so what the upload route still
+        does in the request is hash 20 MB, PUT the bytes where the worker can
+        reach them, and INSERT the row. Every one of those is synchronous and
+        none of them may run on the loop (AC-K1) - the freeze this test guards
+        against was never about which function it was.
+
+        Patches the ROUTE module's ``svc.enqueue_reading_from_upload`` (not a
+        fresh import) so the spy intercepts the exact call the route makes, and
+        asserts ``asyncio.get_running_loop()`` RAISES inside it - i.e. it is
+        executing in a worker thread, not on the loop the TestClient's request is
+        served from. A wall-clock threshold would be flaky on CI hardware; the
+        SHAPE of "off the loop or not" never is.
         """
         from app.api.v1.dealer_kit import flyer_readings as route_module
 
         db, _as, _scope, _storage = api
-        real_create_reading = route_module.svc.create_reading
+        real_enqueue = route_module.svc.enqueue_reading_from_upload
         observed: dict[str, bool] = {}
 
         def _spy(db_arg, **kwargs):
@@ -259,17 +316,17 @@ class TestOffTheLoop:
                 observed["on_loop"] = True
             except RuntimeError:
                 observed["on_loop"] = False
-            return real_create_reading(db_arg, **kwargs)
+            return real_enqueue(db_arg, **kwargs)
 
-        monkeypatch.setattr(route_module.svc, "create_reading", _spy)
+        monkeypatch.setattr(route_module.svc, "enqueue_reading_from_upload", _spy)
 
         with TestClient(app) as c:
             res = _upload(c, filename="zzt-j2-upload.pdf")
 
-        assert res.status_code == 201, res.text
+        assert res.status_code == 202, res.text
         assert "on_loop" in observed, "the spy was never called"
         assert observed["on_loop"] is False, (
-            "create_reading ran ON the event loop - this is the exact defect "
+            "the enqueue ran ON the event loop - this is the exact defect "
             "that froze a whole gunicorn worker for 57.5s (AC-J1)."
         )
 
@@ -324,15 +381,30 @@ def test_ac_j3_every_dealer_kit_endpoint_is_threadpooled_except_the_upload() -> 
 # --------------------------------------------------------------------------- #
 class TestEquivalence:
     def test_ac_a1_a_reading_can_be_created_from_an_attachment(self, api) -> None:
+        """202 first, with the row named and in `processing`, then the report.
+
+        The id on the 202 is the id the finished reading carries - that is what
+        makes "it appears in my uploads at once" and "the report link never
+        changes" one thing rather than two, so it is asserted here rather than
+        assumed by the helper.
+        """
         db, _as, _scope, storage = api
         attachment = _attachment(db, storage, company_id=_SORENTO, filename="zzt-a1-flyer.pdf")
 
         with TestClient(app) as c:
             res = _from_attachment(c, attachment.id)
 
-        assert res.status_code == 201, res.text
-        body = res.json()
-        assert body["id"]
+            assert res.status_code == 202, res.text
+            queued = res.json()
+            assert queued["id"]
+            assert queued["status"] == "processing"
+            assert queued["filename"] == "zzt-a1-flyer.pdf"
+
+            assert [job["status"] for job in finish_reads()] == ["done"]
+            body = _detail(c, queued["id"])
+
+        assert body["id"] == queued["id"]
+        assert body["status"] == "done"
         assert body["filename"] == "zzt-a1-flyer.pdf"
         assert body["pageCount"] == 3
         assert PRINTED_CODE in _codes(body["report"]["unmatched"])
@@ -354,16 +426,10 @@ class TestEquivalence:
         )
 
         with TestClient(app) as c:
-            uploaded = _upload(c, filename="zzt-a5-via-upload.pdf")
-            from_attachment = _from_attachment(c, attachment.id)
+            up_body = _read_upload(c, filename="zzt-a5-via-upload.pdf")
+            fa_body = _read_from_attachment(c, attachment.id)
 
-        assert uploaded.status_code == 201, uploaded.text
-        assert from_attachment.status_code == 201, from_attachment.text
-
-        up_body = uploaded.json()
-        fa_body = from_attachment.json()
-
-        # AC-A5: the upload route's own shape is unchanged.
+        # AC-A5: the upload route's own shape is unchanged past the 202.
         assert up_body["filename"] == "zzt-a5-via-upload.pdf"
         assert up_body["pageCount"] == 3
         assert up_body["report"]["matched"] == []
@@ -420,7 +486,7 @@ class TestAccess:
         with TestClient(app) as c:
             res = _from_attachment(c, attachment.id)
 
-        assert res.status_code == 201, res.text
+        assert res.status_code == 202, res.text
 
 
 # --------------------------------------------------------------------------- #
@@ -459,8 +525,8 @@ class TestCompanyScope:
 
         with TestClient(app) as c:
             res = _from_attachment(c, attachment.id)
-
-        assert res.status_code == 201, res.text
+            assert res.status_code == 202, res.text
+            assert [job["status"] for job in finish_reads()] == ["done"]
 
     def test_a_trashed_attachment_is_absent_too_and_creates_nothing(self, api) -> None:
         """A file in the trash is not a file you may read.
@@ -517,7 +583,17 @@ class TestValidation:
         assert res.status_code == 400, res.text
         assert res.json().get("code") == "FLYER_NOT_A_PDF"
 
-    def test_ac_a4_a_password_protected_flyer_is_refused_with_the_same_code(self, api) -> None:
+    def test_ac_a4_a_password_protected_flyer_fails_the_read_in_the_same_words(
+        self, api
+    ) -> None:
+        """A locked PDF is filed as a PDF, so only the bytes can tell.
+
+        Which means the request cannot refuse it any more: it answers 202 like
+        any other read, and the row is where the designer learns what happened.
+        The WORDS are the thing that must not change - "password protected", and
+        not the generic "export it as a PDF" advice that sends them to re-export
+        the same locked file.
+        """
         db, _as, _scope, storage = api
         locked = _locked_pdf_bytes()
         attachment = _attachment(
@@ -530,10 +606,18 @@ class TestValidation:
         )
 
         with TestClient(app) as c:
-            res = _from_attachment(c, attachment.id)
+            reading_id = _queue_from_attachment(c, attachment.id)
+            assert [job["status"] for job in finish_reads()] == ["failed"]
+            body = _detail(c, reading_id)
 
-        assert res.status_code == 400, res.text
-        assert res.json().get("code") == "FLYER_PASSWORD_PROTECTED"
+        assert body["status"] == "failed"
+        reason = body["errorMessage"].lower()
+        assert "password" in reason, body["errorMessage"]
+        assert "word or image file" not in reason
+        assert "document closed" not in reason
+        # Nothing was read, so the report is empty rather than absent.
+        assert body["report"]["matched"] == []
+        assert body["report"]["unmatched"] == []
 
     def test_ac_a4_oversized_is_refused_from_the_recorded_size_before_fetching_bytes(
         self, api, monkeypatch
@@ -581,9 +665,14 @@ class TestValidation:
         self, api, monkeypatch
     ) -> None:
         """The recorded size UNDERSTATES the real size (metadata drift). The
-        first check passes, the bytes ARE fetched, and the second
+        first check passes, the bytes ARE fetched by the job, and the second
         `assert_within_limit` on the real length still refuses it - matching
         what the upload path does on the actual wire bytes.
+
+        The refusal lands on the ROW rather than on the response, because by the
+        time anything knows the real length the request is long gone. The limit
+        is still named in the words the designer reads, which is the whole
+        reason that message carries a number.
         """
         import app.services.resources_service as resources_service
         from app.services.dealer_kit import flyer_reading_service as svc
@@ -615,10 +704,12 @@ class TestValidation:
         )
 
         with TestClient(app) as c:
-            res = _from_attachment(c, attachment.id)
+            reading_id = _queue_from_attachment(c, attachment.id)
+            assert [job["status"] for job in finish_reads()] == ["failed"]
+            body = _detail(c, reading_id)
 
-        assert res.status_code == 413, res.text
-        assert res.json().get("code") == "FLYER_TOO_LARGE"
+        assert body["status"] == "failed"
+        assert "0.1 MB" in body["errorMessage"], body["errorMessage"]
         assert calls == [attachment.id], "the real bytes must still be fetched and re-checked"
 
 
@@ -637,7 +728,16 @@ class TestEdgeCases:
 
         assert res.status_code == 422, res.text
 
-    def test_a_storage_download_failure_is_a_502_not_a_bare_500(self, api) -> None:
+    def test_a_storage_download_failure_reads_as_a_fetch_problem_not_a_crash(
+        self, api
+    ) -> None:
+        """The bucket refusing is the job's problem to REPORT, not to raise.
+
+        It used to be a 502 on the response. There is no response left by then,
+        so it is the same sentence written onto the row - and it still has to be
+        the sentence that names storage and offers the way round it, not a
+        stringified driver error nobody can act on.
+        """
         db, _as, _scope, storage = api
         attachment = _attachment(
             db, storage, company_id=_SORENTO, filename="zzt-a4-unreadable.pdf"
@@ -645,10 +745,14 @@ class TestEdgeCases:
         storage.downloading_fails = True
 
         with TestClient(app) as c:
-            res = _from_attachment(c, attachment.id)
+            reading_id = _queue_from_attachment(c, attachment.id)
+            assert [job["status"] for job in finish_reads()] == ["failed"]
+            body = _detail(c, reading_id)
 
-        assert res.status_code == 502, res.text
-        assert res.json().get("code") == "FLYER_SOURCE_UNREADABLE"
+        assert body["status"] == "failed"
+        reason = body["errorMessage"].lower()
+        assert "storage" in reason, body["errorMessage"]
+        assert "upload the flyer from your computer" in reason, body["errorMessage"]
 
     def test_a_row_with_no_stored_copy_is_a_422_not_a_502(self, api) -> None:
         """A row with no ``file_path`` is the caller's data problem, not the

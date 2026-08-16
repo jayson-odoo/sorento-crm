@@ -29,6 +29,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 | **S7 flyer seeding** | **PASSED** 2026-08-02 | **PASSED** 2026-08-03 | **REVIEWED** 2026-08-03, blockers fixed | **BUILT, REVIEWED** |
 | **S2.5 Edition approval** | **SKIPPED** (see below) | **PASSED** 2026-08-03 | **REVIEWED** 2026-08-03, blockers fixed | **BUILT, REVIEWED** |
 | **Flyer read hardening** (extends S7) | **n/a** - no new screen | **PASSED** 2026-08-15 | **REVIEWED** 2026-08-15, findings fixed | **BUILT, REVIEWED** |
+| **Flyer read as a background job** (extends S7) | **n/a** - no new screen | **PASSED** 2026-08-16 | **REVIEWED** 2026-08-16, findings fixed; `/code-review` **not recorded** | **BUILT, REVIEWED** |
 
 **On the flyer read hardening row.** Detail lives in
 `PLAN-flyer-read-hardening.md`; this is only the gate record.
@@ -48,6 +49,25 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
   path ships with **no committed regression spec**. AC-A10 and AC-A11 are met by
   a reproducible agent-browser evidence run, whose steps and calls are recorded
   in the plan and the commit, and the missing guard is logged as a backlog row.
+
+**On the background-job row.** Detail lives in
+`PLAN-flyer-read-background-job.md`; this is only the gate record.
+
+- **Phase 1 is n/a, not skipped.** No screen was prototyped because none was
+  added: the existing "Read a flyer" dialog and the Flyers list gained a status
+  pill, a toast and two review-screen states. The deviation is recorded in
+  section 4 of the plan.
+- **Phase 2 passed.** Witnessed in this lane: the dealer-kit pytest suites green,
+  including 25 tests in `tests/test_dealer_kit_flyer_read_job.py` and 33 in
+  `tests/test_dealer_kit_flyer_readings.py`; 293 vitest across the dealer-kit
+  tree; and the browser evidence run in section 6 of the plan - the dialog closes
+  at once, the row appears **Processing**, the pill flips to **Done** with no
+  reload, the report opens, and the POST answers **202 in 0.162 s** warm.
+- **Phase 3 reviewed, findings fixed** - two independent codex passes plus the
+  no-mistakes review step. The repo's own reviewer agent and `/code-review` were
+  **NOT** run in this lane, so that part of the gate is **not recorded**.
+- **CI is not recorded at time of writing:** this row is written during the
+  validation run, before CI reports.
 
 ---
 
@@ -748,10 +768,10 @@ surfaces, one flag, enforced in the service AND by a partial unique index. Infer
 filenames was rejected: it would identify the right image for 509 of 535 and a generator or a
 tile fed the wrong picture is a confident, expensive error.
 
-**S7.1 to S7.4 - extract, match, review, seed.** Extraction is pure and runs inside the request
-(so no queue, no polling screen, no failure path; the "a second for 36 pages" recorded here was
-never measured and is wrong - see `PLAN-flyer-read-hardening.md` for the measurements and for why
-the queue is still deliberately not built). The reading is
+**S7.1 to S7.4 - extract, match, review, seed.** Extraction is pure; at the time it ran inside
+the request, and the "a second for 36 pages" recorded here was never measured and is wrong. It
+is now an RQ job answering 202 - see `PLAN-flyer-read-background-job.md`, which owns the
+measurements, the gateway timeout that forced the queue, and the status column. The reading is
 PERSISTED and the match report is DERIVED on every read - a stored report is only true for the
 master it was computed against and goes stale in the direction that costs money. The seed is a
 draft BY CONSTRUCTION: no draft flag was added, because a version with no label pointing at it

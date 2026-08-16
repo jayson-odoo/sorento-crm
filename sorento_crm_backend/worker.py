@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """RQ worker + APScheduler combined.
 
-Single process owns both queue draining (`imports`, `respond_io`) and cron ticks
-fired by `app.scheduler.task_scheduler`. Compose runs exactly one `worker` service
-so jobs and ticks are never duplicated across blue/green API containers.
+Single process owns both queue draining (`imports`, `respond_io`, `catalogue_render`,
+`flyer_read`) and cron ticks fired by `app.scheduler.task_scheduler`. Compose runs
+exactly one `worker` service so jobs and ticks are never duplicated across
+blue/green API containers.
 
 Set `ENABLE_SCHEDULER=true` in the worker container; API containers leave it false.
 """
@@ -107,7 +108,14 @@ if __name__ == '__main__':
     _maybe_start_scheduler()
     # `catalogue_render` is separate on purpose: a Chromium render is slow and
     # memory-hungry, and sharing the imports queue means one catalogue PDF
-    # blocks every Excel upload behind it.
+    # blocks every Excel upload behind it. `flyer_read` is separate for the same
+    # reason and is listed LAST: a 20 to 60 second PyMuPDF extraction should not
+    # sit in front of every Excel import, and RQ drains queues in list order.
+    #
+    # PRODUCTION: the compose file on the server is hand-edited and gitignored.
+    # If it pins WORKER_QUEUES explicitly, `flyer_read` has to be added there or
+    # a flyer read enqueues and never runs. If it does not pin it, this default
+    # is picked up on the next deploy.
     #
     # WORKER_QUEUES makes the list overridable, matching the project-sales
     # checkout. Every worktree on this machine points at the SAME Redis db 0, so
@@ -117,7 +125,7 @@ if __name__ == '__main__':
     queues = [
         q.strip()
         for q in os.getenv(
-            'WORKER_QUEUES', 'imports,respond_io,catalogue_render'
+            'WORKER_QUEUES', 'imports,respond_io,catalogue_render,flyer_read'
         ).split(',')
         if q.strip()
     ]

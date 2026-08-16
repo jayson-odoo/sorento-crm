@@ -25,19 +25,33 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 
-import type { FlyerReadingSummary } from '../../services/flyerReadingService';
+import type { FlyerReadingStatus, FlyerReadingSummary } from '../../services/flyerReadingService';
 import { deleteFlyerReading } from '../../services/flyerReadingService';
 import { FLYER_READINGS_QUERY_KEY, useFlyerReadingsQuery } from '../hooks/useFlyerReadings';
 import { UploadFlyerDialog } from './UploadFlyerDialog';
 
+/** What each status is called on screen. The pill colour comes from the shared palette. */
+const STATUS_LABEL: Record<FlyerReadingStatus, string> = {
+  processing: 'Processing',
+  done: 'Done',
+  failed: 'Failed',
+};
+
 /**
- * Which flyers have been read.
+ * Which flyers have been read, and which are being read right now.
  *
  * No report per row, deliberately: a report is a match run against 998 codes,
  * and one per row would make a screen whose only job is "which flyers exist"
  * cost a match run per flyer. The report lives on the review screen, where
  * somebody is actually reading it.
+ *
+ * A read is a queued job, so a row exists from the moment the flyer is handed
+ * over and says where it got to. A failed row keeps its reason beside the pill
+ * rather than only on the review screen: the list is where somebody goes to
+ * find out why nothing appeared, and making them open the row to be told is one
+ * click of pure suspense.
  *
  * Deleting a reading throws away the READING, never the brochure it seeded: a
  * page is its own row with its own versions, and nothing links the two. The
@@ -74,6 +88,32 @@ export function FlyerReadingsList() {
         size: 360,
         minSize: 180,
         meta: { headerTitle: 'Flyer', skeleton: <Skeleton className="h-4 w-48" /> },
+      },
+      {
+        accessorKey: 'status',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        cell: ({ row }) => (
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className={`${STATUS_PILL_BASE} shrink-0 ${statusPillClass(row.original.status)}`}
+              data-testid="dk-fr-status-pill"
+            >
+              {STATUS_LABEL[row.original.status]}
+            </span>
+            {row.original.status === 'failed' && row.original.errorMessage && (
+              <span
+                className="truncate text-xs text-muted-foreground"
+                title={row.original.errorMessage}
+                data-testid="dk-fr-status-reason"
+              >
+                {row.original.errorMessage}
+              </span>
+            )}
+          </div>
+        ),
+        size: 260,
+        minSize: 120,
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'pageCount',

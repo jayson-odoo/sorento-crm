@@ -44,6 +44,8 @@ vi.mock('../../services/flyerReadingService', () => ({
   seedFromFlyerReading: vi.fn(),
 }));
 
+import { statusPillClass } from '@/lib/status-pill';
+
 import type { FlyerReadingSummary } from '../../services/flyerReadingService';
 import { FlyerReadingsList } from './FlyerReadingsList';
 
@@ -55,6 +57,9 @@ const ROWS: FlyerReadingSummary[] = [
     pageCount: 36,
     codeCount: 998,
     uploadedAt: '2026-08-01T02:00:00',
+    status: 'done',
+    errorMessage: null,
+    finishedAt: '2026-08-01T02:00:41',
   },
   {
     id: 'r-2',
@@ -63,6 +68,9 @@ const ROWS: FlyerReadingSummary[] = [
     pageCount: 4,
     codeCount: 61,
     uploadedAt: '2026-07-30T02:00:00',
+    status: 'done',
+    errorMessage: null,
+    finishedAt: '2026-07-30T02:00:09',
   },
 ];
 
@@ -204,8 +212,124 @@ describe('FlyerReadingsList', () => {
   });
 });
 
+describe('FlyerReadingsList, status pills (AC-FE.2 / AC-FE.6)', () => {
+  const MIXED_ROWS: FlyerReadingSummary[] = [
+    {
+      id: 'r-p',
+      filename: 'processing-flyer.pdf',
+      byteSize: 0,
+      pageCount: 0,
+      codeCount: 0,
+      uploadedAt: '2026-08-10T00:00:00',
+      status: 'processing',
+      errorMessage: null,
+      finishedAt: null,
+    },
+    {
+      id: 'r-d',
+      filename: 'done-flyer.pdf',
+      byteSize: 1_000_000,
+      pageCount: 4,
+      codeCount: 61,
+      uploadedAt: '2026-08-09T00:00:00',
+      status: 'done',
+      errorMessage: null,
+      finishedAt: '2026-08-09T00:01:00',
+    },
+    {
+      id: 'r-f',
+      filename: 'failed-flyer.pdf',
+      byteSize: 500_000,
+      pageCount: 0,
+      codeCount: 0,
+      uploadedAt: '2026-08-08T00:00:00',
+      status: 'failed',
+      errorMessage: 'That file is not a PDF. Export the flyer as a PDF and upload it again.',
+      finishedAt: '2026-08-08T00:00:05',
+    },
+  ];
+
+  it('shows all three pills - Processing / Done / Failed - in the shared palette (AC-FE.2)', async () => {
+    listFlyerReadings.mockResolvedValue(MIXED_ROWS);
+
+    renderList();
+
+    const pills = await screen.findAllByTestId('dk-fr-status-pill');
+    expect(pills.map((p) => p.textContent)).toEqual(
+      expect.arrayContaining(['Processing', 'Done', 'Failed']),
+    );
+
+    const processingPill = pills.find((p) => p.textContent === 'Processing')!;
+    const donePill = pills.find((p) => p.textContent === 'Done')!;
+    const failedPill = pills.find((p) => p.textContent === 'Failed')!;
+    // The pill colour comes straight off the shared palette, not a local copy.
+    expect(processingPill.className).toContain(statusPillClass('processing'));
+    expect(donePill.className).toContain(statusPillClass('done'));
+    expect(failedPill.className).toContain(statusPillClass('failed'));
+  });
+
+  it('shows the failure reason beside a Failed pill, and only when one was recorded (AC-FE.2)', async () => {
+    const rows: FlyerReadingSummary[] = [
+      MIXED_ROWS[2],
+      {
+        id: 'r-f2',
+        filename: 'failed-no-reason.pdf',
+        byteSize: 0,
+        pageCount: 0,
+        codeCount: 0,
+        uploadedAt: '2026-08-07T00:00:00',
+        status: 'failed',
+        errorMessage: null,
+        finishedAt: '2026-08-07T00:00:05',
+      },
+    ];
+    listFlyerReadings.mockResolvedValue(rows);
+
+    renderList();
+
+    await screen.findByText('failed-flyer.pdf');
+    // Only the row that has a message gets a reason span; the other failed
+    // row has none rather than an empty one.
+    const reasons = screen.getAllByTestId('dk-fr-status-reason');
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toHaveTextContent(/not a pdf/i);
+    expect(reasons[0]).toHaveAttribute(
+      'title',
+      'That file is not a PDF. Export the flyer as a PDF and upload it again.',
+    );
+  });
+
+  it('still offers delete on a row that is Processing (AC-FE.5)', async () => {
+    listFlyerReadings.mockResolvedValue(MIXED_ROWS);
+    deleteFlyerReading.mockResolvedValue(undefined);
+
+    renderList();
+
+    const deleteButton = await screen.findByRole('button', {
+      name: /delete processing-flyer\.pdf/i,
+    });
+    expect(deleteButton).toBeEnabled();
+    fireEvent.click(deleteButton);
+
+    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+
+    await waitFor(() => expect(deleteFlyerReading).toHaveBeenCalledWith('r-p'));
+  });
+
+  it('opens the review screen from a Done row (AC-FE.4)', async () => {
+    listFlyerReadings.mockResolvedValue(MIXED_ROWS);
+
+    renderList();
+
+    fireEvent.click(await screen.findByText('done-flyer.pdf'));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/dealer-kit/flyer-readings/r-d'));
+  });
+});
+
 describe('FlyerReadingsList, the upload dialog', () => {
-  it('opens, accepts a PDF, and says extraction happens now rather than later', async () => {
+  it('opens, accepts a PDF, and asks nobody to wait for it', async () => {
     listFlyerReadings.mockResolvedValue([]);
 
     renderList();
@@ -213,8 +337,11 @@ describe('FlyerReadingsList, the upload dialog', () => {
     fireEvent.click((await screen.findAllByRole('button', { name: /read a flyer/i }))[0]);
 
     const dialog = await screen.findByRole('dialog');
-    // No queue, no job to watch: it is read straight away.
-    expect(dialog).toHaveTextContent(/read straight away/i);
+    // The read is a queued job, so there is nothing to sit through and the
+    // dialog must not say there is.
+    expect(dialog).not.toHaveTextContent(/read straight away/i);
+    expect(dialog).not.toHaveTextContent(/up to a minute/i);
+    expect(dialog).toHaveTextContent(/report of what was found/i);
     expect(screen.getByLabelText('Flyer PDF')).toHaveAttribute('accept', 'application/pdf,.pdf');
     // Nothing to upload yet, so nothing to submit.
     expect(screen.getByTestId('dk-fr-upload-submit')).toBeDisabled();
@@ -240,23 +367,18 @@ describe('FlyerReadingsList, the upload dialog', () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it('lands on the review screen once the flyer has been read', async () => {
+  it('closes and leaves the designer on the list once the flyer is handed over', async () => {
     listFlyerReadings.mockResolvedValue([]);
     uploadFlyerReading.mockResolvedValue({
       id: 'r-9',
       filename: 'flyer.pdf',
       byteSize: 1,
-      pageCount: 3,
-      codeCount: 61,
+      pageCount: 0,
+      codeCount: 0,
       uploadedAt: '',
-      report: {
-        matched: [],
-        unmatched: [],
-        notPromoted: [],
-        dimensionCandidates: [],
-        duplicates: {},
-        promotionId: null,
-      },
+      status: 'processing',
+      errorMessage: null,
+      finishedAt: null,
     });
 
     renderList();
@@ -268,8 +390,9 @@ describe('FlyerReadingsList, the upload dialog', () => {
     });
     fireEvent.click(screen.getByTestId('dk-fr-upload-submit'));
 
-    // Reading a flyer and never looking at what came back is the one path this
-    // feature must not have.
-    await waitFor(() => expect(push).toHaveBeenCalledWith('/dealer-kit/flyer-readings/r-9'));
+    // The dialog goes, and nothing navigates: the row is on the list being
+    // read, and a review screen would have nothing on it yet.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(push).not.toHaveBeenCalled();
   });
 });
