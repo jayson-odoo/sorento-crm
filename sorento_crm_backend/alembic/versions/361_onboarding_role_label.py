@@ -54,6 +54,7 @@ _ALIASES = [
     ("phone", "CONTACT NO"),
     ("email", "EMAIL"),
     ("email", "EMAIL ADDRESS"),
+    ("email", "E-MAIL"),
 ]
 
 
