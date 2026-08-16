@@ -275,6 +275,15 @@ def register_product_spec_listeners() -> None:
         # Both keys are taken before either drain runs: each drain opens its own
         # session and neither is allowed to raise, so a key left behind by the first
         # would be drained again by whatever committed next.
+        #
+        # `session.info` outlives a ROLLBACK, so a write that was rolled back and
+        # then followed by an unrelated commit on the same session drains ids whose
+        # work never landed. Left alone deliberately, for both keys: every drain
+        # re-reads the row it is handed, so the redundant pass embeds (or derives)
+        # whatever is CURRENTLY true, which is what the index should hold anyway. It
+        # costs one wasted pass and cannot write anything wrong. Clearing it would
+        # mean a rollback listener whose only job is to save that pass, and the
+        # pre-existing re-derive key has carried the same property since it shipped.
         codes = session.info.pop(_PENDING_KEY, None)
         product_ids = session.info.pop(_PENDING_EMBED_KEY, None)
         if product_ids:
