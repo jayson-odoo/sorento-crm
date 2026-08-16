@@ -64,8 +64,8 @@ rules after the end date.
 
 ### Migration
 
-One revision on the current single head (verify with `alembic heads` after any rebase; recent
-lanes used 324 and 357-359 — a merge revision if a second head appears):
+One revision on the current single head. Follow the authoritative Alembic pre-merge guard in
+`PRINCIPLES.md`:
 
 1. `create_table promotion_types` + unique index on `type_code` + partial unique index on
    `is_default WHERE is_default` (one default, enforced by the DB).
@@ -220,8 +220,8 @@ expired-but-usable row is served with `expired_but_usable: true`, one proving an
 
 ## 8. Risks
 
-- **Two heads after rebase** — check `alembic heads` before and after; add a merge revision if
-  a second head appears.
+- **Migration graph drift** - follow the authoritative Alembic pre-merge guard in
+  `PRINCIPLES.md`.
 - **Candidate-set cap** — the serving policy is a Python post-pass; bounded at 500 candidate
   rows with a log line when it bites, never a silent truncation.
 - **Marker collisions** — resolved conservatively by `match_priority` (special first), and
