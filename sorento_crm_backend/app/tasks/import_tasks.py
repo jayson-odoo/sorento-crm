@@ -401,6 +401,14 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
                 created_categories=result.get('created_categories', 0),
                 created_brands=result.get('created_brands', 0),
                 created_uoms=result.get('created_uoms', 0),
+                # AutoCount's reorder columns, when the file carried them.
+                levels_applied=result.get('levels_applied', 0),
+                levels_cleared=result.get('levels_cleared', 0),
+                level_conflicts=result.get('level_conflicts', 0),
+                # Rendered by the job detail page's existing Warnings list: a planning
+                # level a person set that this file disagreed with, named so it can be
+                # settled rather than only counted.
+                warnings=result.get('level_conflict_warnings', []),
                 # legacy keys, kept one release
                 created=result['created'],
                 updated=result['updated'],
