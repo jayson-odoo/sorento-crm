@@ -692,6 +692,112 @@ def test_extract_scope_gate_uses_the_products_stored_class_not_a_models_proposed
 
 
 # --------------------------------------------------------------------------- #
+# BLOCKER (second review) - `propose_from_text` fires `code_suffix` rules against the
+# PRODUCT'S OWN code, independently of whatever text was pasted (proven directly in
+# tests/test_product_spec_propose_from_text.py::test_a_code_suffix_rule_still_fires,
+# which pins that the lift keeps that pass and keeps stamping it `origin: "code"`).
+# The route must not let a `code`-origin hit become a proposal here: pasted text is
+# the only source this endpoint reads FROM - derivation already reads the code, via
+# `derive_for_code`, and repeating that reading as if the pasted text said it is not
+# what "extract from this text" means.
+# --------------------------------------------------------------------------- #
+def test_extract_never_proposes_a_code_origin_hit(api, db, monkeypatch):
+    """Code ends `-GY` (`code_suffix` -> finish=grey, confirmed directly against
+    `propose_from_text` above this product's own code). The description instead
+    names "GOLDEN YELLOW" (a `FINISH_WORDS` token -> finish=golden_yellow), so the
+    product's stored, derived finish differs from what the code suffix alone would
+    say. The pasted text is completely inert - no finish word, no code, nothing a
+    rule or a (stubbed absent) model could read - so the only way a finish proposal
+    could appear is the code-origin hit leaking through from `product.product_code`.
+    """
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _no_model(monkeypatch)
+    product = _product(
+        db, "ZZT-EX-CODEORIGIN-GY", "SORENTO BASIN GOLDEN YELLOW ZZT-EX-CODEORIGIN-GY"
+    )
+    db.commit()
+    derive_for_code(db, "ZZT-EX-CODEORIGIN-GY", commit=True)
+    stored = (
+        db.query(ProductSpecifications)
+        .join(Product, Product.id == ProductSpecifications.product_id)
+        .filter(Product.product_code == "ZZT-EX-CODEORIGIN-GY")
+        .first()
+    )
+    assert stored.values["finish"]["value"] == "golden_yellow", (
+        "fixture assumption: the description-derived finish must differ from what "
+        "the code suffix alone would say (grey), or this test cannot tell them apart"
+    )
+
+    response = _extract(
+        client, product.id, "Two year warranty. Please contact your dealer."
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["proposals"] == [], (
+        "the pasted text says nothing about finish - a code-origin hit must not "
+        f"become a proposal, got: {body['proposals']!r}"
+    )
+    assert "finish" not in _by_key(body)
+
+
+# --------------------------------------------------------------------------- #
+# AI usage telemetry - a successful semantic extract writes ONE usage-log row, the
+# same bookkeeping `understand_phrase` writes for `spec_search` (product_spec_
+# understanding.py), discriminated by `feature="spec_extract"`. This is a SEPARATE
+# table from `product_specifications`/`product_flyer_text` - AC-B.1's "writes
+# nothing" is about product data, not about usage telemetry, so this does not
+# relax the no-write guarantee the earlier test in this file pins.
+# --------------------------------------------------------------------------- #
+def test_extract_writes_one_ai_assistant_usage_log_row_on_a_semantic_extract(
+    api, db, monkeypatch
+):
+    from app.models.ai_assistant import AIAssistantUsageLog
+    from app.models.user import User
+
+    client, allow = api
+    allow.add("master_data.products.edit")
+    db.add(User(id=_USER["id"], email=_USER["email"], name="Spec Extractor", status="ACTIVE"))
+    db.commit()
+    _model_returning(
+        {"specs": [{"key": "trap_type", "value": "s_trap", "evidence": "S-Trap"}]}, monkeypatch
+    )
+    product = _product(db, "ZZT-EX-USAGELOG", "SORENTO ONE PIECE WC ZZT-EX-USAGELOG")
+    db.commit()
+    derive_for_code(db, "ZZT-EX-USAGELOG", commit=True)
+
+    before_flyer_count = db.query(ProductFlyerText).count()
+    before_spec = (
+        db.query(ProductSpecifications)
+        .join(Product, Product.id == ProductSpecifications.product_id)
+        .filter(Product.product_code == "ZZT-EX-USAGELOG")
+        .first()
+    )
+    before_snapshot = (dict(before_spec.values), dict(before_spec.provenance))
+    assert db.query(AIAssistantUsageLog).count() == 0
+
+    response = _extract(client, product.id, "A washdown WC with an S-trap outlet")
+
+    assert response.status_code == 200, response.text
+    db.expire_all()
+
+    logs = db.query(AIAssistantUsageLog).all()
+    assert len(logs) == 1, f"expected exactly one usage-log row, found {len(logs)}"
+    assert logs[0].feature == "spec_extract"
+
+    after_spec = (
+        db.query(ProductSpecifications)
+        .join(Product, Product.id == ProductSpecifications.product_id)
+        .filter(Product.product_code == "ZZT-EX-USAGELOG")
+        .first()
+    )
+    after_snapshot = (dict(after_spec.values), dict(after_spec.provenance))
+    assert after_snapshot == before_snapshot, "the usage log write must not touch spec data"
+    assert db.query(ProductFlyerText).count() == before_flyer_count
+
+
+# --------------------------------------------------------------------------- #
 # extractor model resolution: `extract_specs_from_text` must resolve the
 # `spec_extractor` agent's own provider/model, not `spec_understanding`'s.
 #

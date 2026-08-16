@@ -433,6 +433,56 @@ def test_batch_accepts_the_same_truthy_boolean_spellings_the_put_route_accepts(
     assert spec.values["has_drainer"]["value"] is True
 
 
+# --------------------------------------------------------------------------- #
+# second review - a duplicate `spec_key` inside ONE batch, and an `evidence` string
+# past a sane length, must both 422 with a readable message and write nothing. Today
+# neither is checked: `set_spec_values_in_one_batch` builds `prepared` by iterating
+# `payload.entries` with no de-duplication (two entries for the same key both reach
+# `apply_spec_values`), and `SpecBatchEntry.evidence` is an unconstrained `str`.
+# --------------------------------------------------------------------------- #
+def test_batch_rejects_a_duplicate_spec_key_in_one_batch(api, db):
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _registry_key(db, "material", allowed_values=["brass", "ceramic"])
+    product = _product(db, "ZZT-BA-DUPKEY")
+    db.commit()
+
+    response = _batch(
+        client,
+        product.id,
+        [
+            {"spec_key": "material", "value": "brass", "evidence": "Brass Body"},
+            {"spec_key": "material", "value": "ceramic", "evidence": "Ceramic Body"},
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+    message = response.json().get("message", "")
+    assert message, "must carry a readable message, not a bare status"
+    assert "material" in message.lower() or "duplicate" in message.lower()
+
+    spec = _spec_for(db, "ZZT-BA-DUPKEY")
+    assert spec is None or "material" not in (spec.values or {})
+
+
+def test_batch_rejects_evidence_over_500_characters(api, db):
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _registry_key(db, "material", allowed_values=["brass"])
+    product = _product(db, "ZZT-BA-EVIDENCELONG")
+    db.commit()
+
+    response = _batch(
+        client,
+        product.id,
+        [{"spec_key": "material", "value": "brass", "evidence": "x" * 501}],
+    )
+
+    assert response.status_code == 422, response.text
+    spec = _spec_for(db, "ZZT-BA-EVIDENCELONG")
+    assert spec is None or "material" not in (spec.values or {})
+
+
 def test_batch_coerces_a_non_truthy_boolean_spelling_to_false(api, db):
     client, allow = api
     allow.add("master_data.products.edit")

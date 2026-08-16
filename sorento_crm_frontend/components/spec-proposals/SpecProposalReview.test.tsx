@@ -142,6 +142,49 @@ describe('evidence cell', () => {
   });
 });
 
+describe('a multi-value array proposal reads like the scalar path (second review)', () => {
+  // A two-tone finish ("ROSE GOLD + MATT BLACK") is one proposal carrying a LIST
+  // (`app/services/product_spec_derivation.py`'s `MULTI_VALUE_KEYS` - see
+  // tests/test_product_spec_extract_route.py::test_extract_reports_a_multi_value_
+  // finish_as_one_proposal_carrying_the_list on the backend). The type this
+  // component is handed must accept that shape - `SpecProposal['value']` currently
+  // types as `SpecProposalScalar` (string | number | boolean) only, so this literal
+  // does not type-check today; that is red on its own, ahead of any render.
+  const MULTI_VALUE_CHANGE: SpecProposal = {
+    spec_key: 'finish',
+    label: 'Finish or colour',
+    data_type: 'enum',
+    value: ['matte_black', 'rose_gold'],
+    unit: null,
+    evidence: 'MATTE BLACK + ROSE GOLD',
+    kind: 'change',
+    stored_value: 'chrome',
+    stored_unit: null,
+    stored_source: 'derived',
+  };
+
+  it('badges "Changes Chrome to Matte black, Rose gold" - comma+space joined, each element humanised', () => {
+    renderReview({ proposals: [MULTI_VALUE_CHANGE], selectedKeys: ['finish'] });
+
+    expect(
+      screen.getByText('Changes Chrome to Matte black, Rose gold'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders the same reading in the value cell', () => {
+    const { container } = renderReview({
+      proposals: [MULTI_VALUE_CHANGE],
+      selectedKeys: ['finish'],
+    });
+
+    const valueCell = container.querySelector(
+      '[data-spec-proposal-value="finish"]',
+    ) as HTMLElement | null;
+    expect(valueCell).not.toBeNull();
+    expect(valueCell).toHaveTextContent('Matte black, Rose gold');
+  });
+});
+
 describe('empty proposals', () => {
   it('renders the grid without crashing and shows the empty message', () => {
     const empty: SpecProposal[] = [];

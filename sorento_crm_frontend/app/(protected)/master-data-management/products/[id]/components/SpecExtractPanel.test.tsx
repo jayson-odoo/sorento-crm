@@ -186,6 +186,35 @@ describe('zero proposals ("nothing new")', () => {
   });
 });
 
+describe('zero proposals AND zero unchanged ("nothing recognisable", second review)', () => {
+  it('shows "Nothing recognisable in this text", never the 0-values-stored line', async () => {
+    // Neither engine found anything at all - not a proposal, not a restatement of
+    // something already stored. "0 values it states are already stored." reads as
+    // if the text WAS understood and simply agreed with the product, which is a
+    // different, wrong claim from "nothing in this text was recognisable".
+    mockExtract.mockResolvedValue({
+      product_code: 'SRT-WC-1001',
+      engine: 'semantic',
+      model: 'gpt-4o',
+      proposals: [],
+      unchanged: 0,
+    });
+    renderPanel();
+
+    fireEvent.change(screen.getByLabelText('Text to read specifications from'), {
+      target: { value: 'Two year warranty. Please contact your dealer.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Read specs from this' }));
+
+    await waitFor(() =>
+      expect(screen.getByText('Nothing recognisable in this text')).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/values? it states (is|are) already stored/),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe('degraded (no model reachable)', () => {
   it('shows the "read by the rules only" line', async () => {
     mockExtract.mockResolvedValue({
