@@ -82,7 +82,15 @@ def match_marker_type(
     if not normalized:
         return None
     for promo_type in sorted(
-        list(types), key=lambda t: (t.match_priority or 100, t.type_code or "")
+        list(types),
+        # `or 100` would treat an explicit priority of 0 as the most permissive
+        # slot, which is the opposite of what the admin asked for: the form
+        # allows 0 and tells them the lowest number wins. Only a missing value
+        # falls back.
+        key=lambda t: (
+            100 if t.match_priority is None else t.match_priority,
+            t.type_code or "",
+        ),
     ):
         markers = promo_type.match_markers or []
         if not isinstance(markers, list):

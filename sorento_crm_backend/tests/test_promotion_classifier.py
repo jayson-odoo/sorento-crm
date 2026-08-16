@@ -142,3 +142,48 @@ def test_markers_come_from_the_database_not_from_code():
 
         types = list_types_for_matching(db)
         assert classify_text("SORENTO CLEARANCE PROMO.pdf", types).type_code == "special"
+
+
+def test_priority_zero_wins_over_a_higher_number():
+    """An explicit priority of 0 is the strongest, not the weakest.
+
+    The admin form allows 0 and tells the user the lowest number wins, so a
+    `or 100` fallback that folded 0 into the default slot handed the match to
+    whichever type sorted first instead.
+    """
+    with blank_session() as db:
+        types = _seed_types(db)
+        db.add(
+            PromotionType(
+                type_code="clearance",
+                type_name="Clearance",
+                match_markers=["clearance", "special"],
+                match_priority=0,
+                show_expired=False,
+            )
+        )
+        db.flush()
+
+        types = list_types_for_matching(db)
+        # Both types carry the "special" marker; priority 0 must outrank 10.
+        assert classify_text("SORENTO SPECIAL PROMO.pdf", types).type_code == "clearance"
+
+
+def test_a_missing_priority_still_falls_back_to_the_default_slot():
+    """Only NULL falls back - that behaviour is unchanged."""
+    with blank_session() as db:
+        _seed_types(db)
+        db.add(
+            PromotionType(
+                type_code="no_priority",
+                type_name="No Priority",
+                match_markers=["special"],
+                match_priority=None,
+                show_expired=False,
+            )
+        )
+        db.flush()
+
+        types = list_types_for_matching(db)
+        # `special` (10) still wins over a type with no priority at all.
+        assert classify_text("SORENTO SPECIAL PROMO.pdf", types).type_code == "special"
