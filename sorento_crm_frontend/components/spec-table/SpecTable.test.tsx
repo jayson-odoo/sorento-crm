@@ -200,6 +200,25 @@ describe('the source badge', () => {
     fireEvent.click(container.querySelector('[data-spec-source="human"]') as HTMLElement);
     expect(screen.getByText('Set by:')).toBeInTheDocument();
   });
+
+  it('badges a promoted (migrated_from: flyer) value "Set by hand" with a "Read from" evidence prefix (AC-B.15)', () => {
+    // flush_type is promoted: source human, migrated_from flyer, evidence already
+    // carrying the migration's "flyer: " prefix.
+    const { container } = renderTable();
+    const promoted = container.querySelector(
+      '[data-spec-migrated-from="flyer"]',
+    ) as HTMLElement | null;
+    expect(promoted).not.toBeNull();
+    // The pill itself reads "Set by hand" - a promoted value IS authored, it just
+    // never came from a person typing it.
+    expect(promoted!.querySelector('span')).toHaveTextContent('Set by hand');
+    // But the evidence line reads "Read from", not "Set by": the words really are a
+    // quotation off a document, not an audit stamp naming who typed them.
+    expect(promoted).toHaveAttribute('title', 'Read from: flyer: Washdown With Rimless');
+
+    fireEvent.click(promoted!);
+    expect(screen.getByText('Read from:')).toBeInTheDocument();
+  });
 });
 
 describe('editing in place', () => {

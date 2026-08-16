@@ -321,6 +321,9 @@ def test_derive_for_code_ignores_a_stored_flyer_text_row(db):
         .filter(Product.product_code == "ZZT-PFT-DRV-4")
         .first()
     )
-    assert "material" not in (spec.values or {}), (
+    # The description of this fixture says CERAMIC, so `material` IS derived - from the
+    # product master, which is legitimate. What must not survive the lift is the FLYER's
+    # answer: "Brass Body" would have read `material=brass` when the row was an input.
+    assert (spec.values or {}).get("material", {}).get("value") != "brass", (
         "material=brass only ever came from the flyer row; it must not survive the lift"
     )

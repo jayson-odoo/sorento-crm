@@ -34,7 +34,6 @@ import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
-from app.models.company import Company
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_spec import ProductSpecifications
 from app.services.product_class_signal import backfill_category_signals
@@ -298,14 +297,45 @@ def test_a_second_upgrade_changes_nothing(db, seeded):
 # downgrade
 # --------------------------------------------------------------------------- #
 def test_downgrade_restores_the_seeded_provenance_and_status_exactly(db, seeded):
-    before = {key: _snapshot(db, product.id) for key, (product, _spec) in seeded.items()}
+    """Rows (a), (b) and (d) come back byte-identical.
+
+    Row (c) - the hand-made HALF-promoted row - deliberately cannot, and asking it to
+    would be asking for a downgrade that cannot exist. `migrated_from='flyer'` is the
+    only marker either the upgrade or an earlier crashed run leaves behind, so nothing
+    in the data distinguishes "this entry was promoted a moment ago" from "this entry
+    was promoted by the run that died last week". The downgrade therefore demotes both,
+    which is the state the promotion was completing anyway, and is what the next test
+    pins.
+    """
+    keys = ("a", "b", "d")
+    before = {key: _snapshot(db, seeded[key][0].id) for key in keys}
 
     _run_upgrade(db)
     _run_downgrade(db)
 
-    after = {key: _snapshot(db, product.id) for key, (product, _spec) in seeded.items()}
+    after = {key: _snapshot(db, seeded[key][0].id) for key in keys}
 
     assert after == before
+
+
+def test_downgrade_demotes_a_half_promoted_row_completely(db, seeded):
+    product_c, _ = seeded["c"]
+
+    _run_upgrade(db)
+    _run_downgrade(db)
+
+    values, provenance, status = _snapshot(db, product_c.id)
+    assert provenance["finish"] == {
+        "source": "flyer",
+        "confidence": 1.0,
+        "evidence": "CHROME",
+    }
+    assert provenance["material"] == {
+        "source": "flyer",
+        "confidence": 1.0,
+        "evidence": "BRASS",
+    }
+    assert status == "derived"
 
 
 # --------------------------------------------------------------------------- #
@@ -348,5 +378,7 @@ def test_367_is_the_single_alembic_head():
     cfg.set_main_option("script_location", str(root / "alembic"))
     script_dir = ScriptDirectory.from_config(cfg)
 
+    # `get_heads()` returns a LIST, so the tuple this was first written against could
+    # never have matched, single head or not.
     heads = script_dir.get_heads()
-    assert heads == ("367_promote_flyer_provenance",), heads
+    assert list(heads) == ["367_promote_flyer_provenance"], heads

@@ -176,7 +176,12 @@ def test_batch_happy_path_writes_all_three_entries_through_one_call(api, db, mon
     _registry_key(db, "material", allowed_values=["brass", "ceramic"])
     _registry_key(db, "finish", allowed_values=["chrome", "black"])
     _registry_key(db, "trap_type", allowed_values=["s_trap", "p_trap"])
-    product = _product(db, "ZZT-BA-HAPPY")
+    # A description that states NO material: the default fixture says CERAMIC, which
+    # derivation reads, so writing material=brass by hand would raise a real
+    # `human_override_conflict` and land the row on `needs_review` (correctly - a
+    # disagreement between the master and the flyer is the thing D8 exists to surface).
+    # This test is about the batch write, so the fixture is kept clear of that.
+    product = _product(db, "ZZT-BA-HAPPY", "SORENTO KITCHEN SINK ZZT-BA-HAPPY")
     db.commit()
 
     calls = []

@@ -40,6 +40,14 @@ def _spec_reject(message: str):
 
     return AppException(status_code=400, message=message, code="product_spec_bad_value")
 
+
+def _spec_reject_unprocessable(message: str):
+    """The same refusal at 422, for a body that is the wrong size rather than wrong."""
+    from app.services.error_handler import AppException
+
+    return AppException(status_code=422, message=message, code="product_spec_bad_text")
+
+
 _INTERNAL_ONLY_VALUE_KEYS: set[str] = set()
 
 
@@ -295,6 +303,133 @@ async def rederive_one_product(
         return {"product_code": product.product_code, **result}
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+class SpecExtractRequest(BaseModel):
+    """The text a person pasted. Held in the request body and nowhere else."""
+
+    text: str = Field(description="A flyer card, a leaflet paragraph, a supplier blurb.")
+
+
+class SpecBatchEntry(BaseModel):
+    """One accepted proposal, on its way to the write choke point."""
+
+    spec_key: str
+    value: Any
+    unit: Optional[str] = None
+    evidence: str = ""
+
+
+class SpecBatchRequest(BaseModel):
+    entries: list[SpecBatchEntry] = Field(min_length=1, max_length=50)
+
+
+@router.post("/by-product/{product_id}/extract")
+def extract_spec_proposals_from_text(
+    product_id: str,
+    payload: SpecExtractRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Read pasted text and PROPOSE. Writes nothing, anywhere.
+
+    Not a shortcut for the batch write below: the whole point is that a machine reading
+    of marketing copy is shown to a person beside what is already stored, and only what
+    they tick is written. The pasted text lives in this request and in the component's
+    own state, and is never persisted (AC-B.1).
+
+    Plain ``def``, so FastAPI runs it in a thread: the model round trip is blocking, and
+    on the event loop it freezes the whole worker (same fix as the preview route).
+    """
+    from app.services.product_spec_extract import MAX_TEXT_LENGTH, extract_spec_proposals
+
+    text = (payload.text or "").strip()
+    if not text:
+        raise _spec_reject_unprocessable(
+            "There is nothing to read. Paste the text about this product first."
+        )
+    if len(text) > MAX_TEXT_LENGTH:
+        # Refused rather than truncated: reading half a document and proposing from it
+        # looks like a complete answer and is not one.
+        raise _spec_reject_unprocessable(
+            f"That text is {len(text):,} characters, and this reads up to "
+            f"{MAX_TEXT_LENGTH:,}. Paste the part that describes this product."
+        )
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise handle_not_found("Product", product_id)
+
+    try:
+        return extract_spec_proposals(db, product, text)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/by-product/{product_id}/values/batch")
+def set_spec_values_in_one_batch(
+    product_id: str,
+    payload: SpecBatchRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Write every accepted proposal in ONE call (AC-B.9).
+
+    One call per key would produce one fan-out, one rendered-sentence rebuild and one
+    verification diff PER KEY for what the user experienced as a single action, and a
+    partial failure would leave the table half-applied. So the batch is the shape and a
+    batch of one is the narrow case.
+
+    Registered BEFORE `/values/{spec_key}` so "batch" is read as the literal it is
+    rather than as a specification called batch.
+
+    Plain ``def``, so FastAPI runs it in a thread: up to fifty keys, a fan-out to every
+    company copy and a full re-derive of the code is real synchronous work, and on the
+    event loop it holds up every other request the worker is serving.
+    """
+    from app.services.product_spec_write import apply_spec_values
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise handle_not_found("Product", product_id)
+
+    # Pre-flight, before anything is written: the choke point validates the operation
+    # and the value but knows nothing about the registry, so an unknown key would
+    # otherwise be written as a permanent provenance entry no screen can render. Every
+    # entry is checked first, so one bad key writes none of the batch.
+    keys = [entry.spec_key.strip() for entry in payload.entries]
+    known = {
+        row.spec_key
+        for row in db.query(ProductSpecRegistry)
+        .filter(ProductSpecRegistry.spec_key.in_(keys or [""]))
+        .all()
+    }
+    for key in keys:
+        if key not in known:
+            raise handle_not_found("Spec key", key)
+
+    result = apply_spec_values(
+        db,
+        product.product_code,
+        [
+            {
+                "spec_key": entry.spec_key.strip(),
+                "op": "set",
+                "value": entry.value,
+                "unit": entry.unit or None,
+                "source": "human",
+                # The words the text was read from, kept on the row: a value a person
+                # accepted off a flyer is still traceable to the sentence that proposed
+                # it, which is what makes the badge honest a year later.
+                "evidence": f"read from text: {(entry.evidence or '').strip()}",
+            }
+            for entry in payload.entries
+        ],
+        actor=current_user,
+    )
+    return result
 
 
 @router.put("/by-product/{product_id}/values/{spec_key}")

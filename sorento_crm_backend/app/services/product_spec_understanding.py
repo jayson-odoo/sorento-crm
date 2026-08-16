@@ -81,6 +81,16 @@ _TEMPERATURE = 0.0
 # (its registry fallback) is what runs if the registry row is missing.
 AGENT_NAME = "spec_understanding"
 
+# The sibling agent: reading a statement ABOUT one product (a flyer card, a supplier
+# blurb) rather than a customer's enquiry. Its own prompt key because the two jobs pull
+# in opposite directions - understanding a customer means interpreting them, and reading
+# a supplier's copy means refusing to.
+EXTRACTOR_AGENT_NAME = "spec_extractor"
+
+# Longer than the enquiry budget: one flyer card can state a dozen specifications, and
+# this runs behind a button on a staff screen rather than on a WhatsApp reply.
+_EXTRACT_MAX_OUTPUT_TOKENS = 1500
+
 
 @dataclass
 class Understanding:
@@ -105,6 +115,21 @@ class Understanding:
     source: str = "deterministic"
     model: str | None = None
     elapsed_ms: int | None = None
+
+
+@dataclass
+class Extraction:
+    """What a pasted piece of text says about one product, as the registry's own terms.
+
+    `specs` are `{key, value, evidence}` and are already validated: a key or a value the
+    registry does not recognise never reaches this object. `source` is `semantic` only
+    when a model actually answered - anything else (no key, no provider, bad JSON, a
+    timeout) degrades to `deterministic`, where the caller's rule pass stands alone.
+    """
+
+    specs: list[dict] = field(default_factory=list)
+    source: str = "deterministic"
+    model: str | None = None
 
 
 # An open-vocabulary key has no closed list in the registry because its values come from
@@ -564,3 +589,75 @@ def understand_phrase(
         model=model_name,
         elapsed_ms=elapsed_ms,
     )
+
+
+def extract_specs_from_text(
+    db: Session,
+    text: str,
+    *,
+    vocabulary: tuple[list[dict], dict[str, Any], dict[str, list[str]]] | None = None,
+    allow_model: bool = True,
+) -> Extraction:
+    """Read a statement about ONE product onto the registry. Never writes anything.
+
+    The sibling entry point AC-B.4 asks for: it shares `_vocabulary`, `_coerce` and
+    `_validated_pairs` with `understand_phrase`, so neither can propose vocabulary the
+    ranker has never heard of, and `understand_phrase` is NOT overloaded with a mode
+    flag - it carries a WhatsApp latency budget this does not.
+
+    Degrades rather than fails, exactly as the enquiry reader does: no provider, a
+    provider that raises, or a reply that is not JSON all return an empty
+    `Extraction` marked `deterministic`, and the caller's rule pass is what the user
+    gets (AC-B.5). `vocabulary` is accepted so a caller that already rendered the
+    registry does not pay for it twice - the open-vocabulary values behind it are a
+    DISTINCT per key.
+    """
+    text = (text or "").strip()
+    if not text or not allow_model:
+        return Extraction()
+
+    provider, _provider_name, model_name = _resolve_provider(db)
+    if provider is None:
+        return Extraction()
+
+    described, index, open_values = vocabulary if vocabulary is not None else _vocabulary(db)
+    messages = [
+        {"role": "system", "content": get_prompt(db, EXTRACTOR_AGENT_NAME).text},
+        {
+            "role": "user",
+            "content": (
+                "Specifications that exist:\n"
+                + json.dumps(described, ensure_ascii=False)
+                + "\n\nText about the product:\n"
+                + text
+            ),
+        },
+    ]
+
+    try:
+        result = provider.chat(
+            messages,
+            temperature=_TEMPERATURE,
+            max_tokens=_EXTRACT_MAX_OUTPUT_TOKENS,
+            response_format={"type": "json_object"},
+        )
+        payload = json.loads(result.content or "{}")
+    except Exception as exc:  # noqa: BLE001 - any provider failure degrades, never raises
+        logger.warning("spec extraction failed, using the rule pass alone: %s", exc)
+        return Extraction()
+
+    items = (payload.get("specs") if isinstance(payload, dict) else None) or []
+    # The words the model read each value from, kept beside the validation rather than
+    # inside it: `_validated_pairs` is shared with the enquiry reader, which has no
+    # evidence to carry, and widening it for one caller would put an unused field on
+    # every customer sentence.
+    evidence_by_key = {
+        str(item.get("key") or "").strip(): str(item.get("evidence") or "").strip()
+        for item in items
+        if isinstance(item, dict)
+    }
+    specs = _validated_pairs(items, index, open_values, one_per_key=True)
+    for entry in specs:
+        entry["evidence"] = evidence_by_key.get(entry["key"], "")
+
+    return Extraction(specs=specs, source="semantic", model=model_name)
