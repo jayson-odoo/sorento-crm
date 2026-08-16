@@ -266,6 +266,94 @@ describe('HistoryUploadDialog - Test', () => {
   });
 });
 
+// ── 6. the reading row holds its place ──────────────────────────────────────
+
+/**
+ * Pressing Test on the captain's 27,192-row book made the popup shake for as long as
+ * `Reading the file...` was on screen. Two causes, both measured in a browser rather than
+ * guessed at, and both are properties of this row:
+ *
+ * 1. mounting the row on press grew the dialog by 36px, and `DialogContent` is centred with
+ *    `translate-y-[-50%]`, so the whole popup jumped when the read started and again when it
+ *    finished;
+ * 2. the spinner is `animate-spin` inside `DialogBody`, which is `overflow-y-auto` with no
+ *    padding. A rotating square's border box reaches `16 * sqrt(2)` = 22.6px and a transform
+ *    still counts towards an ancestor's scrollable overflow, so the body's `scrollHeight`
+ *    crossed its `clientHeight` and back every animation frame - measured flipping the body's
+ *    `clientWidth` 718 <-> 703 wherever the platform draws a space-taking scrollbar.
+ *
+ * jsdom computes no layout, so neither is directly assertable here. What IS assertable is the
+ * structure both fixes depend on: the row is always in the DOM (so its height never changes),
+ * it is hidden with `invisible` rather than unmounted, and the spinner sits in a clipped box
+ * and only spins while reading.
+ */
+describe('HistoryUploadDialog - the reading row', () => {
+  function readingRow(): HTMLElement {
+    const node = document.querySelector('[data-slot="upload-reading-indicator"]');
+    if (!node) throw new Error('the reading row is not in the DOM');
+    return node as HTMLElement;
+  }
+
+  it('keeps its row before, during and after the read, so the popup never moves', async () => {
+    let release!: (p: PurchaseHistoryPreview) => void;
+    previewPurchaseHistory.mockReturnValue(
+      new Promise<PurchaseHistoryPreview>((resolve) => {
+        release = resolve;
+      }),
+    );
+    renderDialog('purchase-history');
+
+    // Before: present, holding its space, and hidden rather than absent.
+    expect(readingRow()).toHaveClass('invisible');
+    expect(readingRow()).toHaveClass('min-h-5');
+
+    await pick();
+    fireEvent.click(testButton());
+
+    // During: the same element, now visible and spinning.
+    await waitFor(() => expect(readingRow()).not.toHaveClass('invisible'));
+    expect(readingRow().querySelector('.animate-spin')).not.toBeNull();
+
+    release(historyPreview());
+
+    // After: back to hidden, never unmounted.
+    await waitFor(() => expect(readingRow()).toHaveClass('invisible'));
+    expect(readingRow().querySelector('.animate-spin')).toBeNull();
+  });
+
+  it('clips the spinner to its own box, so its rotation cannot overflow the scrolling body', async () => {
+    let release!: (p: PurchaseHistoryPreview) => void;
+    previewPurchaseHistory.mockReturnValue(
+      new Promise<PurchaseHistoryPreview>((resolve) => {
+        release = resolve;
+      }),
+    );
+    renderDialog('purchase-history');
+    await pick();
+    fireEvent.click(testButton());
+
+    await waitFor(() => expect(readingRow()).not.toHaveClass('invisible'));
+    const spinner = readingRow().querySelector('.animate-spin');
+    const clip = spinner?.parentElement;
+    expect(clip).not.toBeNull();
+    // Without the clip the rotated 16px icon reaches 22.6px and pushes the body's
+    // scrollHeight past its clientHeight and back, sixty times a second.
+    expect(clip).toHaveClass('overflow-hidden');
+    expect(clip).toHaveClass('size-4');
+
+    release(historyPreview());
+    await waitFor(() => expect(readingRow()).toHaveClass('invisible'));
+  });
+
+  it('runs one read per press, so the row cannot flicker on a double toggle', async () => {
+    renderDialog('purchase-history');
+    await choose();
+
+    expect(previewPurchaseHistory).toHaveBeenCalledTimes(1);
+    expect(testPurchaseHistory).toHaveBeenCalledTimes(1);
+  });
+});
+
 // ── 1. nothing is written from a single click ───────────────────────────────
 
 describe('HistoryUploadDialog - test, then upload', () => {
