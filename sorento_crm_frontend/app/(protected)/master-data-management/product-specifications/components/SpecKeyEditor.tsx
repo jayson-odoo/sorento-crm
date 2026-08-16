@@ -442,7 +442,17 @@ export default function SpecKeyEditor({
           {rowValues.map((value) => (
             <div key={value} className="flex flex-wrap items-start gap-2">
               <span className="flex w-40 shrink-0 items-center gap-1 pt-2 text-sm">
-                <span className="truncate">
+                {/* Struck through exactly as the value itself is in the values section
+                    above: the words are kept and stay editable, but until the value is
+                    put back the vocabulary carries none of them, and a row that read as
+                    live had the two halves of this form disagreeing about one value. */}
+                <span
+                  className={
+                    droppedValues.includes(value)
+                      ? 'truncate text-muted-foreground line-through decoration-muted-foreground/60'
+                      : 'truncate'
+                  }
+                >
                   {value === 'true' && isBoolean ? 'When true' : readable(value)}
                 </span>
                 {/* Clearing a row is the only way to retire a value on a key with no
