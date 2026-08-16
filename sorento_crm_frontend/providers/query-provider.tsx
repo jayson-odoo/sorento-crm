@@ -16,7 +16,14 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
     () =>
       new QueryClient({
         queryCache: new QueryCache({
-          onError: (error) => {
+          onError: (error, query) => {
+            // A query may opt out of the shared toast with `meta: { silent: true }`.
+            // Some reads are context beside the thing the user came for (a product
+            // photo, say) and their failure is reported in place, on the panel that
+            // asked; a page-level destructive toast for one of those tells the user
+            // their work is in trouble when nothing about it is.
+            if (query.meta?.silent) return;
+
             const message =
               error.message || 'Something went wrong. Please try again.';
 

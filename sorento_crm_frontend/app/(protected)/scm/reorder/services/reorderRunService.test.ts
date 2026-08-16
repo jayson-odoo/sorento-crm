@@ -9,6 +9,8 @@ import {
   getCoveredRecommendations,
   getReorderRun,
   getRecommendations,
+  getProductImage,
+  getProductImages,
   listReorderRuns,
 } from './reorderRunService';
 
@@ -180,6 +182,52 @@ describe('reorderRunService - listReorderRuns', () => {
     expect(page.data[0].run_id).toBe('run-b');
     expect(page.data[0].warehouse_codes).toEqual(['WH-KL', 'WH-JB']);
     expect(page.data[0].summary?.recommendation_count).toBe(5);
+  });
+});
+
+describe('reorderRunService - getProductImages (AC-7)', () => {
+  it('reads which products have a photo from one endpoint', async () => {
+    apiFetch.mockResolvedValue(ok({ has_image: { p1: true } }));
+
+    const out = await getProductImages('run-9');
+
+    expect(calledUrl().pathname).toBe('/api/v1/scm/reorder-runs/run-9/product-images');
+    expect(out.has_image.p1).toBe(true);
+  });
+
+  it('normalises a body with no images at all, so the caller never guards for it', async () => {
+    apiFetch.mockResolvedValue(ok({}));
+    expect(await getProductImages('run-9')).toEqual({ has_image: {} });
+  });
+
+  it('surfaces the backend message rather than a blank failure', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ message: 'Reorder run not found.' }),
+      text: async () => JSON.stringify({ message: 'Reorder run not found.' }),
+    } as unknown as Response);
+
+    await expect(getProductImages('nope')).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('reorderRunService - getProductImage (AC-7)', () => {
+  it('signs one product photo, on the popover that asked for it', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ url: 'https://cdn.test.invalid/p1.jpg?Signature=stub', is_primary: true }),
+    );
+
+    const out = await getProductImage('run-9', 'p1');
+
+    expect(calledUrl().pathname).toBe('/api/v1/scm/reorder-runs/run-9/product-images/p1');
+    expect(out).toEqual({ url: 'https://cdn.test.invalid/p1.jpg?Signature=stub', is_primary: true });
+  });
+
+  it('reads a product with no photo as a null url, not a failure', async () => {
+    apiFetch.mockResolvedValue(ok({ url: null, is_primary: false }));
+    expect(await getProductImage('run-9', 'p2')).toEqual({ url: null, is_primary: false });
   });
 });
 
