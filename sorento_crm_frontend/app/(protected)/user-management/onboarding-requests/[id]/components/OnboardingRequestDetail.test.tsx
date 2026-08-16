@@ -7,7 +7,7 @@
  * actually in review.
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { OnboardingRequestDetail as Detail } from '@/components/common/onboarding/types';
@@ -343,6 +343,79 @@ describe('OnboardingRequestDetail', () => {
       'aria-checked',
       'true',
     );
+  });
+
+  it('does not let a finished save wipe the one still in flight behind it', async () => {
+    // Two saves overlap whenever the reviewer ticks a second need without
+    // waiting: save B goes out, save C goes out, B answers first. When B's
+    // success refetched the request, that read was answered with the row as the
+    // server knew it BEFORE C - so C's tick disappeared from the grid, and a
+    // third click was computed against a row that had lost it. Same failure as
+    // the stale-row one above, arriving from the other side.
+    const row = detail().people[0];
+    const asLoaded = detail({
+      people: [
+        { ...row, needs_system_account: true, needs_respond_contact: false, needs_agent_seat: false },
+      ],
+    });
+    // What a refetch triggered by B would be answered with: B's need is saved,
+    // C's is not there yet.
+    const asServerKnowsItAfterB = detail({
+      people: [
+        { ...row, needs_system_account: true, needs_respond_contact: true, needs_agent_seat: false },
+      ],
+    });
+    getOnboardingRequest
+      .mockResolvedValueOnce(asLoaded)
+      .mockResolvedValue(asServerKnowsItAfterB);
+
+    // B settles on our command; C never settles, so it is still in flight when
+    // B's success handler runs - the exact window the race lives in.
+    let settleB: () => void = () => {};
+    updateOnboardingPerson
+      .mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          settleB = resolve;
+        }),
+      )
+      .mockReturnValue(new Promise(() => {}));
+
+    renderDetail();
+
+    const needs = within(await screen.findByTestId('people-grid')).getByLabelText('Needs');
+    fireEvent.click(needs);
+    // B: tick the chatbot need, and let it reach the row before ticking again -
+    // the reviewer's second click is against the row as it now reads.
+    fireEvent.click(await screen.findByRole('option', { name: 'Access to chatbot AI' }));
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: 'Access to chatbot AI' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      ),
+    );
+    // C: tick the Respond.io need. B has still not answered.
+    fireEvent.click(screen.getByRole('option', { name: 'Respond.io account' }));
+    await waitFor(() => expect(updateOnboardingPerson).toHaveBeenCalledTimes(2));
+
+    // B answers, with C still in flight.
+    settleB();
+    // Long enough that anything B's settlement schedules - a read, and the
+    // repaint that read would cause - has landed on screen before we look.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    // The row keeps BOTH ticks, and nothing read the detail out from under C:
+    // the only read is the one that loaded the page.
+    expect(screen.getByRole('option', { name: 'Access to chatbot AI' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByRole('option', { name: 'Respond.io account' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(getOnboardingRequest).toHaveBeenCalledTimes(1);
   });
 
   it('stops offering edits the server would refuse once the batch is finished', async () => {

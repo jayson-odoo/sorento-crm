@@ -4,10 +4,11 @@
  * The onboarding queue's hooks layer.
  *
  * Layering: UI -> these hooks -> `services/onboardingService` -> `lib/api-client`.
- * The review screen drives eight writes, and every one of them has the same two
- * jobs after it lands: invalidate the request AND the queue, then say what
- * happened. Keeping them here is what stops the component growing a second copy
- * of that rule per button.
+ * The review screen drives eight writes, and the ones that change a verdict, a
+ * status or the link all have the same two jobs after they land: invalidate the
+ * request AND the queue, then say what happened. Keeping them here is what stops
+ * the component growing a second copy of that rule per button. The cell-level
+ * person patch is the exception and says why on itself.
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -140,7 +141,22 @@ export function useOnboardingRequestMutations(requestId: string) {
       }
       return { previous };
     },
-    onSuccess: invalidate,
+    // Deliberately no cache work on success.
+    //
+    // A refetch here raced the reviewer. Ticking a second need starts save B and
+    // then save C; B answers first, its refetch is already on the wire when C is
+    // still in flight, and it comes back with the row as it was BEFORE C. That
+    // response overwrites the cache, C's optimistic tick vanishes from the grid,
+    // and a third click is then computed against a row that lost it - the same
+    // "a multi-select behaves like a single one" failure the optimistic apply
+    // above was added to fix.
+    //
+    // Nothing needs the refetch. The optimistic row already carries what was
+    // saved, the server changes no other field on this write (it only writes the
+    // editable person fields), and the queue summary counts a person patch does
+    // not move, so the list and the pager are not stale either. Collision chips
+    // stay computed live on read (UAC AC-6.4) - every load, every pager step and
+    // every verdict still refetches them.
     onError: (error: Error, _variables, context) => {
       toast.error(error.message);
       // Put the row back the way it was before the optimistic edit, so a refused
