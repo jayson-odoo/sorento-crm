@@ -1,6 +1,6 @@
 # PLAN — Conversation Intervention Tickets
 
-Status: Phases 1-3 DONE (PR #137 open); defect batch D1-D6 in flight; Phase 4 (parity + liveness) PLANNED 2026-08-14, awaiting user review. S4.9 backend gaps 1-4 CLOSED 2026-08-15 (contract below); FE follow-up (consume them) + gaps 5-6 still open.
+Status: Phases 1-3 DONE (PR #137 open); defect batch D1-D6 in flight; Phase 4 (parity + liveness) PLANNED 2026-08-14, awaiting user review. S4.9 backend gaps 1-4 CLOSED 2026-08-15 (contract below); FE follow-up (consume them) + gaps 5-6 still open. S4.10 (captain hands-on round 3, 2026-08-16) BUILT - six items, as-built below.
 UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M + B3/B4 added 2026-08-14)
 
 ## Decision summary
@@ -892,6 +892,58 @@ this phase (respond-send-user webhook-lane wiring, respond-close-convo webhook t
 closedBySource gate, flip-window edits). Decisions locked: AC-M4 keep-the-close-message;
 comment mirroring to Respond best-effort; outbound reply-to confirmed impossible
 (custom_payload 403 on our channel, tested 2026-08-14).
+
+### S4.10 Hands-on round 3 (captain, 2026-08-16) [FE coder]
+
+Six items off live testing. All frontend bar one additive serializer field.
+
+1. **Who handled it, on the detail page.** The header line now reads
+   `Policy ... - Current Tier N - Assigned to X`, and `Resolved by X` once the row is
+   resolved (resolve NULLs `assigned_to_id` by design, so "Assigned to" is empty exactly
+   on the rows a reader opens to find out who answered). ONE rule in
+   `lib/slaHandler.ts`, used by the header AND the listing's "Assigned To" cell (which
+   existed but showed "-" on resolved rows). The helper refuses id-shaped values, because
+   the backend falls back to the raw `resolved_by` column when no user matches.
+2. **"Chat Records" IS the drawer's panel.** New `TicketConversationPanel` holds the
+   thread, the interleaved notes and both composers; the drawer and
+   `SlaTrackingChatRecords` each mount it. The detail page had been passing a shorter
+   prop set and so had no attachments, no "/" snippets, no emoji, no AI assist, no manual
+   template send, no real 24h-window state and no note composer. Anything that is a
+   property of the TICKET (header, chips, resolve, reassign, extend, the quoted enquiry)
+   stays with the caller; the drawer drives the enquiry-quote jump through a
+   `(messageId, nonce)` prop, the same idiom `RespondChatList` already takes. Fallback
+   kept for the surfaces where `GET /{id}/ticket` 404s (a form-scope tracker, a viewer
+   outside the ticket's act-scope): thread + the shared entity chat send, as before.
+3. **Paste an image into the composer.** `SharedConversationComposer` stages
+   `clipboardData.files` through the SAME `addFiles` path as Attach (no parallel lane);
+   images render as thumbnails whose click opens the existing `AttachmentPreviewModal`
+   on a local object URL (revoked on change/unmount), each with a remove control. Text
+   plus attachments still go in one send. No captions - Respond.io has none.
+4. **Scroll-to-latest everywhere.** The "jump to latest" control was rendered only for a
+   detached (search-jumped) window. It is now a round down-arrow above the composer
+   whenever the reader is more than about one viewport from the bottom, on every thread
+   surface; detached windows re-attach through `onJumpToLatest`, attached ones simply
+   scroll. One control, and it keeps the "N new" badge.
+5. **Extend, from the drawer.** A gear/overflow menu beside Resolve holds Extend and
+   opens the worklist's own `ExtendDueDialog` (same slug `...conversation_sla_tracking.extend`,
+   same resolved / has-resolution-deadline gate). A successful extend refetches the
+   ticket so the chips show the new deadline. The menu is where any further ticket action
+   goes; the header takes no more buttons.
+6. **An extended or near-due row is visible.** (a) Countdown urgency is three steps, not
+   two: neutral, amber under `AT_RISK_MS` (raised from 15 minutes to 4 hours, about half
+   a working day - the old value only fired when it was already too late to act), red
+   overdue. The same threshold drives the plain "Respond by / Resolve by" text on
+   non-ticket rows, which had no amber at all. (b) A row whose deadline was moved carries
+   an "Extended" marker (`x2` when repeated) titled with the new due date, driven by the
+   EXISTING `conversation_sla_tracking.extension_count`, newly emitted by
+   `list_my_pending`, `list_team_pending` and `get_ticket_detail` (additive; those routes
+   have no `response_model`). NOT built, deliberately, and still the captain's call: a
+   scheduled pre-due reminder job. The scheduler still only scans OVERDUE rows and
+   escalates after the fact.
+
+Not verifiable without a browser (the captain was mid-test on :3000, so no login was
+taken): the visual placement of the round jump button against a real composer, and the
+thumbnail strip at 375px.
 
 ## Execution model (per PRINCIPLES.md - named executor per step)
 

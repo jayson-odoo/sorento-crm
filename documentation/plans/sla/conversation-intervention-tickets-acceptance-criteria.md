@@ -992,9 +992,10 @@ Journey addition:
   resolved timestamp share one `ticket-header-actions` row directly under the sheet
   header; the footer under the composer is gone. The row is its OWN row rather than
   sitting beside the title because the sheet's close button owns the top-right
-  corner at every width. (b) There are no overflow actions yet - Resolve and Reassign
-  are the whole set, so a "..." menu holding one item would be worse than the two
-  buttons. (c) The launcher is a 40px tab (`h-10 rounded-s-full`, label from `sm` up,
+  corner at every width. (b) ~~There are no overflow actions yet~~ - UPDATED 2026-08-16: a
+  gear/overflow menu joined the row and holds **Extend** (see the feedback round at the
+  end of this file, item 5). Further ticket actions go in that menu rather than beside
+  it: the header is already at its width at 375px. (c) The launcher is a 40px tab (`h-10 rounded-s-full`, label from `sm` up,
   icon only below) at `fixed bottom-6 end-0 z-40`. The z-index is the actual fix:
   the FAB was `z-[120]`, above every Sheet / Dialog (z-50), so it floated over the
   drawer's controls; z-40 keeps it above the header (z-10) and sidebar (z-20) and
@@ -1061,7 +1062,14 @@ Journey addition:
   **As built (2026-08-15, frontend).** `SlaTrackingConversationPanel` is DELETED (it
   had exactly one importer) and replaced by `SlaTrackingChatRecords`, which renders
   the same `RespondChatList` + `useConversationThread` the drawer does with the
-  ticket-keyed loaders, the ticket notes and the ticket media proxy. The composer
+  ticket-keyed loaders, the ticket notes and the ticket media proxy.
+  **CORRECTED 2026-08-16:** "the same component" was true of the thread list and false
+  of everything around it - two call sites passing two prop sets, and the detail page
+  had no attachments, snippets, emoji, AI assist, manual template send, real
+  24h-window state or note composer. Both surfaces now mount ONE
+  `TicketConversationPanel` (feedback round item 2 below), pinned by
+  `ChatPanelParity.test.tsx`, which renders both and compares the props that actually
+  reach `RespondChatList` and the composer. The composer
   and the header's Refresh / Open-in-Respond actions are carried over unchanged; the
   "to send files, open Respond" hint box is not (a feature explanation in the UI).
   Complaint / stock-inquiry / purchase-request each have their OWN panel component
@@ -1133,3 +1141,79 @@ Regression is held by four independent nets:
    contact" gets a test capturing its new multi-row behavior BEFORE the index drops -
    red/green proves the audit found them all; grep sweep for `conversation_tracking_scope`
    + `respond_contact_id` call sites is the completeness check.
+
+## Feedback round 3 - captain hands-on testing (2026-08-16)
+
+Six items off live use of the shipped feature. Every one is frontend except a single
+additive serializer field. Each is stated as the AC it now satisfies plus what was built.
+Design decisions live in `PLAN-conversation-intervention-tickets.md` S4.10.
+
+- **AC-R1 [FE][T] Who handled it is readable without opening a section.** Given a
+  conversation SLA tracking record, When its detail page renders, Then the header names
+  the current **assignee** while the row is open and **"Resolved by X"** once resolved
+  (resolve NULLs `assigned_to_id`, so "Assigned to" is empty by construction on exactly
+  the rows a reader opens to find out who answered), and the listing's "Assigned To"
+  column follows the SAME rule instead of showing "-". No id ever reaches the screen: the
+  backend falls back to the raw `resolved_by` column when no user matches, so an
+  id-shaped value reads as unknown. One helper, `lib/slaHandler.ts`, for both surfaces.
+  Tests: `slaHandler.test.ts`, `ConversationSLATrackingDetail.handler.test.tsx`,
+  `ConversationSLATrackingList.assignee.test.tsx`.
+
+- **AC-R2 [FE][T] "Chat Records" is the ticket drawer's chat panel, one component.**
+  Given the detail page's Chat Records sheet, When it opens, Then it renders the same
+  thread, notes and composers the drawer does - message search, scroll-back, internal
+  notes, the media proxy (attachment preview + inline Excel), inbound quoted context, and
+  the composer's Reply/Comment modes, snippets, emoji, AI assist and Send template -
+  because both mount `TicketConversationPanel`. What stays with the caller is what
+  belongs to the TICKET, not to the thread: the header, the SLA chips, resolve, reassign,
+  extend, and the quoted enquiry (whose jump is driven into the panel as a
+  `(messageId, nonce)` pair, the idiom `RespondChatList` already uses). DEVIATION worth
+  naming: `GET /{tracking_id}/ticket` 404s for a form-scope tracker and for a viewer
+  outside the ticket's act-scope, and the detail page is reused by the form SLA tracking
+  page - so with no ticket the panel falls back to the thread plus the shared entity chat
+  send exactly as that surface behaved before, and offers nothing ticket-scoped (no
+  snippet variables, no template stamping, no AI draft) because there is no ticket to
+  stamp. Tests: `ChatPanelParity.test.tsx` (both surfaces rendered, props compared),
+  `SlaTrackingChatRecords.test.tsx`, `InterventionTicketDrawer*.test.tsx`.
+
+- **AC-R3 [FE][T] Paste an image into the composer.** Given the message box, When the
+  user pastes clipboard files, Then they stage exactly as the Attach button stages them
+  (one path, not two); images show a thumbnail strip whose click opens the EXISTING
+  `AttachmentPreviewModal` (a staged file has no URL, so an object URL is passed and
+  revoked on remove/unmount); each staged item has a remove control; text and attachments
+  go out in ONE send. Non-image pastes stage as the existing named chip. No captions -
+  Respond.io has none either (captain: "respond io also cannot have caption").
+  Test: `SharedConversationComposer.paste.test.tsx`.
+
+- **AC-R4 [FE][T] A way back to the live tail, always.** Given any thread surface, When
+  the reader is more than roughly one viewport from the bottom, Then a round down-arrow
+  floats above the composer; clicking it re-attaches a detached window
+  (`onJumpToLatest`) or plainly scrolls an attached one, and it carries the existing
+  "N new" badge. One control for both cases - it used to appear only for a detached
+  window, which is the rarer of the two.
+  Tests: `RespondChatList.scrollback.test.tsx` ("scroll-to-latest").
+
+- **AC-R5 [FE][T] Extend from the ticket drawer.** Given the drawer header, When the
+  viewer holds `sla_management.conversation_sla_tracking.extend` and the ticket is
+  unresolved with a resolution deadline, Then a gear menu offers **Extend**, which opens
+  the SAME `ExtendDueDialog` the worklist row opens; a successful extend refetches the
+  ticket so the chips show the new deadline. No backend work: `POST /{id}/extend` and
+  `/extend/preview` already exist. Tests: `InterventionTicketDrawer.test.tsx`
+  ("extend (AC-B4)").
+
+- **AC-R6 [FE][BE][T] An extended or near-due row is visible before it breaches.** Given
+  the pending-tasks widget, When a deadline is approaching, Then the countdown reads
+  neutral with time in hand, **amber under 4 hours** and **red once overdue** - on the
+  ticket chips AND on the plain "Respond by / Resolve by" text of non-ticket rows, which
+  had no amber at all. The amber threshold moved from 15 minutes to 4 hours (about half a
+  working day): at 15 minutes the colour arrives too late to act on, which is precisely
+  the extended-deadline case. And When a row's deadline has been extended, Then it
+  carries an **"Extended"** marker (`x2` when repeated) titled with the new due date,
+  driven by the existing `conversation_sla_tracking.extension_count` - now emitted by
+  `list_my_pending`, `list_team_pending` and `get_ticket_detail` (additive; no
+  `response_model` on those routes). Tests: `TicketSlaChips.test.tsx`,
+  `MyPendingSLAWidget.test.tsx` ("deadline urgency"),
+  `tests/test_intervention_ticket_my_pending.py`, `tests/test_intervention_ticket_detail.py`.
+  **Explicitly NOT built:** a scheduled pre-due reminder job. The scheduler still scans
+  only OVERDUE rows and escalates after the fact; whether a pre-due nudge should exist is
+  the captain's decision, not this round's.
