@@ -21,6 +21,7 @@ from app.services.product_spec_registry import (
     applicable_keys_for_code,
     find_similar_key,
     find_similar_value,
+    merged_synonyms,
     normalise_vocabulary,
 )
 from tests._pg_fixture import blank_session
@@ -189,25 +190,30 @@ def test_a_product_with_no_spec_row_still_gets_the_whole_registry(db):
     assert keys["zzt_finish"]["held"] is False
 
 
-def test_the_code_is_matched_whatever_case_it_arrives_in(db):
-    """A code is a filing label, and every other lookup here reads it that way.
-
-    An exact match 404s a caller who typed the same product in another case, and the
-    picker renders that as "this product may carry nothing" rather than as a bad code.
-    """
-    _key(db, "zzt_finish", allowed_values=["chrome"])
-    _product(db, "ZZT-AK-0014")
-
-    keys = {row["spec_key"]: row for row in applicable_keys_for_code(db, "zzt-ak-0014")}
-    assert keys["zzt_finish"]["applicable"] is True
-
-
 def test_inactive_keys_are_left_out(db):
     _key(db, "zzt_retired", is_active=False)
     product = _product(db, "ZZT-AK-0009")
 
     keys = {row["spec_key"] for row in applicable_keys_for_code(db, product.product_code)}
     assert "zzt_retired" not in keys
+
+
+def test_the_code_is_matched_case_insensitively(db):
+    """The same code in another case is the same product, as `keys-for-product` reads it.
+
+    An exact match 404s, and the picker renders a 404 as "this product may carry
+    nothing" - a sentence about the product rather than about the lookup. The held
+    set has to come back with it, or the picker offers a key the product already has.
+    """
+    _key(db, "zzt_finish", allowed_values=["chrome"])
+    _key(db, "zzt_material", allowed_values=["ceramic"])
+    product = _product(db, "ZZT-AK-CASE1")
+    _spec(db, product, {"zzt_finish": {"value": "chrome"}}, {"zzt_finish": {"source": "derived"}})
+
+    keys = {row["spec_key"]: row for row in applicable_keys_for_code(db, "zzt-ak-case1")}
+    assert keys["zzt_finish"]["applicable"] is True
+    assert keys["zzt_finish"]["held"] is True
+    assert keys["zzt_material"]["held"] is False
 
 
 def test_an_unknown_code_raises_rather_than_returning_an_empty_list(db):
@@ -308,3 +314,18 @@ def test_similar_value_matches_a_synonym_of_another_value(db):
 def test_similar_value_returns_none_for_a_new_word(db):
     row = _key(db, "zzt_finish", allowed_values=["chrome"])
     assert find_similar_value(row, "brushed brass") is None
+
+
+def test_a_value_with_no_allowed_entry_keeps_its_words(db):
+    """`_self` and the boolean/numeric literals are keyed off values no `allowed_values`
+    list holds - 44 seeded keys are shaped that way, and the numeric parser reads
+    `merged_synonyms(row)["_self"]` directly. Only SUPPRESSION silences a value."""
+    row = _key(
+        db,
+        "zzt_depth",
+        data_type="numeric",
+        allowed_values=[],
+        synonyms={"_self": ["depth", "deep"]},
+    )
+
+    assert merged_synonyms(row) == {"_self": ["depth", "deep"]}

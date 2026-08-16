@@ -1238,6 +1238,16 @@ def merged_synonyms(row: ProductSpecRegistry) -> dict:
 
     Suppression is applied LAST, so suppressing a word the seed ships and adding it back
     under another value both work, in either order.
+
+    A SUPPRESSED VALUE publishes no words. Its spellings stay STORED - a suppressed value
+    is still in `allowed_values`, and keeping them is what makes putting it back one click
+    rather than a retyping exercise - but nothing reads them while it is withdrawn.
+
+    Unpublished matters because every reader takes this map: `find_similar_value` would
+    refuse a proposal by naming the suppressed value, the product dropdown would say
+    "pick it above" when it is not above, and `GET /spec-registry` would advertise words
+    for a value the same response reports as not allowed - in the one vocabulary the
+    ranker and the n8n parser share.
     """
     merged = {value: list(words) for value, words in (row.synonyms or {}).items()}
     for value, words in (row.user_synonyms or {}).items():
@@ -1250,7 +1260,8 @@ def merged_synonyms(row: ProductSpecRegistry) -> dict:
             continue
         dropped = {str(w).strip().lower() for w in words}
         merged[value] = [w for w in merged[value] if str(w).strip().lower() not in dropped]
-    return merged
+    silenced = {str(v).strip() for v in (row.suppressed_values or [])}
+    return {value: words for value, words in merged.items() if str(value).strip() not in silenced}
 
 
 def shipped_scopes() -> dict[str, dict]:
@@ -1341,10 +1352,6 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
     # than of one company's copy of it, so which copy the caller can see must not change
     # which keys the picker offers.
     with company_scope(db, None):
-        # Case-insensitively, like every other code lookup in this module: a product
-        # code is a filing label, and a caller who types one in a different case is
-        # asking about the same product. An exact match would 404 and the picker would
-        # read that as "this product may carry nothing".
         product = (
             db.query(Product).filter(func.upper(Product.product_code) == code.upper()).first()
         )
@@ -1361,7 +1368,7 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
         spec = (
             db.query(ProductSpecifications)
             .join(Product, Product.id == ProductSpecifications.product_id)
-            .filter(Product.product_code == code)
+            .filter(Product.product_code == product.product_code)
             .first()
         )
 

@@ -25,6 +25,9 @@ const OTHER: SpecKeyDefinition[] = [
   { spec_key: 'bowl_count', label: 'Number of bowls', data_type: 'numeric', unit: null, allowed_values: [] },
   { spec_key: 'drainer', label: 'Drainer board', data_type: 'boolean', unit: null, allowed_values: [] },
 ];
+const HELD: SpecKeyDefinition[] = [
+  { spec_key: 'finish', label: 'Finish', data_type: 'enum', unit: null, allowed_values: [] },
+];
 
 function renderDialog(overrides: Partial<Parameters<typeof AddSpecificationDialog>[0]> = {}) {
   const props = {
@@ -91,6 +94,33 @@ describe('who may create a key', () => {
     expect(lastEntry()).toBeNull();
   });
 
+  it('still reveals an existing key to a user who may not create one', () => {
+    // Finding a key is a search affordance, not a create one. Gating the whole last-row
+    // slot on the create grant left this user with "No specification matches that." for
+    // a key that does exist, and the search box clears when the popover closes.
+    const { props } = renderDialog({ canCreateKey: false, heldKeys: HELD });
+
+    searchFor('Number of bowls');
+    expect(lastEntry()).toHaveTextContent('Number of bowls already exists');
+    fireEvent.click(lastEntry()!);
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect(props.onPick).toHaveBeenCalledWith('bowl_count');
+
+    expect(props.onCreateKey).not.toHaveBeenCalled();
+  });
+
+  it('says a held key is on the product to a user who may not create one', () => {
+    renderDialog({ canCreateKey: false, heldKeys: HELD });
+    searchFor('Finish');
+    expect(lastEntry()).toHaveTextContent('Finish is already on this product');
+  });
+
+  it('never offers Create to a user without the grant, whatever they type', () => {
+    renderDialog({ canCreateKey: false });
+    searchFor('Seat hinge type');
+    expect(lastEntry()).toBeNull();
+  });
+
   it('points a typed name that already IS a key at that key instead of Create', () => {
     const { props } = renderDialog();
     searchFor('flush type');
@@ -108,6 +138,22 @@ describe('who may create a key', () => {
     fireEvent.click(lastEntry()!);
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     expect(props.onPick).toHaveBeenCalledWith('bowl_count');
+  });
+
+  it('says a name the product already carries is on it, and offers no Create', () => {
+    // Neither offerable list holds it - both are built from `!held` - so without the
+    // held keys the search read "no such key" and offered to create a second one.
+    const { props } = renderDialog({ heldKeys: HELD });
+    searchFor('Finish');
+
+    expect(lastEntry()).toHaveTextContent('Finish is already on this product');
+    expect(lastEntry()).not.toHaveTextContent('Create');
+
+    fireEvent.click(lastEntry()!);
+    expect(props.onCreateKey).not.toHaveBeenCalled();
+    expect(props.onPick).not.toHaveBeenCalled();
+    // Still on the search step, not the type question.
+    expect(screen.queryByLabelText('What kind of answer it has')).not.toBeInTheDocument();
   });
 });
 

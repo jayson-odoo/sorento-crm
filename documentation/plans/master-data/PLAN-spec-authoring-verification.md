@@ -429,12 +429,14 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
 
 - **Phase 1 (mock, no backend, no tests):** the `spec-table/` component trio built props-driven
   against fixtures covering every state - derived, flyer, category and authored values, a
-  tombstoned key, an open conflict, an enum key, a numeric key with a unit, a boolean, a free-text
+  tombstoned key (which per AC-A.5 as amended renders **no row**, so the fixture pins the absence),
+  an open conflict, an enum key, a numeric key with a unit, a boolean, a free-text
   key, and a stored key the registry no longer defines. Verify in a real browser by **sidebar
   clicks from `/`**, never a deep link, at 375px and 1280px. Document the contract at the top of
   the service file.
 - **Phase 2 (test-first):** `applicable_keys_for_code`, the `similar` endpoint and its server-side
-  guard, the split-by-field `PATCH` permission for add-a-value, the two relaxations and the grant
+  guard, the split-by-field `PATCH` permission and the appending `POST .../values` route that
+  add-a-value ended up on (D18), the two relaxations and the grant
   migration; then the frontend off mocks onto react-query hooks. Delete `AddSpecByHand.tsx` rather
   than leaving it beside the new component.
 - **The spec table is the shared `DataGrid`** (D10, captain-settled, overruling this plan's
@@ -604,9 +606,10 @@ creation from the product page; an authored value always wins a conflict.
   CSS-grid proposal; inline editing is solved inside the component via an edit affordance on the
   row.
 - **Duplicate-prevention checks are enforced server-side** (D11, 2026-08-14). "We should not
-  trust frontend" - the client-side check stays as a latency courtesy, but the `PATCH
-  user_values` route now rejects near-duplicates with a 422 + acknowledge flag, mirroring the
-  key-creation guard.
+  trust frontend" - the client-side check stays as a latency courtesy, and the server rejects a
+  near-duplicate with a 422, mirroring the key-creation guard. *Superseded in part by D17 (the
+  acknowledge flag is withdrawn - a near-duplicate is refused outright) and D18 (the add-a-word
+  path is `POST /spec-registry/{spec_key}/values`, not the replacing `PATCH`).*
 - **Cross-page `selectAllMatching` stays off** (D12, 2026-08-14). Bulk covers rows the user had
   on screen. Enabling it later is a one-prop change plus a confirm stating the full count.
 
@@ -629,6 +632,30 @@ match. Do not propose reverting them.
   dialog, keeping the durable-absence semantics (survives re-derivation); the second action is
   **"Reset"** (back to derived). These replace the earlier sentence-length labels "This product
   does not have this spec" and "Use what the rules read".
+
+### Settled by the captain at PR 2 review (2026-08-16)
+
+- **A near-duplicate is refused outright - there is NO override** (D17). D11's acknowledge flag
+  is withdrawn, and the plumbing is deleted rather than left unreachable: no `acknowledge_similar`
+  on the create or update payloads, no `acknowledge_field` in the 422 body, which keeps
+  `{error, match}`. Two names for one thing leave a registry answering half of every customer
+  question each, and a flag nothing sends only made the code disagree with the product.
+- **Adding one word APPENDS server-side** (D18). `POST /spec-registry/{spec_key}/values` takes
+  `{value}` alone, re-reads the row under `FOR UPDATE` and appends, gated on the same either-grant
+  as the vocabulary-only PATCH field. The PATCH keeps its replace semantics for the registry
+  editor, which shows and submits the whole list. The product page was rebuilding that list from a
+  cached applicable-keys read, so one merchandiser's add deleted a word another had just added,
+  silently - and migration 361 widened who can reach that from registry admins to every holder of
+  `master_data.products.edit`.
+- **A word struck off a specification is not available from the product page** (D19). It is not
+  offered in the value dropdown, its alternative spellings are neither matched nor published in
+  the shared vocabulary, and adding it back is refused with a message saying it was taken off and
+  that an administrator can restore it on the specification's own screen. Restoring stays a
+  registry-admin action. Adding must never report success while storing nothing, and must never
+  silently reverse the administrator's decision by un-striking the word. Two deeper defects in
+  the same area are known, deliberately out of scope for this PR, and tracked as **issue #183**:
+  wording left orphaned when an administrator deletes a staff-added value, and a restore
+  republishing a word that has since become a value in its own right.
 
 ### Outstanding - still the captain's call
 
