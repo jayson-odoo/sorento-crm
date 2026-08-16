@@ -1,5 +1,79 @@
+/**
+ * ============================================================================
+ * API CONTRACT - the editable spec table (PR 2)
+ * ============================================================================
+ *
+ * Written out here because the frontend was built against it before any of it
+ * existed (Phase 1), and because milestone 2's supplier portal renders the same
+ * components against a different principal and has to match it.
+ *
+ * READS
+ *
+ *   GET /api/v1/master-data/product-specifications/by-product/{productId}
+ *     -> ProductSpecDetail. `spec.values` is the table's row set; `spec.provenance`
+ *        stamps each row with its source. A removed key appears ONLY in
+ *        `provenance`, as `{source: 'human', absent: true}` with no entry in
+ *        `values` - that tombstone is what stops re-derivation refilling it, and
+ *        the table deliberately renders no row for it (removed means gone). The
+ *        add picker offers it again; setting a value replaces the stamp.
+ *     -> `exceptions[]` carries `reason: 'human_override_conflict'` with
+ *        `proposed` = what the rules now read. Answered by SETTING THE VALUE;
+ *        there is no resolve endpoint and there is not meant to be one (D9).
+ *
+ *   GET /api/v1/master-data/spec-registry
+ *     -> { keys: SpecRegistryKey[] }, vocabulary already merged.
+ *
+ *   GET /api/v1/master-data/spec-registry/applicable-keys?code={productCode}
+ *     -> { code, keys: [{ spec_key, label, data_type, unit, allowed_values,
+ *          synonyms, applicable, held }] }
+ *        `applicable` mirrors derivation's `applies_when` gate; `held` is "has a
+ *        value" and nothing else, so a REMOVED key is reported not held - its
+ *        tombstone stays in `provenance` so re-derivation will not refill it, but
+ *        the add picker offers it again and setting a value replaces the stamp.
+ *        The code is matched case-insensitively. 404 on an unknown code -
+ *        deliberately not an empty list, which would read as "this product may
+ *        carry nothing".
+ *
+ *   GET /api/v1/master-data/spec-registry/similar?label={label}
+ *     -> { label, match: { spec_key, label, matched_on, matched_text } | null }
+ *        `matched_on` is one of spec_key | label | synonym.
+ *
+ * WRITES
+ *
+ *   PUT    .../by-product/{productId}/values/{specKey}   body { value }
+ *   DELETE .../by-product/{productId}/values/{specKey}?mode=absent|revert
+ *     `absent` = "this product does not have this spec", survives re-derivation.
+ *     `revert` = hand the key back to the rules.
+ *
+ *   POST  /api/v1/master-data/spec-registry                   (create a key)
+ *   POST  /api/v1/master-data/spec-registry/{specKey}/values  body { value }
+ *     ONE word, appended server-side under a row lock. The PATCH below REPLACES
+ *     `user_values`, so sending a list rebuilt from a cached read deletes whatever
+ *     somebody else added in between; this route never takes the list from a client.
+ *   PATCH /api/v1/master-data/spec-registry/{specKey}         (the registry editor,
+ *     which shows the whole list and submits the whole list)
+ *
+ * THE 422 THAT IS NOT AN ERROR ENVELOPE
+ *
+ * The writes above refuse a near-duplicate with a TOP-LEVEL body, not the
+ * AppException envelope, because the client has to render WHICH existing thing it
+ * collided with:
+ *
+ *     422 { error: string, match: {...} }
+ *
+ * `POST .../{specKey}/values` refuses one more case the same way: a word an
+ * administrator SUPPRESSED on the key comes back as `match.matched_on:
+ * 'suppressed_value'`, since it is absent from the merged vocabulary and adding it
+ * here would overturn a decision made on the key itself.
+ *
+ * There is no way past it: a colliding word is refused, full stop. `extractApiError`
+ * cannot read this body - it is string-only - so these calls parse it themselves and
+ * throw a `SpecSimilarError` carrying the sentence that names the collision.
+ * ============================================================================
+ */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { SimilarKeyMatch, SpecDataType } from '@/components/spec-table';
 import type {
   FindabilityResult,
   FindabilityRun,
@@ -103,11 +177,90 @@ export async function previewSpecSearch(body: {
   return response.json();
 }
 
+/** One key as the add-a-specification picker needs it: may it, and does it already. */
+export interface ApplicableSpecKey {
+  spec_key: string;
+  label: string;
+  data_type: string;
+  unit: string | null;
+  allowed_values: string[];
+  synonyms: Record<string, string[]>;
+  /** The `applies_when` gate, evaluated the way derivation evaluates it. */
+  applicable: boolean;
+  /** Already on the product, meaning it has a value. A removed key is reported not held. */
+  held: boolean;
+}
+
+/**
+ * Which keys this product MAY carry, and which it already does.
+ *
+ * Not `getKeysForProduct`, which answers from the values the product already holds -
+ * the numerator where the picker needs the denominator.
+ */
+export async function getApplicableSpecKeys(
+  productCode: string,
+): Promise<{ code: string; keys: ApplicableSpecKey[] }> {
+  const response = await apiFetch(
+    `/api/v1/master-data/spec-registry/applicable-keys?code=${encodeURIComponent(productCode)}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the specifications'));
+  }
+  return response.json();
+}
+
+/** The existing key a proposed label already means, or null when it is genuinely new. */
+export async function getSimilarSpecKey(label: string): Promise<SimilarKeyMatch | null> {
+  const response = await apiFetch(
+    `/api/v1/master-data/spec-registry/similar?label=${encodeURIComponent(label)}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to check the name'));
+  }
+  return (await response.json()).match ?? null;
+}
+
+/**
+ * The server refused a near-duplicate, in the sentence that names the collision.
+ *
+ * Its own error type because the refusal is a product answer rather than a failure -
+ * "that word is already black on Finish" - and the caller distinguishes it from a
+ * network or permission error. There is no way past it.
+ */
+export class SpecSimilarError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SpecSimilarError';
+  }
+}
+
+/**
+ * Raise the near-duplicate refusal as itself, and anything else as a plain error.
+ *
+ * `extractApiError` is still what handles every ordinary failure below; this reads the
+ * body first ONLY for the 422 shape it cannot represent, because the sentence naming
+ * the collision lives in `error` rather than in `detail`.
+ */
+async function throwSpecWriteError(response: Response, fallback: string): Promise<never> {
+  if (response.status === 422) {
+    let body: { error?: string; match?: Record<string, unknown> } | null = null;
+    try {
+      body = await response.clone().json();
+    } catch {
+      body = null;
+    }
+    if (body?.match) {
+      throw new SpecSimilarError(String(body.error ?? fallback));
+    }
+  }
+  throw new Error(await extractApiError(response, fallback));
+}
+
 /** Register a new spec key. Owned by whoever creates it — never seed-repaired. */
 export async function createSpecKey(body: {
   spec_key: string;
   label: string;
-  data_type: string;
+  data_type: SpecDataType | string;
   unit?: string | null;
   allowed_values?: string[];
   user_synonyms?: Record<string, string[]>;
@@ -120,7 +273,32 @@ export async function createSpecKey(body: {
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to create the spec key'));
+    await throwSpecWriteError(response, 'Failed to create the spec key');
+  }
+  return response.json();
+}
+
+/**
+ * Add ONE word to a key's vocabulary, from the product page.
+ *
+ * A separate call rather than `updateSpecKey` with one field, for two reasons. The
+ * permissions differ: this is `master_data.products.edit` (a merchandiser correcting a
+ * spec), while everything else on the PATCH route needs `master_data.spec_registry.edit`.
+ * And the semantics differ: PATCH REPLACES the list, so a caller sending a list it
+ * rebuilt from an earlier read silently deletes any word added in between. The word
+ * travels alone and the server appends it.
+ */
+export async function addValueToSpecKey(
+  specKey: string,
+  value: string,
+): Promise<SpecRegistryKey> {
+  const response = await apiFetch(`/api/v1/master-data/spec-registry/${specKey}/values`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+  if (!response.ok) {
+    await throwSpecWriteError(response, 'Failed to add the value');
   }
   return response.json();
 }
@@ -154,7 +332,7 @@ export async function updateSpecKey(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to save the spec key'));
+    await throwSpecWriteError(response, 'Failed to save the spec key');
   }
   return response.json();
 }
@@ -287,10 +465,21 @@ export async function setFlyerText(
   return response.json();
 }
 
-/** Drop a hand-set value and let the rules own the key again. */
-export async function clearSpecValueByHand(productId: string, specKey: string): Promise<void> {
+/**
+ * Take a value away, one of the two ways, because they mean different things.
+ *
+ * `revert` hands the key back to derivation and it comes back with whatever the
+ * catalogue says. `absent` is a statement of fact - this product does not have this
+ * spec - and it survives every later run as a tombstone rather than being filled in
+ * again. `revert` is the default because it is what the shipped screen always did.
+ */
+export async function clearSpecValueByHand(
+  productId: string,
+  specKey: string,
+  mode: 'revert' | 'absent' = 'revert',
+): Promise<void> {
   const response = await apiFetch(
-    `/api/v1/master-data/product-specifications/by-product/${productId}/values/${specKey}`,
+    `/api/v1/master-data/product-specifications/by-product/${productId}/values/${specKey}?mode=${mode}`,
     { method: 'DELETE' },
   );
   if (!response.ok) {
