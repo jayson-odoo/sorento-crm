@@ -521,7 +521,8 @@ Add `projects.so_supply_decisions`:
 
 `line_snapshots` is one small JSON object per included line. It freezes line number, Project and
 core line identifiers, product, location, required date, open quantity, timely SPO coverage and its
-dated location-supply references, Reserve, Borrow, Buy, suggestion basis, lifecycle warning, and
+dated location-supply references, Reserve, Borrow, Buy, the deterministic reason string of each
+proposed Reserve, Borrow, and Buy component (section 3.2), suggestion basis, lifecycle warning, and
 required reason. The existing normalized `so_line_allocations` rows remain the confirmed components and
 are grouped atomically by `decision_id`. This is the report's narrow decision header corrected
 from line grain to SO grain for Q6, not a new generic workflow or a second allocation model.
@@ -682,7 +683,8 @@ pre-code contract only.
 
 ### Stage 1C: Order promising, confirmation, and handoff
 
-- Implement deterministic incoming, Reserve, Borrow, and Buy suggestions.
+- Implement deterministic incoming, Reserve, Borrow, and Buy suggestions, each proposed
+  component carrying its section 3.2 reason string (AC-B14).
 - Implement the hot-selling BRW rule, Borrow and discontinued reasons, atomic SO confirmation,
   revision supersession, and Buy-only inquiry rows.
 - Implement the shared section 3.5 ordering and source attribution, including the same-day
@@ -806,7 +808,9 @@ planning:
   persisted SO demand class;
 - retirement of the per-location plan is rejected; both plan grains remain;
 - buyer-selected per-run plan grain is replaced by the admin plan-grain policy setting, rollout
-  default Product, stamped onto each new run at creation (captain revision, 2026-08-17);
+  default Product, stamped onto each new run at creation, and the first-decision grain lock
+  (`SELECT ... FOR UPDATE` / CAS in the decision-write transaction) is dropped because the grain is
+  already stamped from the policy at run creation (captain revision, 2026-08-17);
 - proposed quantities shown with raw evidence alone are replaced by proposed components that each
   state a short deterministic reason (captain revision, 2026-08-17);
 - exact-line incoming allocation is replaced by dated product-location availability;
