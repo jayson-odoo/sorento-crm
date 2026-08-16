@@ -65,7 +65,9 @@ Customer demand is promised from named supply, Purchasing sees only the confirme
 residual, and the buyer can explain the product total down to location and SO-line evidence.
 No demand, stock, incoming supply, or purchase decision is counted twice: every confirmed non-Buy
 component of an active Project decision (Reserve, Borrow, and timely SPO cover) is removed from
-Retail planning supply at that location.
+Retail planning supply at its recorded source location - own-location Reserve and timely SPO cover
+at the line fulfilment location, BRW-pool Reserve at the pool warehouse, and Borrow at the donor
+location recorded on its `so_line_allocations` row.
 
 ## 2. Process stages and ownership
 
@@ -383,8 +385,12 @@ project_need(p, w)
 
 retail_free_supply(p, w)
   = existing shared free-supply calculation
-  - confirmed non-Buy components of active Project decisions at w
-    (Reserve + Borrow + timely SPO cover = confirmed open_so_qty - buy_qty)
+  - confirmed non-Buy components of active Project decisions whose recorded
+    source location is w
+    (per line: Reserve + Borrow + timely SPO cover = confirmed open_so_qty - buy_qty;
+    own-location Reserve and timely SPO cover source the line fulfilment
+    location, BRW-pool Reserve sources the pool warehouse, and Borrow sources
+    the donor location recorded on its so_line_allocations row)
 
 retail_need(p, w)
   = existing normal netting of Retail-class outstanding SO against retail_free_supply
@@ -716,7 +722,7 @@ No browser run is required for this documentation-only PR.
 |---|---|
 | Partial commitment leaks to Purchasing | One SO-level transaction; no active decision or inquiry rows until every line balances |
 | Same incoming or stock covers two lines | One dated product-location projection, stable line and source ordering, concurrency protection, and recheck at commit |
-| Confirmed cover remains free in a later proposal | The same confirmed claim read (Reserve, Borrow, and timely SPO cover) reduces CS free stock and Retail planning supply before either calculation |
+| Confirmed cover remains free in a later proposal | The same confirmed claim read (Reserve, Borrow, and timely SPO cover) reduces CS free stock and Retail planning supply at each component's recorded source location before either calculation |
 | Order Inquiry buys coverage again | Buy residual only; no independent coverage netting in the reader |
 | Customer delivery reduces Buy twice | Reader consumes current unplaced Buy directly, not delivered-order arithmetic |
 | Hot dealer stock is silently reserved | Existing ABC A test, dealer stock excluded, and BRW floor cap |

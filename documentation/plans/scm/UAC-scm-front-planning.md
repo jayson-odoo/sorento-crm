@@ -161,10 +161,12 @@ stock appears only as Reserve or Borrow.
 
 ### AC-B13 [BE][T][J04] Confirmed cover is unavailable to later demand
 
-Given a confirmed Project decision with Reserve, Borrow, or timely SPO cover at one location, when
-a later CS proposal or Retail replenishment calculation reads the same product and location, then
-every confirmed non-Buy component (confirmed open quantity minus Buy) reduces availability and the
-quantity cannot be consumed a second time. Given Project open 10 covered by SPO 10, Retail
+Given a confirmed Project decision with Reserve, Borrow, or timely SPO cover, when a later CS
+proposal or Retail replenishment calculation reads the same product at a component's recorded
+source location (the line fulfilment location for own-location Reserve and timely SPO cover, the
+pool warehouse for BRW-pool Reserve, the donor location for Borrow), then every confirmed non-Buy
+component (confirmed open quantity minus Buy) reduces availability there and the quantity cannot
+be consumed a second time. Given Project open 10 covered by SPO 10, Retail
 outstanding 10, and stock 0 at one location, then Retail need is 10, not 0.
 
 ## Group C: Atomic Project SO confirmation
