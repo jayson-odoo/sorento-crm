@@ -45,7 +45,7 @@ vi.mock('@/components/common/conversation/useConversationEvents', () => ({
 }));
 
 // AC-N7: Reassign in the header is permission-gated and uses the SHARED dialog.
-const hasPermission = vi.fn(() => true);
+const hasPermission = vi.fn<(slug?: string) => boolean>(() => true);
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (...a: unknown[]) => hasPermission(...(a as [])),
 }));
@@ -53,6 +53,31 @@ vi.mock('@/hooks/usePermissions', () => ({
 const reassignMutate = vi.fn();
 vi.mock('../hooks/useTeamPendingSLA', () => ({
   useReassignSLATracking: () => ({ mutate: reassignMutate, isPending: false }),
+}));
+
+// The extend dialog is exercised on its own (ExtendDueDialog.test.tsx); here we
+// only care that the gear opens THAT dialog, for THIS ticket, and that a
+// successful extend re-reads the ticket so the chips move.
+const extendDialogProps: Record<string, unknown>[] = [];
+vi.mock('./ExtendDueDialog', () => ({
+  default: (props: Record<string, unknown>) => {
+    extendDialogProps.push(props);
+    return (
+      <div
+        data-testid="extend-dialog"
+        data-tracking-id={String(props.trackingId ?? '')}
+        data-current-due={String(props.currentDueAt ?? '')}
+      >
+        <button
+          type="button"
+          data-testid="extend-confirm"
+          onClick={() => (props.onExtended as (() => void) | undefined)?.()}
+        >
+          Extend deadline
+        </button>
+      </div>
+    );
+  },
 }));
 
 vi.mock('./ReassignDialog', () => ({
@@ -359,9 +384,11 @@ describe('InterventionTicketDrawer', () => {
   });
 
   it('a closed drawer asks for no ticket at all, so the polling stops with it', () => {
+    // The chat panel lives INSIDE the sheet, so a closed drawer does not mount
+    // it: the thread is not read with a null id, it is not read at all.
     useInterventionTicket.mockReturnValue(mockQuery(undefined));
     renderDrawer({ open: false });
-    expect(useSlaTrackingConversation).toHaveBeenCalledWith(null, expect.anything());
+    expect(useSlaTrackingConversation).not.toHaveBeenCalled();
   });
 
   // ---- AC-K1 / AC-K2: live thread ----------------------------------------
@@ -378,9 +405,7 @@ describe('InterventionTicketDrawer', () => {
   it('AC-K2: a closed drawer holds no stream', () => {
     useInterventionTicket.mockReturnValue(mockQuery(undefined));
     renderDrawer({ open: false });
-    expect(conversationEvents).toHaveBeenCalledWith(
-      expect.objectContaining({ enabled: false }),
-    );
+    expect(conversationEvents).not.toHaveBeenCalled();
   });
 
   it('AC-K1: a message poke refetches the thread and the notes, not the ticket', async () => {
@@ -575,7 +600,7 @@ describe('InterventionTicketDrawer', () => {
   it('a closed drawer loads no notes either', () => {
     useInterventionTicket.mockReturnValue(mockQuery(undefined));
     renderDrawer({ open: false });
-    expect(useTicketComments).toHaveBeenCalledWith(null);
+    expect(useTicketComments).not.toHaveBeenCalled();
   });
 });
 
@@ -830,5 +855,81 @@ describe('InterventionTicketDrawer resolved state (AC-M1 / AC-M2)', () => {
       expect(actions.contains(screen.getByTestId('ticket-resolved-at'))).toBe(true);
       expect(actions.contains(screen.getByTestId('ticket-history-link'))).toBe(true);
     });
+  });
+});
+
+/**
+ * Extend, in the header's overflow menu (feedback 2026-08-16, item 5).
+ *
+ * The action existed only on the worklist row, so an assignee reading the
+ * conversation had to close the drawer to buy time on it. It is a menu rather
+ * than a fourth header button because the header is already at its width on a
+ * phone, and it opens the SAME dialog the row does.
+ */
+describe('InterventionTicketDrawer extend (AC-B4)', () => {
+  /** Radix opens on pointerdown, not click. */
+  function press(el: Element) {
+    fireEvent.pointerDown(el, { bubbles: true, button: 0, pointerType: 'mouse' });
+    fireEvent.click(el, { bubbles: true, button: 0 });
+  }
+
+  beforeEach(() => {
+    extendDialogProps.length = 0;
+  });
+
+  it('the gear opens the shared extend dialog for THIS ticket', async () => {
+    const ticket = makeTicket();
+    useInterventionTicket.mockReturnValue(mockQuery(ticket));
+    renderDrawer();
+
+    press(await screen.findByTestId('ticket-overflow'));
+    press(await screen.findByTestId('ticket-extend'));
+
+    const dialog = await screen.findByTestId('extend-dialog');
+    expect(dialog).toHaveAttribute('data-tracking-id', 't1');
+    expect(dialog).toHaveAttribute('data-current-due', ticket.due_at_resolution!);
+  });
+
+  it('a successful extend re-reads the ticket, so the chips show the new deadline', async () => {
+    const query = mockQuery(makeTicket());
+    useInterventionTicket.mockReturnValue(query);
+    renderDrawer();
+
+    press(await screen.findByTestId('ticket-overflow'));
+    press(await screen.findByTestId('ticket-extend'));
+    query.refetch.mockClear();
+
+    fireEvent.click(await screen.findByTestId('extend-confirm'));
+
+    expect(query.refetch).toHaveBeenCalled();
+  });
+
+  it('no menu without the extend permission', async () => {
+    hasPermission.mockImplementation(
+      (slug?: string) => slug !== 'sla_management.conversation_sla_tracking.extend',
+    );
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+
+    await screen.findByTestId('ticket-header-actions');
+    expect(screen.queryByTestId('ticket-overflow')).not.toBeInTheDocument();
+  });
+
+  it('no menu on a resolved ticket - there is no deadline left to move', async () => {
+    useInterventionTicket.mockReturnValue(
+      mockQuery(makeTicket({ is_resolved: true, can_resolve: false, can_send: false })),
+    );
+    renderDrawer();
+
+    await screen.findByTestId('ticket-header-actions');
+    expect(screen.queryByTestId('ticket-overflow')).not.toBeInTheDocument();
+  });
+
+  it('no menu when the ticket has no resolution deadline', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket({ due_at_resolution: null })));
+    renderDrawer();
+
+    await screen.findByTestId('ticket-header-actions');
+    expect(screen.queryByTestId('ticket-overflow')).not.toBeInTheDocument();
   });
 });

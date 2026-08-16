@@ -1,17 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
-import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
+  CalendarPlus,
   CheckCircle2,
   History,
   MessageSquareQuote,
+  Settings,
   UserRoundCog,
   Users,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 import {
   AlertDialog,
@@ -34,33 +34,24 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
-import RespondChatList from '@/components/common/RespondChatList';
-import InternalCommentComposer from '@/components/common/conversation/InternalCommentComposer';
-import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
-import { useConversationEvents } from '@/components/common/conversation/useConversationEvents';
-import { useConversationThread } from '@/components/common/conversation/useConversationThread';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 import {
-  useSlaTrackingConversation,
-  useSlaTrackingMediaProxy,
-  useSlaTrackingThreadLoaders,
-} from '../hooks/useConversationSLATracking';
-import {
-  useDraftInterventionTicketReply,
   useInterventionTicket,
   useResolveInterventionTicket,
-  useSendInterventionTicketMessage,
 } from '../hooks/useInterventionTickets';
 import { useReassignSLATracking } from '../hooks/useTeamPendingSLA';
-import {
-  ticketCommentsKey,
-  useCreateTicketComment,
-  useTicketComments,
-} from '../hooks/useTicketComments';
 import { contactHistoryHref } from '../lib/historyLinks';
+import ExtendDueDialog from './ExtendDueDialog';
 import ReassignDialog from './ReassignDialog';
+import TicketConversationPanel, { type TicketJumpRequest } from './TicketConversationPanel';
 import TicketSlaChips from './TicketSlaChips';
 
 interface InterventionTicketDrawerProps {
@@ -85,18 +76,6 @@ interface InterventionTicketDrawerProps {
 }
 
 /**
- * How often an open drawer re-reads the thread with NO live stream (paused in a
- * background tab). This is the fallback lane of AC-K1.
- */
-const THREAD_POLL_MS = 10_000;
-/**
- * The same poll while the live stream IS connected. Belt and braces: the stream
- * already pokes on every inbound message, so this only has to catch the case
- * where a poke was published while the socket was momentarily down.
- */
-const THREAD_POLL_LIVE_MS = 60_000;
-
-/**
  * The intervention ticket, opened in place from the dashboard worklist: enquiry
  * header (the message that triggered it), the full shared contact thread, and a
  * composer that stamps this ticket. Siblings for the same contact show the same
@@ -112,93 +91,21 @@ export default function InterventionTicketDrawer({
 }: InterventionTicketDrawerProps) {
   const [confirmResolve, setConfirmResolve] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
+  const [extendOpen, setExtendOpen] = useState(false);
   // Same slug the worklist row's Reassign is gated on (AC-B3 / AC-N7).
   const canReassign = useHasPermission(
     'sla_management.conversation_sla_tracking.reassign',
   );
+  // Same slug the worklist row's Extend is gated on (AC-B4).
+  const canExtend = useHasPermission('sla_management.conversation_sla_tracking.extend');
   const reassignMutation = useReassignSLATracking();
-  // Reply talks to the contact; Comment never leaves the CRM. Two modes, one
-  // switch, so nobody can WhatsApp a customer while meaning to leave a note.
-  const [composerMode, setComposerMode] = useState<'reply' | 'comment'>('reply');
+  /** Asks the panel's thread to scroll to the enquiry message (AC-N6). */
+  const [jumpRequest, setJumpRequest] = useState<TicketJumpRequest | null>(null);
 
-  const queryClient = useQueryClient();
   const ticketQuery = useInterventionTicket(open ? ticketId : null);
   const ticket = ticketQuery.data;
 
-  // ---- AC-K1: live thread. One stream, only while this drawer is open on a
-  // contact (AC-K2), and it carries no content - every poke turns straight into
-  // a refetch through the ordinary REST endpoints, which is what makes a
-  // replayed or duplicated event a no-op on screen (AC-K4).
-  const onLiveEvent = useCallback(
-    (event: { type: string }) => {
-      if (!ticketId) return;
-      if (event.type === 'message') {
-        // A NOTE is poked as `message` too (the backend publishes EVENT_MESSAGE
-        // for a comment), so the note list refreshes on the same event.
-        void queryClient.invalidateQueries({ queryKey: ['sla-tracking-conversation', ticketId] });
-        void queryClient.invalidateQueries({ queryKey: ticketCommentsKey(ticketId) });
-        return;
-      }
-      // ticket_created / ticket_updated: clocks, assignee, resolution.
-      void queryClient.invalidateQueries({ queryKey: ['intervention-ticket', ticketId] });
-    },
-    [queryClient, ticketId],
-  );
-  const onLiveReady = useCallback(() => {
-    if (!ticketId) return;
-    // A (re)connect may have missed pokes while the socket was down, so treat
-    // the handshake itself as one.
-    void queryClient.invalidateQueries({ queryKey: ['sla-tracking-conversation', ticketId] });
-    void queryClient.invalidateQueries({ queryKey: ticketCommentsKey(ticketId) });
-    void queryClient.invalidateQueries({ queryKey: ['intervention-ticket', ticketId] });
-  }, [queryClient, ticketId]);
-  const { connected: liveConnected } = useConversationEvents({
-    contactIds: [ticket?.respond_io_id],
-    enabled: open && !!ticketId,
-    onEvent: onLiveEvent,
-    onReady: onLiveReady,
-  });
-
-  // The SAME query the SLA detail page's conversation panel uses (one key, one
-  // cache entry): a send from here refreshes that panel too, and vice versa.
-  // Polls while the drawer is open (and the tab is focused): a contact's reply
-  // arrives on their schedule, not on ours, so an assignee reading the thread
-  // must see it without hunting for a refresh. Stops the moment the drawer
-  // closes, because the query is disabled with no ticket id. The interval
-  // relaxes while the live stream is up - it is then a safety net, not the
-  // mechanism.
-  const threadQuery = useSlaTrackingConversation(open ? ticketId : null, {
-    limit: 50,
-    refetchIntervalMs: liveConnected ? THREAD_POLL_LIVE_MS : THREAD_POLL_MS,
-  });
-  const sendMutation = useSendInterventionTicketMessage(ticketId ?? '');
   const resolveMutation = useResolveInterventionTicket();
-  const commentsQuery = useTicketComments(open ? ticketId : null);
-  const commentMutation = useCreateTicketComment(ticketId ?? '');
-  const aiDraftMutation = useDraftInterventionTicketReply(ticketId ?? '');
-
-  // A different ticket means a different enquiry: never carry comment mode
-  // into someone else's conversation.
-  useEffect(() => {
-    setComposerMode('reply');
-  }, [ticketId]);
-
-  const liveMessages = threadQuery.data?.items ?? [];
-
-  // AC-L7 / AC-L8: scroll-back and search live in the SHARED thread hook, so the
-  // SLA detail panel and the complaint / stock-inquiry / PR chat panels inherit
-  // them by passing the same loaders - nothing here is drawer-specific.
-  const { loadPage, searchMessages } = useSlaTrackingThreadLoaders(ticketId);
-  // AC-N4: chat media has no CORS, so the preview reads its bytes through the
-  // ticket-scoped backend proxy - that is what makes an .xlsx open inline here.
-  const mediaProxy = useSlaTrackingMediaProxy(ticketId);
-  const thread = useConversationThread({
-    liveItems: liveMessages,
-    loadPage,
-    searchMessages,
-    enabled: open && !!ticketId,
-    resetKey: ticketId,
-  });
 
   const handleResolve = () => {
     if (!ticketId) return;
@@ -299,6 +206,34 @@ export default function InterventionTicketDrawer({
             <CheckCircle2 className="size-4" />
             Resolve ticket
           </Button>
+          {/* Overflow. Extend lives here rather than as a fourth header button:
+              the header is already at its width on a phone, and every further
+              ticket action belongs in this menu instead of beside it. Gated on
+              the same slug + resolution-deadline rule as the worklist row's
+              Extend (AC-B4), so the menu is absent when it would hold nothing. */}
+          {canExtend && !isResolved && ticket?.due_at_resolution && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="ticket-overflow"
+                  aria-label="More ticket actions"
+                >
+                  <Settings className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  data-testid="ticket-extend"
+                  onSelect={() => setExtendOpen(true)}
+                >
+                  <CalendarPlus className="size-4 mr-2" />
+                  Extend
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
 
         <SheetBody className="flex min-h-0 flex-1 flex-col gap-3 py-0">
@@ -335,7 +270,12 @@ export default function InterventionTicketDrawer({
                   type="button"
                   data-testid="enquiry-quote-jump"
                   aria-label="Show this message in the conversation"
-                  onClick={() => thread.jumpToMessage(ticket.source_message_id)}
+                  onClick={() =>
+                    setJumpRequest((prev) => ({
+                      messageId: ticket.source_message_id,
+                      nonce: (prev?.nonce ?? 0) + 1,
+                    }))
+                  }
                   className="flex w-full items-start gap-2 rounded text-start transition-colors hover:bg-black/5 dark:hover:bg-white/10"
                 >
                   <MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -376,153 +316,16 @@ export default function InterventionTicketDrawer({
             </div>
           ) : null}
 
-          {/* ---- The shared contact thread ---- */}
-          {threadQuery.isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          ) : threadQuery.isError ? (
-            <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-              <AlertCircle className="mt-0.5 size-4 shrink-0" />
-              <div className="min-w-0">
-                <p>
-                  {threadQuery.error instanceof Error
-                    ? threadQuery.error.message
-                    : 'Failed to load the conversation.'}
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-2 h-7"
-                  onClick={() => void threadQuery.refetch()}
-                >
-                  Try again
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {threadQuery.data?.error && (
-                <p className="text-xs text-muted-foreground">{threadQuery.data.error}</p>
-              )}
-              {thread.error && <p className="text-xs text-destructive">{thread.error}</p>}
-              <RespondChatList
-                items={thread.items}
-                contactName={ticket?.contact_name}
-                contactPhone={ticket?.contact_phone}
-                emptyHint="No messages in this conversation yet."
-                maxHeightClass="max-h-[45vh]"
-                highlightMessageId={ticket?.source_message_id}
-                highlightLabel="This enquiry"
-                onLoadOlder={thread.loadOlder}
-                hasMoreOlder={thread.hasMoreOlder}
-                isLoadingOlder={thread.isLoadingOlder}
-                atConversationStart={thread.atConversationStart}
-                isDetached={thread.isDetached}
-                onJumpToLatest={thread.jumpToLatest}
-                newerUnseenCount={thread.newerUnseenCount}
-                onLoadNewer={thread.loadNewer}
-                hasMoreNewer={thread.hasMoreNewer}
-                isLoadingNewer={thread.isLoadingNewer}
-                searchController={thread.search}
-                highlightTerm={thread.highlightTerm}
-                focusMessageId={thread.focusMessageId}
-                focusNonce={thread.focusNonce}
-                comments={commentsQuery.data ?? []}
-                mediaProxy={mediaProxy}
-              />
-            </>
-          )}
-
-          {/* ---- Mode switch: message the contact, or note to the team ---- */}
-          {ticket && (
-            <div
-              role="tablist"
-              aria-label="Composer mode"
-              className="flex w-full gap-1 rounded-md border bg-muted/40 p-1"
-            >
-              {(['reply', 'comment'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  role="tab"
-                  aria-selected={composerMode === mode}
-                  data-testid={`composer-mode-${mode}`}
-                  onClick={() => setComposerMode(mode)}
-                  className={cn(
-                    'flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors',
-                    composerMode === mode
-                      ? mode === 'comment'
-                        ? 'bg-amber-500 text-white shadow-sm'
-                        : 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {mode === 'reply' ? 'Reply' : 'Comment'}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* ---- Composer: text + attachments ---- */}
-          {ticket && composerMode === 'comment' && (
-            <InternalCommentComposer
-              disabled={ticket.is_resolved}
-              disabledMessage="This ticket is resolved."
-              onSubmit={({ body, mentionedUserIds }) =>
-                commentMutation.mutateAsync({
-                  body,
-                  mentioned_user_ids: mentionedUserIds,
-                })
-              }
-            />
-          )}
-
-          {ticket && composerMode === 'reply' && (
-            <SharedConversationComposer
-              entityType="conversation_sla"
-              entityId={ticket.id}
-              canReply={ticket.can_send && !ticket.is_resolved}
-              mode="conversation"
-              attachmentsEnabled={ticket.send_capabilities.includes('attachment')}
-              // A manual template send is a reply too: stamp THIS ticket, or
-              // the response clock runs on while the contact has an answer.
-              templateSendTrackingId={ticket.id}
-              // Composer parity with Respond's own inbox (UAC AC-L4 / AC-L5).
-              // Snippet variables resolve against THIS ticket, and the AI
-              // draft is grounded on THIS thread - both server-side, so the
-              // drawer only has to say which ticket it is.
-              snippetsEnabled
-              snippetTrackingId={ticket.id}
-              emojiEnabled
-              onAiAssist={async ({ instruction }) => {
-                const result = await aiDraftMutation.mutateAsync({ instruction });
-                return result.draft;
-              }}
-              onSent={() => {
-                void ticketQuery.refetch();
-                void threadQuery.refetch();
-                onSent?.();
-              }}
-              windowStateOverride={{
-                closed: !ticket.window.open,
-                template: ticket.chat_template,
-              }}
-              sendAdapter={(payload) =>
-                sendMutation.mutateAsync({
-                  text: payload.text,
-                  attachments: payload.files,
-                })
-              }
-              notAvailableMessage={
-                ticket.is_resolved
-                  ? 'This ticket is resolved.'
-                  : 'Replying is not available for this contact.'
-              }
-            />
-          )}
+          {/* ---- The chat panel: thread, notes, composers. The SAME
+                  component the SLA detail page's "Chat Records" mounts, so a
+                  capability cannot land on one surface and not the other. ---- */}
+          <TicketConversationPanel
+            ticketId={ticketId}
+            enabled={open}
+            maxHeightClass="max-h-[45vh]"
+            jumpRequest={jumpRequest}
+            onSent={onSent}
+          />
         </SheetBody>
 
         {/* ---- Both of these live INSIDE the Sheet, not after it.
@@ -553,6 +356,23 @@ export default function InterventionTicketDrawer({
             );
           }}
         />
+
+        {/* The SAME dialog the worklist row's Extend opens (AC-B4), never a
+            fork - and inside the Sheet for the Radix reason above. Mounted only
+            while open: it debounces a preview call off its own state, which a
+            permanently-mounted copy would carry for every drawer. */}
+        {extendOpen && (
+          <ExtendDueDialog
+            open
+            onOpenChange={setExtendOpen}
+            trackingId={ticketId ?? ''}
+            currentDueAt={ticket?.due_at_resolution ?? null}
+            label={ticket?.contact_name ? `Enquiry from ${ticket.contact_name}` : undefined}
+            // The header chips read the ticket, so the new deadline only shows
+            // once the ticket is re-read.
+            onExtended={() => void ticketQuery.refetch()}
+          />
+        )}
 
         <AlertDialog open={confirmResolve} onOpenChange={setConfirmResolve}>
           <AlertDialogContent>
