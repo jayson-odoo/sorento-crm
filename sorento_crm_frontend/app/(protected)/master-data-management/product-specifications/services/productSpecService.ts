@@ -119,12 +119,6 @@ import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { SimilarKeyMatch, SpecDataType } from '@/components/spec-table';
 import type { SpecProposal } from '@/components/spec-proposals';
-// PHASE 1 MOCK - swapped for apiFetch in Phase 2, and this import goes with it.
-import {
-  MOCK_PROPOSALS,
-  MOCK_PROPOSALS_NONE,
-  MOCK_UNCHANGED,
-} from '@/components/spec-proposals/__mocks__/specProposals.fixtures';
 import type {
   SpecDerivationRule,
   SpecSearchPolicyRow,
@@ -604,77 +598,57 @@ export interface SpecBatchApplyResult {
   spec_keys: string[];
 }
 
-/** PHASE 1 MOCK - swapped for apiFetch in Phase 2. */
-const MOCK_DELAY_MS = 700;
-
-/** PHASE 1 MOCK - swapped for apiFetch in Phase 2. */
-function mockDelay(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, MOCK_DELAY_MS));
-}
-
 /**
  * Read a pasted text onto this product's specifications, and propose - never write.
  *
- * PHASE 1 MOCK - swapped for apiFetch in Phase 2. The answer is keyed on the pasted
- * text so every state the panel has to render is reachable from the box itself:
- * "nothing new" gives a zero-proposal result, "no model" gives the degraded
- * deterministic read, "fail" throws, and anything else gives the three-kind result.
+ * The route writes nothing: the text reaches the request body and goes no further, so
+ * the panel can be pressed as often as the user likes without touching the stored
+ * specifications. Nothing is saved until `applySpecProposals` below.
+ *
+ * A blank or over-long text comes back as an ordinary 422 message rather than the
+ * near-duplicate shape the registry writes use, so `extractApiError` reads it: the
+ * sentence it returns is what the panel shows above the box, with the text still in it.
  */
 export async function extractSpecProposals(
   productId: string,
   text: string,
 ): Promise<SpecExtractionResult> {
-  await mockDelay();
-  const asked = text.trim().toLowerCase();
-
-  if (asked.includes('fail')) {
-    throw new Error('Could not read this text. Try again in a moment.');
+  const response = await apiFetch(
+    `/api/v1/master-data/product-specifications/by-product/${productId}/extract`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not read this text'));
   }
-  if (asked.includes('nothing new')) {
-    return {
-      product_code: 'SRT-WC-1001',
-      engine: 'semantic',
-      model: 'gpt-4o',
-      proposals: MOCK_PROPOSALS_NONE,
-      unchanged: 5,
-    };
-  }
-  if (asked.includes('no model')) {
-    return {
-      product_code: 'SRT-WC-1001',
-      engine: 'deterministic',
-      model: null,
-      proposals: MOCK_PROPOSALS.slice(0, 2),
-      unchanged: MOCK_UNCHANGED,
-    };
-  }
-  return {
-    product_code: 'SRT-WC-1001',
-    engine: 'semantic',
-    model: 'gpt-4o',
-    proposals: MOCK_PROPOSALS,
-    unchanged: MOCK_UNCHANGED,
-  };
+  return response.json();
 }
 
 /**
  * Write the accepted proposals as authored values, in ONE call.
  *
- * PHASE 1 MOCK - swapped for apiFetch in Phase 2. One call and not one per key: N
- * would produce N fan-outs, N rendered-text rebuilds and N verification diffs for a
- * single user action, and a partial failure would leave the table half-applied.
+ * One call and not one per key: N would produce N fan-outs, N rendered-text rebuilds
+ * and N verification diffs for a single user action, and a partial failure would leave
+ * the table half-applied. The server refuses the whole batch when any entry is bad,
+ * which is why the caller can refetch once and trust what it reads.
  */
 export async function applySpecProposals(
   productId: string,
   entries: SpecProposalEntry[],
 ): Promise<SpecBatchApplyResult> {
-  await mockDelay();
-  if (entries.length === 0) {
-    throw new Error('Pick at least one specification to apply.');
+  const response = await apiFetch(
+    `/api/v1/master-data/product-specifications/by-product/${productId}/values/batch`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not save the specifications'));
   }
-  return {
-    product_code: 'SRT-WC-1001',
-    rows_written: entries.length,
-    spec_keys: entries.map((entry) => entry.spec_key),
-  };
+  return response.json();
 }

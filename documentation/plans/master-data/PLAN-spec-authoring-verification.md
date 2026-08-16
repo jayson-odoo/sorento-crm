@@ -607,6 +607,15 @@ only for the assistant-pipeline keys), surface it from `list_keys()`, have `POST
 refuse with 400 when it is False, and have the FE `PromptDetail` pass
 `disabled={!meta.active || !meta.dry_runnable}` with the matching reason. `spec_understanding`,
 `scm_market_advisory`, `ideate_extractor` and `spec_extractor` are not dry-runnable.
+**Amended in the wiring (2026-08-17):** `dry_runnable` is surfaced from `list_keys()`
+only, as written above, and `PromptVersionsResponse` does not carry it - but
+`PromptDetail`'s `meta` IS the versions response. So the screen reads the flag off the
+key list (`usePromptKeys()`, already fetched beside it by the "Runs on" card and cached
+under the list page's own query key) rather than off `meta`, and an in-flight list reads
+as runnable so a slow query cannot tell a pipeline key it is outside the pipeline. The
+route's own 400 is the real gate either way. The alternative - adding the field to the
+versions response - was not taken because it duplicates a key-level property onto a
+per-version payload.
 
 **Migrations** (`alembic/versions/`, ids <= 32 chars, one head after):
 1. `366_merge_flyer_promo_scm_heads` - empty merge of `363_merge_flyer_promo_um` +
