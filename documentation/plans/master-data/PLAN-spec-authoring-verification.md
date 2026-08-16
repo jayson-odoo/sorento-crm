@@ -429,12 +429,14 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
 
 - **Phase 1 (mock, no backend, no tests):** the `spec-table/` component trio built props-driven
   against fixtures covering every state - derived, flyer, category and authored values, a
-  tombstoned key, an open conflict, an enum key, a numeric key with a unit, a boolean, a free-text
+  tombstoned key (which per AC-A.5 as amended renders **no row**, so the fixture pins the absence),
+  an open conflict, an enum key, a numeric key with a unit, a boolean, a free-text
   key, and a stored key the registry no longer defines. Verify in a real browser by **sidebar
   clicks from `/`**, never a deep link, at 375px and 1280px. Document the contract at the top of
   the service file.
 - **Phase 2 (test-first):** `applicable_keys_for_code`, the `similar` endpoint and its server-side
-  guard, the split-by-field `PATCH` permission for add-a-value, the two relaxations and the grant
+  guard, the split-by-field `PATCH` permission and the appending `POST .../values` route that
+  add-a-value ended up on (D18), the two relaxations and the grant
   migration; then the frontend off mocks onto react-query hooks. Delete `AddSpecByHand.tsx` rather
   than leaving it beside the new component.
 - **The spec table is the shared `DataGrid`** (D10, captain-settled, overruling this plan's
@@ -604,9 +606,10 @@ creation from the product page; an authored value always wins a conflict.
   CSS-grid proposal; inline editing is solved inside the component via an edit affordance on the
   row.
 - **Duplicate-prevention checks are enforced server-side** (D11, 2026-08-14). "We should not
-  trust frontend" - the client-side check stays as a latency courtesy, but the `PATCH
-  user_values` route now rejects near-duplicates with a 422 + acknowledge flag, mirroring the
-  key-creation guard.
+  trust frontend" - the client-side check stays as a latency courtesy, and the server rejects a
+  near-duplicate with a 422, mirroring the key-creation guard. *Superseded in part by D17 (the
+  acknowledge flag is withdrawn - a near-duplicate is refused outright) and D18 (the add-a-word
+  path is `POST /spec-registry/{spec_key}/values`, not the replacing `PATCH`).*
 - **Cross-page `selectAllMatching` stays off** (D12, 2026-08-14). Bulk covers rows the user had
   on screen. Enabling it later is a one-prop change plus a confirm stating the full count.
 

@@ -61,6 +61,11 @@
  *
  *     422 { error: string, match: {...} }
  *
+ * `POST .../{specKey}/values` refuses one more case the same way: a word an
+ * administrator SUPPRESSED on the key comes back as `match.matched_on:
+ * 'suppressed_value'`, since it is absent from the merged vocabulary and adding it
+ * here would overturn a decision made on the key itself.
+ *
  * There is no way past it: a colliding word is refused, full stop. `extractApiError`
  * cannot read this body - it is string-only - so these calls parse it themselves and
  * throw a `SpecSimilarError` carrying the sentence that names the collision.

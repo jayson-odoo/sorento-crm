@@ -109,9 +109,12 @@ None of that is asked for.
    If "Brushed Brass" already exists for "brushed brass" it offers that instead. Only when
    nothing matches does the dropdown's last row read `Add "brushed brass" to Finish`.
 4. **Add a spec** - "Add a specification" offers the keys this product's class can carry that it
-   does not already hold, everything else one click away. If genuinely nothing matches, a create
-   dialog opens, and before it will submit it checks the proposed label against every existing
-   key, label and synonym and offers the match instead.
+   does not already hold, everything else one click away. If no key goes by the name they typed,
+   the search list's **last row reads `Create "<name>"`** - the same shape as adding a word on a
+   value dropdown, no separate link (amended 2026-08-15, captain) - and it asks the type before
+   checking the proposed label against every existing key, label and synonym and offering the
+   match instead. A removed key is offered again here; a key the product already carries is named
+   as already on the table, with nothing to click.
 5. **Remove** - the row's menu offers the two intents as **"Remove"** (a tombstone that survives
    re-derivation, behind the standard "Confirm delete" dialog) and **"Reset"** (revert to
    derived, with its own confirmation). Labels amended 2026-08-15 by the captain from the earlier
@@ -320,7 +323,11 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   cached read, so one person's add deleted another's; the replacing `PATCH` remains only for the
   registry editor, which shows and submits the whole list. The FE runs the same duplicate check
   client-side first, against data it already holds, so the common case never round-trips - but
-  the frontend check is a courtesy, never the guard.
+  the frontend check is a courtesy, never the guard. A word an administrator **suppressed** on the
+  key is refused the same way (`matched_on: suppressed_value`, 2026-08-16), naming who can put it
+  back: it is absent from the merged vocabulary, so neither the verbatim nor the near-duplicate
+  check sees it, and appending it here would let any holder of `products.edit` silently overturn a
+  decision made on the key itself.
 - **AC-A.12** `[FE]` GIVEN the spec table component WHEN it is written THEN it is
   **props-driven** - values, vocabulary and callbacks in, **no `apiFetch`, no service import, no
   react-query inside the cells** - and it lives in a folder milestone 2's `(auth)`-group portal
