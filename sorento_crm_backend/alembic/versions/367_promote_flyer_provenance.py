@@ -44,7 +44,7 @@ before this runs; do not run it otherwise, or 695 codes are silently demoted to 
 exactly the queries they used to win.
 
 Revision ID: 367_promote_flyer_provenance
-Revises: 366_merge_flyer_promo_scm_heads
+Revises: 366_merge_363_365
 Create Date: 2026-08-16
 """
 
@@ -56,7 +56,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "367_promote_flyer_provenance"
-down_revision = "366_merge_flyer_promo_scm_heads"
+down_revision = "366_merge_363_365"
 branch_labels = None
 depends_on = None
 

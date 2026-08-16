@@ -124,7 +124,7 @@ database returns rather than comparing to that.
 venv/bin/alembic upgrade head
 ```
 
-Head at this point is `367_promote_flyer_provenance`, chained onto `366_merge_flyer_promo_scm_heads`
+Head at this point is `367_promote_flyer_provenance`, chained onto `366_merge_363_365`
 (the empty merge that rejoined the two heads main was carrying). The promote migration logs its
 before and after counts through `logging`, so capture the deploy log.
 
@@ -343,10 +343,10 @@ endpoints but not the tables.
 To undo the promotion, go back exactly one revision:
 
 ```bash
-venv/bin/alembic downgrade 366_merge_flyer_promo_scm_heads
+venv/bin/alembic downgrade 366_merge_363_365
 ```
 
-`366_merge_flyer_promo_scm_heads` is the empty merge revision immediately below
+`366_merge_363_365` is the empty merge revision immediately below
 `367_promote_flyer_provenance`, so this runs the promote migration's `downgrade()` and nothing
 else. That downgrade is exact: every entry carrying `migrated_from = 'flyer'` goes back to
 `{"source": "flyer", "confidence": <kept>, "evidence": <the "flyer: " prefix stripped>}`, and

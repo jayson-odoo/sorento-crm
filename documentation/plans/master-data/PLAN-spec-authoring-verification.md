@@ -674,8 +674,9 @@ versions response - was not taken because it duplicates a key-level property ont
 per-version payload.
 
 **Migrations** (`alembic/versions/`, ids <= 32 chars, one head after):
-1. `366_merge_flyer_promo_scm_heads` - empty merge of `363_merge_flyer_promo_um` +
-   `365_merge_scm_plan_feedback` (repo template: `365_merge_scm_plan_feedback.py`).
+1. `366_merge_363_365` - empty merge of `363_merge_flyer_promo_um` +
+   `365_merge_scm_plan_feedback`. Landed on main separately, so this slice does not add it
+   and only chains onto it.
 2. `367_promote_flyer_provenance` - down_revision `366_...`. UPDATE `product_specifications` SET
    `provenance` = the same object with every entry whose `source = 'flyer'` rewritten to
    `{"source": "human", "confidence": <kept>, "evidence": "flyer: " || <original evidence>,
