@@ -5,6 +5,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 import {
   createReorderRun,
+  getCustomerOrders,
   getBuyRecommendationsForCash,
   getCoveredRecommendations,
   getReorderRun,
@@ -182,6 +183,51 @@ describe('reorderRunService - listReorderRuns', () => {
     expect(page.data[0].run_id).toBe('run-b');
     expect(page.data[0].warehouse_codes).toEqual(['WH-KL', 'WH-JB']);
     expect(page.data[0].summary?.recommendation_count).toBe(5);
+  });
+});
+
+describe('reorderRunService - getCustomerOrders (AC-4.1)', () => {
+  it('asks for the run, product, side and customer key it was opened on', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        lines: [
+          {
+            so_number: 'SO414050',
+            order_date: '2026-07-12',
+            qty: 60,
+            unit_price: 0.94,
+            warehouse_code: 'BRW-BB',
+          },
+        ],
+        total: 27,
+        shown: 1,
+      }),
+    );
+    const out = await getCustomerOrders('run-1', 'prod-1', 'project', 'debtor:300-R009');
+
+    const u = calledUrl();
+    expect(u.pathname).toBe('/api/v1/scm/reorder-runs/run-1/customer-orders');
+    expect(u.searchParams.get('product_id')).toBe('prod-1');
+    expect(u.searchParams.get('segment')).toBe('project');
+    // The three-case key travels verbatim: the backend, not the FE, decides what a
+    // `debtor:` prefix means.
+    expect(u.searchParams.get('customer_key')).toBe('debtor:300-R009');
+    expect(u.searchParams.get('limit')).toBe('20');
+    expect(out.total).toBe(27);
+    expect(out.lines[0].unit_price).toBe(0.94);
+  });
+
+  it('surfaces the backend message rather than an empty list', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 422,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ message: 'Unknown segment.' }),
+    } as unknown as Response);
+
+    await expect(
+      getCustomerOrders('run-1', 'prod-1', 'wholesale', 'none'),
+    ).rejects.toThrow('Unknown segment.');
   });
 });
 

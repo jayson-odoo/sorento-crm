@@ -9,7 +9,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 const toastError = vi.fn();
 vi.mock('sonner', () => ({ toast: { error: (...a: unknown[]) => toastError(...a) } }));
 
-import { useReorderRun, useTodayRun } from './useReorderRun';
+import { useCustomerOrders, useReorderRun, useTodayRun } from './useReorderRun';
 
 function jsonRes(body: unknown, ok = true, status = 200) {
   return {
@@ -212,5 +212,44 @@ describe('useTodayRun - the page default run (M8-D3/D4)', () => {
     const { result } = renderHook(() => useTodayRun(), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.is_today).toBe(false);
+  });
+});
+
+describe('useCustomerOrders - the orders behind one Who-bought-it row', () => {
+  it('does not fetch until the row is expanded', async () => {
+    apiFetch.mockResolvedValue(jsonRes({ lines: [], total: 0, shown: 0 }));
+    renderHook(() => useCustomerOrders('run-1', 'prod-1', 'project', 'cust-1', false), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(apiFetch).not.toHaveBeenCalled());
+  });
+
+  it('fetches the run + product + side + key once it is', async () => {
+    apiFetch.mockResolvedValue(
+      jsonRes({
+        lines: [
+          { so_number: 'SO1', order_date: '2026-07-12', qty: 60, unit_price: 0.94, warehouse_code: 'BRW-BB' },
+        ],
+        total: 1,
+        shown: 1,
+      }),
+    );
+    const { result } = renderHook(
+      () => useCustomerOrders('run-1', 'prod-1', 'project', 'cust-1', true),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.data?.lines).toHaveLength(1));
+    const url = String(apiFetch.mock.calls[0][0]);
+    expect(url).toContain('/api/v1/scm/reorder-runs/run-1/customer-orders');
+    expect(url).toContain('customer_key=cust-1');
+  });
+
+  it('stays idle while the row carries no key at all', async () => {
+    apiFetch.mockResolvedValue(jsonRes({ lines: [], total: 0, shown: 0 }));
+    renderHook(() => useCustomerOrders('run-1', 'prod-1', 'project', null, true), { wrapper });
+
+    await waitFor(() => expect(apiFetch).not.toHaveBeenCalled());
   });
 });

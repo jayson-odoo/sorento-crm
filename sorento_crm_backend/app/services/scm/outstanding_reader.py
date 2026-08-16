@@ -334,10 +334,15 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         # `order_type` it is a header-level fact repeated per line, and like it, it is spent on
         # the demand class - it is the fourth and last source, read only when the document
         # itself says nothing. The write path also stamps it onto the order.
+        # `unit_price` is the sales book's own money column (the alias for `UNIT PRICE` has
+        # been seeded since migration 338) and the demand popover quotes it per line, so
+        # dropping it here left that figure blank on every row the buyer looked at while it
+        # sat in the file. Absent stays absent for the same reason as the cost.
         result.extras[str(row_number)] = {
             "party_code": _clean(rec.get("debtor_code" if doc_type == SO
                                          else "creditor_code")),
             "unit_cost": _to_float(rec.get("unit_cost")),
+            "unit_price": _to_float(rec.get("unit_price")),
             "currency": _clean(rec.get("currency")) or None,
             "order_date": _to_date(rec.get(order_date_field)),
             "order_type": _clean(rec.get("order_type")) or None,
