@@ -64,14 +64,22 @@ Every statement is idempotent (IF NOT EXISTS / a pg_constraint probe), matching
 316's reasoning: several worktrees share one local database and this may already
 have been applied by hand.
 
+It chains onto `359_scm_plan_feedback_r2`, not onto `358`, because that revision
+landed on main while this branch was in flight. Two revisions off the same
+parent are a dual head, and `alembic upgrade head` / CI's `bootstrap_env` stamp
+both fail outright with "Multiple heads are present". The sibling file is
+vendored into this branch verbatim (357's reasoning) so the graph resolves on a
+branch-only checkout too; it is byte-identical to main's, so the git merge is a
+no-op on it.
+
 Revision ID: 359_flyer_read_background_job
-Revises: 358_scm_po_spo_history_aliases
+Revises: 359_scm_plan_feedback_r2
 """
 
 from alembic import op
 
 revision = "359_flyer_read_background_job"
-down_revision = "358_scm_po_spo_history_aliases"
+down_revision = "359_scm_plan_feedback_r2"
 branch_labels = None
 depends_on = None
 
