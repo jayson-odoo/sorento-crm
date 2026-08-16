@@ -192,6 +192,23 @@ detail page's Activity Logs tab is the opposite case: it reads `GET /system-logs
 (`logs.view`), which a role holding only `users.view` does not have, so the tab is rendered only
 when the caller holds `logs.view` rather than always erroring on click. Neither gate is widened.
 
+A third cross-gate case is likewise left exactly as it is: the WhatsApp Contact picker on the user
+edit dialog (`user-profile-edit-dialog.tsx`) searches `GET /contacts/?query=` from a screen gated on
+`users.view` / `users.edit`, and swallows a non-2xx into an empty option list. Every role holding
+`user_management.users.edit` on the live database - admin, warehouse_manager and the three
+`integration_*` - is also in the `contacts.view` grant list, so no real role can open that dialog
+without the slug, and hardening a path no real role can reach is overfitting. Recorded here rather
+than fixed, on the same evidence-first basis as the `access_agents` / `teams` pairing above.
+
+The topbar Apps dropdown IS filtered, and it is the exception that proves the rule for the two
+paragraphs above: it is the ONLY nav path to `/user-management/contacts` (that path has no
+`MENU_SIDEBAR` or `MENU_MEGA` entry at all), and `marketing_manager`, `marketing_executive`,
+`customer_service`, the `purchasing_*` and the `project_sales_*` roles all reach it holding neither
+`contacts.view` nor `access_agents.view` - a reachable dead screen, not a hypothetical one. Its
+`Internal Users` and `AI Agents` entries now carry those two slugs and are hidden without them.
+Scoped to those two: every other quick link points at a route this PR did not gate and renders
+exactly as before.
+
 The two catalogs are gated on different slugs and the sidebar has to match route by route, not
 screen by screen: `/user-management/market-segments` reads `GET /market-segments/`
 (`reference_data.view`), while `/user-management/contact-access-types` reads
