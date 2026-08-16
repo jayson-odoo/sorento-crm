@@ -428,3 +428,7 @@ migration.
 - **Intake-link expiry has no UI control.** `expiry_days` is only settable at creation
   (default 14) and "Issue a new link" resets to 14 days. Nothing on the create dialog or the
   detail page lets the captain choose a different window or extend a live link.
+- **The `cancelled` state has no route.** Migration 360 seeds it and its four incoming edges,
+  and the dead `cancel()` service function has been deleted rather than exposed; nothing moves
+  a request there today. The seeded edges stay - removing them is a destructive migration for
+  no gain.

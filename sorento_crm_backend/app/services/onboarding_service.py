@@ -492,10 +492,6 @@ def reject_request(
     return _move(db, request, REJECTED, apply=_stamp)
 
 
-def cancel(db: Session, request_id: str) -> OnboardingRequest:
-    return _move(db, get_request(db, request_id), CANCELLED)
-
-
 def approve(
     db: Session, request_id: str, *, user_id: Optional[str] = None
 ) -> OnboardingRequest:
