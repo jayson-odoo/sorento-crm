@@ -222,6 +222,35 @@ describe('IntakeScreen', () => {
     expect(screen.getAllByText('Nurul Aisyah').length).toBeGreaterThan(0);
   });
 
+  it('saves what she has typed so far without submitting it', async () => {
+    // The link is multi-use until submission and the intake email tells her she
+    // can come back to it, so the rows have to be able to reach the server
+    // before the batch is sealed. Until Save draft existed the only save was the
+    // one submit made on its way out, and closing the tab lost the lot.
+    fetchIntakeContext.mockResolvedValue(CONTEXT);
+    saveRows.mockResolvedValue({ ...CONTEXT, people: [] });
+
+    renderScreen();
+    fireEvent.click(await screen.findByRole('button', { name: /Add a person/ }));
+    const nameInput = (await screen.findAllByLabelText('Name, row 1'))[0];
+    fireEvent.change(nameInput, { target: { value: 'Half A List' } });
+    fireEvent.blur(nameInput);
+
+    fireEvent.click(screen.getByRole('button', { name: /Save draft/ }));
+
+    await waitFor(() => expect(saveRows).toHaveBeenCalled());
+    const [, rows] = saveRows.mock.calls[0];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ row_number: 1, full_name: 'Half A List' });
+    expect(submitIntake).not.toHaveBeenCalled();
+
+    // Still hers to edit: saving is not submitting.
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('1 person saved.'));
+    expect(screen.getByRole('button', { name: /Add a person/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Submit for review/ })).toBeEnabled();
+    expect(screen.getAllByLabelText('Name, row 1')[0]).toHaveValue('Half A List');
+  });
+
   it('submits the batch and flips to the status view', async () => {
     fetchIntakeContext.mockResolvedValue(CONTEXT);
     saveRows.mockResolvedValue({ ...CONTEXT, people: [] });

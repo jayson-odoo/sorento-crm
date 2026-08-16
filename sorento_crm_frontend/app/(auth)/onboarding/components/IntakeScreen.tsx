@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import { Loader2, Plus, Send } from 'lucide-react';
+import { Loader2, Plus, Save, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -29,7 +29,7 @@ import type {
 } from '@/components/common/onboarding/types';
 import { IntakeHeader } from './IntakeHeader';
 import { applyPersonPatch, toDraftRow } from '../lib/onboarding-client';
-import { useIntakeContext, useSubmitIntake } from '../hooks/useIntake';
+import { useIntakeContext, useSaveDraft, useSubmitIntake } from '../hooks/useIntake';
 
 /** "1 person", "2 people". A batch with one row on it is not "1 people". */
 function people_(count: number): string {
@@ -77,6 +77,14 @@ export function IntakeScreen({ token }: { token: string }) {
   // requester touches anything, so a background refetch cannot wipe her typing.
   const rows = people ?? context?.people ?? [];
   const editable = Boolean(context?.editable) && !submitted;
+
+  const saveMutation = useSaveDraft(token, {
+    // The rows on screen are left exactly as they are: the server answers with
+    // its own copy, and swapping it in mid-edit would move the caret out of
+    // whatever field she is typing in.
+    onSuccess: () => toast.success(`${rows.length} ${people_(rows.length)} saved.`),
+    onError: (e) => toast.error(e.message),
+  });
 
   const submitMutation = useSubmitIntake(token, {
     onSuccess: (result) => {
@@ -192,17 +200,31 @@ export function IntakeScreen({ token }: { token: string }) {
               <p className="text-sm text-muted-foreground">
                 {rows.length} {people_(rows.length)} ready to submit.
               </p>
-              <Button
-                onClick={() => submitMutation.mutate({ rows: rows.map(toDraftRow), note: note.trim() || null })}
-                disabled={!readyToSubmit || submitMutation.isPending}
-              >
-                {submitMutation.isPending ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <Send className="size-4" />
-                )}
-                Submit for review
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => saveMutation.mutate(rows.map(toDraftRow))}
+                  disabled={saveMutation.isPending}
+                >
+                  {saveMutation.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Save draft
+                </Button>
+                <Button
+                  onClick={() => submitMutation.mutate({ rows: rows.map(toDraftRow), note: note.trim() || null })}
+                  disabled={!readyToSubmit || submitMutation.isPending}
+                >
+                  {submitMutation.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Send className="size-4" />
+                  )}
+                  Submit for review
+                </Button>
+              </div>
             </div>
             {!readyToSubmit && rows.length > 0 ? (
               <p className="text-sm text-amber-700">Every person needs a name.</p>

@@ -31,6 +31,29 @@ export function useIntakeContext(token: string) {
 }
 
 /**
+ * Save the rows without sealing the batch.
+ *
+ * The link is multi-use until submission (UAC AC-3.2) and the intake email says
+ * so, but until this existed the only call to `saveRows` was the one submit made
+ * on its way out - so a requester who gathered her list over two days closed the
+ * tab and lost it. Saving is explicit rather than automatic: her rows are what
+ * she typed, and a background write is not something she asked for.
+ */
+export function useSaveDraft(
+  token: string,
+  options: {
+    onSuccess: () => void;
+    onError: (error: Error) => void;
+  },
+) {
+  return useMutation({
+    mutationFn: (rows: OnboardingDraftRow[]) => saveRows(token, rows),
+    onSuccess: options.onSuccess,
+    onError: options.onError,
+  });
+}
+
+/**
  * Save then submit, in that order and as one action: the rows have to reach the
  * server before the batch can be sealed, and a submit that raced the save would
  * seal an empty one.
