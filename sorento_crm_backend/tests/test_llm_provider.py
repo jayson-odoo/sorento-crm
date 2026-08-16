@@ -27,6 +27,7 @@ from app.services.llm_provider import (
     _split_system_messages,
     default_model_for,
     get_provider,
+    resolve_api_key,
 )
 
 
@@ -1054,3 +1055,22 @@ def test_gemini_schema_drops_unsupported_keys_recursively():
     nested = out["properties"]["items"]["items"]
     assert "additionalProperties" not in nested
     assert nested["properties"]["raw"] == {"type": "string"}
+
+
+@pytest.mark.parametrize("asked", ["gemini", "Gemini", " gemini "])
+def test_resolve_api_key_normalizes_the_provider_name(asked, monkeypatch):
+    """`get_provider` and `default_model_for` both lower/strip the name, so the
+    key resolver must agree - otherwise a stored "Gemini" resolves an OpenAI key
+    and hands it to a Gemini client."""
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "openai_api_key", "ZZT-openai-env-key", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "", raising=False)
+    cfg = types.SimpleNamespace(
+        provider="Gemini",
+        api_key_ciphertext="ZZT-generic-key",
+        gemini_api_key_ciphertext="ZZT-gemini-column-key",
+        anthropic_api_key_ciphertext="",
+    )
+
+    assert resolve_api_key(cfg, asked) == "ZZT-gemini-column-key"

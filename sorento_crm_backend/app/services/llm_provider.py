@@ -90,17 +90,22 @@ def resolve_api_key(cfg: Any, provider_name: str) -> str:
     Order per provider: the provider-specific column, then the generic column
     when it belongs to this provider, then the environment key. An empty string
     means no key is configured, which is the caller's cue to say so.
+
+    Names are normalized exactly as ``get_provider`` and ``default_model_for``
+    normalize them, so a stored ``"Gemini"`` cannot resolve an OpenAI key here
+    and then be handed to a Gemini client.
     """
     from app.config import settings as app_settings
+
+    provider_name = (provider_name or "").strip().lower()
 
     def column(name: str) -> str:
         return (getattr(cfg, name, None) if cfg is not None else "") or ""
 
-    generic = (
-        column("api_key_ciphertext")
-        if cfg is not None and getattr(cfg, "provider", None) == provider_name
-        else ""
-    )
+    cfg_provider = (
+        (getattr(cfg, "provider", None) or "") if cfg is not None else ""
+    ).strip().lower()
+    generic = column("api_key_ciphertext") if cfg_provider == provider_name else ""
     if provider_name == "anthropic":
         return (
             column("anthropic_api_key_ciphertext")

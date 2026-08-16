@@ -583,3 +583,35 @@ def test_resolve_provider_uses_the_configured_providers_own_default_model():
         assert isinstance(provider, GeminiProvider)
         assert provider_name == "gemini"
         assert model_name == "gemini-2.5-flash"
+
+
+def test_resolve_provider_reads_the_gemini_key_column_not_the_openai_env_key(monkeypatch):
+    """A Gemini install keeps its key in the dedicated column.
+
+    Reading only the generic ``api_key_ciphertext`` left that install with no
+    key here and fell through to the OpenAI environment key, which was then
+    posted to Google.
+    """
+    from app.config import settings as app_settings
+    from app.models.ai_assistant import AIAssistantConfig
+    from app.services.llm_provider import GeminiProvider
+
+    monkeypatch.setattr(app_settings, "openai_api_key", "ZZT-openai-env-key", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "", raising=False)
+
+    with blank_session() as db:
+        db.add(
+            AIAssistantConfig(
+                provider="gemini",
+                model="",
+                api_key_ciphertext="",
+                gemini_api_key_ciphertext="ZZT-gemini-column-key",
+            )
+        )
+        db.commit()
+
+        provider, provider_name, _ = AIExtractService(db)._resolve_provider()
+
+        assert isinstance(provider, GeminiProvider)
+        assert provider_name == "gemini"
+        assert provider.api_key == "ZZT-gemini-column-key"
