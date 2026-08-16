@@ -562,10 +562,10 @@ describe('PlanLinesGrid - what price to use', () => {
   it('leads with the price to buy at, and the verdict rides under it', () => {
     renderGrid([line()], {}, [], () => stale);
 
-    // The row's unit_cost (10, USD default currency null on the fixture) is the headline;
-    // the verdict badge is the caveat under it.
+    // The row's unit_cost (10, no currency on the fixture, so it reads as base) is the
+    // headline; the verdict badge is the caveat under it.
     expect(screen.getByText('Ask new price')).toBeInTheDocument();
-    expect(screen.getByText('10.00')).toBeInTheDocument();
+    expect(screen.getByText('RM 10.00')).toBeInTheDocument();
   });
 
   it('leaves the cell empty when there is no price opinion, rather than implying all is well', () => {
@@ -752,9 +752,11 @@ describe('product health (2026-08-11 markup)', () => {
 
     // Click the cell's own trigger (the column header is also named "Product health").
     fireEvent.click(screen.getByText('Consider discontinuing'));
-    expect(screen.getByText(/factors argue for discontinuing/i)).toBeInTheDocument();
+    // The verdict is named in one line and the case is the factor list under it - the
+    // prose sentence and the AutoCount footer were removed (AC-5).
+    expect(screen.getByText('Suggestion: Discontinue')).toBeInTheDocument();
     expect(screen.getByText(/nothing left this product/i)).toBeInTheDocument();
-    expect(screen.getByText(/marking it in AutoCount stays your job/i)).toBeInTheDocument();
+    expect(screen.queryByText(/marking it in AutoCount stays your job/i)).not.toBeInTheDocument();
   });
 
   it('a consider-more advisory on a thin margin carries the caveat in the same breath', () => {
@@ -915,5 +917,74 @@ describe('PlanLinesGrid - secondaryActions (the removed tiles\' replacement entr
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Order summary' }));
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PlanLinesGrid - product photo on the row (AC-7)', () => {
+  // > "as IT I do not know what a product looks like"
+  // The icon lives on the product cell, beside the demand and checklist drills, and it is
+  // the ONLY thing on the row that says what the item is.
+
+  function renderWithPhotos(
+    lines: PlanLine[],
+    hasPhotoFor?: (l: PlanLine) => boolean,
+    photoStatus: 'idle' | 'loading' | 'ready' | 'error' = 'ready',
+    onOpenPhoto?: () => void,
+  ) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PlanLinesGrid
+          lines={lines}
+          decisions={{}}
+          onDecide={vi.fn()}
+          onClear={vi.fn()}
+          hasPhotoFor={hasPhotoFor}
+          photoStatus={photoStatus}
+          onOpenPhoto={onOpenPhoto}
+          staleAfterDays={180}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('carries a photo icon on every row', () => {
+    renderWithPhotos([line({ id: 'a', sku: 'BUY-1' }), line({ id: 'b', sku: 'BUY-2', rank: 2 })]);
+    expect(screen.getAllByRole('button', { name: /product photo/i })).toHaveLength(2);
+  });
+
+  it('dims the icon for a product the run found no photo for', () => {
+    renderWithPhotos(
+      [line({ id: 'a', sku: 'HAS-1', product_id: 'p1' }),
+       line({ id: 'b', sku: 'NONE-1', product_id: 'p2', rank: 2 })],
+      (l) => l.product_id === 'p1',
+    );
+
+    const withPhoto = screen.getByText('HAS-1').closest('tr') as HTMLElement;
+    const without = screen.getByText('NONE-1').closest('tr') as HTMLElement;
+
+    expect(
+      within(withPhoto).getByRole('button', { name: /product photo/i }).className,
+    ).not.toContain('text-muted-foreground/50');
+    expect(
+      within(without).getByRole('button', { name: /product photo/i }).className,
+    ).toContain('text-muted-foreground/50');
+  });
+
+  it('nothing is dimmed before the photos have been asked for', () => {
+    // Dimming on `idle` would tell the buyer a product has no photo before anyone looked.
+    renderWithPhotos([line({ sku: 'BUY-1' })], undefined, 'idle');
+    expect(
+      screen.getByRole('button', { name: /product photo/i }).className,
+    ).not.toContain('text-muted-foreground/50');
+  });
+
+  it('starts the run-wide fetch on the FIRST icon opened, not on mount', () => {
+    const onOpenPhoto = vi.fn();
+    renderWithPhotos([line({ sku: 'BUY-1' })], undefined, 'idle', onOpenPhoto);
+
+    expect(onOpenPhoto).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /product photo/i }));
+    expect(onOpenPhoto).toHaveBeenCalledTimes(1);
   });
 });

@@ -9,6 +9,7 @@
  * turns them into words. Every sentence is a fact about OUR OWN order book - like the
  * price advice, nothing here claims to see the market.
  */
+import { fmtInt } from '../../lib/format';
 
 export type TrajectoryVerdict = 'rising' | 'holding' | 'falling' | 'quiet' | 'no_history';
 
@@ -127,11 +128,11 @@ export function describeYearAgo(t: TrajectoryEntry | undefined): string | null {
     return `Same window last year: ${fmtQty(t.year_ago_qty)}.`;
   }
   const dir = t.year_change_pct >= 0 ? 'up' : 'down';
-  return `Against the same window last year (${fmtQty(t.year_ago_qty)}): ${dir} ${Math.abs(t.year_change_pct).toFixed(0)}%.`;
+  return `Against the same window last year (${fmtQty(t.year_ago_qty)}): ${dir} ${fmtInt(Math.round(Math.abs(t.year_change_pct)))}%.`;
 }
 
 function fmtQty(n: number): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return fmtInt(Math.round(n));
 }
 
 /** The key both the plan row and the trajectory map agree on. */

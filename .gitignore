@@ -51,6 +51,14 @@ private_key.pem
 .claude/handoffs/*
 !.claude/handoffs/README.md
 
+# Claude Code runtime state. scheduled_tasks.lock is a per-process lock
+# ({sessionId, pid, acquiredAt}) rewritten by every session, so it shows as
+# modified in every checkout; settings.local.json is per-machine permission
+# overrides. Neither is project config - .claude/settings.json, skills/,
+# agents/, commands/ stay tracked.
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+
 # Pre-trial snapshot written by scripts/container_status_trial.py - holds live
 # clearance data, and is per-environment. Keep it on the box, out of the repo.
 sorento_crm_backend/scripts/container_status_trial_snapshot.json

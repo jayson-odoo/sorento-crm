@@ -203,14 +203,14 @@ SELECT DISTINCT r.product_id::text AS product_id, r.supplier_id::text AS supplie
        s.supplier_code
 FROM scm.reorder_recommendation r
 JOIN suppliers s ON s.id = r.supplier_id
-WHERE r.run_id::text = :run_id
+WHERE r.run_id = CAST(:run_id AS uuid)
 """
 
 _PURCHASES_SQL = """
 WITH pairs AS (
     SELECT DISTINCT r.product_id, r.supplier_id
     FROM scm.reorder_recommendation r
-    WHERE r.run_id::text = :run_id AND r.supplier_id IS NOT NULL
+    WHERE r.run_id = CAST(:run_id AS uuid) AND r.supplier_id IS NOT NULL
 ),
 purchases AS (
     SELECT pol.product_id, po.supplier_id, po.po_number, po.issue_date,
@@ -247,7 +247,7 @@ _STANDING_SQL = """
 SELECT r.product_id::text AS product_id, r.supplier_id::text AS supplier_id,
        MAX(r.unit_cost)::numeric AS unit_cost, MAX(r.currency) AS currency
 FROM scm.reorder_recommendation r
-WHERE r.run_id::text = :run_id AND r.supplier_id IS NOT NULL AND r.unit_cost IS NOT NULL
+WHERE r.run_id = CAST(:run_id AS uuid) AND r.supplier_id IS NOT NULL AND r.unit_cost IS NOT NULL
 GROUP BY r.product_id, r.supplier_id
 """
 
@@ -259,7 +259,7 @@ JOIN purchase_orders po ON po.id = pol.purchase_order_id
 JOIN (
     SELECT DISTINCT r.product_id, r.supplier_id
     FROM scm.reorder_recommendation r
-    WHERE r.run_id::text = :run_id AND r.supplier_id IS NOT NULL
+    WHERE r.run_id = CAST(:run_id AS uuid) AND r.supplier_id IS NOT NULL
 ) pr ON pr.product_id = pol.product_id AND pr.supplier_id = po.supplier_id
 WHERE pol.unit_cost = 0 AND po.status NOT IN :not_a_purchase
 GROUP BY pol.product_id, po.supplier_id

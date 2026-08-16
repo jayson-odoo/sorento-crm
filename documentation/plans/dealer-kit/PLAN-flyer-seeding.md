@@ -235,7 +235,9 @@ exactly as predicted.
 Four routes on the existing dealer-kit router, all behind the page permissions already in
 use: `page.edit` to upload or delete, `page.view` to read or list. No new slug, because a
 fourth one would need a grant sweep before any existing role held it, and everybody who can
-build a page can already do everything a reading leads to.
+build a page can already do everything a reading leads to. (A fifth route, `POST
+/flyer-readings/from-attachment`, landed later under the same `page.edit` slug - see
+`PLAN-flyer-read-hardening.md`.)
 
 **The reading is stored; the report is not.** `dealer_kit.flyer_reading` keeps what the
 extractor read - pages, cards, printed rows, artwork, headings - and the match report is
@@ -246,11 +248,12 @@ number is old. Recomputing 998 codes costs 0.4s and three statements. The regres
 for this changes the master between two GETs of the same reading and expects the answer to
 move.
 
-**Extraction runs inside the request.** 36 A3 pages take about a second, so a queue would
-buy nothing and cost a pending state, a polling screen, a failure path and a worker restart
-per code change. That stops being true at roughly ten seconds of extraction - a much larger
-document, or the artwork rasterisation coming in S7.5 - at which point it becomes an enqueue
-returning 202 with a row to watch, like the catalogue PDF export.
+**Extraction runs inside the request.** The "36 A3 pages take about a second" figure recorded
+here was never measured, and it was wrong: the real flyer takes 17 to 18 seconds in
+`extract_flyer`, which is past the ten second threshold this note itself named as the point a
+queue wins. The decision, the measurements and the reason a queue is still deliberately not
+built now live in `PLAN-flyer-read-hardening.md` and in the `flyer_reading_service` module
+docstring. Do not re-derive the number from this paragraph.
 
 Decisions worth keeping:
 

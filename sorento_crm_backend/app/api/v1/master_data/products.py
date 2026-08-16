@@ -58,6 +58,28 @@ def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
     return out or None
 
 
+def _with_specifications(service: ProductService, result: dict) -> JSONResponse:
+    """The listing page, each row carrying its derived specs.
+
+    Serialized through `ListResponse[ProductResponse]` BY HAND and returned as a
+    raw response, because the declared `response_model` drops any key it does not
+    declare - the standing gotcha. Declaring the field on the schema instead
+    would emit `"specifications": null` on every row for every caller that never
+    asked, which is exactly the byte-for-byte change this opt-in exists to avoid.
+
+    The field set is otherwise identical: the same model does the serializing,
+    this only adds one key per row.
+    """
+    body = ListResponse[ProductResponse].model_validate(result).model_dump(mode="json")
+    rows = result.get("data") or []
+    by_product = service.specifications_for_products([str(row.id) for row in rows])
+    for serialized, row in zip(body.get("data") or [], rows):
+        # Present-but-null when nothing has been derived: absence of data is a
+        # fact the caller should be able to read, not a key it has to miss.
+        serialized["specifications"] = by_product.get(str(row.id))
+    return JSONResponse(content=body)
+
+
 @router.get("/", response_model=ListResponse[ProductResponse])
 def get_products(
     page: int = Query(1, ge=1),
@@ -105,6 +127,15 @@ def get_products(
         "all",
         pattern="^(base|variant|all)$",
         description="Variant-graph filter: base (no parent) | variant (has parent) | all.",
+    ),
+    include_specifications: bool = Query(
+        False,
+        description=(
+            "Attach each row's derived product specifications: "
+            "`specifications: {values, rendered_text, sources}`, or null when the "
+            "product has no derived row. Off by default - the response is "
+            "unchanged for every caller that does not ask."
+        ),
     ),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
@@ -167,6 +198,8 @@ def get_products(
         if isinstance(result, dict) and result.get("alternatives"):
             from fastapi.encoders import jsonable_encoder
             return JSONResponse(content=jsonable_encoder(result))
+        if include_specifications and isinstance(result, dict):
+            return _with_specifications(service, result)
         return result
     except Exception as e:
         elapsed_ms = (time.perf_counter() - started) * 1000

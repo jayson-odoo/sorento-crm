@@ -16,6 +16,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
+from app.models.product import Product, ProductAttachment
+from app.models.resources import Attachment
+from app.models.scm import ReorderRecommendation
 from app.schemas.scm_reorder import (
     CreateReorderRunRequest,
     ReorderRunAccepted,
@@ -25,6 +28,8 @@ from app.schemas.scm_reorder import (
     UnlocatedDemandResponse,
 )
 from app.services.company_scope_sql import company_sql_predicate
+from app.services.dealer_kit import product_images
+from app.services.dealer_kit.viewer import ViewerContext
 from app.services.scm import cover_service
 from app.services.scm import price_history_service
 from app.services.scm import (
@@ -123,7 +128,8 @@ def list_reorder_runs(
     code_by_id: dict[str, str] = {}
     if all_ids:
         for wr in db.execute(text(
-            "SELECT id::text AS id, warehouse_code FROM warehouses WHERE id::text = ANY(:ids)"
+            "SELECT id::text AS id, warehouse_code FROM warehouses "
+            "WHERE id = ANY(CAST(:ids AS uuid[]))"
         ), {"ids": list(all_ids)}).mappings().all():
             code_by_id[wr["id"]] = wr["warehouse_code"]
 
@@ -139,12 +145,20 @@ def _costed_buy_counts(db: Session, run_ids: list[str]) -> dict[str, int]:
     """Live count of ORDERABLE buys (unit_cost present) per run, from the frozen
     recommendations. Overrides the run_log's ``buy`` tally so runs generated before
     the uncosted-exclusion fix still report the orderable count, keeping the Buy tile
-    consistent with the plan grid (which parks uncosted buys in the needs-cost banner)."""
+    consistent with the plan grid (which parks uncosted buys in the needs-cost banner).
+
+    The cast sits on the PARAMETER, never on ``run_id``. Putting ``::text`` on the column
+    instead makes ``ix_scm_reorder_recommendation_rec_type`` unusable and turns this into a
+    parallel sequential scan of every recommendation ever written: measured on the prod
+    copy (396,601 rows), 4,629 ms against 81 ms. It is on the critical path three times
+    over - ``/reorder-runs/today`` gates the whole plan screen, and run-status and the
+    history panel call it as well."""
     if not run_ids:
         return {}
     rows = db.execute(text(
         "SELECT run_id::text AS run_id, count(*) AS n FROM scm.reorder_recommendation "
-        "WHERE run_id::text = ANY(:ids) AND rec_type = 'buy' AND unit_cost IS NOT NULL "
+        "WHERE run_id = ANY(CAST(:ids AS uuid[])) AND rec_type = 'buy' "
+        "  AND unit_cost IS NOT NULL "
         "GROUP BY run_id"
     ), {"ids": run_ids}).mappings().all()
     return {r["run_id"]: int(r["n"]) for r in rows}
@@ -206,7 +220,8 @@ def get_today_reorder_run(
     ids = [str(w) for w in (row["warehouse_ids"] or [])]
     if ids:
         for wr in db.execute(text(
-            "SELECT id::text AS id, warehouse_code FROM warehouses WHERE id::text = ANY(:ids)"
+            "SELECT id::text AS id, warehouse_code FROM warehouses "
+            "WHERE id = ANY(CAST(:ids AS uuid[]))"
         ), {"ids": ids}).mappings().all():
             code_by_id[wr["id"]] = wr["warehouse_code"]
     item = _list_item(row, code_by_id, _costed_buy_counts(db, [str(row["id"])]))
@@ -327,7 +342,8 @@ def list_cover_sources(
         for r in db.execute(
             text(
                 "SELECT DISTINCT product_id::text FROM scm.reorder_recommendation "
-                "WHERE run_id::text = :run AND rec_type IN ('buy', 'needs_level')"
+                "WHERE run_id = CAST(:run AS uuid) "
+                "  AND rec_type IN ('buy', 'needs_level')"
             ),
             {"run": run_id},
         ).fetchall()
@@ -477,6 +493,117 @@ def list_product_economics(
     return product_economics_service.economics_for_run(db, run_id)
 
 
+@router.get("/reorder-runs/{run_id}/product-images")
+def list_product_images(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """WHICH products on the plan have a photo to show (AC-7).
+
+    > "as IT I do not know what a product looks like"
+
+    A row is a code and a name, and a buyer who never handles the goods cannot tell two
+    codes apart from either. The photo is NOT a new asset: it is the one Dealer Kit ->
+    Brochure images already governs, so the plan screen and the catalogue can never show a
+    different picture of the same product.
+
+    This call answers only the QUESTION the icon asks (lit or dimmed), in one SQL and with
+    no signing at all: the icon is on every row, a plan runs to thousands of them, and the
+    buyer opens two. The picture itself, and the one signature it costs, is bought by the
+    per-product call below when a popover opens.
+
+    A product with nothing to show is ABSENT from the map rather than mapped to false - the
+    popover has a designed empty state and the frontend reads a missing key as "no photo".
+
+    DELIBERATE ASYMMETRY with the per-product route below. This one says a live image ROW
+    EXISTS; that one says the row is SERVABLE, because it signs through
+    `primary_image_urls(..., strict=True)`, which drops a photo it cannot sign (no
+    CloudFront key on this box, a storage object that went away). So a lit icon CAN open
+    onto the popover's "No primary photo yet", and that is the designed outcome rather than
+    a defect: signability is a runtime property of the storage backend, not a column, so it
+    cannot be asked in SQL, and asking it per row would cost the plan a signature for every
+    line to decide which icons are dim. The popover renders the same empty state whichever
+    way it arrived there, so the buyer is never told anything false. Do NOT "fix" one of
+    these two answers to match the other.
+    """
+    svc.assert_run_visible(db, run_id)
+    # ONE statement: the run's product ids are the JOIN, never a list Python carries from a
+    # first query into an `IN (...)` of a second - that list is as long as the plan.
+    #
+    # The three image conditions are the reader's own, for its reasons: a PDF spec sheet is
+    # not a photo, and an attachment deleted in Resource Management does not exist. An ORM
+    # query (not raw SQL) so the company scope filter still runs, and columns only so no
+    # Product or Attachment rows are built for a boolean answer.
+    rows = (
+        db.query(ReorderRecommendation.product_id)
+        .join(
+            ProductAttachment,
+            ProductAttachment.product_id == ReorderRecommendation.product_id,
+        )
+        .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .filter(ReorderRecommendation.run_id == run_id)
+        .filter(Attachment.mime_type.ilike("image/%"))
+        .filter(Attachment.is_deleted.is_(False))
+        .distinct()
+        .all()
+    )
+    return {"has_image": {str(row[0]): True for row in rows}}
+
+
+@router.get("/reorder-runs/{run_id}/product-images/{product_id}")
+def get_product_image(
+    run_id: str,
+    product_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The photo of ONE product on the plan, signed on the open of its popover (AC-7).
+
+    `is_primary` says whether anyone ever nominated this picture in Brochure images. The
+    reader falls back to the first catalogue image when nobody has (the overwhelming
+    majority of imaged products today), which is the right thing to show and still worth
+    telling the buyer, so the popover can offer the way back to the picker.
+
+    No photo is `{"url": null}`, not a 404: a 404 here would read as "that product is not
+    on this plan", which is a different and alarming statement.
+    """
+    svc.assert_run_visible(db, run_id)
+    # The run id is the gate (`assert_run_visible`), so the product has to be one the run
+    # planned. Without this the route would be a general product-photo reader that happened
+    # to take a run id, reachable for any product in the company.
+    on_run = db.execute(
+        text(
+            "SELECT 1 FROM scm.reorder_recommendation "
+            "WHERE run_id = CAST(:run AS uuid) AND product_id = CAST(:product AS uuid) "
+            "LIMIT 1"
+        ),
+        {"run": run_id, "product": product_id},
+    ).first()
+    if not on_run:
+        raise AppException(404, "Product not found on this run")
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise AppException(404, "Product not found on this run")
+
+    # Staff: the plan screen is behind `scm.dashboard.view`, an internal permission, so
+    # trade imagery is permitted here exactly as it is in the dealer-kit builder. What a
+    # CONSUMER may see is decided again, per reader, when a catalogue page is published.
+    viewer = ViewerContext(is_staff=True)
+    url = product_images.primary_image_urls(db, [product], viewer).get(product.id)
+    nominated = (
+        db.query(ProductAttachment.id)
+        .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .filter(ProductAttachment.product_id == product_id)
+        .filter(ProductAttachment.is_primary.is_(True))
+        .filter(Attachment.mime_type.ilike("image/%"))
+        .filter(Attachment.is_deleted.is_(False))
+        .first()
+    )
+    return {"url": url, "is_primary": bool(url and nominated)}
+
+
 @router.get("/reorder-runs/{run_id}/level-suggestions")
 def list_level_suggestions(
     run_id: str,
@@ -536,8 +663,17 @@ def list_recommendations(
     ), params).scalar() or 0
 
     sort_expr = _SORT.get(sort or "", None)
-    order_by = (f"{sort_expr} {'DESC' if dir.lower() == 'desc' else 'ASC'} NULLS LAST"
-                if sort_expr else "rr.rec_type ASC, p.product_code ASC")
+    # `rr.id` last, always: without a unique tie-breaker LIMIT/OFFSET paging is not stable.
+    # Neither the default order (rec_type, product_code - one product is planned at several
+    # warehouses) nor any sortable column is unique, so rows that tie can be returned in a
+    # different sequence on each execution and a row can appear on two pages or on none.
+    # Observed on the live run: two identical fetches of disposition page 3 returned the
+    # same 92 rows in a different order. Fetching the pages concurrently makes it likelier
+    # still, since they no longer run one after another against the same warm cache.
+    # This orders ties deterministically; it changes no row's values and no page's contents
+    # beyond making them repeatable.
+    order_by = (f"{sort_expr} {'DESC' if dir.lower() == 'desc' else 'ASC'} NULLS LAST, rr.id ASC"
+                if sort_expr else "rr.rec_type ASC, p.product_code ASC, rr.id ASC")
     params["limit"] = limit
     params["offset"] = (page - 1) * limit
     rows = db.execute(text(f"""

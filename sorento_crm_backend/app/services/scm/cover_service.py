@@ -91,7 +91,7 @@ WITH plan_demand AS (
            MAX(COALESCE((r.inputs ->> 'committed')::numeric, 0)) AS demand,  -- the API calls this outstanding_sales
            MAX(COALESCE((r.inputs ->> 'on_hand')::numeric, 0))           AS plan_on_hand
     FROM scm.reorder_recommendation r
-    WHERE r.run_id::text = :run_id
+    WHERE r.run_id = CAST(:run_id AS uuid)
     GROUP BY r.product_id, r.warehouse_id
 )
 SELECT s.product_id::text                              AS product_id,
@@ -107,8 +107,17 @@ LEFT JOIN plan_demand d
        ON d.product_id = s.product_id AND d.warehouse_id = s.warehouse_id
 WHERE s.quantity_on_hand > 0
   AND w.counts_as_available
-  -- ::text on BOTH sides: a bare uuid = ANY(text[]) is 'operator does not exist'
-  AND s.product_id::text = ANY(:product_ids)
+  -- The cast goes on the PARAMETER. `uuid = ANY(text[])` is 'operator does not exist',
+  -- which is what the ::text-on-both-sides version was working around; casting the bound
+  -- array instead satisfies the operator without casting the column.
+  --
+  -- Consistency, not a measured win. The list here is the run's whole product scope
+  -- (2,581 ids against 13,039 stock rows on the prod copy), and at that width Postgres
+  -- rightly prefers a sequential scan whichever side carries the cast. What this buys is
+  -- that the cast is no longer the thing DECIDING that: the planner is free to use the
+  -- index the day a caller passes a short list. The predicate that genuinely needed the
+  -- index is `run_id` above, which selects 4,634 rows out of 396,601.
+  AND s.product_id = ANY(CAST(:product_ids AS uuid[]))
 """
 
 

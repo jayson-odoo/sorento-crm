@@ -23,7 +23,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
-import { EM_DASH, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtSupplierCost } from '../../lib/format';
 import { computedAtLabel, dayLabel } from '../lib/coverageTimeline';
 import { usePoWorklist, useSetKeyedStatus } from '../hooks/usePoWorklist';
 import {
@@ -274,7 +274,10 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
         ),
         cell: ({ row }) => {
           const r = row.original;
-          if (r.cash_committed === null || !r.last_po_currency) {
+          // The COST decides whether there is anything to show. A missing currency does
+          // not: a blank code means the base currency, so gating on it hid a real
+          // committed figure behind "no cost recorded".
+          if (r.cash_committed === null) {
             return (
               <span
                 className="text-2xs text-muted-foreground"
@@ -285,8 +288,10 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
             );
           }
           return (
-            <span title={`${fmtInt(r.chosen_qty)} at ${r.last_po_cost} ${r.last_po_currency}`}>
-              {r.last_po_currency} {r.cash_committed.toLocaleString('en-MY')}
+            <span
+              title={`${fmtInt(r.chosen_qty)} at ${fmtSupplierCost(r.last_po_cost, r.last_po_currency)}`}
+            >
+              {fmtSupplierCost(r.cash_committed, r.last_po_currency)}
             </span>
           );
         },

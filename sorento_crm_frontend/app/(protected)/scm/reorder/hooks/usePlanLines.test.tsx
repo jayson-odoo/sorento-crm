@@ -22,6 +22,7 @@ const getLevelSuggestions = vi.fn();
 const getPurchaseTrend = vi.fn();
 const getPoBook = vi.fn();
 const getProductEconomics = vi.fn();
+const getProductImages = vi.fn();
 const amendLevelSuggestion = vi.fn();
 const recordLifecycleDecision = vi.fn();
 
@@ -37,6 +38,7 @@ vi.mock('../services/reorderRunService', () => ({
   getPurchaseTrend: (...a: unknown[]) => getPurchaseTrend(...a),
   getPoBook: (...a: unknown[]) => getPoBook(...a),
   getProductEconomics: (...a: unknown[]) => getProductEconomics(...a),
+  getProductImages: (...a: unknown[]) => getProductImages(...a),
   amendLevelSuggestion: (...a: unknown[]) => amendLevelSuggestion(...a),
   recordLifecycleDecision: (...a: unknown[]) => recordLifecycleDecision(...a),
 }));
@@ -61,6 +63,7 @@ beforeEach(() => {
   getPurchaseTrend.mockReset().mockResolvedValue({ window_months: 3, products: {} });
   getPoBook.mockReset().mockResolvedValue({ po_book: {} });
   getProductEconomics.mockReset().mockResolvedValue({ products: {}, thresholds: {} });
+  getProductImages.mockReset().mockResolvedValue({ has_image: {} });
 });
 
 describe('usePlanLines - purchase trend is lazy, not eager', () => {
@@ -169,5 +172,52 @@ describe('usePlanLines - one row cannot reserve stock it does not need', () => {
     const second = result.current.lines.find((l) => l.id === 'r2')!;
     // 50 free less the 10 the first row actually took, never less the 40 it typed.
     expect(result.current.coverFor(second).offered.map((s) => s.qty)).toEqual([40]);
+  });
+});
+
+describe('usePlanLines - the photo map is lazy too, and one call for the whole run (AC-7)', () => {
+  it('does NOT fetch the photos on mount', async () => {
+    renderHook(() => usePlanLines('run-1', true), { wrapper });
+
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalledWith('run-1'));
+    expect(getProductImages).not.toHaveBeenCalled();
+  });
+
+  it('fetches them once, on the first icon opened, however many rows ask', async () => {
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    act(() => result.current.requestProductImages());
+    await waitFor(() => expect(getProductImages).toHaveBeenCalledWith('run-1'));
+
+    act(() => result.current.requestProductImages());
+    expect(getProductImages).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports idle until asked, then ready, and says which products have a photo', async () => {
+    getProductImages.mockResolvedValue({ has_image: { p1: true } });
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    expect(result.current.photoStatus).toBe('idle');
+
+    act(() => result.current.requestProductImages());
+    await waitFor(() => expect(result.current.photoStatus).toBe('ready'));
+
+    const withPhoto = { product_id: 'p1' } as never;
+    const without = { product_id: 'p2' } as never;
+    expect(result.current.hasPhotoFor(withPhoto)).toBe(true);
+    expect(result.current.hasPhotoFor(without)).toBe(false);
+  });
+
+  it('a failed photo fetch is reported, and never takes the plan down with it', async () => {
+    getProductImages.mockRejectedValue(new Error('boom'));
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    act(() => result.current.requestProductImages());
+
+    await waitFor(() => expect(result.current.photoStatus).toBe('error'));
+    expect(result.current.isError).toBe(false);
   });
 });
