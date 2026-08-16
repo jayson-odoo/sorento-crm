@@ -63,7 +63,9 @@ Before CS opens the sheet, the system already knows:
 
 Customer demand is promised from named supply, Purchasing sees only the confirmed unplaced Buy
 residual, and the buyer can explain the product total down to location and SO-line evidence.
-No demand, stock, incoming supply, or purchase decision is counted twice.
+No demand, stock, incoming supply, or purchase decision is counted twice: every confirmed non-Buy
+component of an active Project decision (Reserve, Borrow, and timely SPO cover) is removed from
+Retail planning supply at that location.
 
 ## 2. Process stages and ownership
 
@@ -299,7 +301,10 @@ Order Inquiry is a purchase-requirement handoff, not an independent netting engi
   `projects.sales_order_lines.core_sales_order_line_id` and the fulfilment warehouse. The legacy
   sheet leg (`sales_orders.demand_origin = 'scm_order_inquiry'`) is read only for SOs with no
   confirmed CS decision, so a sheet-named SO that CS later confirms counts once: the confirmed Buy
-  replaces the sheet quantity.
+  replaces the sheet quantity. A core `sales_orders` row is decided exactly when
+  `projects.sales_orders.so_id = sales_orders.id` and that project SO has an active
+  `projects.so_supply_decisions` row; never match on `provisional_ref`, `autocount_doc_no`, or
+  item.
 
 This explicitly replaces two behaviors on the implementation baseline:
 
@@ -325,14 +330,17 @@ Neither selector replaces or overloads the other.
 
 ### 5.2 Deterministic Project and Retail classification
 
-Project versus Retail comes from the existing import and publish classification path. Persisted
+Project versus Retail comes from the existing import classification path. Persisted
 `sales_orders.demand_class` is authoritative for planning. There is no AI, warehouse, or
 fulfilment-location inference.
 
 The deterministic mapping is:
 
 - `_classify_demand` checks the stored SO `order_type`, then the stated import `order_type`, then
-  the customer's market segment, then the sales agent's persisted demand class;
+  the customer's market segment, then the sales agent's persisted demand class; the sales-agent
+  step and the shared `app.services.scm.demand_class.class_of` mapper exist on `main`, not at
+  `aab24c0c`, where the mapper is `_class_of` inside `outstanding_import_service` with no
+  sales-agent step;
 - for each textual order-type or market-segment source, any normalized value containing `project`,
   `projects`, or `contract` maps to `project`, including `subcontractor`, and every other stated
   value maps to `retail`;
@@ -375,7 +383,8 @@ project_need(p, w)
 
 retail_free_supply(p, w)
   = existing shared free-supply calculation
-  - confirmed Project Reserve and Borrow claims against w
+  - confirmed non-Buy components of active Project decisions at w
+    (Reserve + Borrow + timely SPO cover = confirmed open_so_qty - buy_qty)
 
 retail_need(p, w)
   = existing normal netting of Retail-class outstanding SO against retail_free_supply
@@ -513,7 +522,8 @@ precedence over the legacy sheet leg.
   row while retaining the existing aggregate committed column and join keys for current consumers.
   The Project column reads only current confirmed, unplaced Order Inquiry Buy through the
   section 4 join path and passes it through as firm need; the `demand_origin = 'scm_order_inquiry'`
-  leg contributes only for SOs without a confirmed decision. The Retail column keeps the existing
+  leg contributes only for SOs without a confirmed decision under the section 4 predicate. The
+  Retail column keeps the existing
   open-SO basis for normal netting. Front planning reads the split columns; shared stock, SPO, PO,
   and reorder facts remain single product-location values and never gain a demand-class row
   dimension.
@@ -526,9 +536,10 @@ precedence over the legacy sheet leg.
   front planning, store its Project, Retail, and unclassified demand breakdown plus references to
   shared location supply in the existing `inputs` snapshot. On new runs location need is
   `project_need + retail_need`: Project need bypasses net-position subtraction, Retail retains
-  normal netting of Retail-class demand only after confirmed Project Reserve and Borrow claims
-  reduce free supply, and unclassified demand is excluded from the actionable need in both grains.
-  No `demand_class` row key or duplicate supply row is added.
+  normal netting of Retail-class demand only after every confirmed non-Buy component of active
+  Project decisions (Reserve, Borrow, and timely SPO cover) reduces free supply, and unclassified
+  demand is excluded from the actionable need in both grains. No `demand_class` row key or
+  duplicate supply row is added.
 - Keep the existing `scm.order_summary_row` identity and unique key `(run_id, product_id)`. New runs
   still write one row per product. Add nullable Numeric `project_buy_qty`,
   `retail_replenishment_qty`, and `unclassified_demand_qty`, nullable Date
@@ -600,8 +611,8 @@ precedence over the legacy sheet leg.
 - `scm.reorder_level` remains per location. No consolidation migration or product-level winner
   is added. The product value is calculated as the sum in section 5.5.
 - `scm.item_classification` supplies the existing ABC hot-selling fact.
-- Persisted core `sales_orders.demand_class` supplies channel ownership. The existing import and
-  publish precedence is stored `order_type`, stated `order_type`, customer market segment, then
+- Persisted core `sales_orders.demand_class` supplies channel ownership. The existing import
+  precedence is stored `order_type`, stated `order_type`, customer market segment, then
   sales-agent demand class. Text sources use the unchanged substring behavior of
   `demand_class.class_of`; a missing result is the classification exception.
 
@@ -622,6 +633,8 @@ pre-code contract only.
   on `scm.committed_v`, dealer-facing locations, ABC evidence, legacy-run identification, UOM
   name classes and observed quantity scales, and SPO location/date source against
   production-shaped fixtures.
+- Rebase or merge the feature branch onto `main` first, so the sales-agent precedence step and
+  `demand_class.class_of` are present to pin.
 - Pin mapper cases for `project`, `projects`, `contract`, and `subcontractor` as Project and an
   ordinary non-matching stated segment as Retail. Pin stored order type, stated order type,
   customer market segment, and sales-agent fallback precedence, the two existing stamp points
@@ -703,7 +716,7 @@ No browser run is required for this documentation-only PR.
 |---|---|
 | Partial commitment leaks to Purchasing | One SO-level transaction; no active decision or inquiry rows until every line balances |
 | Same incoming or stock covers two lines | One dated product-location projection, stable line and source ordering, concurrency protection, and recheck at commit |
-| Confirmed cover remains free in a later proposal | The same confirmed claim read reduces CS free stock and Retail planning supply before either calculation |
+| Confirmed cover remains free in a later proposal | The same confirmed claim read (Reserve, Borrow, and timely SPO cover) reduces CS free stock and Retail planning supply before either calculation |
 | Order Inquiry buys coverage again | Buy residual only; no independent coverage netting in the reader |
 | Customer delivery reduces Buy twice | Reader consumes current unplaced Buy directly, not delivered-order arithmetic |
 | Hot dealer stock is silently reserved | Existing ABC A test, dealer stock excluded, and BRW floor cap |
@@ -748,7 +761,7 @@ or plan language where different.
 | Q6 | Confirmation is one atomic Project SO-level transaction covering all lines. Before it, the whole SO is Needs CS review and outside purchasing. Every line must satisfy the balance invariant at the same commit. |
 | Q7 | Product reorder level is the sum of per-location reorder levels. NULL or absent contributes 0. There is no inferred winner, worklist, or Needs level state; Location grain keeps reading each location level. |
 | Q8 | Product and Location remain selectable and actionable Plan grain modes over the same frozen product-location facts. Product has one row per product with Project, Retail, and unclassified demand as stacked analysis; Location shows the same breakdown by location. MOQ and rounding apply once to the Product total. One decision grain is locked per new run, separately from Planning mode: Auto / Manual; legacy runs are read-only. |
-| Q9 | Persisted `sales_orders.demand_class` is the semantic owner. Import and publish evaluate stored `order_type`, stated `order_type`, customer market segment, then sales-agent demand class. The unchanged mapper treats a textual value containing `project`, `projects`, or `contract` as Project and every other stated textual value as Retail. A missing persisted class is an exception. Warehouse and AI never classify demand. |
+| Q9 | Persisted `sales_orders.demand_class` is the semantic owner. Import evaluates stored `order_type`, stated `order_type`, customer market segment, then sales-agent demand class. The unchanged mapper treats a textual value containing `project`, `projects`, or `contract` as Project and every other stated textual value as Retail. A missing persisted class is an exception. Warehouse and AI never classify demand. |
 
 ## 12. Supersession notes
 
@@ -759,7 +772,7 @@ planning:
 - inquiry-at-publish and inquiry-side coverage netting are replaced by confirmed Buy-only handoff;
 - requested/accepted donor approval is replaced by explicit confirming-CS Borrow with evidence
   and reason;
-- inferred channel classification is replaced by the existing import and publish precedence plus
+- inferred channel classification is replaced by the existing import precedence plus
   persisted SO demand class;
 - retirement of the per-location plan is rejected; both plan grains remain;
 - exact-line incoming allocation is replaced by dated product-location availability;

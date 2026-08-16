@@ -161,9 +161,11 @@ stock appears only as Reserve or Borrow.
 
 ### AC-B13 [BE][T][J04] Confirmed cover is unavailable to later demand
 
-Given dated location supply covers one SO or Reserve or Borrow is confirmed for it, when a later CS
-proposal or replenishment calculation reads the same product and location, then outstanding demand
-and confirmed claims reduce availability and the quantity cannot be consumed a second time.
+Given a confirmed Project decision with Reserve, Borrow, or timely SPO cover at one location, when
+a later CS proposal or Retail replenishment calculation reads the same product and location, then
+every confirmed non-Buy component (confirmed open quantity minus Buy) reduces availability and the
+quantity cannot be consumed a second time. Given Project open 10 covered by SPO 10, Retail
+outstanding 10, and stock 0 at one location, then Retail need is 10, not 0.
 
 ## Group C: Atomic Project SO confirmation
 
@@ -259,9 +261,9 @@ Given an SO arrives through outstanding-order import (including AutoCount upload
 Inquiry sheet import, when its persisted `sales_orders.demand_class` is stamped, then it goes
 through `_classify_demand`, Project SO publish stamps nothing, and the mapper checks stored
 `order_type`, stated `order_type`, customer market segment, and sales-agent demand class in that
-order. Any textual source containing `project`,
-`projects`, or `contract` maps to `project`, including `subcontractor`; every other stated textual
-value maps to `retail`, and no AI or warehouse inference participates.
+order (the sales-agent step exists on `main`, not at `aab24c0c`). Any textual source containing
+`project`, `projects`, or `contract` maps to `project`, including `subcontractor`; every other
+stated textual value maps to `retail`, and no AI or warehouse inference participates.
 
 ### AC-E02 [BE][J07] Location never classifies demand
 
@@ -358,9 +360,9 @@ Given absent or NULL location levels, when either grain renders, then no inferre
 Given demand and supply at one product and location, when the run freezes its read-model facts, then
 one aggregate product-location row has separate Project, Retail, and unclassified demand columns,
 while stock, SPO incoming, PO supply, and reorder level remain single shared values. Project need is
-confirmed unplaced Buy and Retail need uses normal netting after confirmed Project Reserve and
-Borrow claims are removed. Existing `scm.committed_v` and `scm.net_position_v` cardinality and join
-keys remain unchanged.
+confirmed unplaced Buy and Retail need uses normal netting after every confirmed non-Buy
+component of active Project decisions (Reserve, Borrow, and timely SPO cover) is removed.
+Existing `scm.committed_v` and `scm.net_position_v` cardinality and join keys remain unchanged.
 
 ### AC-F08 [FE][J08] Location drill explains the Product row
 
