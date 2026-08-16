@@ -79,6 +79,16 @@ Two independent passes, and they found different things, which is the argument f
   never declare. Either add the missing ones in a new revision or declare the hand-named ones on
   the models. On a from-zero database the divergence is 0.
 
+## Machine state left behind
+
+Private databases kept ON PURPOSE for the Aug 18 gate, do not drop them until it has run:
+`tstr_projmove_head` (bootstrapped at 354), `tstr_projmove_baseline` (at 353),
+`tstr_projmove_pre` (baseline shape, the migrate-from-before-354 source). The `tstr_pm_*`
+databases are transient check copies from the fix pass and are safe to drop. The `wt-baseline`
+worktree under the session scratchpad is still checked out at `df102ce4b` for the baseline side.
+
+This lane runs no servers and started no browser.
+
 ## Pointers
 
 - `documentation/adr/0009-project-sales-is-one-module-tables-stay-public.md` (status: superseded
