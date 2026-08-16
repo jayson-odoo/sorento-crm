@@ -19,6 +19,9 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import SendTemplateDialog from '@/components/common/whatsapp-template/SendTemplateDialog';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 import { useMessageSnippetOptions } from '@/app/(protected)/sla-management/message-snippets/hooks/useMessageSnippets';
 import type { MessageSnippetOption } from '@/app/(protected)/sla-management/message-snippets/types/messageSnippet.types';
 import { useConversationWindowState } from './useConversationWindowState';
@@ -338,6 +341,43 @@ export default function SharedConversationComposer({
     return false;
   };
 
+  // ---- Staged image previews -------------------------------------------
+  // A pasted screenshot is unrecognisable as a filename ("image.png"), so the
+  // staged strip shows the picture itself. A staged file has no URL of its own,
+  // so each image gets an object URL, revoked as soon as the list changes or
+  // the composer unmounts - the cleanup runs on the PREVIOUS array, which is
+  // exactly the set that just stopped being displayed.
+  const stagedImageUrls = useMemo(
+    () =>
+      files.map((file) =>
+        file.type.startsWith('image/') && typeof URL?.createObjectURL === 'function'
+          ? URL.createObjectURL(file)
+          : null,
+      ),
+    [files],
+  );
+  useEffect(
+    () => () => {
+      stagedImageUrls.forEach((url) => url && URL.revokeObjectURL?.(url));
+    },
+    [stagedImageUrls],
+  );
+  /** Which staged file the preview is open on (index into `files`), or null. */
+  const [previewFileIndex, setPreviewFileIndex] = useState<number | null>(null);
+  const stagedPreviewItems = useMemo(() => {
+    const out: { fileIndex: number; item: AttachmentPreviewItem }[] = [];
+    files.forEach((file, index) => {
+      const url = stagedImageUrls[index];
+      if (!url) return;
+      out.push({ fileIndex: index, item: { id: `staged-${index}`, name: file.name, url } });
+    });
+    return out;
+  }, [files, stagedImageUrls]);
+  const previewStartIndex = Math.max(
+    0,
+    stagedPreviewItems.findIndex((entry) => entry.fileIndex === previewFileIndex),
+  );
+
   const canSubmit = !!replyText.trim() || (attachmentsEnabled && files.length > 0);
 
   const handleSend = async () => {
@@ -431,18 +471,76 @@ export default function SharedConversationComposer({
     </Button>
   );
 
-  const addFiles = (picked: FileList | null) => {
+  const addFiles = (picked: FileList | File[] | null | undefined) => {
     if (sending) return;
     if (!picked?.length) return;
     setFiles((prev) => [...prev, ...Array.from(picked)]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  /**
+   * Pasting into the message box (Cmd/Ctrl+V) stages whatever files the
+   * clipboard carries - a screenshot, a copied file - through the SAME path as
+   * the Attach button, which is what makes it behave like WhatsApp / Respond.
+   * Text pastes are untouched: the handler only intervenes when there are files.
+   */
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!attachmentsEnabled || sending) return;
+    const pasted = Array.from(event.clipboardData?.files ?? []);
+    if (pasted.length === 0) return;
+    event.preventDefault();
+    addFiles(pasted);
+  };
+
+  const removeStagedFile = (idx: number, notSent: boolean) => {
+    if (sending) return;
+    if (notSent) setFailedFileName(null);
+    setPreviewFileIndex(null);
+    setFiles((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   const attachmentChips =
     attachmentsEnabled && files.length > 0 ? (
-      <div className="flex flex-wrap gap-1.5" data-testid="composer-attachments">
+      <div className="flex flex-wrap items-start gap-1.5" data-testid="composer-attachments">
         {files.map((file, idx) => {
           const notSent = failedFileName === file.name;
+          const thumbUrl = stagedImageUrls[idx];
+          if (thumbUrl) {
+            // An image stages as a thumbnail; clicking it opens the SAME
+            // preview surface the thread bubbles use.
+            return (
+              <span
+                key={`${file.name}-${idx}`}
+                data-testid={notSent ? 'composer-attachment-failed' : 'composer-attachment'}
+                className={`relative inline-block size-14 overflow-hidden rounded-md border${
+                  notSent ? ' border-destructive' : ''
+                }`}
+                title={notSent ? `${file.name} - not sent` : file.name}
+              >
+                <button
+                  type="button"
+                  className="block size-full"
+                  aria-label={`Preview ${file.name}`}
+                  onClick={() => setPreviewFileIndex(idx)}
+                >
+                  {/* A local object URL: next/image needs configured hosts. */}
+                  <img src={thumbUrl} alt={file.name} className="size-full object-cover" />
+                  <span className="sr-only">{file.name}</span>
+                </button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="absolute end-0 top-0 size-5 rounded-none bg-background/80"
+                  aria-label={`Remove ${file.name}`}
+                  disabled={sending}
+                  onClick={() => removeStagedFile(idx, notSent)}
+                >
+                  <X className="size-3" />
+                </Button>
+              </span>
+            );
+          }
           return (
             <span
               key={`${file.name}-${idx}`}
@@ -465,11 +563,7 @@ export default function SharedConversationComposer({
                 // accepted mid-flight is undone by the partial re-stage below
                 // and the file goes to the contact on the next Send.
                 disabled={sending}
-                onClick={() => {
-                  if (sending) return;
-                  if (notSent) setFailedFileName(null);
-                  setFiles((prev) => prev.filter((_, i) => i !== idx));
-                }}
+                onClick={() => removeStagedFile(idx, notSent)}
               >
                 <X className="size-3" />
               </Button>
@@ -520,6 +614,7 @@ export default function SharedConversationComposer({
             placeholder="Type your message…"
             value={replyText}
             onChange={onComposerInput}
+            onPaste={handlePaste}
             onKeyDown={(e) => onSnippetKeyDown(e)}
             rows={2}
             disabled={sending}
@@ -599,6 +694,7 @@ export default function SharedConversationComposer({
             placeholder="Type your message..."
             value={replyText}
             onChange={onComposerInput}
+            onPaste={handlePaste}
             onKeyDown={(e) => {
               // The picker owns the arrows and Enter while it is open, or
               // choosing a snippet would send an unfinished message instead.
@@ -711,6 +807,18 @@ export default function SharedConversationComposer({
           </Button>
         )}
       </div>
+
+      {/* Staged images open the SAME preview surface the thread bubbles use -
+          no second lightbox. The item's url IS the local object URL, so no
+          byte-fetch is needed and none is passed. */}
+      <AttachmentPreviewModal
+        open={previewFileIndex !== null && stagedPreviewItems.length > 0}
+        onOpenChange={(next) => {
+          if (!next) setPreviewFileIndex(null);
+        }}
+        items={stagedPreviewItems.map((entry) => entry.item)}
+        startIndex={previewStartIndex}
+      />
 
       <SendTemplateDialog
         entityType={entityType}
