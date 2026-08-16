@@ -333,6 +333,57 @@ def test_submitting_nothing_is_refused(client, sent_request):
     assert response.status_code == 422
 
 
+# --- a bad template id is a 422 on both writers -------------------------------
+#
+# `template_id` is a UUID foreign key taken straight from client input on the
+# public save AND on the reviewer's patch (both go through
+# `_apply_person_values`). Unvalidated, "nope" made Postgres raise `invalid input
+# syntax for type uuid` and a well-formed unknown id raised a foreign-key
+# violation - both reaching a token holder as a 500, where every other bad field
+# on the same payload answers 422.
+
+
+@pytest.mark.parametrize("bad", ["nope", str(uuid.uuid4())])
+def test_a_template_id_that_is_not_on_offer_is_refused_on_the_public_save(
+    client, sent_request, bad
+):
+    rows = _rows(1)
+    rows[0]["template_id"] = bad
+    response = client.put(
+        f"{PUBLIC}/rows", params={"token": sent_request.token}, json={"rows": rows}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("bad", ["nope", str(uuid.uuid4())])
+def test_a_template_id_that_is_not_on_offer_is_refused_on_the_reviewers_patch(
+    client, db, sent_request, bad
+):
+    client.put(
+        f"{PUBLIC}/rows", params={"token": sent_request.token}, json={"rows": _rows(1)}
+    )
+    client.post(f"{PUBLIC}/submit", params={"token": sent_request.token}, json={})
+
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+    person_id = client.get(f"{ADMIN}/requests/{sent_request.id}").json()["people"][0]["id"]
+    response = client.put(
+        f"{ADMIN}/requests/{sent_request.id}/people/{person_id}",
+        json={"template_id": bad},
+    )
+    assert response.status_code == 422
+
+
+def test_the_template_on_offer_is_still_accepted(client, sent_request, template):
+    """The guard refuses what does not exist, not what does."""
+    rows = _rows(1)
+    rows[0]["template_id"] = str(template.id)
+    response = client.put(
+        f"{PUBLIC}/rows", params={"token": sent_request.token}, json={"rows": rows}
+    )
+    assert response.status_code == 200
+    assert response.json()["people"][0]["template_id"] == str(template.id)
+
+
 # --- admin: permissions -------------------------------------------------------
 
 
@@ -607,6 +658,55 @@ def test_creating_a_request_needs_the_add_permission(client, db):
     created = client.post(f"{ADMIN}/requests", json=payload)
     assert created.status_code == 201
     assert created.json()["status"] == "draft"
+
+
+@pytest.mark.parametrize("bad", ["nope", str(uuid.uuid4())])
+def test_creating_a_request_for_a_company_that_does_not_exist_is_refused(client, db, bad):
+    """`company_id` was the one creation field nothing checked.
+
+    Title, email and expiry are all validated, but the company - which decides
+    what approving the batch actually grants - went straight into the INSERT: a
+    malformed id died on Postgres reading it as a UUID and an unknown one on the
+    foreign key, both as 500s at commit.
+    """
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+    response = client.post(
+        f"{ADMIN}/requests",
+        json={
+            "company_id": bad,
+            "title": unique_code("New batch"),
+            "requester_name": "Esther",
+            "requester_email": f"{unique_code('esther')}@mocha.com.my".lower(),
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_creating_a_request_for_someone_elses_company_is_refused(client, db):
+    """An out-of-scope company created a request the caller was then 404'd on.
+
+    The row committed, the caller's own scope filter hid it from the detail read
+    that follows, and the batch existed in a company they cannot see.
+    """
+    from app.models.company import Company
+
+    outsider = Company(
+        id=str(uuid.uuid4()), name=unique_code("Outsider Sdn Bhd"), code=unique_code("O")
+    )
+    db.add(outsider)
+    db.commit()
+
+    _as(_make_user(db, slugs=ALL_SLUGS), db)
+    response = client.post(
+        f"{ADMIN}/requests",
+        json={
+            "company_id": outsider.id,
+            "title": unique_code("New batch"),
+            "requester_name": "Esther",
+            "requester_email": f"{unique_code('esther')}@mocha.com.my".lower(),
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_approving_needs_its_own_permission(client, db, sent_request, template):

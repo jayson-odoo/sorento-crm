@@ -2,8 +2,9 @@
 
 **Status:** Phases 1 and 2 shipped (FE on the real API, backend + tests green), then
 restandardized onto the repo's list/detail idiom; Phase 3 (review) in progress, with the
-captain's hands-on round of 2026-08-15 applied (section 7). Section 2.6's endpoint table and
-2.7's registry note describe what actually shipped, not the original sketch.
+captain's hands-on round of 2026-08-15 applied (section 7) and the review fixes of 2026-08-16
+(section 8). Section 2.6's endpoint table and 2.7's registry note describe what actually
+shipped, not the original sketch.
 **Contract:** `documentation/plans/UAC-onboarding-intake.md`. Read that first; it carries the
 Journey and every AC this plan implements. Nothing outside the repo is required.
 
@@ -432,3 +433,24 @@ migration.
   and the dead `cancel()` service function has been deleted rather than exposed; nothing moves
   a request there today. The seeded edges stay - removing them is a destructive migration for
   no gain.
+- **The batch note is not part of a saved draft.** "Save draft" persists the people rows
+  (`PUT /public/onboarding/rows`); the batch-level `requester_note` is stamped by `submit`
+  alone, so a note typed and left unsent does not survive a reload.
+
+## 8. Fixes after the review round, 2026-08-16
+
+1. **"Save draft" on the intake page.** AC-3.2 promises a link the requester edits over several
+   days and the intake email says so, but the only call to `saveRows` was the one `submit` made
+   on its way out: her rows lived in component state and closing the tab lost them. The button
+   calls the endpoint that already persists rows while the request is `sent`, and `GET /me`
+   already rehydrates them, so no server change was needed. Deliberately not autosave, not
+   local storage, not dirty tracking, and not a `beforeunload` handler.
+2. **A bad `template_id` is a 422 on both writers.** It is a UUID foreign key taken straight
+   from client input: `"nope"` reached Postgres as `invalid input syntax for type uuid` and a
+   well-formed unknown id as a foreign-key violation, so a token holder saw a 500 where every
+   other bad field answers 422. Checked in `_apply_person_values`, which is the one path both
+   the public save and the reviewer's patch go through.
+3. **A bad `company_id` is a 422 on create.** Title, email and expiry were validated and the
+   company was not, though it decides what approving the batch grants. An unknown id escaped
+   `db.commit()` as a foreign-key violation; an out-of-scope one committed and then vanished
+   behind the caller's own scope filter, 404ing them on the request they had just created.

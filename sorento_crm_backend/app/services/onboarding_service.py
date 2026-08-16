@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.access import RespondContact
+from app.models.base import get_company_scope
 from app.models.company import Company
 from app.models.onboarding import (
     LANE_PENDING,
@@ -114,6 +115,63 @@ def _status_by_key(db: Session, key: str) -> Status:
             ),
         )
     return status
+
+
+def _assert_template_on_offer(db: Session, template_id: Optional[str]) -> None:
+    """Refuse a template id that is not one of the ones on offer.
+
+    Both writers take ``template_id`` straight from client input, and it is a
+    UUID foreign key: ``"nope"`` reached Postgres as ``invalid input syntax for
+    type uuid`` and a well-formed unknown id as a foreign-key violation, so a
+    token holder got a 500 where every other bad field on the same payload
+    answers 422.
+
+    Compared as STRINGS against the ids actually on offer, never as a
+    ``WHERE id = <input>``: that is what keeps the malformed value away from
+    Postgres, which would otherwise abort the surrounding transaction as well.
+    The set is what this session can see, so the check is scoped to the
+    request's own company exactly as the picker is.
+    """
+    if not template_id:
+        return
+    known = {str(row[0]) for row in db.query(OnboardingTemplate.id).all()}
+    if str(template_id) not in known:
+        raise AppException(
+            status_code=422,
+            message="That access template is not available. Pick one from the list.",
+        )
+
+
+def _validated_company_id(db: Session, company_id: Optional[str]) -> str:
+    """The company a new request belongs to, or a 422.
+
+    Title, email and expiry were all checked and the company was not, even though
+    it is the field that decides what approving the batch actually grants: an
+    unknown id escaped ``db.commit()`` as a foreign-key violation and a malformed
+    one as a UUID cast error, both 500s. An id outside the caller's own scope is
+    refused for a different reason - it committed happily and then vanished
+    behind that caller's own scope filter, so they were 404'd on the request they
+    had just created.
+
+    String comparison again, for the reason in ``_assert_template_on_offer``.
+    """
+    wanted = str(company_id or "").strip()
+    existing = {str(row[0]) for row in db.query(Company.id).all()}
+    scope = get_company_scope(db)
+    if scope is None:
+        # The deliberate all-companies principal (a worker, a system caller).
+        visible = existing
+    elif isinstance(scope, frozenset):
+        visible = existing & {str(cid) for cid in scope}
+    else:
+        # UNSET: no scope was ever resolved, which is fail-closed everywhere else.
+        visible = set()
+    if wanted not in visible:
+        raise AppException(
+            status_code=422,
+            message="Choose a company you have access to for this request.",
+        )
+    return wanted
 
 
 def _fold_email(value: Optional[str]) -> Optional[str]:
@@ -322,6 +380,7 @@ def create_request(
         )
     if expiry_days < 1:
         raise AppException(status_code=422, message="The link must last at least a day.")
+    company_id = _validated_company_id(db, company_id)
 
     initial = _status_by_key(db, DRAFT)
     request = OnboardingRequest(
@@ -558,8 +617,15 @@ EDITABLE_PERSON_FIELDS = (
 )
 
 
-def _apply_person_values(person: OnboardingPerson, values: dict) -> None:
-    """Set the editable fields, re-deriving the normalised copies as they change."""
+def _apply_person_values(db: Session, person: OnboardingPerson, values: dict) -> None:
+    """Set the editable fields, re-deriving the normalised copies as they change.
+
+    Both screens write through here, which is why the template id is checked here
+    rather than in either route: a guard on one writer leaves the other one
+    handing raw client input to a UUID foreign key.
+    """
+    if "template_id" in values:
+        _assert_template_on_offer(db, values["template_id"])
     for field in EDITABLE_PERSON_FIELDS:
         if field in values:
             setattr(person, field, values[field])
@@ -633,6 +699,7 @@ def replace_people(
             agent_step=LANE_PENDING,
         )
         _apply_person_values(
+            db,
             person,
             {k: v for k, v in row.items() if k in EDITABLE_PERSON_FIELDS and k != "full_name"},
         )
@@ -675,7 +742,9 @@ def submit(
 def update_person(db: Session, person_id: str, values: dict) -> OnboardingPerson:
     person = get_person(db, person_id)
     _assert_reviewer_writable(db, person)
-    _apply_person_values(person, {k: v for k, v in values.items() if k in EDITABLE_PERSON_FIELDS})
+    _apply_person_values(
+        db, person, {k: v for k, v in values.items() if k in EDITABLE_PERSON_FIELDS}
+    )
     db.commit()
     db.refresh(person)
     return person
