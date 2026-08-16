@@ -772,7 +772,7 @@ _VOCABULARY_ONLY_FIELDS = {"user_values"}
 
 
 @router.patch("/{spec_key}")
-async def update_spec_key(
+def update_spec_key(
     spec_key: str,
     payload: SpecKeyUpdate = Body(...),
     # Either grant gets THROUGH the door; which fields the caller may actually change
@@ -949,7 +949,7 @@ class SpecValueAdd(BaseModel):
 
 
 @router.post("/{spec_key}/values")
-async def add_spec_value(
+def add_spec_value(
     spec_key: str,
     payload: SpecValueAdd = Body(...),
     # The same either-grant the vocabulary-only PATCH field takes: adding a word from

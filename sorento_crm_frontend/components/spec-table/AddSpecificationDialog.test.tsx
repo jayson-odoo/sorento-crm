@@ -94,6 +94,33 @@ describe('who may create a key', () => {
     expect(lastEntry()).toBeNull();
   });
 
+  it('still reveals an existing key to a user who may not create one', () => {
+    // Finding a key is a search affordance, not a create one. Gating the whole last-row
+    // slot on the create grant left this user with "No specification matches that." for
+    // a key that does exist, and the search box clears when the popover closes.
+    const { props } = renderDialog({ canCreateKey: false, heldKeys: HELD });
+
+    searchFor('Number of bowls');
+    expect(lastEntry()).toHaveTextContent('Number of bowls already exists');
+    fireEvent.click(lastEntry()!);
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect(props.onPick).toHaveBeenCalledWith('bowl_count');
+
+    expect(props.onCreateKey).not.toHaveBeenCalled();
+  });
+
+  it('says a held key is on the product to a user who may not create one', () => {
+    renderDialog({ canCreateKey: false, heldKeys: HELD });
+    searchFor('Finish');
+    expect(lastEntry()).toHaveTextContent('Finish is already on this product');
+  });
+
+  it('never offers Create to a user without the grant, whatever they type', () => {
+    renderDialog({ canCreateKey: false });
+    searchFor('Seat hinge type');
+    expect(lastEntry()).toBeNull();
+  });
+
   it('points a typed name that already IS a key at that key instead of Create', () => {
     const { props } = renderDialog();
     searchFor('flush type');

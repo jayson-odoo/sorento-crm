@@ -244,52 +244,51 @@ export function AddSpecificationDialog({
               // the name, and when nothing matches, "Create" is the last entry of the
               // list itself rather than a separate link to hunt for. It leads to the
               // type question, because a key without a type cannot be created.
-              createOption={
-                canCreateKey
-                  ? {
-                      label: (query) => {
-                        const known = knownLabel(query, applicableKeys, otherKeys, heldKeys);
-                        if (known?.held) {
-                          return (
-                            <span className="text-muted-foreground">
-                              <span className="font-medium text-foreground">
-                                {known.key.label}
-                              </span>{' '}
-                              is already on this product
-                            </span>
-                          );
-                        }
-                        if (known) {
-                          return (
-                            <span className="text-muted-foreground">
-                              <span className="font-medium text-foreground">
-                                {known.key.label}
-                              </span>{' '}
-                              already exists — use it
-                            </span>
-                          );
-                        }
-                        return <span>Create &ldquo;{query}&rdquo;</span>;
-                      },
-                      onCreate: (query) => {
-                        const known = knownLabel(query, applicableKeys, otherKeys, heldKeys);
-                        // On the table already: the row is behind this dialog, so there
-                        // is nothing to pick and nothing to create.
-                        if (known?.held) return;
-                        if (known) {
-                          // The name IS a key already: pick it, revealing it first if
-                          // it was behind the "show everything" fold.
-                          if (known.hidden) setShowEverything(true);
-                          setPicked(known.key.spec_key);
-                          return;
-                        }
-                        setProposedLabel(query);
-                        setMatch(null);
-                        setCreating(true);
-                      },
-                    }
-                  : undefined
-              }
+              // Passed to everyone, because two of the three things it says are about
+              // the SEARCH rather than about creating: a name that is already a key, and
+              // a name already on this product. Only the Create row itself is gated -
+              // `label` returns null for it without the grant, and a null row is not
+              // rendered at all.
+              createOption={{
+                label: (query) => {
+                  const known = knownLabel(query, applicableKeys, otherKeys, heldKeys);
+                  if (known?.held) {
+                    return (
+                      <span className="text-muted-foreground">
+                        <span className="font-medium text-foreground">{known.key.label}</span>{' '}
+                        is already on this product
+                      </span>
+                    );
+                  }
+                  if (known) {
+                    return (
+                      <span className="text-muted-foreground">
+                        <span className="font-medium text-foreground">{known.key.label}</span>{' '}
+                        already exists — use it
+                      </span>
+                    );
+                  }
+                  if (!canCreateKey) return null;
+                  return <span>Create &ldquo;{query}&rdquo;</span>;
+                },
+                onCreate: (query) => {
+                  const known = knownLabel(query, applicableKeys, otherKeys, heldKeys);
+                  // On the table already: the row is behind this dialog, so there
+                  // is nothing to pick and nothing to create.
+                  if (known?.held) return;
+                  if (known) {
+                    // The name IS a key already: pick it, revealing it first if
+                    // it was behind the "show everything" fold.
+                    if (known.hidden) setShowEverything(true);
+                    setPicked(known.key.spec_key);
+                    return;
+                  }
+                  if (!canCreateKey) return;
+                  setProposedLabel(query);
+                  setMatch(null);
+                  setCreating(true);
+                },
+              }}
             />
             {!showEverything && otherKeys.length > 0 && (
               <button

@@ -106,9 +106,17 @@ export default function SpecKeyEditor({
   // `allowed_values` at all, yet ships words for 1, 2 and 3 — reading the rows off the
   // value list alone rendered an empty section for exactly the keys whose wording
   // matters most. Open vocabularies (brand, class) are the same story.
+  //
+  // `user_synonyms` is read RAW, beside the merged `synonyms`, because a suppressed
+  // value has no merged entry at all - the published vocabulary must not advertise
+  // words for a value it reports as not allowed. Without the raw column the staff words
+  // for that value would be absent from this form, and the next save of this key would
+  // send a `user_synonyms` that no longer mentions them, deleting them. Suppression is
+  // meant to be reversible.
   const wordedValues = dedupe([
     ...(isBoolean ? ['true'] : liveValues),
     ...Object.keys(specKey.synonyms ?? {}),
+    ...Object.keys(specKey.user_synonyms ?? {}),
     ...Object.keys(specKey.suppressed_synonyms ?? {}),
   ]);
   const [extraWordRows, setExtraWordRows] = useState<string[]>([]);
@@ -118,7 +126,10 @@ export default function SpecKeyEditor({
   // reason as the values: suppression has to survive a save it was not part of.
   const [words, setWords] = useState<Record<string, string[]>>(() =>
     Object.fromEntries(
-      dedupe([...wordedValues]).map((v) => [v, [...(specKey.synonyms?.[v] ?? [])]]),
+      dedupe([...wordedValues]).map((v) => [
+        v,
+        dedupe([...(specKey.synonyms?.[v] ?? []), ...(specKey.user_synonyms?.[v] ?? [])]),
+      ]),
     ),
   );
   const [droppedWords, setDroppedWords] = useState<Record<string, string[]>>(() =>
