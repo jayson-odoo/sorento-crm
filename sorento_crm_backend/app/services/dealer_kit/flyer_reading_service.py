@@ -1029,9 +1029,22 @@ def create_reading(
         # about ``AppException`` leaves it saying "being read" forever, on a
         # list screen, with no job anywhere that will ever finish it. Same words
         # the worker's generic arm uses, so the two paths read alike.
+        # ``complete_reading`` commits the row and only then refreshes it, so a
+        # failure raised after that commit belongs to a read that DID happen.
+        # Re-read the row after the rollback and fail it only while it still
+        # says ``processing``, or a finished reading gets relabelled as one that
+        # never happened.
         logger.exception("Flyer reading %s could not be completed", record.id)
         db.rollback()
-        fail_reading(db, record, message=f"The flyer could not be read: {exc}")
+        current = (
+            db.query(FlyerReadingRecord)
+            .filter(FlyerReadingRecord.id == record.id)
+            .first()
+        )
+        if current is not None and (
+            getattr(current, "status", None) == ReadingStatus.PROCESSING
+        ):
+            fail_reading(db, current, message=f"The flyer could not be read: {exc}")
         raise
 
 

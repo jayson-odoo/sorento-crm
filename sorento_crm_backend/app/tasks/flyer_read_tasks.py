@@ -173,8 +173,12 @@ def read_flyer(
             return _mark_failed(db, reading_id, f"The flyer could not be read: {exc}")
 
     except Exception as exc:  # noqa: BLE001 - loading or scoping itself failed
+        # The row still says ``processing`` and no other job will ever finish
+        # it, so it gets the same words the inner generic arm writes. If the row
+        # is what could not be loaded, ``_mark_failed`` finds nothing and says
+        # so, which is the honest answer.
         logger.exception("read_flyer: reading %s could not be started", reading_id)
-        return {"reading_id": reading_id, "status": "failed", "error": str(exc)}
+        return _mark_failed(db, reading_id, f"The flyer could not be read: {exc}")
     finally:
         if staged:
             svc.discard_staged(staged_provider, staged_key)
