@@ -18,10 +18,8 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { AddSpecificationDialog, SpecTable } from '@/components/spec-table';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useProductSpecTable } from '../../hooks/useProductSpecTable';
-import {
-  rederiveProduct,
-  setFlyerText,
-} from '../../../product-specifications/services/productSpecService';
+import SpecExtractPanel from './SpecExtractPanel';
+import { rederiveProduct } from '../../../product-specifications/services/productSpecService';
 import type {
   ProductSpecDetail,
   SpecDiagnosisReason,
@@ -105,103 +103,6 @@ function diagnosisCopy(
           'this class will populate it.',
       };
   }
-}
-
-/**
- * The flyer card this product's specs are read from, correctable in place.
- *
- * The card text is a machine reading of the printed flyer and it is not complete — a
- * card split across a column break, or one whose code the reading could not place,
- * leaves the product with no dimensions, no seat material, no flush type and nothing on
- * screen explaining the hole. Correcting it here re-reads the product on save, so the
- * specs move in the same click.
- */
-function FlyerCard({
-  productId,
-  text,
-  onSaved,
-}: {
-  productId: string;
-  text: string | null;
-  onSaved: () => Promise<void> | void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(text ?? '');
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      await setFlyerText(productId, draft);
-      toast.success('Flyer card saved', { description: 'This product was read again.' });
-      setEditing(false);
-      await onSaved();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not save the flyer text', {
-        duration: 10_000,
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">
-          Flyer card for this code
-        </div>
-        {!editing && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setDraft(text ?? '');
-              setEditing(true);
-            }}
-          >
-            {text ? 'Edit' : 'Add the card text'}
-          </Button>
-        )}
-      </div>
-
-      {editing ? (
-        <div className="flex flex-col gap-2">
-          <textarea
-            className="min-h-[6rem] w-full rounded-md border border-input bg-background p-3 font-mono text-sm"
-            value={draft}
-            placeholder="e.g. Washdown With Rimless. D: L680xW375xH770mm. *PP Seat Cover"
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <div className="flex items-center gap-2">
-            <Button size="sm" onClick={save} disabled={saving}>
-              {saving ? 'Saving…' : 'Save and read again'}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setEditing(false)}
-              disabled={saving}
-            >
-              Cancel
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              Emptying the box means this product has no flyer card.
-            </span>
-          </div>
-        </div>
-      ) : text ? (
-        <p className="rounded-md border bg-muted/30 p-3 font-mono text-sm break-words whitespace-pre-wrap">
-          {text}
-        </p>
-      ) : (
-        <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-          No flyer card for this code. Anything the flyer prints but the description does
-          not — dimensions, seat material, flush type — cannot be read until one is here.
-        </p>
-      )}
-    </div>
-  );
 }
 
 export default function ProductSpecificationsTab({ productId }: { productId: string }) {
@@ -321,17 +222,16 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
             </p>
           </div>
 
-          {/* The second text. A value marked Flyer was read from here and appears
-              nowhere on the product master, so without it there is no way to check it.
-              Editable, and shown even when empty: the flyer reading missed cards, and a
-              product with no card silently loses its dimensions with nothing on screen
-              to say why or to put it right. */}
-          <FlyerCard
+          {/* Where the stored flyer card used to be, in the same place on the tab.
+              The card was a copy of a printed document kept beside the values it
+              produced and going stale against a flyer that had already been
+              reprinted. This reads a text and proposes; nothing is stored but the
+              values a person accepts. */}
+          <SpecExtractPanel
             productId={productId}
-            text={detail.flyer_text}
-            onSaved={spec.refetch}
+            productCode={detail.product_code}
+            canEdit={canEdit}
           />
-
 
           {detail.spec?.rendered_text && (
             <div className="flex flex-col gap-1.5">

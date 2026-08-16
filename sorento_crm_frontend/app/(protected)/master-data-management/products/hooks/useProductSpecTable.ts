@@ -33,8 +33,17 @@ import type { ProductSpecDetail } from '../../product-specifications/types/produ
  * conflict raised by an authored write appear in the same click.
  */
 
-const DETAIL_KEY = (productId: string) => ['product-spec-detail', productId];
-const APPLICABLE_KEY = (productCode: string) => ['product-spec-applicable-keys', productCode];
+/**
+ * The two query keys this product's specifications live under.
+ *
+ * Exported because the extraction panel writes the same rows through a different
+ * hook, and a second copy of either key would be a write that invalidates nothing.
+ */
+export const DETAIL_KEY = (productId: string) => ['product-spec-detail', productId];
+export const APPLICABLE_KEY = (productCode: string) => [
+  'product-spec-applicable-keys',
+  productCode,
+];
 
 export interface UseProductSpecTableResult {
   detail: ProductSpecDetail | undefined;

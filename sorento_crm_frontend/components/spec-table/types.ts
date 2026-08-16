@@ -44,6 +44,11 @@ export interface SpecTableRow {
   options: string[];
   /** derived | flyer | code | category | human | supplier, or null when unstamped. */
   source: string | null;
+  /**
+   * What an authored value was before it was authored - `flyer` on a promoted one.
+   * Null on everything a person actually typed.
+   */
+  migratedFrom?: string | null;
   /** The exact words the value was read from, or the audit stamp for an authored one. */
   evidence: string | null;
   /** Stored on the row but no longer in the registry: shown, never edited. */

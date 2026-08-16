@@ -650,8 +650,11 @@ step 6 is a later deploy and is NOT executed here.
   in `productSpecService.ts`, added to the contract banner; `setFlyerText`, `getFlyers`,
   `runFindability`, `getFindabilityRuns`, `getFindabilityRun`, `FindabilityRun`,
   `FindabilityResult`, `flyer_text` on `ProductSpecDetail`, `FindabilityPanel` and the "Flyer
-  check" tab in `SpecWorkbench` are deleted. Hooks: `useSpecExtraction(productId)` beside
-  `useProductSpecTable`, invalidating the same two query keys on apply.
+  check" tab in `SpecWorkbench` are deleted. Hooks: `useSpecExtraction(productId, productCode)`
+  beside `useProductSpecTable`, invalidating the same two query keys on apply - the second
+  argument because the applicable-keys key is keyed on the CODE, so the hook cannot invalidate
+  it from the id alone; `useProductSpecTable` now exports both key builders so there is one
+  copy of each.
 - `StoredSpecProvenance` gains `migrated_from?: string`; `SpecSourceBadge` shows a
   `migrated_from === 'flyer'` value as "Set by hand" with the evidence line already reading
   "flyer: ..." (AC-B.15) - no new pill colour.

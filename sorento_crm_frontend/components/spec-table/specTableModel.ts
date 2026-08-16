@@ -23,6 +23,15 @@ export interface StoredSpecProvenance {
   evidence?: string;
   /** The tombstone flag. Present and true means the key was removed on purpose. */
   absent?: boolean;
+  /**
+   * Where an authored value came from before it was authored.
+   *
+   * `flyer` on the 3,353 entries the promote migration re-stamped: the flyer stopped
+   * being something derivation reads, so its values became authored ones rather than
+   * disappearing on the next run (D2). Carried so a person can tell why a value they
+   * never typed says "Set by hand" (AC-B.15).
+   */
+  migrated_from?: string;
 }
 
 /** An open exception, narrowed to the two fields a row cares about. */
@@ -67,6 +76,7 @@ export function buildSpecTableRows(input: {
       dataType: definition?.data_type ?? 'text',
       options: definition?.allowed_values ?? [],
       source: stamp?.source ?? null,
+      migratedFrom: stamp?.migrated_from ?? null,
       evidence: stamp?.evidence ?? null,
       unknownKey: !definition,
       conflict: conflict
