@@ -21,7 +21,7 @@ import {
 import { useConversationSLATrackingDetail, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
 import ConversationSLATrackingNavigation from './ConversationSLATrackingNavigation';
 import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
-import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
 import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -53,6 +53,7 @@ import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import SlaTrackingChatRecords from './SlaTrackingChatRecords';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
+import { slaHandler } from '../lib/slaHandler';
 
 const RESPOND_IO_INBOX_BASE_URL = 'https://app.respond.io/space/364817/inbox';
 
@@ -272,16 +273,6 @@ export default function ConversationSLATrackingDetail({
     return null;
   };
 
-  const getTimeToResolution = () => {
-    if (tracking.is_resolved && tracking.resolved_at) {
-      const initiated = parseDateTimeAsUTC(tracking.initiated_at);
-      const resolved = parseDateTimeAsUTC(tracking.resolved_at);
-      const diff = resolved.getTime() - initiated.getTime();
-      return formatDuration(diff);
-    }
-    return null;
-  };
-
   const getResolutionDuration = () => {
     if (tracking.is_resolved && tracking.resolved_at && tracking.initiated_at) {
       const initiated = parseDateTimeAsUTC(tracking.initiated_at);
@@ -291,6 +282,10 @@ export default function ConversationSLATrackingDetail({
     }
     return null;
   };
+
+  // Assignee on an open row, resolver on a resolved one (resolve NULLs the
+  // assignee). Same helper the listing cell uses, so they cannot disagree.
+  const handler = slaHandler(tracking);
 
   const respondIoId = tracking.respond_io_id ?? tracking.contact?.respond_io_id ?? null;
   const contactId = tracking.contact?.id ?? tracking.respond_contact_id ?? null;
@@ -339,7 +334,13 @@ export default function ConversationSLATrackingDetail({
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            Policy: {tracking.policy?.name || tracking.policy_name || tracking.policy?.code || tracking.policy_code || '-'} • Current Tier: {tracking.current_tier}
+            Policy: {tracking.policy?.name || tracking.policy_name || tracking.policy?.code || tracking.policy_code || '-'} • Current Tier: {tracking.current_tier} •{' '}
+            {/* Who handled it, in the header rather than only inside a collapsed
+                section: a resolved row has no assignee (resolve NULLs it), so it
+                names the resolver instead. */}
+            <span data-testid="tracking-handler">
+              {handler.prefix}: {handler.name ?? '-'}
+            </span>
           </p>
         </div>
         <div className="flex gap-2">

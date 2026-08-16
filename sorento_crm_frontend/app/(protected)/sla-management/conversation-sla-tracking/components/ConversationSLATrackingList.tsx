@@ -36,6 +36,7 @@ import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTim
 import { apiFetch } from '@/lib/api';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { CONVERSATION_SLA_TRACKING_PATH } from '../lib/historyLinks';
+import { slaHandler } from '../lib/slaHandler';
 
 export default function ConversationSLATrackingList() {
   const router = useRouter();
@@ -250,14 +251,22 @@ export default function ConversationSLATrackingList() {
         accessorKey: 'assigned_user_name',
         header: ({ column }) => <DataGridColumnHeader title="Assigned To" column={column} />,
         cell: ({ row }) => {
-          const userName = row.original.assigned_user_name ||
-                          row.original.assigned_user?.name ||
-                          row.original.assigned_user?.email ||
-                          row.original.assigned_to ||
-                          '-';
-          return userName;
+          // A resolved row has no assignee (resolve NULLs it), so it names the
+          // resolver instead of reading "-" on exactly the rows someone opens to
+          // find out who handled it. Same helper as the detail header.
+          const handler = slaHandler(row.original);
+          if (!handler.name) return '-';
+          const title = `${handler.prefix} ${handler.name}`;
+          return (
+            <span className="block truncate" title={title}>
+              {handler.prefix === 'Resolved by' && (
+                <span className="text-muted-foreground">Resolved by </span>
+              )}
+              {handler.name}
+            </span>
+          );
         },
-        size: 150,
+        size: 190,
         meta: { headerTitle: 'Assigned To', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
