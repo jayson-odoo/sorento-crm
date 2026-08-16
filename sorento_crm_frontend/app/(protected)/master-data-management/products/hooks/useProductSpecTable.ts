@@ -11,6 +11,7 @@ import {
   type SpecScalar,
   type SpecTableRow,
 } from '@/components/spec-table';
+import { readable } from '@/lib/spec-readable';
 import {
   addValueToSpecKey,
   clearSpecValueByHand,
@@ -22,6 +23,12 @@ import {
   type ApplicableSpecKey,
 } from '../../product-specifications/services/productSpecService';
 import type { ProductSpecDetail } from '../../product-specifications/types/productSpec.types';
+import { WORKLIST_KEY } from '../../spec-verification/hooks/useSpecVerification';
+import {
+  SpecVerifyConflictError,
+  unverifySpec,
+  verifySpec,
+} from '../../spec-verification/services/specVerificationService';
 
 /**
  * Everything the Specifications tab needs, on react-query.
@@ -59,6 +66,12 @@ export interface UseProductSpecTableResult {
   isLoading: boolean;
   error: string | null;
   refetch: () => void;
+  /** Verify this code, echoing the hash the tab was rendered against (AC-D.4). */
+  verify: () => void;
+  /** Withdraw the stamp. The tab asks first (AC-D.25). */
+  unverify: () => void;
+  /** A verify or an unverify is in flight. */
+  verificationBusy: boolean;
   setValue: (specKey: string, value: SpecScalar) => Promise<void>;
   tombstone: (specKey: string) => Promise<void>;
   revert: (specKey: string) => Promise<void>;
@@ -170,6 +183,60 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     onError: (error: Error) => toast.error(error.message, { duration: 10_000 }),
   });
 
+  const invalidateVerification = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: DETAIL_KEY(productId) });
+    // The worklist renders the same stamp. Leaving it cached is how the list and the
+    // record end up disagreeing about a code somebody just acted on.
+    queryClient.invalidateQueries({ queryKey: [WORKLIST_KEY] });
+  }, [queryClient, productId]);
+
+  const verifyMutation = useMutation({
+    mutationFn: (valuesHash: string) =>
+      verifySpec({ product_code: productCode, values_hash: valuesHash }),
+    onSuccess: () => {
+      invalidateVerification();
+      toast.success('Verified');
+    },
+    onError: (error: Error) => {
+      if (error instanceof SpecVerifyConflictError && error.reason === 'exceptions_open') {
+        // Named, because the next action is answering THOSE keys, and "verify was
+        // refused" leaves the user hunting for which ones.
+        const names = (error.exceptions ?? []).map(
+          (row) =>
+            registry.find((key) => key.spec_key === row.spec_key)?.label ??
+            readable(row.spec_key),
+        );
+        invalidateVerification();
+        toast.error(
+          names.length
+            ? `Still needs a human: ${names.join(', ')}`
+            : 'Still needs a human, so this code cannot be verified yet',
+          { duration: 10_000 },
+        );
+        return;
+      }
+      if (error instanceof SpecVerifyConflictError) {
+        invalidateVerification();
+        toast.warning('This product changed while you were reviewing - reloaded', {
+          duration: 10_000,
+        });
+        return;
+      }
+      toast.error(error.message, { duration: 10_000 });
+    },
+  });
+
+  const unverifyMutation = useMutation({
+    mutationFn: () => unverifySpec({ product_code: productCode }),
+    onSuccess: (result) => {
+      invalidateVerification();
+      toast.success(
+        result.outcome === 'unverified' ? 'Verification withdrawn' : 'Nothing to withdraw',
+      );
+    },
+    onError: (error: Error) => toast.error(error.message, { duration: 10_000 }),
+  });
+
   const createKeyMutation = useMutation({
     mutationFn: (input: { spec_key: string; label: string; data_type: string }) =>
       createSpecKey({ ...input, allowed_values: [] }),
@@ -215,5 +282,8 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
       await createKeyMutation.mutateAsync(input);
     },
     checkSimilarKey: (label) => getSimilarSpecKey(label),
+    verify: () => verifyMutation.mutate(detailQuery.data?.values_hash ?? ''),
+    unverify: () => unverifyMutation.mutate(),
+    verificationBusy: verifyMutation.isPending || unverifyMutation.isPending,
   };
 }

@@ -2,8 +2,7 @@
  * Types for the spec verification worklist (PR 3).
  *
  * Field names are the wire shape, snake_case, exactly as the API contract at the
- * top of `services/specVerificationService.ts` documents it. Phase 2 implements
- * that contract against these types unchanged.
+ * top of `services/specVerificationService.ts` documents it.
  */
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 
@@ -29,6 +28,17 @@ export interface VerificationBlock {
   invalidated_reason: string | null;
   invalidated_by_name: string | null;
   invalidated_diff: { changed: VerificationDiffEntry[] } | null;
+}
+
+/**
+ * One open exception, as the single verify's 409 reports it.
+ *
+ * Narrowed to what the refusal has to say: which key is unanswered. The full row,
+ * with its proposal, is on the Specifications tab that raised the verify.
+ */
+export interface VerificationOpenException {
+  spec_key: string;
+  reason?: string | null;
 }
 
 export interface SpecVerificationCoverage {

@@ -4,8 +4,8 @@
  * ============================================================================
  *
  * Written out here because the frontend was built against it before any of it
- * existed (Phase 1). Phase 2 implements exactly this and swaps the mock bodies
- * below for `apiFetch`; a deviation updates this block and both sides together.
+ * existed (Phase 1). The calls below are that contract, now against the real API;
+ * a deviation updates this block and both sides together.
  *
  * Base path: /api/v1/master-data/product-specifications
  * All routes sit on the existing router, so they inherit its module guard.
@@ -40,7 +40,7 @@
  *
  *   GET /by-product/{productId}   (existing route, PR 2)
  *     gains `verification: VerificationBlock` and `values_hash` (AC-D.14), so the
- *     Specifications tab needs no second round trip. Wired in Phase 2.
+ *     Specifications tab needs no second round trip.
  *
  * WRITES  (all perm master_data.products.edit, AC-D.15)
  *
@@ -78,88 +78,173 @@
  * THE ROW BUTTONS CALL THE BULK ROUTES
  *
  * A per-row Verify is a bulk of one (AC-D.23), so there is exactly one code path
- * to keep honest. The single routes above are the Specifications tab's, wired in
- * Phase 2.
+ * to keep honest. The single routes above are the Specifications tab's, where a
+ * refusal has to be rendered rather than counted.
  * ============================================================================
  */
+import { apiFetch } from '@/lib/api';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { getSpecRegistry } from '../../product-specifications/services/productSpecService';
 import type {
   SpecVerificationWorklistParams,
   SpecVerificationWorklistResponse,
   UnverifyBulkResponse,
+  UnverifyResponse,
+  VerificationBlock,
+  VerificationOpenException,
   VerifyBulkResponse,
   VerifyItem,
+  VerifyResponse,
 } from '../types/specVerification.types';
-// PHASE 1 MOCK - the import and every mock body below go in Phase 2.
-import {
-  applyMockUnverify,
-  applyMockVerify,
-  fetchMockWorklist,
-  MOCK_CLASS_OPTIONS,
-  MOCK_LATENCY_MS,
-} from '../__mocks__/specVerification.fixtures';
 
-// PHASE 1 MOCK - swapped for apiFetch in Phase 2.
-function mockDelay<T>(value: () => T): Promise<T> {
-  return new Promise((resolve) => {
-    setTimeout(() => resolve(value()), MOCK_LATENCY_MS);
-  });
-}
+const BASE = '/api/v1/master-data/product-specifications/verification';
 
 export async function getSpecVerificationWorklist(
   params: SpecVerificationWorklistParams,
 ): Promise<SpecVerificationWorklistResponse> {
-  // PHASE 1 MOCK - swapped for apiFetch in Phase 2:
-  //   const search = buildDataGridParams(params, {
-  //     state: params.state || undefined,
-  //     class_label: params.class_label || undefined,
-  //     include_discontinued: params.include_discontinued ? 'true' : undefined,
-  //   });
-  //   const response = await apiFetch(
-  //     `/api/v1/master-data/product-specifications/verification/worklist?${search}`,
-  //   );
-  //   if (!response.ok) {
-  //     throw new Error(await extractApiError(response, 'Failed to load the verification worklist'));
-  //   }
-  //   return response.json();
-  const switchKey = (params.searchQuery ?? '').trim().toLowerCase();
-  if (switchKey === 'error') {
-    await mockDelay(() => null);
-    throw new Error('Failed to load the verification worklist');
+  const search = buildDataGridParams(params, {
+    state: params.state || undefined,
+    class_label: params.class_label || undefined,
+    include_discontinued: params.include_discontinued ? 'true' : undefined,
+  });
+  const response = await apiFetch(`${BASE}/worklist?${search.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the verification worklist'));
   }
-  if (switchKey === 'loading') {
-    return new Promise<SpecVerificationWorklistResponse>(() => {});
-  }
-  return mockDelay(() => fetchMockWorklist(params));
+  return response.json();
 }
 
 export async function verifySpecBulk(items: VerifyItem[]): Promise<VerifyBulkResponse> {
-  // PHASE 1 MOCK - swapped for apiFetch in Phase 2 (POST /verification/verify-bulk).
-  return mockDelay(() => {
-    const results = applyMockVerify(items);
-    const verified = results.filter(
-      (r) => r.outcome === 'verified' || r.outcome === 'already_verified',
-    ).length;
-    return { results, counts: { verified, skipped: results.length - verified } };
+  const response = await apiFetch(`${BASE}/verify-bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
   });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to verify'));
+  }
+  return response.json();
 }
 
 export async function unverifySpecBulk(productCodes: string[]): Promise<UnverifyBulkResponse> {
-  // PHASE 1 MOCK - swapped for apiFetch in Phase 2 (POST /verification/unverify-bulk).
-  return mockDelay(() => {
-    const results = applyMockUnverify(productCodes);
-    const unverified = results.filter((r) => r.outcome === 'unverified').length;
-    return { results, counts: { unverified, no_change: results.length - unverified } };
+  const response = await apiFetch(`${BASE}/unverify-bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_codes: productCodes }),
   });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to unverify'));
+  }
+  return response.json();
+}
+
+/**
+ * The single verify was refused, and WHICH refusal it is decides what happens next.
+ *
+ * Its own error type for the reason `SpecSimilarError` has one: the 409 is a product
+ * answer rather than a failure, and the two answers ask for different things - open
+ * exceptions have to be named so they can be answered, while a moved hash just means
+ * the screen is stale and has to be re-read. `extractApiError` is string-only and
+ * cannot carry either, so this call reads the body itself.
+ */
+export class SpecVerifyConflictError extends Error {
+  readonly reason: 'values_changed' | 'exceptions_open';
+  /** The hash the server holds now, on a `values_changed` refusal. */
+  readonly valuesHash?: string;
+  readonly verification?: VerificationBlock;
+  /** The open exceptions, on an `exceptions_open` refusal. */
+  readonly exceptions?: VerificationOpenException[];
+
+  constructor(
+    reason: 'values_changed' | 'exceptions_open',
+    message: string,
+    extra: {
+      valuesHash?: string;
+      verification?: VerificationBlock;
+      exceptions?: VerificationOpenException[];
+    } = {},
+  ) {
+    super(message);
+    this.name = 'SpecVerifyConflictError';
+    this.reason = reason;
+    this.valuesHash = extra.valuesHash;
+    this.verification = extra.verification;
+    this.exceptions = extra.exceptions;
+  }
+}
+
+interface ConflictBody {
+  error?: string;
+  values_hash?: string;
+  verification?: VerificationBlock;
+  exceptions?: VerificationOpenException[];
+  /** The AppException envelope, read as a fallback so either serialisation lands. */
+  detail?: ConflictBody | string | null;
+}
+
+async function throwVerifyError(response: Response, fallback: string): Promise<never> {
+  if (response.status === 409) {
+    let body: ConflictBody | null = null;
+    try {
+      body = await response.clone().json();
+    } catch {
+      body = null;
+    }
+    const carrier =
+      body?.error !== undefined
+        ? body
+        : body?.detail && typeof body.detail === 'object'
+          ? body.detail
+          : null;
+    if (carrier?.error === 'values_changed' || carrier?.error === 'exceptions_open') {
+      throw new SpecVerifyConflictError(carrier.error, fallback, {
+        valuesHash: carrier.values_hash,
+        verification: carrier.verification,
+        exceptions: carrier.exceptions,
+      });
+    }
+  }
+  throw new Error(await extractApiError(response, fallback));
+}
+
+/**
+ * Verify ONE code, from its own Specifications tab.
+ *
+ * The bulk route is what the worklist calls, down to a bulk of one (AC-D.23); this is
+ * the single route, because the tab has to render the refusal rather than count it.
+ */
+export async function verifySpec(body: VerifyItem): Promise<VerifyResponse> {
+  const response = await apiFetch(`${BASE}/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwVerifyError(response, 'Could not verify this product');
+  }
+  return response.json();
+}
+
+export async function unverifySpec(body: { product_code: string }): Promise<UnverifyResponse> {
+  const response = await apiFetch(`${BASE}/unverify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not unverify this product'));
+  }
+  return response.json();
 }
 
 /**
  * Class labels for the worklist's class filter.
  *
- * Phase 2 sources these from the EXISTING `GET /api/v1/master-data/spec-registry`
- * response - the `class` key carries an open vocabulary fed by
- * `product_categories.class_label` - so no new endpoint is minted for a dropdown.
+ * Read off the EXISTING registry - the `class` key carries an open vocabulary fed by
+ * `product_categories.class_label` - so no endpoint is minted for a dropdown.
  */
 export async function getSpecVerificationClassOptions(): Promise<string[]> {
-  // PHASE 1 MOCK - swapped for the spec-registry read in Phase 2.
-  return mockDelay(() => MOCK_CLASS_OPTIONS);
+  const { keys } = await getSpecRegistry();
+  const values = keys.find((key) => key.spec_key === 'class')?.allowed_values ?? [];
+  return values.map((value) => String(value)).sort((a, b) => a.localeCompare(b));
 }
