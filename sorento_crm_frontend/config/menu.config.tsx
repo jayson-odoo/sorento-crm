@@ -584,6 +584,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       permission: 'master_data.products.view',
     },
     {
+      title: 'Spec Verification',
+      path: '/master-data-management/spec-verification',
+      permission: 'master_data.products.view',
+    },
+    {
       title: 'Brands',
       path: '/master-data-management/brands',
       permission: 'master_data.brands.view',
@@ -1460,6 +1465,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     {
       title: 'Product Specifications',
       path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Spec Verification',
+      path: '/master-data-management/spec-verification',
       permission: 'master_data.products.view',
     },
     {
