@@ -418,3 +418,53 @@ def test_resolve_provider_uses_the_configured_providers_own_default_model():
         assert isinstance(provider, GeminiProvider)
         assert provider_name == "gemini"
         assert model_name == "gemini-2.5-flash"
+
+
+def test_a_gemini_agent_never_borrows_an_openai_assistants_key(monkeypatch):
+    """The per-agent provider is operator-settable, so it is often NOT the one
+    the assistant row runs on. Reading the generic key column regardless posted
+    the OpenAI key to Google: a live credential handed to another vendor, and a
+    400 that reads like a Gemini outage. No key resolves, so the caller degrades
+    to the literal reading instead."""
+    from app.config import settings as app_settings
+    from app.models.ai_assistant import AIAssistantConfig
+
+    monkeypatch.setattr(app_settings, "gemini_api_key", None, raising=False)
+    monkeypatch.setattr(understanding, "agent_model", lambda db, name: ("gemini", ""))
+
+    with blank_session() as db:
+        db.add(
+            AIAssistantConfig(
+                provider="openai", model="", api_key_ciphertext="ZZT-openai-key"
+            )
+        )
+        db.commit()
+
+        provider, provider_name, _ = understanding._resolve_provider(db)
+
+        assert provider is None
+        assert provider_name == "gemini"
+
+
+def test_an_agent_on_the_assistants_own_provider_still_uses_the_generic_key(
+    monkeypatch,
+):
+    """The guard must not break the ordinary install."""
+    from app.models.ai_assistant import AIAssistantConfig
+    from app.services.llm_provider import OpenAIProvider
+
+    monkeypatch.setattr(understanding, "agent_model", lambda db, name: ("openai", ""))
+
+    with blank_session() as db:
+        db.add(
+            AIAssistantConfig(
+                provider="openai", model="", api_key_ciphertext="ZZT-openai-key"
+            )
+        )
+        db.commit()
+
+        provider, provider_name, _ = understanding._resolve_provider(db)
+
+        assert isinstance(provider, OpenAIProvider)
+        assert provider.api_key == "ZZT-openai-key"
+        assert provider_name == "openai"

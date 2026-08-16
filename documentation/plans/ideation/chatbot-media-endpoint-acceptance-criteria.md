@@ -232,6 +232,13 @@ first happens in a period.
 **Then** the decision is `denied_duration` with the "send a shorter one" message and no
 transcription is attempted.
 
+The length that counts is the clip's MEASURED length, never the caller's. A stated
+`duration_ms` is a hint that lets the refusal happen at the gate; when it is absent or
+understated, the worker measures the downloaded audio and refuses there, still before the
+transcription call. A clip whose length cannot be measured at all is refused for that reason
+rather than transcribed on the 25MB byte cap alone. Either worker-side refusal records
+`refused_duration` on the ledger row, so a refused clip consumes no allowance.
+
 ### S2-10 [BE] The period is computed in Asia/Kuala_Lumpur by the CRM
 
 **Given** a call at a UTC instant that falls in a different calendar month in MYT

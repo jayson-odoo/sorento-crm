@@ -35,11 +35,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.ai_assistant import AIAssistantUsageLog
 from app.models.product_spec import ProductSpecifications
 from app.services.ai_prompt_registry import agent_model, get_prompt
-from app.services.llm_provider import default_model_for, get_provider
+from app.services.llm_provider import default_model_for, get_provider, resolve_api_key
 from app.services.product_spec_registry import (
     active_registry,
     merged_allowed_values,
@@ -311,6 +310,12 @@ def _resolve_provider(db: Session):
     Per-agent, falling back to the global assistant config. Reading a misspelt customer
     sentence is not the same job as writing an explanatory paragraph, so the model is
     set against the `spec_understanding` agent row rather than shared with everything.
+
+    The agent's provider is operator-settable, so it is often NOT the one the
+    assistant row is configured for; the key therefore comes from the shared
+    `resolve_api_key`, which only hands over the generic key column when it
+    belongs to the provider being asked for. Reading that column unconditionally
+    posted the OpenAI key to Google whenever this agent was pointed at Gemini.
     """
     from app.models.ai_assistant import AIAssistantConfig
 
@@ -322,7 +327,7 @@ def _resolve_provider(db: Session):
     agent_provider, agent_model_name = agent_model(db, AGENT_NAME)
     provider_name = agent_provider or (cfg.provider if cfg else "openai") or "openai"
     model_name = agent_model_name or (cfg.model if cfg else "") or ""
-    api_key = (cfg.api_key_ciphertext if cfg else "") or settings.openai_api_key or ""
+    api_key = resolve_api_key(cfg, provider_name)
     if not api_key:
         return None, provider_name, model_name
 

@@ -12,7 +12,8 @@ as specified:
     tests monkeypatch the name the service module looks up, not `httpx`).
   - the provider resolution inside `MediaExtractService`
     (`MediaExtractService._resolve_image_provider` for the image lane,
-    `MediaExtractService._api_key` for the voice lane's key lookup).
+    `app.services.llm_provider.resolve_api_key` for the voice lane's key
+    lookup - the one resolver every lane shares).
   - `app.services.media_extract.transcribe._post_transcription` for the voice
     lane's HTTP call, plus a direct `httpx.post` stub for the one test that
     exercises `_post_transcription`'s own error-mapping code (there is no
@@ -54,6 +55,26 @@ from app.services.media_extract.wording import (
     voice_unclear,
 )
 from tests._pg_fixture import blank_session
+
+
+def wav_bytes(seconds: float, rate: int = 8000) -> bytes:
+    """A real WAV of a known length, synthesized with the stdlib.
+
+    The voice lane now measures the clip before transcribing it, so a
+    placeholder like `b"fake-audio-bytes"` is refused as unmeasurable - which is
+    the point. Every voice test therefore feeds genuine audio: the download and
+    the provider call are stubbed, the measurement never is.
+    """
+    import io
+    import wave
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(b"\x00\x00" * int(rate * seconds))
+    return buffer.getvalue()
 
 
 # --------------------------------------------------------------------------- #
@@ -422,12 +443,17 @@ def test_a_provider_4xx_response_raises_with_the_providers_own_message(monkeypat
 # --------------------------------------------------------------------------- #
 
 
-def _seed_usage(db, modality: str):
+def _seed_usage(db, modality: str, *, duration_ms=None, max_clip_seconds=None):
     """A minimal, marker-prefixed contact + ledger row for `_log_usage` /
     `_stamp_usage_cost` to attach to. Returns the usage row (already flushed
-    and committed, so its id is stable)."""
+    and committed, so its id is stable).
+
+    `duration_ms` is what the CALLER said the clip was - the hint the fast path
+    recorded, which the worker must never trust. `max_clip_seconds` seeds the
+    per-contact gate row, so a test can pin the cap the worker resolves.
+    """
     from app.models.access import RespondContact
-    from app.models.media import ContactMediaUsage
+    from app.models.media import ContactMediaLimit, ContactMediaUsage
 
     unique = f"ZZT-mediaextract-{uuid.uuid4().hex[:10]}"
     contact = RespondContact(
@@ -435,6 +461,15 @@ def _seed_usage(db, modality: str):
     )
     db.add(contact)
     db.flush()
+    if max_clip_seconds is not None:
+        db.add(
+            ContactMediaLimit(
+                contact_id=contact.id,
+                modality=modality,
+                is_allowed=True,
+                max_clip_seconds=max_clip_seconds,
+            )
+        )
     usage = ContactMediaUsage(
         id=str(uuid.uuid4()),
         respond_io_id=unique,
@@ -444,6 +479,7 @@ def _seed_usage(db, modality: str):
         period_key="2026-08",
         outcome="accepted",
         tier="standard",
+        duration_ms=duration_ms,
     )
     db.add(usage)
     db.commit()
@@ -551,10 +587,11 @@ def test_voice_lane_transcribes_and_defaults_to_the_pinned_english_strategy(
 
         monkeypatch.setattr(
             "app.services.media_extract.service.fetch_media_bytes",
-            lambda url: (b"fake-audio-bytes", "audio/ogg"),
+            lambda url: (wav_bytes(2), "audio/ogg"),
         )
         monkeypatch.setattr(
-            MediaExtractService, "_api_key", staticmethod(lambda cfg, provider_name: "test-key")
+            "app.services.llm_provider.resolve_api_key",
+            lambda cfg, provider_name: "test-key",
         )
 
         captured = {}
@@ -596,10 +633,11 @@ def test_voice_lane_empty_transcript_asks_for_clarification_end_to_end(monkeypat
 
         monkeypatch.setattr(
             "app.services.media_extract.service.fetch_media_bytes",
-            lambda url: (b"fake-audio-bytes", "audio/ogg"),
+            lambda url: (wav_bytes(2), "audio/ogg"),
         )
         monkeypatch.setattr(
-            MediaExtractService, "_api_key", staticmethod(lambda cfg, provider_name: "test-key")
+            "app.services.llm_provider.resolve_api_key",
+            lambda cfg, provider_name: "test-key",
         )
         monkeypatch.setattr(
             "app.services.media_extract.transcribe._post_transcription",
@@ -639,14 +677,17 @@ def test_lane_dispatch_is_by_modality_alone_and_rejects_anything_else(monkeypatc
 def _voice_settings(**overrides):
     """The resolved-settings shape the voice lane reads, as a plain stub.
 
-    Only the four fields `_extract_voice` touches, so this test cannot pass by
+    Only the fields `_extract_voice` touches, so this test cannot pass by
     accidentally depending on the whole `MediaSettings` dataclass.
+    `voice_max_seconds` is one of them now: the lane measures the clip and
+    applies the cap itself, before the transcription is paid for.
     """
     from types import SimpleNamespace
 
     base = dict(
         transcribe_model="whisper-1",
         voice_degraded_model=None,
+        voice_max_seconds=120,
         extraction_timeout_seconds=45,
     )
     base.update(overrides)
@@ -696,10 +737,11 @@ def test_voice_lane_sends_the_degraded_model_in_the_transcription_request(
 
         monkeypatch.setattr(
             "app.services.media_extract.service.fetch_media_bytes",
-            lambda url: (b"fake-audio-bytes", "audio/ogg"),
+            lambda url: (wav_bytes(2), "audio/ogg"),
         )
         monkeypatch.setattr(
-            MediaExtractService, "_api_key", staticmethod(lambda cfg, provider_name: "test-key")
+            "app.services.llm_provider.resolve_api_key",
+            lambda cfg, provider_name: "test-key",
         )
         monkeypatch.setattr(
             "app.services.media_access_service.resolve_media_settings",
@@ -724,6 +766,141 @@ def test_voice_lane_sends_the_degraded_model_in_the_transcription_request(
         assert outcome.model == "whisper-cheap"
         db.refresh(usage)
         assert usage.model == "whisper-cheap"
+
+
+# --------------------------------------------------------------------------- #
+# The clip cap is enforced on MEASURED audio, not on what the caller claimed  #
+# --------------------------------------------------------------------------- #
+
+
+def _voice_job(usage_id, *, mime="audio/wav"):
+    return MediaJobInput(
+        job_id=str(uuid.uuid4()),
+        modality="voice",
+        tier="standard",
+        media_url="https://cdn.respond.io/x.wav",
+        mime_type=mime,
+        caption=None,
+        usage_id=usage_id,
+    )
+
+
+def _wire_voice(monkeypatch, audio: bytes, *, max_seconds=120):
+    """Stub the download, the key and the settings; leave the measurement real.
+
+    Returns the list every transcription call appends to, so a test can assert
+    the provider was never reached - a refusal that still posts the clip has
+    spent the money it was supposed to save.
+    """
+    calls: list[dict] = []
+
+    monkeypatch.setattr(
+        "app.services.media_extract.service.fetch_media_bytes",
+        lambda url: (audio, "audio/wav"),
+    )
+    monkeypatch.setattr(
+        "app.services.llm_provider.resolve_api_key",
+        lambda cfg, provider_name: "test-key",
+    )
+    monkeypatch.setattr(
+        "app.services.media_access_service.resolve_media_settings",
+        lambda session: _voice_settings(voice_max_seconds=max_seconds),
+    )
+
+    def fake_post(data, *, filename, mime_type, fields, api_key, timeout):
+        calls.append(fields)
+        return {"text": "check stock please", "language": "en"}
+
+    monkeypatch.setattr(
+        "app.services.media_extract.transcribe._post_transcription", fake_post
+    )
+    return calls
+
+
+def test_an_over_length_clip_with_no_stated_duration_is_refused(monkeypatch):
+    """The hole the captain ruled on: `duration_ms` is optional, so omitting it
+    used to skip the cap entirely and buy a full-length transcription."""
+    from app.services.media_extract.service import MediaClipLengthError
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "voice", duration_ms=None)
+        calls = _wire_voice(monkeypatch, wav_bytes(200, rate=1000), max_seconds=120)
+
+        with pytest.raises(MediaClipLengthError) as raised:
+            MediaExtractService(db).extract(_voice_job(usage.id))
+
+        assert "200 seconds" in str(raised.value)
+        assert "120 second limit" in str(raised.value)
+        assert calls == [], "a refused clip must never reach the provider"
+
+
+def test_a_stated_duration_under_the_cap_cannot_buy_a_long_transcription(monkeypatch):
+    """A caller that understates `duration_ms` is refused on the measured
+    length: the hint is a cheap early exit, never the authority."""
+    from app.services.media_extract.service import MediaClipLengthError
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "voice", duration_ms=1000)  # "one second"
+        calls = _wire_voice(monkeypatch, wav_bytes(200, rate=1000), max_seconds=120)
+
+        with pytest.raises(MediaClipLengthError):
+            MediaExtractService(db).extract(_voice_job(usage.id))
+
+        assert calls == []
+
+
+def test_a_clip_whose_length_cannot_be_read_is_refused_with_a_clear_error(monkeypatch):
+    """Unmeasurable is a refusal, not a pass. Letting it through on the 25MB
+    byte cap alone means 25MB of audio transcribed against a 120 second
+    entitlement."""
+    from app.services.media_extract.service import MediaClipLengthError
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "voice")
+        calls = _wire_voice(monkeypatch, b"RIFFnot-really-a-wave-file" * 40)
+
+        with pytest.raises(MediaClipLengthError) as raised:
+            MediaExtractService(db).extract(_voice_job(usage.id))
+
+        assert "could not be read" in str(raised.value)
+        assert calls == []
+
+
+def test_a_clip_inside_the_cap_still_transcribes(monkeypatch):
+    with blank_session() as db:
+        usage = _seed_usage(db, "voice")
+        calls = _wire_voice(monkeypatch, wav_bytes(10, rate=1000), max_seconds=120)
+
+        outcome = MediaExtractService(db).extract(_voice_job(usage.id))
+
+        assert outcome.result["transcript"] == "check stock please"
+        assert len(calls) == 1
+
+
+def test_the_measured_cap_is_the_contacts_own_override(monkeypatch):
+    """Same number the fast path applies: the per-contact `max_clip_seconds`
+    beats the system default, in the worker as well as at the gate."""
+    from app.services.media_extract.service import MediaClipLengthError
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "voice", max_clip_seconds=5)
+        calls = _wire_voice(monkeypatch, wav_bytes(10, rate=1000), max_seconds=120)
+
+        with pytest.raises(MediaClipLengthError) as raised:
+            MediaExtractService(db).extract(_voice_job(usage.id))
+
+        assert "5 second limit" in str(raised.value)
+        assert calls == []
+
+
+def test_measure_audio_seconds_reads_real_audio_and_refuses_the_rest():
+    from app.services.media_extract.service import measure_audio_seconds
+
+    assert measure_audio_seconds(wav_bytes(3)) == pytest.approx(3.0, abs=0.05)
+    assert measure_audio_seconds(b"") is None
+    assert measure_audio_seconds(b"not audio at all" * 20) is None
+    # A truncated download parses as far as the header and then runs out.
+    assert measure_audio_seconds(wav_bytes(3)[:20]) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -1245,7 +1422,7 @@ def test_the_voice_lane_never_posts_another_providers_key_to_openai(monkeypatch)
 
         monkeypatch.setattr(
             "app.services.media_extract.service.fetch_media_bytes",
-            lambda url: (b"fake-audio-bytes", "audio/ogg"),
+            lambda url: (wav_bytes(2), "audio/ogg"),
         )
         monkeypatch.setattr(
             "app.services.media_access_service.resolve_media_settings",
@@ -1293,7 +1470,7 @@ def test_the_voice_lane_still_uses_the_primary_key_when_the_assistant_is_openai(
 
         monkeypatch.setattr(
             "app.services.media_extract.service.fetch_media_bytes",
-            lambda url: (b"fake-audio-bytes", "audio/ogg"),
+            lambda url: (wav_bytes(2), "audio/ogg"),
         )
         monkeypatch.setattr(
             "app.services.media_access_service.resolve_media_settings",

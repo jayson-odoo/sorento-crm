@@ -81,6 +81,25 @@ class MediaExtractionError(RuntimeError):
     worker where there is no request to fail."""
 
 
+class MediaClipLengthError(MediaExtractionError):
+    """A voice note refused on the clip length cap, before anything was spent.
+
+    Its own class because the ledger treats it differently from every other
+    extraction failure: an ordinary failure keeps consuming the monthly
+    allowance (the provider was called and the money is gone), while this one is
+    raised before the transcription call, so `media_tasks` records it as
+    `refused_duration` and the contact keeps the allowance.
+
+    `notice` is the customer-facing text, carried here because only this side
+    knows which cap was applied, and it travels back to n8n on the ledger row
+    the same way the fast path's refusal notices do.
+    """
+
+    def __init__(self, message: str, *, notice: dict[str, Any]):
+        super().__init__(message)
+        self.notice = notice
+
+
 @dataclass
 class MediaJobInput:
     """A plain snapshot of the job row, taken before the extraction thread runs.
@@ -186,6 +205,37 @@ def fetch_media_bytes(url: str) -> tuple[bytes, Optional[str]]:
     if not data:
         raise MediaExtractionError("The media downloaded as zero bytes.")
     return data, content_type
+
+
+def measure_audio_seconds(data: bytes) -> Optional[float]:
+    """The clip's real length in seconds, or None when the bytes cannot be read.
+
+    `mutagen` parses the container header, so it is cheap and needs no system
+    binary - there is no ffprobe in the image and no other audio library in this
+    repo. It covers what Respond.io voice notes actually arrive as: OGG/Opus,
+    MP4/M4A/AAC, MP3 and WAV. The format is sniffed from the content rather than
+    the mime type or the url, because both are supplied by the caller and the
+    whole point here is not to trust what the caller said about the audio.
+
+    None is the honest answer for anything it cannot parse - a truncated
+    download, an unsupported container, or something that is not audio at all -
+    and the caller refuses on it rather than transcribing an unmeasured clip.
+    """
+    import io
+
+    import mutagen
+
+    try:
+        audio = mutagen.File(io.BytesIO(data))
+    except Exception:  # noqa: BLE001 - an unparseable clip is simply unmeasurable
+        return None
+    # `mutagen.File` returns None when no parser recognises the bytes. The
+    # object itself must be compared to None rather than tested for truth: a
+    # `FileType` is a tag mapping, so a valid clip with no tags is falsy.
+    length = getattr(getattr(audio, "info", None), "length", None)
+    if not isinstance(length, (int, float)) or length <= 0:
+        return None
+    return float(length)
 
 
 def build_image_result_body(
@@ -396,7 +446,11 @@ class MediaExtractService:
         a degrade, so a degraded tier only reaches here while a model is named.
         """
         from app.models.ai_assistant import AIAssistantConfig
-        from app.services.llm_provider import default_model_for, get_provider
+        from app.services.llm_provider import (
+            default_model_for,
+            get_provider,
+            resolve_api_key,
+        )
 
         cfg = (
             self.db.query(AIAssistantConfig)
@@ -413,7 +467,7 @@ class MediaExtractService:
         if not model_name:
             model_name = default_model_for(provider_name)
 
-        api_key = self._api_key(cfg, provider_name)
+        api_key = resolve_api_key(cfg, provider_name)
         if not api_key:
             # Naming the provider is the whole message: the lane can run on a
             # different provider than the assistant, so "no key configured" on
@@ -427,36 +481,6 @@ class MediaExtractService:
         except ValueError as exc:
             raise MediaExtractionError(str(exc)) from exc
         return provider, provider_name, model_name
-
-    @staticmethod
-    def _api_key(cfg: Any, provider_name: str) -> str:
-        """The key for this provider, preferring the provider-specific column."""
-        from app.config import settings as app_settings
-
-        # The generic key column only counts when the assistant itself runs on
-        # the provider being asked for - otherwise it holds someone else's key,
-        # and sending it produces a 401/400 that reads like that provider being
-        # down rather than "no key configured".
-        def generic_key() -> str:
-            if not cfg or getattr(cfg, "provider", None) != provider_name:
-                return ""
-            return getattr(cfg, "api_key_ciphertext", None) or ""
-
-        if provider_name == "anthropic":
-            return (
-                (getattr(cfg, "anthropic_api_key_ciphertext", None) if cfg else "")
-                or generic_key()
-                or app_settings.anthropic_api_key
-                or ""
-            )
-        if provider_name == "gemini":
-            return (
-                (getattr(cfg, "gemini_api_key_ciphertext", None) if cfg else "")
-                or generic_key()
-                or app_settings.gemini_api_key
-                or ""
-            )
-        return generic_key() or app_settings.openai_api_key or ""
 
     # ----- Voice ------------------------------------------------------------
 
@@ -476,12 +500,59 @@ class MediaExtractService:
             return str(settings.voice_degraded_model)
         return str(settings.transcribe_model)
 
+    def _enforce_clip_length(self, job: MediaJobInput, data: bytes, settings: Any) -> None:
+        """Refuse a clip longer than the cap, on its MEASURED length.
+
+        The caller's `duration_ms` is a hint. The fast path uses it to refuse
+        early and cheaply when it is over the cap, but it is never the
+        authority: a request that omits it, or states a small one for a long
+        clip, would otherwise buy a full-length transcription that the contact
+        is not entitled to. The audio only exists here, so this is the earliest
+        point the real length can be known - and it still runs before the
+        transcription call, so nothing has been spent when it refuses.
+
+        A clip whose length cannot be read is refused too. Letting it through
+        on the byte cap alone means 25MB of audio transcribed against a 120
+        second entitlement.
+        """
+        from app.services.media_access_service import (
+            effective_clip_seconds,
+            get_limit_row,
+        )
+
+        contact_id = self._contact_id(job.usage_id)
+        limit_row = get_limit_row(self.db, contact_id, "voice") if contact_id else None
+        max_seconds = effective_clip_seconds(limit_row, settings)
+
+        measured = measure_audio_seconds(data)
+        if measured is None:
+            raise MediaClipLengthError(
+                "The voice note's length could not be read from the audio, so "
+                f"the {max_seconds} second limit cannot be applied.",
+                notice={
+                    "kind": "unreadable",
+                    "text": wording.voice_unclear(),
+                    "append": True,
+                },
+            )
+        if measured > max_seconds:
+            raise MediaClipLengthError(
+                f"The voice note is {measured:.0f} seconds, over the "
+                f"{max_seconds} second limit.",
+                notice={
+                    "kind": "too_long",
+                    "text": wording.clip_too_long(max_seconds),
+                    "append": True,
+                },
+            )
+
     def _extract_voice(self, job: MediaJobInput, settings: Any) -> MediaExtractionOutcome:
         from app.models.ai_assistant import AIAssistantConfig
         from app.services.ai_extract.extract_service import AIExtractService
-        from app.services.llm_provider import ChatResult
+        from app.services.llm_provider import ChatResult, resolve_api_key
 
         data, content_type = fetch_media_bytes(job.media_url or "")
+        self._enforce_clip_length(job, data, settings)
         cfg = (
             self.db.query(AIAssistantConfig)
             .order_by(AIAssistantConfig.created_at.asc())
@@ -496,7 +567,7 @@ class MediaExtractService:
                 # Built from settings at call time (UAC S5-01/S5-02): pinned,
                 # hints or auto, defaulting to pinned/`en`.
                 strategy=settings.language_strategy(),
-                api_key=self._api_key(cfg, "openai"),
+                api_key=resolve_api_key(cfg, "openai"),
                 mime_type=job.mime_type or content_type,
                 media_url=job.media_url,
                 timeout=settings.extraction_timeout_seconds,
@@ -691,6 +762,7 @@ def run_extraction(job: Any, *, db: Optional[Session] = None) -> dict[str, Any]:
 __all__ = [
     "FORM_KEY_IMAGE",
     "FORM_KEY_VOICE",
+    "MediaClipLengthError",
     "MediaExtractService",
     "MediaExtractionError",
     "MediaExtractionOutcome",
@@ -699,5 +771,6 @@ __all__ = [
     "build_voice_result_body",
     "empty_result_body",
     "fetch_media_bytes",
+    "measure_audio_seconds",
     "run_extraction",
 ]

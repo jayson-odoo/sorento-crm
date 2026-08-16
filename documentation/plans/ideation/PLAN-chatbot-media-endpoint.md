@@ -337,7 +337,7 @@ Request:
   "media_url": "https://...",         // respond.io CDN url
   "mime_type": "image/jpeg",
   "caption": "check stock for these", // may be null
-  "duration_ms": 18400,               // voice only, used for the clip cap
+  "duration_ms": 18400,               // voice only, optional; a HINT for the clip cap
   "bytes": 284119,                    // optional
   "turn_id": "9240705",
   "callback_url": "https://automate-sorento.foundryx.my/webhook/...",  // optional
@@ -394,7 +394,11 @@ Inside one transaction, in this order:
    stored decision with `idempotent_replay: true` and the existing `job_id`. Nothing else runs.
    This is what makes n8n's `retryOnFail` cheap rather than a second spend.
 3. **Gate.** No `contact_media_limit` row, or `is_allowed = false`, gives `denied_gate`.
-4. **Duration cap** for voice, against the effective `max_clip_seconds`.
+4. **Duration cap** for voice, against the effective `max_clip_seconds`. The stated
+   `duration_ms` is a HINT and refuses here only when the caller is honest about it; the
+   authoritative check is in the worker, which measures the downloaded audio (`mutagen`) and
+   applies the same cap before the transcription is paid for. A clip refused there records
+   `refused_duration` on the ledger row, so it consumes no allowance.
 5. **Burst**, via the existing `rate_limit.hit` primitive (`app/services/rate_limit.py:41`) on a
    namespaced bucket. Redis is correct here and only here: the burst window is genuinely
    ephemeral and a reset is harmless. It fails open, which is the right direction for a pacing

@@ -529,13 +529,33 @@ def test_gemini_sends_the_thinking_config_even_without_a_max_tokens(monkeypatch)
     assert "maxOutputTokens" not in generation
 
 
+def test_gemini_2_0_gets_no_thinking_config_and_an_untouched_answer_budget(monkeypatch):
+    """Thinking budgets are a 2.5 feature: 2.0 rejects `thinkingConfig` with a
+    400, and the media model box is free text, so an operator typing
+    `gemini-2.0-flash` would fail every call."""
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [{"role": "user", "content": "read it"}],
+        model="gemini-2.0-flash",
+        max_tokens=2048,
+    )
+    generation = t.body["generationConfig"]
+    assert "thinkingConfig" not in generation
+    assert generation["maxOutputTokens"] == 2048
+
+
 def test_gemini_thinking_budget_helper():
     assert _gemini_thinking_budget("gemini-2.5-flash") == 0
     assert _gemini_thinking_budget("gemini-2.5-flash-lite") == 0
     assert _gemini_thinking_budget("gemini-2.5-pro") == 1024
-    # Unknown or unset ids take the safe side: Pro-family models reject a zero.
-    assert _gemini_thinking_budget(None) == 1024
+    # Newer families think too, and a Pro-family model rejects a zero budget.
     assert _gemini_thinking_budget("gemini-3-something") == 1024
+    # None means "this model has no thinking to budget", so the caller leaves
+    # `thinkingConfig` off the request: 2.0 and older reject the field with a
+    # 400, and the model box on the settings page is free text.
+    assert _gemini_thinking_budget("gemini-2.0-flash") is None
+    assert _gemini_thinking_budget("gemini-1.5-pro") is None
+    assert _gemini_thinking_budget(None) is None
 
 
 def test_gemini_counts_thinking_tokens_as_completion(monkeypatch):

@@ -152,7 +152,7 @@ def process_media_extraction(job_id: str) -> None:
             job.status = "failed"
             job.result = None
             job.error = str(exc) or exc.__class__.__name__
-            _mark_usage_failed(db, job)
+            _mark_usage_failed(db, job, exc)
         job.completed_at = _utcnow()
         db.commit()
 
@@ -175,9 +175,28 @@ def process_media_extraction(job_id: str) -> None:
         db.close()
 
 
-def _mark_usage_failed(db, job: MediaExtractionJob) -> None:
+def _mark_usage_failed(db, job: MediaExtractionJob, exc: BaseException) -> None:
     """Flip the ledger outcome to `failed`. Still consumes quota, deliberately:
-    the provider was called and the money was spent."""
+    the provider was called and the money was spent.
+
+    Except for a clip refused on its measured length, which is raised BEFORE the
+    transcription call - nothing was spent, so it records `refused_duration` and
+    the contact keeps the allowance, exactly as the fast path does when the
+    stated duration is over the cap. It carries the customer notice onto the
+    ledger row too, because that is what the callback and the polling endpoint
+    hand back.
+
+    Both outcomes go through `mark_usage_outcome`, which stays the only writer
+    of `outcome` after the insert, so the "re-stamp an accepted row only" rule
+    holds for the refusal exactly as it does for the failure.
+    """
+    from app.services.media_extract.service import MediaClipLengthError
+
+    if isinstance(exc, MediaClipLengthError):
+        mark_usage_outcome(
+            db, job.usage_id, "refused_duration", notices=[exc.notice]
+        )
+        return
     mark_usage_outcome(db, job.usage_id, "failed")
 
 

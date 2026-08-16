@@ -140,7 +140,12 @@ def real_chain():
 
 
 def _seed_job_row(
-    *, callback_url=None, callback_headers=None, context=None, notices=None
+    *,
+    callback_url=None,
+    callback_headers=None,
+    context=None,
+    notices=None,
+    modality="image",
 ) -> str:
     """Seeds a standalone `contact_media_usage` + `media_extraction_job` pair
     (no `contact_media_limit`, no gate involved) directly at "queued", the
@@ -157,7 +162,7 @@ def _seed_job_row(
     db.add(contact)
     db.add(
         ContactMediaLimit(
-            contact_id=contact.id, modality="image", is_allowed=True, monthly_limit=50
+            contact_id=contact.id, modality=modality, is_allowed=True, monthly_limit=50
         )
     )
     db.flush()
@@ -165,7 +170,7 @@ def _seed_job_row(
         id=str(uuid.uuid4()),
         respond_io_id=unique,
         contact_id=contact.id,
-        modality="image",
+        modality=modality,
         message_id=f"{unique}-m1",
         media_ordinal=0,
         period_key="2026-08",
@@ -179,7 +184,7 @@ def _seed_job_row(
         id=str(uuid.uuid4()),
         usage_id=usage.id,
         status="queued",
-        modality="image",
+        modality=modality,
         tier="standard",
         media_url="https://cdn.respond.io/x.jpg",
         mime_type="image/jpeg",
@@ -297,6 +302,51 @@ def test_a_raised_extraction_error_marks_the_job_failed_and_updates_the_ledger(
         assert job.error
         usage = _fetch_usage_by_job(job_id)
         assert usage.outcome == "failed"
+    finally:
+        _cleanup_chain(contact_id)
+
+
+def test_a_clip_refused_on_its_measured_length_leaves_no_spent_allowance(monkeypatch):
+    """The ledger side of the clip cap. An ordinary failure keeps consuming the
+    allowance because the provider was called; a clip refused on its measured
+    length is raised BEFORE the transcription, so it records `refused_duration`
+    and the contact keeps the month's voice note."""
+    import app.tasks.media_tasks as media_tasks
+    from app.services.media_access_service import count_usage
+    from app.services.media_extract.service import MediaClipLengthError
+
+    def _too_long(job):
+        raise MediaClipLengthError(
+            "The voice note is 200 seconds, over the 120 second limit.",
+            notice={
+                "kind": "too_long",
+                "text": "That voice note is longer than 120 seconds.",
+                "append": True,
+            },
+        )
+
+    monkeypatch.setattr(media_tasks, "run_media_extraction", _too_long)
+    job_id, contact_id = _seed_job_row(modality="voice")
+    try:
+        media_tasks.process_media_extraction(job_id)
+
+        job = _fetch_job(job_id)
+        assert job.status == "failed"
+        assert "120 second limit" in job.error
+
+        usage = _fetch_usage_by_job(job_id)
+        assert usage.outcome == "refused_duration"
+        # And the customer text travels back the same way the fast path's own
+        # refusal notices do, through the ledger row.
+        assert usage.notices[0]["kind"] == "too_long"
+
+        db = SessionLocal()
+        try:
+            assert (
+                count_usage(db, usage.respond_io_id, "voice", usage.period_key) == 0
+            ), "a refusal must not consume the monthly allowance"
+        finally:
+            db.close()
     finally:
         _cleanup_chain(contact_id)
 

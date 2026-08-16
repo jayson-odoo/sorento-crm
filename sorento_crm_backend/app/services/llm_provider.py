@@ -76,6 +76,48 @@ def default_model_for(provider_name: Optional[str]) -> str:
     return DEFAULT_MODELS.get(key, DEFAULT_MODELS["anthropic"])
 
 
+def resolve_api_key(cfg: Any, provider_name: str) -> str:
+    """The key to send to ``provider_name``, given the AI assistant config row.
+
+    One resolver for every caller, because the same mistake was made twice: a
+    per-agent provider is operator-settable, so the provider a call runs on is
+    often NOT the one the assistant row is configured for, and the generic
+    ``api_key_ciphertext`` column then holds somebody else's key. Posting an
+    OpenAI key to Google produces a 400 that reads like a Gemini outage rather
+    than "no key configured", so the generic column counts only when the
+    assistant itself runs on the provider being asked for.
+
+    Order per provider: the provider-specific column, then the generic column
+    when it belongs to this provider, then the environment key. An empty string
+    means no key is configured, which is the caller's cue to say so.
+    """
+    from app.config import settings as app_settings
+
+    def column(name: str) -> str:
+        return (getattr(cfg, name, None) if cfg is not None else "") or ""
+
+    generic = (
+        column("api_key_ciphertext")
+        if cfg is not None and getattr(cfg, "provider", None) == provider_name
+        else ""
+    )
+    if provider_name == "anthropic":
+        return (
+            column("anthropic_api_key_ciphertext")
+            or generic
+            or app_settings.anthropic_api_key
+            or ""
+        )
+    if provider_name == "gemini":
+        return (
+            column("gemini_api_key_ciphertext")
+            or generic
+            or app_settings.gemini_api_key
+            or ""
+        )
+    return generic or app_settings.openai_api_key or ""
+
+
 class LLMProvider(Protocol):
     name: str
 
@@ -651,20 +693,33 @@ GEMINI_EMBEDDING_NATIVE_DIMS = 3072
 GEMINI_PRO_THINKING_BUDGET = 1024
 
 
-def _gemini_thinking_budget(model: Optional[str]) -> int:
+def _gemini_thinking_budget(model: Optional[str]) -> Optional[int]:
     """How many tokens this model may spend thinking before it answers.
 
-    Every Gemini 2.5 model thinks by default, and thinking tokens are spent out
-    of `maxOutputTokens`. Left alone, a tight budget (the vision lane sends
-    2048) can be consumed entirely by thinking and come back as a candidate with
-    no parts at all - `finishReason=MAX_TOKENS` with nothing to parse.
+    `None` means the model has no thinking to budget and `thinkingConfig` must
+    be left off the request altogether: Google introduced thinking budgets with
+    the 2.5 family, and 2.0 and older reject the field with a 400. The model box
+    on the media settings page is free text, so an operator typing
+    `gemini-2.0-flash` would otherwise fail every call.
+
+    From 2.5 up, thinking is on by default and its tokens are spent out of
+    `maxOutputTokens`. Left alone, a tight budget (the vision lane sends 2048)
+    can be consumed entirely by thinking and come back as a candidate with no
+    parts at all - `finishReason=MAX_TOKENS` with nothing to parse.
 
     `flash` and `flash-lite` accept a zero budget, which is what this lane
     wants: the work is reading a photo into a fixed JSON shape, not reasoning.
+    A model id with no readable version is treated as pre-2.5, because omitting
+    the field costs at worst a shorter answer while sending it to a model that
+    does not take it costs the whole call.
     """
-    if "flash" in (model or "").lower():
-        return 0
-    return GEMINI_PRO_THINKING_BUDGET
+    name = (model or "").lower()
+    version = re.search(r"gemini-(\d+)(?:\.(\d+))?", name)
+    if version is None:
+        return None
+    if (int(version.group(1)), int(version.group(2) or 0)) < (2, 5):
+        return None
+    return 0 if "flash" in name else GEMINI_PRO_THINKING_BUDGET
 
 
 # Gemini's schema dialect is a strict subset of JSON Schema (OpenAPI 3.0). An
@@ -1000,14 +1055,17 @@ class GeminiProvider:
             )
 
         generation: dict[str, Any] = {"temperature": temperature}
-        # Thinking is on by default on 2.5 and is billed against
+        # Thinking is on by default from 2.5 and is billed against
         # `maxOutputTokens`, so the budget is set explicitly and ADDED to what
         # the caller asked for - the caller's number is its answer budget, not
-        # a pool the model gets to think out of.
+        # a pool the model gets to think out of. A model with no thinking to
+        # budget (2.0 and older) gets no `thinkingConfig` and the caller's
+        # `max_tokens` unchanged, because the field itself is a 400 there.
         thinking_budget = _gemini_thinking_budget(model_name)
-        generation["thinkingConfig"] = {"thinkingBudget": thinking_budget}
+        if thinking_budget is not None:
+            generation["thinkingConfig"] = {"thinkingBudget": thinking_budget}
         if max_tokens is not None:
-            generation["maxOutputTokens"] = max_tokens + thinking_budget
+            generation["maxOutputTokens"] = max_tokens + (thinking_budget or 0)
         # Structured output is native here: `responseSchema` constrains decoding
         # the same way OpenAI's strict json_schema does, so `content` comes back
         # as a schema-valid JSON string and the caller parses it identically.

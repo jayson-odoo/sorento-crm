@@ -276,6 +276,21 @@ def resolve_effective_limit(
     return (settings or resolve_media_settings(db)).monthly_limit_for(modality)
 
 
+def effective_clip_seconds(
+    limit_row: Optional[ContactMediaLimit], settings: MediaSettings
+) -> int:
+    """The voice clip cap in force: the contact's override, else the default.
+
+    Takes the row rather than the contact id so every caller that already has it
+    (the operator card, the fast path) reuses the rule without a second query,
+    and the worker - which measures the real clip length before transcribing -
+    applies exactly the same number the fast path did.
+    """
+    if limit_row is not None and limit_row.max_clip_seconds is not None:
+        return int(limit_row.max_clip_seconds)
+    return int(settings.voice_max_seconds)
+
+
 def count_usage(
     db: Session, respond_io_id: str, modality: str, period_key: str
 ) -> int:
@@ -293,14 +308,25 @@ def count_usage(
     )
 
 
-def mark_usage_outcome(db: Session, usage_id: Optional[str], outcome: str) -> None:
+def mark_usage_outcome(
+    db: Session,
+    usage_id: Optional[str],
+    outcome: str,
+    notices: Optional[list[dict]] = None,
+) -> None:
     """Re-stamp an accepted ledger row once its fate is known.
 
     The only writer of `outcome` after the insert, so whether an item consumes
     the contact's allowance stays decided in one place: `failed` still consumes
-    (the provider was called and the money was spent), `not_queued` does not
-    (nothing ran, so nothing was spent). Only an `accepted` row is re-stamped -
-    a refusal was already final and a second terminal write must not move it.
+    (the provider was called and the money was spent), while `not_queued`
+    (nothing ran) and `refused_duration` (refused before the transcription call)
+    do not. Only an `accepted` row is re-stamped - a refusal was already final
+    and a second terminal write must not move it.
+
+    `notices` is the customer-facing text that outcome produced, written onto
+    the same row under the same guard because the callback and the polling
+    endpoint read it from there. Omitting it leaves whatever the insert wrote
+    alone, so an ordinary outcome flip never blanks an existing notice.
     """
     if usage_id is None:
         return
@@ -309,6 +335,8 @@ def mark_usage_outcome(db: Session, usage_id: Optional[str], outcome: str) -> No
     )
     if usage is not None and usage.outcome == "accepted":
         usage.outcome = outcome
+        if notices is not None:
+            usage.notices = notices
 
 
 # --------------------------------------------------------------------------- #
@@ -372,14 +400,9 @@ def build_access_item(
         if row is not None and row.monthly_limit is not None
         else settings.monthly_limit_for(modality)
     )
-    if modality == "voice":
-        effective_clip = (
-            int(row.max_clip_seconds)
-            if row is not None and row.max_clip_seconds is not None
-            else settings.voice_max_seconds
-        )
-    else:
-        effective_clip = None
+    effective_clip = (
+        effective_clip_seconds(row, settings) if modality == "voice" else None
+    )
 
     used = _used_for_contact(db, contact_id, modality, period_key)
     return {
@@ -586,13 +609,13 @@ def decide_and_record(
             [_notice("not_enabled", wording.not_enabled(request.modality))],
         )
 
-    # 4. Duration cap (voice only), against the effective max clip length.
+    # 4. Duration cap (voice only), against the effective max clip length. The
+    #    stated `duration_ms` is a HINT: it refuses early and cheaply when the
+    #    caller is honest, but it is not the authority and its absence is not a
+    #    pass. `MediaExtractService` measures the real length off the downloaded
+    #    audio and applies this same cap before the transcription is paid for.
     if request.modality == "voice" and request.duration_ms is not None:
-        max_seconds = (
-            int(limit_row.max_clip_seconds)
-            if limit_row.max_clip_seconds is not None
-            else settings.voice_max_seconds
-        )
+        max_seconds = effective_clip_seconds(limit_row, settings)
         if request.duration_ms > max_seconds * 1000:
             return _refuse(
                 "refused_duration",
