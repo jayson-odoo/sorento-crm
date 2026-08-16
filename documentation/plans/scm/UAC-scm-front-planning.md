@@ -89,7 +89,9 @@ SO at that location, supply is processed before demand on the same date, and no 
 allocation is required or inferred. Given eligible opening stock 10, same-day SPO 10, and two
 10-unit lines on the same SO, product, location, and required date at line numbers 10 and 20, then
 line 10 receives Reserve 10 and line 20 receives timely SPO coverage 10, even when database row
-order is reversed; an internal line ID breaks a tied line number without being displayed.
+order is reversed; an internal line ID breaks a tied line number without being displayed. The
+shared coverage timeline and every consumer of it (reorder engine, Coverage Timeline panel, plan
+exceptions, coverage routes) apply the same supply-first same-day order.
 
 ### AC-B03 [FE][J04] Late incoming is advisory
 

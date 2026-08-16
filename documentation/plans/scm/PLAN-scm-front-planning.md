@@ -257,6 +257,13 @@ before the line's required date. Eligible SPO sources sort by arrival date, SPO 
 number with missing numbers last, then allocation ID. This order is used by the timeline, the line
 proposal, and confirmation recomputation; database return order never participates.
 
+Supply before demand on the same day reverses the existing shared `coverage_timeline._sort_key`
+order, which places demand first and is pinned by
+`tests/scm/test_coverage_timeline.py::test_same_day_demand_is_ordered_before_supply`. Stage 1C
+changes `_sort_key` and that pinned test together, and the new order applies to every consumer of
+the shared timeline: the reorder engine, the `summary_order_service` Coverage Timeline panel, plan
+exceptions, and coverage routes. There is one ordering contract and no per-consumer divergence.
+
 An SPO arriving on the required date therefore counts at that date. The calculation may explain
 which SPO rows contributed, but it creates no `spo_allocation -> sales_order_line` ownership and no
 `order_link_claim` chain. An SPO arriving after a line's required date is advisory for that need and
@@ -400,11 +407,12 @@ Each new front-planning run has exactly one actionable `decision_grain`:
 
 The buyer may inspect both views at any time. The first saved decision locks `decision_grain`
 permanently for that frozen run. The lock is atomic: every Product or Location decision write
-first takes a row lock on the `scm.reorder_run` row (`SELECT ... FOR UPDATE`) in its own
-transaction, then sets `decision_grain` when NULL or rejects the write when it holds the other
-grain, so two concurrent first decisions can never persist competing grains. If the buyer needs
-the other grain to become actionable after a decision, a new current run must be created from a
-new frozen input snapshot; the old run and all of its decisions remain immutable and auditable.
+first takes a row lock on the `scm.reorder_run` row (`SELECT ... FOR UPDATE`) in the same
+transaction as the decision write, then sets `decision_grain` when NULL or rejects the write when
+it holds the other grain, so two concurrent first decisions can never persist competing grains. If
+the buyer needs the other grain to become actionable after a decision, a new current run must be
+created from a new frozen input snapshot; the old run and all of its decisions remain immutable
+and auditable.
 PO worklists read only the run's selected grain.
 This preserves two real Buy planning modes without allowing both to order the same requirement.
 
@@ -505,11 +513,12 @@ not produced for a confirmed decision.
   `earliest_project_need_date`, nullable JSONB `channel_calculation_basis` as the frozen channel
   breakdown, and nullable SmallInteger `uom_decimal_places` copied from the product's base UOM at
   calculation. Existing decision, keying, worklist, and response operations remain keyed by run
-  and product, with no channel identifier. New runs require the six fields after calculation.
-  Chosen-quantity validation and allocator replay read `uom_decimal_places` from the row, never
-  live UOM master data, so a later UOM edit cannot change a frozen run. Existing
-  rows remain untouched and their new fields stay NULL; they are not split, duplicated, defaulted,
-  or made actionable.
+  and product, with no channel identifier. New runs require the three quantities, the
+  basis, and `uom_decimal_places` after calculation; `earliest_project_need_date` is required only
+  when `project_buy_qty > 0` and is otherwise NULL. Chosen-quantity validation and allocator
+  replay read `uom_decimal_places` from the row, never live UOM master data, so a later UOM edit
+  cannot change a frozen run. Existing rows remain untouched and their new fields stay NULL; they
+  are not split, duplicated, defaulted, or made actionable.
 - Reuse existing summary-row quantity, supplier, and keying fields. Do not add a frozen cash field:
   `cash_committed` remains the live `chosen_qty` and cost calculation in
   `summary_order_service.po_worklist`, while frozen `cash_impact` remains owned by each
@@ -536,16 +545,19 @@ not produced for a confirmed decision.
   arithmetic precision or a planning-policy knob, and it is not inferred from `conversion_factor`.
 - Extend the non-durable shared projection input with `line_no` and core `line_id`. Reconciled
   Project lines supply their human line number; a missing line number sorts last. Extend
-  `CoverageService._demand_events_many` and `TimelineEvent` to carry both values and apply the
-  section 3.5 ordering. The internal ID never enters a user-facing response.
+  `CoverageService._demand_events_many` and `TimelineEvent` to carry both values, and change
+  `coverage_timeline._sort_key` to the section 3.5 order, including its same-day supply-first
+  reversal for all timeline consumers. The internal ID never enters a user-facing response.
 - Add the narrow child `scm.order_summary_location_allocation` with `order_summary_row_id`,
   `reorder_recommendation_id`, `warehouse_id`, and Numeric `allocated_qty`. When Product `chosen_qty`
   changes, generalize and rerun
   `reorder_engine.allocate(chosen_qty, frozen_location_inputs, decimal_places)` with the summary
   row's frozen `uom_decimal_places` and persist its output. The decision boundary rejects
   `chosen_qty` with more fractional places than that snapshot permits. The allocator converts the
-  accepted total to integer minor units of `10^-decimal_places`, reuses its deterministic
-  largest-remainder allocation, then converts the children back to decimal quantities. Enforce one
+  accepted total, the frozen location deficits, and demand rates to the same integer minor units of
+  `10^-decimal_places` before comparing or apportioning, so branch selection is unchanged, reuses
+  its deterministic largest-remainder allocation, then converts the children back to decimal
+  quantities. Enforce one
   row per summary row and warehouse, non-negative quantities, company scope, and a
   transaction-time invariant that child quantities sum exactly to the parent's stored `chosen_qty`.
   Do not rescale a prior split. This is persistence for the PO worklist, not a new allocator or
@@ -600,8 +612,10 @@ pre-code contract only.
 - Implement deterministic incoming, Reserve, Borrow, and Buy suggestions.
 - Implement the hot-selling BRW rule, Borrow and discontinued reasons, atomic SO confirmation,
   revision supersession, and Buy-only inquiry rows.
-- Implement the shared section 3.5 ordering and source attribution. Pin its two-line worked case,
-  including identical results when database row order is reversed.
+- Implement the shared section 3.5 ordering and source attribution, including the same-day
+  supply-first reversal of `coverage_timeline._sort_key`; update
+  `test_same_day_demand_is_ordered_before_supply` to the new order in the same change and pin the
+  two-line worked case, including identical results when database row order is reversed.
 - Replace early publish derivation, per-line partial confirmation, independent inquiry netting,
   and second-approver Borrow on the named implementation branch.
 
@@ -711,6 +725,8 @@ planning:
   persisted SO demand class;
 - retirement of the per-location plan is rejected; both plan grains remain;
 - exact-line incoming allocation is replaced by dated product-location availability;
+- same-day demand-before-supply timeline ordering is replaced by the section 3.5 supply-first
+  order for every timeline consumer;
 - Product-versus-Location reconciliation is replaced by one Product row that aggregates the same
   channel-aware location facts;
 - location-set channel classification is replaced by persisted SO demand class across all
