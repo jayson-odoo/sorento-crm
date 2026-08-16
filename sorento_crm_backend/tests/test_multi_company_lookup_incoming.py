@@ -65,8 +65,8 @@ def test_incoming_list_ac_b1_found_in_both_companies(db):
     for row in result["data"]:
         assert row.get("company_id") in (DEFAULT_COMPANY_ID, MOCHA_ID)
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -81,8 +81,8 @@ def test_incoming_list_ac_b2_none_in_either_company(db):
     assert result["data"] == []
     assert result["empty"] is True
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -99,8 +99,8 @@ def test_incoming_list_ac_b3_found_in_one_of_several(db):
     assert len(result["data"]) == 1
     assert result["data"][0].get("company_name") == "Sorento"
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -134,8 +134,8 @@ def test_incoming_list_ac_b5_rows_span_two_companies_with_no_product_ids(db):
     names = {row.get("company_name") for row in result["data"]}
     assert names == {"Sorento", "Mocha"}
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -190,8 +190,8 @@ def test_incoming_list_route_labels_rows_and_lookup_companies(api):
     names = {row.get("company_name") for row in rows}
     assert names == {"Sorento", "Mocha"}
     assert body.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -239,8 +239,8 @@ def test_incoming_by_product_ac_b1_found_in_both_companies(db):
     names = {row.get("company_name") for row in result["data"]}
     assert names == {"Sorento", "Mocha"}
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -256,8 +256,8 @@ def test_incoming_by_product_ac_b2_none_in_either_company(db):
     assert result["data"] == []
     assert result["empty"] is True
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -301,8 +301,8 @@ def test_incoming_shipments_ac_b1_rows_span_two_companies(db):
     names = {row.get("company_name") for row in result["data"]}
     assert names == {"Sorento", "Mocha"}
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 

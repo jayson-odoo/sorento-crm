@@ -260,6 +260,11 @@ class PromotionResponse(PromotionBase):
 
 class PromotionListItemResponse(PromotionBase):
     id: str
+    # Multi-company reply clarity: the owning company. ``company_name`` is
+    # resolved ONLY when the lookup spanned more than one company
+    # (`company_scope.stamp_lookup_companies`), and is null otherwise.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -283,7 +288,7 @@ class PromotionListItemResponse(PromotionBase):
     def _serialize_promotion_boundary_dates_list(self, v: Optional[date]) -> Optional[str]:
         return promotion_date_to_api_iso(v) if v is not None else None
 
-    @field_validator('id', 'created_by', mode='before')
+    @field_validator('id', 'created_by', 'company_id', mode='before')
     @classmethod
     def convert_uuid_to_string(cls, v):
         """Convert UUID objects to strings."""
@@ -405,6 +410,11 @@ class PromotionSimple(BaseModel):
 
 class PromotionProductResponse(BaseModel):
     id: str
+    # Multi-company reply clarity: the owning company. ``company_name`` is
+    # resolved ONLY when the lookup spanned more than one company
+    # (`company_scope.stamp_lookup_companies`), and is null otherwise.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
     promotion_id: str
     promotion_group_id: Optional[str] = None
     product_id: str
@@ -429,7 +439,7 @@ class PromotionProductResponse(BaseModel):
     # The parent promotion has ended and its TYPE says it still applies.
     expired_but_usable: bool = False
 
-    @field_validator("id", "promotion_id", "promotion_group_id", "product_id", mode="before")
+    @field_validator("id", "promotion_id", "promotion_group_id", "product_id", "company_id", mode="before")
     @classmethod
     def _uuid_id_fields(cls, v):
         """Nested from_attributes (e.g. under promotion_groups) bypasses custom model_validate."""

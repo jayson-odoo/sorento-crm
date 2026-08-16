@@ -21,6 +21,7 @@ from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.import_log_service import ImportLogService
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
+from app.services.company_scope import stamp_lookup_companies
 from app.services.embedding_change_listener import (
     suppress_embedding_events,
     bulk_enqueue_embedding_events,
@@ -479,6 +480,11 @@ class OrderService:
             },
             "empty": total == 0
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(
+            self.db, payload, orders, product_ids=_product_uuid_filter
+        )
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
         # Date-axis relaxation (§3.4): the customer (and any product/status scope)
@@ -1431,6 +1437,16 @@ class OrderService:
             },
             "empty": total == 0,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched. Both
+        # the typed uuid filter and the ids resolved from free-text product tokens
+        # count as "what was asked about".
+        stamp_lookup_companies(
+            self.db,
+            payload,
+            orders,
+            product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+        )
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
         return payload

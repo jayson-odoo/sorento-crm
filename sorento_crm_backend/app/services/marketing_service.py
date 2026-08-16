@@ -47,6 +47,7 @@ from app.schemas.marketing import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error, handle_validation_error
 from app.services.contact_access_type_service import ContactAccessTypeService
+from app.services.company_scope import stamp_lookup_companies
 from app.services.embedding_events import publish_embedding_event
 from app.services.identifier_resolver import resolve_identifier
 from app.services.uuid_path_param import validate_uuid_path
@@ -744,6 +745,9 @@ class PromotionService:
             "empty": total == 0,
             "fallback_used": fallback_used,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(self.db, payload, promotions, product_ids=product_ids)
         if serving_policy:
             payload["serving_policy_applied"] = True
         if entity_buckets is not None:
@@ -1606,6 +1610,11 @@ class PromotionProductService:
             "empty": total == 0,
             "fallback_used": fallback_used,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(
+            self.db, payload, products, product_ids=product_ids_filter
+        )
         if serving_policy:
             payload["serving_policy_applied"] = True
         if _entity_buckets is not None:

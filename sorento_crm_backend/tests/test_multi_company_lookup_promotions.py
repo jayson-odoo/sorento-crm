@@ -62,8 +62,8 @@ def test_promotions_list_ac_b1_found_in_both_companies(db):
     names = {getattr(row, "company_name", None) for row in result["data"]}
     assert names == {"Sorento", "Mocha"}
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -78,8 +78,8 @@ def test_promotions_list_ac_b2_none_in_either_company(db):
     assert result["data"] == []
     assert result["empty"] is True
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -132,8 +132,8 @@ def test_promotion_products_list_ac_b1_found_in_both_companies(db):
     names = {getattr(row, "company_name", None) for row in result["data"]}
     assert names == {"Sorento", "Mocha"}
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -149,8 +149,8 @@ def test_promotion_products_list_ac_b2_none_in_either_company(db):
     assert result["data"] == []
     assert result["empty"] is True
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 

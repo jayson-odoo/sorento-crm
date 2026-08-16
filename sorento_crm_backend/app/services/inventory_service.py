@@ -12,7 +12,7 @@ from app.schemas.inventory import (
     StockCreate, StockUpdate, StockBatchCreate, StockBatchUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error, AppException
-from app.services.company_scope import get_company_scope
+from app.services.company_scope import get_company_scope, stamp_lookup_companies
 from app.services.import_log_service import ImportLogService
 from app.services.identifier_resolver import resolve_identifier
 
@@ -856,6 +856,11 @@ class StockService:
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so "nothing in stock" can name the companies searched.
+        stamp_lookup_companies(
+            self.db, payload, stock_items, product_ids=resolved_input_product_ids
+        )
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
         # Data-miss (§3.3): the query resolved to a real product but returned 0 stock

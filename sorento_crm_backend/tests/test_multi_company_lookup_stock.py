@@ -54,8 +54,8 @@ def test_ac_b1_found_in_both_companies_labels_every_row_and_lookup_companies(db)
     for row in result["data"]:
         assert row.company_id in (DEFAULT_COMPANY_ID, MOCHA_ID)
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -73,8 +73,8 @@ def test_ac_b2_none_in_either_company_still_names_both_in_lookup_companies(db):
     assert result["data"] == []
     assert result["empty"] is True
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -95,8 +95,8 @@ def test_ac_b3_found_in_one_of_several_still_names_both(db):
     assert len(result["data"]) == 1
     assert getattr(result["data"][0], "company_name", None) == "Sorento"
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -139,8 +139,8 @@ def test_ac_b5_rows_span_two_companies_with_no_product_ids_filter(db):
     names = {getattr(row, "company_name", None) for row in result["data"]}
     assert names == {"Sorento", "Mocha"}
     assert result.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -195,8 +195,8 @@ def test_route_labels_rows_and_lookup_companies_for_a_two_company_hit(api):
     names = {row.get("company_name") for row in rows}
     assert names == {"Sorento", "Mocha"}
     assert body.get("lookup_companies") == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 

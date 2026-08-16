@@ -8,6 +8,7 @@ for the TDD red step: "missing helper", not a misbehaving one.
 """
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -53,8 +54,8 @@ def test_labels_when_product_ids_span_two_companies_even_with_no_rows(db):
     )
 
     assert payload["lookup_companies"] == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -97,11 +98,18 @@ def test_out_of_scope_product_id_contributes_nothing(db):
 # --- AC-B7: one batched companies query, only when union > 1 ---------------
 
 
+# The blank test schema renders every table name schema-qualified
+# (`FROM zzs_blank_1234_abcd.companies`), so a literal "from companies" match
+# never fires here. The word boundary keeps `user_companies` /
+# `respond_contact_companies` out.
+_COMPANIES_TABLE = re.compile(r"\bcompanies\b")
+
+
 def _count_companies_queries(db, fn) -> int:
     statements: list[str] = []
 
     def _capture(conn, cursor, statement, *_a, **_kw):
-        if "from companies" in statement.lower():
+        if _COMPANIES_TABLE.search(statement.lower()):
             statements.append(statement)
 
     connection = db.get_bind()
@@ -159,8 +167,8 @@ def test_stamps_dict_rows_with_both_keys(db):
     assert rows[0]["company_id"] == DEFAULT_COMPANY_ID
     assert rows[0]["company_name"] == "Sorento"
     assert payload["lookup_companies"] == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
@@ -202,8 +210,8 @@ def test_row_company_id_callable_for_rows_with_no_company_id_attribute(db):
     assert rows[0]["company_id"] == MOCHA_ID
     assert rows[0]["company_name"] == "Mocha"
     assert payload["lookup_companies"] == [
-        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
         {"id": MOCHA_ID, "name": "Mocha"},
+        {"id": DEFAULT_COMPANY_ID, "name": "Sorento"},
     ]
 
 
