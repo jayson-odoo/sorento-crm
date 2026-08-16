@@ -282,7 +282,7 @@ from the PR body.
   `apiFetch`) was orphaned by the removal. `tsc --noEmit` output is byte-identical before and after
   (26 pre-existing errors in unrelated scm/products/prompts files, unchanged), and `lib/` lost 3
   pre-existing `no-unused-vars` errors that lived in the deleted file.
-- **All 24 gated routes now reject `X-API-Key` principals.** `require_permission` wraps
+- **All 26 gated routes now reject `X-API-Key` principals.** `require_permission` wraps
   `get_current_user`, not `get_current_user_or_api_key`, so an automation calling these paths with
   a key rather than a bearer token gets 401 where it previously got 200. Verified safe: no caller
   exists in `sorento_crm_mcp/`, in backend internal HTTP calls, or in any n8n workflow or doc -
@@ -290,7 +290,7 @@ from the PR body.
   (`respond_sync_handler.py:106`, `ai_assistant_service.py:3217`). It also matches the `users.py`
   precedent, where the gated reads use the same dependency. Named here because it is a real
   behaviour change that the audit table's slug column does not convey. Routes that genuinely need
-  key access use `require_permission_with_api_key`; none of these 24 do.
+  key access use `require_permission_with_api_key`; none of these 26 do.
 - **`teams.py` had malformed indentation on exactly the four lines this PR targets** (six spaces
   before `current_user:` instead of four, on all four GET handlers, and on its write handlers too).
   A small tell that these handlers were hand-edited and skipped when the rest of the package was
@@ -356,4 +356,6 @@ looking like a live consumer somebody missed.
 - **403 does not log the user out.** `lib/api.ts:193` is explicit that an RBAC 403 from one
   endpoint never clears the session, so the failure mode is a toast or an empty grid, not a
   logout loop.
-- **No migration, so no head to merge.** `alembic heads` must still read a single head at the end.
+- **One migration, so there is a head to keep single.** Rows 1-13 needed none, but the Q1/Q3 slugs
+  do: `359_um_contacts_reference_perms` (`down_revision` `358_scm_po_spo_history_aliases`, revision
+  id 32 chars or fewer). `alembic heads` must still read a single head at the end.

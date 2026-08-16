@@ -130,6 +130,12 @@ UAC6c.3 - The same migration grants it to every role holding at least one of
 `forms.forms.view`, `marketing.promotions.view`, `master_data.brands.view`,
 `master_data.products.view`, `resource.attachments.view`, `resource.attachment_directories.view`,
 `resource.attachment_types.view` - **derived in SQL from those slugs**, not hardcoded by role name.
+Review added three more consuming slugs after this was written, so the shipped derivation reads
+TEN: the seven above plus `user_management.contacts.view` and
+`user_management.access_agents.view` (the in-package screens read the same two catalogs) and
+`master_data.certificates.view` (the fourth and last mount point of `AttachmentDetailModal`).
+`contacts.view` is granted by this same migration, so the derivation runs after that grant and in
+the same transaction. Reasoning in the plan; the migration docstring is the owner of the list.
 UAC6c.4 (REG) - The ~10 consuming screens outside user-management (promotions, forms, files, trash,
 attachments, brands, products) keep working for `marketing_manager` and `marketing_executive`, who
 hold zero `user_management.*` grants otherwise. This is the whole reason the slug is new and
@@ -194,7 +200,13 @@ system-logs gates makes the coverage test fail naming that exact route path.
 - **Tests are Postgres-only** (`tests/_pg_fixture.py`), never sqlite, per PRINCIPLES.md. Each test
   seeds its own chain with a marker prefix; nothing is borrowed with `LIMIT 1` off an existing
   table, because CI's database is empty.
-- **No frontend change in this PR.** Every gated route's live callers were mapped caller-by-caller
+- **Superseded: "no frontend change in this PR" did not survive the Q1-Q3 decisions.** It was
+  written when the gates were expected to leave every screen on a menu entry that already carried
+  the matching slug. Gating `GET /settings/` forced the three consumers onto `/settings/app-config`
+  (UAC6b.5-6b.7), and closing the permission-free doors of Q1 forced the menu / Apps-dropdown /
+  tab alignment. The shipped frontend surface is listed in the plan's Status line; the plan is the
+  owner of that list. What is unchanged is the mapping below.
+- Every gated route's live callers were mapped caller-by-caller
   (see the plan's audit table). All sit on screens whose menu entry already carries the matching
   slug, with two deliberate exceptions - `GET /access-agents/` and
   `GET /access-agents/{id}/field-access` are also called from the permission-free
