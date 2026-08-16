@@ -319,7 +319,8 @@ Product grain has not retired or replaced Location grain.
 ### AC-F03 [BE][J07][J08] Both grains share one frozen input set
 
 Given Product and Location views for a run, when their evidence is inspected, then both use the
-same company, as-of time, demand, stock, incoming, policy, supplier facts, and source revision.
+same company, as-of time, demand, stock, incoming, policy, supplier facts, source revision, and
+per-product frozen UOM `decimal_places`.
 
 ### AC-F04 [BE][J07][J08] Product reorder level is a sum
 
@@ -357,7 +358,9 @@ the chosen quantity, and the chosen quantity's split back to locations.
 ### AC-F09 [BE][J07][J08] Exactly one grain is actionable per run
 
 Given a new front-planning run has no saved decisions, when the buyer first saves in Product or
-Location grain, then that grain is locked as `decision_grain`; Product uses the single
+Location grain, then that grain is locked as `decision_grain` under a `scm.reorder_run` row lock
+taken in the same transaction as the decision write, so two concurrent first saves in different
+grains persist exactly one grain and the other is rejected; Product uses the single
 `order_summary_row` decision keyed by `(run_id, product_id)`, Location uses the existing
 recommendation decisions and overrides, and PO worklists ignore the other grain. Neither worklist
 nor response contracts add a channel key. Legacy runs accept no new decisions in either grain.
@@ -381,9 +384,12 @@ to suggested quantity 10; it does not round each location or channel first.
 Given UOM master data is created or edited, when `decimal_places` is submitted, then values `0..4`
 are stored and returned by create, edit, list, detail, and select while values outside that range
 are rejected. Omitted creates and missing rollout values resolve to `0`; omitted edits preserve the
-stored value. Count-unit backfills are `0`, measure-unit backfills use the transaction columns and
-exact name aliases in the plan to find the greatest observed fractional scale after trailing zeroes
-are removed and cap it at `4`, unknown units resolve to `0`, and no quantity row is rewritten. Given
+stored value. Backfill classifies by UOM name only, never code: count names are `0`, measure names
+use the transaction columns and exact name aliases in the plan to find the greatest observed
+fractional scale after trailing zeroes are removed and cap it at `4`, unknown names resolve to `0`
+(code `EA` with name `Kilogram` is a measure unit), and no quantity row is rewritten. Each new
+summary row freezes the product's `decimal_places` as `uom_decimal_places`; validation and
+allocation read that snapshot, so editing the UOM afterwards does not change a frozen run. Given
 an `EA` product and a `kg` product with `decimal_places = 3`, when chosen quantities are validated,
 then `2.5 EA` is rejected while `2.5 kg` is accepted. When an accepted Product choice is split, the
 generalized existing allocator works in the UOM's integer minor units, stores decimal location

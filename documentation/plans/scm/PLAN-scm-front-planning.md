@@ -384,14 +384,14 @@ Location grain remains a permanent selectable and actionable Buy mode. It reads 
 recommendation workflow extended with the frozen demand-class split. At each product-location it
 shows Project need, Retail need, and shared stock, SPO, PO, reorder, and policy evidence. It retains
 the existing decision and override workflow. Both grains use the same run, as-of time, facts,
-supplier inputs, and source revision.
+supplier inputs, source revision, and per-product UOM `decimal_places` snapshot.
 
 Each new front-planning run has exactly one actionable `decision_grain`:
 
 - `product`: the single product `scm.order_summary_row` owns the chosen quantity. Its PO-worklist
   split reruns the existing `reorder_engine.allocate` deterministically with `chosen_qty`, the
-  frozen location inputs, and the product UOM's `decimal_places`. Allocation works in that UOM's
-  integer minor units, persists the resulting decimal location quantities, and makes their sum
+  frozen location inputs, and the `decimal_places` frozen on the summary row. Allocation works in
+  those integer minor units, persists the resulting decimal location quantities, and makes their sum
   exactly equal `chosen_qty`; no proportional rescaling formula is added. Location recommendations
   are read-only under this grain.
 - `location`: existing `scm.reorder_recommendation` decisions and
@@ -399,9 +399,13 @@ Each new front-planning run has exactly one actionable `decision_grain`:
   of their chosen quantities.
 
 The buyer may inspect both views at any time. The first saved decision locks `decision_grain`
-permanently for that frozen run. If the buyer needs the other grain to become actionable after a
-decision, a new current run must be created from a new frozen input snapshot; the old run and all
-of its decisions remain immutable and auditable. PO worklists read only the run's selected grain.
+permanently for that frozen run. The lock is atomic: every Product or Location decision write
+first takes a row lock on the `scm.reorder_run` row (`SELECT ... FOR UPDATE`) in its own
+transaction, then sets `decision_grain` when NULL or rejects the write when it holds the other
+grain, so two concurrent first decisions can never persist competing grains. If the buyer needs
+the other grain to become actionable after a decision, a new current run must be created from a
+new frozen input snapshot; the old run and all of its decisions remain immutable and auditable.
+PO worklists read only the run's selected grain.
 This preserves two real Buy planning modes without allowing both to order the same requirement.
 
 Runs created before this contract are legacy. They keep their existing recommendations, overrides,
@@ -487,9 +491,9 @@ not produced for a confirmed decision.
   product-location values and never gain a demand-class row dimension.
 - Add `front_planning_contract_version` and `decision_grain` (`product` or `location`) to
   `scm.reorder_run`. Existing runs keep both NULL. New runs set contract version `1`, leave
-  `decision_grain` NULL until the first decision, and then lock it. Decision services reject every
-  write when the contract version is NULL, so legacy runs are read-only without a decision-grain
-  backfill.
+  `decision_grain` NULL until the first decision, and then lock it under the section 5.4 row lock.
+  Decision services reject every write when the contract version is NULL, so legacy runs are
+  read-only without a decision-grain backfill.
 - Keep the existing `scm.reorder_recommendation` identity. For each concrete-location fact used by
   front planning, store its Project, Retail, and unclassified demand breakdown plus references to
   shared location supply in the existing `inputs` snapshot. Project need bypasses net-position
@@ -498,9 +502,12 @@ not produced for a confirmed decision.
 - Keep the existing `scm.order_summary_row` identity and unique key `(run_id, product_id)`. New runs
   still write one row per product. Add nullable Numeric `project_buy_qty`,
   `retail_replenishment_qty`, and `unclassified_demand_qty`, nullable Date
-  `earliest_project_need_date`, and nullable JSONB `channel_calculation_basis` as the frozen channel
-  breakdown. Existing decision, keying, worklist, and response operations remain keyed by run and
-  product, with no channel identifier. New runs require the five fields after calculation. Existing
+  `earliest_project_need_date`, nullable JSONB `channel_calculation_basis` as the frozen channel
+  breakdown, and nullable SmallInteger `uom_decimal_places` copied from the product's base UOM at
+  calculation. Existing decision, keying, worklist, and response operations remain keyed by run
+  and product, with no channel identifier. New runs require the six fields after calculation.
+  Chosen-quantity validation and allocator replay read `uom_decimal_places` from the row, never
+  live UOM master data, so a later UOM edit cannot change a frozen run. Existing
   rows remain untouched and their new fields stay NULL; they are not split, duplicated, defaulted,
   or made actionable.
 - Reuse existing summary-row quantity, supplier, and keying fields. Do not add a frozen cash field:
@@ -509,7 +516,8 @@ not produced for a confirmed decision.
   `ReorderRecommendation`.
 - Add `decimal_places` to `public.units_of_measure` as a SmallInteger constrained to `0..4`.
   Products read it through their existing `base_uom_id`; a missing value during rollout resolves
-  to `0`. Backfill from lowercased, trimmed UOM code or name before making the field non-null.
+  to `0`. Backfill from the lowercased, trimmed UOM name only, before making the field non-null;
+  the UOM code is not used, so code `EA` with name `Kilogram` is a measure unit.
   Exact count aliases `ea`, `each`, `piece`, `pieces`, `unit`, `units`, `pc`, `pcs`, `set`, and
   `sets` receive `0`. Exact measure aliases are `kg`, `kilogram`, `kilograms`, `g`, `gram`, `grams`,
   `m`, `meter`, `meters`, `metre`, `metres`, `cm`, `centimeter`, `centimeters`, `centimetre`,
@@ -533,14 +541,15 @@ not produced for a confirmed decision.
 - Add the narrow child `scm.order_summary_location_allocation` with `order_summary_row_id`,
   `reorder_recommendation_id`, `warehouse_id`, and Numeric `allocated_qty`. When Product `chosen_qty`
   changes, generalize and rerun
-  `reorder_engine.allocate(chosen_qty, frozen_location_inputs, decimal_places)` and persist its
-  output. The decision boundary rejects `chosen_qty` with more fractional places than the product
-  UOM permits. The allocator converts the accepted total to integer minor units of
-  `10^-decimal_places`, reuses its deterministic largest-remainder allocation, then converts the
-  children back to decimal quantities. Enforce one row per summary row and warehouse,
-  non-negative quantities, company scope, and a transaction-time invariant that child quantities
-  sum exactly to the parent's stored `chosen_qty`. Do not rescale a prior split. This is
-  persistence for the PO worklist, not a new allocator or subsystem.
+  `reorder_engine.allocate(chosen_qty, frozen_location_inputs, decimal_places)` with the summary
+  row's frozen `uom_decimal_places` and persist its output. The decision boundary rejects
+  `chosen_qty` with more fractional places than that snapshot permits. The allocator converts the
+  accepted total to integer minor units of `10^-decimal_places`, reuses its deterministic
+  largest-remainder allocation, then converts the children back to decimal quantities. Enforce one
+  row per summary row and warehouse, non-negative quantities, company scope, and a
+  transaction-time invariant that child quantities sum exactly to the parent's stored `chosen_qty`.
+  Do not rescale a prior split. This is persistence for the PO worklist, not a new allocator or
+  subsystem.
 - `scm.reorder_level` remains per location. No consolidation migration or product-level winner
   is added. The product value is calculated as the sum in section 5.5.
 - `scm.item_classification` supplies the existing ABC hot-selling fact.
@@ -604,8 +613,9 @@ pre-code contract only.
   need, and location drills.
 - Add and backfill UOM `decimal_places`, expose it in UOM master-data create and edit with `0..4`
   validation, and preserve the `0` fallback during rollout.
-- Keep one Product row, add its stacked channel readings and expandable ledgers, apply supplier
-  rounding once to the total, and persist the durable allocator-rerun location split.
+- Keep one Product row, freeze its UOM `decimal_places` snapshot, add its stacked channel readings
+  and expandable ledgers, apply supplier rounding once to the total, and persist the durable
+  allocator-rerun location split.
 - Pin mixed-channel same-location demand, Project Buy pass-through, decimal chosen-quantity
   allocation at UOM precision, unavailable legacy breakdowns, and rejection of every legacy-run
   decision write.
