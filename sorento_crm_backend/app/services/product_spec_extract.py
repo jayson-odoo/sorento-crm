@@ -182,7 +182,12 @@ def _in_scope(
     gate.values = dict(stored_values)
     gate.provenance = dict(stored_provenance)
     for entry in candidates:
-        gate.values[entry["key"]] = {"value": entry["value"]}
+        # `setdefault`, never assignment: a candidate that proposes a GATE key (a
+        # pasted card read as naming "Kitchen Sink") must not overwrite the product's
+        # own stored class before the gate is evaluated, or it would smuggle its
+        # neighbours (bowl_count, applies_when class Kitchen Sink) past a gate that
+        # exists to keep them off a Water Closet.
+        gate.values.setdefault(entry["key"], {"value": entry["value"]})
         gate.provenance.setdefault(
             entry["key"], {"source": "derived", "confidence": 1.0, "evidence": ""}
         )

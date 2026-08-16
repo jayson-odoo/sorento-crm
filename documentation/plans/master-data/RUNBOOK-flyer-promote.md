@@ -211,12 +211,12 @@ Verify after the deploy that no surface still calls the retired routes:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' -X PUT \
-  "$API_BASE/api/v1/product-specifications/by-product/<any-product-id>/flyer-text" \
+  "$API_BASE/api/v1/master-data/product-specifications/by-product/<any-product-id>/flyer-text" \
   -H "X-API-Key: $EXTERNAL_API_KEY" -H 'Content-Type: application/json' -d '{"text":"x"}'
 # expected: 404
 
 curl -s -o /dev/null -w '%{http_code}\n' \
-  "$API_BASE/api/v1/product-specifications/findability/flyers" \
+  "$API_BASE/api/v1/master-data/product-specifications/findability/flyers" \
   -H "X-API-Key: $EXTERNAL_API_KEY"
 # expected: 404
 ```
@@ -255,11 +255,11 @@ Either route runs the same `derive_all` over every code, all companies.
 
 **From the screen (preferred, because it has a status anyone can poll).** Master Data ->
 Specifications -> the master spec screen, then "Read the catalogue again". That is
-`POST /api/v1/spec-registry/reread-catalogue`, which calls `product_spec_rederive.start(db)`. It
-runs on a background thread inside the API process, refuses to start a second run alongside the
-first, and writes the rules fingerprint when it finishes. Poll it with
-`GET /api/v1/spec-registry/catalogue-status` (or just leave the screen open) until `status` reads
-`done`. It takes minutes over the whole catalogue.
+`POST /api/v1/master-data/spec-registry/reread-catalogue`, which calls
+`product_spec_rederive.start(db)`. It runs on a background thread inside the API process, refuses
+to start a second run alongside the first, and writes the rules fingerprint when it finishes. Poll
+it with `GET /api/v1/master-data/spec-registry/catalogue-status` (or just leave the screen open)
+until `status` reads `done`. It takes minutes over the whole catalogue.
 
 **On the RQ worker**, when the API process should not carry it:
 

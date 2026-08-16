@@ -605,6 +605,17 @@ inline permission `Depends(require_permission_with_api_key(...))`, hand-built di
   fails the whole batch through the choke point's own validation. Response `{product_code,
   rows_written, spec_keys}` as the service returns it. Nothing else new; the FE refetches
   `by-product` afterwards.
+  **Amended at review (2026-08-17).** The choke point knows nothing about the registry, so
+  "the choke point's own validation" is not enough on its own: every entry is first put
+  through the SAME coercion the single `PUT .../values/{spec_key}` runs, extracted into one
+  shared `_value_for_registry(row, value, reject)` that both routes call. It coerces by
+  `data_type`, refuses a value outside the merged allowed values, and takes the `unit` from
+  the registry row - a `unit` in the body is accepted and ignored, because the unit belongs to
+  the key. The refusal is 422 here and 400 on the PUT (`reject` is the caller's), except a
+  blank value, which is 400 either way because it is the choke point's own refusal. A list
+  value is accepted only for `MULTI_VALUE_KEYS` (`finish`), coerced element-wise and kept as a
+  list, so accepting a two-tone proposal stores exactly what a re-derivation of the same words
+  stores. Evidence collapses to `"read from text"` when the entry's own evidence is blank.
 - `PUT .../flyer-text` and the four `/findability/*` routes are DELETED; the by-product response
   drops `flyer_text` (AC-B.14). `product_flyer_import.py` (zero callers) and
   `spec_findability.py` are deleted with `tests/test_spec_findability.py`. The findability

@@ -1330,7 +1330,14 @@ def derive_for_code(
     ):
         return {"written": 0, "skipped": len(rows), "exceptions": 0}
 
-    result = derive(product, category, rules_by_key=rules_by_key)
+    # Scopes as well as rules: they are already in hand for the fingerprint above,
+    # and without them one code's re-derive gated on the SHIPPED `applies_when`
+    # while the catalogue run gated on the configured one - the same product read
+    # two ways depending on which button produced it. Extraction already passes
+    # both (`product_spec_extract`), so this is derivation catching up with it.
+    result = derive(
+        product, category, rules_by_key=rules_by_key, scopes_by_key=scopes_by_key
+    )
 
     # Brand is the one spec that lives on the ROW while derivation is keyed on the CODE.
     # Where two company copies of a model carry different brands (6 rows catalog-wide),

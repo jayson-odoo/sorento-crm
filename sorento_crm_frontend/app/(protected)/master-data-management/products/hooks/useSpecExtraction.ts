@@ -85,10 +85,14 @@ export function useSpecExtraction(
       if (productCode) {
         queryClient.invalidateQueries({ queryKey: APPLICABLE_KEY(productCode) });
       }
-      toast.success(
-        `${answer.rows_written} specification${answer.rows_written === 1 ? '' : 's'} saved`,
-        { description: 'Each one carries the words it was read from.' },
-      );
+      // `spec_keys`, never `rows_written`: the write fans out to every company copy
+      // of the code, so two accepted specifications on a two-company code report four
+      // rows written. The user ticked two, and a toast that says four is the system
+      // describing its own plumbing back at them.
+      const saved = answer.spec_keys.length;
+      toast.success(`${saved} specification${saved === 1 ? '' : 's'} saved`, {
+        description: 'Each one carries the words it was read from.',
+      });
       discard();
     },
     onError: (failure: Error) => toast.error(failure.message, { duration: 10_000 }),

@@ -61,7 +61,13 @@ export function proposalBadgeText(proposal: SpecProposal): string {
     case 'change':
       return `Changes ${stored} to ${readableValue(proposal.value, proposal.unit ?? undefined)}`;
     case 'conflict':
-      return `Conflicts with your value ${stored}`;
+      // A tombstone conflicts with a REMOVAL, not with a value: the person said this
+      // product does not carry this spec, so there is no stored value to name. Through
+      // the sentence below it reads "Conflicts with your value " - a badge that stops
+      // mid-phrase, which the reader has to interpret as either a bug or a blank value.
+      return stored
+        ? `Conflicts with your value ${stored}`
+        : 'Conflicts with your removal of this spec';
     default:
       return 'New';
   }

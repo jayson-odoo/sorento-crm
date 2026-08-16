@@ -90,7 +90,11 @@ _PROMOTE = sa.text(
     WITH targets AS (
         SELECT s.id
           FROM product_specifications s
-         WHERE EXISTS (
+         -- `jsonb_each` errors on anything that is not an object, and the column is
+         -- nullable with no CHECK behind it: one row holding `null`, `[]` or a bare
+         -- string aborts the whole statement mid-migration rather than being skipped.
+         WHERE jsonb_typeof(s.provenance) = 'object'
+           AND EXISTS (
                  SELECT 1
                    FROM jsonb_each(s.provenance) AS e(key, value)
                   WHERE e.value->>'source' = 'flyer'
@@ -133,7 +137,10 @@ _DEMOTE = sa.text(
     WITH targets AS (
         SELECT s.id
           FROM product_specifications s
-         WHERE EXISTS (
+         -- Same guard as the upgrade: a non-object `provenance` is skipped rather
+         -- than aborting the statement (see `_PROMOTE`).
+         WHERE jsonb_typeof(s.provenance) = 'object'
+           AND EXISTS (
                  SELECT 1
                    FROM jsonb_each(s.provenance) AS e(key, value)
                   WHERE e.value->>'migrated_from' = 'flyer'
@@ -166,6 +173,16 @@ _DEMOTE = sa.text(
                        AND NOT EXISTS (
                              SELECT 1
                                FROM jsonb_each(restored.provenance) AS r(key, value)
+                              -- This list IS `product_spec_write.AUTHORED_SOURCES`,
+                              -- frozen into SQL because a migration must keep saying
+                              -- what it said the day it ran. It is deliberately NOT
+                              -- imported: the hazard is the other way round - `flyer`
+                              -- JOINS that set in the bulk-ingestion slice after PRs
+                              -- 1-4 (see AC-F.7), and an import would then make this
+                              -- downgrade read a demoted `source='flyer'` entry as
+                              -- authored and leave every row on `authored` forever.
+                              -- If the set changes for a reason OTHER than the flyer
+                              -- joining it, change this list to match by hand.
                               WHERE r.value->>'source' IN ('human', 'supplier')
                            )
                       THEN 'derived'

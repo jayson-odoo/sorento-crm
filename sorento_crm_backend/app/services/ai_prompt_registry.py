@@ -654,7 +654,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     # here is an unknown one and is refused at save.
     "spec_extractor": PromptKeySpec(
         name="spec_extractor",
-        role="Spec extractor — read pasted product text onto the Spec Registry",
+        role="Spec extractor - read pasted product text onto the Spec Registry",
         active=True,
         activates_in=None,
         variables=[],

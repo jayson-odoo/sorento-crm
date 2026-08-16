@@ -40,6 +40,10 @@ from app.models.ai_assistant import AIAssistantUsageLog
 from app.models.product_spec import ProductSpecifications
 from app.services.ai_prompt_registry import agent_model, get_prompt
 from app.services.llm_provider import get_provider
+# The keys a product may hold more than one of. Imported rather than restated: the set
+# is derivation's, and a second copy would let an accepted proposal store a shape a
+# re-derivation of the same words would not.
+from app.services.product_spec_derivation import MULTI_VALUE_KEYS
 from app.services.product_spec_registry import (
     active_registry,
     merged_allowed_values,
@@ -226,6 +230,23 @@ def _coerce(row, value: Any, open_values: list[str] | None = None) -> Any | None
     """
     data_type = (row.data_type or "").lower()
 
+    if isinstance(value, (list, tuple)) and row.spec_key in MULTI_VALUE_KEYS:
+        # "Rose Gold + Matt Black" is one tap in two finishes, and both readings are
+        # true. `apply_rules` already produces the list and derivation stores it, so
+        # coercing the list element-wise and KEEPING its shape is what makes an
+        # accepted proposal store what a re-derivation of the same words would have.
+        # Stringified, the whole list matches nothing in the vocabulary and the reading
+        # is dropped on the floor - the text said something real and no screen shows it.
+        items: list = []
+        for item in value:
+            coerced = _coerce(row, item, open_values)
+            if coerced is not None and coerced not in items:
+                items.append(coerced)
+        if not items:
+            return None
+        # One tone is stored as the tone, exactly as `apply_rules` does it.
+        return items[0] if len(items) == 1 else items
+
     if data_type == "boolean":
         if isinstance(value, bool):
             return value
@@ -330,12 +351,18 @@ def _validate(
     return specs, exclusions, free_terms, notes
 
 
-def _resolve_provider(db: Session):
+def _resolve_provider(db: Session, agent_name: str = AGENT_NAME):
     """The provider and model THIS agent runs on. None when unconfigured.
 
     Per-agent, falling back to the global assistant config. Reading a misspelt customer
     sentence is not the same job as writing an explanatory paragraph, so the model is
-    set against the `spec_understanding` agent row rather than shared with everything.
+    set against the agent's own row rather than shared with everything.
+
+    `agent_name` is an argument rather than the module constant because two agents call
+    this: the enquiry reader and the extractor beneath it. Hardcoded, the extractor
+    read its own words (its system prompt IS asked for under `spec_extractor`) with
+    whatever model an admin had configured for the enquiry reader, and nothing on
+    either screen said so.
     """
     from app.models.ai_assistant import AIAssistantConfig
 
@@ -344,7 +371,7 @@ def _resolve_provider(db: Session):
         .order_by(AIAssistantConfig.created_at.asc())
         .first()
     )
-    agent_provider, agent_model_name = agent_model(db, AGENT_NAME)
+    agent_provider, agent_model_name = agent_model(db, agent_name)
     provider_name = agent_provider or (cfg.provider if cfg else "openai") or "openai"
     model_name = agent_model_name or (cfg.model if cfg else "") or ""
     api_key = (cfg.api_key_ciphertext if cfg else "") or settings.openai_api_key or ""
@@ -616,7 +643,7 @@ def extract_specs_from_text(
     if not text or not allow_model:
         return Extraction()
 
-    provider, _provider_name, model_name = _resolve_provider(db)
+    provider, _provider_name, model_name = _resolve_provider(db, EXTRACTOR_AGENT_NAME)
     if provider is None:
         return Extraction()
 

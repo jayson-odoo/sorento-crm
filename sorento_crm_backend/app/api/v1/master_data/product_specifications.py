@@ -48,6 +48,75 @@ def _spec_reject_unprocessable(message: str):
     return AppException(status_code=422, message=message, code="product_spec_bad_text")
 
 
+def _value_for_registry(row: ProductSpecRegistry, raw: Any, reject) -> Any:
+    """One value, forced into the shape the registry describes, or refused.
+
+    Both write paths call this and neither keeps its own copy: a value a reviewer
+    accepts off a pasted flyer card is written by the batch route, and the same value
+    typed into the same field is written by the PUT. Two copies of the coercion would
+    mean the batch could store a word the field itself refuses - an out-of-vocabulary
+    enum, a "measurement" that is not a number - and the vocabulary is the whole
+    reason the registry is shared with the parser and the ranker.
+
+    `reject` builds the refusal, because the two callers are refusing different
+    things: a value typed into one field is a bad business state (400), and a body
+    naming a value the registry cannot accept is the wrong shape for the call (422).
+    The blank case answers 400 either way - it is the write choke point's own refusal
+    (`product_spec_write._prepare`), reproduced here only so the message can name the
+    key's label instead of its slug.
+    """
+    from app.services.product_spec_registry import merged_allowed_values
+
+    def _blank():
+        # An empty value is not a value, it is a removal wearing one. Stored, it
+        # canonicalises to nothing while derivation keeps producing something, so the
+        # merge would raise the same conflict on every run forever - in a table whose
+        # contract is exceptions only.
+        return _spec_reject(
+            f"{row.label} cannot be blank. To take the value away, remove the "
+            f"specification instead."
+        )
+
+    if isinstance(raw, (list, tuple)):
+        # A product can genuinely carry two of these at once: SRTWT9605-RG is "Rose
+        # Gold + Matt Black", and derivation stores both. So the list is coerced
+        # element-wise and KEPT as a list, or accepting a proposal would write a
+        # different shape from the one a re-derivation of the same words produces.
+        from app.services.product_spec_derivation import MULTI_VALUE_KEYS
+
+        if row.spec_key not in MULTI_VALUE_KEYS:
+            raise reject(f"{row.label} holds one value, not several.")
+        items = [_value_for_registry(row, item, reject) for item in raw]
+        if not items:
+            raise _blank()
+        # One tone is stored as the tone, exactly as `apply_rules` does it: a
+        # one-element list and the value itself must not be two different answers.
+        return items[0] if len(items) == 1 else items
+
+    data_type = (row.data_type or "").lower()
+    if data_type == "boolean":
+        return str(raw).strip().lower() in {"true", "yes", "1"}
+
+    if data_type == "numeric":
+        try:
+            number = float(raw)
+        except (TypeError, ValueError):
+            raise reject(f"{row.label} is a measurement, so it needs a number.")
+        return int(number) if number.is_integer() else number
+
+    value = str(raw).strip()
+    if not value:
+        raise _blank()
+
+    allowed = merged_allowed_values(row)
+    if allowed and value not in allowed:
+        raise reject(
+            f"{row.label} does not have a value called \"{value}\". "
+            f"Add it to the specification first, or pick one of: {', '.join(allowed)}."
+        )
+    return value
+
+
 _INTERNAL_ONLY_VALUE_KEYS: set[str] = set()
 
 
@@ -382,8 +451,10 @@ def set_spec_values_in_one_batch(
     partial failure would leave the table half-applied. So the batch is the shape and a
     batch of one is the narrow case.
 
-    Registered BEFORE `/values/{spec_key}` so "batch" is read as the literal it is
-    rather than as a specification called batch.
+    Every entry is validated against the registry exactly as the single PUT validates
+    the one it is given (`_value_for_registry`), because a value a person accepted off
+    a flyer card is the same claim as one they typed, and only the shared helper keeps
+    the two from drifting.
 
     Plain ``def``, so FastAPI runs it in a thread: up to fifty keys, a fan-out to every
     company copy and a full re-derive of the code is real synchronous work, and on the
@@ -397,11 +468,12 @@ def set_spec_values_in_one_batch(
 
     # Pre-flight, before anything is written: the choke point validates the operation
     # and the value but knows nothing about the registry, so an unknown key would
-    # otherwise be written as a permanent provenance entry no screen can render. Every
-    # entry is checked first, so one bad key writes none of the batch.
+    # otherwise be written as a permanent provenance entry no screen can render, and an
+    # out-of-vocabulary value would be written as a word the ranker has never heard of.
+    # Every entry is checked first, so one bad entry writes none of the batch.
     keys = [entry.spec_key.strip() for entry in payload.entries]
     known = {
-        row.spec_key
+        row.spec_key: row
         for row in db.query(ProductSpecRegistry)
         .filter(ProductSpecRegistry.spec_key.in_(keys or [""]))
         .all()
@@ -410,26 +482,29 @@ def set_spec_values_in_one_batch(
         if key not in known:
             raise handle_not_found("Spec key", key)
 
-    result = apply_spec_values(
-        db,
-        product.product_code,
-        [
+    prepared: list[dict] = []
+    for entry in payload.entries:
+        row = known[entry.spec_key.strip()]
+        # The words the text was read from, kept on the row: a value a person accepted
+        # off a flyer is still traceable to the sentence that proposed it, which is
+        # what makes the badge honest a year later. A dangling "read from text: " with
+        # nothing after it says less than the phrase alone, so it collapses.
+        evidence = (entry.evidence or "").strip()
+        prepared.append(
             {
-                "spec_key": entry.spec_key.strip(),
+                "spec_key": row.spec_key,
                 "op": "set",
-                "value": entry.value,
-                "unit": entry.unit or None,
+                "value": _value_for_registry(row, entry.value, _spec_reject_unprocessable),
+                # The registry's unit, never the caller's: the unit belongs to the key
+                # and a batch that could smuggle in its own would store 250 cm under a
+                # millimetre measurement.
+                "unit": row.unit or None,
                 "source": "human",
-                # The words the text was read from, kept on the row: a value a person
-                # accepted off a flyer is still traceable to the sentence that proposed
-                # it, which is what makes the badge honest a year later.
-                "evidence": f"read from text: {(entry.evidence or '').strip()}",
+                "evidence": f"read from text: {evidence}" if evidence else "read from text",
             }
-            for entry in payload.entries
-        ],
-        actor=current_user,
-    )
-    return result
+        )
+
+    return apply_spec_values(db, product.product_code, prepared, actor=current_user)
 
 
 @router.put("/by-product/{product_id}/values/{spec_key}")
@@ -450,7 +525,6 @@ async def set_spec_value_by_hand(
     word the ranker and the parser have never heard of, which is the whole reason the
     vocabulary is shared.
     """
-    from app.services.product_spec_registry import merged_allowed_values
     from app.services.product_spec_write import apply_spec_values
 
     product = db.query(Product).filter(Product.id == product_id).first()
@@ -461,33 +535,9 @@ async def set_spec_value_by_hand(
     if row is None:
         raise handle_not_found("Spec key", spec_key)
 
-    value = payload.value
-    data_type = (row.data_type or "").lower()
-    if data_type == "boolean":
-        value = str(value).strip().lower() in {"true", "yes", "1"}
-    elif data_type == "numeric":
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            raise _spec_reject(f"{row.label} is a measurement, so it needs a number.")
-        value = int(number) if number.is_integer() else number
-    else:
-        value = str(value).strip()
-        if not value:
-            # An empty string is not a value, it is a removal wearing one. Stored, it
-            # canonicalises to nothing while derivation keeps producing something, so
-            # the merge would raise the same conflict on every run forever - in a table
-            # whose contract is exceptions only.
-            raise _spec_reject(
-                f"{row.label} cannot be blank. To take the value away, remove the "
-                f"specification instead."
-            )
-        allowed = merged_allowed_values(row)
-        if allowed and value not in allowed:
-            raise _spec_reject(
-                f"{row.label} does not have a value called \"{value}\". "
-                f"Add it to the specification first, or pick one of: {', '.join(allowed)}."
-            )
+    # The same coercion the batch route runs, from the same helper: a value a person
+    # types and a value they tick off a proposal are the same claim about the product.
+    value = _value_for_registry(row, payload.value, _spec_reject)
 
     # The write itself belongs to the spec write service: it fans the value out to every
     # company copy of the code, holds it against the re-derivation it triggers, and

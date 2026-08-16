@@ -32,7 +32,10 @@ mechanically and both are load-bearing for how these tests are built:
 
 The model-path monkeypatches `product_spec_understanding._resolve_provider`, the
 exact technique tests/test_product_spec_understanding.py uses for "no model" and "a
-model answer" - the tester brief names that file for this reason.
+model answer" - the tester brief names that file for this reason. The stubs take
+`*_agent` because `_resolve_provider` now takes the agent name it is resolving for
+(the last test in this file is what asks for that); `understand_phrase` still calls it
+with the session alone, which is why the sibling file's one-argument stubs still hold.
 """
 from __future__ import annotations
 
@@ -136,7 +139,9 @@ def _by_key(body: dict) -> dict[str, dict]:
 def _no_model(monkeypatch):
     import app.services.product_spec_understanding as understanding
 
-    monkeypatch.setattr(understanding, "_resolve_provider", lambda db: (None, "openai", ""))
+    monkeypatch.setattr(
+        understanding, "_resolve_provider", lambda db, *_agent: (None, "openai", "")
+    )
 
 
 def _model_returning(payload: dict, monkeypatch):
@@ -147,7 +152,7 @@ def _model_returning(payload: dict, monkeypatch):
     )
     provider = SimpleNamespace(chat=lambda *a, **k: result)
     monkeypatch.setattr(
-        understanding, "_resolve_provider", lambda db: (provider, "openai", "gpt-test")
+        understanding, "_resolve_provider", lambda db, *_agent: (provider, "openai", "gpt-test")
     )
 
 
@@ -159,7 +164,7 @@ def _model_raising(monkeypatch):
 
     provider = SimpleNamespace(chat=_boom)
     monkeypatch.setattr(
-        understanding, "_resolve_provider", lambda db: (provider, "openai", "gpt-test")
+        understanding, "_resolve_provider", lambda db, *_agent: (provider, "openai", "gpt-test")
     )
 
 
