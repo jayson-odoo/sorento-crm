@@ -102,6 +102,16 @@ No new slug and no migration: `user_management.logs.view` is already in
 so the dependency simply makes the menu's claim true. `POST /system-logs/` in the same file is left
 alone - writes are issue #174.
 
+Two tabs front these two routes and both are now hidden for a role without `logs.view`: the user
+detail page's Activity Logs tab (row 26) and the My account Logs tab (row 25, via
+`/api/user-management/account/logs`). Stating the consequence as a role "losing" the My account Logs
+tab was wrong before that change - the tab rendered and hard-errored on click for every role holding
+`account.view` without `logs.view`, which is worse than not offering it. Hiding it is presentation
+only: the gate is the backend dependency, and per the convention above there is no route guard, so a
+deep link still renders the child page and still gets denied its data. The My account screen also
+still reads the GLOBAL unfiltered system-log list rather than the signed-in user's own - that is
+issue #181 and is deliberately not fixed here.
+
 **Why these two were missed, which matters more than the two routes.** The structural coverage test
 in work item 4 exists precisely to catch this, and could not: its `_IN_SCOPE_MODULES` was a
 hardcoded set of the seven module names this plan's audit table walked, and `system_logs.py` is an
@@ -158,7 +168,7 @@ Resolution summary:
   a different role set gets the right answer. Net effect: the two catalogs are no longer readable by
   any authenticated caller, and no consuming screen breaks.
 
-Review follow-up on that derivation: the consumer list is now NINE slugs, not seven -
+Review follow-up on that derivation: the consumer list is now TEN slugs, not seven -
 `user_management.contacts.view` and `user_management.access_agents.view` were added, because the
 in-package screens read the same two catalogs (the contact detail page's market-segment section and
 its edit dialog, the access-agents member segment editor). `contacts.view` is granted by this very
@@ -171,6 +181,16 @@ synthetic fixture role, seeded holding no consumer slug precisely to prove the n
 the derivation. The change is made on the structural argument - the stated rule is "every role that
 can open a consuming screen", and two consuming screens were missing from the list - not because
 anyone was stranded.
+
+The tenth slug, `master_data.certificates.view`, is a TRANSITIVE consumer and is bounded on purpose,
+because "one more screen reads the catalog" could otherwise run forever.
+`AttachmentDetailModal` calls `useContactAccessTypes()` unconditionally and has exactly four mount
+points: the Files panel (`resource.attachments.view`), `PromotionsList`
+(`marketing.promotions.view`), `ProductAttachmentsTab` (`master_data.products.view`) and
+`CertificateDetail` (`master_data.certificates.view`). Three were already on the list, so certificates
+COMPLETES that modal rather than opening a series. It is not reachable on the current database -
+all eleven roles holding `master_data.certificates.view` already qualify through another consumer
+slug - and is added for structural correctness, exactly like the two in-package slugs above.
 
 One correction the Q2 investigation turned up: of the "three consumers" that made gating
 `GET /settings/` risky, only two were ever functional. `hooks/use-excel-accept.ts` reads

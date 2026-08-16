@@ -17,6 +17,7 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import { AccountProvider } from './components/account-context';
+import { useHasPermission } from '@/hooks/usePermissions';
 
 type NavRoutes = Record<
   string,
@@ -48,6 +49,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     retry: 1,
   });
 
+  // The logs tab proxies to GET /system-logs, gated on user_management.logs.view -
+  // without it the tab is a guaranteed error.
+  const canViewLogs = useHasPermission('user_management.logs.view');
+
   const navRoutes = useMemo<NavRoutes>(
     () => ({
       profile: {
@@ -60,13 +65,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         icon: ShieldCheck,
         path: '/user-management/account/security',
       },
-      logs: {
-        title: 'Logs',
-        icon: AudioLines,
-        path: '/user-management/account/logs',
-      },
+      ...(canViewLogs
+        ? {
+            logs: {
+              title: 'Logs',
+              icon: AudioLines,
+              path: '/user-management/account/logs',
+            },
+          }
+        : {}),
     }),
-    [],
+    [canViewLogs],
   );
 
   // Local state to instantly update the active tab on click

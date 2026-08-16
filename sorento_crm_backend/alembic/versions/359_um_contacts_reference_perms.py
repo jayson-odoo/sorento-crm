@@ -36,10 +36,23 @@ SQL: every role holding at least one of
     resource.attachment_types.view
     user_management.contacts.view
     user_management.access_agents.view
+    master_data.certificates.view
 
 The derivation deliberately runs AFTER the contacts.view grant below and in the
 same transaction, so a role this migration itself grants contacts.view to is
 visible to the SELECT and receives reference_data.view in the same run.
+
+`master_data.certificates.view` is there for a TRANSITIVE consumer, and the
+reason it is the last of its kind rather than the first of a series is worth
+recording. `AttachmentDetailModal` calls `useContactAccessTypes()`
+unconditionally, and it has exactly four mount points: the Files panel
+(`resource.attachments.view`), `PromotionsList` (`marketing.promotions.view`),
+`ProductAttachmentsTab` (`master_data.products.view`) and `CertificateDetail`
+(`master_data.certificates.view`). The first three were already on the list, so
+adding certificates COMPLETES that modal's set. It is not reachable on the
+current database - all eleven roles holding `master_data.certificates.view`
+already qualify through another consumer slug - and is added for structural
+correctness, like the two in-package slugs above it.
 
 On the production-shaped role set that resolves to admin, superadmin, director,
 warehouse_manager, marketing_manager, marketing_executive, purchasing_manager,
@@ -97,6 +110,7 @@ _REFERENCE_CONSUMER_SLUGS = [
     "resource.attachment_types.view",
     _CONTACTS_VIEW,
     "user_management.access_agents.view",
+    "master_data.certificates.view",
 ]
 
 
