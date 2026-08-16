@@ -63,6 +63,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.dealer_kit import FlyerReadingRecord
@@ -480,6 +481,9 @@ def _reading_in_flight(
     Only ``processing`` blocks. A ``done`` or ``failed`` reading of the same file
     is history: re-reading a flyer after fixing the master, or after a failure,
     is a thing people do on purpose.
+
+    This is a READ, and a read cannot be the guarantee - see ``_insert_or_join``
+    for the window it leaves and the unique index that closes it.
     """
     query = db.query(FlyerReadingRecord).filter(
         FlyerReadingRecord.status == ReadingStatus.PROCESSING
@@ -491,6 +495,63 @@ def _reading_in_flight(
     else:  # pragma: no cover - a caller with neither has nothing to match on
         return None
     return query.order_by(FlyerReadingRecord.created_at.desc()).first()
+
+
+def _insert_or_join(
+    db: Session,
+    record: FlyerReadingRecord,
+    *,
+    sha256: Optional[str] = None,
+    attachment_id: Optional[str] = None,
+) -> tuple[FlyerReadingRecord, bool]:
+    """Commit the new ``processing`` row, or hand back the one that beat it.
+
+    Returns ``(row, inserted)``. ``inserted`` is False when this call joined a
+    read that was already running, so the caller knows there is nothing to queue
+    and, for an upload, a staged copy of the bytes to throw away.
+
+    ``_reading_in_flight`` reads and this writes, and between the two statements
+    there is a window nothing in Python can close: two clicks landing together -
+    a double click, a retried request, two tabs - both see nothing in flight and
+    both insert. The loser's job then reads the same 20 to 60 second document a
+    second time and stores a SECOND set of banner assets, which is the part that
+    is not merely wasteful: those assets are library rows a designer has to tell
+    apart afterwards.
+
+    So the database closes it. Migration 359's two partial indexes are UNIQUE on
+    ``(company_id, source_attachment_id)`` and ``(company_id, sha256)`` while
+    ``status = 'processing'``, and the second INSERT is refused. That refusal is
+    not an error, it is the answer the read was asking for: roll back, look
+    again, and return the row that won. The caller answers 202 carrying it,
+    exactly as the uncontended re-click does.
+
+    The second attempt covers the one case where the look comes back empty: the
+    winner reached ``done`` or ``failed`` between our INSERT and our SELECT, so
+    the index no longer holds anything and the row we were refused now belongs.
+    Re-reading a finished flyer is a thing people do on purpose. A refusal on
+    that attempt is a real one and propagates.
+    """
+
+    def _commit_new() -> FlyerReadingRecord:
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        return record
+
+    try:
+        return _commit_new(), True
+    except IntegrityError:
+        db.rollback()
+        existing = _reading_in_flight(db, sha256=sha256, attachment_id=attachment_id)
+        if existing is not None:
+            logger.info(
+                "A read of the same source was already in flight as reading %s; "
+                "joining it rather than starting a second",
+                existing.id,
+            )
+            return existing, False
+
+    return _commit_new(), True
 
 
 def _enqueue(
@@ -624,7 +685,9 @@ def enqueue_reading_from_upload(
        go under their own prefix and are deleted when the job ends, either way.
     4. Write the row and commit. The commit is what stamps the company, and it
        has to happen HERE, in the request, because the worker has no request
-       identity to stamp from.
+       identity to stamp from. It is also where step 2's answer is made true
+       under concurrency (``_insert_or_join``), and where a failure has to give
+       step 3's bytes back.
     5. Queue it.
 
     Called from a threadpool: hashing 20 MB and a PUT to object storage are both
@@ -642,16 +705,32 @@ def enqueue_reading_from_upload(
 
     provider, key = _stage_upload(data)
 
-    record = _new_processing_record(
-        filename=filename,
-        byte_size=len(data),
-        sha256=digest,
-        source_attachment_id=None,
-        user_id=user_id,
-    )
-    db.add(record)
-    db.commit()
-    db.refresh(record)
+    try:
+        record, inserted = _insert_or_join(
+            db,
+            _new_processing_record(
+                filename=filename,
+                byte_size=len(data),
+                sha256=digest,
+                source_attachment_id=None,
+                user_id=user_id,
+            ),
+            sha256=digest,
+        )
+    except Exception:
+        # The bytes are parked BEFORE the row exists (step 3 before step 4), so
+        # everything that can refuse the row - the company stamp, the CHECK, a
+        # database blip - leaves a copy of somebody's flyer in the bucket with
+        # nothing pointing at it. Only a QUEUED job discards a staged object,
+        # and no job was queued, so this is the last place that can.
+        discard_staged(provider, key)
+        raise
+
+    if not inserted:
+        # A concurrent click won the race. Its job reads its OWN staged copy;
+        # ours is already an orphan.
+        discard_staged(provider, key)
+        return record
 
     return _enqueue_or_fail(db, record, staged_provider=provider, staged_key=key)
 
@@ -701,9 +780,11 @@ def enqueue_reading_from_attachment(
         source_attachment_id=str(attachment.id),
         user_id=user_id,
     )
-    db.add(record)
-    db.commit()
-    db.refresh(record)
+    record, inserted = _insert_or_join(db, record, attachment_id=str(attachment.id))
+    if not inserted:
+        # Two clicks landed together and the other one won. Nothing is staged on
+        # this path, so there is nothing to clean up - just hand back its row.
+        return record
 
     return _enqueue_or_fail(db, record)
 
@@ -915,6 +996,13 @@ def create_reading(
     A refusal is written onto the row AND re-raised. The caller asked for a
     reading and has to be told it did not get one; the row still has to say why,
     because it is committed by then and something has to explain it on the list.
+
+    It does NOT join an in-flight read the way the two enqueue paths do: a
+    caller here wants a finished reading back, not somebody else's half of one.
+    So it inserts, and the unique index means "the same bytes are being read on
+    the worker RIGHT NOW" refuses that insert rather than producing a second
+    row. That is the same answer, delivered as an exception because this caller
+    has one to catch.
     """
     record = _new_processing_record(
         filename=filename,
@@ -932,6 +1020,18 @@ def create_reading(
     except AppException as exc:
         db.rollback()
         fail_reading(db, record, message=refusal_message(exc))
+        raise
+    except Exception as exc:  # noqa: BLE001 - the row is committed; it must say why
+        # Anything that is NOT a refusal - PyMuPDF dying on a malformed page,
+        # the process running out of memory mid-extraction, a storage driver
+        # raising while the banners are stored. The row was committed as
+        # ``processing`` before any of this ran, so a handler that only knows
+        # about ``AppException`` leaves it saying "being read" forever, on a
+        # list screen, with no job anywhere that will ever finish it. Same words
+        # the worker's generic arm uses, so the two paths read alike.
+        logger.exception("Flyer reading %s could not be completed", record.id)
+        db.rollback()
+        fail_reading(db, record, message=f"The flyer could not be read: {exc}")
         raise
 
 

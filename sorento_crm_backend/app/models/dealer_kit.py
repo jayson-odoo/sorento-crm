@@ -426,6 +426,29 @@ class FlyerReadingRecord(Base, CompanyScopedMixin):
     __tablename__ = "flyer_reading"
     __table_args__ = (
         Index("ix_dealer_kit_flyer_reading_company_created", "company_id", "created_at"),
+        # ONE read in flight per source, enforced by the database rather than by
+        # the service's read-then-insert. Two clicks landing together both find
+        # nothing in flight, and without these the loser starts a second 20 to
+        # 60 second extraction and stores a second set of banners.
+        #
+        # UNIQUE only bites where there is something to compare: `sha256` is
+        # NULL until a library read's job fills it in, `source_attachment_id` is
+        # NULL for every upload, and Postgres treats NULLs as distinct - which
+        # is why this is two indexes and not one over both columns.
+        Index(
+            "ix_dealer_kit_flyer_reading_pending_attachment",
+            "company_id",
+            "source_attachment_id",
+            unique=True,
+            postgresql_where=text("status = 'processing'"),
+        ),
+        Index(
+            "ix_dealer_kit_flyer_reading_pending_sha256",
+            "company_id",
+            "sha256",
+            unique=True,
+            postgresql_where=text("status = 'processing'"),
+        ),
         {"schema": SCHEMA},
     )
 

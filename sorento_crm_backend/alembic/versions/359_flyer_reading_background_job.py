@@ -41,6 +41,25 @@ starting a duplicate 20 to 60 second extraction. Partial on
 `status = 'processing'`, because that is the only state the lookup ever asks
 about and the table is overwhelmingly `done`.
 
+They are **UNIQUE**, and that is the whole guarantee rather than a lookup
+optimisation. The service reads (`_reading_in_flight`) and then inserts, and
+between those two statements sits a window: a double-click, a retried request
+or two tabs both find nothing in flight, both insert, and the loser's job reads
+the same document a second time and stores a second set of banners into the
+asset library. No application-side check can close that window, so the index
+does: the second insert is refused, and the service turns the refusal into the
+row that won.
+
+Two NULL notes, because they decide what the indexes actually forbid.
+`sha256` is NULL on every library read until its job fills it in, and
+`source_attachment_id` is NULL on every upload; Postgres treats NULLs as
+distinct in a unique index, so neither index constrains rows that have nothing
+to be constrained on. That is exactly right - two different attachments read at
+once are two reads - and it is why the pair has to be two indexes rather than
+one over both columns. A row whose `company_id` is NULL (nothing in the request
+path produces one) is likewise unconstrained, falling back to today's
+read-then-insert behaviour rather than to something worse.
+
 Every statement is idempotent (IF NOT EXISTS / a pg_constraint probe), matching
 316's reasoning: several worktrees share one local database and this may already
 have been applied by hand.
@@ -90,18 +109,30 @@ def upgrade() -> None:
 
     op.execute("ALTER TABLE dealer_kit.flyer_reading ALTER COLUMN sha256 DROP NOT NULL")
 
-    # The idempotency lookups, one per source. Partial because a finished
-    # reading never blocks a new read of the same file.
+    # The idempotency guard, one index per source. Partial because a finished
+    # reading never blocks a new read of the same file, UNIQUE because the
+    # read-then-insert above it cannot be made atomic in application code.
+    #
+    # Dropped first: an earlier cut of this same (unmerged) revision created
+    # these NON-unique, and `CREATE INDEX IF NOT EXISTS` would find that name
+    # taken and leave the weaker index in place without a word. The drop makes
+    # the statement say what the database ends up with.
+    op.execute(
+        "DROP INDEX IF EXISTS dealer_kit.ix_dealer_kit_flyer_reading_pending_attachment"
+    )
     op.execute(
         """
-        CREATE INDEX IF NOT EXISTS ix_dealer_kit_flyer_reading_pending_attachment
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_dealer_kit_flyer_reading_pending_attachment
         ON dealer_kit.flyer_reading (company_id, source_attachment_id)
         WHERE status = 'processing'
         """
     )
     op.execute(
+        "DROP INDEX IF EXISTS dealer_kit.ix_dealer_kit_flyer_reading_pending_sha256"
+    )
+    op.execute(
         """
-        CREATE INDEX IF NOT EXISTS ix_dealer_kit_flyer_reading_pending_sha256
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_dealer_kit_flyer_reading_pending_sha256
         ON dealer_kit.flyer_reading (company_id, sha256)
         WHERE status = 'processing'
         """

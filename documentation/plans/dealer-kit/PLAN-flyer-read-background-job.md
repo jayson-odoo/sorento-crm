@@ -479,15 +479,44 @@ and a lesson explaining the signature, because this kills every queue on a dev
 Mac and the identical stack is in other lanes' crash reports
 (`~/Library/Logs/DiagnosticReports/Python-*.ips`), including one from 2026-08-14.
 
-The stuck row was also a live confirmation of **BL-008**: nothing sweeps a
+The stuck row was also a live confirmation of **BL-010**: nothing sweeps a
 reading whose work-horse died, so it stays `processing` forever. The idempotency
 guard then correctly refused to start a second read of the same attachment
 (AC-J2.4 working as designed), which is what made the stuck row visible.
 
 Test rows created by this walk were deleted afterwards.
 
-### Still to record
+### The full walk, once the worker survived its fork
 
-The final `Processing -> Done` flip and the report opening from the list were
-re-verified at the service level (row `done`, 36 pages, report reachable) but
-the last browser leg is pending a second stack window; see the status file.
+Re-run 2026-08-16 01:26 with `PGGSSENCMODE=disable` on the worker, everything
+else identical (backend :8011, `flyer_read` worker, FE dev :3011, sidebar clicks
+from `/`). This is the leg that matters, and it now completes:
+
+| Step | Result |
+| --- | --- |
+| `Read the flyer` | dialog closed at once, toast "Reading the flyer in the background - it will appear in your uploads", row listed as **Processing** |
+| `POST .../from-attachment` | **202** |
+| Pill, no reload, no interaction | **Processing -> Done between the 10 s and 20 s poll** (the read itself took about 25 s of worker time for 21.1 MB / 36 pages) |
+| Click the Done row | `/dealer-kit/flyer-readings/35292a17-...`, header "36 pages, 998 product codes, 20.1 MB", matched / unmatched / duplicate sections and the promotion picker all render |
+| Delete from the list | "Confirm delete" dialog with "This action cannot be undone", row gone after confirming |
+| Console | no errors at any point |
+
+### Request latency, honestly
+
+| Request | Measured |
+| --- | --- |
+| `POST .../from-attachment`, warm process | **0.162 s** |
+| the same POST as the first call after a cold boot | 2.50 s (one-off import cost of the attachment and storage modules, not per-request work) |
+| `GET /flyer-readings` (the list, polled) | 0.22 to 0.59 s |
+| `GET /flyer-readings/{id}` (the report) | **6.3 s** on a loaded machine |
+
+The acceptance line was "no request longer than a few hundred ms", and the write
+path meets it. The report GET does not, and it is worth being straight about
+why: it is the match run over 998 codes, it predates this branch (PR #164
+measured 0.875 s for it on a quiet machine), and it is a plain `def` route so it
+is threadpooled rather than on the loop. It is not what produced the 504 and
+nothing here made it slower, but a 6 s report open on a busy box is a real
+number and belongs in the backlog rather than in a footnote.
+
+Test rows created by both walks were deleted afterwards, one of them through the
+UI's own confirm-delete dialog.
