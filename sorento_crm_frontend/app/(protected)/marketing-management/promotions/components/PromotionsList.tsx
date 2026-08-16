@@ -197,6 +197,31 @@ export default function PromotionsList() {
         meta: { headerTitle: 'Attachments', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
+        accessorKey: 'promotion_type_name',
+        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        cell: ({ row }) => {
+          // A promotion with no type is served under the default type's rule, so
+          // the empty state says which rule it is rather than showing a dash.
+          const name = row.original.promotion_type_name;
+          if (!name) {
+            return (
+              <span className="text-muted-foreground truncate" title="Unclassified - treated as the default type">
+                Unclassified
+              </span>
+            );
+          }
+          return (
+            <div className="min-w-0 max-w-full truncate" title={name}>
+              {name}
+            </div>
+          );
+        },
+        size: 140,
+        minSize: 100,
+        enableSorting: false,
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
         accessorKey: 'access_levels',
         header: ({ column }) => <DataGridColumnHeader title="Access" column={column} />,
         cell: ({ row }) => {
