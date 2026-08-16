@@ -66,16 +66,28 @@ def _fixtures(db):
         id=str(uuid.uuid4()), category_code="ZZT-VS-BD", category_name="ZZT-VS-BD",
         class_label="Bidet",
     )
+    # A class only a discontinued code carries, and a category with no class at all -
+    # both exist for the `classes` facet tests and are unused by every other fixture.
+    cat_c = ProductCategory(
+        id=str(uuid.uuid4()), category_code="ZZT-VS-SH", category_name="ZZT-VS-SH",
+        class_label="Shower Set",
+    )
+    cat_none = ProductCategory(
+        id=str(uuid.uuid4()), category_code="ZZT-VS-NC", category_name="ZZT-VS-NC",
+        class_label=None,
+    )
     uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code="ZZT-VS-PCS", uom_name="Piece")
     brand = Brand(id=str(uuid.uuid4()), brand_code="ZZT-VS-SRT", brand_name="Sorento")
     second = Company(id=str(uuid.uuid4()), name="ZZT VS Second Co", code="ZZT-VS2")
-    db.add_all([cat, cat_b, uom, brand, second])
+    db.add_all([cat, cat_b, cat_c, cat_none, uom, brand, second])
     db.flush()
     backfill_category_signals(db)
     _REFS.update(
         {
             "cat": cat.id,
             "cat_b": cat_b.id,
+            "cat_c": cat_c.id,
+            "cat_none": cat_none.id,
             "uom": uom.id,
             "brand": brand.id,
             "company2": second.id,
@@ -841,6 +853,38 @@ def test_worklist_class_label_filter_narrows_both_data_and_summary(db, worklist_
 
     assert {row["product_code"] for row in result["data"]} == {worklist_codes["b1"]}
     assert result["summary"]["total"] == 1, "unlike state, class_label DOES narrow the summary"
+
+
+def test_worklist_classes_lists_distinct_sorted_class_labels_and_never_null(db, worklist_codes):
+    """The class filter's own options, so the dropdown has real data to offer.
+
+    The registry's `class` key is deliberately open-vocabulary (empty allowed_values),
+    so the labels have to come from the same expression the list itself groups by.
+    """
+    _product(db, unique_code("WL-NOCLASS"), name="Unclassified", category="cat_none")
+    db.commit()
+
+    result = psv.worklist(db, page=1, limit=50)
+
+    assert result["classes"] == ["Bidet", "Kitchen Sink"], (
+        "distinct, sorted, and a code whose category carries no class contributes nothing"
+    )
+
+
+def test_worklist_classes_survive_the_class_and_state_filters(db, worklist_codes):
+    """Filtering to one class must not empty the dropdown that did the filtering."""
+    filtered = psv.worklist(db, page=1, limit=50, class_label="Bidet", state="unverified")
+
+    assert filtered["classes"] == ["Bidet", "Kitchen Sink"]
+    assert {row["product_code"] for row in filtered["data"]} == {worklist_codes["b1"]}
+
+
+def test_worklist_classes_exclude_a_class_only_a_discontinued_code_carries(db, worklist_codes):
+    _product(db, unique_code("WL-DISC-SH"), name="Discontinued Shower", category="cat_c", discontinued=True)
+    db.commit()
+
+    assert "Shower Set" not in psv.worklist(db, page=1, limit=50)["classes"]
+    assert "Shower Set" in psv.worklist(db, page=1, limit=50, include_discontinued=True)["classes"]
 
 
 def test_worklist_query_searches_code_and_name(db, worklist_codes):

@@ -17,7 +17,8 @@
  *            include_discontinued=false, sort=default|coverage|code, dir=asc|desc
  *     200: { data: Row[],
  *            pagination: { total, page, limit },
- *            summary: { total, verified, needs_reverify, unverified } }
+ *            summary: { total, verified, needs_reverify, unverified },
+ *            classes: string[] }
  *
  *     Row: { product_id, product_code, product_name, class_label|null,
  *            brand_name|null, is_discontinued,
@@ -41,6 +42,12 @@
  *     keys-for-product per code. Discontinued codes are excluded by default
  *     (AC-D.6). `summary` counts the same set as the list MINUS the `state`
  *     filter, so "Verified N of M" stays honest while a state filter is applied.
+ *     `classes` are the class filter's OWN options: the distinct class labels over
+ *     the same scope, computed before the class and state filters so filtering to a
+ *     class never empties the dropdown that did the filtering. No options endpoint is
+ *     minted and the spec registry is NOT the source - its `class` key is open
+ *     vocabulary and its allowed_values are deliberately empty, so the labels only
+ *     exist on the rows themselves.
  *
  *   GET /by-product/{productId}   (existing route, PR 2)
  *     gains `verification: VerificationBlock` and `values_hash` (AC-D.14), so the
@@ -88,7 +95,6 @@
  */
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
-import { getSpecRegistry } from '../../product-specifications/services/productSpecService';
 import type {
   SpecVerificationWorklistParams,
   SpecVerificationWorklistResponse,
@@ -179,6 +185,7 @@ export class SpecVerifyConflictError extends Error {
 
 interface ConflictBody {
   error?: string;
+  message?: string;
   values_hash?: string;
   verification?: VerificationBlock;
   exceptions?: VerificationOpenException[];
@@ -201,7 +208,9 @@ async function throwVerifyError(response: Response, fallback: string): Promise<n
           ? body.detail
           : null;
     if (carrier?.error === 'values_changed' || carrier?.error === 'exceptions_open') {
-      throw new SpecVerifyConflictError(carrier.error, fallback, {
+      // The server words the two refusals differently on purpose, so its own sentence
+      // beats the generic one this call site would otherwise show.
+      throw new SpecVerifyConflictError(carrier.error, carrier.message || fallback, {
         valuesHash: carrier.values_hash,
         verification: carrier.verification,
         exceptions: carrier.exceptions,
@@ -239,16 +248,4 @@ export async function unverifySpec(body: { product_code: string }): Promise<Unve
     throw new Error(await extractApiError(response, 'Could not unverify this product'));
   }
   return response.json();
-}
-
-/**
- * Class labels for the worklist's class filter.
- *
- * Read off the EXISTING registry - the `class` key carries an open vocabulary fed by
- * `product_categories.class_label` - so no endpoint is minted for a dropdown.
- */
-export async function getSpecVerificationClassOptions(): Promise<string[]> {
-  const { keys } = await getSpecRegistry();
-  const values = keys.find((key) => key.spec_key === 'class')?.allowed_values ?? [];
-  return values.map((value) => String(value)).sort((a, b) => a.localeCompare(b));
 }

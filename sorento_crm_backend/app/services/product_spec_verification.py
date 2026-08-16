@@ -25,7 +25,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
-from sqlalchemy import Text, and_, case, column, func, literal, literal_column, or_, select
+from sqlalchemy import Text, and_, case, column, func, literal, literal_column, or_, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -312,6 +312,12 @@ def verify_code(
                 "exceptions": [],
             }
 
+        # A code with no spec row at all has nothing to lock FOR UPDATE, so two
+        # concurrent verifies of such a code would both pass the reads below. The
+        # advisory lock is held to the end of the transaction and is keyed on the code
+        # itself, so the serialisation does not depend on a row existing.
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:code))"), {"code": product_code})
+
         specs = (
             db.query(ProductSpecifications)
             .filter(ProductSpecifications.product_id.in_([p.id for p in products]))
@@ -571,6 +577,43 @@ def worklist(
 
     `summary` counts the same set the list does MINUS the state filter, so "Verified N
     of M" stays honest while the reviewer is filtered down to what is left (AC-D.6).
+    `classes` are the class filter's own options: the registry's `class` key is
+    open-vocabulary and holds no allowed_values, so the labels have to come from the
+    same expression the list groups by.
+
+    PR NOTES - worklist cost (C7 set the threshold at p95 400 ms).
+
+    Three statements plus the ledger read, in this shape for a measured reason. The
+    slim projection (code, class, state) answers the facet, the progress line, the
+    total AND the page's ordering; the coverage subquery, the 52-CASE applicable
+    expression, the open-exception count and the `values` column are then fetched for
+    the 25 codes on the page and nothing else.
+
+    Measured on the prod-copy database, Sorento scope, page 1, 8,820 live codes,
+    `time.perf_counter` around the whole call, 3 runs after one warm-up:
+
+    | shape                                   | limit=25       | limit=50       |
+    |-----------------------------------------|----------------|----------------|
+    | one heavy subquery, scanned three times | 125/126/123 ms | 120/120/144 ms |
+    | slim summary + heavy page query         | 197/181/163 ms | 251/156/156 ms |
+    | slim ordering + page-only hydration     | 74/74/71 ms    | 94/85/73 ms    |
+
+    The middle row is the change as first prescribed at review, and it is SLOWER. The
+    summary and the count were never paying for the heavy expressions: Postgres prunes
+    the unused output columns of a subquery it cannot pull up, and per-statement timing
+    put them at 30 ms and 33 ms against the fat subquery. The page query was the whole
+    cost, 130 ms of it, because those expressions were evaluated for all 8,820
+    candidate rows before LIMIT threw 8,795 of them away. So: order and paginate on the
+    slim set, then hydrate - ordering measures 35 ms and hydrating 25 codes 4 ms.
+
+    Output is unchanged: `data`, `pagination` and `summary` were compared row for row
+    against the previous implementation across eight parameter shapes (default, page 2,
+    state filter, both coverage directions, code desc, search, include_discontinued).
+
+    One shape got slower, deliberately: a class-filtered page went from 42-44 ms to
+    72-143 ms, because `classes` is computed over the set the class filter has NOT
+    narrowed. That is what stops the dropdown emptying itself, and it stays far inside
+    the 400 ms threshold.
     """
     class_label_expr = func.coalesce(
         ProductSpecifications.values["class"]["value"].astext, ProductCategory.class_label
@@ -578,10 +621,10 @@ def worklist(
     latest = _latest_select(party).subquery("latest_verification")
     state_expr = func.coalesce(latest.c.state, literal(STATE_UNVERIFIED))
 
-    filters = []
     # The caller's scope, applied by hand rather than left to the session listener: the
     # de-duplication below wraps the products select in a subquery, and a predicate
     # that silently stopped applying there would widen the list to every company.
+    filters = []
     scope_predicate = build_company_predicate(Product, get_company_scope(db))
     if scope_predicate is not None:
         filters.append(scope_predicate)
@@ -589,11 +632,114 @@ def worklist(
         filters.append(Product.is_discontinued.is_(False))
     if query:
         wild = f"%{query.strip()}%"
-        filters.append(
-            or_(Product.product_code.ilike(wild), Product.product_name.ilike(wild))
+        filters.append(or_(Product.product_code.ilike(wild), Product.product_name.ilike(wild)))
+
+    slim_columns = [
+        Product.product_code.label("product_code"),
+        class_label_expr.label("class_label"),
+        state_expr.label("state"),
+        func.row_number()
+        .over(partition_by=Product.product_code, order_by=Product.id)
+        .label("copy_rank"),
+    ]
+    if sort == SORT_COVERAGE:
+        # The only ordering key that is not already slim. Added on demand rather than
+        # always, so the default order pays nothing for a sort nobody asked for.
+        slim_columns.append(_have_expr().label("have"))
+
+    slim_candidates = (
+        select(*slim_columns)
+        .select_from(Product)
+        .outerjoin(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+        .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        .outerjoin(latest, latest.c.product_code == Product.product_code)
+        .where(*filters)
+        .subquery("worklist_slim_candidates")
+    )
+    slim = (
+        select(slim_candidates)
+        .where(slim_candidates.c.copy_rank == 1)
+        .subquery("worklist_slim")
+    )
+
+    # One aggregate answers three questions. Grouped by BOTH state and class because
+    # the facet must ignore the class filter that the summary and the total obey:
+    # filtering to a class must not empty the dropdown that did the filtering. So
+    # `classes` is computed after the discontinued and search filters and before the
+    # class and state ones.
+    facet = db.execute(
+        select(slim.c.state, slim.c.class_label, func.count()).group_by(
+            slim.c.state, slim.c.class_label
         )
+    ).all()
+
+    classes = sorted({label for _state, label, _count in facet if label is not None})
+    summary = {"total": 0, "verified": 0, "needs_reverify": 0, "unverified": 0}
+    for row_state, row_class, count in facet:
+        if class_label and row_class != class_label:
+            continue
+        summary[row_state] += count
+        summary["total"] += count
+    # The state filter narrows the list but not the summary, so the total it would
+    # have counted is already in hand.
+    total = summary.get(state, 0) if state else summary["total"]
+
+    listing = select(slim.c.product_code)
     if class_label:
-        filters.append(class_label_expr == class_label)
+        listing = listing.where(slim.c.class_label == class_label)
+    if state:
+        listing = listing.where(slim.c.state == state)
+
+    descending = str(direction or "asc").lower() == "desc"
+
+    def _ordered(col):
+        return col.desc() if descending else col.asc()
+
+    if sort == SORT_COVERAGE:
+        order_by = [_ordered(slim.c.have), slim.c.product_code.asc()]
+    elif sort == SORT_CODE:
+        order_by = [_ordered(slim.c.product_code)]
+    else:
+        # The default order is a narrative rather than a sort key ("what needs looking
+        # at, grouped so one class is reviewed at a time"), so `direction` does not
+        # reverse it.
+        order_by = [
+            _state_rank(slim.c.state),
+            slim.c.class_label.asc().nullslast(),
+            slim.c.product_code.asc(),
+        ]
+
+    page_codes = list(
+        db.execute(
+            listing.order_by(*order_by).limit(limit).offset(max(page - 1, 0) * limit)
+        ).scalars()
+    )
+
+    return {
+        "data": _hydrate_page(db, page_codes, filters, class_label_expr, state_expr, latest, party),
+        "pagination": {"total": total, "page": page, "limit": limit},
+        "summary": summary,
+        "classes": classes,
+    }
+
+
+def _hydrate_page(
+    db: Session,
+    page_codes: Sequence[str],
+    filters: list,
+    class_label_expr,
+    state_expr,
+    latest,
+    party: str,
+) -> list[dict]:
+    """Everything a row shows, for the codes on this page and no others.
+
+    Split out from `worklist` because it is where the expensive expressions live, and
+    keeping them off the ordering query is the whole point: coverage, the open-exception
+    count and the `values` column are evaluated 25 times rather than 8,820.
+    """
+    if not page_codes:
+        return []
 
     inner = (
         select(
@@ -617,72 +763,33 @@ def worklist(
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
         .outerjoin(Brand, Brand.id == Product.brand_id)
         .outerjoin(latest, latest.c.product_code == Product.product_code)
-        .where(*filters)
+        .where(*filters, Product.product_code.in_(list(page_codes)))
         .subquery("worklist_candidates")
     )
-    rows = select(inner).where(inner.c.copy_rank == 1).subquery("worklist_rows")
+    rows = select(inner).where(inner.c.copy_rank == 1)
 
-    summary = {"total": 0, "verified": 0, "needs_reverify": 0, "unverified": 0}
-    for row_state, count in db.execute(
-        select(rows.c.state, func.count()).group_by(rows.c.state)
-    ).all():
-        summary[row_state] = count
-        summary["total"] += count
+    by_code = {row["product_code"]: row for row in db.execute(rows).mappings().all()}
+    blocks = verification_blocks(db, list(page_codes), party)
 
-    listing = select(rows)
-    if state:
-        listing = listing.where(rows.c.state == state)
-
-    total = db.execute(
-        select(func.count()).select_from(listing.subquery("worklist_filtered"))
-    ).scalar_one()
-
-    descending = str(direction or "asc").lower() == "desc"
-
-    def _ordered(col):
-        return col.desc() if descending else col.asc()
-
-    if sort == SORT_COVERAGE:
-        order_by = [_ordered(rows.c.have), rows.c.product_code.asc()]
-    elif sort == SORT_CODE:
-        order_by = [_ordered(rows.c.product_code)]
-    else:
-        # The default order is a narrative rather than a sort key ("what needs looking
-        # at, grouped so one class is reviewed at a time"), so `direction` does not
-        # reverse it.
-        order_by = [
-            _state_rank(rows.c.state),
-            rows.c.class_label.asc().nullslast(),
-            rows.c.product_code.asc(),
-        ]
-
-    page_rows = (
-        db.execute(
-            listing.order_by(*order_by).limit(limit).offset(max(page - 1, 0) * limit)
+    data = []
+    # The page query answers in whatever order it likes; the ordering query already
+    # decided, so the codes are put back in ITS order rather than re-sorted here.
+    for code in page_codes:
+        row = by_code.get(code)
+        if row is None:
+            continue
+        data.append(
+            {
+                "product_id": str(row["product_id"]),
+                "product_code": row["product_code"],
+                "product_name": row["product_name"],
+                "class_label": row["class_label"],
+                "brand_name": row["brand_name"],
+                "is_discontinued": bool(row["is_discontinued"]),
+                "coverage": {"have": row["have"], "applicable": row["applicable"]},
+                "open_exceptions": row["open_exceptions"],
+                "values_hash": canonical_values_hash(row["values"] or {}),
+                "verification": blocks[row["product_code"]],
+            }
         )
-        .mappings()
-        .all()
-    )
-
-    blocks = verification_blocks(db, [row["product_code"] for row in page_rows], party)
-    data = [
-        {
-            "product_id": str(row["product_id"]),
-            "product_code": row["product_code"],
-            "product_name": row["product_name"],
-            "class_label": row["class_label"],
-            "brand_name": row["brand_name"],
-            "is_discontinued": bool(row["is_discontinued"]),
-            "coverage": {"have": row["have"], "applicable": row["applicable"]},
-            "open_exceptions": row["open_exceptions"],
-            "values_hash": canonical_values_hash(row["values"] or {}),
-            "verification": blocks[row["product_code"]],
-        }
-        for row in page_rows
-    ]
-
-    return {
-        "data": data,
-        "pagination": {"total": total, "page": page, "limit": limit},
-        "summary": summary,
-    }
+    return data

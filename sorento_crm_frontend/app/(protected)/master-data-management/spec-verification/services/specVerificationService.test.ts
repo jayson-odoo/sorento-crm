@@ -1,5 +1,5 @@
 /**
- * specVerificationService — worklist query assembly, write bodies, and the 409
+ * specVerificationService - worklist query assembly, write bodies, and the 409
  * taxonomy on the single verify (AC-D.4: `values_changed` vs `exceptions_open` are
  * distinguishable). Traces to the API contract block at the top of the service file
  * and AC-D.11/D.16/D.23/D.24.
@@ -9,14 +9,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/api', () => ({
   apiFetch: vi.fn(),
 }));
-vi.mock('../../product-specifications/services/productSpecService', () => ({
-  getSpecRegistry: vi.fn(),
-}));
 
 import { apiFetch } from '@/lib/api';
-import { getSpecRegistry } from '../../product-specifications/services/productSpecService';
 import {
-  getSpecVerificationClassOptions,
   getSpecVerificationWorklist,
   SpecVerifyConflictError,
   unverifySpec,
@@ -26,7 +21,6 @@ import {
 } from './specVerificationService';
 
 const mockedFetch = vi.mocked(apiFetch);
-const mockedGetRegistry = vi.mocked(getSpecRegistry);
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -37,11 +31,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('getSpecVerificationWorklist — query-string assembly', () => {
+describe('getSpecVerificationWorklist - query-string assembly', () => {
   const WORKLIST_RESPONSE = {
     data: [],
     pagination: { total: 0, page: 1, limit: 25 },
     summary: { total: 0, verified: 0, needs_reverify: 0, unverified: 0 },
+    classes: [],
   };
 
   it('omits state, class_label and include_discontinued when unset', async () => {
@@ -197,7 +192,7 @@ describe('write bodies', () => {
   });
 });
 
-describe('SpecVerifyConflictError — both 409 serialisations', () => {
+describe('SpecVerifyConflictError - both 409 serialisations', () => {
   it('parses a top-level { error, ... } body', async () => {
     mockedFetch.mockResolvedValue(
       jsonResponse(
@@ -206,9 +201,9 @@ describe('SpecVerifyConflictError — both 409 serialisations', () => {
       ),
     );
 
-    const thrown = await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
-      (e) => e as Error,
-    );
+    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
+      (e) => e,
+    )) as Error;
 
     expect(thrown).toBeInstanceOf(SpecVerifyConflictError);
     const conflict = thrown as SpecVerifyConflictError;
@@ -230,9 +225,9 @@ describe('SpecVerifyConflictError — both 409 serialisations', () => {
       ),
     );
 
-    const thrown = await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
-      (e) => e as Error,
-    );
+    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
+      (e) => e,
+    )) as Error;
 
     expect(thrown).toBeInstanceOf(SpecVerifyConflictError);
     const conflict = thrown as SpecVerifyConflictError;
@@ -240,12 +235,43 @@ describe('SpecVerifyConflictError — both 409 serialisations', () => {
     expect(conflict.exceptions).toEqual([{ spec_key: 'shape', reason: 'shape_mismatch' }]);
   });
 
+  it("carries the server's own message when it sent one, not the local fallback", async () => {
+    mockedFetch.mockResolvedValue(
+      jsonResponse(
+        {
+          error: 'exceptions_open',
+          message: 'Answer the open specification questions before confirming this product.',
+          exceptions: [{ spec_key: 'shape' }],
+        },
+        409,
+      ),
+    );
+
+    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
+      (e) => e,
+    )) as Error;
+
+    expect(thrown.message).toBe(
+      'Answer the open specification questions before confirming this product.',
+    );
+  });
+
+  it('falls back to the local message when the 409 body carries none', async () => {
+    mockedFetch.mockResolvedValue(jsonResponse({ error: 'values_changed' }, 409));
+
+    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
+      (e) => e,
+    )) as Error;
+
+    expect(thrown.message).toBe('Could not verify this product');
+  });
+
   it('a non-409 error falls through to extractApiError, never SpecVerifyConflictError', async () => {
     mockedFetch.mockResolvedValue(jsonResponse({ detail: 'Not permitted' }, 403));
 
-    const thrown = await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
-      (e) => e as Error,
-    );
+    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
+      (e) => e,
+    )) as Error;
 
     expect(thrown).not.toBeInstanceOf(SpecVerifyConflictError);
     expect(thrown.message).toBe('Not permitted');
@@ -254,62 +280,35 @@ describe('SpecVerifyConflictError — both 409 serialisations', () => {
   it('a 409 whose body carries neither known error code falls through as a plain error', async () => {
     mockedFetch.mockResolvedValue(jsonResponse({ error: 'something_else' }, 409));
 
-    const thrown = await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
-      (e) => e as Error,
-    );
+    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
+      (e) => e,
+    )) as Error;
 
     expect(thrown).not.toBeInstanceOf(SpecVerifyConflictError);
   });
 });
 
-describe('getSpecVerificationClassOptions', () => {
-  it('maps the registry class key allowed_values, sorted', async () => {
-    mockedGetRegistry.mockResolvedValue({
-      keys: [
-        {
-          spec_key: 'class',
-          label: 'Product class',
-          data_type: 'enum',
-          unit: null,
-          allowed_values: ['Kitchen Sink', 'Bidet Spray'],
-          synonyms: {},
-        },
-        {
-          spec_key: 'finish',
-          label: 'Finish',
-          data_type: 'enum',
-          unit: null,
-          allowed_values: ['chrome'],
-          synonyms: {},
-        },
-      ],
-    } as never);
+describe('the class facet', () => {
+  it('is read off the worklist response, not the spec registry', async () => {
+    // The registry's `class` key is open vocabulary and its allowed_values are empty
+    // on purpose, so the labels can only come from the rows the worklist counted.
+    mockedFetch.mockResolvedValue(
+      jsonResponse({
+        data: [],
+        pagination: { total: 0, page: 1, limit: 25 },
+        summary: { total: 0, verified: 0, needs_reverify: 0, unverified: 0 },
+        classes: ['Bidet Spray', 'Kitchen Sink'],
+      }),
+    );
 
-    const options = await getSpecVerificationClassOptions();
+    const response = await getSpecVerificationWorklist({
+      pageIndex: 0,
+      pageSize: 25,
+      sorting: [],
+      searchQuery: '',
+    });
 
-    expect(options).toEqual(['Bidet Spray', 'Kitchen Sink']);
-  });
-
-  it('returns an empty list, no crash, when the class key has no vocabulary yet', async () => {
-    mockedGetRegistry.mockResolvedValue({
-      keys: [
-        {
-          spec_key: 'class',
-          label: 'Product class',
-          data_type: 'enum',
-          unit: null,
-          allowed_values: [],
-          synonyms: {},
-        },
-      ],
-    } as never);
-
-    await expect(getSpecVerificationClassOptions()).resolves.toEqual([]);
-  });
-
-  it('returns an empty list, no crash, when the class key is absent from the registry', async () => {
-    mockedGetRegistry.mockResolvedValue({ keys: [] } as never);
-
-    await expect(getSpecVerificationClassOptions()).resolves.toEqual([]);
+    expect(response.classes).toEqual(['Bidet Spray', 'Kitchen Sink']);
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,5 +1,5 @@
 /**
- * SpecVerificationList — the worklist screen (PR 3).
+ * SpecVerificationList - the worklist screen (PR 3).
  *
  * The service layer is mocked; the real hooks (`useSpecVerification`) and the real
  * shared `DataGrid` run, so the cache-patch behaviour (AC-D.22: acted row updates in
@@ -30,13 +30,11 @@ vi.mock('next/navigation', () => ({
 }));
 
 const getSpecVerificationWorklist = vi.fn();
-const getSpecVerificationClassOptions = vi.fn();
 const verifySpecBulk = vi.fn();
 const unverifySpecBulk = vi.fn();
 
 vi.mock('../services/specVerificationService', () => ({
   getSpecVerificationWorklist: (...a: unknown[]) => getSpecVerificationWorklist(...a),
-  getSpecVerificationClassOptions: (...a: unknown[]) => getSpecVerificationClassOptions(...a),
   verifySpecBulk: (...a: unknown[]) => verifySpecBulk(...a),
   unverifySpecBulk: (...a: unknown[]) => unverifySpecBulk(...a),
 }));
@@ -84,7 +82,6 @@ function renderList() {
 beforeEach(() => {
   vi.clearAllMocks();
   nav.params = new URLSearchParams();
-  getSpecVerificationClassOptions.mockResolvedValue(['Kitchen Sink', 'Bath Basin']);
 });
 
 afterEach(() => cleanup());
@@ -119,6 +116,7 @@ describe('empty state', () => {
       data: [],
       pagination: { total: 0, page: 1, limit: 25 },
       summary: { total: 0, verified: 0, needs_reverify: 0, unverified: 0 },
+      classes: [],
     });
     renderList();
 
@@ -135,6 +133,7 @@ describe('empty state', () => {
       data: [],
       pagination: { total: 0, page: 1, limit: 25 },
       summary: { total: 0, verified: 0, needs_reverify: 0, unverified: 0 },
+      classes: [],
     });
     renderList();
 
@@ -152,11 +151,12 @@ describe('data state', () => {
     row('WC300', 'verified'),
   ];
 
-  function mockWorklist(data = ROWS) {
+  function mockWorklist(data = ROWS, total = data.length) {
     getSpecVerificationWorklist.mockResolvedValue({
       data,
-      pagination: { total: data.length, page: 1, limit: 25 },
+      pagination: { total, page: 1, limit: 25 },
       summary: { total: 4812, verified: 3000, needs_reverify: 1000, unverified: 812 },
+      classes: ['Bath Basin', 'Kitchen Sink'],
     });
   }
 
@@ -265,6 +265,102 @@ describe('data state', () => {
     expect(screen.queryByText('Confirm verify')).not.toBeInTheDocument();
   });
 
+  it('a row-level Unverify is confirmed first, with a count of one, and only then sent', async () => {
+    // PRINCIPLES: confirm before every destructive OR detach action, never one-click.
+    // Verify is not destructive and stays one-click; withdrawing a stamp is not.
+    mockWorklist();
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC300')).toBeInTheDocument());
+    unverifySpecBulk.mockResolvedValue({
+      results: [
+        {
+          product_code: 'WC300',
+          outcome: 'unverified',
+          verification: row('WC300', 'unverified').verification,
+        },
+      ],
+      counts: { unverified: 1, no_change: 0 },
+    });
+
+    const rowWC300 = screen.getByText('WC300').closest('tr') as HTMLElement;
+    fireEvent.click(within(rowWC300).getByRole('button', { name: 'Unverify' }));
+
+    await waitFor(() => expect(screen.getByText('Confirm unverify')).toBeInTheDocument());
+    expect(screen.getByText(/Withdraw the verification on 1 product code\?/)).toBeInTheDocument();
+    expect(unverifySpecBulk).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Unverify' }));
+
+    await waitFor(() => expect(unverifySpecBulk).toHaveBeenCalledWith(['WC300']));
+  });
+
+  it('cancelling the row-level Unverify confirmation sends nothing', async () => {
+    mockWorklist();
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC300')).toBeInTheDocument());
+
+    const rowWC300 = screen.getByText('WC300').closest('tr') as HTMLElement;
+    fireEvent.click(within(rowWC300).getByRole('button', { name: 'Unverify' }));
+    await waitFor(() => expect(screen.getByText('Confirm unverify')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByText('Confirm unverify')).not.toBeInTheDocument());
+    expect(unverifySpecBulk).not.toHaveBeenCalled();
+  });
+
+  it('changing page clears the selection, so a bulk action can only ever send on-page codes', async () => {
+    // The raw selection map is keyed on product_code and outlives the page it was
+    // made on; the toolbar count would then disagree with what is actually sent.
+    mockWorklist(ROWS, 60);
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    expect(screen.getByText('3 selected')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go to next page' }));
+
+    await waitFor(() => expect(screen.queryByText('3 selected')).not.toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /Verify selected/ })).not.toBeInTheDocument();
+  });
+
+  it('after a page change the bulk verify sends only the code selected on the new page', async () => {
+    mockWorklist(ROWS, 60);
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+    verifySpecBulk.mockResolvedValue({
+      results: [
+        {
+          product_code: 'WC200',
+          outcome: 'verified',
+          verification: row('WC200', 'verified').verification,
+          values_hash: 'hash-WC200-v2',
+        },
+      ],
+      counts: { verified: 1, skipped: 0 },
+    });
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to next page' }));
+    await waitFor(() => expect(screen.queryByText('3 selected')).not.toBeInTheDocument());
+    // Page 2 is its own query, so the rows re-render once it resolves.
+    await waitFor(() => expect(screen.getByText('WC200')).toBeInTheDocument());
+
+    const rowWC200 = screen.getByText('WC200').closest('tr') as HTMLElement;
+    fireEvent.click(within(rowWC200).getByRole('checkbox', { name: 'Select row' }));
+    fireEvent.click(screen.getByRole('button', { name: /Verify selected/ }));
+    await waitFor(() => expect(screen.getByText(/Verify 1 product code\?/)).toBeInTheDocument());
+    const dialog = screen.getByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
+
+    await waitFor(() =>
+      expect(verifySpecBulk).toHaveBeenCalledWith([
+        { product_code: 'WC200', values_hash: 'hash-WC200' },
+      ]),
+    );
+  });
+
   it('select-all is page-scoped: no cross-page "select all matching" banner ever renders', async () => {
     mockWorklist();
     renderList();
@@ -297,7 +393,19 @@ describe('data state', () => {
     fireEvent.click(screen.getByRole('button', { name: /Verify selected/ }));
 
     await waitFor(() => expect(screen.getByText('Confirm verify')).toBeInTheDocument());
-    expect(screen.getByText(/Verify 3 product code\(s\)\?/)).toBeInTheDocument();
+    expect(screen.getByText(/Verify 3 product codes\?/)).toBeInTheDocument();
+  });
+
+  it('the confirmation pluralises properly: one selected code reads "1 product code"', async () => {
+    mockWorklist();
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+
+    const rowWC100 = screen.getByText('WC100').closest('tr') as HTMLElement;
+    fireEvent.click(within(rowWC100).getByRole('checkbox', { name: 'Select row' }));
+    fireEvent.click(screen.getByRole('button', { name: /Verify selected/ }));
+
+    await waitFor(() => expect(screen.getByText(/Verify 1 product code\?/)).toBeInTheDocument());
   });
 
   it('a mixed bulk verify: acted row flips pill in place, skipped row (open exceptions) stays selected', async () => {

@@ -138,6 +138,21 @@ def test_get_worklist_happy_path(api, db):
     assert "open_exceptions" in row
 
 
+def test_get_worklist_carries_the_class_facet(api, db):
+    """The class filter's options ride the worklist response - no second endpoint."""
+    client, allow = api
+    allow.add(VIEW)
+    code = unique_code("VR-WLCLASS")
+    _product(db, code)
+    db.commit()
+
+    body = client.get(f"{ENDPOINT}/verification/worklist", params={"query": code}).json()
+
+    assert "classes" in body
+    assert all(isinstance(label, str) for label in body["classes"])
+    assert body["classes"] == sorted(set(body["classes"]))
+
+
 def test_get_worklist_denies_without_the_view_permission(api, db):
     client, _allow = api
 
@@ -151,6 +166,24 @@ def test_get_worklist_422s_on_an_invalid_page(api, db):
     allow.add(VIEW)
 
     response = client.get(f"{ENDPOINT}/verification/worklist", params={"page": 0})
+
+    assert response.status_code == 422, response.text
+
+
+def test_get_worklist_422s_on_an_unknown_state(api, db):
+    client, allow = api
+    allow.add(VIEW)
+
+    response = client.get(f"{ENDPOINT}/verification/worklist", params={"state": "sort_of_verified"})
+
+    assert response.status_code == 422, response.text
+
+
+def test_get_worklist_422s_on_an_unknown_sort(api, db):
+    client, allow = api
+    allow.add(VIEW)
+
+    response = client.get(f"{ENDPOINT}/verification/worklist", params={"sort": "brand"})
 
     assert response.status_code == 422, response.text
 

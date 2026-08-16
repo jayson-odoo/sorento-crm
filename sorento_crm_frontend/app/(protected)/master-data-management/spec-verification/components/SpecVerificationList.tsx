@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -45,7 +45,6 @@ import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import {
   skippedUnverifyCodes,
   skippedVerifyCodes,
-  useSpecVerificationClassOptions,
   useSpecVerificationMutations,
   useSpecVerificationWorklist,
 } from '../hooks/useSpecVerification';
@@ -68,6 +67,11 @@ const STATE_OPTIONS = [
   { value: 'unverified', label: 'Unverified' },
   { value: 'verified', label: 'Verified' },
 ];
+
+/** What a confirmation counts. "(s)" reads as copy nobody finished writing. */
+function productCodeCount(n: number): string {
+  return `${n} product code${n === 1 ? '' : 's'}`;
+}
 
 /** Who vouched for the code and when, or what moved under the stamp. */
 function verificationTitle(block: VerificationBlock): string {
@@ -131,7 +135,13 @@ export default function SpecVerificationList() {
     () => searchParams.get('include_discontinued') === 'true',
   );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [confirmAction, setConfirmAction] = useState<'verify' | 'unverify' | null>(null);
+  // The dialog carries the codes it was opened for, so a row-level Unverify and a bulk
+  // Unverify are the same confirmation with a different count (PRINCIPLES: confirm
+  // before every destructive or detach action, never one-click).
+  const [confirmTarget, setConfirmTarget] = useState<{
+    action: 'verify' | 'unverify';
+    codes: string[];
+  } | null>(null);
 
   // Deps are primitives, and an unchanged URL is not rewritten: `sorting` /
   // `pagination` are fresh objects on some table renders, and replacing the URL
@@ -177,12 +187,17 @@ export default function SpecVerificationList() {
     class_label: classFilter,
     include_discontinued: includeDiscontinued,
   });
-  const { data: classOptions } = useSpecVerificationClassOptions();
   const { verify, unverify } = useSpecVerificationMutations();
   const pending = verify.isPending || unverify.isPending;
 
   const rows = useMemo(() => data?.data ?? [], [data]);
   const summary = data?.summary;
+  // The class facet rides the worklist response, so no second call is made for it.
+  // Held in a ref across refetches so the dropdown does not blink empty while the page
+  // it just filtered is still loading.
+  const classOptionsRef = useRef<string[]>([]);
+  if (data?.classes?.length) classOptionsRef.current = data.classes;
+  const classOptions = classOptionsRef.current;
   const filtersActive = Boolean(searchQuery || stateFilter || classFilter || includeDiscontinued);
 
   const clearFilters = () => {
@@ -223,19 +238,6 @@ export default function SpecVerificationList() {
     if (!codes.length) return;
     const response = await unverify.mutateAsync(codes);
     settleSelection(codes, skippedUnverifyCodes(response.results));
-  };
-
-  const selectedCodes = useMemo(
-    () => Object.keys(rowSelection).filter((code) => rowSelection[code]),
-    [rowSelection],
-  );
-
-  const confirmBulk = async () => {
-    const codes = selectedCodes;
-    const action = confirmAction;
-    setConfirmAction(null);
-    if (action === 'verify') await runVerify(codes);
-    if (action === 'unverify') await runUnverify(codes);
   };
 
   const columns = useMemo<ColumnDef<SpecVerificationRow>[]>(
@@ -368,7 +370,9 @@ export default function SpecVerificationList() {
                   size="sm"
                   variant="outline"
                   disabled={pending}
-                  onClick={() => void runUnverify([item.product_code])}
+                  onClick={() =>
+                    setConfirmTarget({ action: 'unverify', codes: [item.product_code] })
+                  }
                 >
                   Unverify
                 </Button>
@@ -421,20 +425,43 @@ export default function SpecVerificationList() {
     manualFiltering: true,
   });
 
+  // Selection is page-scoped (AC-D.10), so it is dropped when the page changes: a
+  // code the user can no longer see must not be carried into a bulk action.
+  useEffect(() => {
+    table.resetRowSelection();
+  }, [table, pageIndex, pageSize]);
+
+  // Read off the table's own selected rows rather than the raw selection map. The map
+  // can still hold a code from a page the user has left, which would make the
+  // toolbar's count disagree with what a bulk action actually sends. Not memoised:
+  // the row model is memoised inside the table, and this is only read in a click
+  // handler.
+  const selectedCodes = table
+    .getSelectedRowModel()
+    .rows.map((selected) => selected.original.product_code);
+
+  const confirmRun = async () => {
+    const target = confirmTarget;
+    setConfirmTarget(null);
+    if (!target) return;
+    if (target.action === 'verify') await runVerify(target.codes);
+    else await runUnverify(target.codes);
+  };
+
   const bulkActions: ToolbarAction[] = [
     {
       key: 'verify',
       label: 'Verify selected',
       icon: BadgeCheck,
       disabled: pending,
-      onClick: () => setConfirmAction('verify'),
+      onClick: () => setConfirmTarget({ action: 'verify', codes: selectedCodes }),
     },
     {
       key: 'unverify',
       label: 'Unverify selected',
       icon: BadgeX,
       disabled: pending,
-      onClick: () => setConfirmAction('unverify'),
+      onClick: () => setConfirmTarget({ action: 'unverify', codes: selectedCodes }),
     },
   ];
 
@@ -461,16 +488,19 @@ export default function SpecVerificationList() {
     );
   }
 
+  const confirmCount = confirmTarget?.codes.length ?? 0;
   const confirmCopy =
-    confirmAction === 'verify'
+    confirmTarget?.action === 'verify'
       ? {
           title: 'Confirm verify',
-          description: `Verify ${selectedCodes.length} product code(s)? A code with open exceptions, or one whose values moved while you were reviewing, is reported back as skipped.`,
+          description: `Verify ${productCodeCount(confirmCount)}? A code with open exceptions, or one whose values moved while you were reviewing, is reported back as skipped.`,
           actionLabel: 'Verify',
         }
       : {
           title: 'Confirm unverify',
-          description: `Withdraw the verification on ${selectedCodes.length} product code(s)? They read as unverified again and the history keeps who vouched for them.`,
+          description: `Withdraw the verification on ${productCodeCount(confirmCount)}? ${
+            confirmCount === 1 ? 'It reads' : 'They read'
+          } as unverified again and the history keeps who vouched.`,
           actionLabel: 'Unverify',
         };
 
@@ -531,7 +561,7 @@ export default function SpecVerificationList() {
                     onChange={(e) => setSearchInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && applySearch()}
                     disabled={isLoading}
-                    className="ps-9 w-full sm:40 md:w-64"
+                    className="ps-9 w-full sm:w-40 md:w-64"
                   />
                   {searchQuery.length > 0 && (
                     <Button
@@ -577,7 +607,7 @@ export default function SpecVerificationList() {
                         value={classFilter}
                         clearable
                         placeholder="Any class"
-                        options={(classOptions ?? []).map((label) => ({
+                        options={classOptions.map((label) => ({
                           value: label,
                           label,
                         }))}
@@ -628,9 +658,9 @@ export default function SpecVerificationList() {
       </DataGrid>
 
       <AlertDialog
-        open={confirmAction !== null}
+        open={confirmTarget !== null}
         onOpenChange={(open) => {
-          if (!open) setConfirmAction(null);
+          if (!open) setConfirmTarget(null);
         }}
       >
         <AlertDialogContent>
@@ -643,7 +673,7 @@ export default function SpecVerificationList() {
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault();
-                void confirmBulk();
+                void confirmRun();
               }}
               disabled={pending}
             >

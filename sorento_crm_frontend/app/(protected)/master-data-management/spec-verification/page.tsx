@@ -37,6 +37,10 @@ export default async function SpecVerificationPage() {
                 <BreadcrumbItem>
                   <BreadcrumbPage>Product Management</BreadcrumbPage>
                 </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>Spec Verification</BreadcrumbPage>
+                </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
           </ToolbarHeading>

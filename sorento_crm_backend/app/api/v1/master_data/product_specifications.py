@@ -11,7 +11,7 @@ The preview is the point. The relevance floor and the per-key weights are curren
 one engineer's judgement measured against a small eval set; they only become right
 when a product person types real phrases and says which results are wrong.
 """
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -761,10 +761,12 @@ def spec_verification_worklist(
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None, description="Match a product code or name."),
-    state: Optional[str] = Query(None, description="unverified | verified | needs_reverify"),
+    # Literal rather than str: an unknown state or sort is a client bug, and silently
+    # serving the unfiltered list instead of 422ing hides it.
+    state: Optional[Literal["unverified", "verified", "needs_reverify"]] = Query(None),
     class_label: Optional[str] = Query(None),
     include_discontinued: bool = Query(False),
-    sort: str = Query("default", description="default | coverage | code"),
+    sort: Literal["default", "coverage", "code"] = Query("default"),
     direction: str = Query("asc", alias="dir", description="asc | desc"),
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
     db: Session = Depends(get_db),
@@ -772,7 +774,8 @@ def spec_verification_worklist(
     """The codes waiting to be confirmed, worst first, in the caller's companies.
 
     `summary` counts the same set the list does minus the state filter, so the progress
-    line stays honest while the reviewer is filtered down (AC-D.6).
+    line stays honest while the reviewer is filtered down (AC-D.6). `classes` carries
+    the class filter's own options, so the screen needs no second call for a dropdown.
     """
     return product_spec_verification.worklist(
         db,

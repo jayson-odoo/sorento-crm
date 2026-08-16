@@ -87,6 +87,12 @@ export interface SpecVerificationWorklistResponse {
   data: SpecVerificationRow[];
   pagination: { total: number; page: number; limit: number };
   summary: SpecVerificationSummary;
+  /**
+   * The class filter's own options: distinct, sorted, never null, and computed
+   * before the class and state filters so filtering to a class does not empty the
+   * dropdown that did the filtering.
+   */
+  classes: string[];
 }
 
 export type SpecVerificationWorklistParams = DataGridApiFetchParams & {

@@ -201,6 +201,36 @@ Checked directly against the local Postgres copy of prod used for the run
   derived" path is used successfully. Nothing else under `product_specifications` was touched by
   this run.
 
+## Resolution after the run
+
+Written after the Phase 3 review round that followed this run. The steps above are the
+historical record and are not rewritten; this section records what happened to what
+they found.
+
+- **The `[object Object]` diff defect is fixed** (commit `081a4595`). The backend sends
+  each side of the diff as the stored spec ENTRY (`{value, unit?}`), and the frontend
+  was formatting it as a scalar. `lib/spec-readable.ts` gained `readableEntry`, which
+  renders the entry's value with its unit, and both call sites use it: the worklist
+  row's verification tooltip (`SpecVerificationList.tsx`) and the "what moved since it
+  was verified" block on the Specifications tab (`ProductSpecificationsTab.tsx`). Two
+  vitest cases pin it, one per call site, each asserting the rendered text does NOT
+  contain `[object Object]` and DOES contain the readable pair.
+- **The MGB5026B provenance residue is reverted.** Step 8 left `material` on
+  `MGB5026B` reading `source: human / status: authored` after the Material edit was
+  undone by hand, because the run ended before a revert-to-derived path was found. It
+  was cleared afterwards through the supported path, `apply_spec_values` with
+  `op=revert` - before: `source human`, `status authored`; after: `source derived`.
+  The value the row renders was "Glass" throughout, so nothing a user sees changed;
+  what changed back is the badge and the row status. No other row was touched.
+- **Vitest count.** The four files held 47 tests at the time of the run, 49 after the
+  `[object Object]` fix added its two, and **54** after the review round (a class-facet
+  test replacing three registry-mapping ones on the service, two conflict-message
+  tests, and four on the list: plural confirmation copy, the confirmed row-level
+  Unverify and its cancel, and page-scoped selection across a page change).
+
+Nothing in this section was re-driven through a browser. The defect fix and the
+review-round changes are covered by vitest and pytest; the walk itself was not repeated.
+
 ## Notes on this reconstruction
 
 - The transcript was read via targeted `grep`/Python JSON extraction of assistant `text` blocks

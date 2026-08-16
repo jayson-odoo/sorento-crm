@@ -1,5 +1,5 @@
 /**
- * useSpecVerification — the pure summary/skip helpers and the cache patcher.
+ * useSpecVerification - the pure summary/skip helpers and the cache patcher.
  *
  * These are the pieces AC-D.11 and AC-D.22 actually hinge on: the bulk outcome
  * copy, which codes stay selected, and that a patched row keeps its position in
@@ -105,7 +105,6 @@ import React from 'react';
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
 vi.mock('../services/specVerificationService', () => ({
   getSpecVerificationWorklist: vi.fn(),
-  getSpecVerificationClassOptions: vi.fn(),
   verifySpecBulk: vi.fn(),
   unverifySpecBulk: vi.fn(),
 }));
@@ -154,6 +153,7 @@ describe('patchRows via useSpecVerificationMutations().verify', () => {
       data: [baseRow('A', 'needs_reverify'), baseRow('B', 'unverified'), baseRow('C', 'unverified')],
       pagination: { total: 3, page: 1, limit: 25 },
       summary: { total: 3, verified: 0, needs_reverify: 1, unverified: 2 },
+      classes: ['Kitchen Sink'],
     };
     client.setQueryData([WORKLIST_KEY, 0, 25, [], '', '', '', false], initial);
 

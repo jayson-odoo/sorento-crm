@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import {
-  getSpecVerificationClassOptions,
   getSpecVerificationWorklist,
   unverifySpecBulk,
   verifySpecBulk,
@@ -39,14 +38,6 @@ export function useSpecVerificationWorklist(params: SpecVerificationWorklistPara
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
     retry: 1,
-  });
-}
-
-export function useSpecVerificationClassOptions() {
-  return useQuery({
-    queryKey: ['spec-verification-class-options'],
-    queryFn: () => getSpecVerificationClassOptions(),
-    staleTime: 5 * 60 * 1000,
   });
 }
 

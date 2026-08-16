@@ -1,11 +1,11 @@
 /**
- * ProductSpecificationsTab — the verification block (PR 3, AC-D.13/D.19/D.20/D.25).
+ * ProductSpecificationsTab - the verification block (PR 3, AC-D.13/D.19/D.20/D.25).
  *
  * `useProductSpecTable` is mocked so the test drives the tab's rendering directly off
  * a `VerificationBlock`, the way the real hook would hand it back from
  * `GET /by-product/{id}`. `SpecTable` / `AddSpecificationDialog` are stubbed to a
  * capture shim: heavy, already covered by their own suite, and here we only need to
- * assert the ONE prop that matters — `openEditorFor` — following the exception row's
+ * assert the ONE prop that matters, `openEditorFor`, following the exception row's
  * own "Edit" button (AC-D.17c).
  */
 import type { ReactNode } from 'react';
@@ -158,7 +158,7 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-describe('VerificationStrip — renders in every state', () => {
+describe('VerificationStrip - renders in every state', () => {
   it('unverified: pill reads Unverified, no stamp line, Verify button offered', () => {
     mockHook(baseDetail(UNVERIFIED));
     render(<ProductSpecificationsTab productId="p-1" />);
