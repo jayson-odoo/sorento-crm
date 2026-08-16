@@ -273,7 +273,11 @@ exception. It remains visible as unclassified demand rather than becoming a thir
 Given a frozen SCM run containing multiple locations and channels for one product, when **Plan
 grain: Product** is selected, then the product has exactly one row. Its SO and Suggested columns
 show stacked Project, Retail, and unclassified readings, and its expandable ledgers preserve each
-channel's evidence without making channel part of row identity.
+channel's evidence without making channel part of row identity. On a new run `project_demand`
+(open Project-class SO quantity) and `retail_outstanding` (stored `dealer_outstanding`) are
+classified by persisted `demand_class`, a missing class counts as unclassified, and
+`project_demand` is shown beside `project_buy_qty` (confirmed unplaced Buy) as two measures of one
+owner; legacy runs keep their stored values.
 
 ### AC-E04 [BE][J07] Project demand is confirmed unplaced Buy
 
@@ -379,7 +383,10 @@ breakdown is not inferred or backfilled.
 
 Given Project and Retail need across two locations contribute a total unrounded need of 2 and the
 supplier multiple is 10, when Product grain is calculated, then its single Product row rounds once
-to suggested quantity 10; it does not round each location or channel first.
+to suggested quantity 10; it does not round each location or channel first, and stored
+`suggested_qty` on a new run is that once-rounded value at the frozen `uom_decimal_places`, not the
+sum of per-location rounded quantities ceiled to a whole unit. Given a `kg` product with three
+decimal places, no supplier constraint, and total need 2.5, then `suggested_qty` is 2.5.
 
 ### AC-F12 [BE][FE][E2E][T][J07][J08][J09] UOM precision and the chosen split are durable
 

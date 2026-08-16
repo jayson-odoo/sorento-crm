@@ -377,13 +377,16 @@ product_raw_need(p)
 
 product_suggested_qty(p)
   = apply_supplier_MOQ_and_multiple_once(product_raw_need(p))
+    at the frozen uom_decimal_places
 ```
 
 Project Buy is firm demand: Retail free-supply netting never reduces it. Applying supplier
 constraints once to the actionable product row avoids buying one MOQ for every location or demand
-channel. No Product-versus-Location reconciliation bridge or rounding delta exists because both
-views read the same channel-aware location facts. No AI-generated quantity, optimizer, or extra
-policy knob is added.
+channel. On new runs `order_summary_row.suggested_qty` is this value; it replaces the existing
+`summary_order_service.write_rows` derivation that sums per-location `rounded_qty` and then
+`math.ceil`s to a whole unit. No Product-versus-Location reconciliation bridge or rounding delta
+exists because both views read the same channel-aware location facts. No AI-generated quantity,
+optimizer, or extra policy knob is added.
 
 ### 5.4 Location grain and decision ownership
 
@@ -519,7 +522,18 @@ not produced for a confirmed decision.
   replay read `uom_decimal_places` from the row, never live UOM master data, so a later UOM edit
   cannot change a frozen run. Existing rows remain untouched and their new fields stay NULL; they
   are not split, duplicated, defaulted, or made actionable.
-- Reuse existing summary-row quantity, supplier, and keying fields. Do not add a frozen cash field:
+- Re-base the existing `order_summary_row.project_demand`, `dealer_outstanding`, and their line
+  counts on persisted `sales_orders.demand_class` for new runs: `summary_order_service
+  ._demand_aggregates` classifies open SO lines by `demand_class` instead of exact `order_type`
+  membership, a missing `demand_class` counts as unclassified, and `dealer_outstanding` is exposed
+  as `retail_outstanding` in the new API and UI while the column name stays. The row then carries
+  two Project measures with one owner, shown side by side: `project_demand` is open Project-class
+  SO quantity and `project_buy_qty` is confirmed unplaced Buy. Legacy runs keep their stored
+  values on the old basis, read-only.
+- Write `suggested_qty` on new runs as section 5.3 `product_suggested_qty`, rounded once at
+  supplier MOQ and multiple and the frozen `uom_decimal_places`, replacing the
+  `summary_order_service.write_rows` sum of per-location `rounded_qty` plus `math.ceil`. Reuse the
+  other existing summary-row quantity, supplier, and keying fields. Do not add a frozen cash field:
   `cash_committed` remains the live `chosen_qty` and cost calculation in
   `summary_order_service.po_worklist`, while frozen `cash_impact` remains owned by each
   `ReorderRecommendation`.
@@ -628,8 +642,10 @@ pre-code contract only.
 - Add and backfill UOM `decimal_places`, expose it in UOM master-data create and edit with `0..4`
   validation, and preserve the `0` fallback during rollout.
 - Keep one Product row, freeze its UOM `decimal_places` snapshot, add its stacked channel readings
-  and expandable ledgers, apply supplier rounding once to the total, and persist the durable
-  allocator-rerun location split.
+  and expandable ledgers, re-base `_demand_aggregates` and `project_demand` /
+  `dealer_outstanding` (`retail_outstanding` in the API and UI) on `demand_class`, replace the
+  `write_rows` per-location rounded sum with `suggested_qty` rounded once at supplier constraints
+  and the frozen `uom_decimal_places`, and persist the durable allocator-rerun location split.
 - Pin mixed-channel same-location demand, Project Buy pass-through, decimal chosen-quantity
   allocation at UOM precision, unavailable legacy breakdowns, and rejection of every legacy-run
   decision write.
