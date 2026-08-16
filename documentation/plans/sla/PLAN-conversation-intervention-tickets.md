@@ -460,6 +460,21 @@ Deviations from the bullets above, and why:
   renders "replying to" block above the message body. Outbound quoting stays the
   existing prefix emulation (no API support - verified).
 
+**Amended 2026-08-16 (captain's call): the outbound prefix emulation is REMOVED.**
+Respond exposes no reply-to for API sends (403 on the raw-payload path), so our
+">"-quoted line was theatre that read on screen like a real quote. Deleted: the
+per-bubble Reply affordance in `RespondChatList`, the composer's quoted-reply banner
+and its `replyTo` / `onClearReplyTo` props, `buildQuotedReplyText` /
+`splitQuotedPrefix` / `splitMessageQuote` in `lib/respondIoChatRender.ts`, the shared
+`components/common/conversation/quotedReply.ts` helper, and the `reply_to_message_id` /
+`reply_to_excerpt` fields on `interventionTicketService` + `conversationsInboxService`.
+The backend keeps its optional audit-only parameters (removing them is a separate
+backend change); the FE no longer sends them. Everything BELOW this note - the inbound
+`replyTo` ingest, `describeQuotedContext`, `QuotedContextBlock` - is unchanged and
+still shipped: that quote is a real reference the contact made. One visible
+consequence: a historical outgoing message that was sent with a ">" line now shows
+that line as ordinary text, which is exactly what the contact received.
+
 Built 2026-08-15 (code + tests; awaiting tester/review). **No migration: the columns
 already existed.** `chat_histories.reply_to_message_id` + `reply_to_message` predate
 this feature (they were added for the chatbot's numbered-option resolution), and the

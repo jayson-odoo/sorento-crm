@@ -116,6 +116,19 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
   (media uploaded via CRM storage, delivered by URL, CMYK JPEG converted to RGB) and appears
   in the thread. Sticker and reply-to included iff the Respond API supports them (R1);
   unsupported types are absent from the composer, never silently failing.
+
+  **As built (2026-08-16, captain's call).** Respond supports neither, so BOTH are
+  absent. Sticker never shipped. Outbound reply-to DID ship, as an emulation - the
+  quoted excerpt sent as a ">"-prefixed line above the body - and has now been
+  REMOVED. It read on screen like a real quote reference and was not one, which is
+  the "silently failing" this AC forbids. Gone with it: the per-bubble Reply
+  affordance in `RespondChatList`, the composer's quoted-reply banner and its
+  `replyTo` / `onClearReplyTo` props, `buildQuotedReplyText` / `splitQuotedPrefix` /
+  `splitMessageQuote` in `lib/respondIoChatRender.ts`, the shared
+  `conversation/quotedReply.ts` helper, and the `reply_to_message_id` /
+  `reply_to_excerpt` fields on both FE send services. The backend routes still
+  ACCEPT that pair (optional, audit-only) - removing it there is a separate change;
+  the FE simply never sends it now. INBOUND quoted context is untouched (AC-L6).
 - **AC-D2 [BE][T]** Given the contact's messaging window is closed, When the assignee sends,
   Then the template smart-send fallback fires exactly as the existing unified composer.
 - **AC-D3 [BE][T]** Given any send (success OR Respond 4xx/5xx), When it completes, Then an
@@ -614,6 +627,11 @@ channel - quote-prefix emulation stays), sticker sends.
   `replyTo`), When rendered, Then the quoted context shows above the message body
   (read-side parity even though outbound quoting stays emulation).
 
+  **Amended 2026-08-16 (captain's call).** There is no outbound counterpart any more:
+  the ">"-prefix emulation was removed (see AC-D1). This AC is unchanged and still
+  holds - inbound quoted context is a REAL reference the contact made and still
+  renders, in the shared `RespondChatList`, on every thread surface.
+
   **As built (slice S4.6, 2026-08-15).** The block renders in the SHARED
   `RespondChatList`, so the complaint / stock-inquiry / PR / portal threads get it too.
   Thread items carry `replyTo: { messageId, traffic?, message: { type?, text? } }`;
@@ -621,7 +639,9 @@ channel - quote-prefix emulation stays), sticker sends.
   `{ messageId, excerpt, sender }`. Tapping the block scrolls to the quoted message and
   flashes it, reusing the S4.8 bubble ref map - but only when that message is already
   loaded; otherwise it renders as plain text rather than as a button that cannot act.
-  Outbound quoting is untouched.
+  Outbound quoting was untouched here, and was removed outright on 2026-08-16
+  (AC-D1): `splitMessageQuote` and the ">"-prefix quote bubble are gone, so a bubble
+  now shows a quote block only when Respond gave us a real `replyTo`.
 
   Deviations from the wording above, and why:
   1. **No new column, no migration.** `chat_histories.reply_to_message_id` and
