@@ -86,7 +86,10 @@ quantity and not a value reduced again by a downstream reader.
 Given inbound SPO quantities for a product and line location, when coverage is calculated for a
 required date, then location availability is stock plus SPO incoming by that date minus outstanding
 SO at that location, supply is processed before demand on the same date, and no SPO-to-SO-line
-allocation is required or inferred.
+allocation is required or inferred. Given eligible opening stock 10, same-day SPO 10, and two
+10-unit lines on the same SO, product, location, and required date at line numbers 10 and 20, then
+line 10 receives Reserve 10 and line 20 receives timely SPO coverage 10, even when database row
+order is reversed; an internal line ID breaks a tied line number without being displayed.
 
 ### AC-B03 [FE][J04] Late incoming is advisory
 
@@ -97,7 +100,8 @@ is labeled advisory for that date and contributes zero coverage at that date.
 
 Given identical frozen stock, claims, incoming, classification, reorder level, dates, and SO data,
 when the suggestion is calculated twice, then timely SPO coverage, Reserve, Borrow candidates, and
-Buy are identical and no LLM or nondeterministic optimizer supplies a quantity.
+Buy are identical. Line and SPO source attribution are also identical, and no LLM, database return
+order, or nondeterministic optimizer supplies a quantity.
 
 ### AC-B05 [BE][J04] Hot-selling uses existing ABC facts
 
@@ -372,13 +376,18 @@ Given Project and Retail need across two locations contribute a total unrounded 
 supplier multiple is 10, when Product grain is calculated, then its single Product row rounds once
 to suggested quantity 10; it does not round each location or channel first.
 
-### AC-F12 [BE][T][J07][J08][J09] The chosen split is durable and balanced
+### AC-F12 [BE][FE][E2E][T][J07][J08][J09] UOM precision and the chosen split are durable
 
-Given a buyer saves a decimal chosen quantity valid at the product UOM precision on a Product row,
-when its PO worklist split is persisted, then the generalized existing allocator reruns
-deterministically with the stored `chosen_qty`, frozen location inputs, and product UOM precision.
-It stores decimal location quantities rounded at that precision, those quantities sum exactly to
-the stored `chosen_qty`, and no rescaling formula is used.
+Given UOM master data is created or edited, when `decimal_places` is submitted, then values `0..4`
+are stored and returned by create, edit, list, detail, and select while values outside that range
+are rejected. Omitted creates and missing rollout values resolve to `0`; omitted edits preserve the
+stored value. Count-unit backfills are `0`, measure-unit backfills use the transaction columns and
+exact name aliases in the plan to find the greatest observed fractional scale after trailing zeroes
+are removed and cap it at `4`, unknown units resolve to `0`, and no quantity row is rewritten. Given
+an `EA` product and a `kg` product with `decimal_places = 3`, when chosen quantities are validated,
+then `2.5 EA` is rejected while `2.5 kg` is accepted. When an accepted Product choice is split, the
+generalized existing allocator works in the UOM's integer minor units, stores decimal location
+quantities, and those quantities sum exactly to stored `chosen_qty`; no rescaling formula is used.
 
 ## Group G: Audit, lifecycle, and usability
 

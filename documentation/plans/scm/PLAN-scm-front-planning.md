@@ -249,14 +249,26 @@ availability_by_date(p, w, d)
   - SUM(outstanding SO(p, w) required on or before d)
 ```
 
-The line proposal derives timely SPO coverage from this location timeline using the existing
-deterministic SO ordering, except that this contract changes the shared timeline tie-break so
-supply is processed before demand on the same date. An SPO arriving on the required date therefore
-counts at that date. The calculation may explain which SPO rows contributed, but it creates no
-`spo_allocation -> sales_order_line` ownership and no `order_link_claim` chain. An SPO arriving
-after a line's required date is advisory for that need and contributes no coverage at that date.
-For the line balance, the stock leg is represented only by Reserve or Borrow and the incoming leg
-only by timely SPO coverage, so the combined availability formula never counts either unit twice.
+The shared location-projection boundary owns all ordering and source attribution. Timeline events
+sort by date, then kind with supply before demand, then SO number, then line number with missing
+numbers last, then the internal SO-line ID. The line ID is a final stable key only and is never
+displayed. Demand lines consume sources in that order: opening stock first, then SPO arriving on or
+before the line's required date. Eligible SPO sources sort by arrival date, SPO number, SPO line
+number with missing numbers last, then allocation ID. This order is used by the timeline, the line
+proposal, and confirmation recomputation; database return order never participates.
+
+An SPO arriving on the required date therefore counts at that date. The calculation may explain
+which SPO rows contributed, but it creates no `spo_allocation -> sales_order_line` ownership and no
+`order_link_claim` chain. An SPO arriving after a line's required date is advisory for that need and
+contributes no coverage at that date. For the line balance, stock consumed by the attribution is
+represented only by Reserve or Borrow and incoming only by timely SPO coverage, so the combined
+availability formula never counts either unit twice.
+
+Worked attribution: eligible opening stock is 10, one SPO of 10 arrives on the required date, and
+SO-100 has two 10-unit lines for the same product, location, and date at line numbers 10 and 20.
+Line 10 receives Reserve 10 from opening stock; line 20 receives timely SPO coverage 10. Reversing
+database row order does not change that result. If line numbers tie, internal line ID decides the
+order.
 
 ## 4. Order Inquiry handoff
 
@@ -378,10 +390,10 @@ Each new front-planning run has exactly one actionable `decision_grain`:
 
 - `product`: the single product `scm.order_summary_row` owns the chosen quantity. Its PO-worklist
   split reruns the existing `reorder_engine.allocate` deterministically with `chosen_qty`, the
-  frozen location inputs, and the product UOM precision. Allocation rounds deterministically at
-  that precision, persists decimal location quantities, and makes their sum exactly equal
-  `chosen_qty`; no proportional rescaling formula is added. Location recommendations are read-only
-  under this grain.
+  frozen location inputs, and the product UOM's `decimal_places`. Allocation works in that UOM's
+  integer minor units, persists the resulting decimal location quantities, and makes their sum
+  exactly equal `chosen_qty`; no proportional rescaling formula is added. Location recommendations
+  are read-only under this grain.
 - `location`: existing `scm.reorder_recommendation` decisions and
   `scm.recommendation_override` rows remain actionable. The Product row is a read-only aggregate
   of their chosen quantities.
@@ -495,20 +507,40 @@ not produced for a confirmed decision.
   `cash_committed` remains the live `chosen_qty` and cost calculation in
   `summary_order_service.po_worklist`, while frozen `cash_impact` remains owned by each
   `ReorderRecommendation`.
-- Add `quantity_precision` as a non-negative integer on `public.units_of_measure`; existing rows
-  receive `4`, matching the shared SCM quantity precision, and products read it through their
-  existing `base_uom_id`. It is the canonical UOM quantity scale, not a planning-policy knob, and
-  is not inferred from `conversion_factor`.
+- Add `decimal_places` to `public.units_of_measure` as a SmallInteger constrained to `0..4`.
+  Products read it through their existing `base_uom_id`; a missing value during rollout resolves
+  to `0`. Backfill from lowercased, trimmed UOM code or name before making the field non-null.
+  Exact count aliases `ea`, `each`, `piece`, `pieces`, `unit`, `units`, `pc`, `pcs`, `set`, and
+  `sets` receive `0`. Exact measure aliases are `kg`, `kilogram`, `kilograms`, `g`, `gram`, `grams`,
+  `m`, `meter`, `meters`, `metre`, `metres`, `cm`, `centimeter`, `centimeters`, `centimetre`,
+  `centimetres`, `l`, `liter`, `liters`, `litre`, `litres`, `ml`, `milliliter`, `milliliters`,
+  `millilitre`, `millilitres`, `m2`, `m²`, `square meter`, `square meters`, `square metre`,
+  `square metres`, `m3`, `m³`, `cubic meter`, `cubic meters`, `cubic metre`, and `cubic metres`.
+  Measure units receive the greatest observed fractional scale after trailing zeroes are removed,
+  capped at `4`, across `order_lines.quantity`, `sales_order_lines.qty_ordered`,
+  `sales_order_lines.qty_delivered`, `sales_order_lines.qty_required`,
+  `purchase_order_lines.qty_ordered`, and `purchase_order_lines.qty_received` for products using
+  that base UOM. Every unknown name receives `0`; no historical quantity is rewritten.
+- UOM model, create/update/response schemas, `UnitOfMeasureService` list serialization, canonical
+  master ingest, and frontend create/edit/detail surfaces carry `decimal_places`. Create defaults a
+  missing value to `0`; edit preserves the stored value when omitted; every write validates `0..4`.
+  List, detail, and select responses return it. This is canonical UOM divisibility, not SCM
+  arithmetic precision or a planning-policy knob, and it is not inferred from `conversion_factor`.
+- Extend the non-durable shared projection input with `line_no` and core `line_id`. Reconciled
+  Project lines supply their human line number; a missing line number sorts last. Extend
+  `CoverageService._demand_events_many` and `TimelineEvent` to carry both values and apply the
+  section 3.5 ordering. The internal ID never enters a user-facing response.
 - Add the narrow child `scm.order_summary_location_allocation` with `order_summary_row_id`,
   `reorder_recommendation_id`, `warehouse_id`, and Numeric `allocated_qty`. When Product `chosen_qty`
   changes, generalize and rerun
-  `reorder_engine.allocate(chosen_qty, frozen_location_inputs, uom_precision)` and persist its
-  output. The decision boundary validates and stores `chosen_qty` at the product UOM precision;
-  the allocator quantizes deterministically at that precision and preserves decimal quantities.
-  Enforce one row per summary row and warehouse, non-negative quantities, company scope, and a
-  transaction-time invariant that child quantities sum exactly to the parent's stored
-  `chosen_qty`. Do not rescale a prior split. This is persistence for the PO worklist, not a new
-  allocator or subsystem.
+  `reorder_engine.allocate(chosen_qty, frozen_location_inputs, decimal_places)` and persist its
+  output. The decision boundary rejects `chosen_qty` with more fractional places than the product
+  UOM permits. The allocator converts the accepted total to integer minor units of
+  `10^-decimal_places`, reuses its deterministic largest-remainder allocation, then converts the
+  children back to decimal quantities. Enforce one row per summary row and warehouse,
+  non-negative quantities, company scope, and a transaction-time invariant that child quantities
+  sum exactly to the parent's stored `chosen_qty`. Do not rescale a prior split. This is
+  persistence for the PO worklist, not a new allocator or subsystem.
 - `scm.reorder_level` remains per location. No consolidation migration or product-level winner
   is added. The product value is calculated as the sum in section 5.5.
 - `scm.item_classification` supplies the existing ABC hot-selling fact.
@@ -532,7 +564,8 @@ pre-code contract only.
 
 - Confirm the core SO-line link, classification precedence and stamp points, channel demand columns
   on `scm.committed_v`, dealer-facing locations, ABC evidence, legacy-run identification, UOM
-  quantity precision, and SPO location/date source against production-shaped fixtures.
+  name classes and observed quantity scales, and SPO location/date source against
+  production-shaped fixtures.
 - Pin mapper cases for `project`, `projects`, `contract`, and `subcontractor` as Project and an
   ordinary non-matching stated segment as Retail. Pin stored order type, stated order type,
   customer market segment, and sales-agent fallback precedence, the import and publish stamps, and
@@ -558,8 +591,8 @@ pre-code contract only.
 - Implement deterministic incoming, Reserve, Borrow, and Buy suggestions.
 - Implement the hot-selling BRW rule, Borrow and discontinued reasons, atomic SO confirmation,
   revision supersession, and Buy-only inquiry rows.
-- Change the shared coverage timeline to process supply before demand on the same date and pin the
-  zero-stock, demand-10, same-day-SPO-10 case at zero shortfall.
+- Implement the shared section 3.5 ordering and source attribution. Pin its two-line worked case,
+  including identical results when database row order is reversed.
 - Replace early publish derivation, per-line partial confirmation, independent inquiry netting,
   and second-approver Borrow on the named implementation branch.
 
@@ -569,6 +602,8 @@ pre-code contract only.
 - Extend the single-row shared committed read model and frozen recommendation facts with Project,
   Retail, and unclassified demand columns, shared supply, firm Project Buy, normally netted Retail
   need, and location drills.
+- Add and backfill UOM `decimal_places`, expose it in UOM master-data create and edit with `0..4`
+  validation, and preserve the `0` fallback during rollout.
 - Keep one Product row, add its stacked channel readings and expandable ledgers, apply supplier
   rounding once to the total, and persist the durable allocator-rerun location split.
 - Pin mixed-channel same-location demand, Project Buy pass-through, decimal chosen-quantity
@@ -605,7 +640,7 @@ No browser run is required for this documentation-only PR.
 | Risk | Control |
 |---|---|
 | Partial commitment leaks to Purchasing | One SO-level transaction; no active decision or inquiry rows until every line balances |
-| Same incoming or stock covers two lines | One dated product-location projection, concurrency protection, unique active claims, and recheck at commit |
+| Same incoming or stock covers two lines | One dated product-location projection, stable line and source ordering, concurrency protection, and recheck at commit |
 | Confirmed cover remains free in a later proposal | The same confirmed claim read reduces CS free stock and Retail planning supply before either calculation |
 | Order Inquiry buys coverage again | Buy residual only; no independent coverage netting in the reader |
 | Customer delivery reduces Buy twice | Reader consumes current unplaced Buy directly, not delivered-order arithmetic |
@@ -619,9 +654,9 @@ No browser run is required for this documentation-only PR.
 | Both plan grains create purchases | One locked actionable decision grain per run; PO worklists ignore the comparison grain |
 | Product grain accidentally applies MOQ per location or channel | One Product row aggregates all actionable need and rounds once |
 | Product choice cannot be replayed by location | Existing allocator reruns with chosen quantity; narrow child persists an exactly balanced split |
-| Decimal choices lose quantity during allocation | Allocator quantizes at product UOM precision and child quantities sum exactly to chosen quantity |
+| Fractional count units or lost measure quantities | UOM master data owns `decimal_places`; input validation and minor-unit allocation keep children equal to chosen quantity |
 | Legacy decisions become actionable twice | Legacy runs remain unchanged and read-only; only new versioned runs accept decisions |
-| Same-day incoming is treated inconsistently | Shared timeline processes supply before demand on the same date |
+| Same-day incoming is attributed inconsistently | Section 3.5 owns supply-first event order, stable line keys, and stock-before-SPO attribution |
 | Product level overrides location ownership | Deterministic sum only; individual rows remain authoritative in Location grain |
 | Amendment creates duplicate Buy | Revision supersession plus idempotent active inquiry row and placed-supply exception ledger |
 | Cross-company facts leak | Company-scoped reads, writes, uniqueness, permissions, and isolation tests |
@@ -644,7 +679,7 @@ or plan language where different.
 | Decision | Captain answer |
 |---|---|
 | Q1 | Order Inquiry carries only the confirmed Buy residual. |
-| Q2 | Incoming SPO to the line location is dated location supply. Availability by date is stock plus SPO arriving by that date minus outstanding SO at that location. Supply is processed before demand on the same date, so same-day SPO counts. There is no allocated-incoming concept; later SPO is advisory and contributes no coverage at the required date. |
+| Q2 | Incoming SPO to the line location is dated location supply. Availability by date is stock plus SPO arriving by that date minus outstanding SO at that location. Same-day SPO counts, and line attribution follows the stable ordering in section 3.5. There is no allocated-incoming concept; later SPO is advisory and contributes no coverage at the required date. |
 | Q3 | Borrow needs explicit CS confirmation with donor impact shown and a required reason. There is no second approver. |
 | Q4 | Buying a discontinued product for committed customer demand is allowed, with a warning and required reason. |
 | Q5 | Dealer hot-selling is determined by an existing ABC A row at an active, available warehouse with `segment = dealer`. Reserve cannot consume dealer-facing free stock for such a product and may use the `pool_warehouse_id` BRW pool only above BRW's per-location reorder level. For other products, own fulfilment free stock and shared BRW are Reserve; outside or already committed stock is Borrow. |
