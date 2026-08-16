@@ -25,13 +25,13 @@ the BRANCH POINT, not of your branch. Re-check ``alembic heads`` against the
 latest default branch just before merging, not only after a rebase.
 """
 
-from alembic import op
-import sqlalchemy as sa
-
-
 # revision identifiers, used by Alembic.
-revision = '363_merge_flyer_promo_um'
-down_revision = ('359_flyer_read_background_job', '360_merge_um_gates_scm_r2', '362_promotion_type_perms')
+revision = "363_merge_flyer_promo_um"
+down_revision = (
+    "359_flyer_read_background_job",
+    "360_merge_um_gates_scm_r2",
+    "362_promotion_type_perms",
+)
 branch_labels = None
 depends_on = None
 

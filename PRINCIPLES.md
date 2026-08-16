@@ -220,4 +220,6 @@ dropdown-select MUST use `SearchableSelect`/`SearchableMultiSelect` from `@/comp
 - Deploy: `DEPLOY.md` (blue/green via CI + `scripts/blue_green_deploy.sh`). Prod server
   `/opt/sorento-crm2/` has **no git repo** — CI scp's the deploy script; compose is edited by hand.
 - New Alembic `down_revision` must chain onto a **committed** main head (not an uncommitted WIP
-  migration); revision ids ≤ 32 chars. A branch merge forks two heads → fix with `alembic merge`.
+  migration); revision ids ≤ 32 chars. Immediately before merging, re-check `alembic heads`
+  against the latest default branch. Concurrent migrations can leave multiple heads despite a
+  clean rebase; rejoin every current head with an empty `alembic merge` revision.
