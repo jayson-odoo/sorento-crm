@@ -44,7 +44,7 @@ from app.models.user import User
 from app.services import project_seed_service
 from app.tasks.project_document_tasks import _mark_failed
 
-from ._pg_fixture import blank_session
+from ._pg_fixture import SCRATCH_SCHEMA_PREFIX, blank_session
 
 MARKER = "zzt-doc-task-failure"
 
@@ -185,7 +185,14 @@ def test_the_write_lands_in_the_schema_under_test_not_the_real_projects_one(seed
     _mark_failed(db, ProjectPOVersion, row_id, RuntimeError("boom"))
 
     scratch = db.get_bind().get_execution_options()["schema_translate_map"]["projects"]
-    assert scratch.startswith("zzt_"), scratch
+    # Asked of the fixture, not restated as a literal: the prefix is the fixture's to
+    # choose (it has already been renamed once, zzt_ -> zzs_, so that a sibling
+    # checkout's schema sweep cannot match it) and a copy of it here would fail this
+    # test for a reason that has nothing to do with what it is guarding. What matters
+    # is only that the write went somewhere scratch rather than into the real
+    # `projects` schema.
+    assert scratch.startswith(f"{SCRATCH_SCHEMA_PREFIX}_"), scratch
+    assert scratch != "projects"
     state = db.execute(
         text(f'select extraction_state from "{scratch}".po_versions where id = :i'),
         {"i": row_id},
