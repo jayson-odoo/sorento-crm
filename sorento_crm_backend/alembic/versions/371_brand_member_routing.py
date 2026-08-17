@@ -162,27 +162,31 @@ def _number_unordered_members(bind, team_id) -> int:
     return highest + len(unordered)
 
 
-def _move_members(bind, from_team_id, to_team_id, brand: str, row_id) -> None:
-    """Move a suffixed tier's people into the surviving team, tagged with its brand.
+def _move_members(bind, from_team_id, to_team_id, brands: list[str], group_row_ids) -> None:
+    """Move a suffixed tier's people into the surviving team, tagged with its brands.
 
     Appended to the BACK of the round-robin queue (``sort_order`` continues past the
     highest one already there), because joining a rotation should not hand the newcomer
     the next conversation. ``include_in_round_robin`` travels with them: somebody
     excluded in the Mocha team is excluded here too.
 
-    ``row_id`` is the ``agent_teams`` row being collapsed. If any OTHER routing row
-    still points at the same team, its people stay: emptying that team would silently
-    strip the other set's round-robin pool to nobody, which is a far bigger change than
-    the one this migration is making.
+    ``brands`` is every suffix of the collapse group that pointed at this team: when
+    the _mocha and _cabana rows share one team, its people move ONCE and carry both
+    tags. ``group_row_ids`` are the ``agent_teams`` rows of the collapse group, all of
+    which are deleted right after this. If any routing row OUTSIDE the group still
+    points at the same team, its people stay: emptying that team would silently strip
+    the other set's round-robin pool to nobody, which is a far bigger change than the
+    one this migration is making.
     """
     if str(from_team_id) == str(to_team_id):
         return
 
     shared_with = bind.execute(
         sa_text(
-            "SELECT count(*) FROM agent_teams WHERE team_id = :t AND id <> :i"
+            "SELECT count(*) FROM agent_teams "
+            "WHERE team_id = :t AND NOT (id::text = ANY(:ids))"
         ),
-        {"t": from_team_id, "i": row_id},
+        {"t": from_team_id, "ids": [str(i) for i in group_row_ids]},
     ).scalar() or 0
     if shared_with:
         logger.warning(
@@ -191,7 +195,7 @@ def _move_members(bind, from_team_id, to_team_id, brand: str, row_id) -> None:
             "Move them by hand if they should serve that brand in the collapsed set.",
             from_team_id,
             to_team_id,
-            brand,
+            brands,
         )
         return
 
@@ -223,8 +227,8 @@ def _move_members(bind, from_team_id, to_team_id, brand: str, row_id) -> None:
                 "hand if they should only serve that brand.",
                 row["user_id"],
                 to_team_id,
-                brand,
-                brand,
+                "/".join(brands),
+                brands,
             )
             continue
         offset += 1
@@ -234,7 +238,8 @@ def _move_members(bind, from_team_id, to_team_id, brand: str, row_id) -> None:
             ),
             {"to": to_team_id, "s": base + offset, "i": row["id"]},
         )
-        _tag(bind, row["id"], brand)
+        for brand in brands:
+            _tag(bind, row["id"], brand)
 
 
 def _tag_existing_members(bind, team_id, brand: str) -> None:
@@ -376,14 +381,15 @@ def _collapse_tier(bind, agent_id, company_id, tier, tier_suffixed, tier_base) -
             )
             _tag_existing_members(bind, survivor_team_id, winner_brand)
 
+    group_row_ids = [r["id"] for r in tier_suffixed] + [r["id"] for r in tier_base]
+    brands_by_team: dict[str, list[str]] = {}
     for row in remaining:
-        _move_members(
-            bind,
-            row["team_id"],
-            survivor_team_id,
-            LEGACY_CODES[_normalised_code(row["code"])],
-            row["id"],
-        )
+        brand = LEGACY_CODES[_normalised_code(row["code"])]
+        brands_by_team.setdefault(str(row["team_id"]), []).append(brand)
+    for team_id, brands in brands_by_team.items():
+        ordered = [b for b in BRAND_PRIORITY if b in brands]
+        _move_members(bind, team_id, survivor_team_id, ordered, group_row_ids)
+    for row in remaining:
         bind.execute(sa_text("DELETE FROM agent_teams WHERE id = :i"), {"i": row["id"]})
 
 

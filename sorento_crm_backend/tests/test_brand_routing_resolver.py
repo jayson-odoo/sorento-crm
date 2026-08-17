@@ -275,6 +275,21 @@ def test_an_untagged_member_rotates_with_the_tagged_one(svc, promo_team):
     ]
 
 
+def test_brand_matched_is_per_assignee_not_per_pool(svc, promo_team):
+    """The mocha pool is [Am (untagged), Kia Yee (mocha)]. brand_matched follows
+    the member DRAWN: true when Kia Yee takes it, false when Am does, so n8n can
+    tell the specialist from the serve-all member even inside one pool."""
+    people = promo_team["people"]
+    seen = {}
+    for _ in range(4):
+        assignee = svc.get_next_assignee(
+            promo_team["agent_id"], promo_team["team_id"], brand_code="mocha"
+        )
+        seen[assignee["id"]] = assignee["brand_matched"]
+
+    assert seen == {people["Am"]: False, people["Kia Yee"]: True}
+
+
 def test_an_empty_pool_falls_back_to_the_whole_team(svc, db):
     """Every member tagged, none with this brand: the whole team round-robins."""
     agent_id = _agent(db)

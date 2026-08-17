@@ -463,7 +463,12 @@ def test_a_brand_nobody_is_tagged_for_falls_back_to_the_whole_team(seeded, brand
 
 
 def test_promotion_brand_and_untagged_fallback(seeded):
-    """AC2-R3 - cabana draws Aqi and Am (untagged serves all); mocha only Am."""
+    """AC2-R3 - cabana draws Aqi and Am (untagged serves all); mocha only Am.
+
+    brand_matched is per assignee: the draw that lands on Aqi (tagged cabana) is a
+    match, the draw that lands on Am (untagged) is not, even though both came out
+    of the same cabana pool.
+    """
     cabana = [
         _post(seeded, team_code="marketing_promotion", brand_code="cabana").json()
         for _ in range(2)
@@ -471,7 +476,10 @@ def test_promotion_brand_and_untagged_fallback(seeded):
     assert sorted(r["assignee_id"] for r in cabana) == sorted(
         [seeded["people"]["Am"], seeded["people"]["Aqi"]]
     )
-    assert all(r["brand_matched"] is True for r in cabana)
+    assert {r["assignee_id"]: r["brand_matched"] for r in cabana} == {
+        seeded["people"]["Aqi"]: True,
+        seeded["people"]["Am"]: False,
+    }
 
     # Nobody in the promotion team is tagged mocha, so only the untagged member
     # is eligible - and that is not a brand match.

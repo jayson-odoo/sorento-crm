@@ -221,9 +221,9 @@ the brand, escalation still climbs the same set.
 - **AC2-R3** [BE][T] Headline cases hold: mocha -> Kia Yee (tagged member), sorento/unknown ->
   untagged members (Am / whole-team fallback), cabana -> Aqi.
 - **AC2-X1** [BE][T] External contract unchanged: next-assignee / team-members accept
-  `brand_code` + `company_id`; `brand_matched` = true when at least one TAGGED member matched the
-  brand (false when the untagged/whole-team fallback served it); team-members roster reflects the
-  same pool next-assignee draws from.
+  `brand_code` + `company_id`; `brand_matched` = true when the member DRAWN is tagged with the
+  brand (false when an untagged member or the whole-team fallback served it, even from a pool that
+  also holds a tagged member); team-members roster reflects the same pool next-assignee draws from.
 - **AC2-F1** [FE][T] Member rows in the team editing surface get a Brands multi-select mirroring
   the market-segment editor; member rows in AccessAgentDetail show brand chips; the tier-row
   Brand select and badges are gone.

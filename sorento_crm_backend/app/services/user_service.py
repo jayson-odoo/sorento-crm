@@ -1599,8 +1599,9 @@ class AccessAgentService:
 
         ``brand_code`` (opt-in): the SECOND axis, same rule and ANDed with the first -
         members tagged with that brand plus members tagged with none of them. The
-        returned dict carries ``brand_matched``, true only when a TAGGED member is in
-        the pool, so n8n can tell a real brand routing from the serve-all fallback.
+        returned dict carries ``brand_matched``, true only when the member DRAWN is
+        tagged with that brand, so n8n can tell the specialist taking it from an
+        untagged serve-all member taking it.
 
         The two filters fall back ONE AXIS AT A TIME: a brand nobody serves drops the
         brand and keeps whatever the segment left, and only a segment nobody serves
@@ -1685,10 +1686,6 @@ class AccessAgentService:
                 if len(brand_pool) != len(pool):
                     segment_key = f"{segment_key}{brand_pool_key(wanted_brand)}"
                 pool = brand_pool
-                # A tagged member in the pool is what makes this a BRAND routing; a pool
-                # of untagged members is the serve-all fallback, which n8n must be able
-                # to tell apart from the specialist actually taking it.
-                brand_matched = any(brands_by_member.get(str(m.id)) for m in pool)
         members = pool
         user_ids = [_rr_user_id_key(m.user_id) for m in members]
         # Get or create cursor and lock it (scoped by segment_key)
@@ -1723,6 +1720,13 @@ class AccessAgentService:
         next_idx = (idx + 1) % len(user_ids)
         next_user_id = user_ids[next_idx]
         setattr(cursor, "last_assigned_user_id", next_user_id)
+        # Per assignee, not per pool: the drawn member carrying the tag is what makes
+        # this a BRAND routing. An untagged serve-all member drawn from the same pool
+        # reports false, which is what n8n needs to tell the specialist taking it from
+        # the fallback taking it.
+        if wanted_brand:
+            drawn = members[next_idx]
+            brand_matched = wanted_brand in (brands_by_member.get(str(drawn.id)) or set())
         self.db.commit()
         # Load user for response
         user = self.db.query(User).filter(User.id == next_user_id).first()

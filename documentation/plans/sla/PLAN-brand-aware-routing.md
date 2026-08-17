@@ -525,7 +525,9 @@ applied the identical rule for market segments:
 - `AccessAgentService.get_next_assignee(agent_id, team_id, contact_segments=None, *, brand_code=None)`
   - pool = RR-eligible members passing the segment filter AND the brand filter;
   - empty pool -> the whole team on the legacy cursor (never nobody);
-  - the returned dict carries `brand_matched`, true only when a TAGGED member is in the pool;
+  - the returned dict carries `brand_matched`, true only when the member DRAWN is tagged with the
+    brand (per assignee, not per pool: an untagged serve-all member drawn from the same pool
+    reports false);
   - cursor key = `segment_key` + `brand_pool_key(brand)` (`~b:<code>`), and the brand part is
     appended ONLY when a tagged member matched. A team nobody has tagged therefore keeps its
     single `''` cursor when n8n starts sending `brand_code`, instead of silently splitting one

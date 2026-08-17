@@ -483,6 +483,66 @@ def test_a_team_another_routing_row_still_points_at_is_not_emptied(db, caplog):
     ), [r.getMessage() for r in caplog.records]
 
 
+def _two_siblings_sharing_one_team(db, *, order: tuple[str, str]):
+    """_sorento -> team Y (survivor); _mocha and _cabana both -> team X.
+
+    ``order`` is the order the two suffixed rows are inserted, so both physical row
+    orders are covered.
+    """
+    agent_id = _agent(db)
+    team_y, team_x = _team(db, "Y"), _team(db, "X")
+    am = _person(db, team_y, "Am", sort_order=1)
+    kia_yee = _person(db, team_x, "Kia Yee", sort_order=1)
+    _link(db, agent_id, f"{BASE}_sorento", team_y, 1)
+    for brand in order:
+        _link(db, agent_id, f"{BASE}_{brand}", team_x, 1)
+    db.flush()
+    return agent_id, team_y, team_x, am, kia_yee
+
+
+@pytest.mark.parametrize("order", [("mocha", "cabana"), ("cabana", "mocha")])
+def test_siblings_sharing_one_team_move_its_people_once_with_both_brands(
+    db, caplog, order
+):
+    """The other rows of the SAME collapse group are not "another routing row":
+    they are deleted a moment later. Their shared team's people move into the
+    survivor once, tagged with every sibling brand, whichever row is seen first."""
+    agent_id, team_y, team_x, am, kia_yee = _two_siblings_sharing_one_team(
+        db, order=order
+    )
+
+    with caplog.at_level(logging.WARNING, logger="alembic.runtime.migration"):
+        _run_upgrade(db)
+
+    roster = _roster(db, team_y)
+    assert roster[am]["brands"] == []
+    assert roster[kia_yee]["brands"] == ["cabana", "mocha"]
+    assert roster[kia_yee]["sort_order"] > roster[am]["sort_order"]
+    assert _roster(db, team_x) == {}
+    assert [r["code"] for r in _promotion_rows(db, agent_id)] == [BASE]
+    assert str(_promotion_rows(db, agent_id)[0]["team_id"]) == team_y
+    assert not any("another routing row" in r.getMessage() for r in caplog.records)
+
+
+def test_siblings_sharing_a_team_another_set_uses_still_leave_it_alone(db, caplog):
+    """The genuine guard survives the sibling exclusion: a row OUTSIDE the group
+    pointing at the shared team keeps its people where they are."""
+    agent_id, team_y, team_x, am, kia_yee = _two_siblings_sharing_one_team(
+        db, order=("mocha", "cabana")
+    )
+    _link(db, agent_id, "marketing_product", team_x, 1)
+    db.flush()
+
+    with caplog.at_level(logging.WARNING, logger="alembic.runtime.migration"):
+        _run_upgrade(db)
+
+    assert list(_roster(db, team_x)) == [kia_yee]
+    assert _roster(db, team_x)[kia_yee]["brands"] == []
+    assert list(_roster(db, team_y)) == [am]
+    assert [r["code"] for r in _promotion_rows(db, agent_id)] == [BASE]
+    assert any("another routing row" in r.getMessage() for r in caplog.records)
+
+
 def test_the_round_robin_opt_out_survives_the_move(db):
     agent_id = _agent(db)
     sorento_t1, mocha_t1 = _team(db, "S1"), _team(db, "M1")

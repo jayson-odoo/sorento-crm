@@ -333,9 +333,10 @@ def _enrich_n8n_response(
     if resolved_team is not None:
         out["team_set_code"] = resolved_team.team_set_code
         out["brand_code"] = resolved_team.brand_code
-        # True only when a member TAGGED with that brand took it; the untagged
-        # serve-all fallback reports false, which is the difference between "the
-        # brand specialist has it" and "nobody is tagged for this brand yet".
+        # Per assignee: true only when the member DRAWN carries that brand tag. An
+        # untagged serve-all member drawn from the same pool reports false, which is
+        # the difference between "the brand specialist has it" and "somebody who
+        # serves every brand has it".
         out["brand_matched"] = bool(resolved_team.brand_code) and brand_matched
     out["is_working_hours"] = is_working_hours
     out["is_already_assigned"] = is_already_assigned
