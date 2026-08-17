@@ -13,7 +13,7 @@ happen to arrive in.
 Not company-scoped, matching every other spec table: a code's specs are a property of
 the model, and so is a person's confirmation of them.
 
-Revision ID: 367_product_spec_verifications
+Revision ID: 369_product_spec_verifications
 Revises: 366_merge_363_365
 Create Date: 2026-08-16
 """
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "367_product_spec_verifications"
+revision = "369_product_spec_verifications"
 down_revision = "366_merge_363_365"
 branch_labels = None
 depends_on = None
