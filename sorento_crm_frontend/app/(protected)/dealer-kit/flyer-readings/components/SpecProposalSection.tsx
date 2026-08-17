@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { AlertTriangle, ListChecks, Loader2, ScanLine } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { useHasPermission } from '@/hooks/usePermissions';
+import { useHasPermission, usePermissions } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 import { proposalCountsSentence } from '../../../master-data-management/flyer-spec-proposals/lib/countsSentence';
@@ -45,6 +45,7 @@ export function SpecProposalSection({
   readingStatus,
 }: SpecProposalSectionProps) {
   const canWriteMaster = useHasPermission(MASTER_DATA_EDIT);
+  const { isLoading: permissionsLoading } = usePermissions();
   // The route wants the product-master permission too, so without it the request
   // can only come back 403. The section still renders, saying what it is.
   const { data, isLoading, isError, error, refetch } =
@@ -89,7 +90,19 @@ export function SpecProposalSection({
       description="Read once here, reviewed and written in Master Data. Nothing is written by reading."
       action={action}
     >
-      {!canWriteMaster && (
+      {permissionsLoading && (
+        <div
+          className="flex items-center gap-3 rounded-lg border border-dashed px-4 py-6"
+          data-testid="dk-fr-spec-loading"
+        >
+          <Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            Checking whether this flyer has been read for specifications.
+          </p>
+        </div>
+      )}
+
+      {!permissionsLoading && !canWriteMaster && (
         <Empty tone="neutral" title="No spec proposals yet">
           Reading a flyer for specifications needs the product master
           permission, which your role does not have.

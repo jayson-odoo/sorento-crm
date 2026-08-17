@@ -11,11 +11,13 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-const { useFlyerSpecProposalsQuery, useProposeFlyerSpecs, hasPermission } = vi.hoisted(() => ({
-  useFlyerSpecProposalsQuery: vi.fn(),
-  useProposeFlyerSpecs: vi.fn(),
-  hasPermission: vi.fn(),
-}));
+const { useFlyerSpecProposalsQuery, useProposeFlyerSpecs, hasPermission, permissionsLoading } =
+  vi.hoisted(() => ({
+    useFlyerSpecProposalsQuery: vi.fn(),
+    useProposeFlyerSpecs: vi.fn(),
+    hasPermission: vi.fn(),
+    permissionsLoading: { value: false },
+  }));
 
 vi.mock(
   '../../../master-data-management/flyer-spec-proposals/hooks/useFlyerSpecProposals',
@@ -28,7 +30,11 @@ vi.mock(
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => hasPermission(slug),
   useHasAnyPermission: () => true,
-  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+  usePermissions: () => ({
+    permissions: [],
+    permissionSet: new Set(),
+    isLoading: permissionsLoading.value,
+  }),
 }));
 
 import type { FlyerSpecBatch } from '../../../master-data-management/flyer-spec-proposals/services/flyerSpecProposalService';
@@ -84,6 +90,7 @@ function renderSection(readingStatus: 'processing' | 'done' | 'failed' = 'done')
 beforeEach(() => {
   vi.clearAllMocks();
   hasPermission.mockReturnValue(true);
+  permissionsLoading.value = false;
   propose.mutate = vi.fn();
   propose.isPending = false;
   useProposeFlyerSpecs.mockReturnValue(propose);
@@ -237,6 +244,21 @@ describe('SpecProposalSection, status failed (AC-D.1)', () => {
     expect(screen.getByTestId('dk-fr-spec-failed')).toHaveTextContent(
       'The specifications could not be read, and no reason was recorded.',
     );
+  });
+});
+
+describe('SpecProposalSection, while the permissions are still being fetched (AC-D.1)', () => {
+  it('shows the checking line, not the permission refusal, and fires no request yet', () => {
+    permissionsLoading.value = true;
+    hasPermission.mockReturnValue(false);
+    setQuery(undefined);
+
+    renderSection('done');
+
+    expect(screen.getByTestId('dk-fr-spec-loading')).toBeInTheDocument();
+    expect(screen.queryByText('No spec proposals yet')).toBeNull();
+    expect(screen.queryByTestId('dk-fr-spec-propose')).toBeNull();
+    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', { enabled: false });
   });
 });
 

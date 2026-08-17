@@ -27,7 +27,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useHasPermission } from '@/hooks/usePermissions';
+import { useHasPermission, usePermissions } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { readable, readableValue } from '@/lib/spec-readable';
 
@@ -96,6 +96,10 @@ function pendingRows(batch: FlyerSpecProposals): FlyerSpecProposal[] {
 
 export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
   const canWriteMaster = useHasPermission(MASTER_DATA_EDIT);
+  // `useHasPermission` answers false while the permissions are still being
+  // fetched, and "not yet known" must not read as "denied": the refusal copy
+  // is for a role that has been looked up and found wanting.
+  const { isLoading: permissionsLoading } = usePermissions();
   // The route wants the product-master permission as well as the dealer-kit
   // slug, so without it the request can only come back 403: not fired, and the
   // screen says why instead of showing the error the server would have sent.
@@ -253,6 +257,16 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
       },
     });
   };
+
+  if (permissionsLoading) {
+    return (
+      <div className="flex flex-col gap-4" data-testid="fsp-loading">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-5 w-96" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
 
   if (!canWriteMaster) {
     return (

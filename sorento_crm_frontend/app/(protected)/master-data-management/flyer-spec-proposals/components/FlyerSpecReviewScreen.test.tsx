@@ -28,6 +28,7 @@ const {
   useDismissFlyerSpecProposal,
   useApplicableSpecKeysQuery,
   hasPermission,
+  permissionsLoading,
 } = vi.hoisted(() => ({
   useFlyerSpecProposalsQuery: vi.fn(),
   useProposeFlyerSpecs: vi.fn(),
@@ -37,6 +38,7 @@ const {
   useDismissFlyerSpecProposal: vi.fn(),
   useApplicableSpecKeysQuery: vi.fn(),
   hasPermission: vi.fn(),
+  permissionsLoading: { value: false },
 }));
 
 vi.mock('../hooks/useFlyerSpecProposals', () => ({
@@ -52,7 +54,11 @@ vi.mock('../hooks/useFlyerSpecProposals', () => ({
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => hasPermission(slug),
   useHasAnyPermission: () => true,
-  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+  usePermissions: () => ({
+    permissions: [],
+    permissionSet: new Set(),
+    isLoading: permissionsLoading.value,
+  }),
 }));
 
 import type {
@@ -225,6 +231,7 @@ function renderScreen() {
 beforeEach(() => {
   vi.clearAllMocks();
   hasPermission.mockReturnValue(true);
+  permissionsLoading.value = false;
   propose.mutate = vi.fn();
   propose.isPending = false;
   apply.isPending = false;
@@ -549,6 +556,21 @@ describe('FlyerSpecReviewScreen, without master_data.products.edit (AC-D.2)', ()
       'href',
       '/master-data-management/flyer-spec-proposals',
     );
+  });
+
+  it('shows the loading skeleton, not the refusal, while the permissions are still being fetched', () => {
+    // `useHasPermission` answers false until the permissions query settles.
+    // That is "not known yet", and the screen must not tell a permitted user
+    // their role is wanting for the length of a round trip.
+    permissionsLoading.value = true;
+    hasPermission.mockReturnValue(false);
+    setQuery({});
+
+    renderScreen();
+
+    expect(screen.getByTestId('fsp-loading')).toBeInTheDocument();
+    expect(screen.queryByTestId('fsp-readonly')).toBeNull();
+    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', { enabled: false });
   });
 
   it('asks for the batch for somebody who holds it', () => {
