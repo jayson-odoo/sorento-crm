@@ -17,7 +17,7 @@ from two places.
 line, not on the core line, not in a join table - so there is nothing to derive an existing
 value from. Every existing row starts NULL, and reconciliation is the only writer.
 
-Revision ID: 368_project_so_line_core_link
+Revision ID: 372_project_so_line_core_link
 Revises: 2c859e3161da
 """
 from alembic import op
@@ -25,7 +25,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 
-revision = "368_project_so_line_core_link"
+revision = "372_project_so_line_core_link"
 down_revision = "2c859e3161da"
 branch_labels = None
 depends_on = None
