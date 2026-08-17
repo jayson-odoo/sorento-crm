@@ -17,11 +17,12 @@ Three rules the shape of this module rests on:
   the question the screen exists to answer, and a plan holding only winners cannot answer it.
 
 Ranking runs through the tenant's Fulfilment Priority policy (`scm.priority_policy`), whose
-day-one weights reproduce today's manual answer: purchase-order document sequence dominant,
-everything else seeded at zero. A factor weighted zero drops out of the average rather than
-dragging it, so switching the policy on is a weight change and not a code change - and each
-line stores its own factor vector, because a rank a planner cannot decompose is one they stop
-trusting the first time it disagrees with them (AC-E7).
+seeded weights put outstanding customer demand ahead of purchase-order document sequence
+(`priority.SEEDED_WEIGHTS`): a line owed to a customer loads before one owed to nobody, and
+document sequence orders the lines inside each demand band. A factor weighted zero drops out of
+the average rather than dragging it, so changing the rule is a weight change and not a code
+change - and each line stores its own factor vector, because a rank a planner cannot decompose
+is one they stop trusting the first time it disagrees with them (AC-E7).
 """
 from __future__ import annotations
 
@@ -121,7 +122,9 @@ def _resolve_container(
 
 
 def _open_po_lines(db: Session, supplier_id: str) -> list[dict]:
-    """Outstanding purchase-order lines at this supplier, oldest document first.
+    """Outstanding lines on PLACED purchase orders at this supplier, oldest document first.
+
+    A draft or draft_recommendation the supplier has never seen is not a candidate.
 
     Raw SQL because company isolation applies on ORM execution only, so the predicate is
     added explicitly below - the same rule the rest of this module follows.
@@ -150,6 +153,9 @@ def _open_po_lines(db: Session, supplier_id: str) -> list[dict]:
           LEFT JOIN products p ON p.id = pol.product_id
          WHERE po.supplier_id = :supplier_id
            AND pol.line_status = 'open'
+           -- Placed, not drafted. `draft_recommendation` is a plan the engine staged and
+           -- nobody has sent, so there is nothing at the supplier to load against it.
+           AND po.status NOT IN ('draft', 'draft_recommendation')
            AND COALESCE(pol.qty_ordered, 0) > COALESCE(pol.qty_received, 0)
            {scope}
          ORDER BY po.issue_date NULLS LAST, po.po_number, pol.id
@@ -189,6 +195,7 @@ def _supplier_stock(db: Session, supplier_id: str) -> dict[str, dict]:
 # names are kept as thin aliases so the code below still reads in the plan's own vocabulary.
 _active_policy = priority.active_policy
 _demand_class_by_po = priority.demand_class_by_po
+_demand_value = priority.demand_value
 _sequence_values = priority.sequence_values
 _date_values = priority.date_values
 _factors_for = priority.factors_for
@@ -256,7 +263,9 @@ def _compute(db: Session, supplier_id: str, capacity: float) -> dict:
                 "factors": _factors_for(
                     weights,
                     sequence=sequence.get(str(c["po_number"] or "")),
-                    demand_weight=class_weights.get(classes.get(str(c["po_number"] or ""), "")),
+                    demand_weight=_demand_value(
+                        classes, class_weights, str(c["po_number"] or "")
+                    ),
                     need_by=need_by.get(line_id),
                     age=ages.get(line_id),
                 ),

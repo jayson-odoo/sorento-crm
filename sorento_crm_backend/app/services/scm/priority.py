@@ -20,8 +20,11 @@ The four factors:
   * `document_age`        - older document is higher, which is the same helper read the other way.
 
 Every factor degrades gracefully: a value we do not have is ABSENT, not zero. `rank_score`
-divides by the weight of the factors actually present, so a missing demand class lowers nobody's
-score - it just stops being part of the comparison.
+divides by the weight of the factors actually present, so an absent factor lowers nobody's score
+- it just stops being part of the comparison. Demand is the one place where "nothing" is a real
+value rather than a gap: no claimed sales order behind a purchase order is a demand of 0.0 and
+PRESENT, because a purchase order owed to a customer has to be able to outrank one owed to
+nobody. Only a resolved class the policy does not weight is absent (see `demand_value`).
 """
 from __future__ import annotations
 
@@ -37,10 +40,26 @@ from app.services.scm.cash_ranking import Factor
 #: plus a value here; it is never a schema change (AC-H6 applies the same rule to demand classes).
 FACTOR_KEYS = ("po_document_sequence", "demand_class", "need_by_date", "document_age")
 
-#: What a policy-less database ranks by. The seeded default reproduces today's behaviour, which
-#: is document sequence dominant (AC-H2), so the fallback says the same thing rather than
-#: silently ranking everything equal.
+#: What a policy-less database ranks by. Sequence only: with no policy row the tenant has said
+#: nothing about what demand is worth, so the fallback ranks by the order the buyer already
+#: reads off the list rather than inventing a weighting.
 DEFAULT_WEIGHTS = {"po_document_sequence": 1.0}
+
+#: What migration 374 seeds as the active policy, and what a fresh install seeds directly (311).
+#: Here so tests and the PR can quote one source. With demand at 3.0 against sequence at 1.0 the
+#: score bands do not overlap: project [0.75, 1.0], retail [0.30, 0.55], nothing owed [0, 0.25].
+#: So a line owed to a customer always outranks one owed to nobody, and document sequence orders
+#: the lines inside each band. The migrations keep the literals rather than importing this, so
+#: they stay standalone; changing one means changing both.
+SEEDED_WEIGHTS = {
+    "po_document_sequence": 1.0,
+    "demand_class": 3.0,
+    "need_by_date": 0.0,
+    "document_age": 0.0,
+}
+
+#: What each resolved demand class is worth, seeded alongside `SEEDED_WEIGHTS`.
+SEEDED_CLASS_WEIGHTS = {"project": 1.0, "retail": 0.4}
 
 
 def active_policy(db: Session) -> Optional[PriorityPolicy]:
@@ -64,7 +83,8 @@ def demand_class_by_po(db: Session, po_numbers: set[str]) -> dict[str, str]:
     """The demand class of the sales orders each purchase order is feeding.
 
     Through `scm.order_link_claim`, which is where the SO<->PO pairing lives. A purchase order
-    nobody has claimed against has no class, and the factor is then absent rather than guessed.
+    nobody has claimed against is simply missing from the result; `demand_value` turns that into
+    a demand of 0.0, because nothing owed is a value and not a gap.
     """
     if not po_numbers:
         return {}
@@ -90,6 +110,23 @@ def demand_class_by_po(db: Session, po_numbers: set[str]) -> dict[str, str]:
     for r in rows:
         out.setdefault(str(r["po_number"]), str(r["demand_class"]))
     return out
+
+
+def demand_value(
+    classes: dict[str, str], class_weights: dict, po_number: str
+) -> Optional[float]:
+    """The demand factor value for one purchase order.
+
+    No claimed sales order behind the purchase order is a demand of NOTHING owed, so it is
+    0.0 and PRESENT: that is what lets a purchase order feeding a customer outrank one
+    feeding no one. A resolved class the policy does not weight is still absent, because
+    then the policy has not said what it is worth.
+    """
+    klass = classes.get(po_number)
+    if klass is None:
+        return 0.0
+    w = class_weights.get(klass)
+    return float(w) if w is not None else None
 
 
 def sequence_values(candidates: Sequence[dict]) -> dict[str, float]:
@@ -165,7 +202,7 @@ def factors_for_candidates(db: Session, candidates: Sequence[dict]) -> dict[str,
         out[line_id] = factors_for(
             weights,
             sequence=sequence.get(str(c.get("po_number") or "")),
-            demand_weight=class_weights.get(classes.get(str(c.get("po_number") or ""), "")),
+            demand_weight=demand_value(classes, class_weights, str(c.get("po_number") or "")),
             need_by=need_by.get(line_id),
             age=ages.get(line_id),
         )

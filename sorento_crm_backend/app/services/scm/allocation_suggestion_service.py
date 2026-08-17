@@ -51,11 +51,11 @@ def _shipment_or_404(db: Session, shipment_id: str) -> InboundShipment:
 
 
 def _candidates(db: Session, product_ids: set[str], supplier_id: Optional[str]) -> list[dict]:
-    """Open purchase-order lines that could be what this container is shipping against.
+    """Open lines on PLACED purchase orders that this container could be shipping against.
 
     Restricted to the shipment's supplier when it has one. A container from one supplier
     drawing down another supplier's order is not a ranking mistake to be corrected further
-    down; it is not a candidate at all.
+    down; it is not a candidate at all. Same for a draft the supplier has never seen.
     """
     if not product_ids:
         return []
@@ -78,6 +78,9 @@ def _candidates(db: Session, product_ids: set[str], supplier_id: Optional[str]) 
               FROM purchase_order_lines pol
               JOIN purchase_orders po ON po.id = pol.purchase_order_id
              WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
+               -- Placed, not drafted. `draft_recommendation` is a plan the engine staged
+               -- and nobody has sent, so a container cannot be shipping against it.
+               AND po.status NOT IN ('draft', 'draft_recommendation')
                AND COALESCE(pol.qty_ordered, 0) - COALESCE(pol.qty_received, 0) > 0
                {supplier_clause}
                AND {predicate or 'true'}
