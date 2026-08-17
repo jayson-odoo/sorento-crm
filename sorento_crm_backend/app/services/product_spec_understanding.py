@@ -35,6 +35,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+# The env-key half of the ladder is read inside `resolve_api_key`, off this same
+# singleton - re-exported here so a test can empty it (`understanding.settings`)
+# and be certain no real provider call can escape, whichever provider the agent
+# resolves to. Not referenced in this module by design; do not prune it.
+from app.config import settings  # noqa: F401
 from app.models.ai_assistant import AIAssistantUsageLog
 from app.models.product_spec import ProductSpecifications
 from app.services.ai_prompt_registry import agent_model, get_prompt
