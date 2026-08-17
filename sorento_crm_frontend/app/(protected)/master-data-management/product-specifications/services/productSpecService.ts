@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * API CONTRACT - the editable spec table (PR 2)
+ * API CONTRACT - the editable spec table (PR 2) and extraction from text (PR 4)
  * ============================================================================
  *
  * Written out here because the frontend was built against it before any of it
@@ -69,14 +69,67 @@
  * There is no way past it: a colliding word is refused, full stop. `extractApiError`
  * cannot read this body - it is string-only - so these calls parse it themselves and
  * throw a `SpecSimilarError` carrying the sentence that names the collision.
+ *
+ * EXTRACTION FROM PASTED TEXT (PR 4)
+ *
+ *   POST .../by-product/{productId}/extract              body { text: string }
+ *     -> { product_code: string,
+ *          engine: 'semantic' | 'deterministic',
+ *          model: string | null,
+ *          proposals: SpecProposal[],
+ *          unchanged: number }
+ *        Gated on `master_data.products.edit`, not on any spec_registry grant.
+ *        WRITES NO SPECIFICATION DATA (AC-B.1, B.2): the pasted text reaches the
+ *        request body and goes no further, so the flyer row count and the spec
+ *        `updated_at` are unchanged across a call. There is no "save the text"
+ *        anywhere. The one row a call can write is an AI usage-log row, and only when
+ *        a model answered - the same bookkeeping every other model call books against
+ *        itself, telemetry about the call rather than a claim about the product.
+ *        `kind` on each proposal is decided SERVER-SIDE (AC-B.3), never here, because
+ *        milestone 2's supplier review reads the same field off a different endpoint
+ *        and two copies of the rule would drift: stored key absent -> `new`; stored
+ *        equal after coercion -> OMITTED entirely and counted in `unchanged`; stored
+ *        authored or tombstoned -> `conflict`; stored non-authored and different ->
+ *        `change`, except a size key (the description-first set), which is a
+ *        `conflict` on the key alone - provenance does not record which text a stored
+ *        value was read from. One proposal per key.
+ *        `engine: 'deterministic'` means no model was reachable and the rules alone
+ *        read it - a 200 marked as such, never a 502 (AC-B.5).
+ *        422 { detail } with a readable message when the text is blank or longer than
+ *        8,000 characters. Never truncated.
+ *
+ *   POST .../by-product/{productId}/values/batch
+ *     body { entries: [{ spec_key: string, value: SpecProposalValue,
+ *                        unit?: string | null, evidence: string }] }
+ *     -> { product_code: string, rows_written: number, spec_keys: string[] }
+ *        `value` is the proposal's value UNCHANGED, a list included: a multi-value key
+ *        (a two-tone finish) is coerced element-wise and stored as the list, so it
+ *        stores what a re-derivation of the same words would.
+ *        1..50 entries; an empty list is a 422. So is a `spec_key` over 100 characters,
+ *        an `evidence` over 500, and the same `spec_key` twice in one batch - one key
+ *        twice is two claims about one thing, and the second would silently win.
+ *        ONE call through `apply_spec_values`
+ *        with `source: 'human'` and evidence `read from text: <evidence>` (AC-B.9):
+ *        N per-key calls would produce N fan-outs, N rendered-text rebuilds and N
+ *        verification diffs for one user action. Atomic - one bad entry fails the
+ *        whole batch through the choke point's own validation, so the table is never
+ *        left half-applied.
+ *
+ * RETIRED WITH PR 4
+ *
+ * `PUT .../by-product/{id}/flyer-text`, the `flyer_text` field on the by-product
+ * response and the four `/findability/*` routes are gone, together, in the deploy
+ * that promotes flyer provenance to authored (AC-B.12, B.14). The flyer stops being
+ * something derivation reads; it reaches the specs only as proposals a person accepts
+ * through the two routes above.
+ *
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { SimilarKeyMatch, SpecDataType } from '@/components/spec-table';
+import type { SpecProposal, SpecProposalValue } from '@/components/spec-proposals';
 import type {
-  FindabilityResult,
-  FindabilityRun,
   SpecDerivationRule,
   SpecSearchPolicyRow,
   ProductSpecDetail,
@@ -442,30 +495,6 @@ export async function setSpecValueByHand(
 }
 
 /**
- * Correct the flyer card this product's specs are read from, and read it again.
- *
- * The card text comes from a machine reading of the printed flyer, and that reading
- * missed cards. Sending an empty string means the product has no flyer card at all.
- */
-export async function setFlyerText(
-  productId: string,
-  text: string,
-): Promise<{ flyer_text: string | null }> {
-  const response = await apiFetch(
-    `/api/v1/master-data/product-specifications/by-product/${productId}/flyer-text`,
-    {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Could not save the flyer text'));
-  }
-  return response.json();
-}
-
-/**
  * Take a value away, one of the two ways, because they mean different things.
  *
  * `revert` hands the key back to derivation and it comes back with whatever the
@@ -551,66 +580,91 @@ export async function rereadCatalogue(): Promise<{ status: string }> {
   return response.json();
 }
 
-// --- Findability: can a customer find this product by describing it? ---------------
+// --- Extraction from pasted text (PR 4) --------------------------------------------
 
-export async function getFlyers(): Promise<{
-  flyers: { source_id: string; source_label: string; cards: number; last_run: string | null }[];
-}> {
+/** What one extract call answers. The banner at the top of this file is the contract. */
+export interface SpecExtractionResult {
+  product_code: string;
+  /** `deterministic` means no model was reachable and the rules alone read the text. */
+  engine: 'semantic' | 'deterministic';
+  model: string | null;
+  proposals: SpecProposal[];
+  /** Keys the text merely restated. Counted rather than listed, on purpose. */
+  unchanged: number;
+}
+
+/** One accepted proposal, as the batch write takes it. */
+export interface SpecProposalEntry {
+  spec_key: string;
+  /**
+   * The proposed value, unchanged. A LIST where the key holds more than one value (a
+   * two-tone finish): the batch route coerces it element-wise and stores the list, so
+   * flattening it here would store something a re-derivation of the same words would
+   * not.
+   */
+  value: SpecProposalValue;
+  unit?: string | null;
+  /** The words it was read from. Stored as the value's evidence. */
+  evidence: string;
+}
+
+export interface SpecBatchApplyResult {
+  product_code: string;
+  rows_written: number;
+  spec_keys: string[];
+}
+
+/**
+ * Read a pasted text onto this product's specifications, and propose - never write.
+ *
+ * The route writes nothing: the text reaches the request body and goes no further, so
+ * the panel can be pressed as often as the user likes without touching the stored
+ * specifications. Nothing is saved until `applySpecProposals` below.
+ *
+ * A blank or over-long text comes back as an ordinary 422 message rather than the
+ * near-duplicate shape the registry writes use, so `extractApiError` reads it: the
+ * sentence it returns is what the panel shows above the box, with the text still in it.
+ */
+export async function extractSpecProposals(
+  productId: string,
+  text: string,
+): Promise<SpecExtractionResult> {
   const response = await apiFetch(
-    '/api/v1/master-data/product-specifications/findability/flyers',
+    `/api/v1/master-data/product-specifications/by-product/${productId}/extract`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    },
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load flyers'));
+    throw new Error(await extractApiError(response, 'Could not read this text'));
   }
   return response.json();
 }
 
-export async function runFindability(params: {
-  sourceId?: string;
-  window?: number;
-  limit?: number;
-}): Promise<FindabilityRun> {
-  const search = new URLSearchParams({
-    ...(params.sourceId ? { source_id: params.sourceId } : {}),
-    ...(params.window ? { window: String(params.window) } : {}),
-    ...(params.limit ? { limit: String(params.limit) } : {}),
-  });
+/**
+ * Write the accepted proposals as authored values, in ONE call.
+ *
+ * One call and not one per key: N would produce N fan-outs, N rendered-text rebuilds
+ * and N verification diffs for a single user action, and a partial failure would leave
+ * the table half-applied. The server refuses the whole batch when any entry is bad,
+ * which is why the caller can refetch once and trust what it reads.
+ */
+export async function applySpecProposals(
+  productId: string,
+  entries: SpecProposalEntry[],
+): Promise<SpecBatchApplyResult> {
   const response = await apiFetch(
-    `/api/v1/master-data/product-specifications/findability/run?${search.toString()}`,
-    { method: 'POST' },
+    `/api/v1/master-data/product-specifications/by-product/${productId}/values/batch`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    },
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to run the findability sweep'));
-  }
-  return response.json();
-}
-
-export async function getFindabilityRuns(
-  sourceId?: string,
-): Promise<{ runs: FindabilityRun[] }> {
-  const search = new URLSearchParams(sourceId ? { source_id: sourceId } : {});
-  const response = await apiFetch(
-    `/api/v1/master-data/product-specifications/findability/runs?${search.toString()}`,
-  );
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load past sweeps'));
-  }
-  return response.json();
-}
-
-export async function getFindabilityRun(
-  runId: string,
-  params: { boundary?: string; q?: string } = {},
-): Promise<{ run: FindabilityRun; results: FindabilityResult[] }> {
-  const search = new URLSearchParams({
-    ...(params.boundary ? { boundary: params.boundary } : {}),
-    ...(params.q ? { q: params.q } : {}),
-  });
-  const response = await apiFetch(
-    `/api/v1/master-data/product-specifications/findability/runs/${runId}?${search.toString()}`,
-  );
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load the sweep'));
+    throw new Error(await extractApiError(response, 'Could not save the specifications'));
   }
   return response.json();
 }

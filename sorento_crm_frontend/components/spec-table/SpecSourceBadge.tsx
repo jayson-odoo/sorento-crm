@@ -52,10 +52,21 @@ const AUTHORED_SOURCES = new Set(['human', 'supplier']);
 export function SpecSourceBadge({
   source,
   evidence,
+  migratedFrom = null,
   className,
 }: {
   source: string | null;
   evidence: string | null;
+  /**
+   * What an authored value was before it was authored - `flyer` on a promoted one.
+   *
+   * It changes no pill and no label: a promoted value IS authored now, it wins every
+   * conflict a typed one wins, and inventing a fourth colour for it would be a state
+   * to learn for a distinction that has no consequence. What it changes is the one
+   * word in front of the evidence, because "Set by: flyer: Matt Black finish" claims
+   * a person wrote a sentence that was quoted off a printed flyer (AC-B.15).
+   */
+  migratedFrom?: string | null;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -65,9 +76,11 @@ export function SpecSourceBadge({
   }
 
   const label = SOURCE_LABEL[source] ?? source;
-  const authored = AUTHORED_SOURCES.has(source);
+  const authored = AUTHORED_SOURCES.has(source) && !migratedFrom;
   // "Set by tehjayson@..." is an audit stamp, not a quotation from a document, and
   // labelling it "Read from" would claim the person's name appears in the catalogue.
+  // A promoted value is the other way round: authored, but the evidence really is a
+  // quotation, and it already reads "flyer: ...".
   const evidenceLabel = authored ? 'Set by' : 'Read from';
 
   return (
@@ -81,6 +94,7 @@ export function SpecSourceBadge({
         title={evidence ? `${evidenceLabel}: ${evidence}` : undefined}
         className="flex w-fit max-w-full items-center gap-1 disabled:cursor-default"
         data-spec-source={source}
+        data-spec-migrated-from={migratedFrom ?? undefined}
       >
         <span className={cn(STATUS_PILL_BASE, statusPillClass(SOURCE_PILL_KEY[source] ?? 'ai'))}>
           {label}

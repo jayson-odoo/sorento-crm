@@ -57,7 +57,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Technical Specifications). Omit it for a plain price/spec listing with NO attachments.\n\n"
             "DERIVED SPECIFICATIONS: pass `include_specifications=true` to add `specifications` to every "
             "row - `values` (the spec block as key -> value, e.g. thickness 1.2), `rendered_text` (the "
-            "spec sentence) and `sources` (per key: derived | flyer | human | category, i.e. where the "
+            "spec sentence) and `sources` (per key: derived | human | category, i.e. where the "
             "value came from). Null on a product with no derived specs, which means 'not recorded', never "
             "'does not have it'. Default false; omit it for a plain price/dimension listing.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
