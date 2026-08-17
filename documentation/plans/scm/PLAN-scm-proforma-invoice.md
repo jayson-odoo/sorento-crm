@@ -1,6 +1,8 @@
 # PLAN - proforma invoice as a first-class document (G3b) and prices no longer dropped (G3c)
 
-Status: In progress, 2026-08-17. Branch `fm/scm-proforma-first-class`.
+Status: Built, 2026-08-17, on branch `fm/scm-proforma-first-class` (unmerged). Every AC below is
+implemented and covered by the pytest / vitest suites named under `Tests`; both reviewer passes
+are closed (see `Review status`).
 UAC: `scm-proforma-invoice-acceptance-criteria.md` (the contract; this plan serves it).
 
 ## Journey (from the UAC)
@@ -200,8 +202,10 @@ first line's price silently valued the whole merged quantity at one of two price
 - `tests/scm/test_packing_list_import.py`: add "the shipment line carries the unit price
   and currency the file stated", "priced list without currency is refused", "unpriced list
   is unaffected", "the label after a blank BL is not read as the BL".
-- `tests/test_s3b_cost_variance_edges.py` or the import test: a stated CNY survives an
-  allocation against a MYR PO line.
+- `tests/scm/test_s3b_cost_variance_edges.py`: a stated CNY survives an allocation against a
+  MYR PO line.
+- `tests/test_migration_375_proforma_grant_sweep.py`: the sweep reaches every holder of
+  `scm.reorder.run` and no `integration_*` role (AC-P4.3).
 
 ## Deviations from the pipeline, stated
 
@@ -226,13 +230,15 @@ first line's price silently valued the whole merged quantity at one of two price
 
 ## Review status
 
-Reviewer pass 1 findings addressed; pass 2 verified them (no blockers) and its three
-should-fixes are applied: packing-list Test now reports row problems as warnings so Test and
-Confirm agree (this also covers the latent main bug where `RowProblem.message` did not exist
-and any row problem 500'd preview/validate); the Known-limits note states the 80-char stem
-truncation; the duplicate-line merge no longer turns an explicit cartons_count 0 into 1. (2026-08-17): router thinned to service calls, supplier
+Reviewer pass 1 findings all addressed (2026-08-17): router thinned to service calls, supplier
 lookups company-scoped, `pi_number_for` truncates the stem, proforma row problems are warnings,
 migration-375 grant sweep test added, currency field added to the packing-list upload, duplicate
 shipment lines merge to a quantity-weighted unit cost, an unrecognised form currency is a 422,
-plus the nits. The derived-number limit the review raised is recorded in the UAC's
-`Known limits`.
+plus the nits.
+
+Pass 2 verified them (no blockers) and its three should-fixes are applied: packing-list Test now
+reports row problems as warnings so Test and Confirm agree (this also covers the latent main bug
+where `RowProblem.message` did not exist and any row problem 500'd preview/validate); the
+Known-limits note states the 80-char stem truncation; the duplicate-line merge no longer turns an
+explicit cartons_count 0 into 1. The derived-number limit the review raised is recorded in the
+UAC's `Known limits`.

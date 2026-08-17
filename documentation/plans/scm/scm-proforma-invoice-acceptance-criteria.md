@@ -1,6 +1,7 @@
 # Proforma invoice as a first-class document - acceptance criteria
 
-Status: Draft, 2026-08-17. Gaps G3b + G3c of the SCM fulfilment gap report (firstmate home,
+Status: Implemented, 2026-08-17, on branch `fm/scm-proforma-first-class` (unmerged). Gaps G3b +
+G3c of the SCM fulfilment gap report (firstmate home,
 `data/scm-fulfilment-gap/report.md`). Plan: `PLAN-scm-proforma-invoice.md`.
 
 Backend slice. There is no NEW screen in this slice: the deliverable is the document, its
@@ -173,7 +174,8 @@ nothing resolved, it says so before Confirm is pressed.
   here rather than fixed, because the fix touches `update_shipment` and the packing-list form,
   a surface a concurrent worker owns: it is a named follow-up for the packing-list task, whose
   options are to preserve both fields from the replaced line matched on `product_id` when the
-  payload states neither, or to carry them through the form's line schema.
+  payload states neither, or to carry them through the form's line schema. Tracked as **BL-023**
+  in `documentation/backlogs/backlog.md`, which is where the follow-up is picked up from.
 
 ## Out of scope (owned elsewhere)
 
