@@ -32,6 +32,21 @@ interface SendTemplateDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Called after a successful send so the parent can refetch the chat list. */
   onSent?: () => void;
+  /**
+   * Intervention ticket this template answers. Passed to the backend so the
+   * send stops THAT ticket's response clock; absent on every other surface.
+   */
+  trackingId?: string | null;
+  /**
+   * Overrides the send route. The default posts to the entity chat route keyed
+   * by (entityType, entityId), which only exists for a real entity - the
+   * Conversations inbox is keyed by CONTACT and has its own endpoint, so it
+   * supplies one instead of the dialog being forked.
+   */
+  sendAdapter?: (input: {
+    template_id: string;
+    params: Record<string, string>;
+  }) => Promise<unknown>;
 }
 
 /**
@@ -45,6 +60,8 @@ export default function SendTemplateDialog({
   open,
   onOpenChange,
   onSent,
+  trackingId = null,
+  sendAdapter,
 }: SendTemplateDialogProps) {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -108,11 +125,16 @@ export default function SendTemplateDialog({
     if (!selected) return;
     setIsSending(true);
     try {
-      await sendTemplateMessage(entityType, entityId, {
-        contact_id: contactId,
-        template_id: selected.id,
-        params,
-      });
+      if (sendAdapter) {
+        await sendAdapter({ template_id: selected.id, params });
+      } else {
+        await sendTemplateMessage(entityType, entityId, {
+          contact_id: contactId,
+          template_id: selected.id,
+          params,
+          tracking_id: trackingId,
+        });
+      }
       toast.success(`Template "${selected.name}" sent`);
       resetAndClose(false);
       onSent?.();

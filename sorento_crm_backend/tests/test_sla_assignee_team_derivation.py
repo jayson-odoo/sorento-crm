@@ -355,7 +355,7 @@ def test_apply_no_change_returns_none():
 
 
 def test_apply_skips_form_sla_tracking():
-    """Form SLA stages own routing via FormSLAConfig — assignee changes never flip them."""
+    """Form SLA stages own routing via FormSLAConfig - assignee changes never flip them."""
     mock_db = MagicMock()
     tracking = _tracking_mock(source_entity_type="purchase_request")
     service = ConversationSLATrackingService(mock_db)
@@ -426,7 +426,7 @@ def test_apply_missing_policy_tier_keeps_clocks_but_fixes_routing():
 
 
 # ---------------------------------------------------------------------------
-# Tier-1 membership invariant — TeamService.add_team_member
+# Tier-1 membership invariant - TeamService.add_team_member
 # ---------------------------------------------------------------------------
 
 def test_add_member_to_unlinked_team_passes():
@@ -466,7 +466,7 @@ def test_add_member_already_in_other_tier1_team_rejected():
 
 
 def test_add_member_same_set_passes():
-    """User's only tier-1 set is the same (agent, code) as the new team's — allowed."""
+    """User's only tier-1 set is the same (agent, code) as the new team's - allowed."""
     mock_db = MagicMock()
     mock_db.query.side_effect = [
         _form_codes(),
@@ -479,7 +479,7 @@ def test_add_member_same_set_passes():
 
 
 def test_add_member_to_shared_pool_team_passes():
-    """Same team linked at tier 1 under multiple agents (shared pool) — members allowed."""
+    """Same team linked at tier 1 under multiple agents (shared pool) - members allowed."""
     mock_db = MagicMock()
     mock_db.query.side_effect = [
         _form_codes(),
@@ -506,7 +506,7 @@ def test_add_member_to_form_only_tier1_team_passes():
 
 def test_add_member_conv_tier1_allowed_despite_existing_form_tier1(monkeypatch):
     """New relaxation: user already in a FORM-SLA tier-1 team may still join a
-    CONVERSATION tier-1 team — the existing-links probe excludes form agents, so
+    CONVERSATION tier-1 team - the existing-links probe excludes form agents, so
     it finds nothing to conflict with."""
     mock_db = MagicMock()
     mock_db.query.side_effect = [
@@ -531,7 +531,7 @@ def test_add_team_member_runs_invariant_check():
 
 
 # ---------------------------------------------------------------------------
-# Tier-1 membership invariant — AccessAgentService.set_agent_teams
+# Tier-1 membership invariant - AccessAgentService.set_agent_teams
 # ---------------------------------------------------------------------------
 
 def test_set_agent_teams_tier1_conflict_rejected():
@@ -575,7 +575,7 @@ def test_set_agent_teams_no_tier1_assignments_skips_validation():
 
 def test_set_agent_teams_form_agent_skips_validation():
     """New relaxation: linking teams under a FORM-SLA agent never constrains
-    membership — the whole check short-circuits after the agent-type probe."""
+    membership - the whole check short-circuits after the agent-type probe."""
     mock_db = MagicMock()
     form_agent = MagicMock()
     form_agent.code = "purchase_request"
@@ -607,7 +607,7 @@ def test_set_agent_teams_clean_config_passes():
 
 
 # ---------------------------------------------------------------------------
-# /integration/escalate — signal-only auto-increment
+# /integration/escalate - signal-only auto-increment
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -661,6 +661,11 @@ def test_escalate_signal_only_increments_tier(mock_service_cls, _mock_log, clien
     before = _escalate_tracking_mock(current_tier=1)
     after = _escalate_tracking_mock(current_tier=2)
     svc.resolve_internal_respond_contact_id.return_value = "contact-1"
+    # get_open_tracking_by_contact is the route's PRIMARY resolver (S2b); an
+    # unconfigured auto-mock is truthy (and its auto-mocked .is_resolved is
+    # truthy too), so it must return None to fall through to the
+    # get_tracking_by_contact_and_policy mock this test actually configures.
+    svc.get_open_tracking_by_contact.return_value = None
     svc.get_tracking_by_contact_and_policy.return_value = before
     svc.get_escalation_assignee_for_tier.return_value = ASSIGNEE
     svc.escalate_tracking.return_value = after
@@ -693,6 +698,7 @@ def test_escalate_signal_only_increments_tier(mock_service_cls, _mock_log, clien
 def test_escalate_signal_only_at_max_tier_returns_flag(mock_service_cls, _mock_log, client):
     svc = mock_service_cls.return_value
     svc.resolve_internal_respond_contact_id.return_value = "contact-1"
+    svc.get_open_tracking_by_contact.return_value = None
     svc.get_tracking_by_contact_and_policy.return_value = _escalate_tracking_mock(current_tier=3)
 
     r = client.post(
@@ -742,6 +748,7 @@ def test_escalate_explicit_multi_step_jump_still_works(mock_service_cls, _mock_l
     before = _escalate_tracking_mock(current_tier=1)
     after = _escalate_tracking_mock(current_tier=3)
     svc.resolve_internal_respond_contact_id.return_value = "contact-1"
+    svc.get_open_tracking_by_contact.return_value = None
     svc.get_tracking_by_contact_and_policy.return_value = before
     svc.get_escalation_assignee_for_tier.return_value = ASSIGNEE
     svc.escalate_tracking.return_value = after

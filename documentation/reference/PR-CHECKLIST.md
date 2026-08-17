@@ -21,3 +21,7 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
 - [ ] Uses `extractApiError`, `buildDataGridParams` from `lib/api-client` (no duplication)
 - [ ] Uses shared scaffolds: `ListPageToolbar`, `ConfirmDeleteDialog`, `FormDialogScaffold` where applicable
 - [ ] User/team selects: `services/userSelectService` (no feature-local duplication)
+
+## Test cost
+- [ ] New backend tests do not add whole-suite-running slow tests without cause; check the `--durations=30` block in the backend CI logs for the PR ("Backend test suite (Postgres)" and "Backend test suite - SCM (Postgres)") and justify any new entry over ~2s
+- [ ] A test that only asserts against production-copy data goes in `tests/ci_excluded.txt` with a reason, not into the gated set

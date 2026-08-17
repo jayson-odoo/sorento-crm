@@ -16,6 +16,8 @@ export interface RespondContact {
   workspace_space_id?: string | null;
   access_type_codes?: string[];
   access_types?: RespondContactAccessType[];
+  /** Outbound WhatsApp kill switch. Flipped via the shared outbound endpoints, not a contact update. */
+  outbound_enabled?: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;

@@ -527,6 +527,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sla-management/sla-policies',
       },
       {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
+      },
+      {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
@@ -545,6 +550,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
       },
       {
         title: 'KPI Dashboard',
@@ -898,6 +908,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Respond.io Workspaces',
         path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
+        title: 'Respond.io Contacts',
+        path: '/system-management/respond-contacts',
         permission: 'system.respond_workspaces.view',
       },
       {
@@ -1410,6 +1425,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/sla-management/sla-policies',
       },
       {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
+      },
+      {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
@@ -1428,6 +1448,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
       },
       {
         title: 'KPI Dashboard',
@@ -1781,6 +1806,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Respond.io Workspaces',
         path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
+        title: 'Respond.io Contacts',
+        path: '/system-management/respond-contacts',
         permission: 'system.respond_workspaces.view',
       },
     ],
