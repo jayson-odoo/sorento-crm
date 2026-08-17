@@ -49,7 +49,8 @@ and the core `sales_order_lines` under it (product, quantity, required date, war
 
 The upload itself is the existing P8a route (`POST /project-sales/sales-orders/ingest-file`
 and its JSON twin), which already adopts the document number and links `so_id`
-(`ProjectSOIngestService._reconcile_core_order`). This slice adds the line half and the review
+(`ProjectSOIngestService.reconcile_core_order`, public since this slice so the reconciliation
+service can attempt the header link on a re-run). This slice adds the line half and the review
 state on top of it; it introduces no second upload path.
 
 ## 2. Line mapping rule (deterministic, AC-A02)
@@ -74,8 +75,10 @@ is now closed or on another SO makes that Project line **missing** again (the st
 cleared).
 
 Header outcomes: **no document** (`autocount_doc_no` is null - upload it), **no core SO**
-(`so_id` is null after `_reconcile_core_order` - the outstanding SO book has not carried this
-number yet), **linked**.
+(`so_id` is null after `reconcile_core_order` - the outstanding SO book has not carried this
+number yet), **linked**. `so_id` is what decides **linked**, ahead of the document number:
+the review state turns on `so_id`, so an order carrying a core SO must not read "nothing
+uploaded yet" beside a Needs CS review pill.
 
 Review state (derived, never a stored column in this slice):
 
@@ -147,7 +150,7 @@ empty list, and a failed request.
 - `app/services/project_so_reconciliation_service.py`: `evaluate(order)` (pure read, returns
   the summary and the writes it would make), `reconcile(order)` (evaluate + persist links + clear
   stale ones + flush), `review_states_for(order_ids)` (one grouped query for list rows).
-- `ProjectSOIngestService.ingest` calls `reconcile` right after `_reconcile_core_order` when
+- `ProjectSOIngestService.ingest` calls `reconcile` right after `reconcile_core_order` when
   `so_id` is set, so the P8a upload lands with the lines linked in the same transaction.
 - No new table, no migration, no new setting. `derive_for_sales_order` is not called anywhere
   on this path (AC-A04).
@@ -158,7 +161,9 @@ empty list, and a failed request.
   or reconcile. The sheet leg staying counted before confirmation is plan section 4's own rule
   ("read only for SOs with no confirmed CS decision"); Stage 2 rebases the Project column onto
   confirmed Buy. The Stage 1B test pins both halves for a reconciled Needs CS review SO.
-- Routes in `app/api/v1/projects/sales_orders.py` (or a sibling module mounted the same way).
+- Routes in `app/api/v1/projects/fulfilment_planning.py`, mounted ahead of the sales-order
+  router for the same reason `divergences` is, with schemas in
+  `app/schemas/project_so_reconciliation.py`.
 
 ## 5. Tests (Phase 2, TDD)
 

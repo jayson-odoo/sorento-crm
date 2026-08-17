@@ -181,8 +181,11 @@ async def list_project_sales_orders(
             sort=sort,
             direction=dir,
         )
+        # One derivation for the whole page: the review state is computed, not stored, and
+        # asking per row would run the line mapping once per sales order.
+        states = service.review_states_for(rows)
         return {
-            "data": [service.serialize_row(row) for row in rows],
+            "data": [service.serialize_row(row, review_states=states) for row in rows],
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
@@ -294,7 +297,8 @@ async def regroup_sales_order(
         orders = service.regroup(
             order, [group.model_dump() for group in payload.groups]
         )
-        rows = [service.serialize_row(row) for row in orders]
+        states = service.review_states_for(orders)
+        rows = [service.serialize_row(row, review_states=states) for row in orders]
         db.commit()
         return rows
     except Exception as exc:

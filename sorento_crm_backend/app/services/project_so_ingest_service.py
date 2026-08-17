@@ -198,8 +198,19 @@ class ProjectSOIngestService:
         # document that agrees still has to leave our record able to name its counterpart.
         if document.doc_no:
             order.autocount_doc_no = document.doc_no
-            self._reconcile_core_order(order, document.doc_no)
+            self.reconcile_core_order(order, document.doc_no)
             self.db.flush()
+
+        # AC-A01: the line half, in the SAME call. The upload is the moment both documents
+        # are in hand, so leaving the lines to a second step somebody has to remember is how
+        # an order sits unreconciled with nothing on screen saying why. Imported here rather
+        # than at module scope because that service calls back into this one for the header.
+        if order.so_id:
+            from app.services.project_so_reconciliation_service import (
+                ProjectSOReconciliationService,
+            )
+
+            ProjectSOReconciliationService(self.db).reconcile(order)
 
         report = compare(*self._ours(order), *self._theirs(document))
         existing = self._open_divergence(order.id)
@@ -227,7 +238,7 @@ class ProjectSOIngestService:
 
     # ------------------------------------------------------- the two numbers
 
-    def _reconcile_core_order(self, order: ProjectSalesOrder, doc_no: str) -> None:
+    def reconcile_core_order(self, order: ProjectSalesOrder, doc_no: str) -> None:
         """Make the real number and the provisional one name ONE piece of demand.
 
         Four outcomes, and the last two are the ones that have to be written down (AC-F5):
@@ -328,6 +339,11 @@ class ProjectSOIngestService:
             # are left where they are: they are a pairing somebody already made, and the
             # line they name still exists.
             self._repoint_claims(order, doc_no, unresolved_only=True)
+
+    #: The name this was written under. Public since Stage 1B, because the reconciliation
+    #: service attempts the header link before mapping the lines; the old name stays so an
+    #: existing caller (or a note pointing at it) still resolves.
+    _reconcile_core_order = reconcile_core_order
 
     def _repoint_claims(
         self, order: ProjectSalesOrder, doc_no: str, *, unresolved_only: bool
