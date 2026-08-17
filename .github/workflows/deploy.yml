@@ -7,6 +7,14 @@ on:
   pull_request:
     branches:
       - main
+  # Merge-queue entries: GitHub creates a temporary branch containing the
+  # candidate merge result (this PR merged onto main plus every entry queued
+  # ahead of it) and fires this event. Every validate/test job below runs for
+  # it because none of them filter on event name, so the queue gates on the
+  # exact same checks as a PR. This is what catches two individually-green
+  # branches that only break combined (duplicate alembic heads, a shared
+  # count assertion off by one).
+  merge_group:
   workflow_dispatch:
     inputs:
       deploy_all:
@@ -20,8 +28,105 @@ env:
   RELEASE_TAG: 1.0.1
 
 jobs:
+  # Fast pre-check: fail in under a minute when the alembic migration graph
+  # has more than one head, instead of consuming a 21-35 minute full-CI cycle
+  # (or a merge-queue slot) to discover the same thing. Two branches each
+  # merge main and add their own NNN_merge_* revision; each is green alone,
+  # and the second to land gives main two heads, at which point
+  # `alembic upgrade head` refuses and every database-touching job dies at
+  # bootstrap. This job parses the version files with the stdlib only (no pip
+  # install: alembic's env.py imports the whole app), builds the
+  # revision/down_revision graph, and fails unless exactly one head remains.
+  check-migration-heads:
+    name: Single alembic head (fast gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assert exactly one migration head
+        run: |
+          python3 - <<'PY'
+          import ast, pathlib, sys
+
+          versions = pathlib.Path("sorento_crm_backend/alembic/versions")
+          revs, downs = set(), set()
+          for f in sorted(versions.glob("*.py")):
+              tree = ast.parse(f.read_text())
+              for node in tree.body:
+                  if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                          and isinstance(node.targets[0], ast.Name):
+                      name, value = node.targets[0].id, node.value
+                  elif isinstance(node, ast.AnnAssign) \
+                          and isinstance(node.target, ast.Name) and node.value is not None:
+                      name, value = node.target.id, node.value
+                  else:
+                      continue
+                  if name not in ("revision", "down_revision"):
+                      continue
+                  val = ast.literal_eval(value)
+                  if name == "revision":
+                      revs.add(val)
+                  elif val is not None:
+                      downs.update([val] if isinstance(val, str) else val)
+          heads = sorted(revs - downs)
+          print(f"{len(revs)} revisions, {len(heads)} head(s): {heads}")
+          if len(heads) != 1:
+              sys.exit(
+                  "the migration graph must have exactly one head: merge main "
+                  "and add a merge revision joining these heads"
+              )
+          PY
+
+  # Which areas a pull request touches, so the multi-minute jobs below only
+  # run when the code they test can have changed. Before this, every job ran
+  # on every PR regardless of what it changed, which is the main reason CI
+  # minutes kept growing on a metered plan.
+  #
+  # Pull requests ONLY. A push to main, a merge-queue entry and a manual
+  # dispatch all report every area as changed, so main, the queue and the
+  # deploy keep gating on the full set. The alembic gate above is deliberately
+  # NOT behind this: it is the fast check, and it must run on every PR. The
+  # workflow file itself counts as every area, or a change to it could never
+  # be exercised by the PR that makes it.
+  #
+  # Plain `gh api` over the PR's file list, no third-party action and no
+  # checkout: it is one HTTP call and it finishes in seconds.
+  changes:
+    name: Changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      mcp: ${{ steps.filter.outputs.mcp }}
+    steps:
+      - name: Detect changed areas
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            for area in backend frontend mcp; do echo "$area=true" >> "$GITHUB_OUTPUT"; done
+            echo "$EVENT is not a pull_request: every area counts as changed"
+            exit 0
+          fi
+          files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[].filename')
+          echo "changed files:"; echo "$files" | sed 's/^/  /'
+          flag() {
+            if echo "$files" | grep -Eq "$2"; then echo "$1=true"; else echo "$1=false"; fi
+          }
+          {
+            flag backend  '^(sorento_crm_backend/|\.github/workflows/deploy\.yml$)'
+            flag frontend '^(sorento_crm_frontend/|\.github/workflows/deploy\.yml$)'
+            flag mcp      '^(sorento_crm_mcp/|\.github/workflows/deploy\.yml$)'
+          } | tee -a "$GITHUB_OUTPUT"
+
   validate-backend:
     name: Validate backend imports
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -109,6 +214,8 @@ jobs:
 
   validate-mcp:
     name: Validate MCP imports
+    needs: [changes]
+    if: needs.changes.outputs.mcp == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -189,6 +296,8 @@ jobs:
 
   test-backend:
     name: Backend test suite (Postgres)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -220,11 +329,12 @@ jobs:
       JWT_SECRET: ci-dummy-secret
       JWT_ALGORITHM: HS256
       # This job starts no frontend, so the Dealer Kit PDF render tests cannot
-      # run here - and since an absent frontend is now a FAILURE rather than a
-      # silent skip, the opt-out has to be stated. It is stated HERE, in the job
-      # that declines them, rather than in tests/ci_excluded.txt, because they
-      # are NOT excluded from CI: `test-dealer-kit-render` runs every one of
-      # them against a real browser and a real frontend.
+      # run here, and an absent frontend is a FAILURE rather than a silent skip,
+      # so the opt-out has to be stated. No CI job runs them any more: the
+      # real-browser render job was removed on 2026-08-17 (about 7 minutes on
+      # every PR, recurring out-of-memory failures in its frontend build, and
+      # the last Playwright user in the repo). They stay in the suite as a
+      # local check; the recipe is in tests/test_dealer_kit_pdf_render.py.
       DEALER_KIT_RENDER_TESTS: skip
     steps:
       - name: Checkout
@@ -267,7 +377,7 @@ jobs:
 
   # Why tests/scm gets its OWN job rather than another step here.
   #
-  # Same reasoning as the render split below, applied to size instead of tooling.
+  # A job split, so two halves run in parallel instead of one long serial run.
   # tests/scm is the fastest-growing area of the suite (PR #135, commit c738b1ad,
   # added 119 test files in one merge), and run serially with everything else it
   # is simply added to the gate's wall clock. Split into two jobs the duplicated
@@ -282,6 +392,8 @@ jobs:
   # exclusion cannot be added to one half and forgotten in the other.
   test-backend-scm:
     name: Backend test suite - SCM (Postgres)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -360,6 +472,8 @@ jobs:
   # follow-up decision, taken on this job's history rather than on an estimate.
   test-backend-xdist-shadow:
     name: Backend suite under xdist (SHADOW - non-blocking)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     services:
@@ -421,208 +535,10 @@ jobs:
           echo "excluding $(echo "$IGNORES" | wc -w) path(s)"
           python -m pytest -q -p no:cacheprovider -n auto --durations=30 $IGNORES tests/
 
-  # Why a SEPARATE job rather than extra steps on `test-backend`.
-  #
-  # This one needs everything that job needs (Postgres, pip install,
-  # bootstrap_env) PLUS Node, a full `next build`, `npm start` and Playwright's
-  # Chromium with its system libraries. Bolting that on would add several
-  # minutes to the job every other job waits behind, for a suite of seven tests
-  # that share nothing with the other ~1960.
-  #
-  # Split, the duplicated bootstrap is paid in PARALLEL, so the gate's wall
-  # clock is the max of the two rather than the sum, and the render requirement
-  # gets its own named check that reads on its own: "Dealer Kit PDF render"
-  # red means the PDF stopped matching the brochure, not that some unrelated
-  # service test regressed. The cost is honest and bounded: one more Postgres
-  # boot and one more pip install.
-  test-dealer-kit-render:
-    name: Dealer Kit PDF render (real browser)
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        # Same pgvector image as `test-backend`: bootstrap_env creates the
-        # `vector` extension and will not build the schema without it.
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: sorento
-          POSTGRES_PASSWORD: sorento
-          POSTGRES_DB: sorento_render_ci
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DATABASE_URL: postgresql://sorento:sorento@localhost:5432/sorento_render_ci
-      DIRECT_URL: postgresql://sorento:sorento@localhost:5432/sorento_render_ci
-      REDIS_URL: redis://localhost:6379/0
-      # ONE secret for both processes on purpose. The print URL carries an HMAC
-      # over the download id signed with JWT_SECRET: pytest mints it, the API
-      # verifies it. Two values here would 404 every render payload.
-      JWT_SECRET: ci-dummy-secret
-      JWT_ALGORITHM: HS256
-      # The print page fetches the API from the BROWSER, cross-origin
-      # (:3000 -> :8000), so the frontend's origin has to be allowed or every
-      # render comes back as an unready page and times out.
-      CORS_ORIGINS: http://localhost:3000
-      # Where the render tests point Chromium.
-      DEALER_KIT_PRINT_BASE_URL: http://localhost:3000
-      # Baked into the frontend bundle at build time (NEXT_PUBLIC_*), which is
-      # why the build must come after this is set and cannot be changed later.
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: sorento_crm_backend/requirements.txt
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          # Match the frontend Dockerfile base (node:20-alpine).
-          node-version: 20
-          cache: npm
-          cache-dependency-path: sorento_crm_frontend/package-lock.json
-
-      - name: Install backend dependencies
-        working-directory: sorento_crm_backend
-        run: pip install -r requirements.txt
-
-      # The browser binary is NOT pip-installable. `--with-deps` also pulls the
-      # shared libraries headless Chromium needs on a bare ubuntu runner; without
-      # them the launch fails with a missing-.so error that reads like a
-      # Playwright bug.
-      - name: Install Playwright Chromium
-        run: python -m playwright install --with-deps chromium
-
-      # See test-backend: `alembic upgrade head` cannot build this schema from
-      # zero. bootstrap_env creates it from the ORM models and stamps alembic.
-      - name: Bootstrap the database
-        working-directory: sorento_crm_backend
-        run: python -m scripts.bootstrap_env
-
-      # `--force` mirrors local install: React 19 peer-dep conflicts are expected
-      # and documented in CLAUDE.md.
-      - name: Install frontend dependencies
-        working-directory: sorento_crm_frontend
-        run: npm ci --force
-
-      # A production build, not `next dev`. The print route is a client
-      # component under `app/(public)` with no auth of its own, so this needs
-      # NEITHER NEXTAUTH_SECRET NOR NEXTAUTH_URL: the only variable that has to
-      # be right is NEXT_PUBLIC_API_URL, and it is only readable if it is
-      # present HERE, at build time.
-      - name: Build the frontend
-        working-directory: sorento_crm_frontend
-        run: npm run build
-
-      # Both servers are started detached with their logs on disk, so a render
-      # that fails leaves something to read. Backend first: the frontend's print
-      # page is useless without it.
-      - name: Start the backend
-        working-directory: sorento_crm_backend
-        run: |
-          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 \
-            > "$RUNNER_TEMP/backend.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/backend.pid"
-          for _ in $(seq 1 60); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8000/health; then
-              echo "backend up"; exit 0
-            fi
-            sleep 2
-          done
-          echo "backend never became healthy"; cat "$RUNNER_TEMP/backend.log"; exit 1
-
-      # `next start` prints a warning because next.config.mjs sets
-      # `output: standalone` (which is for the Docker image, where the deployed
-      # entrypoint is .next/standalone/server.js). It is only a warning: the
-      # build in .next is served correctly, verified locally by rendering PDFs
-      # through it. Using the standalone server here would mean copying static
-      # assets around by hand for no gain.
-      - name: Start the frontend
-        working-directory: sorento_crm_frontend
-        run: |
-          nohup npx next start --port 3000 > "$RUNNER_TEMP/frontend.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/frontend.pid"
-          for _ in $(seq 1 60); do
-            if curl -fsS -o /dev/null http://127.0.0.1:3000/; then
-              echo "frontend up"; exit 0
-            fi
-            sleep 2
-          done
-          echo "frontend never became healthy"; cat "$RUNNER_TEMP/frontend.log"; exit 1
-
-      # No opt-out set, so an unreachable frontend fails here with instructions
-      # rather than skipping. The junit report is written so the next step can
-      # check they RAN, which a green exit code alone does not prove.
-      - name: Run the PDF render suite (executing gate)
-        working-directory: sorento_crm_backend
-        run: |
-          python -m pytest -q -p no:cacheprovider --durations=30 \
-            --junitxml="$RUNNER_TEMP/render-junit.xml" \
-            tests/test_dealer_kit_pdf_render.py
-
-      # A suite that skipped itself exits 0. That is the exact failure this
-      # whole job exists to make impossible, so it is asserted rather than
-      # assumed: some tests ran, and none of them opted out.
-      - name: Assert the render tests actually ran
-        if: always()
-        run: |
-          python - "$RUNNER_TEMP/render-junit.xml" <<'PY'
-          import sys, xml.etree.ElementTree as ET
-
-          path = sys.argv[1]
-          try:
-              root = ET.parse(path).getroot()
-          except Exception as exc:
-              sys.exit(f"no junit report at {path} ({exc}): the render tests did not run")
-
-          suites = root.findall("testsuite") or [root]
-          total = sum(int(s.get("tests", 0)) for s in suites)
-          skipped = sum(int(s.get("skipped", 0)) for s in suites)
-          if total == 0:
-              sys.exit("the render suite collected nothing")
-          if skipped:
-              sys.exit(
-                  f"{skipped} of {total} render tests skipped. These are the only "
-                  "tests that prove the exported PDF matches the brochure, so a "
-                  "skip here is a green tick standing for nothing."
-              )
-          print(f"{total} render tests ran, none skipped")
-          PY
-
-      - name: Stop the servers
-        if: always()
-        run: |
-          for name in frontend backend; do
-            pid_file="$RUNNER_TEMP/$name.pid"
-            [ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true
-          done
-
-      # Only on failure, and only the tail: a render that timed out usually says
-      # why in one of these two.
-      - name: Server logs (on failure)
-        if: failure()
-        run: |
-          echo "--- backend ---"; tail -n 100 "$RUNNER_TEMP/backend.log" || true
-          echo "--- frontend ---"; tail -n 100 "$RUNNER_TEMP/frontend.log" || true
-
   validate-frontend:
     name: Validate frontend (vitest)
+    needs: [changes]
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -652,13 +568,16 @@ jobs:
   build-and-deploy:
     needs:
       [
+        check-migration-heads,
         validate-backend,
         validate-mcp,
         validate-frontend,
         test-backend,
         test-backend-scm,
-        test-dealer-kit-render,
       ]
+    # Deliberately NOT `merge_group`: a queue entry only validates the merge
+    # candidate. The deploy belongs to the `push` to main that lands after the
+    # queue merges it, so each change still deploys exactly once, from main.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
