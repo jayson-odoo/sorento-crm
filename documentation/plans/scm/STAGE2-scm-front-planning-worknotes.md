@@ -205,3 +205,32 @@ Frontend (`sorento_crm_frontend/`):
 ## 4. Evidence log
 
 Filled in as slices land (browser runs, test counts, worked cases for AC-F11 and AC-F12).
+
+### 4.1 Phase 1 mock evidence run (agent-browser, 2026-08-17)
+
+Stack: backend `uvicorn` :8022, frontend `next dev` :3022 (this worktree's `.env.local`), private
+session `scm-stage2-product-plan`, login with the `E2E_EMAIL` / `E2E_PASSWORD` pair, servers stopped
+after the run. Every screen reached by sidebar clicks from `/`; `?plan_mock=` appended only after the
+sidebar navigation to switch mock scenarios.
+
+- Sidebar Supply Chain > Reorder Planning: chip **Plan grain: Product**; per-location grid carries
+  Project / Retail / Unclass. columns; Decision cell reads "Decided at Product grain" (AC-F01, F02).
+- Actions > Order summary: one row per product; SO demand stacked Project 480 / Retail 186 /
+  Unclass. 12 with per-channel drill buttons; Suggested stacked Project Buy 180 / Retail 80 / Total
+  300; Locations drill shows BRW and JB with channel split, shared Stock / SPO / PO / Level once,
+  "Suggested once at the product: 300", "Chosen: 600", split 400 / 200 (AC-E03, E07, F08).
+- Worked case `SRTTB1120`: Project 1 + Retail 1 across BRW/JB, multiple 10, Suggested Total 10
+  (AC-F11). Decision sheet at dp 0 strips a typed `2.5` and shows "Whole units only (EA)".
+- Worked case `SRTAD9002` (kg, dp 3): need 2.5, suggested 2.5; typed 2.75 accepted ("Up to 3
+  decimal places (kg)"); Record decision returns "Split back to locations" BRW 1.375 / JB 1.375 /
+  Total 2.75 (AC-F12 FE half). Nit for Phase 2: the success toast formats 2.75 as "3" (`fmtInt`).
+- `?plan_mock=legacy`: chip **Legacy run**, 24 "Unavailable" channel cells, every decision cell
+  "Legacy run - read only. Create a new plan to decide."; stored project/retail values kept (AC-F10).
+- `?plan_mock=location`: chip **Plan grain: Location**; per-location Accept buttons active; Order
+  summary product rows locked "Decided at Location grain"; PO worklist lists per-location rows with a
+  Locations column (AC-F02, F09).
+- User Management > Settings > General: **Plan grain** select, options Product / Location, default
+  Product, hint "Applies to runs created afterwards." (AC-F01).
+- Product Management > Units of Measure: "Decimal Places" list column; Create UOM form has the
+  0..4 field defaulting to 0, `7` is refused at submit (AC-F12 UOM half); 375px viewport renders.
+- `errors` empty; console only dev noise. Screenshots kept in the session scratchpad.
