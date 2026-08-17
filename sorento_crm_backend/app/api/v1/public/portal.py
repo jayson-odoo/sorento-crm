@@ -249,6 +249,9 @@ class PortalMeResponse(BaseModel):
     expires_at: str
     portal_slug: Optional[str] = None
     whatsapp_number: Optional[str] = None
+    # AC-F4: per-contact sponsorship rollout. The form reads this to decide whether the
+    # project picker is mandatory; the server enforces it regardless.
+    requires_registered_project: bool = False
     impersonation: Optional[PortalImpersonationInfo] = None
 
 
@@ -299,6 +302,9 @@ def portal_me(
         expires_at=token.expires_at.isoformat(),
         portal_slug=portal_slug,
         whatsapp_number=service.whatsapp_number_for_contact(contact),
+        requires_registered_project=bool(
+            getattr(contact, "requires_registered_project", False)
+        ),
         impersonation=impersonation_info,
     )
 
@@ -414,6 +420,49 @@ def lookup_debtors(
         query = query.filter(Order.debtor_name.ilike(f"%{qs}%"))
     rows = query.distinct().order_by(Order.debtor_name).limit(limit).all()
     return [DebtorLookupItem(debtor_name=r[0]) for r in rows if r[0]]
+
+
+class ProjectLookupItem(BaseModel):
+    """A project the CONTACT may attach a sponsorship to (AC-F4a).
+
+    ``company_name`` is on every row rather than only when it disambiguates: a contact
+    mapped to two companies cannot otherwise tell two similarly-named phases apart, and a
+    field that appears only sometimes reads as a rendering bug.
+    """
+
+    id: str
+    project_code: str
+    title: str
+    company_name: Optional[str] = None
+
+
+@router.get("/lookups/projects", response_model=list[ProjectLookupItem])
+def lookup_projects(
+    q: str = Query("", description="Substring match on the code or the title"),
+    limit: int = Query(20, ge=1, le=50),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Only the projects of the companies this contact is linked to (AC-F4a).
+
+    A contact linked to no company gets an empty list, which the form turns into "ask the
+    Sorento team to link your company" rather than an empty dropdown that looks broken.
+    """
+    from app.services import sponsorship_link_service
+
+    contact = PortalService(db).get_contact(token)
+    rows = sponsorship_link_service.projects_for_contact(
+        db, contact=contact, query=q, limit=limit
+    )
+    return [
+        ProjectLookupItem(
+            id=str(row["id"]),
+            project_code=row["project_code"],
+            title=row["title"],
+            company_name=row["company_name"],
+        )
+        for row in rows
+    ]
 
 
 class DOProductLine(BaseModel):

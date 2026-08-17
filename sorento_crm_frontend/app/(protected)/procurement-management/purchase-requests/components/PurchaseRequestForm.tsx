@@ -1,11 +1,18 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm, useFieldArray } from 'react-hook-form';
-import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save, Send, Plus, Trash2, Link2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { useEffect, useMemo, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm, useFieldArray } from "react-hook-form";
+import { useRouter } from "next/navigation";
+import {
+  LoaderCircleIcon,
+  Save,
+  Send,
+  Plus,
+  Trash2,
+  Link2,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -13,8 +20,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
   Form,
   FormControl,
@@ -22,11 +29,12 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { SearchableSelect } from "@/components/common/SearchableSelect";
+import { searchProjectsForLink } from "../services/purchaseRequestService";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -34,15 +42,15 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
+} from "@/components/ui/table";
 import {
   useCreatePurchaseRequest,
   useUpdatePurchaseRequest,
   useUpdatePurchaseRequestAndReply,
   usePurchaseRequest,
-} from '../hooks/usePurchaseRequests';
-import { getOrCreateViewLink } from '../services/purchaseRequestService';
-import { toast } from 'sonner';
+} from "../hooks/usePurchaseRequests";
+import { getOrCreateViewLink } from "../services/purchaseRequestService";
+import { toast } from "sonner";
 import {
   PurchaseRequestFormSchema,
   type PurchaseRequestSchemaType,
@@ -56,28 +64,27 @@ import LookupBoundField from '@/components/common/LookupBoundField';
 import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
 import { cn } from '@/lib/utils';
 
-const PURCHASE_REQUESTS_EDIT = '/procurement-management/purchase-requests';
-const SPONSORSHIP_FORMS_EDIT = '/procurement-management/sponsorship-forms';
+const PURCHASE_REQUESTS_EDIT = "/procurement-management/purchase-requests";
+const SPONSORSHIP_FORMS_EDIT = "/procurement-management/sponsorship-forms";
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
-  purchase_request: 'Purchase Request',
-  sponsorship_form: 'Sponsorship Form',
+  purchase_request: "Purchase Request",
+  sponsorship_form: "Sponsorship Form",
 };
-
 
 interface PurchaseRequestFormProps {
   requestId?: string;
   /** When set (e.g. on sponsorship-forms/new), form defaults to this type and type field is hidden. */
-  defaultRequestType?: 'purchase_request' | 'sponsorship_form';
+  defaultRequestType?: "purchase_request" | "sponsorship_form";
   /** On edit: if the loaded record's type doesn't match, redirect to the correct section's edit page. */
-  expectedRequestType?: 'purchase_request' | 'sponsorship_form';
+  expectedRequestType?: "purchase_request" | "sponsorship_form";
   /** URL to redirect to after successful create/update (serializable; use this from Server Component pages). */
   successRedirectUrl?: string;
 }
 
 export default function PurchaseRequestForm({
   requestId,
-  defaultRequestType = 'purchase_request',
+  defaultRequestType = "purchase_request",
   expectedRequestType,
   successRedirectUrl,
 }: PurchaseRequestFormProps) {
@@ -89,8 +96,9 @@ export default function PurchaseRequestForm({
   const createMutation = useCreatePurchaseRequest();
   const updateMutation = useUpdatePurchaseRequest();
   const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
-  const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
-  const [replyMessage, setReplyMessage] = useState('');
+  const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] =
+    useState(false);
+  const [replyMessage, setReplyMessage] = useState("");
   const [replyViewLinkLoading, setReplyViewLinkLoading] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
 
@@ -104,7 +112,7 @@ export default function PurchaseRequestForm({
       request.request_type !== expectedRequestType
     ) {
       const correctPath =
-        request.request_type === 'sponsorship_form'
+        request.request_type === "sponsorship_form"
           ? `${SPONSORSHIP_FORMS_EDIT}/${requestId}/edit`
           : `${PURCHASE_REQUESTS_EDIT}/${requestId}/edit`;
       router.replace(correctPath);
@@ -120,6 +128,7 @@ export default function PurchaseRequestForm({
       customer_name: null,
       pic: null,
       project_title: null,
+      project_id: null,
       purpose: null,
       delivery_address: null,
       total_project_value: null,
@@ -133,25 +142,36 @@ export default function PurchaseRequestForm({
       requested_by: null,
       requested_by_contact_id: null,
       requested_at: null,
-      products: [{ item_code: null, quantity: null, remark: null, unit_price: null, total: null }],
+      products: [
+        {
+          item_code: null,
+          quantity: null,
+          remark: null,
+          unit_price: null,
+          total: null,
+        },
+      ],
     },
-    mode: 'onSubmit',
+    mode: "onSubmit",
   });
 
-  const requestType = form.watch('request_type') ?? defaultRequestType ?? 'purchase_request';
-  const isSponsorship = requestType === 'sponsorship_form';
-  const watchedProducts = form.watch('products');
+  const requestType =
+    form.watch("request_type") ?? defaultRequestType ?? "purchase_request";
+  const isSponsorship = requestType === "sponsorship_form";
+  const watchedProducts = form.watch("products");
   const sponsorshipLineGrandTotal = useMemo(() => {
     if (!isSponsorship || !watchedProducts?.length) return 0;
     let sum = 0;
     for (const p of watchedProducts) {
-      const tot = p.total != null && p.total !== '' ? Number(p.total) : null;
+      const tot = p.total != null && p.total !== "" ? Number(p.total) : null;
       if (tot != null && !Number.isNaN(tot)) {
         sum += tot;
         continue;
       }
-      const q = p.quantity != null && p.quantity !== '' ? Number(p.quantity) : 0;
-      const up = p.unit_price != null && p.unit_price !== '' ? Number(p.unit_price) : 0;
+      const q =
+        p.quantity != null && p.quantity !== "" ? Number(p.quantity) : 0;
+      const up =
+        p.unit_price != null && p.unit_price !== "" ? Number(p.unit_price) : 0;
       sum += q * up;
     }
     return sum;
@@ -159,7 +179,7 @@ export default function PurchaseRequestForm({
 
   const { fields, append, remove } = useFieldArray({
     control: form.control,
-    name: 'products',
+    name: "products",
   });
 
   const [formInitialized, setFormInitialized] = useState(false);
@@ -175,36 +195,48 @@ export default function PurchaseRequestForm({
               unit_price: l.unit_price != null ? Number(l.unit_price) : null,
               total: l.total != null ? Number(l.total) : null,
             }))
-          : [{ item_code: null, quantity: null, remark: null, unit_price: null, total: null }];
+          : [
+              {
+                item_code: null,
+                quantity: null,
+                remark: null,
+                unit_price: null,
+                total: null,
+              },
+            ];
       form.reset({
-        request_type: (request.request_type ?? 'purchase_request') as
-          | 'purchase_request'
-          | 'sponsorship_form',
+        request_type: (request.request_type ?? "purchase_request") as
+          | "purchase_request"
+          | "sponsorship_form",
         request_number: request.request_number ?? null,
         request_date: request.request_date
-          ? new Date(request.request_date).toISOString().split('T')[0]
+          ? new Date(request.request_date).toISOString().split("T")[0]
           : null,
         customer_name: request.customer_name ?? null,
         pic: request.pic ?? null,
         project_title: request.project_title ?? null,
+        project_id: request.project_id ?? null,
         purpose: request.purpose ?? null,
         delivery_address: request.delivery_address ?? null,
-        total_project_value: request.total_project_value != null ? Number(request.total_project_value) : null,
+        total_project_value:
+          request.total_project_value != null
+            ? Number(request.total_project_value)
+            : null,
         total_project_value_text: request.total_project_value_text ?? null,
         sales_type: request.sales_type ?? null,
         sponsor_subject: request.sponsor_subject ?? null,
         sponsor_subject_other: request.sponsor_subject_other ?? null,
         expected_delivery_date: request.expected_delivery_date
-          ? new Date(request.expected_delivery_date).toISOString().split('T')[0]
+          ? new Date(request.expected_delivery_date).toISOString().split("T")[0]
           : null,
         expected_po_date: request.expected_po_date
-          ? new Date(request.expected_po_date).toISOString().split('T')[0]
+          ? new Date(request.expected_po_date).toISOString().split("T")[0]
           : null,
         expected_po_date_text: request.expected_po_date_text ?? null,
         requested_by: request.requested_by ?? null,
         requested_by_contact_id: request.requested_by_contact_id ?? null,
         requested_at: request.requested_at
-          ? new Date(request.requested_at).toISOString().split('T')[0]
+          ? new Date(request.requested_at).toISOString().split("T")[0]
           : null,
         products,
       });
@@ -226,25 +258,26 @@ export default function PurchaseRequestForm({
         // Empty string must become undefined, not "" — "not given" is one value.
         pic: data.pic || undefined,
         project_title: data.project_title || undefined,
+        project_id: data.project_id || null,
         purpose: data.purpose ?? undefined,
         delivery_address: data.delivery_address ?? undefined,
         total_project_value:
-          data.total_project_value != null && data.total_project_value !== ''
+          data.total_project_value != null && data.total_project_value !== ""
             ? Number(data.total_project_value)
             : undefined,
         total_project_value_text: data.total_project_value_text?.trim()
           ? data.total_project_value_text.trim()
           : undefined,
         // Sales type applies to purchase requests only; clear it on sponsorship forms.
-        sales_type: !isSponsorship ? data.sales_type ?? undefined : undefined,
+        sales_type: !isSponsorship ? (data.sales_type ?? undefined) : undefined,
         sponsor_subject: data.sponsor_subject ?? undefined,
         // Only carry the "Others" detail when the sponsor subject is 'others';
         // sending '' otherwise clears any stale parked text on the backend.
         sponsor_subject_other:
-          isSponsorship && data.sponsor_subject === 'others'
+          isSponsorship && data.sponsor_subject === "others"
             ? data.sponsor_subject_other?.trim() || undefined
             : isSponsorship
-              ? ''
+              ? ""
               : undefined,
         expected_delivery_date: data.expected_delivery_date || undefined,
         expected_po_date: data.expected_po_date || undefined,
@@ -253,13 +286,25 @@ export default function PurchaseRequestForm({
         requested_by_contact_id: data.requested_by_contact_id ?? null,
         requested_at: data.requested_at || undefined,
         products: data.products
-          .filter((p) => p.item_code != null || p.quantity != null || (isSponsorship && (p.unit_price != null || p.total != null)))
+          .filter(
+            (p) =>
+              p.item_code != null ||
+              p.quantity != null ||
+              (isSponsorship && (p.unit_price != null || p.total != null)),
+          )
           .map((p) => ({
             item_code: p.item_code ?? undefined,
-            quantity: p.quantity != null && p.quantity !== '' ? Number(p.quantity) : undefined,
+            quantity:
+              p.quantity != null && p.quantity !== ""
+                ? Number(p.quantity)
+                : undefined,
             remark: p.remark ?? undefined,
-            unit_price: p.unit_price != null && p.unit_price !== '' ? Number(p.unit_price) : undefined,
-            total: p.total != null && p.total !== '' ? Number(p.total) : undefined,
+            unit_price:
+              p.unit_price != null && p.unit_price !== ""
+                ? Number(p.unit_price)
+                : undefined,
+            total:
+              p.total != null && p.total !== "" ? Number(p.total) : undefined,
           })),
       };
 
@@ -272,7 +317,7 @@ export default function PurchaseRequestForm({
         router.push(successRedirectUrl);
       }
     } catch (error) {
-      console.error('Error submitting form:', error);
+      console.error("Error submitting form:", error);
     }
   };
 
@@ -301,37 +346,41 @@ export default function PurchaseRequestForm({
             sponsorshipLineGrandTotal={sponsorshipLineGrandTotal}
           />
         ) : (
-        <div className="space-y-6">
-          <Card className={cn(isSponsorship && 'border-2 shadow-sm')}>
-            <CardHeader>
-              {isSponsorship ? (
-                <CardTitle className="text-center text-xl font-semibold border-b border-border pb-4">
-                  Project Sales Sponsorship Form
-                </CardTitle>
-              ) : (
-                <CardTitle>Header</CardTitle>
-              )}
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <div className="space-y-6">
+            <Card className={cn(isSponsorship && "border-2 shadow-sm")}>
+              <CardHeader>
+                {isSponsorship ? (
+                  <CardTitle className="text-center text-xl font-semibold border-b border-border pb-4">
+                    Project Sales Sponsorship Form
+                  </CardTitle>
+                ) : (
+                  <CardTitle>Header</CardTitle>
+                )}
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <FormField
                   control={form.control}
                   name="request_number"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{purchaseRequestNumberFieldLabel(requestType)}</FormLabel>
+                      <FormLabel>
+                        {purchaseRequestNumberFieldLabel(requestType)}
+                      </FormLabel>
                       <FormControl>
                         <Input
                           placeholder="e.g. PR26-0303"
                           {...field}
-                          value={field.value ?? ''}
-                          onChange={(e) => field.onChange(e.target.value || null)}
+                          value={field.value ?? ""}
+                          onChange={(e) =>
+                            field.onChange(e.target.value || null)
+                          }
                         />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-                {defaultRequestType !== 'sponsorship_form' && (
+                {defaultRequestType !== "sponsorship_form" && (
                   <FormField
                     control={form.control}
                     name="request_type"
@@ -341,11 +390,17 @@ export default function PurchaseRequestForm({
                         <FormControl>
                           <SearchableSelect
                             onChange={field.onChange}
-                            value={field.value ?? ''}
+                            value={field.value ?? ""}
                             placeholder="Select type"
                             options={[
-                              { value: 'purchase_request', label: 'Purchase Request' },
-                              { value: 'sponsorship_form', label: 'Sponsorship Form' },
+                              {
+                                value: "purchase_request",
+                                label: "Purchase Request",
+                              },
+                              {
+                                value: "sponsorship_form",
+                                label: "Sponsorship Form",
+                              },
                             ]}
                           />
                         </FormControl>
@@ -364,7 +419,7 @@ export default function PurchaseRequestForm({
                         <Input
                           placeholder="Customer name"
                           {...field}
-                          value={field.value ?? ''}
+                          value={field.value ?? ""}
                         />
                       </FormControl>
                       <FormMessage />
@@ -401,7 +456,7 @@ export default function PurchaseRequestForm({
                             rows={4}
                             className="resize-y min-h-[80px]"
                             {...field}
-                            value={field.value ?? ''}
+                            value={field.value ?? ""}
                           />
                         </FormControl>
                         <FormMessage />
@@ -419,9 +474,34 @@ export default function PurchaseRequestForm({
                         <Input
                           placeholder="Project title"
                           {...field}
-                          value={field.value ?? ''}
+                          value={field.value ?? ""}
                         />
                       </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                {/* AC-L3: the office-side project picker. The portal has offered contacts
+                    the same link since S4; without it here a CS-entered form could never be
+                    linked, which is most of the historical backlog. */}
+                <FormField
+                  control={form.control}
+                  name="project_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Registered project (optional)</FormLabel>
+                      <SearchableSelect
+                        value={field.value || ""}
+                        onChange={(next) => field.onChange(next || null)}
+                        fetchOptions={(query, pageIndex) =>
+                          searchProjectsForLink(query, pageIndex + 1)
+                        }
+                        paginated
+                        pageSize={25}
+                        clearable
+                        placeholder="Search a project by code or title"
+                        emptyMessage="No project matches that. Leave it empty if it was never registered."
+                      />
                       <FormMessage />
                     </FormItem>
                   )}
@@ -437,7 +517,7 @@ export default function PurchaseRequestForm({
                           <Input
                             placeholder="e.g. Showroom, Mock up, Others"
                             {...field}
-                            value={field.value ?? ''}
+                            value={field.value ?? ""}
                           />
                         </FormControl>
                         <FormMessage />
@@ -463,13 +543,13 @@ export default function PurchaseRequestForm({
                             placeholder="Select sales type"
                             renderFallback={() => (
                               <SearchableSelect
-                                key={field.value || 'empty'}
+                                key={field.value || "empty"}
                                 onChange={field.onChange}
-                                value={field.value || ''}
+                                value={field.value || ""}
                                 placeholder="Select sales type"
                                 options={[
-                                  { value: 'project', label: 'Project' },
-                                  { value: 'cash_sales', label: 'Cash Sales' },
+                                  { value: "project", label: "Project" },
+                                  { value: "cash_sales", label: "Cash Sales" },
                                 ]}
                               />
                             )}
@@ -495,9 +575,11 @@ export default function PurchaseRequestForm({
                               step="0.01"
                               placeholder="e.g. 1234.00"
                               {...field}
-                              value={field.value ?? ''}
+                              value={field.value ?? ""}
                               onChange={(e) =>
-                                field.onChange(e.target.value === '' ? null : e.target.value)
+                                field.onChange(
+                                  e.target.value === "" ? null : e.target.value,
+                                )
                               }
                             />
                           </FormControl>
@@ -520,14 +602,14 @@ export default function PurchaseRequestForm({
                               placeholder="Select sponsor subject"
                               renderFallback={() => (
                                 <SearchableSelect
-                                  key={field.value || 'empty'}
+                                  key={field.value || "empty"}
                                   onChange={field.onChange}
-                                  value={field.value || ''}
+                                  value={field.value || ""}
                                   placeholder="Select sponsor subject"
                                   options={[
-                                    { value: 'showroom', label: 'Showroom' },
-                                    { value: 'mockup', label: 'Mockup' },
-                                    { value: 'others', label: 'Others' },
+                                    { value: "showroom", label: "Showroom" },
+                                    { value: "mockup", label: "Mockup" },
+                                    { value: "others", label: "Others" },
                                   ]}
                                 />
                               )}
@@ -537,7 +619,7 @@ export default function PurchaseRequestForm({
                         </FormItem>
                       )}
                     />
-                    {form.watch('sponsor_subject') === 'others' && (
+                    {form.watch("sponsor_subject") === "others" && (
                       <FormField
                         control={form.control}
                         name="sponsor_subject_other"
@@ -548,7 +630,7 @@ export default function PurchaseRequestForm({
                               <Input
                                 placeholder="Specify the sponsor subject"
                                 {...field}
-                                value={field.value ?? ''}
+                                value={field.value ?? ""}
                               />
                             </FormControl>
                             <FormMessage />
@@ -564,10 +646,16 @@ export default function PurchaseRequestForm({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>
-                        {isSponsorship ? 'Date of Delivery' : 'Expected date of delivery'}
+                        {isSponsorship
+                          ? "Date of Delivery"
+                          : "Expected date of delivery"}
                       </FormLabel>
                       <FormControl>
-                        <Input type="date" {...field} value={field.value ?? ''} />
+                        <Input
+                          type="date"
+                          {...field}
+                          value={field.value ?? ""}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -581,7 +669,11 @@ export default function PurchaseRequestForm({
                       <FormItem>
                         <FormLabel>Expected date to receive PO</FormLabel>
                         <FormControl>
-                          <Input type="date" {...field} value={field.value ?? ''} />
+                          <Input
+                            type="date"
+                            {...field}
+                            value={field.value ?? ""}
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -594,12 +686,14 @@ export default function PurchaseRequestForm({
                     name="expected_po_date_text"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Expected date to receive PO (free text)</FormLabel>
+                        <FormLabel>
+                          Expected date to receive PO (free text)
+                        </FormLabel>
                         <FormControl>
                           <Input
                             placeholder="e.g. PROPOSED STAGE (IMMEDIATE ORDER)"
                             {...field}
-                            value={field.value ?? ''}
+                            value={field.value ?? ""}
                           />
                         </FormControl>
                         <FormMessage />
@@ -630,15 +724,23 @@ export default function PurchaseRequestForm({
               </CardContent>
             </Card>
 
-          <Card className={cn(isSponsorship && 'border-2 shadow-sm')}>
-            <CardHeader className="flex-row items-center justify-between">
-              <CardTitle>{isSponsorship ? 'Line items' : 'Line Items'}</CardTitle>
+            <Card className={cn(isSponsorship && "border-2 shadow-sm")}>
+              <CardHeader className="flex-row items-center justify-between">
+                <CardTitle>
+                  {isSponsorship ? "Line items" : "Line Items"}
+                </CardTitle>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    append({ item_code: null, quantity: null, remark: null, unit_price: null, total: null })
+                    append({
+                      item_code: null,
+                      quantity: null,
+                      remark: null,
+                      unit_price: null,
+                      total: null,
+                    })
                   }
                 >
                   <Plus className="size-4" />
@@ -678,7 +780,7 @@ export default function PurchaseRequestForm({
                                   <Input
                                     placeholder="Item code"
                                     {...f}
-                                    value={f.value ?? ''}
+                                    value={f.value ?? ""}
                                     className="h-8"
                                   />
                                 </FormControl>
@@ -699,14 +801,21 @@ export default function PurchaseRequestForm({
                                     step="any"
                                     placeholder="0"
                                     {...f}
-                                    value={f.value ?? ''}
+                                    value={f.value ?? ""}
                                     onChange={(e) => {
-                                      const v = e.target.value ? parseFloat(e.target.value) : null;
+                                      const v = e.target.value
+                                        ? parseFloat(e.target.value)
+                                        : null;
                                       f.onChange(v);
                                       if (isSponsorship) {
-                                        const up = form.getValues(`products.${index}.unit_price`);
-                                        if (up != null && up !== '') {
-                                          form.setValue(`products.${index}.total`, (v ?? 0) * Number(up));
+                                        const up = form.getValues(
+                                          `products.${index}.unit_price`,
+                                        );
+                                        if (up != null && up !== "") {
+                                          form.setValue(
+                                            `products.${index}.total`,
+                                            (v ?? 0) * Number(up),
+                                          );
                                         }
                                       }
                                     }}
@@ -731,13 +840,20 @@ export default function PurchaseRequestForm({
                                       step="any"
                                       placeholder="0"
                                       {...f}
-                                      value={f.value ?? ''}
+                                      value={f.value ?? ""}
                                       onChange={(e) => {
-                                        const v = e.target.value ? parseFloat(e.target.value) : null;
+                                        const v = e.target.value
+                                          ? parseFloat(e.target.value)
+                                          : null;
                                         f.onChange(v);
-                                        const qty = form.getValues(`products.${index}.quantity`);
-                                        if (qty != null && qty !== '') {
-                                          form.setValue(`products.${index}.total`, (v ?? 0) * Number(qty));
+                                        const qty = form.getValues(
+                                          `products.${index}.quantity`,
+                                        );
+                                        if (qty != null && qty !== "") {
+                                          form.setValue(
+                                            `products.${index}.total`,
+                                            (v ?? 0) * Number(qty),
+                                          );
                                         }
                                       }}
                                       className="h-8 w-24"
@@ -762,9 +878,11 @@ export default function PurchaseRequestForm({
                                       step="any"
                                       placeholder="0"
                                       {...f}
-                                      value={f.value ?? ''}
+                                      value={f.value ?? ""}
                                       onChange={(e) => {
-                                        const v = e.target.value ? parseFloat(e.target.value) : null;
+                                        const v = e.target.value
+                                          ? parseFloat(e.target.value)
+                                          : null;
                                         f.onChange(v);
                                       }}
                                       className="h-8 w-28"
@@ -786,7 +904,7 @@ export default function PurchaseRequestForm({
                                   <Input
                                     placeholder="Remark"
                                     {...f}
-                                    value={f.value ?? ''}
+                                    value={f.value ?? ""}
                                     className="h-8"
                                   />
                                 </FormControl>
@@ -820,8 +938,7 @@ export default function PurchaseRequestForm({
                 )}
               </CardContent>
             </Card>
-
-        </div>
+          </div>
         )}
 
         {isEditMode && requestId && (
@@ -849,7 +966,9 @@ export default function PurchaseRequestForm({
                 if (!valid || !requestId) return;
                 const values = form.getValues();
                 const typeLabel =
-                  REQUEST_TYPE_LABELS[values.request_type ?? ''] ?? values.request_type ?? 'Request';
+                  REQUEST_TYPE_LABELS[values.request_type ?? ""] ??
+                  values.request_type ??
+                  "Request";
                 // Form state holds the bare number (a suffix there would be
                 // submitted back); the message quotes it with the revision
                 // suffix the screens show.
@@ -858,12 +977,19 @@ export default function PurchaseRequestForm({
                   values.request_number,
                   request?.revision_no,
                 );
-                let defaultReply = `This is the ${idPhrase} for ${typeLabel} for project title ${values.project_title ?? ''}.`;
+                let defaultReply = `This is the ${idPhrase} for ${typeLabel} for project title ${values.project_title ?? ""}.`;
                 if (publicViewLinksEnabled) {
                   try {
-                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
-                    if (view_url) defaultReply += `\n\nView full details: ${view_url}`;
+                    const baseUrl =
+                      typeof window !== "undefined"
+                        ? window.location.origin
+                        : undefined;
+                    const { view_url } = await getOrCreateViewLink(
+                      requestId,
+                      baseUrl,
+                    );
+                    if (view_url)
+                      defaultReply += `\n\nView full details: ${view_url}`;
                   } catch {
                     // leave message as-is, user can add link
                   }
@@ -890,12 +1016,12 @@ export default function PurchaseRequestForm({
             {isLoading ? (
               <>
                 <LoaderCircleIcon className="size-4 animate-spin" />
-                {isEditMode ? 'Updating...' : 'Creating...'}
+                {isEditMode ? "Updating..." : "Creating..."}
               </>
             ) : (
               <>
                 <Save className="size-4" />
-                {isEditMode ? 'Update' : 'Create'}
+                {isEditMode ? "Update" : "Create"}
               </>
             )}
           </Button>
@@ -903,12 +1029,21 @@ export default function PurchaseRequestForm({
       </form>
 
       {isEditMode && (
-        <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
+        <Dialog
+          open={updateAndReplyDialogOpen}
+          onOpenChange={setUpdateAndReplyDialogOpen}
+        >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>Update & Reply</DialogTitle>
               <DialogDescription>
-                This message will be sent to the conversation in Respond. It is pre-filled for this {form.watch('request_type') === 'sponsorship_form' ? 'Sponsorship Form' : 'Purchase Request'}. You can edit it below. A shareable view link is included only when the Public view links module is enabled in App Store.
+                This message will be sent to the conversation in Respond. It is
+                pre-filled for this{" "}
+                {form.watch("request_type") === "sponsorship_form"
+                  ? "Sponsorship Form"
+                  : "Purchase Request"}
+                . You can edit it below. A shareable view link is included only
+                when the Public view links module is enabled in App Store.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
@@ -928,25 +1063,37 @@ export default function PurchaseRequestForm({
                     variant="outline"
                     size="sm"
                     className="mt-1"
-                    disabled={replyViewLinkLoading || updateAndReplyMutation.isPending}
+                    disabled={
+                      replyViewLinkLoading || updateAndReplyMutation.isPending
+                    }
                     onClick={async () => {
                       setReplyViewLinkLoading(true);
                       try {
-                        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                        const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
+                        const baseUrl =
+                          typeof window !== "undefined"
+                            ? window.location.origin
+                            : undefined;
+                        const { view_url } = await getOrCreateViewLink(
+                          requestId,
+                          baseUrl,
+                        );
                         if (view_url) {
                           const line = `View full details: ${view_url}`;
-                          setReplyMessage((prev) => (prev.trim() ? `${prev.trim()}\n\n${line}` : line));
+                          setReplyMessage((prev) =>
+                            prev.trim() ? `${prev.trim()}\n\n${line}` : line,
+                          );
                         }
                       } catch {
-                        toast.error('Could not get view link');
+                        toast.error("Could not get view link");
                       } finally {
                         setReplyViewLinkLoading(false);
                       }
                     }}
                   >
                     <Link2 className="size-4 mr-1" />
-                    {replyViewLinkLoading ? 'Getting link…' : 'Attach view link'}
+                    {replyViewLinkLoading
+                      ? "Getting link…"
+                      : "Attach view link"}
                   </Button>
                 )}
               </div>
@@ -960,7 +1107,9 @@ export default function PurchaseRequestForm({
                 Cancel
               </Button>
               <Button
-                disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
+                disabled={
+                  updateAndReplyMutation.isPending || !replyMessage.trim()
+                }
                 onClick={async () => {
                   if (!requestId) return;
                   try {
@@ -975,18 +1124,21 @@ export default function PurchaseRequestForm({
                           customer_name: values.customer_name ?? undefined,
                           project_title: values.project_title ?? undefined,
                           purpose: values.purpose ?? undefined,
-                          expected_delivery_date: values.expected_delivery_date ?? undefined,
-                          expected_po_date: values.expected_po_date ?? undefined,
-                          expected_po_date_text: values.expected_po_date_text ?? undefined,
+                          expected_delivery_date:
+                            values.expected_delivery_date ?? undefined,
+                          expected_po_date:
+                            values.expected_po_date ?? undefined,
+                          expected_po_date_text:
+                            values.expected_po_date_text ?? undefined,
                           requested_by: values.requested_by ?? undefined,
                           requested_by_contact_id: values.requested_by_contact_id ?? null,
                           requested_at: values.requested_at ?? undefined,
                           products: (values.products ?? []).map((p) => ({
                             item_code: p.item_code ?? undefined,
                             quantity:
-                              typeof p.quantity === 'number'
+                              typeof p.quantity === "number"
                                 ? p.quantity
-                                : p.quantity != null && p.quantity !== ''
+                                : p.quantity != null && p.quantity !== ""
                                   ? Number(p.quantity)
                                   : undefined,
                             remark: p.remark ?? undefined,
@@ -996,15 +1148,17 @@ export default function PurchaseRequestForm({
                       },
                     });
                     setUpdateAndReplyDialogOpen(false);
-                    setReplyMessage('');
-                    toast.success('Updated and reply sent');
+                    setReplyMessage("");
+                    toast.success("Updated and reply sent");
                     if (successRedirectUrl) router.push(successRedirectUrl);
                   } catch {
                     // toast from mutation
                   }
                 }}
               >
-                {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+                {updateAndReplyMutation.isPending
+                  ? "Sending…"
+                  : "Update & Reply"}
               </Button>
             </DialogFooter>
           </DialogContent>

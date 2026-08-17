@@ -3690,7 +3690,9 @@ def process_sales_history_import(db_job_id: str, file_data: bytes, filename: str
 def process_order_inquiry_import(db_job_id: str, file_data: bytes, filename: str,
                                  user_id: str):
     """Import the Order Inquiry sheet: project demand, stock locations, and PO claims."""
-    from app.services.scm import order_inquiry_service, order_link_service
+    # Project Sales owns the Order Inquiry importer (ADR 0010); the claim resolver stays SCM's.
+    from app.services import project_order_inquiry_import_service as order_inquiry_service
+    from app.services.scm import order_link_service
 
     def _apply(db, outcome, on_total):
         result = order_inquiry_service.apply(db, file_data, actor=user_id, outcome=outcome,

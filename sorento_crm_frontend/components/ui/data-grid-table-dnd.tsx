@@ -9,6 +9,8 @@ import {
   DataGridTableBodyRowSkeleton,
   DataGridTableBodyRowSkeletonCell,
   DataGridTableEmpty,
+  DataGridTableFoot,
+  DataGridTableFootRowCell,
   DataGridTableHead,
   DataGridTableHeadRow,
   DataGridTableHeadRowCell,
@@ -189,6 +191,25 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
               <DataGridTableEmpty />
             )}
           </DataGridTableBody>
+
+          {/* Same totals row as the non-draggable branch. `columnsDraggable` defaults to TRUE,
+              so this component is what a listing actually renders through, and a footer added
+              only to the other branch would never appear. */}
+          {table.getVisibleFlatColumns().some((column) => Boolean(column.columnDef.footer)) && (
+            <DataGridTableFoot>
+              {table.getFooterGroups().map((footerGroup) => (
+                <tr key={footerGroup.id}>
+                  {footerGroup.headers.map((header) => (
+                    <DataGridTableFootRowCell key={header.id} header={header}>
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(header.column.columnDef.footer, header.getContext())}
+                    </DataGridTableFootRowCell>
+                  ))}
+                </tr>
+              ))}
+            </DataGridTableFoot>
+          )}
         </DataGridTableBase>
       </div>
     </DndContext>

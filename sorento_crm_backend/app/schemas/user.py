@@ -18,6 +18,9 @@ class RespondContactBase(BaseModel):
     last_name: Optional[str] = None
     respond_io_id: Optional[str] = None  # Respond.io contact id for inbox URL
     workspace_id: Optional[str] = None  # FK to respond_workspaces.id
+    # AC-F4: when true, this contact's sponsorship form demands a registered project.
+    # Per contact so the requirement can be rolled out one team at a time.
+    requires_registered_project: bool = False
 
 
 class RespondContactCreate(RespondContactBase):
@@ -31,6 +34,7 @@ class RespondContactUpdate(BaseModel):
     last_name: Optional[str] = None
     respond_io_id: Optional[str] = None
     workspace_id: Optional[str] = None
+    requires_registered_project: Optional[bool] = None
     access_type_codes: Optional[List[str]] = None  # When set, replaces the contact's M2M assignment
 
 

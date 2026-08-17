@@ -130,6 +130,32 @@ async def get_status_graph(
     )
 
 
+@router.post("/statuses/graph/{entity_type}/reapply-dials")
+async def reapply_dials(
+    entity_type: str,
+    scope_id: str = Query(description="The forked scope to copy the default dials onto."),
+    _user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Copy the default graph's per-rung dials back onto a fork (AC-H4).
+
+    Explicit, and only ever in this direction. A fork stops tracking default changes on
+    purpose -- overwriting a tuned template because somebody edited the default would be
+    indistinguishable from data loss -- so this exists as an action an admin asks for by
+    name. The response says how many rungs actually changed, so the UI can report "3 rungs
+    updated" or "already matching" instead of claiming success either way.
+    """
+    from app.services.status_service import reapply_default_dials
+
+    changed = reapply_default_dials(db, entity_type, scope_id)
+    db.commit()
+    return {
+        "entity_type": entity_type,
+        "scope_id": scope_id,
+        "statuses_updated": changed,
+    }
+
+
 # ------------------------------------------------------------------ statuses
 
 

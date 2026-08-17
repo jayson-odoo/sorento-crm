@@ -1,6 +1,47 @@
 # UAC — Project Sales Pipeline (module `projects`)
 
-**Status:** Drafted from grill session 2026-07-25. Pre-code. Awaiting user grill round.
+> **Table names in this document predate the schema move.** On 2026-08-15 the projects
+> module's 47 tables moved into a dedicated `projects` Postgres schema and the 34 that
+> carried a `project_` prefix dropped it: `project_leads` is now `projects.leads`,
+> `project_quotation_lines` is `projects.quotation_lines`, and so on. The 13 unprefixed
+> ones only changed schema. Nothing else in this document changes. See
+> [ADR-0011](../adr/0011-project-sales-tables-live-in-the-projects-schema.md) and
+> `documentation/plans/PLAN-projects-schema-move.md` for the full mapping.
+
+**Status:** every slice built (S0 through S6b, 2026-07-27). Groups B, C, D, E, F, G, H, I, J,
+K, L, N and O are implemented and browser-verified except where noted below; A is implemented
+apart from the Excel import.
+
+**Verified against a running stack, not asserted:** every AC below marked ✅ was exercised
+either by a test that fails without it or in the browser at localhost:3010/:8010. ACs that
+did NOT ship are marked ⏸ with the reason, rather than being quietly left ambiguous:
+
+- ⏸ **AC-C9 / AC-C9a (Excel import).** Needs its own intra-batch duplicate detector — rows
+  grouped within the sheet, BOTH sides of a repeated `(developer, normalised_title)` failed.
+  Half of that is worse than none: it would create exactly the silent duplicate the module
+  exists to prevent.
+- ✅ **AC-H1 / AC-H2 (activities adapter).** Shipped in S5b. The project registers an
+  adapter, so the shared feed / notes / mentions panel works with no new tables, and all six
+  whitelisted system events plus any human post advance `last_meaningful_activity_at` (task
+  create / complete from S2b's AC-N8 still count). An import or a field edit deliberately
+  does not, and the Activity tab labels which events counted so a surprising nudge can be
+  explained on screen.
+- ⏸ **AC-N5a (link a task to a quotation version / sample / Project PO).** The columns, the
+  schema and the API accept the link, and after S4 all three targets now exist -- but the
+  picker itself is still not in the UI. Un-blocked rather than done.
+- ✅ **AC-G10 (delete blocked by a Project PO).** No longer pending: `project_purchase_orders`
+  exists as of S4, and both a service test and a route test now assert the 409.
+- ⏸ **AC-G2 (board default per role).** The Board/Grid toggle and per-user persistence ship;
+  defaulting Board for sales and Grid for management needs the role read, deferred with the
+  rest of the role-aware UX.
+- ✅ **AC-E5 / AC-E6, the "notifies management" half.** Shipped in S5b, which established the
+  single definition of management (`projects.projects.view_all_financials`, G20) the fan-out
+  was waiting on. A floor breach now notifies management in-app and by email on the
+  TRANSITION into breach only, deduplicated per line, and the loud log line stays.
+- ⏸ **AC-E8, the display and off-catalog-upload half.** A line picked from the catalogue
+  DOES resolve and store its product image (`resolve_product_image` on snapshot), so the
+  data is there. Rendering it in the line table and letting an off-catalog line upload its
+  own arrive with S4, alongside the sample-submission attachment UI they share.
 **Slug:** project-sales-pipeline
 **Source:** `Sorento Project Management Process Flow.pdf` (6pp) + client feedback on
 registration roles + grill decisions recorded in `documentation/CONTEXT.md` and
@@ -135,9 +176,12 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
   in-place editing must not generate an alert storm.
 - **AC-E7** The floor value in force at the time is stored on the line. Changing floor policy
   later never retro-flags an existing quotation.
-- **AC-E8** Line image resolves from the product's attachments whose attachment type is an
+- **AC-E8** ~~Line image resolves from the product's attachments whose attachment type is an
   image class (`attachment_types.is_image_class`, seeded true for Product Photos), lowest
-  `sort_order`; an off-catalog line may upload its own.
+  `sort_order`; an off-catalog line may upload its own.~~ **WITHDRAWN, superseded by S21** -
+  see `quotation-product-images-acceptance-criteria.md` (SUP-1, SUP-2). "Lowest `sort_order`" is
+  the whichever-row-came-first fallback that `product_attachments.is_primary` exists to remove,
+  and an off-catalog line has no product for a flag to point at, so it never carries an image.
 - **AC-E9** Outcome lives on the quotation: open | won | lost, with a `loss_reason` lookup
   mandatory on lost. The lookup set is **configurable** (lookup set + binding, client-editable
   without a deploy), seeded with: price · spec locked to competitor · project cancelled or
@@ -191,6 +235,24 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
   **"PO Received"** (the single auto edge in v1). It does **not** set outcome — outcome is
   derived from quotations per AC-E10.
 
+**Group F notes (S4).** Three asymmetries are deliberate and are recorded in
+`PLAN-project-sales-pipeline.md` §5c rather than being re-derived by the next reader: a
+sample is refused against a superseded version while a PO is not (we control what we send,
+not what they send back); a mismatch reads as an exception while erosion from v1 reads as a
+plain number; and the per-contact flag decides whether a project link is REQUIRED, never
+whether it may be wrong -- ownership is checked for every contact, flagged or not.
+
+Still open in Group F:
+
+- ⏸ **AC-F6 (linking the ~28 pre-link sponsorship rows).** The column, the picker and the
+  rollup all ship; the historical rows are linked BY HAND, as the AC requires. No fuzzy
+  backfill runs, because a wrong link is worse than no link once the rollup reports a number
+  somebody acts on.
+- ⏸ **AC-F5, the portal-side rehearsal.** The hard block is enforced in
+  `PortalService.submit_draft` and covered by service tests, and the picker + per-contact
+  requirement render in the form. It has NOT been exercised end to end in a browser as a
+  flagged portal contact, which needs a live portal token for a flagged contact.
+
 ## Group G — Pipeline UX
 
 - **AC-G1** New sidebar group **Project Sales** (moduleKey `projects`): Pipeline, My Tasks,
@@ -241,6 +303,18 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
 - **AC-H7** **"My Tasks"** lists the current user's open tasks across all projects, overdue
   first, then upcoming, with the project and its status on each row.
 
+**Status after S5b.** AC-H1, AC-H2, AC-H4 and AC-H6 ship in full; AC-H3 and AC-H7 shipped in
+S2b and are now read by the ladder. **AC-H5 ships with one deliberate deviation:** the sweep is
+a `scheduled_tasks` row on the existing heartbeat, not an `automations` row. `automations`
+requires an email template and models "send this template on a schedule"; the ladder writes
+state, an activity row, notifications and a badge. The AC's actual requirement - no new
+scheduler - is met, and manual runs use the existing `POST /scheduled-tasks/{id}/run-now`.
+Reasoning in PLAN §5e.
+
+Also landed here, deferred from earlier slices: the **AC-E6a floor-breach** and **AC-F9 PO
+mismatch** notification fan-outs, which S3 and S4 shipped as log lines pending one definition
+of "management" (`projects.projects.view_all_financials`, grill finding G20).
+
 ## Group I — Forecast and reporting
 
 - **AC-I1** Three numbers are reported **separately and never blended**: Pipeline (sum of open
@@ -263,6 +337,15 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
   architect intelligence.
 - **AC-I5** Conversion rate is computed from quotation outcomes rolled to projects, so a
   partial win (house units won, common area lost) is not counted as a full win.
+
+**Status after S5a.** AC-I1, AC-I2, AC-I2a, AC-I3 and AC-I5 ship in full on Project Sales →
+Forecast &amp; Reports. AC-I4 ships **partially**: projects registered, potential value,
+conversion rate, loss reasons, delivery-by-year, salesperson performance and the
+sponsorship-investment / sponsorship-to-PO pair are all on the page. **Brand intelligence by
+location and budget band, and architect intelligence, are NOT built** - both need location and
+budget-band vocabularies that today are free text on the sales profile, so charting them now
+would report groupings nobody agreed on. Deferred with the rest of the S6 reporting work, and
+the vocabulary decision belongs to the client, not to us.
 
 ## Group J — RBAC
 
@@ -292,6 +375,20 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
   with no contact sees **all** companies — the existing convention, stated here so it isn't
   rediscovered as a leak.
 
+**Status after S6a.** All four tools ship and were exercised against a running MCP server:
+`crm_projects_list`, `crm_project_detail`, `crm_project_quotations_list`,
+`crm_project_forecast`. AC-K2 holds at the API surface as well as in the catalog (write routes
+stay JWT-only). AC-K3 verified through the server: `updated_at` comes back naive Malaysia
+wall-clock with no offset. AC-K4 holds by the shared convention; the three scoped tools forward
+`contact_id` / `space_id` and the forecast aggregate deliberately does not.
+
+**One AC-K1 clause could not be honoured literally:** "`agent_mcp_tools` links are seeded by
+the startup hook". That table and the tool-to-agent ownership model were removed when n8n took
+over agent routing. The intent is met against `AIAssistantConfig.enabled_tools` (what the
+assistant's RAG selects from), plus a narrow grant of `projects.projects.view` to the roles the
+integration principals act as — without which every tool 403s while looking configured. See
+PLAN §5f, findings F43 and F44.
+
 ## Group L — Migration and go-live
 
 - **AC-L1** Day-one migration is a **single consolidated management-run Excel import**, with
@@ -300,6 +397,10 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
   errors for a human to resolve.
 - **AC-L3** `purchase_requests` (PR) and `complaints` gain `project_id` in a **follow-up
   slice**, using the same nullable-FK-plus-picker pattern. Not in v1.
+  ✅ **Shipped in S6b.** `complaints.project_id` (migration 318, ON DELETE SET NULL so a
+  complaint outlives its project), the picker on the complaint form AND on the office-side
+  PR / sponsorship form, and a resolved project CODE on both detail pages. `project_title`
+  free text survives on both as the fallback for rows that predate the link.
 - **AC-L4** A rollback path exists: disabling the module leaves all `purchase_requests` and
   `complaints` behaviour untouched.
 

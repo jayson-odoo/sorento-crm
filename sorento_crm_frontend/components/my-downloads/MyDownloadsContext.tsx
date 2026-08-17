@@ -21,11 +21,14 @@ import { useQuery } from '@tanstack/react-query';
 
 import {
   fetchMyDownloads,
+  MY_DOWNLOADS_QUERY_KEY,
   type MyDownload,
   type MyDownloadsResponse,
 } from '@/services/myDownloadsService';
 
-export const MY_DOWNLOADS_QUERY_KEY = ['my-downloads'] as const;
+// Re-exported for the existing importers; the key itself now lives with the service so an
+// export trigger can invalidate it without importing a client component.
+export { MY_DOWNLOADS_QUERY_KEY };
 
 function hasInFlight(rows: MyDownload[]): boolean {
   return rows.some((d) => d.status === 'pending' || d.status === 'processing');

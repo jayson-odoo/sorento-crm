@@ -23,7 +23,7 @@ from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import OrderLinkClaim
-from app.services.scm import order_inquiry_service as inquiry
+from app.services import project_order_inquiry_import_service as inquiry
 from app.services.scm import order_link_service as links
 from tests._pg_fixture import pg_session
 

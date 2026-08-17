@@ -33,6 +33,8 @@ export const ComplaintSchema = z.object({
   contact_number: z.string().max(255).optional().nullable(),
   customer_address: z.string().max(2000).optional().nullable(),
   project_title: z.string().max(255).optional().nullable(),
+  // AC-L3. Optional forever: a complaint about a retail delivery has no project.
+  project_id: z.string().uuid().optional().nullable(),
   contact_id: z.string().max(500).optional().nullable(),
   space_id: z.string().max(500).optional().nullable(),
   technical_team_response: z.string().max(5000).optional().nullable(),

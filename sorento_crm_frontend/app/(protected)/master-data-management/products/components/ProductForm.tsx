@@ -28,9 +28,21 @@ import type { Product, ProductFormData } from '../types/product.types';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
+// The floor is project-sales pricing POLICY, not a product column, so the panel and its
+// rules live with the rest of that policy and are only surfaced here.
+import { PriceFloorPanel } from '@/app/(protected)/project-sales/_shared/components/PriceFloorPanel';
 import ProductSuppliersSection from './ProductSuppliersSection';
 import ProductAttachmentsTab from './ProductAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
+
+/** The tab values `?tab=` may name, so a stray query string cannot land on an empty panel. */
+const PRODUCT_FORM_TABS = [
+  'basic',
+  'pricing',
+  'specifications',
+  'suppliers',
+  'attachments',
+];
 
 interface ProductFormProps {
   productId?: string;
@@ -269,7 +281,13 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
             />
           </div>
         )}
-        <Tabs defaultValue="basic" className="w-full">
+        {/* `?tab=` so another screen can send somebody to the right tab rather than to
+            Basic Information with instructions. The quotation's "No photo chosen" cell links
+            straight to `?tab=attachments`, which is where the product photo is chosen. Unknown
+            values fall back to the first tab rather than rendering nothing. */}
+        <Tabs defaultValue={PRODUCT_FORM_TABS.includes(searchParams.get('tab') ?? '')
+            ? (searchParams.get('tab') as string)
+            : 'basic'} className="w-full">
           <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>
             <TabsTrigger value="pricing">Pricing</TabsTrigger>
@@ -556,6 +574,18 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                   )}
                 />
 
+                {/* Saves on its own, deliberately: a floor is a row in price_floor_rules,
+                    not a product column, so folding it into this form's submit would be
+                    one button writing two resources with no honest thing to say when the
+                    second half failed. */}
+                <PriceFloorPanel
+                  target={
+                    isEditMode && productId && product
+                      ? { level: 'product', id: productId, label: product.product_code }
+                      : null
+                  }
+                  disabledReason="Save the product first, then set its floor here."
+                />
               </CardContent>
             </Card>
           </TabsContent>

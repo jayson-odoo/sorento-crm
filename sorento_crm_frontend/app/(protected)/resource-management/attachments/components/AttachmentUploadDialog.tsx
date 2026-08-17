@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
-import { Upload, X, File as FileIcon, AlertCircle } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -11,6 +11,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription, AlertIcon } from '@/components/ui/alert';
@@ -51,7 +52,6 @@ export default function AttachmentUploadDialog({
   const [entityType, setEntityType] = useState<string>(propEntityType || '');
   const [entityId, setEntityId] = useState<string>(propEntityId || '');
   const [accessLevels, setAccessLevels] = useState<string[]>([]);
-  const [dragActive, setDragActive] = useState(false);
   const [validationError, setValidationError] = useState<string>('');
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [isUploading, setIsUploading] = useState(false);
@@ -157,108 +157,38 @@ export default function AttachmentUploadDialog({
     return true;
   };
 
-  const handleDrag = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setDragActive(false);
-    }
+  // The dropzone raises onReject once per refused file. Batch them into the one
+  // inline alert this dialog has always shown; the counter resets on the next
+  // microtask so each drop reports its own tally.
+  const rejectedCountRef = useRef(0);
+  const noteRejected = useCallback(() => {
+    rejectedCountRef.current += 1;
+    setValidationError(`${rejectedCountRef.current} file(s) skipped (extension/size)`);
+    queueMicrotask(() => {
+      rejectedCountRef.current = 0;
+    });
   }, []);
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragActive(false);
-
-      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        if (!selectedType) {
-          setValidationError('Please select an attachment type first');
-          return;
-        }
-        
-        const files = Array.from(e.dataTransfer.files).filter(f => !f.name.trim().startsWith('._'));
-        const skippedDotUnderscore = e.dataTransfer.files.length - files.length;
-        const validFiles = files.filter(file => validateFile(file, selectedType, false));
-        
-        if (validFiles.length === 0) {
-          setValidationError(
-            skippedDotUnderscore
-              ? 'No valid files. Files starting with ._ are not allowed and were skipped.'
-              : 'No valid files found. Please check file extensions and sizes.'
-          );
-          return;
-        }
-        
-        const msg = [];
-        if (skippedDotUnderscore) msg.push(`${skippedDotUnderscore} ._ file(s) skipped`);
-        if (validFiles.length < files.length) msg.push(`${files.length - validFiles.length} file(s) skipped (extension/size)`);
-        if (msg.length) setValidationError(msg.join('. '));
-        
-        setSelectedFiles(prev => [...prev, ...validFiles]);
+  const handleFilesChange = useCallback(
+    (next: File[]) => {
+      if (!selectedType) {
+        setValidationError('Please select an attachment type first');
+        return;
       }
-    },
-    [selectedType]
-  );
-
-  const handleFileInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files && e.target.files.length > 0) {
-        if (!selectedType) {
-          setValidationError('Please select an attachment type first');
-          return;
+      setSelectedFiles(next);
+      setUploadProgress((prev) => {
+        const kept: Record<string, number> = {};
+        for (const file of next) {
+          if (prev[file.name] !== undefined) kept[file.name] = prev[file.name];
         }
-        
-        const files = Array.from(e.target.files).filter(f => !f.name.trim().startsWith('._'));
-        const skippedDotUnderscore = e.target.files.length - files.length;
-        const validFiles = files.filter(file => validateFile(file, selectedType, false));
-        
-        if (validFiles.length === 0) {
-          setValidationError(
-            skippedDotUnderscore
-              ? 'No valid files. Files starting with ._ are not allowed and were skipped.'
-              : 'No valid files found. Please check file extensions and sizes.'
-          );
-          e.target.value = '';
-          return;
-        }
-        
-        const msg = [];
-        if (skippedDotUnderscore) msg.push(`${skippedDotUnderscore} ._ file(s) skipped`);
-        if (validFiles.length < files.length) msg.push(`${files.length - validFiles.length} file(s) skipped (extension/size)`);
-        if (msg.length) setValidationError(msg.join('. '));
-        
-        setSelectedFiles(prev => [...prev, ...validFiles]);
-        
-        // Reset input to allow selecting the same files again
-        e.target.value = '';
-      }
-    },
-    [selectedType]
-  );
-  
-  const removeFile = (index: number) => {
-    const fileToRemove = selectedFiles[index];
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-    if (fileToRemove) {
-      setUploadProgress(prev => {
-        const newProgress = { ...prev };
-        delete newProgress[fileToRemove.name];
-        return newProgress;
+        return kept;
       });
-    }
-  };
+    },
+    [selectedType]
+  );
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
-  };
-
-  const getAcceptString = (type: AttachmentType | undefined): string => {
-    if (!type) return '*';
+  const getAcceptString = (type: AttachmentType | undefined): string | undefined => {
+    if (!type) return undefined;
     return type.allowed_extensions
       .split(',')
       .map((ext) => `.${ext.trim()}`)
@@ -399,96 +329,22 @@ export default function AttachmentUploadDialog({
           {/* File Upload */}
           <div className="space-y-2">
             <Label>Files <span className="text-destructive">*</span></Label>
-            <div
-              onDragEnter={handleDrag}
-              onDragLeave={handleDrag}
-              onDragOver={handleDrag}
-              onDrop={handleDrop}
-              className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-                dragActive ? 'border-primary bg-primary/5' : 'border-border'
-              }`}
-            >
-              {selectedFiles.length > 0 ? (
-                <div className="space-y-3">
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {selectedFiles.map((file, index) => (
-                      <div key={`${file.name}-${index}`} className="flex items-center gap-3 p-3 border rounded-lg bg-muted/50">
-                        <FileIcon className="size-5 text-muted-foreground flex-shrink-0" />
-                        <div className="flex-1 min-w-0 text-left">
-                          <p className="text-sm font-medium truncate">{file.name}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">{formatFileSize(file.size)}</p>
-                          {uploadProgress[file.name] !== undefined && uploadProgress[file.name] >= 0 && (
-                            <div className="mt-1.5">
-                              <div className="h-1 bg-muted rounded-full overflow-hidden">
-                                <div 
-                                  className="h-full bg-primary transition-all duration-300"
-                                  style={{ width: `${uploadProgress[file.name]}%` }}
-                                />
-                              </div>
-                            </div>
-                          )}
-                          {uploadProgress[file.name] === -1 && (
-                            <p className="text-xs text-destructive mt-0.5">Upload failed</p>
-                          )}
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeFile(index)}
-                          disabled={isUploading}
-                        >
-                          <X className="size-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                  {!isUploading && (
-                    <div className="pt-2 border-t">
-                      <input
-                        type="file"
-                        multiple
-                        accept={getAcceptString(selectedType)}
-                        onChange={handleFileInput}
-                        className="hidden"
-                        id="file-upload"
-                        disabled={!selectedTypeId}
-                      />
-                      <label htmlFor="file-upload">
-                        <Button variant="outline" asChild disabled={!selectedTypeId} size="sm">
-                          <span>Add More Files</span>
-                        </Button>
-                      </label>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <Upload className="size-8 mx-auto mb-3 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground mb-2">
-                    Drag and drop files here, or click to browse
-                  </p>
-                  <input
-                    type="file"
-                    multiple
-                    accept={getAcceptString(selectedType)}
-                    onChange={handleFileInput}
-                    className="hidden"
-                    id="file-upload"
-                    disabled={!selectedTypeId}
-                  />
-                  <label htmlFor="file-upload">
-                    <Button variant="outline" asChild disabled={!selectedTypeId}>
-                      <span>Select Files</span>
-                    </Button>
-                  </label>
-                  {selectedType && (
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Max file size: {selectedType.max_file_size_mb} MB per file
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
+            <FileDropzone
+              multiple
+              disabled={isUploading}
+              accept={getAcceptString(selectedType)}
+              maxSizeMb={selectedType?.max_file_size_mb}
+              files={selectedFiles}
+              onFilesChange={handleFilesChange}
+              onReject={noteRejected}
+              title="Drag and drop files here, or click to browse"
+              hint={
+                selectedType
+                  ? `Allowed: ${selectedType.allowed_extensions}`
+                  : 'Select an attachment type first'
+              }
+              aria-label="Attachment files"
+            />
           </div>
 
           {showFieldLinkageSection && (

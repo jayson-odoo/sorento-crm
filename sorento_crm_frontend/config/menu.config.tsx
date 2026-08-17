@@ -687,6 +687,80 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
+    title: 'Project Sales',
+    icon: Building2,
+    moduleKey: 'projects',
+    children: [
+      {
+        // Pipeline carries both views behind its own Board / Grid toggle, and the Grid
+        // is the same list a separate "Projects" entry used to show. Two menu entries
+        // onto one screen is a choice the user has to make and cannot get right.
+        // /project-sales/projects still resolves, it redirects here.
+        title: 'Pipeline',
+        path: '/project-sales/pipeline',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Leads',
+        path: '/project-sales/leads',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Marketing's worklist: leads assigned but not yet accepted. Its own entry
+        // because a lead nobody has accepted is nobody's job, and it stays invisible
+        // if you have to go looking for it inside the leads list.
+        title: 'Awaiting Acceptance',
+        path: '/project-sales/lead-acceptance',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'My Tasks',
+        path: '/project-sales/my-tasks',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project by nature: a claim raised on one project's sales order is
+        // answered by another project's CS, so it cannot live under either project.
+        title: 'Stock Claims',
+        path: '/project-sales/stock-claims',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project for the same reason claims are: a reconciliation belongs to one
+        // sales order, but the point of the list is that a STACK of unanswered ones is
+        // visible to management rather than discovered (AC-N6).
+        title: 'AutoCount Differences',
+        path: '/project-sales/divergences',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Forecast & Reports',
+        path: '/project-sales/reports',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Parties',
+        path: '/project-sales/parties',
+        permission: 'projects.parties.view',
+      },
+      {
+        title: 'Setup',
+        path: '/project-sales/setup',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Series',
+        path: '/project-sales/series',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Price Floors',
+        path: '/project-sales/price-floors',
+        permission: 'projects.types.view',
+      },
+    ],
+  },
+  {
     title: 'Marketing Management',
     icon: Megaphone,
     moduleKey: 'marketing',
@@ -1562,6 +1636,80 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock Ledger',
         path: '/inventory-management/stock-ledger',
         permission: 'inventory.stock_ledger.view',
+      },
+    ],
+  },
+  {
+    title: 'Project Sales',
+    icon: Building2,
+    moduleKey: 'projects',
+    children: [
+      {
+        // Pipeline carries both views behind its own Board / Grid toggle, and the Grid
+        // is the same list a separate "Projects" entry used to show. Two menu entries
+        // onto one screen is a choice the user has to make and cannot get right.
+        // /project-sales/projects still resolves, it redirects here.
+        title: 'Pipeline',
+        path: '/project-sales/pipeline',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Leads',
+        path: '/project-sales/leads',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Marketing's worklist: leads assigned but not yet accepted. Its own entry
+        // because a lead nobody has accepted is nobody's job, and it stays invisible
+        // if you have to go looking for it inside the leads list.
+        title: 'Awaiting Acceptance',
+        path: '/project-sales/lead-acceptance',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'My Tasks',
+        path: '/project-sales/my-tasks',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project by nature: a claim raised on one project's sales order is
+        // answered by another project's CS, so it cannot live under either project.
+        title: 'Stock Claims',
+        path: '/project-sales/stock-claims',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project for the same reason claims are: a reconciliation belongs to one
+        // sales order, but the point of the list is that a STACK of unanswered ones is
+        // visible to management rather than discovered (AC-N6).
+        title: 'AutoCount Differences',
+        path: '/project-sales/divergences',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Forecast & Reports',
+        path: '/project-sales/reports',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Parties',
+        path: '/project-sales/parties',
+        permission: 'projects.parties.view',
+      },
+      {
+        title: 'Setup',
+        path: '/project-sales/setup',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Series',
+        path: '/project-sales/series',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Price Floors',
+        path: '/project-sales/price-floors',
+        permission: 'projects.types.view',
       },
     ],
   },

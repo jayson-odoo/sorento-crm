@@ -33,6 +33,15 @@ export type SearchableSelectOption = {
 export type SearchableSelectProps = {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * The whole option that was just chosen, alongside `onChange`, and `null` when the selection
+   * is cleared.
+   *
+   * For callers whose next step needs more than the id: an inline line table fills the rest of
+   * the row from the picked product, and re-fetching a record it has just been handed would be
+   * a round trip for data already on screen.
+   */
+  onOptionChange?: (option: SearchableSelectOption | null) => void;
   /** Static mode: full option set, filtered client-side. Mutually exclusive with `fetchOptions`. */
   options?: SearchableSelectOption[];
   /**
@@ -53,6 +62,12 @@ export type SearchableSelectProps = {
    * widen a locally-filtered list with a server refetch.
    */
   onSearchChange?: (query: string) => void;
+  /**
+   * Search text the popover opens with, for callers that already know what is being looked
+   * for. It is put IN the search box rather than applied invisibly, so the user can see what
+   * narrowed the list and widen it by editing or clearing the box. Restored on every open.
+   */
+  initialQuery?: string;
   /**
    * Async mode: the currently-selected option, so the trigger label + checkmark survive
    * when `value` isn't in the fetched page. Callers already hold the selected entity.
@@ -101,6 +116,7 @@ export type SearchableSelectProps = {
 export function SearchableSelect({
   value,
   onChange,
+  onOptionChange,
   options,
   fetchOptions,
   selectedOption,
@@ -108,6 +124,7 @@ export function SearchableSelect({
   paginated = false,
   pageSize = 50,
   onSearchChange,
+  initialQuery = '',
   id,
   size,
   placeholder = 'Select...',
@@ -126,7 +143,7 @@ export function SearchableSelect({
   // Async state
   const [asyncOptions, setAsyncOptions] = React.useState<SearchableSelectOption[]>([]);
   const [loading, setLoading] = React.useState(false);
-  const [query, setQuery] = React.useState('');
+  const [query, setQuery] = React.useState(initialQuery);
   const lastQueryRef = React.useRef<string>('\u0000'); // sentinel: never equals a real query
 
   const [page, setPage] = React.useState(0);
@@ -173,19 +190,23 @@ export function SearchableSelect({
     }
   }, [fetchOptions, loadingMore, page, query, pageSize]);
 
-  // Eager first page on open; debounced fetch on query change (async mode only).
+  // Eager first page on open; debounced fetch on query change (async mode only). A seeded
+  // query is not a keystroke, it is what the caller already knew, so it fetches on open at
+  // once rather than after the typing debounce.
   React.useEffect(() => {
     if (!isAsync || !open) return;
-    const t = setTimeout(() => void runFetch(query), query === '' ? 0 : 300);
+    const seeded = query === '' || query === initialQuery;
+    const t = setTimeout(() => void runFetch(query), seeded ? 0 : 300);
     return () => clearTimeout(t);
-  }, [isAsync, open, query, runFetch]);
+  }, [isAsync, open, query, initialQuery, runFetch]);
 
-  // Reset transient async state when the popover closes.
+  // Reset transient async state when the popover closes. Back to the seed, not to blank:
+  // reopening asks the same question it asked the first time.
   React.useEffect(() => {
     if (open) return;
-    setQuery('');
+    setQuery(initialQuery);
     lastQueryRef.current = '\u0000';
-  }, [open]);
+  }, [open, initialQuery]);
 
   const baseOptions = React.useMemo(
     () => (isAsync ? asyncOptions : (options ?? [])),
@@ -232,8 +253,9 @@ export function SearchableSelect({
   const isDisabled = disabled || misconfigured;
   const showClear = clearable && !!value && !isDisabled;
 
-  const select = (v: string) => {
-    onChange(v);
+  const select = (opt: SearchableSelectOption) => {
+    onChange(opt.value);
+    onOptionChange?.(opt);
     setOpen(false);
   };
 
@@ -282,6 +304,7 @@ export function SearchableSelect({
                 e.preventDefault();
                 e.stopPropagation();
                 onChange('');
+                onOptionChange?.(null);
               }}
             >
               <X className="size-4" />
@@ -298,7 +321,12 @@ export function SearchableSelect({
         className={cn(
             // Cap to the space Radix measured, or a long list makes the menu taller than
             // the viewport and the search box gets pushed off-screen on short windows.
-            'w-(--radix-popper-anchor-width) max-h-(--radix-popper-available-height) flex flex-col p-0',
+            //
+            // The menu follows its trigger's width but never goes below 16rem: a narrow cell
+            // (a UOM column is 110px) made a legible list unreadable, one squeezed word per
+            // line, and the column cannot be widened to suit its dropdown. Capped at the space
+            // Radix measured so widening it can never push the menu off a 375px screen.
+            'w-[max(var(--radix-popper-anchor-width),16rem)] max-w-(--radix-popper-available-width) max-h-(--radix-popper-available-height) flex flex-col p-0',
             className,
           )}
         align="start"
@@ -320,7 +348,7 @@ export function SearchableSelect({
                     key={opt.value}
                     value={opt.searchText ?? `${opt.label} ${opt.description ?? ''}`}
                     disabled={opt.disabled}
-                    onSelect={() => select(opt.value)}
+                    onSelect={() => select(opt)}
                     className="flex items-start gap-2"
                   >
                     <Check

@@ -410,6 +410,139 @@ def _judge_fallback() -> str:
     )
 
 
+def _po_extractor_fallback() -> str:
+    """One page of a scanned customer purchase order to structured lines and
+    handwriting. Measured against the client's own scan before the slice was sized:
+    52/52 line amounts, the single strike-through, the successor PO number and the
+    dates on the pencil notes (PLAN-project-lead-to-so.md 5b).
+
+    Every rule below earned its place by being got wrong without it. The
+    two-line-wrapped stock code is the one that mattered most: the customer's column
+    is narrow, so `SRTWC86` and `08-RL` are one code printed on two rows, and reading
+    them as two codes produces a PO that reconciles to nothing.
+    """
+    return (
+        "You are reading ONE PAGE of a scanned customer PURCHASE ORDER sent to Sorento "
+        "Sdn Bhd. This is page {{page_no}} of {{page_count}}.\n"
+        "\n"
+        "Return STRICT JSON only, no prose, no markdown fence:\n"
+        "\n"
+        "{\n"
+        '  "header": {"po_number":..., "po_date":..., "term":..., "sales_person":...,\n'
+        '             "cust_order_no":..., "remark":...},\n'
+        '  "lines": [\n'
+        '    {"no": 1, "stock_code": "...", "description": "...", "qty": 927,\n'
+        '     "uom": "SETS", "unit_price": 392.85, "amount": 364171.95,\n'
+        '     "struck_through": false,\n'
+        '     "struck_parts": ["SRTFH12", "S/STEEL"]}\n'
+        "  ],\n"
+        '  "annotations": [\n'
+        '    {"text": "verbatim handwriting", "date": "26/1/26", "refers_to_items": [5,20,23],\n'
+        '     "meaning": "amend code and description",\n'
+        '     "kind": "amend_code",\n'
+        '     "proposed_code": "SRTWC8608-RL",\n'
+        '     "successor_po_number": null}\n'
+        "  ]\n"
+        "}\n"
+        "\n"
+        "Rules:\n"
+        "- Transcribe the PRINTED table exactly. Do not correct, expand or normalise codes.\n"
+        "- A stock code wrapped onto two lines is ONE code: join it, so a cell reading\n"
+        '  "SRTWC86" then "08-RL" is "SRTWC8608-RL".\n'
+        "- A ROW IS A ROW ONLY IF IT HAS AN ITEM NUMBER, A STOCK CODE OR MONEY ON IT.\n"
+        "  A long description wraps onto the rows beneath it and can even finish at the\n"
+        "  TOP OF THE NEXT PAGE, above the next numbered item. That continuation belongs\n"
+        "  to the description it came from and is NOT a separate item.\n"
+        '  * Wrapping WITHIN this page: put the whole thing in that item\'s "description".\n'
+        "  * Wrapping in from the PREVIOUS page, so this page opens with description text\n"
+        "    before its first numbered item: emit it as an entry carrying ONLY\n"
+        '    "description", with "no", "stock_code", "qty", "unit_price" and "amount" all\n'
+        "    null. That is the signal that it is a continuation, and it gets joined back\n"
+        "    to the item it belongs to. Do not invent an item number for it, and do not\n"
+        "    drop the text.\n"
+        "  Apart from that one continuation entry, the entries you return must be exactly\n"
+        "  the item numbers printed on this page.\n"
+        "- STRIKE-THROUGH IS THE MOST IMPORTANT THING ON THIS PAGE. Look for a pen line\n"
+        "  drawn horizontally THROUGH printed characters. It can cover a whole row, or\n"
+        "  only part of one, and both matter:\n"
+        "  * the WHOLE row crossed out means the line is cancelled -> struck_through=true.\n"
+        "  * only SOME words crossed out means those words are being replaced, usually by\n"
+        "    handwriting nearby -> struck_through=false, and list exactly the crossed-out\n"
+        '    fragments in "struck_parts". A row where only the stock code is crossed out\n'
+        "    is NOT a cancelled row.\n"
+        "- Transcribe struck-out text as it is printed, in the field it belongs to, and\n"
+        '  also name it in "struck_parts". Never silently drop it and never merge it with\n'
+        "  the replacement: the reviewer needs to see what was there and what replaced it.\n"
+        "- Handwriting can itself be crossed out, meaning the writer changed their mind.\n"
+        "  Exclude the crossed-out part from the note text and put it in struck_parts. If\n"
+        '  the paper reads "SS C-FH12" with SS crossed out, the note is "C-FH12".\n'
+        '- Put EVERY handwritten note in "annotations", verbatim, including notes written\n'
+        "  next to a line or in the margin. Do not merge two notes into one.\n"
+        '- Classify each note as "kind", judged from everything you can SEE - the words,\n'
+        "  the strike-through it sits beside, where on the page it points - not from\n"
+        "  keywords alone. Exactly one of:\n"
+        '  * "cancel_line" - the note cancels printed line items (whatever language or\n'
+        "    words it uses for that).\n"
+        '  * "amend_code" - it replaces a product code. Put the REPLACEMENT code, exactly\n'
+        '    as written, in "proposed_code".\n'
+        '  * "amend_description" - it changes wording, a size or a spec, not the code.\n'
+        '  * "successor_po" - it points at another purchase order. Put that PO number in\n'
+        '    "successor_po_number" (also fill this on a cancel_line note that names one).\n'
+        '  * "signature" - a signature, a chop, an approval stamp.\n'
+        '  * "other" - anything else. When unsure between two kinds, prefer "other" over\n'
+        "    guessing: a wrong cancel_line moves money.\n"
+        '- "proposed_code" and "successor_po_number" are null unless the note names one.\n'
+        "- Numbers: no thousands separators, a dot decimal.\n"
+        "- If a field is absent on this page use null. Report ONLY lines visible on THIS page.\n"
+    )
+
+
+def _schedule_extractor_fallback() -> str:
+    """One page of a customer delivery-schedule matrix to (phase x product -> qty).
+
+    Different problem from the PO: the schedule usually HAS a text layer, so this is
+    structure rather than OCR. It is checkable, which is the point: the column total
+    must equal the schedule's own TOTAL QTY row and the PO quantity, so a wrong answer
+    announces itself (PLAN-project-lead-to-so.md 5c).
+
+    The empty-cell rule is not cosmetic. A zero and a blank mean different things: a
+    blank means this phase does not take this product, and turning blanks into zeroes
+    makes every phase look like it was planned for every product.
+    """
+    return (
+        "This is ONE PAGE of a customer DELIVERY SCHEDULE sent to Sorento Sdn Bhd. "
+        "This is page {{page_no}} of {{page_count}}.\n"
+        "\n"
+        "It is a MATRIX. Rows are delivery phases (a label such as \"Level 2 & 7\", plus a "
+        "delivery date). Columns are products, each headed by a product name that contains "
+        "a product code, where the customer prefixes their own code, so "
+        '"SORENTO BUI-HB-SRTWC8613-RL One-Piece WC" carries the code SRTWC8613-RL. '
+        "Cells are quantities. Rows are grouped under an area heading such as TOWER or "
+        "COMMON AREA. There is usually a TOTAL QTY row at the bottom.\n"
+        "\n"
+        "Return STRICT JSON only:\n"
+        "\n"
+        "{\n"
+        '  "header": {"project": ..., "po_ref": ..., "schedule_date": ..., "revision": ...},\n'
+        '  "products": [{"col": 1, "customer_code": "BUI-HB-SRTWC8613-RL", "code": "SRTWC8613-RL",\n'
+        '                "name": "One-Piece WC"}],\n'
+        '  "phases": [{"row": 1, "area_group": "TOWER", "label": "Level 2 & 7",\n'
+        '              "delivery_date": "2026-07-01"}],\n'
+        '  "cells": [{"row": 1, "col": 1, "qty": 135}],\n'
+        '  "reported_totals": [{"col": 1, "qty": 927}]\n'
+        "}\n"
+        "\n"
+        "Rules:\n"
+        "- Only the products whose columns appear on THIS page.\n"
+        "- An empty cell is omitted entirely. Never write it as zero.\n"
+        "- delivery_date as ISO yyyy-mm-dd. The rows run in calendar order, so use that to\n"
+        "  disambiguate an ambiguous day and month.\n"
+        '- "reported_totals" is the schedule\'s own TOTAL QTY row, transcribed, not computed.\n'
+        "- A row under COMMON AREA may carry no label at all. Give it area_group COMMON AREA\n"
+        "  and its date, and do not borrow the label from the row above it.\n"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # PROMPT_KEYS registry                                                          #
 # --------------------------------------------------------------------------- #
@@ -496,6 +629,27 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_ideate_extractor_fallback,
+    ),
+    # --- Document extraction (project sales phase 2). Not part of the assistant
+    #     pipeline: these run per PAGE against a vision model on an uploaded
+    #     document, and everything they produce is checked by arithmetic before a
+    #     human ever sees it. They live here so the prompt can be tuned and
+    #     rolled back without a deploy, like every other prompt. ---
+    "po_extractor": PromptKeySpec(
+        name="po_extractor",
+        role="PO extractor — scanned customer purchase order to lines and handwriting",
+        active=True,
+        activates_in=None,
+        variables=["page_no", "page_count"],
+        fallback=_po_extractor_fallback,
+    ),
+    "schedule_extractor": PromptKeySpec(
+        name="schedule_extractor",
+        role="Schedule extractor — delivery schedule matrix to phase by product quantities",
+        active=True,
+        activates_in=None,
+        variables=["page_no", "page_count"],
+        fallback=_schedule_extractor_fallback,
     ),
     # --- Superseded by semantic_parser (M0). Rows kept for trace history +
     #     prompt rollback; call sites removed. active=False → not offered as a

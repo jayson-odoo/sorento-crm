@@ -17,6 +17,29 @@ from app.services.storage_router import default_provider, get_backend
 logger = logging.getLogger(__name__)
 
 
+def _record_failure(db, svc: DownloadService, download_id: str, error: Exception, label: str) -> None:
+    """Write the failure onto the download row, whatever it was that failed.
+
+    The rollback is the point. When the thing that failed was the DATABASE - a query against a
+    column the running code expects and the schema does not yet have, say - psycopg2 leaves the
+    transaction aborted, and every later statement on that session raises
+    `InFailedSqlTransaction`. `mark_failed` is a later statement on that session, so without a
+    rollback first it raises too, and the row is left sitting in 'processing' for good: the
+    drawer polls it forever, and its sweeper only reaps rows in 'sent'. The user is told nothing.
+
+    Marking the failure is itself best-effort - if even this cannot be written, log it and let
+    the task return normally rather than poisoning RQ's failed registry.
+    """
+    try:
+        db.rollback()
+    except Exception:  # noqa: BLE001 - a session too broken to roll back is still worth trying
+        logger.exception("%s: rollback before marking download %s failed", label, download_id)
+    try:
+        svc.mark_failed(download_id, str(error))
+    except Exception:  # noqa: BLE001
+        logger.exception("%s: could not mark download %s failed", label, download_id)
+
+
 def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) -> dict:
     """Render a complaint PDF, store it, and update the download row.
 
@@ -55,10 +78,7 @@ def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) ->
         return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_complaint_pdf failed for download %s", download_id)
-        try:
-            svc.mark_failed(download_id, str(e))
-        except Exception:
-            logger.exception("generate_complaint_pdf: could not mark download %s failed", download_id)
+        _record_failure(db, svc, download_id, e, "generate_complaint_pdf")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()
@@ -197,7 +217,7 @@ def generate_purchase_request_pdf(
 
 
 def generate_promotions_pdf(
-    download_id: str, promotion_ids: list, user_id: str, company_id: str = None
+    download_id: str, promotion_ids: list, user_id: str, company_id: Optional[str] = None
 ) -> dict:
     """Compile the selected promotions' attachment flyers into one PDF, store it,
     and update the download row.
@@ -246,10 +266,138 @@ def generate_promotions_pdf(
         }
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_promotions_pdf failed for download %s", download_id)
-        try:
-            svc.mark_failed(download_id, str(e))
-        except Exception:
-            logger.exception("generate_promotions_pdf: could not mark download %s failed", download_id)
+        _record_failure(db, svc, download_id, e, "generate_promotions_pdf")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
+def _quotation_issue_or_die(db, issue_id: str):
+    """The issue row the export renders from, or a readable failure.
+
+    The download row outlives what it points at - a document can be deleted between the
+    enqueue and the render - so a missing revision has to become a failed download rather
+    than an AttributeError deep inside the renderer.
+    """
+    from app.models.projects import ProjectQuotationIssue
+
+    issue = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.id == str(issue_id))
+        .first()
+    )
+    if issue is None:
+        raise ValueError(
+            "This revision no longer exists, so it cannot be exported."
+        )
+    return issue
+
+
+def generate_quotation_issue_pdf(
+    download_id: str, issue_id: str, user_id: str, company_id: Optional[str] = None
+) -> dict:
+    """Render one issued quotation as a PDF, store it, and update the download row.
+
+    The renderer is the SAME one the on-demand route uses and it still reads the ISSUE
+    snapshot, so a download next year is what was sent. What is new is only that the bytes are
+    persisted once, as this download job's artifact - nothing else ever reads that object, and
+    the document itself keeps rendering on demand.
+
+    Best-effort and self-contained: any failure marks the download 'failed' with a readable
+    message rather than raising into RQ's failed registry.
+    """
+    db = SessionLocal()
+    # Worker sessions default to the fail-closed UNSET scope, which would hide every
+    # company-owned quotation row. Re-establish the enqueuer's active company (snapshotted at
+    # enqueue); None = system-wide, for a principal with no single company.
+    set_company_scope(db, frozenset({company_id}) if company_id else None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+
+        from app.services import project_quotation_pdf_service as pdf
+
+        pdf_bytes, filename = pdf.render_issue_pdf(
+            db, _quotation_issue_or_die(db, issue_id)
+        )
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        # Keyed by DOWNLOAD id, not by the reference: two exports of the same revision are two
+        # rows, and a shared key would have the second silently overwrite the first's file.
+        key = f"exports/quotation-pdf/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=pdf_bytes,
+            file_path=key,
+            content_type="application/pdf",
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_quotation_issue_pdf: download %s ready (%d bytes)",
+            download_id, len(pdf_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_quotation_issue_pdf failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_quotation_issue_pdf")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
+def generate_quotation_issue_xlsx(
+    download_id: str, issue_id: str, user_id: str, company_id: Optional[str] = None
+) -> dict:
+    """Render one issued quotation as a workbook, store it, and update the download row.
+
+    Same snapshot as the PDF, so the two artifacts of one revision can never quote different
+    money. Separate task rather than a format flag: they upload under different prefixes with
+    different mime types, and an xlsx served as application/pdf downloads as a file Excel
+    refuses to open.
+    """
+    db = SessionLocal()
+    set_company_scope(db, frozenset({company_id}) if company_id else None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+
+        from app.services import project_quotation_excel_service as excel
+
+        payload, filename = excel.render_issue_xlsx(
+            db, _quotation_issue_or_die(db, issue_id)
+        )
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/quotation-xlsx/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=payload,
+            file_path=key,
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_quotation_issue_xlsx: download %s ready (%d bytes)",
+            download_id, len(payload),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(payload)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_quotation_issue_xlsx failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_quotation_issue_xlsx")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()
@@ -344,10 +492,7 @@ def generate_chat_history_csv(download_id: str, filters: dict) -> dict:
         return {"download_id": download_id, "status": "ready", "rows": rows_written}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_chat_history_csv failed for download %s", download_id)
-        try:
-            svc.mark_failed(download_id, str(e))
-        except Exception:
-            logger.exception("generate_chat_history_csv: could not mark download %s failed", download_id)
+        _record_failure(db, svc, download_id, e, "generate_chat_history_csv")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()

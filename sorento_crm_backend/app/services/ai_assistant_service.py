@@ -195,6 +195,18 @@ _UUID_PARAM_ENTITY_TYPES: dict[str, str] = {
     "supplier_id": "supplier",
     "promotion_ids": "promotion",
     "promotion_id": "promotion",
+    # Project Sales (AC-K1). `developer_party_ids` maps to the shared party resolver, which
+    # covers developers, architects and main contractors in one probe -- the LLM writes the
+    # company name it was shown either way.
+    "project_ids": "project",
+    "project_id": "project",
+    "developer_party_ids": "project_party",
+    "developer_party_id": "project_party",
+    # "my pipeline" / "what is Ali working on". The tool takes a user uuid, and since the
+    # slimmed project payload no longer carries owner uuids, a NAME is the only thing the model
+    # ever has to work with -- so without this entry the owner filter cannot be reached at all.
+    "owner_user_ids": "user",
+    "owner_user_id": "user",
 }
 
 _UUID_RE = re.compile(
@@ -2212,9 +2224,26 @@ class AIAssistantChatService:
 
     def _resolve_value_to_uuids(self, value: str, entity_type: str) -> list[str]:
         """Fallback: resolve a single name/code to UUIDs of ``entity_type`` by
-        reusing ``resolve_references``. Best-effort — any failure yields []."""
+        reusing ``resolve_references``. Best-effort — any failure yields [].
+
+        The value is passed as a TOKEN LIST, not as a query string. Handed a string,
+        ``resolve_references`` runs `extract_candidate_tokens`, which only keeps code-like
+        tokens (a digit AND a letter) plus names that follow a "customer is ..." marker -- so a
+        bare person or company name tokenized to NOTHING and this fallback silently returned []
+        for every name it was ever asked about. Here the value IS the token: the LLM already
+        told us what to look up, there is nothing to extract.
+
+        Embedding fallback is off deliberately. This substitutes a UUID into a filter, so a
+        plausible-but-wrong semantic neighbour would answer confidently about the wrong
+        salesperson or developer; leaving the value unresolved makes the backend say so.
+        """
         try:
-            res = resolve_references(self.db, value)
+            res = resolve_references(
+                self.db,
+                [value],
+                allowed_entity_types=[entity_type],
+                enable_embedding_fallback=False,
+            )
         except Exception:
             logger.exception("uuid-arg fallback resolve failed value=%s", value[:80])
             return []

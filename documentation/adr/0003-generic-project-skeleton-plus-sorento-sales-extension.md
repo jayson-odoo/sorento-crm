@@ -1,5 +1,13 @@
 # A generic project skeleton and the Sorento sales extension ship together, never apart
 
+> **Table names in this document predate the schema move.** On 2026-08-15 the projects
+> module's 47 tables moved into a dedicated `projects` Postgres schema and the 34 that
+> carried a `project_` prefix dropped it: `project_leads` is now `projects.leads`,
+> `project_quotation_lines` is `projects.quotation_lines`, and so on. The 13 unprefixed
+> ones only changed schema. Nothing else in this document changes. See
+> [ADR-0011](0011-project-sales-tables-live-in-the-projects-schema.md) and
+> `documentation/plans/PLAN-projects-schema-move.md` for the full mapping.
+
 `dreamz_ems` already models an event as a **Project** created from a **Project Template**
 belonging to a **Project Type**, with participants carrying template-configured roles. Sorento
 needs the same skeleton, so the `projects` module is split in two layers that are built and
