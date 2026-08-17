@@ -28,7 +28,7 @@ The tier ladder that sets deadlines.
 
 ## Entity: Conversation SLA tracking row (`conversation_sla_tracking`, conversation scope)
 
-**Identity / routing:** `id`, `policy_id`, `current_tier`, `assigned_to_id` (FK users), `assigned_to` (legacy text), `respond_contact_id`, `agent_id`, `team_set_code`, `message_id`.
+**Identity / routing:** `id`, `policy_id`, `current_tier`, `assigned_to_id` (FK users), `assigned_to` (legacy text), `respond_contact_id`, `agent_id`, `team_set_code`, `brand_code` (the brand the conversation is about, stamped at creation and reused by every escalation to narrow the tier team's pool; null = all brands), `message_id`.
 
 **The two clocks:**
 

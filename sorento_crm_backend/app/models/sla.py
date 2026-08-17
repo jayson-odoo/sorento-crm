@@ -128,6 +128,12 @@ class ConversationSLATracking(Base):
     source_entity_id = Column(UUID(as_uuid=False), nullable=True)
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="SET NULL"), nullable=True)  # FK to access_agents
     team_set_code = Column(String(100), nullable=True)  # Team assignment set code for escalation; cleared on resolve
+    # The brand the initial assignment resolved with (lower-case `brands.brand_code`),
+    # NULL = unknown, which narrows nobody. Stamped once at creation and read back by
+    # every escalation, exactly like company_id above: without it a tier-2 escalation
+    # of a Mocha conversation would round-robin the whole tier-2 team instead of the
+    # members tagged for Mocha.
+    brand_code = Column(Text, nullable=True)
     message_id = Column(BigInteger, nullable=True)  # External message id (e.g. n8n); cleared on resolve
     # Identity of a conversation intervention ticket: the message that asked for a
     # human. Text (not BigInteger) so the ticket layer stays channel-agnostic when

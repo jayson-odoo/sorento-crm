@@ -599,8 +599,8 @@ def _is_gated(route) -> bool:
 
 class TestStructuralCoverage:
     def test_there_are_user_management_get_routes_to_check(self):
-        # UAC4.2's whole point breaks if this is vacuously empty. 49 is the real
-        # count now the sweep covers the whole package - 42 gated + 7 exceptions.
+        # UAC4.2's whole point breaks if this is vacuously empty. 45 is the real
+        # count now the sweep covers the whole package - 39 gated + 7 exceptions.
         # (It was 27 under the old seven-name scope: 13 gated + 13 exceptions
         # when written, then 24 gated + 3 exceptions once Q1, Q2 and Q3 were
         # decided, Q2 also adding /settings/app-config.)
@@ -643,6 +643,7 @@ class TestStructuralCoverage:
             "/api/v1/user-management/teams/{team_id}",
             "/api/v1/user-management/teams/{team_id}/members",
             "/api/v1/user-management/teams/{team_id}/members/{user_id}/market-segments",
+            "/api/v1/user-management/teams/{team_id}/members/{user_id}/brands",
             "/api/v1/user-management/access-agents/",
             "/api/v1/user-management/access-agents/contact-access",
             "/api/v1/user-management/access-agents/neighbours",

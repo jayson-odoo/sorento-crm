@@ -197,6 +197,31 @@ team_member_market_segments = Table(
 )
 
 
+# Many-to-many: a team membership serves zero+ BRANDS. Empty = the member serves
+# every brand (untagged member = serves all), exactly like the segment table above -
+# same matching rule, second axis. Brand is orthogonal to company: Cabana and Mocha
+# are brands INSIDE the Sorento company, so the company column cannot carry them.
+#
+# `brand_code` is deliberately NOT an FK to `brands.brand_code`: deleting a brand
+# would then silently untag its members, turning specialists into serve-all and
+# changing routing without anybody asking for it. Unknown codes are validated at
+# save time instead (see `team_member_brand_service`).
+team_member_brands = Table(
+    "team_member_brands",
+    Base.metadata,
+    Column(
+        "team_member_id",
+        UUID(as_uuid=False),
+        ForeignKey("team_members.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("brand_code", Text, primary_key=True),
+    Column("created_at", DateTime(timezone=False), server_default=func.now(), nullable=False),
+    Index("ix_team_member_brands_team_member_id", "team_member_id"),
+    Index("ix_team_member_brands_brand_code", "brand_code"),
+)
+
+
 class RespondContact(Base):
     __tablename__ = "respond_contacts"
 

@@ -45,6 +45,7 @@ EXEMPTIONS: dict[str, str] = {
     "respond_contact_access_types": "JUNCTION (contact_id + access_type_code)",
     "respond_contact_market_segments": "JUNCTION (contact_id + segment_code)",
     "team_member_market_segments": "JUNCTION (team_member_id + segment_code)",
+    "team_member_brands": "JUNCTION (team_member_id + brand_code), mirrors team_member_market_segments",
     # --- EXTERNAL (schema owned elsewhere) ---
     "verification_tokens": "EXTERNAL — NextAuth composite PK (identifier + token)",
     "chat_histories": "EXTERNAL — Respond/n8n ingest, BigInteger id by their design",

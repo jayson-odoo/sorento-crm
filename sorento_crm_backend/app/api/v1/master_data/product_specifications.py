@@ -11,9 +11,10 @@ The preview is the point. The relevance floor and the per-key weights are curren
 one engineer's judgement measured against a small eval set; they only become right
 when a product person types real phrases and says which results are wrong.
 """
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -27,7 +28,8 @@ from app.models.product_spec import (
     ProductSpecifications,
 )
 from app.schemas.common import MAX_PAGE_LIMIT
-from app.services.error_handler import handle_internal_error, handle_not_found
+from app.services import product_spec_verification
+from app.services.error_handler import AppException, handle_internal_error, handle_not_found
 from app.services.product_class_signal import explain_code
 from app.services.product_spec_search import RELEVANCE_FLOOR, search_specs
 
@@ -281,6 +283,15 @@ async def get_product_specification(
             "category_code": category.category_code if category else None,
             "searchable": bool(spec),
             "diagnosis": diagnosis,
+            # Both from the CODE, so the two company copies of a model show the
+            # identical badge and the Specifications tab needs no second round trip
+            # (AC-D.14). `values_hash` is what a single Verify echoes back.
+            "verification": product_spec_verification.verification_block(
+                db, product.product_code
+            ),
+            "values_hash": product_spec_verification.current_values_hash(
+                db, product.product_code
+            ),
             "spec": (
                 {
                     "values": _display_values(spec.values or {}),
@@ -699,3 +710,196 @@ def preview_spec_search(
         }
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+# --- Verification: who vouched for a code's specs, and the queue of what is left ---
+#
+# Same router, same module guard, and the same two permissions the product screens
+# already use - `.view` to read the queue, `.edit` to stamp or withdraw one. No new
+# slug is minted: a dedicated one would ship the feature 403'd to everyone, which is
+# exactly what happened to the spec registry (AC-D.15).
+
+
+class SpecVerifyRequest(BaseModel):
+    """One code, and the hash of the values the person was actually looking at."""
+
+    product_code: str = Field(..., min_length=1)
+    values_hash: str = Field(..., min_length=1)
+
+
+class SpecVerifyBulkRequest(BaseModel):
+    """The rows a reviewer ticked. Capped because selection is page-scoped."""
+
+    items: list[SpecVerifyRequest] = Field(..., min_length=1, max_length=500)
+
+
+class SpecUnverifyRequest(BaseModel):
+    """A withdrawal takes no hash: a claim is being removed, not made."""
+
+    product_code: str = Field(..., min_length=1)
+
+
+class SpecUnverifyBulkRequest(BaseModel):
+    product_codes: list[str] = Field(..., min_length=1, max_length=500)
+
+
+def _verification_conflict(payload: dict) -> AppException:
+    """A 409 whose body IS the refusal, rather than a sentence about it.
+
+    The global handler serialises `AppException.detail` straight to the response body,
+    so replacing the standard envelope is how a route says something the client must
+    branch on. There is exactly one refusal left - `values_changed`, "re-read the
+    values" (AC-D.4); the open-exception refusal went with the exceptions UI (captain
+    ruling 2026-08-17). `message` is kept alongside so a generic error reader still has
+    something to show.
+
+    Encoded HERE, because that handler hands the detail to `JSONResponse` as-is rather
+    than through FastAPI's response encoding. A VerificationBlock carries datetimes, so
+    an unencoded payload raised TypeError inside the handler and turned the refusal into
+    a 500 - in exactly the case the refusal exists for, a stamped code whose values
+    moved. A code with no ledger history has nothing but strings in it, which is why
+    the first tests of this path passed.
+    """
+    payload = jsonable_encoder(payload)
+    exc = AppException(status_code=409, message=payload["message"], code=payload["error"])
+    exc.detail = payload
+    return exc
+
+
+@router.get("/verification/worklist")
+def spec_verification_worklist(
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
+    query: Optional[str] = Query(None, description="Match a product code or name."),
+    # Literal rather than str: an unknown state or sort is a client bug, and silently
+    # serving the unfiltered list instead of 422ing hides it.
+    state: Optional[Literal["unverified", "verified", "needs_reverify"]] = Query(None),
+    class_label: Optional[str] = Query(None),
+    include_discontinued: bool = Query(False),
+    sort: Literal["default", "coverage", "code"] = Query("default"),
+    direction: str = Query("asc", alias="dir", description="asc | desc"),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """The codes waiting to be confirmed, worst first, in the caller's companies.
+
+    `summary` counts the same set the list does minus the state filter, so the progress
+    line stays honest while the reviewer is filtered down (AC-D.6). `classes` carries
+    the class filter's own options, so the screen needs no second call for a dropdown.
+    """
+    return product_spec_verification.worklist(
+        db,
+        page=page,
+        limit=limit,
+        query=query,
+        state=state,
+        class_label=class_label,
+        include_discontinued=include_discontinued,
+        sort=sort,
+        direction=direction,
+    )
+
+
+@router.post("/verification/verify")
+def verify_spec_code(
+    payload: SpecVerifyRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Confirm one code's specs, against the values the person was shown."""
+    result = product_spec_verification.verify_code(
+        db,
+        payload.product_code,
+        values_hash=payload.values_hash,
+        actor=current_user,
+    )
+    if result["outcome"] == "not_found":
+        raise handle_not_found("Product", payload.product_code)
+    if result["outcome"] == "values_changed":
+        raise _verification_conflict(
+            {
+                "error": "values_changed",
+                "message": (
+                    "These specifications changed while you were reviewing them. "
+                    "Read them again before confirming."
+                ),
+                "values_hash": result["values_hash"],
+                "verification": result["verification"],
+            }
+        )
+    db.commit()
+    return {
+        "product_code": result["product_code"],
+        "outcome": result["outcome"],
+        "values_hash": result["values_hash"],
+        "verification": result["verification"],
+    }
+
+
+@router.post("/verification/verify-bulk")
+def verify_spec_codes_bulk(
+    payload: SpecVerifyBulkRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """The same guard, per code. A refused code is reported, never fails the batch.
+
+    Also what the per-row button calls, with one item: one code path to keep honest
+    (AC-D.16, AC-D.23).
+    """
+    # The service commits per code (it locks up to 500 of them, and a code decided is
+    # a code the reviewer was told about), so there is nothing left to commit here.
+    results = product_spec_verification.verify_codes_bulk(
+        db,
+        [item.model_dump() for item in payload.items],
+        actor=current_user,
+    )
+
+    verified = sum(1 for r in results if r["outcome"] in ("verified", "already_verified"))
+    return {
+        "results": [
+            {
+                # The hash comes back on a refused code too, so the row can refresh
+                # itself without a reload (AC-D.24).
+                "product_code": r["product_code"],
+                "outcome": r["outcome"],
+                "values_hash": r["values_hash"],
+                "verification": r["verification"],
+            }
+            for r in results
+        ],
+        "counts": {"verified": verified, "skipped": len(results) - verified},
+    }
+
+
+@router.post("/verification/unverify")
+def unverify_spec_code(
+    payload: SpecUnverifyRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Withdraw a confirmation. A user may withdraw a stamp that is not their own -
+    the recorded actor is what makes that accountable (AC-D.26)."""
+    result = product_spec_verification.unverify_code(
+        db, payload.product_code, actor=current_user
+    )
+    db.commit()
+    return result
+
+
+@router.post("/verification/unverify-bulk")
+def unverify_spec_codes_bulk(
+    payload: SpecUnverifyBulkRequest,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # Commits per code, like verify-bulk. The single-code routes still commit themselves.
+    results = product_spec_verification.unverify_codes_bulk(
+        db, payload.product_codes, actor=current_user
+    )
+
+    unverified = sum(1 for r in results if r["outcome"] == "unverified")
+    return {
+        "results": results,
+        "counts": {"unverified": unverified, "no_change": len(results) - unverified},
+    }

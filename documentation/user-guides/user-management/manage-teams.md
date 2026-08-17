@@ -36,6 +36,7 @@ A team only becomes "tier 1 / 2 / 3 of a team set" through an **AI Agent**, not 
 
 * On **[User Management → AI Agents](/user-management/access-agents)**, an agent's **Team Assignments** bind a **team-set code** + a **tier** (1 = initial, 2 / 3 = escalation) to a team, optionally with an SLA **policy**.
 * When SLA work starts, the resolver picks the **first existing team at or above** the requested tier (`resolve_team_with_tier_fallback`) — a missing intermediate tier is skipped, not fatal — then assigns round-robin among that team's auto-assignable members.
+* **Brand tags narrow the round-robin pool.** On the AI Agent detail page, each member row of a team assignment carries a **Brands** editor (next to the market-segment one): tick the brands that member serves; **All brands** (untagged) means they serve every brand. When a conversation arrives with a brand, the pool is the members tagged with that brand plus the untagged ones; if nobody carries that brand, the whole team round-robins. Escalations reuse the brand the conversation was created with. Stored in `team_member_brands`; the tracker keeps it in `conversation_sla_tracking.brand_code`.
 * On escalation, the next-higher tier's team is used the same way; whether that tier's team is *notified* of a lower-tier deadline extension is the per-tier `notify_on_extension` flag.
 
 So the same team can be tier 1 for one agent's team-set and tier 2 for another — "what tier is this team?" is only meaningful for a specific agent/team-set.
