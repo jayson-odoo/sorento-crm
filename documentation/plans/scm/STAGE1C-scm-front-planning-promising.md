@@ -1,7 +1,9 @@
 # Stage 1C slice note: order promising, atomic confirmation, Buy-only handoff
 
-**Status:** IN PROGRESS, 17 August 2026. Branch `fm/scm-stage1c-promising`, stacked on
-`fm/scm-stage1b-reconciliation` (PR #209).
+**Status:** IN PROGRESS, 18 August 2026. Branch `fm/scm-stage1c-promising`, stacked on
+`fm/scm-stage1b-reconciliation` (PR #209). Phase 1 (mock) and Phase 2 backend are in;
+the frontend swap off the mock, its Vitest, the evidence run and the AC-H03 report are
+what is left.
 
 **Contract:** `PLAN-scm-front-planning.md` sections 3.1-3.5, 4, and the Stage 1C bullet in
 section 7; `UAC-scm-front-planning.md` Groups B, C, D plus the AC-G / AC-H criteria those
@@ -313,6 +315,22 @@ live one.
 A refused confirmation is read by the frontend from the response body directly
 (`failing_lines`), not through `extractApiError`, which answers with a string: the shared
 extractor supplies the message and the list is read from a clone of the same response.
+
+Two corrections made while building Phase 2, both recorded here rather than left as a
+difference between this note and the code:
+
+- **The refusal body is the shared envelope plus `failing_lines`**, not a bespoke
+  `{error, failing_lines}`: `{message, detail, code, failing_lines}`, which is what the
+  global `AppException` handler serialises. The frontend is unchanged - it already reads
+  the sentence through `extractApiError` (which reads `message`) and the list off a clone
+  of the same response - and a second key holding the same sentence under another name
+  would be one more thing to keep in step.
+- **Confirmation verifies the LINE links, not the whole Stage 1B review state.** Plan 3.1
+  step 2 says "verify that every Project line has a unique reconciled core SO line", and
+  that is the check: a line with no `core_sales_order_line_id` refuses the order. The
+  header link is not re-checked separately because only reconciliation writes those line
+  links and it needs `so_id` to do it, so a line link implies a header link; the review
+  state the sheet SHOWS still comes from Stage 1B, unchanged.
 
 ## 7. Frontend
 

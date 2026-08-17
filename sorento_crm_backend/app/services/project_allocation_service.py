@@ -43,10 +43,12 @@ from app.models.project_so import (
     ALLOC_SOURCE_ORDER,
     CLAIM_REFUSED,
     CLAIM_REQUESTED,
+    DECISION_ACTIVE,
     AllocationClaim,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
     SOLineAllocation,
+    SOSupplyDecision,
 )
 from app.models.projects import Project, ProjectCollaborator
 from app.models.user import User
@@ -217,6 +219,13 @@ class ProjectAllocationService:
         the engine floors availability at zero, so the effect is that nobody else is
         offered the pile, which is the safe direction. The movement itself is SCM's, not
         this slice's.
+
+        A SUPERSEDED revision holds nothing (Stage 1C). Its rows stay for audit, so the
+        filter is on the decision's state, and a row belonging to no decision at all -
+        every allocation written before Stage 1C - still holds, because nothing has
+        replaced it. `project_supply_service` reads free stock by the identical rule, and
+        the two must agree or the candidate list and the supply sheet describe different
+        piles.
         """
         if not product_id:
             return []
@@ -238,11 +247,18 @@ class ProjectAllocationService:
                 ProjectSalesOrder.id == ProjectSalesOrderLine.project_sales_order_id,
             )
             .join(Project, Project.id == ProjectSalesOrder.project_id)
+            .outerjoin(
+                SOSupplyDecision, SOSupplyDecision.id == SOLineAllocation.decision_id
+            )
             .filter(
                 ProjectSalesOrderLine.product_id == product_id,
                 SOLineAllocation.confirmed_at.isnot(None),
                 SOLineAllocation.warehouse_id.isnot(None),
                 SOLineAllocation.source_type != ALLOC_SOURCE_ORDER,
+                or_(
+                    SOLineAllocation.decision_id.is_(None),
+                    SOSupplyDecision.state == DECISION_ACTIVE,
+                ),
             )
         )
         if exclude_line_id:
