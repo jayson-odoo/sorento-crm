@@ -88,7 +88,11 @@ def apply(bind) -> int:
 
 
 def revert(bind) -> int:
-    """Put the weight and the name back. Rows changed."""
+    """Put the weight and the name back. Rows changed.
+
+    Guarded on the weight this revision set, so a tenant who raised it further under the new
+    name keeps their value.
+    """
     if not _has_policy_table(bind):
         return 0
     res = bind.execute(
@@ -99,6 +103,7 @@ def revert(bind) -> int:
                    name = :old_name,
                    notes = :notes
              WHERE name = :new_name
+               AND COALESCE((factors->>'demand_class')::numeric, 0) = 3
             """
         ),
         {

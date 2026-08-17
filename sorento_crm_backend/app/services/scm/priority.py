@@ -113,7 +113,7 @@ def demand_class_by_po(db: Session, po_numbers: set[str]) -> dict[str, str]:
 
 
 def demand_value(
-    classes: dict[str, str], class_weights: dict, po_number: str
+    classes: dict[str, str], class_weights: dict[str, float], po_number: str
 ) -> Optional[float]:
     """The demand factor value for one purchase order.
 

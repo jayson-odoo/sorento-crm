@@ -453,7 +453,8 @@ stated fallback if it slips.
 3. **WeChat Official Account in Respond.io.** Not procured. Chat stays dark by design; email
    ships. No rework when it lands.
 4. **Ms Tee's manual answer for one real shipment**, to check the seeded priority default
-   reproduces it (AC-H2). Without this the day-one validation claim is untested.
+   against it (AC-H2). Since 2026-08-17 the seed ranks demand owed first and document sequence
+   within each band, so her answer is the within-band check, not the whole order.
 5. **Mr Loo on the cost basis** (latest, average, landed). Parked in UAC Group K, but the buy row
    shows last purchase cost regardless, which answers his usual question.
 
