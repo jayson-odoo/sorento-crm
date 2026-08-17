@@ -433,6 +433,48 @@ def test_derive_for_code_that_changes_values_invalidates_a_verified_code(db):
     assert block["invalidated_reason"] == psv.REASON_VALUES_CHANGED
 
 
+def test_derive_over_a_new_no_spec_copy_that_sorts_first_does_not_invalidate(db):
+    """The before/after pair must come from the copy `current_values_hash` is defined
+    on (the lowest product id holding a spec row), not from whichever copy iterates
+    first. A verified code that gains a second company copy with no spec row yet -
+    sorting FIRST in derivation's (company_id, id) order - must survive a re-derive
+    that writes identical canonical values, rather than being withdrawn against an
+    empty "before" (AC-D.3)."""
+    code = unique_code("VS-NEWCOPY")
+    with company_scope(db, None):
+        _product(
+            db,
+            code,
+            "SORENTO CERAMIC KITCHEN SINK",
+            company_id=_REFS["company2"],
+            product_id="ffffffff-0000-4000-8000-" + uuid.uuid4().hex[:12],
+        )
+        derive_for_code(db, code, commit=True)
+    h1 = psv.current_values_hash(db, code)
+    result = psv.verify_code(db, code, values_hash=h1, actor=_ACTOR, party=psv.PARTY_INTERNAL)
+    assert result["outcome"] == "verified"
+    db.commit()
+
+    # The default company's near-zero id sorts below `company2`'s random one, and the
+    # low product id makes this copy the canonical read after it gains a spec row.
+    with company_scope(db, None):
+        _product(
+            db,
+            code,
+            "SORENTO CERAMIC KITCHEN SINK",
+            company_id=None,
+            product_id="00000000-0000-4000-8000-" + uuid.uuid4().hex[:12],
+        )
+        derive_result = derive_for_code(db, code, commit=True)
+    assert derive_result["written"] == 2, "the new copy forces a full write pass"
+
+    block = psv.verification_block(db, code)
+    assert block["state"] == psv.STATE_VERIFIED, (
+        "identical canonical values re-written over a new empty copy must not "
+        "withdraw the stamp"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # AC-D.4 - verify guards, same-transaction, distinguishable 409 taxonomy
 # --------------------------------------------------------------------------- #

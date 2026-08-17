@@ -382,7 +382,12 @@ def apply_spec_values(
     from app.services.product_spec_verification import invalidate_on_values_change
 
     with company_scope(db, None):
-        products = db.query(Product).filter(Product.product_code == product_code).all()
+        products = (
+            db.query(Product)
+            .filter(Product.product_code == product_code)
+            .order_by(Product.id)
+            .all()
+        )
         if not products:
             # Unconditional, and BEFORE the empty-batch return: an unknown code is an
             # unknown code whether or not the caller had anything to write, and a
@@ -427,12 +432,20 @@ def apply_spec_values(
         )
 
         rows_written = 0
-        # Every copy of a code holds the same values, so one before/after pair speaks
-        # for all of them. Captured around the write rather than re-read afterwards:
-        # `write_spec_row` replaces the column, and a verification stamp has to be
-        # withdrawn against what it was actually made against.
-        before_values: dict | None = None
-        after_values: dict | None = None
+        # One before/after pair speaks for the whole code, and it must come from the
+        # copy the verify hash is defined on - `current_values_hash` reads the lowest
+        # product id that HAS a spec row - not from whichever copy iterates first: a
+        # fresh no-spec copy would hand back an empty "before" and withdraw a stamp
+        # over canonical values that never changed. Captured around the write rather
+        # than re-read afterwards: `write_spec_row` replaces the column, and a
+        # verification stamp has to be withdrawn against what it was actually made
+        # against. After the writes every copy holds a spec row, so the canonical
+        # "after" copy is the lowest product id outright.
+        before_values: dict = (
+            dict(existing[min(existing)].values or {}) if existing else {}
+        )
+        canonical_after_id = min(product.id for product in products)
+        after_values: dict = {}
         for product in products:
             spec = existing.get(product.id)
             if spec is None:
@@ -440,12 +453,11 @@ def apply_spec_values(
                 db.add(spec)
 
             values = dict(spec.values or {})
-            if before_values is None:
-                before_values = dict(values)
             provenance = dict(spec.provenance or {})
             for entry in prepared:
                 _apply(values, provenance, entry)
-            after_values = values
+            if product.id == canonical_after_id:
+                after_values = values
 
             # `derived_hash=None` is required, not tidiness: derivation's
             # skip-if-unchanged path would otherwise suppress the conflict computation
@@ -465,8 +477,8 @@ def apply_spec_values(
         invalidate_on_values_change(
             db,
             product_code,
-            before_values=before_values or {},
-            after_values=after_values or {},
+            before_values=before_values,
+            after_values=after_values,
         )
         # In the caller's transaction, so a conflict surfaces in the same click.
         derive_for_code(db, product_code, commit=False)

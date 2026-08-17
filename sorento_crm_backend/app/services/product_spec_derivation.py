@@ -1397,16 +1397,22 @@ def derive_for_code(
         exceptions.append(conflict)
 
     written = 0
-    # Every copy of a code is written the same values, so one before/after pair speaks
-    # for all of them. Read BEFORE `write_spec_row` replaces the column: a verification
-    # stamp has to be withdrawn against what it was actually made against. The
-    # skip-if-unchanged return above never reaches here, which is the point - a re-run
-    # that changes nothing must not withdraw anything (AC-D.3).
-    before_values: dict | None = None
-    after_values: dict | None = None
+    # One before/after pair speaks for the whole code, and it must come from the copy
+    # the verify hash is defined on - `current_values_hash` reads the lowest product id
+    # that HAS a spec row - not from whichever copy iterates first: a fresh no-spec
+    # copy that sorts first would hand back an empty "before" and withdraw a stamp over
+    # canonical values that never changed. Read BEFORE `write_spec_row` replaces the
+    # column: a verification stamp has to be withdrawn against what it was actually
+    # made against. The skip-if-unchanged return above never reaches here, which is the
+    # point - a re-run that changes nothing must not withdraw anything (AC-D.3).
+    before_values: dict = (
+        dict(existing[min(existing)].values or {}) if existing else {}
+    )
+    # After the writes every copy holds a spec row, so the canonical copy is the lowest
+    # product id outright - the same row `current_values_hash` reads back afterwards.
+    canonical_after_id = min(spec.product_id for spec, _, _ in merged)
+    after_values: dict = {}
     for spec, values, provenance in merged:
-        if before_values is None:
-            before_values = dict(spec.values or {})
         write_spec_row(
             spec,
             values=values,
@@ -1414,7 +1420,8 @@ def derive_for_code(
             has_exceptions=bool(exceptions),
             derived_hash=fingerprint,
         )
-        after_values = values
+        if spec.product_id == canonical_after_id:
+            after_values = values
         written += 1
 
     # Rebuild this code's open exceptions rather than appending, so a fixed input
@@ -1442,8 +1449,8 @@ def derive_for_code(
     invalidate_on_values_change(
         db,
         product_code,
-        before_values=before_values or {},
-        after_values=after_values or {},
+        before_values=before_values,
+        after_values=after_values,
     )
 
     db.flush()
