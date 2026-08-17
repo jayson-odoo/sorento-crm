@@ -419,9 +419,10 @@ class TestPerRouteGates:
         # tests/test_settings_app_config_gate.py, where the settings singleton is
         # seeded with non-null sensitive values so its 200 body and its
         # /app-config sibling can be asserted together. (The structural sweep
-        # below covers 42 gated routes in total - the other 16 are the 12
-        # users/roles/permissions reads that were already gated before this work
-        # and the 4 onboarding reads, both of which have their own tests.)
+        # below covers 43 gated routes in total - the other 17 are the 12
+        # users/roles/permissions reads that were already gated before this work,
+        # the 4 onboarding reads and the teams member-brands read from the
+        # brand-aware escalation PR (#197), all of which have their own tests.)
         assert len(self.specs) == 25, "one entry per gated route except GET /settings/"
 
     def test_denied_without_permission(self, api):
@@ -624,20 +625,22 @@ class TestStructuralCoverage:
         """Every gated GET in the package, as an exact set rather than a count:
         a route that loses its gate fails here even if another route gains one.
 
-        Three groups. The 26 this PR series is responsible for - the plan's audit
+        Four groups. The 26 this PR series is responsible for - the plan's audit
         table (13), the Q1/Q2/Q3 decisions (8 contacts GETs + the settings blob +
         2 reference catalogs) and the 2 system-logs reads - the 12 in
         `users.py` / `roles.py` / `permissions.py` that were already correctly
-        gated before any of it, and the 4 onboarding reads (the review queue, its
-        neighbours, one request, and the access templates). Those 12 are new to
-        this assertion only because the sweep now covers the whole package;
-        nothing about them changed.
+        gated before any of it, the 4 onboarding reads (the review queue, its
+        neighbours, one request, and the access templates), and the member-level
+        brands read on teams (`/teams/{team_id}/members/{user_id}/brands`), added
+        by the brand-aware escalation routing PR (#197) alongside its
+        market-segments sibling. Those 12 are new to this assertion only because
+        the sweep now covers the whole package; nothing about them changed.
 
         Adding a gated GET to the package is expected to fail here once: name it
         below so the gate is stated rather than counted.
         """
         gated_paths = {r.path for r in _mounted_get_routes() if _is_gated(r)}
-        assert len(gated_paths) == 42
+        assert len(gated_paths) == 43
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",
