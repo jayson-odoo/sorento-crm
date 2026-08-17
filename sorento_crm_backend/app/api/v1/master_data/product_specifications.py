@@ -748,9 +748,10 @@ def _verification_conflict(payload: dict) -> AppException:
 
     The global handler serialises `AppException.detail` straight to the response body,
     so replacing the standard envelope is how a route says something the client must
-    branch on - and the two refusals are deliberately distinguishable (AC-D.4): one
-    means "re-read the values", the other "answer the exceptions first". `message` is
-    kept alongside so a generic error reader still has something to show.
+    branch on. There is exactly one refusal left - `values_changed`, "re-read the
+    values" (AC-D.4); the open-exception refusal went with the exceptions UI (captain
+    ruling 2026-08-17). `message` is kept alongside so a generic error reader still has
+    something to show.
 
     Encoded HERE, because that handler hands the detail to `JSONResponse` as-is rather
     than through FastAPI's response encoding. A VerificationBlock carries datetimes, so
@@ -826,15 +827,6 @@ def verify_spec_code(
                 "verification": result["verification"],
             }
         )
-    if result["outcome"] == "exceptions_open":
-        raise _verification_conflict(
-            {
-                "error": "exceptions_open",
-                "message": "Answer the open specification questions before confirming this product.",
-                "exceptions": result["exceptions"],
-            }
-        )
-
     db.commit()
     return {
         "product_code": result["product_code"],
@@ -850,7 +842,7 @@ def verify_spec_codes_bulk(
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """The same guards, per code. A refused code is reported, never fails the batch.
+    """The same guard, per code. A refused code is reported, never fails the batch.
 
     Also what the per-row button calls, with one item: one code path to keep honest
     (AC-D.16, AC-D.23).

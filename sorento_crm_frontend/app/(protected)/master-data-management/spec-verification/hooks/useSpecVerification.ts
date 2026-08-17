@@ -47,12 +47,11 @@ export function useSpecVerificationWorklist(
 const ACTED_VERIFY_OUTCOMES = new Set(['verified', 'already_verified']);
 
 const VERIFY_SKIP_LABEL: Record<string, string> = {
-  exceptions_open: 'exceptions open',
   values_changed: 'changed while you were reviewing',
   not_found: 'no longer in the list',
 };
 
-/** "42 verified, 3 skipped - exceptions open, 1 skipped - changed while you were reviewing". */
+/** "42 verified, 1 skipped - changed while you were reviewing". */
 export function summariseVerify(results: VerifyBulkResult[]): string {
   const acted = results.filter((r) =>
     ACTED_VERIFY_OUTCOMES.has(r.outcome),
@@ -105,8 +104,13 @@ function nextSummary(
  * The default order puts verified rows last, so a refetch would move the row the
  * user just stamped out from under their cursor (AC-D.22). The order is only
  * re-read when they page or reload.
+ *
+ * Exported because the Specifications tab stamps the SAME rows from inside a product:
+ * returning to the list must show the row already Verified, before the invalidated
+ * query has answered (captain ruling 2026-08-17). A second copy of this arithmetic is
+ * how the two surfaces would end up disagreeing about the summary line.
  */
-function patchRows(
+export function patchWorklistRows(
   old: SpecVerificationWorklistResponse | undefined,
   results: (VerifyBulkResult | UnverifyBulkResult)[],
 ): SpecVerificationWorklistResponse | undefined {
@@ -140,7 +144,7 @@ export function useSpecVerificationMutations() {
   const applyToCache = (results: (VerifyBulkResult | UnverifyBulkResult)[]) => {
     queryClient.setQueriesData<SpecVerificationWorklistResponse>(
       { queryKey: [WORKLIST_KEY] },
-      (old) => patchRows(old, results),
+      (old) => patchWorklistRows(old, results),
     );
   };
 

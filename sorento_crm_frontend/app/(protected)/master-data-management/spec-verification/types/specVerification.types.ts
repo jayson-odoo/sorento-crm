@@ -43,14 +43,15 @@ export interface VerificationBlock {
 }
 
 /**
- * One open exception, as the single verify's 409 reports it.
+ * One applicable key, and what this code says for it. `value` is null when unfilled.
  *
- * Narrowed to what the refusal has to say: which key is unanswered. The full row,
- * with its proposal, is on the Specifications tab that raised the verify.
+ * The stored ENTRY again, not a scalar - `readableEntry` renders it, the same reader
+ * the invalidation diff uses.
  */
-export interface VerificationOpenException {
+export interface SpecVerificationCoverageItem {
   spec_key: string;
-  reason?: string | null;
+  label: string;
+  value: VerificationDiffValue | null;
 }
 
 export interface SpecVerificationCoverage {
@@ -58,6 +59,8 @@ export interface SpecVerificationCoverage {
   have: number;
   /** Keys the registry says apply to it. */
   applicable: number;
+  /** The denominator itemised, sorted by label: what the Coverage cell opens. */
+  items: SpecVerificationCoverageItem[];
 }
 
 export interface SpecVerificationRow {
@@ -69,6 +72,10 @@ export interface SpecVerificationRow {
   brand_name: string | null;
   is_discontinued: boolean;
   coverage: SpecVerificationCoverage;
+  /**
+   * Derivation's own flags. Carried because the API still sends it; NOTHING renders
+   * it (captain ruling 2026-08-17: there is no exceptions concept for the user).
+   */
   open_exceptions: number;
   /** Echoed back on verify so the same-transaction guard applies from the list (AC-D.24). */
   values_hash: string;
@@ -107,7 +114,6 @@ export type VerifyOutcome =
   | 'verified'
   | 'already_verified'
   | 'values_changed'
-  | 'exceptions_open'
   | 'not_found';
 
 export type UnverifyOutcome = 'unverified' | 'no_change';

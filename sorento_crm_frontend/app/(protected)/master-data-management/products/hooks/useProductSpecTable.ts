@@ -11,7 +11,6 @@ import {
   type SpecScalar,
   type SpecTableRow,
 } from '@/components/spec-table';
-import { readable } from '@/lib/spec-readable';
 import {
   addValueToSpecKey,
   clearSpecValueByHand,
@@ -23,12 +22,20 @@ import {
   type ApplicableSpecKey,
 } from '../../product-specifications/services/productSpecService';
 import type { ProductSpecDetail } from '../../product-specifications/types/productSpec.types';
-import { WORKLIST_KEY } from '../../spec-verification/hooks/useSpecVerification';
+import {
+  patchWorklistRows,
+  WORKLIST_KEY,
+} from '../../spec-verification/hooks/useSpecVerification';
 import {
   SpecVerifyConflictError,
   unverifySpec,
   verifySpec,
 } from '../../spec-verification/services/specVerificationService';
+import type {
+  SpecVerificationWorklistResponse,
+  UnverifyBulkResult,
+  VerifyBulkResult,
+} from '../../spec-verification/types/specVerification.types';
 
 /**
  * Everything the Specifications tab needs, on react-query.
@@ -194,31 +201,34 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     queryClient.invalidateQueries({ queryKey: [WORKLIST_KEY] });
   }, [queryClient, productId]);
 
+  /**
+   * Flip the worklist's own row for this code, before the refetch lands.
+   *
+   * The reviewer came FROM that list and goes straight back to it; an invalidation
+   * alone leaves the row reading its old state until the query answers, which is
+   * exactly the moment they are looking at it (captain ruling 2026-08-17). Same
+   * patcher the list's own bulk actions use, so the row and the progress line move
+   * together.
+   */
+  const patchWorklistRow = useCallback(
+    (result: VerifyBulkResult | UnverifyBulkResult) => {
+      queryClient.setQueriesData<SpecVerificationWorklistResponse>(
+        { queryKey: [WORKLIST_KEY] },
+        (old) => patchWorklistRows(old, [result]),
+      );
+    },
+    [queryClient],
+  );
+
   const verifyMutation = useMutation({
     mutationFn: (valuesHash: string) =>
       verifySpec({ product_code: productCode, values_hash: valuesHash }),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      patchWorklistRow(result);
       invalidateVerification();
       toast.success('Verified');
     },
     onError: (error: Error) => {
-      if (error instanceof SpecVerifyConflictError && error.reason === 'exceptions_open') {
-        // Named, because the next action is answering THOSE keys, and "verify was
-        // refused" leaves the user hunting for which ones.
-        const names = (error.exceptions ?? []).map(
-          (row) =>
-            registry.find((key) => key.spec_key === row.spec_key)?.label ??
-            readable(row.spec_key),
-        );
-        invalidateVerification();
-        toast.error(
-          names.length
-            ? `Still needs a human: ${names.join(', ')}`
-            : 'Still needs a human, so this code cannot be verified yet',
-          { duration: 10_000 },
-        );
-        return;
-      }
       if (error instanceof SpecVerifyConflictError) {
         invalidateVerification();
         toast.warning('This product changed while you were reviewing - reloaded', {
@@ -233,6 +243,7 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
   const unverifyMutation = useMutation({
     mutationFn: () => unverifySpec({ product_code: productCode }),
     onSuccess: (result) => {
+      patchWorklistRow(result);
       invalidateVerification();
       toast.success(
         result.outcome === 'unverified' ? 'Verification withdrawn' : 'Nothing to withdraw',

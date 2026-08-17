@@ -28,7 +28,9 @@ describe('summariseVerify', () => {
     expect(summariseVerify(results)).toBe('2 verified');
   });
 
-  it('names each skip reason with its own count, in the mix the AC quotes', () => {
+  it('names each skip reason with its own count', () => {
+    // Two reasons left: the open-exception refusal went with the exceptions UI
+    // (captain ruling 2026-08-17), so a code that used to be skipped now verifies.
     const results: VerifyBulkResult[] = [
       ...Array.from(
         { length: 42 },
@@ -37,28 +39,22 @@ describe('summariseVerify', () => {
           outcome: 'verified',
         }),
       ),
-      ...Array.from(
-        { length: 3 },
-        (_, i): VerifyBulkResult => ({
-          product_code: `E${i}`,
-          outcome: 'exceptions_open',
-        }),
-      ),
       { product_code: 'C1', outcome: 'values_changed' },
+      { product_code: 'G1', outcome: 'not_found' },
     ];
 
     expect(summariseVerify(results)).toBe(
-      '42 verified, 3 skipped - exceptions open, 1 skipped - changed while you were reviewing',
+      '42 verified, 1 skipped - changed while you were reviewing, 1 skipped - no longer in the list',
     );
   });
 
   it('a batch that is entirely skipped carries no "verified" clause', () => {
     const results: VerifyBulkResult[] = [
-      { product_code: 'A', outcome: 'exceptions_open' },
+      { product_code: 'A', outcome: 'values_changed' },
       { product_code: 'B', outcome: 'not_found' },
     ];
     expect(summariseVerify(results)).toBe(
-      '1 skipped - exceptions open, 1 skipped - no longer in the list',
+      '1 skipped - changed while you were reviewing, 1 skipped - no longer in the list',
     );
   });
 });
@@ -86,11 +82,10 @@ describe('skippedVerifyCodes / skippedUnverifyCodes', () => {
     const results: VerifyBulkResult[] = [
       { product_code: 'A', outcome: 'verified' },
       { product_code: 'B', outcome: 'already_verified' },
-      { product_code: 'C', outcome: 'exceptions_open' },
       { product_code: 'D', outcome: 'values_changed' },
       { product_code: 'E', outcome: 'not_found' },
     ];
-    expect(skippedVerifyCodes(results)).toEqual(['C', 'D', 'E']);
+    expect(skippedVerifyCodes(results)).toEqual(['D', 'E']);
   });
 
   it('unverify: only "unverified" is acted, "no_change" stays selected', () => {
@@ -102,8 +97,8 @@ describe('skippedVerifyCodes / skippedUnverifyCodes', () => {
   });
 });
 
-// patchRows is not exported; drive it through the mutation hook so the test still
-// pins the real cache-patching behaviour rather than a reimplementation of it.
+// Driven through the mutation hook rather than by calling `patchWorklistRows`
+// directly, so the test still pins the real cache-patching behaviour end to end.
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi, beforeEach } from 'vitest';
@@ -139,7 +134,18 @@ function baseRow(
     class_label: 'Kitchen Sink',
     brand_name: null,
     is_discontinued: false,
-    coverage: { have: 1, applicable: 2 },
+    coverage: {
+      have: 1,
+      applicable: 2,
+      items: [
+        {
+          spec_key: 'material',
+          label: 'Material',
+          value: { value: 'ceramic' },
+        },
+        { spec_key: 'finish', label: 'Finish', value: null },
+      ],
+    },
     open_exceptions: 0,
     values_hash: `hash-${code}`,
     verification: {

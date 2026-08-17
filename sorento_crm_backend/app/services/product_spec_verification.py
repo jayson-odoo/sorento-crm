@@ -8,7 +8,8 @@ Three things live here because they are one question asked from three angles:
   * `verify_code` / `unverify_code` (and their bulk loops) - the only writers of that
     ledger. Bulk is a loop over the single-code function rather than a second path, so
     the bulk button can never become the way to stamp what the single button refuses
-    (AC-D.16).
+    (AC-D.16). The only refusal left is a moved hash: the open-exception gate was
+    dropped by the captain on 2026-08-17 with the exceptions UI itself.
   * `invalidate_on_values_change` - the hook both spec writers call after their write
     loop, so a stamp cannot outlive the values it was made against (AC-D.3).
 
@@ -260,28 +261,6 @@ def invalidate_on_values_change(
 # --------------------------------------------------------------------------- #
 # verify
 # --------------------------------------------------------------------------- #
-def _serialise_exception(row: ProductSpecException) -> dict:
-    return {
-        "id": str(row.id),
-        "spec_key": row.spec_key,
-        "reason": row.reason,
-        "proposed": row.proposed,
-        "stored": row.stored,
-    }
-
-
-def _open_exceptions(db: Session, product_code: str) -> list[ProductSpecException]:
-    return (
-        db.query(ProductSpecException)
-        .filter(
-            ProductSpecException.product_code == product_code,
-            ProductSpecException.resolved_at.is_(None),
-        )
-        .order_by(ProductSpecException.spec_key)
-        .all()
-    )
-
-
 def verify_code(
     db: Session,
     product_code: str,
@@ -292,14 +271,18 @@ def verify_code(
 ) -> dict:
     """Stamp one code, or say precisely why not. Never raises for a guard.
 
-    The route turns `values_changed` / `exceptions_open` into the two distinguishable
-    409s (AC-D.4); a refusal is an outcome here rather than an exception so the bulk
-    loop reports per code instead of failing the batch.
+    The route turns `values_changed` into a 409 (AC-D.4); a refusal is an outcome here
+    rather than an exception so the bulk loop reports per code instead of failing the
+    batch.
+
+    A code with open `ProductSpecException` rows verifies normally (captain ruling
+    2026-08-17: there is no exceptions concept for the user, so there is no gate for
+    one either). Exceptions remain internal derivation data.
 
     The code's spec rows are locked FOR UPDATE - the same lock `apply_spec_values`
-    takes - and the hash, the open exceptions and the active stamp are all re-read
-    inside it, so a write landing between the screen rendering and this call is caught
-    rather than stamped over. Does not commit; the caller owns the transaction.
+    takes - and both the hash and the active stamp are re-read inside it, so a write
+    landing between the screen rendering and this call is caught rather than stamped
+    over. Does not commit; the caller owns the transaction.
     """
     with company_scope(db, None):
         products = db.query(Product).filter(Product.product_code == product_code).all()
@@ -309,7 +292,6 @@ def verify_code(
                 "outcome": "not_found",
                 "values_hash": canonical_values_hash({}),
                 "verification": dict(_EMPTY_BLOCK),
-                "exceptions": [],
             }
 
         # A code with no spec row at all has nothing to lock FOR UPDATE, so two
@@ -335,17 +317,6 @@ def verify_code(
                 "outcome": "values_changed",
                 "values_hash": current,
                 "verification": verification_block(db, product_code, party),
-                "exceptions": [],
-            }
-
-        open_rows = _open_exceptions(db, product_code)
-        if open_rows:
-            return {
-                "product_code": product_code,
-                "outcome": "exceptions_open",
-                "values_hash": current,
-                "verification": verification_block(db, product_code, party),
-                "exceptions": [_serialise_exception(row) for row in open_rows],
             }
 
         outcome = "verified"
@@ -375,7 +346,6 @@ def verify_code(
             "outcome": outcome,
             "values_hash": current,
             "verification": verification_block(db, product_code, party),
-            "exceptions": [],
         }
 
 
@@ -386,7 +356,7 @@ def verify_codes_bulk(
     actor: Mapping | None,
     party: str = PARTY_INTERNAL,
 ) -> list[dict]:
-    """The same guards, code by code. COMMITS PER CODE; the caller must not commit again.
+    """The same guard, code by code. COMMITS PER CODE; the caller must not commit again.
 
     Two departures from "loop, and let the caller commit once", both about a batch of
     up to 500:
@@ -539,7 +509,31 @@ def _gate_value_expr(gate_key: str):
     return ProductSpecifications.values[gate_key]["value"].astext
 
 
-def _applicable_expr(db: Session):
+def _active_registry_gates(db: Session) -> list[tuple[ProductSpecRegistry, dict[str, list[str]]]]:
+    """Every active registry key with its gates normalised, read once per request.
+
+    ONE reading of `applies_when`, because two things ask it the same question: the SQL
+    denominator below, and the per-row key list `_hydrate_page` builds for the coverage
+    tooltip. A count that disagreed with the list under it would be worse than either.
+    An empty allowed list is no constraint at all, not an impossible one.
+    """
+    keys = []
+    for row in (
+        db.query(ProductSpecRegistry)
+        .filter(ProductSpecRegistry.is_active.is_(True))
+        .order_by(ProductSpecRegistry.spec_key)
+        .all()
+    ):
+        gates = {}
+        for gate_key, permitted in (row.applies_when or {}).items():
+            allowed = [str(value).strip().lower() for value in (permitted or [])]
+            if allowed:
+                gates[gate_key] = allowed
+        keys.append((row, gates))
+    return keys
+
+
+def _applicable_expr(registry: list[tuple[ProductSpecRegistry, dict[str, list[str]]]]):
     """How many specs this product OUGHT to hold, from the registry, inline in the SQL.
 
     The registry is read once per request and folded into the statement as one CASE per
@@ -555,16 +549,11 @@ def _applicable_expr(db: Session):
     """
     ungated = 0
     gated_cases = []
-    for row in (
-        db.query(ProductSpecRegistry).filter(ProductSpecRegistry.is_active.is_(True)).all()
-    ):
-        clauses = []
-        for gate_key, permitted in (row.applies_when or {}).items():
-            allowed = [str(value).strip().lower() for value in (permitted or [])]
-            if not allowed:
-                # An empty list is no constraint at all, not an impossible one.
-                continue
-            clauses.append(func.lower(_gate_value_expr(gate_key)).in_(allowed))
+    for _row, gates in registry:
+        clauses = [
+            func.lower(_gate_value_expr(gate_key)).in_(allowed)
+            for gate_key, allowed in gates.items()
+        ]
         if not clauses:
             ungated += 1
             continue
@@ -574,6 +563,58 @@ def _applicable_expr(db: Session):
     for gated in gated_cases:
         expression = expression + gated
     return expression
+
+
+def _entry_text(entry) -> str | None:
+    """An entry's value as text, the way Postgres' `->>` renders it for the gate above."""
+    if not isinstance(entry, Mapping):
+        return None
+    value = entry.get("value")
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _coverage_items(
+    registry: list[tuple[ProductSpecRegistry, dict[str, list[str]]]],
+    values: Mapping | None,
+    class_label: str | None,
+) -> list[dict]:
+    """Which keys this code ought to hold, and what it says for each one.
+
+    The denominator, itemised: the same gate rule `_applicable_expr` counts with, so the
+    tooltip lists exactly the keys the `have / applicable` figure was computed over. A
+    key with nothing stored is carried with `value: null` rather than dropped - "we do
+    not know this yet" is precisely what the reviewer opened the tooltip to see.
+
+    `value` is the stored ENTRY (`{value, unit?}`), like the invalidation diff's sides,
+    so one reader (`readableEntry`) renders both.
+    """
+    values = values or {}
+    items = []
+    for row, gates in registry:
+        applies = True
+        for gate_key, allowed in gates.items():
+            text = _entry_text(values.get(gate_key))
+            if text is None and gate_key == "class":
+                text = class_label
+            if text is None or text.strip().lower() not in allowed:
+                applies = False
+                break
+        if not applies:
+            continue
+        entry = values.get(row.spec_key)
+        items.append(
+            {
+                "spec_key": row.spec_key,
+                "label": row.label or row.spec_key,
+                "value": entry if _entry_text(entry) is not None else None,
+            }
+        )
+    items.sort(key=lambda item: (item["label"].casefold(), item["spec_key"]))
+    return items
 
 
 def _open_exceptions_expr():
@@ -809,6 +850,7 @@ def _hydrate_page(
     if not page_codes:
         return []
 
+    registry = _active_registry_gates(db)
     inner = (
         select(
             Product.id.label("product_id"),
@@ -817,8 +859,11 @@ def _hydrate_page(
             Product.is_discontinued.label("is_discontinued"),
             class_label_expr.label("class_label"),
             Brand.brand_name.label("brand_name"),
+            # Labelled away from "values": `subquery.c.values` is the mapping's own
+            # method, not a column, and shadowing it is a trap for the next reader.
+            ProductSpecifications.values.label("spec_values"),
             _have_expr().label("have"),
-            _applicable_expr(db).label("applicable"),
+            _applicable_expr(registry).label("applicable"),
             _open_exceptions_expr().label("open_exceptions"),
             state_expr.label("state"),
             func.row_number()
@@ -854,7 +899,15 @@ def _hydrate_page(
                 "class_label": row["class_label"],
                 "brand_name": row["brand_name"],
                 "is_discontinued": bool(row["is_discontinued"]),
-                "coverage": {"have": row["have"], "applicable": row["applicable"]},
+                "coverage": {
+                    "have": row["have"],
+                    "applicable": row["applicable"],
+                    # The denominator itemised, so the reviewer can judge a code from
+                    # the list without opening it (captain ruling 2026-08-17).
+                    "items": _coverage_items(
+                        registry, row["spec_values"], row["class_label"]
+                    ),
+                },
                 "open_exceptions": row["open_exceptions"],
                 # NOT hashed from the row above: that is the in-scope copy, and the
                 # verify guard compares against the all-companies one.

@@ -1,8 +1,7 @@
 /**
- * specVerificationService - worklist query assembly, write bodies, and the 409
- * taxonomy on the single verify (AC-D.4: `values_changed` vs `exceptions_open` are
- * distinguishable). Traces to the API contract block at the top of the service file
- * and AC-D.11/D.16/D.23/D.24.
+ * specVerificationService - worklist query assembly, write bodies, and the single
+ * verify's one 409, `values_changed` (AC-D.4). Traces to the API contract block at the
+ * top of the service file and AC-D.11/D.16/D.23/D.24.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -241,8 +240,9 @@ describe('SpecVerifyConflictError - both 409 serialisations', () => {
       jsonResponse(
         {
           detail: {
-            error: 'exceptions_open',
-            exceptions: [{ spec_key: 'shape', reason: 'shape_mismatch' }],
+            error: 'values_changed',
+            values_hash: 'h2',
+            verification: { state: 'needs_reverify' },
           },
         },
         409,
@@ -256,20 +256,19 @@ describe('SpecVerifyConflictError - both 409 serialisations', () => {
 
     expect(thrown).toBeInstanceOf(SpecVerifyConflictError);
     const conflict = thrown as SpecVerifyConflictError;
-    expect(conflict.reason).toBe('exceptions_open');
-    expect(conflict.exceptions).toEqual([
-      { spec_key: 'shape', reason: 'shape_mismatch' },
-    ]);
+    expect(conflict.reason).toBe('values_changed');
+    expect(conflict.valuesHash).toBe('h2');
+    expect(conflict.verification).toEqual({ state: 'needs_reverify' });
   });
 
   it("carries the server's own message when it sent one, not the local fallback", async () => {
     mockedFetch.mockResolvedValue(
       jsonResponse(
         {
-          error: 'exceptions_open',
+          error: 'values_changed',
           message:
-            'Answer the open specification questions before confirming this product.',
-          exceptions: [{ spec_key: 'shape' }],
+            'These specifications changed while you were reviewing them. Read them again before confirming.',
+          values_hash: 'h2',
         },
         409,
       ),
@@ -281,8 +280,26 @@ describe('SpecVerifyConflictError - both 409 serialisations', () => {
     }).catch((e) => e)) as Error;
 
     expect(thrown.message).toBe(
-      'Answer the open specification questions before confirming this product.',
+      'These specifications changed while you were reviewing them. Read them again before confirming.',
     );
+  });
+
+  it('an open-exception code is no longer refused at all (captain ruling 2026-08-17)', async () => {
+    mockedFetch.mockResolvedValue(
+      jsonResponse({
+        product_code: 'WC100',
+        outcome: 'verified',
+        values_hash: 'h1',
+        verification: { state: 'verified' },
+      }),
+    );
+
+    const result = await verifySpec({
+      product_code: 'WC100',
+      values_hash: 'h1',
+    });
+
+    expect(result.outcome).toBe('verified');
   });
 
   it('falls back to the local message when the 409 body carries none', async () => {

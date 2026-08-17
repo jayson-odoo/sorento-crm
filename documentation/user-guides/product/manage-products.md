@@ -56,15 +56,15 @@ Open a product, then **Edit** (or the **Edit** icon on the list row). The same t
 
 The detail page (`/master-data-management/products/{id}`) shows the product name as the title, a **Quick Info** sidebar (including **List Price**), and these tabs:
 
-* **Overview** — **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, and **Tracking Flags** (including **Discontinued: Yes/No**).
-* **Stock** — on-hand / reserved / available by warehouse.
-* **Purchase History** — past purchases of this product.
-* **Attachments** — files linked to this product.
-* **Suppliers** — linked suppliers.
-* **Promotions** — promotions covering this product.
-* **Variants** — linked product variants.
-* **Audit Trail** — change history (the product model is audit-tracked).
-* **Specifications** — the product's structured specification values: every value with where it came from, editable in place, **AI Extract** to propose values from an attached document, a **Needs a human** card for values that disagree, and the verification block. See [Verify product specifications](verify-product-specifications.md).
+* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, and **Tracking Flags** (including **Discontinued: Yes/No**).
+* **Stock** - on-hand / reserved / available by warehouse.
+* **Purchase History** - past purchases of this product.
+* **Attachments** - files linked to this product.
+* **Suppliers** - linked suppliers.
+* **Promotions** - promotions covering this product.
+* **Variants** - linked product variants.
+* **Audit Trail** - change history (the product model is audit-tracked).
+* **Specifications** - the product's structured specification values: every value with where it came from, editable in place, **AI Extract** to propose values from an attached document, and the verification block. See [Verify product specifications](verify-product-specifications.md).
 
 Every section renders even when empty.
 

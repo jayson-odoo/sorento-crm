@@ -32,9 +32,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from '@/components/ui/hover-card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import {
@@ -61,6 +65,7 @@ import {
   useSpecVerificationWorklist,
 } from '../hooks/useSpecVerification';
 import type {
+  SpecVerificationCoverage,
   SpecVerificationRow,
   VerificationBlock,
   VerificationState,
@@ -124,6 +129,63 @@ function verificationTitle(block: VerificationBlock): string {
   return 'Not verified yet';
 }
 
+/**
+ * The coverage figure, and the keys behind it.
+ *
+ * "3 / 8" says how much is known and nothing about WHICH, so judging a row meant
+ * opening the product. Every applicable key and what this code says for it is already
+ * on the row (`coverage.items`), so the cell itself answers it: filled keys first,
+ * then what is still blank. Hovering opens it, and so does tabbing to it - the same
+ * `HoverCard` the reorder grid uses for a cell that has more to say than it can show.
+ */
+function CoverageCell({ coverage }: { coverage: SpecVerificationCoverage }) {
+  const items = coverage.items ?? [];
+  // What the code DOES say is read before what it does not.
+  const ordered = [
+    ...items.filter((item) => item.value),
+    ...items.filter((item) => !item.value),
+  ];
+
+  return (
+    <HoverCard openDelay={120}>
+      <HoverCardTrigger asChild>
+        <button
+          type="button"
+          className="text-sm tabular-nums underline decoration-dotted underline-offset-4"
+          // The row navigates on click; this cell answers in place instead.
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Coverage: ${coverage.have} of ${coverage.applicable} applicable keys hold a value`}
+        >
+          {coverage.have} / {coverage.applicable}
+        </button>
+      </HoverCardTrigger>
+      <HoverCardContent className="w-72 p-3" align="start">
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">
+          {coverage.have} of {coverage.applicable} applicable keys hold a value
+        </div>
+        {ordered.length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            No specification key applies to this product.
+          </p>
+        ) : (
+          <ul className="mt-2 flex max-h-64 flex-col gap-1 overflow-y-auto text-sm">
+            {ordered.map((item) => (
+              <li key={item.spec_key} className="break-words">
+                <span className="font-medium">{item.label}</span>:{' '}
+                {item.value ? (
+                  <span>{readableEntry(item.value) || 'not set'}</span>
+                ) : (
+                  <span className="text-muted-foreground">not set</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
 export default function SpecVerificationList() {
   const router = useRouter();
   const pathname = usePathname();
@@ -166,7 +228,28 @@ export default function SpecVerificationList() {
   const [includeDiscontinued, setIncludeDiscontinued] = useState(
     () => searchParams.get('include_discontinued') === 'true',
   );
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  // Ticking rows and then opening one of them to check it is the journey; a selection
+  // that did not survive that trip made the reviewer re-tick the page (captain ruling
+  // 2026-08-17). Page-scoped as before: dropped whenever the page changes.
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>(() => {
+    const selected = searchParams.get('selected');
+    if (!selected) return {};
+    return Object.fromEntries(
+      selected
+        .split(',')
+        .filter(Boolean)
+        .map((code) => [code, true]),
+    );
+  });
+  /**
+   * The row to bring back into view, read ONCE at first render.
+   *
+   * The URL-writing effect below never emits `focus`, so its first pass strips the
+   * param - which is what makes the restore idempotent, the same trick
+   * `GuideTargetSpotlight` uses.
+   */
+  const [focusCode] = useState(() => searchParams.get('focus'));
+  const focusDone = useRef(false);
   // The dialog carries the codes it was opened for, so a row-level Unverify and a bulk
   // Unverify are the same confirmation with a different count (PRINCIPLES: confirm
   // before every destructive or detach action, never one-click).
@@ -181,6 +264,11 @@ export default function SpecVerificationList() {
   const sortField = sorting[0]?.id ?? '';
   const sortDesc = sorting[0]?.desc ?? false;
   const { pageIndex, pageSize } = pagination;
+  // The raw map, not the table's selected row model: it is what was seeded from the
+  // URL, and it is populated before the rows have loaded.
+  const selectedParam = Object.keys(rowSelection)
+    .filter((code) => rowSelection[code])
+    .join(',');
   useEffect(() => {
     const next = new URLSearchParams();
     if (searchQuery) next.set('query', searchQuery);
@@ -193,6 +281,7 @@ export default function SpecVerificationList() {
     }
     if (pageIndex > 0) next.set('page', String(pageIndex + 1));
     if (pageSize !== DEFAULT_PAGE_SIZE) next.set('limit', String(pageSize));
+    if (selectedParam) next.set('selected', selectedParam);
     const qs = next.toString();
     const target = qs ? `${pathname}?${qs}` : pathname;
     if (`${window.location.pathname}${window.location.search}` === target)
@@ -209,6 +298,7 @@ export default function SpecVerificationList() {
     sortDesc,
     pageIndex,
     pageSize,
+    selectedParam,
   ]);
 
   const { data, isLoading, isError, error, refetch, isFetching } =
@@ -307,6 +397,7 @@ export default function SpecVerificationList() {
           <span
             className="font-medium text-sm truncate block"
             title={row.original.product_code}
+            data-spec-code={row.original.product_code}
           >
             {row.original.product_code}
           </span>
@@ -388,50 +479,13 @@ export default function SpecVerificationList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Coverage" column={column} />
         ),
-        cell: ({ row }) => {
-          const { have, applicable } = row.original.coverage;
-          return (
-            <span
-              className="text-sm tabular-nums"
-              title={`${have} of ${applicable} applicable keys hold a value`}
-            >
-              {have} / {applicable}
-            </span>
-          );
-        },
+        cell: ({ row }) => <CoverageCell coverage={row.original.coverage} />,
         size: 90,
         meta: {
           headerTitle: 'Coverage',
           skeleton: <Skeleton className="h-4 w-12" />,
         },
         enableSorting: true,
-      },
-      {
-        accessorKey: 'open_exceptions',
-        id: 'open_exceptions',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Exceptions" column={column} />
-        ),
-        cell: ({ row }) => {
-          const count = row.original.open_exceptions;
-          if (!count)
-            return <span className="text-sm text-muted-foreground">0</span>;
-          return (
-            <Badge
-              variant="warning"
-              appearance="light"
-              title="Verify is refused while open"
-            >
-              {count}
-            </Badge>
-          );
-        },
-        size: 100,
-        meta: {
-          headerTitle: 'Exceptions',
-          skeleton: <Skeleton className="h-4 w-8" />,
-        },
-        enableSorting: false,
       },
       {
         accessorKey: 'verification',
@@ -543,11 +597,27 @@ export default function SpecVerificationList() {
     manualFiltering: true,
   });
 
-  // Selection is page-scoped (AC-D.10), so it is dropped when the page changes: a
-  // code the user can no longer see must not be carried into a bulk action.
+  // Selection is page-scoped (AC-D.10), so it is dropped when the page CHANGES: a
+  // code the user can no longer see must not be carried into a bulk action. Guarded on
+  // the page actually moving rather than left to run on mount too, which would wipe the
+  // selection the URL just restored.
+  const pageKey = useRef(`${pageIndex}:${pageSize}`);
   useEffect(() => {
+    if (pageKey.current === `${pageIndex}:${pageSize}`) return;
+    pageKey.current = `${pageIndex}:${pageSize}`;
     table.resetRowSelection();
   }, [table, pageIndex, pageSize]);
+
+  // Put the reviewer back on the row they left from. Once, and only when the rows the
+  // page was resumed with are on screen.
+  useEffect(() => {
+    if (!focusCode || focusDone.current || !rows.length) return;
+    focusDone.current = true;
+    const target = Array.from(
+      document.querySelectorAll('[data-spec-code]'),
+    ).find((el) => el.getAttribute('data-spec-code') === focusCode);
+    target?.scrollIntoView?.({ block: 'center' });
+  }, [focusCode, rows]);
 
   // Read off the table's own selected rows rather than the raw selection map. The map
   // can still hold a code from a page the user has left, which would make the
@@ -589,6 +659,24 @@ export default function SpecVerificationList() {
       ]
     : [];
 
+  /**
+   * Open the product, carrying this exact list back with it.
+   *
+   * `back` is the whole worklist URL - search, filters, sort, page and selection, which
+   * the effect above keeps current - plus `focus`, the row being left. The detail
+   * page's Back link returns to it, so the round trip costs the reviewer nothing
+   * (captain ruling 2026-08-17). Read off the location rather than rebuilt from state,
+   * so there is one spelling of that URL.
+   */
+  const openProduct = (row: SpecVerificationRow) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('focus', row.product_code);
+    const back = `${pathname}?${params.toString()}`;
+    router.push(
+      `/master-data-management/products/${row.product_id}?tab=specifications&back=${encodeURIComponent(back)}`,
+    );
+  };
+
   const applySearch = () => {
     setSearchQuery(searchInput);
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -624,7 +712,7 @@ export default function SpecVerificationList() {
     confirmTarget?.action === 'verify'
       ? {
           title: 'Confirm verify',
-          description: `Verify ${productCodeCount(confirmCount)}? A code with open exceptions, or one whose values moved while you were reviewing, is reported back as skipped.`,
+          description: `Verify ${productCodeCount(confirmCount)}? A code whose values moved while you were reviewing is reported back as skipped.`,
           actionLabel: 'Verify',
         }
       : {
@@ -641,11 +729,7 @@ export default function SpecVerificationList() {
         table={table}
         recordCount={data?.pagination.total ?? 0}
         isLoading={isLoading}
-        onRowClick={(row) =>
-          router.push(
-            `/master-data-management/products/${row.product_id}?tab=specifications`,
-          )
-        }
+        onRowClick={(row) => openProduct(row)}
         listingKey="master_data.products.view::spec-verification"
         tableLayout={{
           width: 'fixed',

@@ -22,8 +22,15 @@
  *
  *     Row: { product_id, product_code, product_name, class_label|null,
  *            brand_name|null, is_discontinued,
- *            coverage: { have, applicable }, open_exceptions,
- *            values_hash, verification: VerificationBlock }
+ *            coverage: { have, applicable, items: [{ spec_key, label, value }] },
+ *            open_exceptions, values_hash, verification: VerificationBlock }
+ *
+ *     `coverage.items` is the denominator itemised: every APPLICABLE registry key for
+ *     that row, by the same gate rule the `applicable` count uses, with the registry
+ *     label and the stored ENTRY (`{ value, unit? }`) or null when the key is unfilled,
+ *     sorted by label. It is what the Coverage cell opens, so a reviewer can judge a
+ *     code without leaving the list (captain ruling 2026-08-17). `open_exceptions` is
+ *     still sent and is deliberately not rendered anywhere.
  *
  *     VerificationBlock: { state: 'unverified'|'verified'|'needs_reverify',
  *            verified_by_name|null, verified_at|null,
@@ -59,15 +66,15 @@
  *     200: { product_code, outcome: 'verified'|'already_verified',
  *            verification, values_hash }
  *     409: { error: 'values_changed', values_hash: <current>, verification }
- *       or { error: 'exceptions_open', exceptions: [...] }
  *     The client echoes the hash it was shown; the handler locks the code's spec
- *     rows and compares in the same transaction (AC-D.4). The two 409s are
- *     deliberately distinguishable.
+ *     rows and compares in the same transaction (AC-D.4). A moved hash is the ONLY
+ *     refusal: the open-exception gate was dropped with the exceptions UI (captain
+ *     ruling 2026-08-17), so a code with open exceptions verifies normally.
  *
  *   POST /verification/verify-bulk      body { items: [{ product_code, values_hash }] }
  *     200: { results: [{ product_code,
  *                        outcome: 'verified'|'already_verified'|'values_changed'
- *                                |'exceptions_open'|'not_found',
+ *                                |'not_found',
  *                        values_hash?, verification? }],
  *            counts: { verified, skipped } }
  *     Per-code, never all-or-nothing (AC-D.11). It is a loop over the SAME
@@ -80,7 +87,7 @@
  *   POST /verification/unverify-bulk    body { product_codes: [...] }
  *     200: { results: [{ product_code, outcome, verification? }],
  *            counts: { unverified, no_change } }
- *     Unverify has no exception gate and no hash compare (a claim is being
+ *     Unverify has no hash compare (a claim is being
  *     removed, not made), lands on `unverified` rather than needs_reverify, keeps
  *     the original verified_by / verified_at on the row, and is idempotent on a
  *     code with no history (AC-D.20, AC-D.21). No reason field: AC-D.1's column
@@ -101,7 +108,6 @@ import type {
   UnverifyBulkResponse,
   UnverifyResponse,
   VerificationBlock,
-  VerificationOpenException,
   VerifyBulkResponse,
   VerifyItem,
   VerifyResponse,
@@ -158,29 +164,25 @@ export async function unverifySpecBulk(
 }
 
 /**
- * The single verify was refused, and WHICH refusal it is decides what happens next.
+ * The single verify was refused because the values moved under the reviewer.
  *
  * Its own error type for the reason `SpecSimilarError` has one: the 409 is a product
- * answer rather than a failure, and the two answers ask for different things - open
- * exceptions have to be named so they can be answered, while a moved hash just means
- * the screen is stale and has to be re-read. `extractApiError` is string-only and
- * cannot carry either, so this call reads the body itself.
+ * answer rather than a failure - the screen is stale and has to be re-read, and the
+ * current hash comes back so it can be. `extractApiError` is string-only and cannot
+ * carry that, so this call reads the body itself.
  */
 export class SpecVerifyConflictError extends Error {
-  readonly reason: 'values_changed' | 'exceptions_open';
-  /** The hash the server holds now, on a `values_changed` refusal. */
+  readonly reason: 'values_changed';
+  /** The hash the server holds now. */
   readonly valuesHash?: string;
   readonly verification?: VerificationBlock;
-  /** The open exceptions, on an `exceptions_open` refusal. */
-  readonly exceptions?: VerificationOpenException[];
 
   constructor(
-    reason: 'values_changed' | 'exceptions_open',
+    reason: 'values_changed',
     message: string,
     extra: {
       valuesHash?: string;
       verification?: VerificationBlock;
-      exceptions?: VerificationOpenException[];
     } = {},
   ) {
     super(message);
@@ -188,7 +190,6 @@ export class SpecVerifyConflictError extends Error {
     this.reason = reason;
     this.valuesHash = extra.valuesHash;
     this.verification = extra.verification;
-    this.exceptions = extra.exceptions;
   }
 }
 
@@ -197,7 +198,6 @@ interface ConflictBody {
   message?: string;
   values_hash?: string;
   verification?: VerificationBlock;
-  exceptions?: VerificationOpenException[];
   /** The AppException envelope, read as a fallback so either serialisation lands. */
   detail?: ConflictBody | string | null;
 }
@@ -219,19 +219,14 @@ async function throwVerifyError(
         : body?.detail && typeof body.detail === 'object'
           ? body.detail
           : null;
-    if (
-      carrier?.error === 'values_changed' ||
-      carrier?.error === 'exceptions_open'
-    ) {
-      // The server words the two refusals differently on purpose, so its own sentence
-      // beats the generic one this call site would otherwise show.
+    if (carrier?.error === 'values_changed') {
+      // The server's own sentence beats the generic one this call site would show.
       throw new SpecVerifyConflictError(
         carrier.error,
         carrier.message || fallback,
         {
           valuesHash: carrier.values_hash,
           verification: carrier.verification,
-          exceptions: carrier.exceptions,
         },
       );
     }

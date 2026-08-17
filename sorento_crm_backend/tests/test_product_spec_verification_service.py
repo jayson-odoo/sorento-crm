@@ -172,6 +172,11 @@ def _open_exception(db, code: str, *, spec_key: str = "material", reason: str = 
     return row
 
 
+def _counts(coverage: dict) -> dict:
+    """The two coverage numbers alone. `items` (the tooltip's list) has its own test."""
+    return {"have": coverage["have"], "applicable": coverage["applicable"]}
+
+
 def _verification_row(db, code: str, **overrides) -> ProductSpecVerification:
     """A verification row inserted BY HAND, bypassing `verify_code` - what M2-S5's
     "pinned by a pytest that inserts a supplier row by hand before the feature
@@ -528,7 +533,10 @@ def test_verify_code_wrong_hash_returns_values_changed_and_writes_nothing(db):
     assert db.query(ProductSpecVerification).filter_by(product_code=code).count() == 0
 
 
-def test_verify_code_open_exception_returns_exceptions_open_and_writes_nothing(db):
+def test_verify_code_with_open_exceptions_verifies_normally(db):
+    """Captain ruling 2026-08-17: there is no exceptions concept for the user, so
+    there is no gate for one either. Open `ProductSpecException` rows stay as internal
+    derivation data and do not stand between a reviewer and a code they have read."""
     code = unique_code("VS-OPENEXC")
     _product(db, code)
     derive_for_code(db, code, commit=True)
@@ -539,9 +547,15 @@ def test_verify_code_open_exception_returns_exceptions_open_and_writes_nothing(d
     result = psv.verify_code(db, code, values_hash=h, actor=_ACTOR, party=psv.PARTY_INTERNAL)
     db.commit()
 
-    assert result["outcome"] == "exceptions_open"
-    assert result["exceptions"], "the exceptions must be surfaced, not merely a boolean refusal"
-    assert db.query(ProductSpecVerification).filter_by(product_code=code).count() == 0
+    assert result["outcome"] == "verified"
+    assert result["verification"]["state"] == psv.STATE_VERIFIED
+    assert db.query(ProductSpecVerification).filter_by(product_code=code).count() == 1
+    assert (
+        db.query(ProductSpecException)
+        .filter_by(product_code=code, resolved_at=None)
+        .count()
+        == 1
+    ), "the exception row itself is untouched - it is derivation data, not a gate"
 
 
 def test_verify_code_unknown_code_returns_not_found_never_raises(db):
@@ -613,12 +627,14 @@ def test_verify_codes_bulk_returns_per_code_outcomes_in_input_order(db):
     assert [r["product_code"] for r in results] == [clean_code, exc_code, stale_code, unknown_code]
     assert [r["outcome"] for r in results] == [
         "verified",
-        "exceptions_open",
+        # Open exceptions no longer refuse a verify (captain ruling 2026-08-17), so the
+        # only skip a batch can report is a hash that moved, or a code that is not there.
+        "verified",
         "values_changed",
         "not_found",
     ]
     assert db.query(ProductSpecVerification).filter_by(product_code=clean_code).count() == 1
-    assert db.query(ProductSpecVerification).filter_by(product_code=exc_code).count() == 0
+    assert db.query(ProductSpecVerification).filter_by(product_code=exc_code).count() == 1
     assert db.query(ProductSpecVerification).filter_by(product_code=stale_code).count() == 0
 
 
@@ -847,7 +863,7 @@ def test_worklist_row_carries_coverage_open_exceptions_and_values_hash(db, workl
     by_code = {row["product_code"]: row for row in result["data"]}
 
     a1 = by_code[worklist_codes["a1"]]
-    assert a1["coverage"] == {"have": 3, "applicable": 3}, (
+    assert _counts(a1["coverage"]) == {"have": 3, "applicable": 3}, (
         "wl_material + wl_mounting + wl_shape are applicable; wl_diameter's gate "
         "(shape in round/square) fails for 'rectangular'; wl_legacy is inactive"
     )
@@ -855,13 +871,13 @@ def test_worklist_row_carries_coverage_open_exceptions_and_values_hash(db, workl
     assert a1["values_hash"] == psv.current_values_hash(db, worklist_codes["a1"])
 
     a2 = by_code[worklist_codes["a2"]]
-    assert a2["coverage"] == {"have": 2, "applicable": 4}, (
+    assert _counts(a2["coverage"]) == {"have": 2, "applicable": 4}, (
         "shape=round passes wl_diameter's gate, so all four active keys are applicable"
     )
     assert a2["open_exceptions"] == 0
 
     b1 = by_code[worklist_codes["b1"]]
-    assert b1["coverage"] == {"have": 0, "applicable": 3}
+    assert _counts(b1["coverage"]) == {"have": 0, "applicable": 3}
 
     verified = by_code[worklist_codes["verified"]]
     assert verified["verification"]["state"] == psv.STATE_VERIFIED
@@ -869,6 +885,45 @@ def test_worklist_row_carries_coverage_open_exceptions_and_values_hash(db, workl
 
     needs = by_code[worklist_codes["needs_reverify"]]
     assert needs["verification"]["state"] == psv.STATE_NEEDS_REVERIFY
+
+
+def test_worklist_coverage_carries_the_itemised_keys_behind_the_have_over_applicable_figure(
+    db, worklist_codes
+):
+    """Captain ruling 2026-08-17: the Coverage cell opens a tooltip listing the keys.
+
+    Every APPLICABLE key is carried - filled ones with their stored entry, unfilled ones
+    with `value: null`, because "we do not know this yet" is what the reviewer opened it
+    for - and a key whose gate fails is absent entirely. Sorted by label, so the list
+    reads the same way twice.
+    """
+    result = psv.worklist(db, page=1, limit=50)
+    by_code = {row["product_code"]: row for row in result["data"]}
+
+    a2 = by_code[worklist_codes["a2"]]["coverage"]
+    assert len(a2["items"]) == a2["applicable"], (
+        "the list and the denominator are the same rule; a count that disagreed with "
+        "the list under it would be worse than either"
+    )
+    assert [item["spec_key"] for item in a2["items"]] == [
+        "wl_diameter",
+        "wl_material",
+        "wl_mounting",
+        "wl_shape",
+    ], "sorted by label"
+    by_key = {item["spec_key"]: item for item in a2["items"]}
+    assert by_key["wl_shape"]["value"] == {"value": "round"}, "a filled key carries its entry"
+    assert by_key["wl_diameter"]["value"] == {"value": 300}
+    assert by_key["wl_material"]["value"] is None, "an unfilled applicable key is listed, empty"
+    assert by_key["wl_mounting"]["value"] is None
+    assert by_key["wl_material"]["label"] == "Wl Material", "the registry label, for a human"
+
+    a1 = by_code[worklist_codes["a1"]]["coverage"]
+    assert "wl_diameter" not in {item["spec_key"] for item in a1["items"]}, (
+        "shape=rectangular fails wl_diameter's gate, so it is not applicable and not listed"
+    )
+    assert "wl_legacy" not in {item["spec_key"] for item in a1["items"]}, "inactive keys never apply"
+    assert all(item["value"] is not None for item in a1["items"])
 
 
 def test_worklist_summary_counts_the_default_filtered_set_and_ignores_only_the_state_filter(
@@ -1101,9 +1156,9 @@ def test_applicable_counts_a_key_gated_on_a_class_the_category_supplies(db):
         for row in psv.worklist(db, page=1, limit=50, query="WL-CLASSGATE")["data"]
     }
 
-    assert rows[sink.product_code]["coverage"] == {"have": 1, "applicable": 2}, (
+    assert _counts(rows[sink.product_code]["coverage"]) == {"have": 1, "applicable": 2}, (
         "the category says Kitchen Sink, so the gated trap key counts"
     )
-    assert rows[bidet.product_code]["coverage"] == {"have": 1, "applicable": 1}, (
+    assert _counts(rows[bidet.product_code]["coverage"]) == {"have": 1, "applicable": 1}, (
         "a Bidet does not carry the gated key"
     )

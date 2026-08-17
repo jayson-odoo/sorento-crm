@@ -135,7 +135,12 @@ def test_get_worklist_happy_path(api, db):
     row = next(r for r in body["data"] if r["product_code"] == code)
     assert row["verification"]["state"] == "unverified"
     assert "values_hash" in row
-    assert {"have", "applicable"} <= set(row["coverage"])
+    assert {"have", "applicable", "items"} <= set(row["coverage"])
+    # The tooltip's list rides the same response - no second call per row.
+    assert isinstance(row["coverage"]["items"], list)
+    assert all(
+        {"spec_key", "label", "value"} <= set(item) for item in row["coverage"]["items"]
+    )
     assert "open_exceptions" in row
 
 
@@ -302,7 +307,11 @@ def test_verify_409s_with_values_changed_and_a_json_encodable_verification_block
     assert isinstance(body["verification"]["invalidated_at"], str)
 
 
-def test_verify_409s_with_exceptions_open(api, db):
+def test_verify_succeeds_on_a_code_with_open_exceptions(api, db):
+    """Captain ruling 2026-08-17: no exceptions concept for the user, so no gate.
+
+    `values_changed` is the only 409 this route can raise now.
+    """
     client, allow = api
     allow.add(EDIT)
     code = unique_code("VR-VFY-EXC")
@@ -322,10 +331,10 @@ def test_verify_409s_with_exceptions_open(api, db):
         json={"product_code": code, "values_hash": current_hash},
     )
 
-    assert response.status_code == 409, response.text
+    assert response.status_code == 200, response.text
     body = response.json()
-    assert body["error"] == "exceptions_open"
-    assert body["exceptions"]
+    assert body["outcome"] == "verified"
+    assert body["verification"]["state"] == "verified"
 
 
 # --------------------------------------------------------------------------- #

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { MoreVertical, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
@@ -54,16 +54,6 @@ import type {
  * it needs comes from `useProductSpecTable`, so this file holds no fetching of its own
  * and the two surfaces cannot drift apart.
  */
-
-const EXCEPTION_LABELS: Record<string, string> = {
-  shape_mismatch: 'Stored dimensions describe a round or square product',
-  column_conflict: 'Description disagrees with the stored dimensions',
-  implausible_dimension: 'Dimension too large to be real',
-  low_confidence: 'Derived below the review threshold',
-  // An authored value the rules now disagree with. Setting the right value is what
-  // answers it - there is deliberately no resolve action anywhere on this page (D9).
-  human_override_conflict: 'The rules read something else than the value set by hand',
-};
 
 /** Each silence gets its own sentence and its own fix. */
 function diagnosisCopy(
@@ -223,7 +213,6 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   /** A key just picked from the dialog, so the table opens its editor on that row. */
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [confirmingUnverify, setConfirmingUnverify] = useState(false);
-  const tableRef = useRef<HTMLDivElement>(null);
   const spec = useProductSpecTable(productId);
   const { detail, rows, registry, applicableKeys, otherKeys, heldKeys, isLoading, error } = spec;
 
@@ -234,19 +223,6 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   const { permissionSet } = usePermissions();
   const canEdit = permissionSet.has('master_data.products.edit');
   const canCreateKey = permissionSet.has('master_data.spec_registry.add');
-
-  /**
-   * Answer an exception where it is answered: on the key's own row in the table.
-   *
-   * The table takes the key even when the product holds no value for it yet, so a
-   * flagged key with no row still opens an editor rather than sending the user to the
-   * add picker (AC-D.17c). Scrolled to, because the card that raised it sits below the
-   * table and an editor that opened off screen is an editor nobody found.
-   */
-  const editKeyInTable = (specKey: string) => {
-    setPendingKey(specKey);
-    tableRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-  };
 
   const rederive = async () => {
     setBusy(true);
@@ -386,7 +362,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
               product with no specs is what made "this product has none" and "this
               screen is broken" look identical, and it is the one thing a person
               arriving to ADD a specification most needs to see. */}
-          <div className="flex flex-col gap-1.5" ref={tableRef}>
+          <div className="flex flex-col gap-1.5">
             <div className="text-xs uppercase tracking-wide text-muted-foreground">
               Every value, and where it came from
             </div>
@@ -422,62 +398,6 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
         onCreateKey={spec.createKey}
         onCheckSimilar={spec.checkSimilarKey}
       />
-
-      {/* Rendered whether or not there are any, per the never-hide-a-section mandate -
-          "nothing disagrees" is the answer a reviewer came for. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Needs a human ({detail.exceptions.length})</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {detail.exceptions.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">
-              Nothing on this product disagrees with itself.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {detail.exceptions.map((row) => (
-                <div
-                  key={row.id}
-                  className="flex flex-col gap-1 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">
-                      {registry.find((key) => key.spec_key === row.spec_key)?.label ??
-                        row.spec_key}
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {EXCEPTION_LABELS[row.reason] ?? row.reason}
-                    </div>
-                  </div>
-                  {/* No resolve button anywhere here, on purpose (D9). Correcting the
-                      value in the table above is what answers it, and a button that
-                      only marked it read would be a second source of truth about
-                      whether the catalogue is right. Edit is that correction, opened on
-                      this key's own row rather than on another screen (AC-D.17c). */}
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="text-sm text-muted-foreground">
-                      The rules read{' '}
-                      <span className="font-medium text-foreground">
-                        {String((row.proposed as { value?: unknown })?.value ?? '')}
-                      </span>
-                    </div>
-                    {canEdit && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => editKeyInTable(row.spec_key)}
-                      >
-                        Edit
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       <AlertDialog open={confirmingUnverify} onOpenChange={setConfirmingUnverify}>
         <AlertDialogContent>

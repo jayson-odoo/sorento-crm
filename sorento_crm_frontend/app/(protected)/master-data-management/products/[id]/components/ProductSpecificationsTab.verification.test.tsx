@@ -3,10 +3,8 @@
  *
  * `useProductSpecTable` is mocked so the test drives the tab's rendering directly off
  * a `VerificationBlock`, the way the real hook would hand it back from
- * `GET /by-product/{id}`. `SpecTable` / `AddSpecificationDialog` are stubbed to a
- * capture shim: heavy, already covered by their own suite, and here we only need to
- * assert the ONE prop that matters, `openEditorFor`, following the exception row's
- * own "Edit" button (AC-D.17c).
+ * `GET /by-product/{id}`. `SpecTable` / `AddSpecificationDialog` are stubbed: heavy,
+ * and already covered by their own suite.
  */
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -24,15 +22,8 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-const capturedSpecTableProps = vi.hoisted(() => ({
-  openEditorFor: undefined as string | null | undefined,
-}));
-
 vi.mock('@/components/spec-table', () => ({
-  SpecTable: (props: { openEditorFor?: string | null }) => {
-    capturedSpecTableProps.openEditorFor = props.openEditorFor;
-    return <div data-testid="spec-table-stub" />;
-  },
+  SpecTable: () => <div data-testid="spec-table-stub" />,
   AddSpecificationDialog: () => null,
 }));
 
@@ -191,7 +182,6 @@ beforeEach(() => {
   usePermissions.mockReturnValue({
     permissionSet: new Set(['master_data.products.edit']),
   });
-  capturedSpecTableProps.openEditorFor = undefined;
 });
 
 afterEach(() => cleanup());
@@ -325,8 +315,11 @@ describe('Verify action', () => {
   });
 });
 
-describe('Exception row Edit opens the SpecTable editor for that key (AC-D.17c)', () => {
-  it('clicking Edit on an exception row passes that spec_key as openEditorFor', () => {
+describe('Exceptions are not a thing the user is shown (captain ruling 2026-08-17)', () => {
+  it('renders no exceptions section and no per-exception Edit, even when the product has one', () => {
+    // Derivation still flags disagreements; they are internal data now. The user puts
+    // the catalogue right by editing the value in the table, which is what always
+    // answered them - the card only ever named a question with no separate answer.
     const detail = baseDetail(UNVERIFIED);
     detail.exceptions = [
       {
@@ -340,20 +333,14 @@ describe('Exception row Edit opens the SpecTable editor for that key (AC-D.17c)'
     mockHook(detail);
     render(<ProductSpecificationsTab productId="p-1" />);
 
-    expect(capturedSpecTableProps.openEditorFor).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-
-    expect(capturedSpecTableProps.openEditorFor).toBe('shape');
-  });
-
-  it('renders the exceptions card even when there are none, per the never-hide-a-section rule', () => {
-    mockHook(baseDetail(UNVERIFIED));
-    render(<ProductSpecificationsTab productId="p-1" />);
-
-    expect(screen.getByText('Needs a human (0)')).toBeInTheDocument();
+    expect(screen.queryByText(/Needs a human/)).not.toBeInTheDocument();
     expect(
-      screen.getByText('Nothing on this product disagrees with itself.'),
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: 'Edit' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Nothing on this product disagrees with itself.'),
+    ).not.toBeInTheDocument();
+    // The table is still there, and is still where a value is corrected.
+    expect(screen.getByTestId('spec-table-stub')).toBeInTheDocument();
   });
 });

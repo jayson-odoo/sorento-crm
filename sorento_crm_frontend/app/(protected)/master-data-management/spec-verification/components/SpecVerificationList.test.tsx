@@ -73,7 +73,23 @@ function row(
     class_label: 'Kitchen Sink',
     brand_name: 'Sorento',
     is_discontinued: false,
-    coverage: { have: 3, applicable: 8 },
+    coverage: {
+      have: 2,
+      applicable: 3,
+      items: [
+        {
+          spec_key: 'material',
+          label: 'Material',
+          value: { value: 'ceramic' },
+        },
+        {
+          spec_key: 'dim_height',
+          label: 'Height',
+          value: { value: 770, unit: 'mm' },
+        },
+        { spec_key: 'finish', label: 'Finish or colour', value: null },
+      ],
+    },
     open_exceptions: 0,
     values_hash: `hash-${code}`,
     verification: {
@@ -304,16 +320,48 @@ describe('data state', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('clicking a row navigates to the product Specifications tab, not a new detail route', async () => {
+  it('clicking a row navigates to the product Specifications tab, carrying this list back', async () => {
     mockWorklist();
     renderList();
     await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
 
     fireEvent.click(screen.getByText('WC100'));
 
-    expect(nav.push).toHaveBeenCalledWith(
-      '/master-data-management/products/id-WC100?tab=specifications',
+    // No new detail route, and `back` is the worklist URL plus the row being left, so
+    // the trip out and home again costs the reviewer nothing.
+    const pushed = String(nav.push.mock.calls[0][0]);
+    expect(
+      pushed.startsWith(
+        '/master-data-management/products/id-WC100?tab=specifications&back=',
+      ),
+    ).toBe(true);
+    const back = decodeURIComponent(pushed.split('&back=')[1]);
+    expect(back.startsWith('/master-data-management/spec-verification?')).toBe(
+      true,
     );
+    expect(new URLSearchParams(back.split('?')[1]).get('focus')).toBe('WC100');
+  });
+
+  it('the Coverage cell opens the keys behind the figure: filled first, then what is blank', async () => {
+    mockWorklist([row('WC100', 'unverified')]);
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+
+    const trigger = screen.getByRole('button', {
+      name: 'Coverage: 2 of 3 applicable keys hold a value',
+    });
+    // Tabbing to it opens it, which is the same thing a click does here.
+    fireEvent.focus(trigger);
+
+    const list = await screen.findByRole('list');
+    const entries = within(list)
+      .getAllByRole('listitem')
+      .map((li) => li.textContent);
+    expect(entries).toEqual([
+      'Material: Ceramic',
+      'Height: 770 mm',
+      'Finish or colour: not set',
+    ]);
   });
 
   it('the row action does not itself navigate (stops propagation)', async () => {
@@ -587,12 +635,78 @@ describe('data state', () => {
     );
   });
 
-  it('a mixed bulk verify: acted row flips pill in place, skipped row (open exceptions) stays selected', async () => {
-    const rowsWithException = [
+  it('the selection is written to the URL, so it survives opening a product and coming back', async () => {
+    mockWorklist();
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+
+    const rowWC100 = screen.getByText('WC100').closest('tr') as HTMLElement;
+    fireEvent.click(
+      within(rowWC100).getByRole('checkbox', { name: 'Select row' }),
+    );
+
+    await waitFor(() => {
+      const urls = nav.replace.mock.calls.map((call) => String(call[0]));
+      expect(urls.some((url) => url.includes('selected=WC100'))).toBe(true);
+    });
+  });
+
+  it('a selection carried in the URL is restored, and is what a bulk action then sends', async () => {
+    nav.params = new URLSearchParams({ selected: 'WC200' });
+    mockWorklist();
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC200')).toBeInTheDocument());
+
+    const rowWC200 = screen.getByText('WC200').closest('tr') as HTMLElement;
+    expect(
+      within(rowWC200).getByRole('checkbox', { name: 'Select row' }),
+    ).toBeChecked();
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+
+    verifySpecBulk.mockResolvedValue({
+      results: [
+        {
+          product_code: 'WC200',
+          outcome: 'verified',
+          verification: row('WC200', 'verified').verification,
+          values_hash: 'hash-WC200-v2',
+        },
+      ],
+      counts: { verified: 1, skipped: 0 },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Verify selected/ }));
+    await waitFor(() =>
+      expect(screen.getByText(/Verify 1 product code\?/)).toBeInTheDocument(),
+    );
+    const dialog = screen.getByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
+
+    await waitFor(() =>
+      expect(verifySpecBulk).toHaveBeenCalledWith([
+        { product_code: 'WC200', values_hash: 'hash-WC200' },
+      ]),
+    );
+  });
+
+  it('`focus` in the URL scrolls that row back into view, once', async () => {
+    nav.params = new URLSearchParams({ focus: 'WC300' });
+    const scrollIntoView = vi.fn();
+    // jsdom implements no scrolling at all, so the component calls it optionally.
+    Element.prototype.scrollIntoView = scrollIntoView;
+    mockWorklist();
+    renderList();
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    const target = scrollIntoView.mock.instances[0] as HTMLElement;
+    expect(target.getAttribute('data-spec-code')).toBe('WC300');
+  });
+
+  it('a mixed bulk verify: acted row flips pill in place, skipped row (values moved) stays selected', async () => {
+    const rowsWithSkip = [
       row('WC200', 'unverified'),
-      row('WC400', 'unverified', { open_exceptions: 1 }),
+      row('WC400', 'unverified'),
     ];
-    mockWorklist(rowsWithException);
+    mockWorklist(rowsWithSkip);
     renderList();
     await waitFor(() => expect(screen.getByText('WC200')).toBeInTheDocument());
 
@@ -604,7 +718,7 @@ describe('data state', () => {
           verification: row('WC200', 'verified').verification,
           values_hash: 'hash-WC200-v2',
         },
-        { product_code: 'WC400', outcome: 'exceptions_open' },
+        { product_code: 'WC400', outcome: 'values_changed' },
       ],
       counts: { verified: 1, skipped: 1 },
     });
