@@ -419,9 +419,9 @@ class TestPerRouteGates:
         # tests/test_settings_app_config_gate.py, where the settings singleton is
         # seeded with non-null sensitive values so its 200 body and its
         # /app-config sibling can be asserted together. (The structural sweep
-        # below covers 38 gated routes in total - the other 12 are the
+        # below covers 42 gated routes in total - the other 16 are the 12
         # users/roles/permissions reads that were already gated before this work
-        # and have their own tests.)
+        # and the 4 onboarding reads, both of which have their own tests.)
         assert len(self.specs) == 25, "one entry per gated route except GET /settings/"
 
     def test_denied_without_permission(self, api):
@@ -599,8 +599,8 @@ def _is_gated(route) -> bool:
 
 class TestStructuralCoverage:
     def test_there_are_user_management_get_routes_to_check(self):
-        # UAC4.2's whole point breaks if this is vacuously empty. 45 is the real
-        # count now the sweep covers the whole package - 38 gated + 7 exceptions.
+        # UAC4.2's whole point breaks if this is vacuously empty. 49 is the real
+        # count now the sweep covers the whole package - 42 gated + 7 exceptions.
         # (It was 27 under the old seven-name scope: 13 gated + 13 exceptions
         # when written, then 24 gated + 3 exceptions once Q1, Q2 and Q3 were
         # decided, Q2 also adding /settings/app-config.)

@@ -41,6 +41,13 @@ MIGRATION = (
 )
 SORENTO = "00000000-0000-0000-0000-000000000001"
 
+#: A well-formed uuid that belongs to nothing, for the "unknown id" half of the
+#: bad-id cases. Deliberately a literal rather than `uuid.uuid4()`: a parametrize
+#: argument is evaluated at COLLECTION time, so a random one gives each xdist
+#: worker a different test id and the parallel run aborts with "Different tests
+#: were collected between gw0 and gw2" before a single test executes.
+UNKNOWN_UUID = "11111111-2222-3333-4444-555555555555"
+
 PUBLIC = "/api/v1/public/onboarding"
 ADMIN = "/api/v1/user-management/onboarding"
 
@@ -343,7 +350,7 @@ def test_submitting_nothing_is_refused(client, sent_request):
 # on the same payload answers 422.
 
 
-@pytest.mark.parametrize("bad", ["nope", str(uuid.uuid4())])
+@pytest.mark.parametrize("bad", ["nope", UNKNOWN_UUID])
 def test_a_template_id_that_is_not_on_offer_is_refused_on_the_public_save(
     client, sent_request, bad
 ):
@@ -355,7 +362,7 @@ def test_a_template_id_that_is_not_on_offer_is_refused_on_the_public_save(
     assert response.status_code == 422
 
 
-@pytest.mark.parametrize("bad", ["nope", str(uuid.uuid4())])
+@pytest.mark.parametrize("bad", ["nope", UNKNOWN_UUID])
 def test_a_template_id_that_is_not_on_offer_is_refused_on_the_reviewers_patch(
     client, db, sent_request, bad
 ):
@@ -660,7 +667,7 @@ def test_creating_a_request_needs_the_add_permission(client, db):
     assert created.json()["status"] == "draft"
 
 
-@pytest.mark.parametrize("bad", ["nope", str(uuid.uuid4())])
+@pytest.mark.parametrize("bad", ["nope", UNKNOWN_UUID])
 def test_creating_a_request_for_a_company_that_does_not_exist_is_refused(client, db, bad):
     """`company_id` was the one creation field nothing checked.
 
