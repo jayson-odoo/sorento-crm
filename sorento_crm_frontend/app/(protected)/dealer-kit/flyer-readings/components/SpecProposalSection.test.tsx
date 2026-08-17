@@ -11,13 +11,17 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-const { useFlyerSpecProposalsQuery, useProposeFlyerSpecs, hasPermission, permissionsLoading } =
-  vi.hoisted(() => ({
-    useFlyerSpecProposalsQuery: vi.fn(),
-    useProposeFlyerSpecs: vi.fn(),
-    hasPermission: vi.fn(),
-    permissionsLoading: { value: false },
-  }));
+const {
+  useFlyerSpecProposalsQuery,
+  useProposeFlyerSpecs,
+  hasPermission,
+  permissionsLoading,
+} = vi.hoisted(() => ({
+  useFlyerSpecProposalsQuery: vi.fn(),
+  useProposeFlyerSpecs: vi.fn(),
+  hasPermission: vi.fn(),
+  permissionsLoading: { value: false },
+}));
 
 vi.mock(
   '../../../master-data-management/flyer-spec-proposals/hooks/useFlyerSpecProposals',
@@ -83,8 +87,12 @@ function setQuery(
   });
 }
 
-function renderSection(readingStatus: 'processing' | 'done' | 'failed' = 'done') {
-  return render(<SpecProposalSection readingId="r-1" readingStatus={readingStatus} />);
+function renderSection(
+  readingStatus: 'processing' | 'done' | 'failed' = 'done',
+) {
+  return render(
+    <SpecProposalSection readingId="r-1" readingStatus={readingStatus} />,
+  );
 }
 
 beforeEach(() => {
@@ -110,12 +118,18 @@ describe('SpecProposalSection, before the batch answers and when it refuses (AC-
   });
 
   it('shows the refusal with a retry, and does not offer to propose over it', () => {
-    setQuery(undefined, false, new Error('Permission required: dealer_kit.page.view'));
+    setQuery(
+      undefined,
+      false,
+      new Error('Permission required: dealer_kit.page.view'),
+    );
 
     renderSection('done');
 
     const failure = screen.getByTestId('dk-fr-spec-error');
-    expect(failure).toHaveTextContent('Permission required: dealer_kit.page.view');
+    expect(failure).toHaveTextContent(
+      'Permission required: dealer_kit.page.view',
+    );
     expect(
       screen.queryByText('This flyer has not been read for specifications'),
     ).toBeNull();
@@ -126,7 +140,11 @@ describe('SpecProposalSection, before the batch answers and when it refuses (AC-
   });
 
   it('shows the refusal, not a stale proposing spinner, when a poll fails with data still cached', () => {
-    setQuery(batch({ status: 'proposing', id: 'batch-1' }), false, new Error('boom'));
+    setQuery(
+      batch({ status: 'proposing', id: 'batch-1' }),
+      false,
+      new Error('boom'),
+    );
 
     renderSection('done');
 
@@ -199,7 +217,10 @@ describe('SpecProposalSection, status proposed (AC-D.1)', () => {
     );
 
     const link = screen.getByRole('link', { name: 'Review proposals' });
-    expect(link).toHaveAttribute('href', '/master-data-management/flyer-spec-proposals/r-1');
+    expect(link).toHaveAttribute(
+      'href',
+      '/master-data-management/flyer-spec-proposals/r-1',
+    );
 
     const button = screen.getByTestId('dk-fr-spec-propose');
     expect(button).toHaveTextContent('Propose again');
@@ -212,7 +233,9 @@ describe('SpecProposalSection, status proposed (AC-D.1)', () => {
     renderSection('done');
 
     expect(
-      screen.getByText('This flyer states nothing the product master does not already hold.'),
+      screen.getByText(
+        'This flyer states nothing the product master does not already hold.',
+      ),
     ).toBeInTheDocument();
   });
 });
@@ -223,7 +246,8 @@ describe('SpecProposalSection, status failed (AC-D.1)', () => {
       batch({
         status: 'failed',
         id: 'batch-1',
-        error_message: 'The specification rules could not be loaded while reading this flyer',
+        error_message:
+          'The specification rules could not be loaded while reading this flyer',
       }),
     );
 
@@ -233,7 +257,9 @@ describe('SpecProposalSection, status failed (AC-D.1)', () => {
     expect(failed).toHaveTextContent(
       'The specification rules could not be loaded while reading this flyer',
     );
-    expect(screen.getByTestId('dk-fr-spec-retry')).toHaveTextContent('Try again');
+    expect(screen.getByTestId('dk-fr-spec-retry')).toHaveTextContent(
+      'Try again',
+    );
   });
 
   it('falls back to a generic message when none was recorded', () => {
@@ -258,7 +284,9 @@ describe('SpecProposalSection, while the permissions are still being fetched (AC
     expect(screen.getByTestId('dk-fr-spec-loading')).toBeInTheDocument();
     expect(screen.queryByText('No spec proposals yet')).toBeNull();
     expect(screen.queryByTestId('dk-fr-spec-propose')).toBeNull();
-    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', { enabled: false });
+    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', {
+      enabled: false,
+    });
   });
 });
 
@@ -297,7 +325,9 @@ describe('SpecProposalSection, without master_data.products.edit (AC-D.1)', () =
 
     renderSection('done');
 
-    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', { enabled: false });
+    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', {
+      enabled: false,
+    });
   });
 
   it('does fire it for somebody who holds the permission', () => {
@@ -306,6 +336,8 @@ describe('SpecProposalSection, without master_data.products.edit (AC-D.1)', () =
 
     renderSection('done');
 
-    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', { enabled: true });
+    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', {
+      enabled: true,
+    });
   });
 });

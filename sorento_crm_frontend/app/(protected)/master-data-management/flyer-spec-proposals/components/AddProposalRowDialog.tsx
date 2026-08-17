@@ -113,8 +113,7 @@ export function AddProposalRowDialog({
                 data-testid="fsp-add-key-error"
               >
                 <span>
-                  The specifications this product can carry could not be
-                  loaded.
+                  The specifications this product can carry could not be loaded.
                 </span>
                 <Button
                   variant="outline"
@@ -138,9 +137,7 @@ export function AddProposalRowDialog({
                   label: entry.label || readable(entry.spec_key),
                 }))}
                 placeholder={
-                  isLoading
-                    ? 'Loading specifications'
-                    : 'Search specifications'
+                  isLoading ? 'Loading specifications' : 'Search specifications'
                 }
                 emptyMessage={
                   isLoading

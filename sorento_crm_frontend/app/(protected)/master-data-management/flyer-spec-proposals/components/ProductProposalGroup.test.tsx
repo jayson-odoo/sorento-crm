@@ -12,22 +12,37 @@
  * which never answers under jsdom - mocked before the import that pulls it in.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
 }));
 
 // The add-a-specification dialog asks which keys this product may carry. The
 // hook is react-query over `getApplicableSpecKeys`; what this file is about is
 // what the group does with the answer, so the answer is set per test.
-const { applicableKeysQuery } = vi.hoisted(() => ({ applicableKeysQuery: vi.fn() }));
+const { applicableKeysQuery } = vi.hoisted(() => ({
+  applicableKeysQuery: vi.fn(),
+}));
 vi.mock('../hooks/useFlyerSpecProposals', () => ({
-  useApplicableSpecKeysQuery: (...args: unknown[]) => applicableKeysQuery(...args),
+  useApplicableSpecKeysQuery: (...args: unknown[]) =>
+    applicableKeysQuery(...args),
 }));
 
 import { ProductProposalGroup } from './ProductProposalGroup';
-import type { FlyerSpecProductGroup, FlyerSpecProposal } from '../services/flyerSpecProposalService';
+import type {
+  FlyerSpecProductGroup,
+  FlyerSpecProposal,
+} from '../services/flyerSpecProposalService';
 
 function row(overrides: Partial<FlyerSpecProposal>): FlyerSpecProposal {
   return {
@@ -57,7 +72,12 @@ const GROUP: FlyerSpecProductGroup = {
   product_name: 'Sorento Wall Hung Water Closet',
   pages: [3],
   proposals: [
-    row({ id: 'p-new', spec_key: 'seat_material', label: 'Seat cover material', kind: 'new' }),
+    row({
+      id: 'p-new',
+      spec_key: 'seat_material',
+      label: 'Seat cover material',
+      kind: 'new',
+    }),
     row({
       id: 'p-change',
       spec_key: 'dim_height',
@@ -103,7 +123,9 @@ const GROUP: FlyerSpecProductGroup = {
   ],
 };
 
-function renderGroup(overrides: Partial<Parameters<typeof ProductProposalGroup>[0]> = {}) {
+function renderGroup(
+  overrides: Partial<Parameters<typeof ProductProposalGroup>[0]> = {},
+) {
   const onSelectionChange = vi.fn();
   const result = render(
     <ProductProposalGroup
@@ -139,7 +161,9 @@ describe('ProductProposalGroup, per-product select-all (AC-D.2, AC-D.8)', () => 
     renderGroup();
 
     expect(screen.getByText('SRTWC8066')).toBeInTheDocument();
-    expect(screen.getByText('Sorento Wall Hung Water Closet')).toBeInTheDocument();
+    expect(
+      screen.getByText('Sorento Wall Hung Water Closet'),
+    ).toBeInTheDocument();
     expect(screen.getByText('p. 3')).toBeInTheDocument();
     // new + change + conflict = 3 tickable rows (AC-F.4). It was 2 before the
     // captain's amendment made a ticked conflict the confirmation.
@@ -184,7 +208,11 @@ describe('ProductProposalGroup, per-product select-all (AC-D.2, AC-D.8)', () => 
   it('offers no select-all when this product has nothing selectable pending', () => {
     const settledOnly: FlyerSpecProductGroup = {
       ...GROUP,
-      proposals: GROUP.proposals.map((p) => ({ ...p, outcome: 'applied', applied_at: 'x' })),
+      proposals: GROUP.proposals.map((p) => ({
+        ...p,
+        outcome: 'applied',
+        applied_at: 'x',
+      })),
     };
 
     render(
@@ -207,7 +235,9 @@ describe('ProductProposalGroup, rows delegate to the shared review (AC-D.2)', ()
 
     expect(screen.getByText('New')).toBeInTheDocument();
     expect(screen.getByText('Changes 750 mm to 770 mm')).toBeInTheDocument();
-    expect(screen.getByText('Conflicts with your value Chrome')).toBeInTheDocument();
+    expect(
+      screen.getByText('Conflicts with your value Chrome'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Already stored')).toBeInTheDocument();
     expect(screen.getByText('Removed from this product')).toBeInTheDocument();
   });
@@ -221,7 +251,9 @@ describe('ProductProposalGroup, rows delegate to the shared review (AC-D.2)', ()
     const conflictCell = screen.getByText('Conflicts with your value Chrome');
     const conflictRow = conflictCell.closest('tr');
     expect(conflictRow).not.toBeNull();
-    expect(within(conflictRow as HTMLElement).getByLabelText('Select row')).toBeEnabled();
+    expect(
+      within(conflictRow as HTMLElement).getByLabelText('Select row'),
+    ).toBeEnabled();
 
     const unchangedCell = screen.getByText('Already stored');
     const unchangedRow = unchangedCell.closest('tr');
@@ -233,7 +265,9 @@ describe('ProductProposalGroup, rows delegate to the shared review (AC-D.2)', ()
     const newCell = screen.getByText('New');
     const newRow = newCell.closest('tr');
     expect(newRow).not.toBeNull();
-    expect(within(newRow as HTMLElement).getByLabelText('Select row')).toBeEnabled();
+    expect(
+      within(newRow as HTMLElement).getByLabelText('Select row'),
+    ).toBeEnabled();
   });
 });
 
@@ -265,8 +299,12 @@ describe('ProductProposalGroup, settled rows are read-only (AC-D.4, AC-D.8)', ()
 
     const settled = screen.getByText('Already decided').closest('div');
     expect(settled).not.toBeNull();
-    expect(within(settled as HTMLElement).getByText('Material')).toBeInTheDocument();
-    expect(within(settled as HTMLElement).getByText('Applied')).toBeInTheDocument();
+    expect(
+      within(settled as HTMLElement).getByText('Material'),
+    ).toBeInTheDocument();
+    expect(
+      within(settled as HTMLElement).getByText('Applied'),
+    ).toBeInTheDocument();
     // A settled row is not a table row any more - there is no checkbox for it.
     // The base GROUP has 5 still-pending rows; the added settled row adds none.
     expect(screen.queryAllByLabelText('Select row')).toHaveLength(5);
@@ -275,7 +313,11 @@ describe('ProductProposalGroup, settled rows are read-only (AC-D.4, AC-D.8)', ()
   it('says every row for this product has been through an apply when nothing is pending', () => {
     const settledOnly: FlyerSpecProductGroup = {
       ...GROUP,
-      proposals: GROUP.proposals.map((p) => ({ ...p, outcome: 'applied', applied_at: 'x' })),
+      proposals: GROUP.proposals.map((p) => ({
+        ...p,
+        outcome: 'applied',
+        applied_at: 'x',
+      })),
     };
 
     render(
@@ -299,7 +341,9 @@ describe('ProductProposalGroup, correcting a value in place (AC-F.3)', () => {
   it('offers the pencil on a pending new/change/conflict row and not on unchanged or suppressed', () => {
     renderGroup({ onEditValue: vi.fn() });
 
-    expect(screen.getByLabelText('Edit Seat cover material')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Edit Seat cover material'),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText('Edit Height')).toBeInTheDocument();
     expect(screen.getByLabelText('Edit Finish or colour')).toBeInTheDocument();
     expect(screen.queryByLabelText('Edit Width')).toBeNull();
@@ -451,11 +495,15 @@ describe('ProductProposalGroup, correcting a value in place (AC-F.3)', () => {
     renderGroup({ onEditValue });
 
     fireEvent.click(screen.getByLabelText('Edit Seat cover material'));
-    const input = screen.getByLabelText('Seat cover material') as HTMLInputElement;
+    const input = screen.getByLabelText(
+      'Seat cover material',
+    ) as HTMLInputElement;
     expect(input).toHaveAttribute('type', 'text');
 
     fireEvent.change(input, { target: { value: 'uf' } });
-    fireEvent.click(screen.getByLabelText('Cancel editing Seat cover material'));
+    fireEvent.click(
+      screen.getByLabelText('Cancel editing Seat cover material'),
+    );
 
     expect(screen.queryByLabelText('Seat cover material')).toBeNull();
     expect(onEditValue).not.toHaveBeenCalled();
@@ -464,7 +512,14 @@ describe('ProductProposalGroup, correcting a value in place (AC-F.3)', () => {
   it('marks a row the server says was edited', () => {
     const edited: FlyerSpecProductGroup = {
       ...GROUP,
-      proposals: [row({ id: 'p-edited', spec_key: 'seat_material', label: 'Seat cover material', edited: true })],
+      proposals: [
+        row({
+          id: 'p-edited',
+          spec_key: 'seat_material',
+          label: 'Seat cover material',
+          edited: true,
+        }),
+      ],
     };
 
     render(

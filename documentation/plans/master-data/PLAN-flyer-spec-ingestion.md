@@ -1,9 +1,10 @@
 # PLAN: flyer / catalogue ingestion into product specifications
 
-**Status:** DRAFT -> building. Written 2026-08-17 (branch `fm/flyer-ingestion-build`, based on
-the unmerged PR 4 branch `fm/spec-pr4-extraction-prompt` because `propose_from_text`, the shared
-`SpecProposalReview` component and the batch-apply route only exist there; rebase onto `main`
-once PR 4 merges). Phase 1 mock (S1): BUILT, browser verification outstanding.
+**Status:** BUILT and reviewed; PR delivery pending. Written 2026-08-17 (branch
+`fm/flyer-ingestion-build`; originally drafted against the PR 4 branch
+`fm/spec-pr4-extraction-prompt`, since merged to `main` as #194 - the branch now sits on `main`,
+so `propose_from_text`, the shared `SpecProposalReview` component and the batch-apply route come
+from `main`). Phase 1 mock (S1): BUILT, browser verification outstanding.
 Phase 2 backend (S2): **BUILT** - classifier + registry-helper lift, `AUTHORED_SOURCES` flip,
 migration `370_flyer_spec_proposals`, both models, the ingest service, the RQ task and the four
 routes; the four red pytest files are green (52 tests) and `alembic heads` is a single head.
@@ -13,15 +14,18 @@ field (no type change was needed); the 13 vitest files over these surfaces are g
 tests). The agent-browser evidence run (section 6) was attempted once 2026-08-17 and blocked by
 shared-machine resource exhaustion (login succeeded, sidebar navigation could not complete); a
 second attempt the same day **completed** - AC-E.1 and AC-E.2 are verified, full walk, network
-calls, console checks and screenshots in section 6. Review (S4): pending.
+calls, console checks and screenshots in section 6. Review (S4): **done** - the codex
+cross-model pass was waived by firstmate (usage limit) and replaced by two independent Claude
+reviewer passes; every finding is fixed on the branch.
 Captain amendments F and G (S5): **BUILT** - conflicts apply on tick, values edit in place, rows
 are added and dismissed, the page searches; three columns folded into migration 370, three new
 routes, two data-driven props on the shared review component. See section 7c for what shipped and
 where it deviates. Amendment F+G agent-browser evidence run (own agent stack, ports 3040/8040):
 **completed 2026-08-17** - AC-F.1-F.5 and AC-G.1-G.4 verified; AC-G.5 half-verified with one
-found defect (search-clear does not restore the full product-group list/pagination - reproduced
-3x, not fixed here, logged as a follow-up). Full walk, network calls, console checks and
-screenshots in section 6b.
+found defect (search-clear did not restore the full product-group list/pagination - reproduced
+3x). Full walk, network calls, console checks and screenshots in section 6b. That defect and
+four sibling findings were fixed in S6 (`f15d3f67`, section 7d) and re-verified in the S7
+re-walk (section 6c), so AC-G.5 is now fully verified.
 **UAC:** `flyer-spec-ingestion-acceptance-criteria.md` (the contract; this plan fulfils it).
 **Design source:** `firstmate/data/flyer-spec-ingestion/report.md` §3, §5, §7 (read-only report,
 2026-08-16). **Parent plan:** `PLAN-spec-authoring-verification.md` (PR 4 amendment, AC-B.18).
@@ -54,7 +58,10 @@ read-only) -> `Apply N selected` -> every row reported applied or refused -> the
 
 ## 3. Design (backwards from the journey)
 
-### 3.1 Tables (migration `370_flyer_spec_proposals`, down `367_promote_flyer_provenance`)
+### 3.1 Tables (migration `370_flyer_spec_proposals`, down `368_merge_tickets_main`)
+
+The down revision is `main`'s merge revision, which already includes
+`367_promote_flyer_provenance`, so the chain stays a single `alembic heads` head.
 
 `product_spec_flyer_batches` (`CompanyScopedMixin`, company copied from the reading):
 
@@ -852,13 +859,13 @@ apply) is the captain's call. Nothing here suppresses it; logged as **BL-016**.
 and 94 across the other five); vitest 219 green over the same 13 files. No migration, so
 `alembic heads` is unchanged at the single head `370_flyer_spec_proposals`.
 
-## 6c. Re-walk after the fixes (S7, `dfc6a1bb`)
+## 6c. Re-walk after the fixes (S7, `f15d3f67`)
 
 **Completed 2026-08-17, own agent stack** (BE `:8040`, worker on `WORKER_QUEUES=flyer_read`
 against `REDIS_URL=redis://localhost:6379/5`, FE `npm run dev` on `:3040` with
 `NEXT_PUBLIC_API_URL=http://localhost:8040`; `:3000`/`:8000` untouched, belong to other lanes),
 against the shared dev Postgres, via `npx -y agent-browser@0.27.0 --session spec-flyer-rewalk`.
-Scope: the five findings fixed in `dfc6a1bb` (search-clear, dismiss-prunes-tick,
+Scope: the five findings fixed in `f15d3f67` (search-clear, dismiss-prunes-tick,
 add-ticks-unless-already-stored, multi-value pencil disabled) plus a clean 375x812 pass. Login
 used `E2E_EMAIL`/`E2E_PASSWORD` from `sorento_crm_frontend/.env.local` (values never echoed).
 `get url` was checked before trusting reads. Navigation started from `/` via the sidebar, per

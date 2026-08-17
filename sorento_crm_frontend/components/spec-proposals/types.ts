@@ -40,7 +40,12 @@ export type SpecProposalValue = SpecProposalScalar | SpecProposalScalar[];
  *
  * `unchanged` and `suppressed` are never selectable: there is nothing to write.
  */
-export type SpecProposalKind = 'new' | 'change' | 'conflict' | 'unchanged' | 'suppressed';
+export type SpecProposalKind =
+  | 'new'
+  | 'change'
+  | 'conflict'
+  | 'unchanged'
+  | 'suppressed';
 
 /**
  * Which kinds may be ticked when the caller says nothing.

@@ -31,11 +31,7 @@ import type {
   FlyerSpecProposal,
 } from '../services/flyerSpecProposalService';
 import { AddProposalRowDialog } from './AddProposalRowDialog';
-import {
-  ProposalValueEditor,
-  fromDraft,
-  toDraft,
-} from './ProposalValueEditor';
+import { ProposalValueEditor, fromDraft, toDraft } from './ProposalValueEditor';
 
 /**
  * One product's share of a flyer batch.
@@ -167,7 +163,10 @@ export interface ProductProposalGroupProps {
    * leaves it open with what the reviewer typed, because the sentence the server
    * refused with is about the value they are still holding.
    */
-  onEditValue?: (proposalId: string, value: SpecProposalValue) => Promise<unknown>;
+  onEditValue?: (
+    proposalId: string,
+    value: SpecProposalValue,
+  ) => Promise<unknown>;
   /** Take one row off the batch. Omitted when the reader may not write. */
   onDismiss?: (proposalId: string) => Promise<unknown>;
   /** Add a key the flyer stated in a way no rule caught, to THIS product. */
@@ -357,7 +356,10 @@ export function ProductProposalGroup({
                           // The title sits on the wrapper: a disabled button
                           // takes no pointer events, so its own tooltip would
                           // never open.
-                          <span title={MULTI_VALUE_HINT} className="inline-flex">
+                          <span
+                            title={MULTI_VALUE_HINT}
+                            className="inline-flex"
+                          >
                             <Button
                               size="icon"
                               variant="ghost"

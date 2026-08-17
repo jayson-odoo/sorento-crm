@@ -245,7 +245,9 @@ export function seedProposalRow(
     ...batch,
     groups: batch.groups.map((group) => {
       if (group.product_id !== productId) return group;
-      const others = group.proposals.filter((existing) => existing.id !== row.id);
+      const others = group.proposals.filter(
+        (existing) => existing.id !== row.id,
+      );
       return { ...group, proposals: [...others, row] };
     }),
   };
@@ -256,8 +258,7 @@ export function useDismissFlyerSpecProposal(readingId: string) {
   const invalidate = useRowMutationInvalidation(readingId);
 
   return useMutation<FlyerSpecBatch, Error, string>({
-    mutationFn: (proposalId) =>
-      dismissFlyerSpecProposal(readingId, proposalId),
+    mutationFn: (proposalId) => dismissFlyerSpecProposal(readingId, proposalId),
     onSuccess: () => {
       invalidate();
       toast.success('Proposal dismissed');
@@ -280,7 +281,10 @@ export function useDismissFlyerSpecProposal(readingId: string) {
  * `enabled` is the dialog being open: 25 product groups on screen would otherwise
  * be 25 requests for lists nobody asked to see.
  */
-export function useApplicableSpecKeysQuery(productCode: string, enabled: boolean) {
+export function useApplicableSpecKeysQuery(
+  productCode: string,
+  enabled: boolean,
+) {
   return useQuery({
     queryKey: APPLICABLE_KEY(productCode),
     queryFn: () => getApplicableSpecKeys(productCode),

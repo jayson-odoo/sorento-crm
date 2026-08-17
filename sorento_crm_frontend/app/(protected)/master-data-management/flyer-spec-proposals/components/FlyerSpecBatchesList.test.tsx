@@ -12,17 +12,27 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const push = vi.fn();
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push, replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
+  useRouter: () => ({
+    push,
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    prefetch: vi.fn(),
+  }),
   usePathname: () => '/master-data-management/flyer-spec-proposals',
   useSearchParams: () => new URLSearchParams(),
   useParams: () => ({}),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
 }));
 
-const { listFlyerSpecBatches } = vi.hoisted(() => ({ listFlyerSpecBatches: vi.fn() }));
+const { listFlyerSpecBatches } = vi.hoisted(() => ({
+  listFlyerSpecBatches: vi.fn(),
+}));
 
 vi.mock('../services/flyerSpecProposalService', () => ({
   listFlyerSpecBatches,
@@ -61,7 +71,10 @@ function batch(overrides: Partial<FlyerSpecBatch> = {}): FlyerSpecBatch {
 
 function renderList() {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+      mutations: { retry: false },
+    },
   });
   return render(
     <QueryClientProvider client={client}>
@@ -97,10 +110,14 @@ describe('FlyerSpecBatchesList, rows (AC-D.6)', () => {
 
     renderList();
 
-    fireEvent.click(await screen.findByText('Sorento Bathroom Collection 2026 A3.pdf'));
+    fireEvent.click(
+      await screen.findByText('Sorento Bathroom Collection 2026 A3.pdf'),
+    );
 
     await waitFor(() =>
-      expect(push).toHaveBeenCalledWith('/master-data-management/flyer-spec-proposals/r-1'),
+      expect(push).toHaveBeenCalledWith(
+        '/master-data-management/flyer-spec-proposals/r-1',
+      ),
     );
   });
 
@@ -127,11 +144,15 @@ describe('FlyerSpecBatchesList, rows (AC-D.6)', () => {
 
 describe('FlyerSpecBatchesList, the Applied status derivation (AC-D.6)', () => {
   it('reads "Proposing" while a pass is running', async () => {
-    listFlyerSpecBatches.mockResolvedValue([batch({ status: 'proposing', applied_count: 0 })]);
+    listFlyerSpecBatches.mockResolvedValue([
+      batch({ status: 'proposing', applied_count: 0 }),
+    ]);
 
     renderList();
 
-    expect(await screen.findByTestId('fsp-status-pill')).toHaveTextContent('Proposing');
+    expect(await screen.findByTestId('fsp-status-pill')).toHaveTextContent(
+      'Proposing',
+    );
   });
 
   it('reads "Failed" with the error message alongside it', async () => {
@@ -144,30 +165,42 @@ describe('FlyerSpecBatchesList, the Applied status derivation (AC-D.6)', () => {
 
     renderList();
 
-    expect(await screen.findByTestId('fsp-status-pill')).toHaveTextContent('Failed');
+    expect(await screen.findByTestId('fsp-status-pill')).toHaveTextContent(
+      'Failed',
+    );
     expect(
       screen.getByText('The specification rules could not be loaded'),
     ).toBeInTheDocument();
   });
 
   it('reads "Proposed" when settled but nothing has been applied yet', async () => {
-    listFlyerSpecBatches.mockResolvedValue([batch({ status: 'proposed', applied_count: 0 })]);
+    listFlyerSpecBatches.mockResolvedValue([
+      batch({ status: 'proposed', applied_count: 0 }),
+    ]);
 
     renderList();
 
-    expect(await screen.findByTestId('fsp-status-pill')).toHaveTextContent('Proposed');
+    expect(await screen.findByTestId('fsp-status-pill')).toHaveTextContent(
+      'Proposed',
+    );
   });
 
   it('reads "Applied" the moment at least one row has been written, even mid-batch', async () => {
     // A batch with rows still ticked-but-unapplied is still `proposed` server
     // side; `applied_count > 0` is what flips the pill, not the batch status.
     listFlyerSpecBatches.mockResolvedValue([
-      batch({ status: 'proposed', applied_count: 4, applied_at: '2026-08-16T11:00:00' }),
+      batch({
+        status: 'proposed',
+        applied_count: 4,
+        applied_at: '2026-08-16T11:00:00',
+      }),
     ]);
 
     renderList();
 
-    expect(await screen.findByTestId('fsp-status-pill')).toHaveTextContent('Applied');
+    expect(await screen.findByTestId('fsp-status-pill')).toHaveTextContent(
+      'Applied',
+    );
   });
 });
 
@@ -179,7 +212,9 @@ describe('FlyerSpecBatchesList, empty state (AC-D.6)', () => {
 
     const empty = await screen.findByTestId('fsp-list-empty');
     expect(empty).toHaveTextContent('No flyer has been proposed yet');
-    expect(empty).toHaveTextContent('Read a flyer in Dealer Kit and press Propose specs.');
+    expect(empty).toHaveTextContent(
+      'Read a flyer in Dealer Kit and press Propose specs.',
+    );
   });
 
   it('says a search matched nothing rather than reading as an empty account', async () => {
@@ -188,9 +223,13 @@ describe('FlyerSpecBatchesList, empty state (AC-D.6)', () => {
     renderList();
 
     await screen.findByText('Sorento Bathroom Collection 2026 A3.pdf');
-    fireEvent.change(screen.getByLabelText('Search flyers'), { target: { value: 'zzzz' } });
+    fireEvent.change(screen.getByLabelText('Search flyers'), {
+      target: { value: 'zzzz' },
+    });
 
-    expect(await screen.findByText(/no flyer matches that search/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/no flyer matches that search/i),
+    ).toBeInTheDocument();
   });
 
   it('replaces the grid with the failure instead of an empty account', async () => {
@@ -200,9 +239,12 @@ describe('FlyerSpecBatchesList, empty state (AC-D.6)', () => {
 
     renderList();
 
-    await waitFor(() => expect(screen.getByTestId('fsp-list-error')).toBeInTheDocument(), {
-      timeout: 4000,
-    });
+    await waitFor(
+      () => expect(screen.getByTestId('fsp-list-error')).toBeInTheDocument(),
+      {
+        timeout: 4000,
+      },
+    );
     expect(screen.getByText(/permission required/i)).toBeInTheDocument();
     expect(screen.queryByTestId('fsp-list-empty')).toBeNull();
   });

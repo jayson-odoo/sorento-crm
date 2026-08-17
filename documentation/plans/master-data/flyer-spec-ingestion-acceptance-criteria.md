@@ -25,7 +25,8 @@ One upload, one background proposal pass, one review screen, one apply route.
   holds today.
 - A review screen lists the batch **grouped by product**, per-row state
   `new` / `change` / `conflict` / `unchanged` / `suppressed`, select-all per product, `new` ticked
-  by default, `change` unticked, the other three not tickable.
+  by default, `change` and `conflict` unticked but tickable (captain amendment, section F);
+  only `unchanged` and `suppressed` are not tickable.
 - Apply writes the ticked rows through PR 1's choke point (`apply_spec_values`) with
   **`source='flyer'`**, which this slice adds to `AUTHORED_SOURCES`. Every refusal is reported by
   row with a reason.

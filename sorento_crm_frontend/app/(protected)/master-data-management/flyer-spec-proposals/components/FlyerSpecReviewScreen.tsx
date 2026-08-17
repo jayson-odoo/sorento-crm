@@ -197,7 +197,9 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
   // decision, and a dialog that named only the total would hide the one that
   // matters (AC-F.4).
   const replaceCount = replacing.length;
-  const authoredCount = replacing.filter((row) => row.kind === 'conflict').length;
+  const authoredCount = replacing.filter(
+    (row) => row.kind === 'conflict',
+  ).length;
 
   /**
    * The groups the search box leaves on screen.
@@ -282,9 +284,7 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
           data-testid="fsp-readonly"
         >
           <ScanLine className="size-6 text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">
-            Reported only
-          </p>
+          <p className="text-sm font-medium text-foreground">Reported only</p>
           <p className="max-w-md text-sm text-muted-foreground">
             Reviewing what a flyer states needs the product master permission,
             which your role does not have.
@@ -652,18 +652,18 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
             data-testid="fsp-replacing"
           >
             {replacing.map((row) => (
-                <li key={row.id} className="flex flex-col">
-                  <span className="text-foreground">
-                    {row.label || readable(row.spec_key)}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {readableValue(
-                      row.stored_value,
-                      row.stored_unit ?? undefined,
-                    ) || 'Not recorded'}{' '}
-                    becomes {readableValue(row.value, row.unit ?? undefined)}
-                  </span>
-                </li>
+              <li key={row.id} className="flex flex-col">
+                <span className="text-foreground">
+                  {row.label || readable(row.spec_key)}
+                </span>
+                <span className="text-muted-foreground">
+                  {readableValue(
+                    row.stored_value,
+                    row.stored_unit ?? undefined,
+                  ) || 'Not recorded'}{' '}
+                  becomes {readableValue(row.value, row.unit ?? undefined)}
+                </span>
+              </li>
             ))}
           </ul>
 

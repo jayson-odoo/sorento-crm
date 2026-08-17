@@ -57,7 +57,9 @@ const mockAddRow = vi.mocked(addFlyerSpecProposalRow);
 
 function wrapperWith(client: QueryClient) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
   };
 }
 
@@ -92,7 +94,9 @@ function batch(overrides: Partial<FlyerSpecBatch> = {}): FlyerSpecBatch {
   };
 }
 
-function proposals(overrides: Partial<FlyerSpecProposals> = {}): FlyerSpecProposals {
+function proposals(
+  overrides: Partial<FlyerSpecProposals> = {},
+): FlyerSpecProposals {
   return { ...batch(), groups: [], ...overrides };
 }
 
@@ -125,9 +129,12 @@ describe('useFlyerSpecBatchesQuery, the 3 s poll (AC-D.8)', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockList).toHaveBeenCalledTimes(1);
 
-    await waitFor(() => expect(result.current.data?.[0]?.status).toBe('proposed'), {
-      timeout: 4500,
-    });
+    await waitFor(
+      () => expect(result.current.data?.[0]?.status).toBe('proposed'),
+      {
+        timeout: 4500,
+      },
+    );
     expect(mockList).toHaveBeenCalledTimes(2);
 
     // Nothing left proposing: refetchInterval resolves to false, so no third
@@ -153,7 +160,9 @@ describe('useFlyerSpecBatchesQuery, the 3 s poll (AC-D.8)', () => {
 
 describe('useFlyerSpecProposalsQuery, the 3 s poll (AC-D.8)', () => {
   it('asks for nothing until there is a reading to ask about', () => {
-    renderHook(() => useFlyerSpecProposalsQuery(''), { wrapper: wrapperWith(freshClient()) });
+    renderHook(() => useFlyerSpecProposalsQuery(''), {
+      wrapper: wrapperWith(freshClient()),
+    });
 
     expect(mockGet).not.toHaveBeenCalled();
   });
@@ -179,7 +188,9 @@ describe('useFlyerSpecProposalsQuery, the 3 s poll (AC-D.8)', () => {
     await waitFor(() => expect(result.current.data?.status).toBe('proposing'));
     expect(mockGet).toHaveBeenCalledTimes(1);
 
-    await waitFor(() => expect(result.current.data?.status).toBe('proposed'), { timeout: 4500 });
+    await waitFor(() => expect(result.current.data?.status).toBe('proposed'), {
+      timeout: 4500,
+    });
     expect(mockGet).toHaveBeenCalledTimes(2);
 
     await new Promise((resolve) => setTimeout(resolve, 3200));
@@ -217,12 +228,17 @@ describe('useProposeFlyerSpecs', () => {
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: [FLYER_SPEC_PROPOSALS_QUERY_KEY, 'r-1'],
     });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: [FLYER_SPEC_BATCHES_QUERY_KEY] });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: [FLYER_SPEC_BATCHES_QUERY_KEY],
+    });
   });
 
   it('toasts an error, not a success, when the 202 already answers failed', async () => {
     mockPropose.mockResolvedValue(
-      batch({ status: 'failed', error_message: 'The flyer could not be queued for reading.' }),
+      batch({
+        status: 'failed',
+        error_message: 'The flyer could not be queued for reading.',
+      }),
     );
 
     const { result } = renderHook(() => useProposeFlyerSpecs('r-1'), {
@@ -242,7 +258,14 @@ describe('useProposeFlyerSpecs', () => {
 describe('useApplyFlyerSpecProposals', () => {
   it('invalidates both query keys after a successful apply', async () => {
     mockApply.mockResolvedValue({
-      applied: [{ proposal_id: 'p-1', product_code: 'SRTWC8066', spec_key: 'seat_material', value: 'pp' }],
+      applied: [
+        {
+          proposal_id: 'p-1',
+          product_code: 'SRTWC8066',
+          spec_key: 'seat_material',
+          value: 'pp',
+        },
+      ],
       refused: [],
     });
     const client = freshClient();
@@ -258,8 +281,12 @@ describe('useApplyFlyerSpecProposals', () => {
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: [FLYER_SPEC_PROPOSALS_QUERY_KEY, 'r-1'],
     });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: [FLYER_SPEC_BATCHES_QUERY_KEY] });
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('1 specification value written');
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: [FLYER_SPEC_BATCHES_QUERY_KEY],
+    });
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+      '1 specification value written',
+    );
   });
 
   it('invalidates both keys even when nothing was written, but does not toast a success', async () => {
@@ -288,7 +315,9 @@ describe('useApplyFlyerSpecProposals', () => {
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: [FLYER_SPEC_PROPOSALS_QUERY_KEY, 'r-1'],
     });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: [FLYER_SPEC_BATCHES_QUERY_KEY] });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: [FLYER_SPEC_BATCHES_QUERY_KEY],
+    });
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
   });
 
@@ -358,9 +387,16 @@ describe('useAddFlyerSpecProposalRow, the cached batch (AC-G.1, AC-F.4)', () => 
       wrapper: wrapperWith(client),
     });
 
-    await result.current.mutateAsync({ product_id: 'prod-2', spec_key: 'seat_material', value: 'pp' });
+    await result.current.mutateAsync({
+      product_id: 'prod-2',
+      spec_key: 'seat_material',
+      value: 'pp',
+    });
 
-    const cached = client.getQueryData<FlyerSpecProposals>([FLYER_SPEC_PROPOSALS_QUERY_KEY, 'r-1']);
+    const cached = client.getQueryData<FlyerSpecProposals>([
+      FLYER_SPEC_PROPOSALS_QUERY_KEY,
+      'r-1',
+    ]);
     expect(cached?.groups[0].proposals).toEqual([]);
     expect(cached?.groups[1].proposals).toEqual([added]);
   });
@@ -374,11 +410,17 @@ describe('useAddFlyerSpecProposalRow, the cached batch (AC-G.1, AC-F.4)', () => 
       wrapper: wrapperWith(client),
     });
 
-    await result.current.mutateAsync({ product_id: 'prod-2', spec_key: 'seat_material', value: 'pp' });
+    await result.current.mutateAsync({
+      product_id: 'prod-2',
+      spec_key: 'seat_material',
+      value: 'pp',
+    });
 
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: [FLYER_SPEC_PROPOSALS_QUERY_KEY, 'r-1'],
     });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: [FLYER_SPEC_BATCHES_QUERY_KEY] });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: [FLYER_SPEC_BATCHES_QUERY_KEY],
+    });
   });
 });
