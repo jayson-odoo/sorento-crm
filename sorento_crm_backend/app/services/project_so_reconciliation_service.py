@@ -35,9 +35,13 @@ line this sales order does not, which is answered in AutoCount Differences).
 
 ## What this file must never do (AC-A04)
 
-Reconciling writes core-line links and nothing else. It creates no purchase requirement, no
-order inquiry row, and never calls `derive_for_sales_order`: purchasing demand is created
-inside the atomic SO confirmation in Stage 1C, from the confirmed Buy residual alone.
+Reconciling writes core-line links and nothing else. It creates no purchase requirement and
+no order inquiry row: purchasing demand is created inside the atomic SO confirmation, from
+the confirmed Buy residual alone (`ProjectOrderInquiryService.refresh_for_decision`, the
+only writer of a standard demand row). What reconciling DOES do to a confirmed order is
+retire its decision - a re-mapped line supersedes the active revision and drifted facts
+challenge it (AC-C06) - so the SO returns to Needs CS review rather than staying confirmed
+against a mapping that has moved.
 
 ## No UUID in a message
 

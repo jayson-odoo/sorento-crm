@@ -7,10 +7,14 @@ same project actually reaches the engine as a pool, that the stock location come
 CONFIRMED allocation and is left empty when there is not one, that purchasing gets a task
 rather than an email, and that the spreadsheet comes out with the client's own headings.
 
-**Publish no longer derives** (PLAN-scm-front-planning.md section 4, AC-D01). Stage 1C's
-atomic CS confirmation becomes the only caller, with the confirmed Buy residual only, so
-every case below drives ``derive_for_sales_order`` directly. The trigger moved; the
-derivation is unchanged and stays pinned here until 1C replaces it.
+**Publish no longer derives, and neither does anything else on the SO path**
+(PLAN-scm-front-planning.md section 4, AC-D01). `derive_for_sales_order` and its pool
+netting are gone: the standard demand row is the confirmed Buy residual, written by
+`refresh_for_decision` inside the atomic CS confirmation. The cases that pinned the SO
+path's netting (pre-order pools, inbound SPO cover, the reserve window) went with the
+behaviour, in the same commit; the ones about what happens AROUND the rows drive
+`_confirmed_inquiry` below instead. Amendment derivation, and the netting the amendment
+verbs still use, are untouched.
 
 Postgres, blank scratch schema, rolled back at teardown. Every FK target is real: the
 constraints this slice leans on are enforced, so an invented uuid aborts the transaction
@@ -236,6 +240,68 @@ def seeded():
 
 # ------------------------------------------------------------------ derivation
 
+def _confirmed_inquiry(db, order, *, actor_user_id, buy=None):
+    """The Buy-only handoff, written the way Stage 1C writes it.
+
+    `derive_for_sales_order` is gone: the SO path no longer nets anything, and the only
+    creator of a standard demand row is `refresh_for_decision`, inside the atomic
+    confirmation (PLAN-scm-front-planning.md section 4). The cases below are about what
+    happens AROUND those rows - the stock location on them, the purchasing task, the row
+    states, the spreadsheet - so they need rows rather than a whole confirmation, and this
+    writes them through the one writer that exists.
+
+    ``buy`` defaults to each line's full quantity, which is what a line nothing covers
+    resolves to and what these cases were originally written against.
+    """
+    from app.models.project_so import SOSupplyDecision
+
+    service = ProjectOrderInquiryService(db)
+    lines = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.project_sales_order_id == order.id)
+        .order_by(ProjectSalesOrderLine.line_no.asc())
+        .all()
+    )
+    revision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .count()
+        + 1
+    )
+    decision = SOSupplyDecision(
+        id=str(uuid.uuid4()),
+        company_id=order.company_id,
+        project_sales_order_id=order.id,
+        revision_no=revision,
+        # Only the first is active: two active revisions on one order is exactly what the
+        # partial unique index refuses, and a fixture may not pretend otherwise.
+        state="active" if revision == 1 else "superseded",
+        line_snapshots=[{"line_no": line.line_no} for line in lines],
+        confirmed_by=actor_user_id,
+        confirmed_at=datetime.utcnow(),
+    )
+    db.add(decision)
+    db.flush()
+    result = service.refresh_for_decision(
+        order,
+        decision,
+        [
+            {
+                "line": line,
+                "line_no": line.line_no,
+                "item_code": service._product_code(line.product_id),
+                "buy_qty": Decimal(str(buy)) if buy is not None else Decimal(str(line.qty)),
+                "required_date": line.delivery_date,
+                "stock_location": service._stock_location(line.id),
+            }
+            for line in lines
+        ],
+        actor_user_id=actor_user_id,
+    )
+    return result["inquiry"]
+
+
+
 
 def test_publishing_a_sales_order_raises_no_inquiry_row(seeded):
     """AC-D01 / AC-A04. Publish is not the handoff to purchasing any more.
@@ -298,209 +364,28 @@ def test_publishing_a_sales_order_writes_no_core_sales_order(seeded):
 
 
 def test_deriving_twice_does_not_double_the_rows(seeded):
-    """AC-I1 idempotency: republishing must not tell purchasing to buy it twice."""
+    """AC-I1 / AC-D05 idempotency: a second confirmation must not tell purchasing to buy
+    it twice. The superseded row is CANCELLED rather than deleted, so the count of rows
+    grows and the count of ACTIVE ones does not - the old instruction stays auditable.
+    """
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
     order = _sales_order(db, project)
     _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
 
-    service = ProjectOrderInquiryService(db)
-    first = service.derive_for_sales_order(order, actor_user_id=owner)
-    second = service.derive_for_sales_order(order, actor_user_id=owner)
+    first = _confirmed_inquiry(db, order, actor_user_id=owner)
+    second = _confirmed_inquiry(db, order, actor_user_id=owner)
 
     assert first.id == second.id
-    assert len(_rows(db, first.id)) == 1
+    active = [row for row in _rows(db, first.id) if row.state != INQUIRY_CANCELLED]
+    assert len(active) == 1
+    assert len(_rows(db, first.id)) == 2
     assert (
         db.query(OrderInquiry)
         .filter(OrderInquiry.project_sales_order_id == order.id)
         .count()
         == 1
     )
-
-
-def test_a_pre_order_on_the_same_project_nets_off_the_earliest_dates(seeded):
-    """AC-I3 and AC-I3a end to end: the client's own 5,950 pre-ordered gratings.
-
-    The pre-order is published under a different debtor (a parking route, D18) and is
-    still found, because the join goes through the PROJECT.
-    """
-    db, company_id, owner = seeded
-    project = _project(db, company_id, owner)
-    grating = _product(db, "CB6633")
-
-    pre_order = _sales_order(
-        db, project, is_pre_order=True, status=SO_STATUS_PUBLISHED, doc_no="SO383057"
-    )
-    _line(db, pre_order, grating, "5950", date(2026, 1, 1))
-
-    order = _sales_order(db, project, doc_no="SO397450")
-    _line(db, order, grating, "2000", date(2028, 7, 1), line_no=1)
-    _line(db, order, grating, "2000", date(2028, 8, 3), line_no=2)
-    _line(db, order, grating, "2000", date(2028, 9, 1), line_no=3)
-    _line(db, order, grating, "600", date(2028, 10, 1), line_no=4)
-
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
-    rows = _rows(db, inquiry.id)
-
-    assert [(row.delivery_date, row.verb, row.qty) for row in rows] == [
-        (date(2028, 7, 1), IV_PRE_ORDERED, Decimal("2000.0000")),
-        (date(2028, 8, 3), IV_PRE_ORDERED, Decimal("2000.0000")),
-        (date(2028, 9, 1), IV_PRE_ORDERED, Decimal("1950.0000")),
-        (date(2028, 9, 1), IV_ORDER, Decimal("50.0000")),
-        (date(2028, 10, 1), IV_ORDER, Decimal("600.0000")),
-    ]
-    assert all(
-        row.covered_by == "Pre-order SO383057"
-        for row in rows
-        if row.verb == IV_PRE_ORDERED
-    )
-
-
-def test_a_pool_already_promised_to_an_earlier_publish_is_not_promised_twice(seeded):
-    """The ledger: a second sales order cannot net against a pre-order already spent."""
-    db, company_id, owner = seeded
-    project = _project(db, company_id, owner)
-    grating = _product(db, "CB6633")
-
-    pre_order = _sales_order(
-        db, project, is_pre_order=True, status=SO_STATUS_PUBLISHED, doc_no="SO383057"
-    )
-    _line(db, pre_order, grating, "100", date(2026, 1, 1))
-
-    service = ProjectOrderInquiryService(db)
-
-    first = _sales_order(db, project, doc_no="SO397450")
-    _line(db, first, grating, "100", date(2028, 7, 1))
-    first_inquiry = service.derive_for_sales_order(first, actor_user_id=owner)
-    assert [row.verb for row in _rows(db, first_inquiry.id)] == [IV_PRE_ORDERED]
-
-    second = _sales_order(db, project, doc_no="SO397460")
-    _line(db, second, grating, "100", date(2028, 8, 3))
-    second_inquiry = service.derive_for_sales_order(second, actor_user_id=owner)
-
-    assert [row.verb for row in _rows(db, second_inquiry.id)] == [IV_ORDER]
-
-
-def test_cancelling_a_covered_row_releases_the_quantity_it_claimed(seeded):
-    db, company_id, owner = seeded
-    project = _project(db, company_id, owner)
-    grating = _product(db, "CB6633")
-    pre_order = _sales_order(
-        db, project, is_pre_order=True, status=SO_STATUS_PUBLISHED, doc_no="SO383057"
-    )
-    _line(db, pre_order, grating, "100", date(2026, 1, 1))
-
-    service = ProjectOrderInquiryService(db)
-    first = _sales_order(db, project, doc_no="SO397450")
-    _line(db, first, grating, "100", date(2028, 7, 1))
-    first_inquiry = service.derive_for_sales_order(first, actor_user_id=owner)
-    service.mark_rows(
-        [row.id for row in _rows(db, first_inquiry.id)],
-        state=INQUIRY_CANCELLED,
-        actor_user_id=owner,
-    )
-
-    second = _sales_order(db, project, doc_no="SO397460")
-    _line(db, second, grating, "100", date(2028, 8, 3))
-    second_inquiry = service.derive_for_sales_order(second, actor_user_id=owner)
-
-    assert [row.verb for row in _rows(db, second_inquiry.id)] == [IV_PRE_ORDERED]
-
-
-def test_a_pre_order_never_nets_against_itself(seeded):
-    db, company_id, owner = seeded
-    project = _project(db, company_id, owner)
-    grating = _product(db, "CB6633")
-    pre_order = _sales_order(db, project, is_pre_order=True, doc_no="SO383057")
-    _line(db, pre_order, grating, "5950", date(2028, 1, 1))
-
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        pre_order, actor_user_id=owner
-    )
-
-    rows = _rows(db, inquiry.id)
-    assert [row.verb for row in rows] == [IV_ORDER]
-    assert rows[0].covered_by is None
-
-
-def test_a_draft_pre_order_is_not_a_pool(seeded):
-    """Nothing is covered by a document nobody has committed to yet."""
-    db, company_id, owner = seeded
-    project = _project(db, company_id, owner)
-    grating = _product(db, "CB6633")
-    pre_order = _sales_order(db, project, is_pre_order=True, doc_no="SO383057")
-    _line(db, pre_order, grating, "5950", date(2026, 1, 1))
-
-    order = _sales_order(db, project, doc_no="SO397450")
-    _line(db, order, grating, "600", date(2027, 1, 7))
-
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
-
-    assert [row.verb for row in _rows(db, inquiry.id)] == [IV_ORDER]
-
-
-def test_stock_on_the_water_carries_its_spo_reference(seeded):
-    db, company_id, owner = seeded
-    project = _project(db, company_id, owner)
-    grating = _product(db, "CB6633")
-    _inbound_spo(db, grating, spo_number="202511-S0022", qty=600, eta=date(2026, 11, 1))
-
-    order = _sales_order(db, project, doc_no="SO397450")
-    _line(db, order, grating, "600", date(2027, 1, 7))
-
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
-
-    rows = _rows(db, inquiry.id)
-    assert [(row.verb, row.spo_ref) for row in rows] == [
-        (IV_ALREADY_INBOUND, "202511-S0022")
-    ]
-    assert rows[0].covered_by == "Inbound SPO 202511-S0022"
-
-
-def test_a_shipment_that_has_already_landed_is_not_on_the_water(seeded):
-    """Landed stock is stock, and stock is allocation's question, not netting's."""
-    db, company_id, owner = seeded
-    project = _project(db, company_id, owner)
-    grating = _product(db, "CB6633")
-    _inbound_spo(
-        db,
-        grating,
-        spo_number="202511-S0022",
-        qty=600,
-        eta=date(2026, 5, 1),
-        landed=True,
-    )
-
-    order = _sales_order(db, project, doc_no="SO397450")
-    _line(db, order, grating, "600", date(2027, 1, 7))
-
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
-
-    assert [row.verb for row in _rows(db, inquiry.id)] == [IV_ORDER]
-
-
-def test_demand_landing_inside_the_reserve_window_is_reserved_as_well_as_ordered(seeded):
-    db, company_id, owner = seeded
-    project = _project(db, company_id, owner)
-    order = _sales_order(db, project)
-    _line(db, order, _product(db, "CB6633"), "600", date.today())
-
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
-
-    assert [row.verb for row in _rows(db, inquiry.id)] == [IV_RESERVE_AND_ORDER]
-
-
-# --------------------------------------------------------------- stock location
 
 
 def test_a_confirmed_allocation_becomes_the_stock_location(seeded):
@@ -511,9 +396,7 @@ def test_a_confirmed_allocation_becomes_the_stock_location(seeded):
     line = _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
     _confirm_allocation(db, line, _warehouse(db, "BRW-BB"), "600", user_id=owner)
 
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
 
     assert [row.stock_location for row in _rows(db, inquiry.id)] == ["BRW-BB"]
 
@@ -528,9 +411,7 @@ def test_an_unconfirmed_allocation_leaves_the_location_empty(seeded):
         db, line, _warehouse(db, "BRW-BB"), "600", user_id=owner, confirmed=False
     )
 
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
 
     assert [row.stock_location for row in _rows(db, inquiry.id)] == [None]
 
@@ -541,9 +422,7 @@ def test_no_allocation_at_all_leaves_the_location_empty(seeded):
     order = _sales_order(db, project)
     _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
 
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
 
     assert [row.stock_location for row in _rows(db, inquiry.id)] == [None]
 
@@ -556,9 +435,7 @@ def test_a_split_allocation_prints_both_locations(seeded):
     _confirm_allocation(db, line, _warehouse(db, "BRW-BB"), "400", user_id=owner)
     _confirm_allocation(db, line, _warehouse(db, "SRT-KL"), "200", user_id=owner)
 
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
 
     assert [row.stock_location for row in _rows(db, inquiry.id)] == ["BRW-BB / SRT-KL"]
 
@@ -706,7 +583,7 @@ def test_purchasing_is_handed_a_task_with_the_rows_attached(seeded):
     _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
 
     service = ProjectOrderInquiryService(db)
-    inquiry = service.derive_for_sales_order(order, actor_user_id=owner)
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
 
     task = service.task_for(inquiry.id)
     assert task is not None
@@ -736,7 +613,7 @@ def test_a_row_carries_who_actioned_it_and_when(seeded):
     _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
 
     service = ProjectOrderInquiryService(db)
-    inquiry = service.derive_for_sales_order(order, actor_user_id=owner)
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
     row_id = _rows(db, inquiry.id)[0].id
 
     body = service.mark_rows([row_id], state=INQUIRY_ACTIONED, actor_user_id=buyer)
@@ -755,7 +632,7 @@ def test_undoing_a_row_clears_the_claim_it_made(seeded):
     _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
 
     service = ProjectOrderInquiryService(db)
-    inquiry = service.derive_for_sales_order(order, actor_user_id=owner)
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
     row_id = _rows(db, inquiry.id)[0].id
     service.mark_rows([row_id], state=INQUIRY_ACTIONED, actor_user_id=owner)
 
@@ -776,7 +653,7 @@ def test_an_inquiry_stays_open_while_any_row_is_still_waiting(seeded):
     _line(db, order, _product(db, "SRT382-6"), "135", date(2027, 2, 1), line_no=2)
 
     service = ProjectOrderInquiryService(db)
-    inquiry = service.derive_for_sales_order(order, actor_user_id=owner)
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
     rows = _rows(db, inquiry.id)
     service.mark_rows([rows[0].id], state=INQUIRY_ACTIONED, actor_user_id=owner)
 
@@ -794,7 +671,7 @@ def test_an_unknown_state_is_refused(seeded):
     order = _sales_order(db, project)
     _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
     service = ProjectOrderInquiryService(db)
-    inquiry = service.derive_for_sales_order(order, actor_user_id=owner)
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
     row_id = _rows(db, inquiry.id)[0].id
 
     with pytest.raises(AppException) as caught:
@@ -818,7 +695,7 @@ def test_the_list_serves_the_number_the_reader_knows_not_the_uuid(seeded):
     _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
 
     service = ProjectOrderInquiryService(db)
-    service.derive_for_sales_order(order, actor_user_id=owner)
+    _confirmed_inquiry(db, order, actor_user_id=owner)
     rows, total = service.list_rows(project.id)
 
     assert total == 1
@@ -833,28 +710,29 @@ def test_the_list_filters_by_verb_and_by_state(seeded):
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
     grating = _product(db, "CB6633")
-    pre_order = _sales_order(
-        db, project, is_pre_order=True, status=SO_STATUS_PUBLISHED, doc_no="SO383057"
-    )
-    _line(db, pre_order, grating, "100", date(2026, 1, 1))
     order = _sales_order(db, project, doc_no="SO397450")
     _line(db, order, grating, "100", date(2028, 7, 1), line_no=1)
     _line(db, order, _product(db, "SRT382-6"), "50", date(2028, 8, 3), line_no=2)
 
     service = ProjectOrderInquiryService(db)
-    service.derive_for_sales_order(order, actor_user_id=owner)
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
+    rows = _rows(db, inquiry.id)
+    service.mark_rows([rows[0].id], state=INQUIRY_ACTIONED, actor_user_id=owner)
 
+    ordered, ordered_total = service.list_rows(project.id, verb=[IV_ORDER])
+    assert ordered_total == 2
+
+    # A verb no row carries answers empty rather than answering everything.
     covered, covered_total = service.list_rows(project.id, verb=[IV_PRE_ORDERED])
-    assert covered_total == 1
-    assert covered[0]["item_code"] == "CB6633"
+    assert covered_total == 0 and covered == []
 
     open_rows, open_total = service.list_rows(project.id, state=[INQUIRY_RAISED])
-    assert open_total == 2
+    assert open_total == 1
 
     assert service.summary(project.id) == {
         "total": 2,
-        "raised": 2,
-        "actioned": 0,
+        "raised": 1,
+        "actioned": 1,
         "cancelled": 0,
     }
 
@@ -866,7 +744,7 @@ def test_the_sales_order_view_carries_its_purchasing_task(seeded):
     _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
 
     service = ProjectOrderInquiryService(db)
-    service.derive_for_sales_order(order, actor_user_id=owner)
+    _confirmed_inquiry(db, order, actor_user_id=owner)
     body = service.get_for_sales_order(order.id)
 
     assert body is not None
@@ -886,7 +764,7 @@ def test_the_export_uses_the_clients_own_column_headings(seeded):
     _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
 
     service = ProjectOrderInquiryService(db)
-    service.derive_for_sales_order(order, actor_user_id=owner)
+    _confirmed_inquiry(db, order, actor_user_id=owner)
     filename, body = service.export_xlsx(project.id)
 
     assert filename.endswith(".xlsx")
@@ -908,16 +786,26 @@ def test_the_export_uses_the_clients_own_column_headings(seeded):
 
 
 def test_the_export_writes_the_remark_the_way_purchasing_reads_it(seeded):
+    """An inbound row prints its SPO reference; every other row prints its verb.
+
+    The inbound row is seeded rather than derived: the SO path raises Buy and nothing else
+    now (section 4), and the coverage verbs it used to raise belong to an amendment. What
+    is under test here is `_remark`, which is the same function either way.
+    """
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
     grating = _product(db, "CB6633")
-    _inbound_spo(db, grating, spo_number="202511-S0022", qty=100, eta=date(2026, 11, 1))
     order = _sales_order(db, project, doc_no="SO397450")
-    _line(db, order, grating, "100", date(2027, 1, 7), line_no=1)
+    line = _line(db, order, grating, "100", date(2027, 1, 7), line_no=1)
     _line(db, order, _product(db, "SRT382-6"), "50", date(2027, 2, 1), line_no=2)
 
     service = ProjectOrderInquiryService(db)
-    service.derive_for_sales_order(order, actor_user_id=owner)
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
+    inbound = _rows(db, inquiry.id)[0]
+    assert inbound.so_line_id == line.id
+    inbound.verb = IV_ALREADY_INBOUND
+    inbound.spo_ref = "202511-S0022"
+    db.flush()
     _filename, body = service.export_xlsx(project.id)
 
     sheet = openpyxl.load_workbook(io.BytesIO(body)).worksheets[0]
@@ -938,7 +826,7 @@ def test_the_export_leaves_an_unallocated_location_blank(seeded):
     _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
 
     service = ProjectOrderInquiryService(db)
-    service.derive_for_sales_order(order, actor_user_id=owner)
+    _confirmed_inquiry(db, order, actor_user_id=owner)
     _filename, body = service.export_xlsx(project.id)
 
     sheet = openpyxl.load_workbook(io.BytesIO(body)).worksheets[0]
@@ -970,7 +858,7 @@ def test_committed_demand_is_untouched_by_deriving_an_inquiry(seeded):
     line = _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
     before = (line.qty, line.delivery_date, line.product_id)
 
-    ProjectOrderInquiryService(db).derive_for_sales_order(order, actor_user_id=owner)
+    _confirmed_inquiry(db, order, actor_user_id=owner)
     db.refresh(line)
 
     assert (line.qty, line.delivery_date, line.product_id) == before
@@ -993,9 +881,7 @@ def test_a_sponsorship_sales_order_derives_rows_exactly_as_a_commercial_one(seed
     _line(db, order, grating, "600", date(2027, 1, 7))
 
     ProjectSODraftService(db).publish(order, actor_user_id=owner)
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
 
     rows = _rows(db, inquiry.id)
     assert [(row.item_code, row.qty, row.verb) for row in rows] == [
@@ -1019,34 +905,9 @@ def test_a_price_zero_sponsorship_line_still_raises_an_instruction(seeded):
     db.flush()
 
     ProjectSODraftService(db).publish(order, actor_user_id=owner)
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=owner
-    )
+    inquiry = _confirmed_inquiry(db, order, actor_user_id=owner)
 
     rows = _rows(db, inquiry.id)
     assert [(row.item_code, row.qty) for row in rows] == [("SRT382-6", Decimal("135.0000"))]
 
 
-def test_a_sponsorship_order_is_not_treated_as_a_covering_pool(seeded):
-    """A pre-order is stock we hold and can point at; a sponsorship is stock going OUT.
-
-    Netting off against it would tell purchasing that a giveaway already covers a paying
-    customer's delivery, which is the one thing the pool must never do.
-    """
-    db, company_id, owner = seeded
-    project = _project(db, company_id, owner)
-    product = _product(db, "CB6633")
-
-    sponsorship = _sales_order(db, project, is_sponsorship=True)
-    _line(db, sponsorship, product, "5000", date(2027, 1, 1))
-
-    commercial = _sales_order(db, project)
-    _line(db, commercial, product, "600", date(2027, 6, 1))
-
-    ProjectSODraftService(db).publish(commercial, actor_user_id=owner)
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        commercial, actor_user_id=owner
-    )
-
-    rows = _rows(db, inquiry.id)
-    assert [(row.qty, row.verb) for row in rows] == [(Decimal("600.0000"), IV_ORDER)]

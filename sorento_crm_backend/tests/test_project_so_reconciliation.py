@@ -873,9 +873,9 @@ def test_review_states_for_returns_every_requested_order_in_one_call(seeded):
 def test_a_reconciled_needs_cs_review_so_creates_no_order_inquiry_demand_and_stays_excluded(
     seeded,
 ):
-    """AC-A04. Reconciling writes core-line links only. `derive_for_sales_order` is
-    never called on this path, so `order_inquiry_rows` gains no ORDER /
-    RESERVE_AND_ORDER row, and the demand reader's own predicate
+    """AC-A04. Reconciling writes core-line links only. No standard demand row is written
+    on this path - the only writer is the atomic confirmation - so `order_inquiry_rows`
+    gains no ORDER / RESERVE_AND_ORDER row, and the demand reader's own predicate
     (`app.services.scm.demand.is_plan_demand_order`) still excludes the linked core
     SO while it carries `demand_class = 'project'` and no sheet-leg origin."""
     db, company_id, owner = seeded

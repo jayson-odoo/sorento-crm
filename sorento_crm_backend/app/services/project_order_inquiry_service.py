@@ -85,7 +85,6 @@ from app.services.error_handler import AppException
 from app.services.project_order_inquiry_engine import (
     CHANGE_DATE_EARLIER,
     CHANGE_DATE_LATER,
-    CHANGE_NEW,
     CHANGE_QTY_DECREASE,
     CHANGE_QTY_INCREASE,
     CHANGE_REPOINT,
