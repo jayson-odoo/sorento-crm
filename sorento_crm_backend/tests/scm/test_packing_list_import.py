@@ -13,6 +13,7 @@ from io import BytesIO
 
 import pytest
 
+from app.models.import_alias import ImportFieldAlias
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.error_handler import AppException
@@ -280,3 +281,97 @@ def test_a_code_another_company_also_uses_resolves_to_ours():
             .one()
         )
         assert str(line.product_id) == str(mine.id)
+
+
+# --------------------------------------------------------------------------------- #
+# G3c / AC-P5 - the pre-loading list stops dropping its prices.
+# --------------------------------------------------------------------------------- #
+
+
+def _priced_file(w: World, container: str, items: list[tuple[str, float, float]]) -> bytes:
+    """Like `_file`, but with an RMB unit-price column, priced per line."""
+    rows: list[list] = []
+    if container:
+        rows.append([f"货柜号：{container}"])
+    rows.append(HEADER + ["RMB"])
+    rows.extend([w.code(k), "座厕", qty, 2, 0.21, price] for k, qty, price in items)
+    rows.append([])
+    return workbook(rows)
+
+
+def test_the_shipment_line_carries_the_unit_price_and_currency_the_file_stated():
+    # AC-P5.1. "RMB" in the header states CNY; the price is no longer parsed and dropped.
+    with pg_session() as db:
+        w = World(db)
+        data = _priced_file(w, f"{MARKER}U1", [("A", 10, 25.5)])
+
+        svc.apply(db, data, supplier_id=str(w.supplier.id))
+
+        line = (
+            db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
+            .one()
+        )
+        assert float(line.unit_cost) == 25.5
+        assert line.currency == "CNY"
+
+
+def test_a_priced_file_with_no_resolvable_currency_is_refused():
+    # AC-P5.2. A price with no currency anywhere is refused, not stored guessing one.
+    # The real packing-list aliases (RMB / 金额（rmb）) always hint CNY, so a NEUTRAL
+    # unit-price header is seeded here, scoped to this test, to reproduce the file that
+    # states a price under a column name that names no currency at all.
+    with pg_session() as db:
+        w = World(db)
+        alias = f"{MARKER}COST"
+        db.add(ImportFieldAlias(doc_type="packing_list", field="unit_price", alias=alias))
+        db.flush()
+
+        rows = [HEADER + [alias], [w.code("A"), "座厕", 10, 2, 0.21, 25.5]]
+        data = workbook(rows)
+
+        result = svc.validate(db, data)
+        assert result["valid"] is False
+        assert any("curren" in e.lower() for e in result["errors"])
+
+        with pytest.raises(AppException) as exc:
+            svc.apply(db, data, supplier_id=str(w.supplier.id))
+        assert exc.value.status_code == 422
+        assert _shipments(db, w) == []
+
+
+def test_an_unpriced_file_is_unaffected():
+    # AC-P5.2, second half: no price anywhere means no currency is demanded, and the
+    # existing (pre-price) behaviour of this whole file keeps passing unchanged.
+    with pg_session() as db:
+        w = World(db)
+        data = _file(w, [(f"{MARKER}U1", [("A", 10)])])
+
+        svc.apply(db, data, supplier_id=str(w.supplier.id))
+
+        line = (
+            db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
+            .one()
+        )
+        assert line.unit_cost is None
+        assert line.currency is None
+
+
+def test_a_blank_bill_of_lading_label_does_not_swallow_the_next_label():
+    # AC-P2.4, pinned at the packing-list channel too: the shared `_labelled` helper's
+    # fix lives once and must not read a candidate that itself resolves to a KNOWN field
+    # (here "货柜号：..." after a blank "提单号：") as if it were a value.
+    with pg_session() as db:
+        w = World(db)
+        rows = [
+            ["提单号：", None, f"货柜号：{MARKER}U9"],
+            HEADER,
+            [w.code("A"), "座厕", 5, 1, 0.2],
+        ]
+
+        svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
+
+        shipment = _shipments(db, w)[0]
+        assert shipment.bill_of_lading_number is None
+        assert shipment.shipping_container_number == f"{MARKER}U9"

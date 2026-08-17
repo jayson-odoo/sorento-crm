@@ -33,7 +33,7 @@ Both tables in the `scm` schema, `CompanyScopedMixin`, mirroring `supplier_inven
 `scm.proforma_invoice`
 - `id` uuid pk; `supplier_id` -> `suppliers.id` CASCADE, NOT NULL
 - `pi_number` String(100) NOT NULL (stated, else derived `PI-<stem>-<index>`)
-- `invoice_date` Date NULL; `currency` String(3) NOT NULL
+- `invoice_date` Date NULL; `currency` String(3) NULL (NULL only when no line is priced; a priced document is refused before write unless it resolved)
 - `container_ref` String(100) NULL; `bl_ref` String(100) NULL
 - `total_amount` Numeric NULL (the document's own total when it states one, else sum of lines)
 - `line_count` Integer NOT NULL default 0
@@ -60,6 +60,8 @@ them and adds its tables in one step. Re-check `alembic heads` after the pre-pus
 somebody merged the heads first, point at that merge instead. The migration also:
 - seeds the `proforma_invoice` aliases (module-level `_ALIASES` + `seed(bind)`, replayed
   from `scripts/bootstrap_env.py` alongside 338/357/358);
+- declares `company_id` with its `companies` FK and index (what `CompanyScopedMixin` +
+  `create_all` produce), so a migrated database and a CI one are the same shape;
 - registers `scm.proforma_invoice.upload` and sweeps it onto holders of `scm.reorder.run`,
   excluding `integration\_%` roles (pattern: 361_spec_registry_grant_sweep). The registry
   entry is ALSO added to `app/rbac/permission_registry.py` so a fresh database has it.
@@ -92,10 +94,18 @@ combined-label spellings are listed so the labelled-cell scanner resolves them w
 
 Refactor `packing_list_reader` minimally so its block machinery is reusable:
 - `_labelled(raw, resolver, fields=_BLOCK_FIELDS)` takes the block-field tuple; a candidate
-  value that itself resolves to ANY known field (a label) is not a value - stops the
-  `bl_no='Date 日期：'` defect (AC-P2.4) for both channels.
+  value that is itself a LABEL is not a value, and ends the search for that field - stops
+  the `bl_no='Date 日期：'` defect (AC-P2.4) for both channels. A cell is a label three ways
+  (`_is_label`): it resolves to a known field, it ends in a colon, or it is the one-cell
+  `label：value` form whose head resolves. The last two are what correct the PACKING-LIST
+  channel, where `Date 日期：` resolves to nothing under its own doc type and `货柜号：XXXU1`
+  resolves to nothing as a whole cell - a resolve-only test would have fixed the proforma
+  channel and left the other one reading a label as a bill of lading.
 - `_is_header(mapped, required=("item_code","qty"))` parametrised.
 - `_line_from` stays packing-list specific; the proforma reader has its own `_pi_line_from`.
+- The currency hint is one helper for both readers, `currency_resolution.price_column_currency`
+  (over `currency_from_text`), so the two channels cannot disagree about what money one file
+  is in.
 
 `read_workbook(data, resolver=None, *, db=None) -> ProformaReadResult` with
 `documents: list[ProformaDocument]`, each `{index, pi_number, invoice_date, container_no,
@@ -103,6 +113,11 @@ bl_no, currency_hint, header_row, stated_total, lines: list[ProformaLine]}`. Hea
 `item_code` + `qty` + `unit_price` mapped on one row (AC-P2.6). Block fields:
 `pi_number, invoice_date, container_no, bl_no, currency`. A totals row (`合 计`, `总金额`) has
 no item code -> not a line. Blank numbered rows (`序号` only) -> not a line.
+
+The document NUMBER is not derived here: a derived one is positional and needs the file's
+own name, which `read_workbook` does not have. The reader returns what the document states
+(else `None`) and `proforma_invoice_service.pi_number_for(doc, source_ref=)` derives
+`PI-<stem>-<index>`, mirroring `packing_list_service.shipment_number_for`.
 
 Currency hint: from the RAW header text of the unit_price / amount columns and a labelled
 `currency` cell, via a tiny ordered map (`rmb|元|cny|¥` -> CNY, `usd|us$` -> USD,

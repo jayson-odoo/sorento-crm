@@ -1080,3 +1080,122 @@ class CurrencyRate(Base):
         CheckConstraint("rate_to_base > 0", name="ck_currency_rate_positive"),
         {"schema": "scm"},
     )
+
+
+class ProformaInvoice(Base, CompanyScopedMixin):
+    """The supplier's own priced document, as they sent it (G3b).
+
+    A document of record rather than a derived view: it is what the next task verifies a
+    purchase order against, so it has to survive the file it came from being deleted and the
+    order book moving underneath it.
+
+    Identity is `(company, supplier, pi_number)`, which is why `pi_number` is NOT NULL even
+    on the documents that state none - the pre-loading list's five blocks carry no invoice
+    number at all, and a positional one (`PI-<file stem>-<block>`) is derived so a re-upload
+    lands on the same five invoices instead of a second set (AC-P1.4, AC-P2.5).
+
+    `currency` is NOT NULL and never defaulted. Every line here is priced, and a price with
+    no currency is a number with no meaning; where nothing states one the upload is refused
+    rather than stored in a house default nobody would ever question (AC-P3.2).
+
+    `container_ref` / `bl_ref` are nullable and never invented: at proforma time the
+    container usually has not been assigned, and the pre-loading list leaves both cells blank.
+    """
+    __tablename__ = "proforma_invoice"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
+    )
+    pi_number = Column(String(100), nullable=False)
+    invoice_date = Column(Date, nullable=True)
+    # NULL only for a document with no priced line at all: a priced one is refused before
+    # it is written unless the currency resolved (AC-P3.2). Never a house default.
+    currency = Column(String(3), nullable=True)
+
+    container_ref = Column(String(100), nullable=True)
+    bl_ref = Column(String(100), nullable=True)
+
+    #: What the document totals ITSELF to when it states a total, else the sum of its lines.
+    #: Stored rather than summed on read so the verification screen compares like with like.
+    total_amount = Column(Numeric, nullable=True)
+    line_count = Column(Integer, nullable=False, server_default=text("0"))
+
+    source_ref = Column(String, nullable=True)
+    block_index = Column(Integer, nullable=True)
+    uploaded_by = Column(String, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    lines = relationship(
+        "ProformaInvoiceLine", back_populates="invoice", cascade="all, delete-orphan",
+        order_by="ProformaInvoiceLine.line_no",
+    )
+
+    __table_args__ = (
+        Index("ix_scm_proforma_invoice_supplier", "supplier_id"),
+        # Declared on the MODEL as well as in migration 374, because a CI database is built
+        # with `create_all` and never runs a migration body: without it the guard against a
+        # doubled invoice exists in production and nowhere else (the supplier_inventory
+        # precedent).
+        Index(
+            "uq_scm_proforma_invoice_identity",
+            text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
+            "supplier_id",
+            "pi_number",
+            unique=True,
+        ),
+        {"schema": "scm"},
+    )
+
+
+class ProformaInvoiceLine(Base, CompanyScopedMixin):
+    """One priced line of a proforma, in the supplier's own spelling.
+
+    `item_code` is verbatim - trimmed of outer whitespace and nothing else. Kailu writes
+    `SRTWT8258\\n-GM` with a newline inside it, and normalising that away would quietly make
+    the document disagree with the paper the supplier sent.
+
+    `product_id` is nullable and set ONLY on an exact, case-insensitive, company-scoped match
+    of `products.product_code` (AC-P1.3). An unmatched line is still stored and named in the
+    preview: it is a real charge, and dropping it would make the invoice total wrong.
+
+    `po_ref` is what the line says it is against, when it says anything. It is null on most
+    lines and indexed anyway, because the verification task reads it across invoices.
+    """
+    __tablename__ = "proforma_invoice_line"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    invoice_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    line_no = Column(Integer, nullable=False)
+    #: Where in the file this line was, so a question about it can be taken back to the row.
+    row_number = Column(Integer, nullable=True)
+
+    item_code = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    qty = Column(Numeric, nullable=False)
+    uom = Column(String(20), nullable=True)
+    unit_price = Column(Numeric, nullable=True)
+    amount = Column(Numeric, nullable=True)
+    po_ref = Column(String(100), nullable=True)
+    remark = Column(Text, nullable=True)
+
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    invoice = relationship("ProformaInvoice", back_populates="lines")
+
+    __table_args__ = (
+        Index("ix_scm_proforma_invoice_line_invoice", "invoice_id"),
+        Index("ix_scm_proforma_invoice_line_po_ref", "po_ref"),
+        {"schema": "scm"},
+    )

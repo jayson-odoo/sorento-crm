@@ -170,7 +170,10 @@ class InboundShipmentLineBase(BaseModel):
 
 
 class InboundShipmentLineCreate(InboundShipmentLineBase):
-    pass
+    # What `unit_cost` is stated in. The column has existed since S3b; the packing-list
+    # upload had no way to fill it, so a price parsed out of the file could only be stored
+    # as a number with no meaning. Optional and never defaulted (AC-P5.1).
+    currency: Optional[str] = None
 
 
 class InboundShipmentLineResponse(InboundShipmentLineBase):

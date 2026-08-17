@@ -470,6 +470,9 @@ async def apply_packing_list(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
     supplier_id: Optional[str] = Form(None),
     shipment_date: Optional[str] = Form(None),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
     validate_only: bool = Query(
         False,
         description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
@@ -480,7 +483,9 @@ async def apply_packing_list(
     """One inbound shipment per container block. Re-uploading the same file updates in place."""
     data = await read_upload(file)
     if validate_only:
-        return packing_list_service.validate(db, data, source_ref=file.filename)
+        return packing_list_service.validate(
+            db, data, source_ref=file.filename, supplier_id=supplier_id, currency=currency
+        )
 
     parsed_date = None
     if shipment_date:
@@ -497,6 +502,7 @@ async def apply_packing_list(
         data,
         supplier_id=supplier_id,
         shipment_date=parsed_date,
+        currency=currency,
         source_ref=file.filename,
         actor_id=current_user.get("id"),
     )

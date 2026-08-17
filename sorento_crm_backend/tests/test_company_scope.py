@@ -388,8 +388,12 @@ def test_every_company_id_table_is_registered():
     #
     # The number is the union of both lineages at this merge: main's 68 (67 plus the
     # flyer proposal batch above) plus the 41 the project-sales branch brought (which
-    # were audited table by table at its own merge).
-    expected_owned = 109
+    # were audited table by table at its own merge), plus the proforma invoice's 2 under
+    # the same rule: an invoice is ONE company's document of record from ONE of its
+    # suppliers, and its lines are that document's own charges. The lines are owned
+    # rather than derived because the write path deletes and reinserts them BY invoice
+    # id, and the mixin also stamps the company at insert.
+    expected_owned = 111
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

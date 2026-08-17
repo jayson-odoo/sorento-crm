@@ -584,6 +584,13 @@ PERMISSION_REGISTRY.extend([
         "name": "Manage SCM configuration",
         "description": "Manage SCM module configuration, budgets, and reason vocabularies.",
     },
+    # Migration 374 creates this one and sweeps it onto whoever holds `scm.reorder.run`;
+    # declared here so a create_all database (CI, `scripts/bootstrap_env`) has it at all.
+    {
+        "slug": "scm.proforma_invoice.upload",
+        "name": "Upload proforma invoices",
+        "description": "Upload, apply and delete supplier proforma invoices.",
+    },
 ])
 
 
