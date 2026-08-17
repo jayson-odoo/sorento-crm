@@ -3,7 +3,7 @@
 The complaint / stock-inquiry / purchase-request chat panels each fetch their
 conversation from an entity-specific ``/conversation`` route (not the generic
 activities adapter, which only covers tickets). This module is the single
-implementation those routes — and ``activities_service`` — delegate to, so the
+implementation those routes - and ``activities_service`` - delegate to, so the
 manual template flow can't drift across the four surfaces.
 
 Validation raises ``AppException`` (handled globally → JSON), per backend
@@ -226,6 +226,54 @@ def send_manual_template_for(
     }
 
 
+def deliver_manual_template_now(
+    db: Session,
+    *,
+    identifier: str,
+    template_id: str,
+    params: Dict[str, str],
+    business_table: str,
+    business_id: str,
+    sender_user_id: Optional[str],
+) -> Dict[str, Any]:
+    """Deliver a manual template IN-REQUEST and answer the truth.
+
+    The queued path answers ``{ok: true, queued: true}`` the moment the job is
+    in Redis: with no worker draining ``respond_io`` the operator sees a success
+    toast and NO ``integration_log`` row exists until something drains the queue
+    (observed: a template sat queued for four hours). Every surface that needs
+    the OUTCOME - the ticket drawer, the Conversations inbox - comes through
+    here instead.
+
+    ``send_manual_template_for`` writes the outbox itself on BOTH outcomes and
+    re-raises on failure; this translates that into the 502 a composer can show.
+    Callers own whatever happens afterwards (a response clock, a human-send
+    signal), which is the only thing that differs between them.
+    """
+    from app.services.error_handler import AppException
+
+    try:
+        return send_manual_template_for(
+            db,
+            identifier=identifier,
+            template_id=template_id,
+            params=params,
+            business_table=business_table,
+            business_id=business_id,
+            created_by=sender_user_id,
+        )
+    except AppException:
+        raise
+    except Exception as e:  # noqa: BLE001 - the outbox row is already written
+        logger.exception("Manual template send failed for %s %s", business_table, business_id)
+        raise AppException(
+            status_code=502,
+            message="Failed to send the template. Please try again.",
+            detail=str(e),
+            code="respond_send_failed",
+        )
+
+
 def _resolve_contact_name(db: Session, *, respond_contact_id: Optional[str], identifier: str) -> str:
     """Contact display name (name -> joined -> phone), falling back to the identifier."""
     from app.models.access import RespondContact
@@ -257,10 +305,10 @@ def get_chat_template_preview(
 ) -> Dict[str, Any]:
     """Describe the form's ``*_chat`` template so the composer can render it inline
     with the non-message params pre-filled and the ``message`` param left as an
-    editable field. Reads the DB only — never calls Respond.io.
+    editable field. Reads the DB only - never calls Respond.io.
 
     Returns:
-      {configured: False, settings_url}  — no valid chat template default; or
+      {configured: False, settings_url} - no valid chat template default; or
       {configured: True, template_name, body_text,
        slots: {"1": {variable, value, editable}, ...}}
     where exactly one slot has ``variable == "message"`` and ``editable == True``
@@ -288,7 +336,7 @@ def get_chat_template_preview(
             extra_context = {}
     # Row-derived vars (entity_number, status, customer, project, …) so a mapped
     # placeholder like {{entity_number}} renders its real value in the inline
-    # preview — same resolution the actual send uses. build_context_vars never
+    # preview - same resolution the actual send uses. build_context_vars never
     # raises (missing → "-"). Chat-specific vars below override any collision.
     from app.services.respond_messaging_service import build_context_vars
 
@@ -337,14 +385,15 @@ def send_chat_message_for(
     preserved), out-of-window the form's ``*_chat`` WhatsApp template carrying
     ``sender_name`` + the typed ``message`` (flattened into one param).
 
-    This deliberately does NOT go through ``send_text_or_template`` — that choke
+    This deliberately does NOT go through ``send_text_or_template`` - that choke
     point renders the template body in-window too (cross-window "uniformity" for
     status-update templates), which is the OPPOSITE of what a free-text chat reply
     wants. Here in-window means plain text, unchanged.
 
     NEVER mutates the entity. Writes an integration_log outbox on success AND
-    failure (best-effort — a logging failure never 500s a delivered send).
-    Returns ``{sent_as, rendered_text, flattened, window_state}``.
+    failure (best-effort - a logging failure never 500s a delivered send).
+    Returns ``{sent_as, rendered_text, flattened, window_state, response}``
+    (``response`` = Respond's raw acknowledgement, carrying the messageId).
 
     Raises ``AppException`` 422 (``no_chat_template``) when the window is closed
     and no valid chat template default is configured, and 502
@@ -384,7 +433,7 @@ def send_chat_message_for(
     endpoint = f"https://api.respond.io/v2/contact/id:{identifier or ''}/message"
 
     def _log(status: str, *, request_payload: Any, response: Any = None, error: str = None) -> None:
-        # Best-effort outbox write — never mask a delivered send / never 500 a success.
+        # Best-effort outbox write - never mask a delivered send / never 500 a success.
         try:
             log_service.create_integration_log(
                 IntegrationLogCreate(
@@ -430,8 +479,12 @@ def send_chat_message_for(
         return {
             "sent_as": "text",
             "rendered_text": stripped,
-            "flattened": False,  # raw text sent unaltered — no flatten in-window.
+            "flattened": False,  # raw text sent unaltered - no flatten in-window.
             "window_state": _window_state_out(),
+            # Respond's raw acknowledgement. The ticket drawer needs the real
+            # messageId for the human-send webhook so both mirror lanes dedupe
+            # on the same id (AC-J1/AC-J5); every other caller ignores it.
+            "response": response,
         }
 
     # ---- Out-of-window: a template is the only deliverable channel. ----
@@ -467,7 +520,7 @@ def send_chat_message_for(
             extra_context = {}
 
     # Row-derived vars (entity_number, status, customer, project, …) so a mapped
-    # placeholder like {{entity_number}} renders its real value on the send — not
+    # placeholder like {{entity_number}} renders its real value on the send - not
     # just the chat-specific message/sender. build_context_vars never raises
     # (missing → "-"). The chat-specific vars below override any collision.
     from app.services.respond_messaging_service import build_context_vars
@@ -527,4 +580,182 @@ def send_chat_message_for(
         "rendered_text": rendered_text,
         "flattened": flattened,
         "window_state": _window_state_out(),
+        "response": result.get("response"),
     }
+
+
+_ATTACHMENT_KIND_BY_MIME_PREFIX = (
+    ("image/", "image"),
+    ("video/", "video"),
+    ("audio/", "audio"),
+)
+
+
+def respond_attachment_kind(mime: Optional[str]) -> str:
+    """Map a MIME type to the Respond.io attachment subtype (R1: image / video /
+    audio / file only - no sticker). Unrecognised/binary mimes fall back to
+    ``file``, never raise - the composer accepts any file type."""
+    lower = (mime or "").lower()
+    for prefix, kind in _ATTACHMENT_KIND_BY_MIME_PREFIX:
+        if lower.startswith(prefix):
+            return kind
+    return "file"
+
+
+def chat_attachment_basename(filename: Optional[str]) -> str:
+    """Storage-safe LAST path segment for a chat attachment (AC-D5).
+
+    WhatsApp names the delivered document after the last path segment of the URL
+    Respond.io fetches, so this segment must BE the user's filename - stem and
+    extension intact, no uuid prefix. Whitespace collapses to underscores so the
+    segment stays readable both raw (the storage key) and percent-encoded (the
+    URL); everything else is the shared ``sanitize_storage_filename`` charset.
+    """
+    import re
+
+    from app.services.storage_router import sanitize_storage_filename
+
+    safe = sanitize_storage_filename(filename) or "file"
+    return re.sub(r"\s+", "_", safe) or "file"
+
+
+def upload_chat_attachment(
+    *,
+    business_table: str,
+    business_id: str,
+    content: bytes,
+    filename: str,
+    mime: Optional[str],
+) -> Dict[str, str]:
+    """Upload a composer-attached file to CRM storage; return ``{url, kind}``.
+
+    WhatsApp/Meta reject CMYK JPEGs, so the bytes are normalized to RGB first -
+    the same rule the attachments upload API applies. The URL is the
+    PERMANENT, non-expiring CDN link when the active storage provider serves
+    one unsigned (R2); S3/CloudFront has no unsigned route, so a long-lived
+    (7 day) signed URL is used instead of the 1h read-time default - a short
+    presign would go stale by the time anyone re-opens this ticket's thread to
+    see what was actually sent (R2 research item, PLAN-conversation-
+    intervention-tickets.md).
+
+    Key shape ``{table}/{id}/{uuid}/{filename}`` - the repo's existing
+    uuid-segregated attachment convention. The uuid is a PATH SEGMENT, never a
+    basename prefix: the contact's WhatsApp names the delivered document from
+    the URL's last segment, so ``{uuid}_{name}.xlsx`` reached them as a uuid
+    soup (AC-D5). Respond's send API carries no fileName field (R1 - the v2
+    attachment object is ``{type, url}``), so the URL IS the only name channel.
+    """
+    import uuid
+    from urllib.parse import quote
+
+    from app.services.image_normalizer import ensure_rgb_image
+    from app.services.storage_router import (
+        PROVIDER_R2,
+        cdn_base_url,
+        default_provider,
+        get_backend,
+    )
+
+    normalized_content, normalized_filename, normalized_mime = ensure_rgb_image(
+        content, filename, mime
+    )
+    kind = respond_attachment_kind(normalized_mime)
+    safe_name = chat_attachment_basename(normalized_filename)
+    key = f"{business_table}/{business_id}/{uuid.uuid4()}/{safe_name}"
+    provider = default_provider()
+    backend = get_backend(provider)
+    backend.upload_file(
+        file_content=normalized_content, file_path=key, content_type=normalized_mime
+    )
+    # Both branches must hand Respond a fetchable URL whose path ends in the
+    # clean name: the CloudFront signer percent-encodes the path itself (and
+    # signs the encoded form), the R2 CDN builder concatenates raw - so encode
+    # for R2 here rather than changing a builder every stored row depends on.
+    url = (
+        cdn_base_url(provider, quote(key, safe="/"))
+        if provider == PROVIDER_R2
+        else backend.get_signed_url(key, expires_in=60 * 60 * 24 * 7)
+    )
+    return {"url": url, "kind": kind}
+
+
+def send_chat_attachment_for(
+    db: Session,
+    *,
+    identifier: str,
+    respond_contact_id: Optional[str],
+    attachment_type: str,
+    url: str,
+    business_table: str,
+    business_id: str,
+    created_by: Optional[str] = None,
+    window: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Send a single Respond.io attachment message (image/video/audio/file - R1).
+
+    In-window only: Respond.io has no attachment-carrying template (R1), so
+    unlike ``send_chat_message_for`` there is no closed-window fallback - a
+    closed window is a hard, upfront refusal (mirrors the ``no_chat_template``
+    guard's "nothing attempted yet, nothing logged" shape), not a send that
+    silently gets dropped by WhatsApp. Writes an ``integration_log`` outbox row
+    on success AND failure of the actual Respond call; NEVER mutates the
+    entity (mirrors ``send_chat_message_for``).
+
+    ``window``: pass an ALREADY-RESOLVED window state (``get_window_state``'s
+    return shape) to skip this function's own lookup - the multi-attachment
+    caller (``ConversationSLATrackingService.send_ticket_message``) resolves
+    the window ONCE for the whole send instead of once per file (each a live
+    Respond HTTP call, 15s timeout). Omit to keep the single-call contract
+    (this function resolves it itself) for any other caller.
+    """
+    from app.services.error_handler import AppException
+    from app.services.integration_service import RespondClient, log_respond_send
+    from app.services.respond_messaging_service import get_window_state
+
+    if window is None:
+        window = get_window_state(db, identifier, respond_contact_id=respond_contact_id)
+    if not window.get("open"):
+        raise AppException(
+            status_code=422,
+            message="Cannot send an attachment outside the 24h messaging window.",
+            detail=(
+                "Respond.io has no attachment-carrying template; only text "
+                "falls back to the reply template."
+            ),
+            code="attachment_window_closed",
+        )
+
+    request_payload = {
+        "message": {"type": "attachment", "attachment": {"type": attachment_type, "url": url}}
+    }
+    try:
+        response = RespondClient.for_identifier(db, identifier).send_attachment(
+            identifier, attachment_type, url
+        )
+    except Exception as e:
+        logger.exception(
+            "Chat attachment send failed for %s %s", business_table, business_id
+        )
+        log_respond_send(
+            db,
+            business_table=business_table,
+            business_id=business_id,
+            identifier=identifier or "",
+            request_payload=request_payload,
+            exc=e,
+        )
+        raise AppException(
+            status_code=502,
+            message="Failed to send the attachment. Please try again.",
+            detail=str(e),
+            code="respond_send_failed",
+        )
+    log_respond_send(
+        db,
+        business_table=business_table,
+        business_id=business_id,
+        identifier=identifier or "",
+        request_payload=request_payload,
+        response=response,
+    )
+    return {"response": response, "attachment_type": attachment_type, "url": url}

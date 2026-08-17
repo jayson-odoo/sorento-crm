@@ -39,6 +39,13 @@ def test_split_uuid_source_populates_both():
     assert dedup == u, "and doubles as the default dedup scope (old behaviour)"
 
 
+# Two of these values embed a fresh uuid4, generated at COLLECTION time. Without
+# explicit ids pytest names those cases after the value itself, so every xdist
+# worker collects a different node id for them and the run aborts with
+# "Different tests were collected between gw0 and gwN" before a single test
+# executes. The ids below are stable, so the workers agree; the values stay
+# random on purpose, since the point is that the helper reads the SHAPE of the
+# key rather than recognising particular strings.
 @pytest.mark.parametrize(
     "synthetic",
     [
@@ -47,6 +54,7 @@ def test_split_uuid_source_populates_both():
         f"{uuid.uuid4()}_{uuid.uuid4().hex[:16]}",
         f"{uuid.uuid4()}:2026-06-20",
     ],
+    ids=["alert_scope", "digest_date", "uuid_underscore_suffix", "uuid_colon_date"],
 )
 def test_split_synthetic_source_never_enters_uuid_column(synthetic):
     entity, dedup = _split_entity_and_dedup(synthetic, None)
