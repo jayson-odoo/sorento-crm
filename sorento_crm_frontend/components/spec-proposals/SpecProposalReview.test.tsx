@@ -196,3 +196,187 @@ describe('empty proposals', () => {
     expect(screen.getByText('Nothing to review.')).toBeInTheDocument();
   });
 });
+
+/**
+ * The two kinds the flyer batch adds as DATA (AC-D.2, AC-D.8): `unchanged` and
+ * `suppressed`. Neither is ever tickable, whatever `selectableKinds` says -
+ * there is nothing to write for either, so they are the floor rather than a
+ * default (see `NEVER_SELECTABLE` in the component under test).
+ */
+const UNCHANGED_ROW: SpecProposal = {
+  spec_key: 'dim_width',
+  label: 'Width',
+  data_type: 'numeric',
+  value: 800,
+  unit: 'mm',
+  evidence: 'L1700 x W800 x H590mm',
+  kind: 'unchanged',
+  stored_value: 800,
+  stored_unit: 'mm',
+  stored_source: 'derived',
+};
+
+const SUPPRESSED_ROW: SpecProposal = {
+  spec_key: 'flush_type',
+  label: 'Flush type',
+  data_type: 'text',
+  value: 'dual',
+  unit: null,
+  evidence: 'Dual Flush 3L / 4.5L',
+  kind: 'suppressed',
+  stored_value: null,
+  stored_unit: null,
+  stored_source: 'human',
+};
+
+describe('the two new kinds, unchanged and suppressed (AC-D.2, AC-D.8)', () => {
+  it('badges an unchanged row "Already stored" and disables its checkbox under the default selectable kinds', () => {
+    renderReview({ proposals: [UNCHANGED_ROW], selectedKeys: [] });
+
+    expect(screen.getByText('Already stored')).toBeInTheDocument();
+    expect(screen.getByLabelText('Select row')).toBeDisabled();
+  });
+
+  it('badges a suppressed row "Removed from this product" and disables its checkbox under the default selectable kinds', () => {
+    renderReview({ proposals: [SUPPRESSED_ROW], selectedKeys: [] });
+
+    expect(screen.getByText('Removed from this product')).toBeInTheDocument();
+    expect(screen.getByLabelText('Select row')).toBeDisabled();
+  });
+
+  it('keeps both rows disabled even when a caller names them in selectableKinds explicitly', () => {
+    renderReview({
+      proposals: [UNCHANGED_ROW, SUPPRESSED_ROW],
+      selectedKeys: [],
+      selectableKinds: ['new', 'change', 'conflict', 'unchanged', 'suppressed'],
+    });
+
+    const checkboxes = screen.getAllByLabelText('Select row');
+    expect(checkboxes).toHaveLength(2);
+    for (const checkbox of checkboxes) {
+      expect(checkbox).toBeDisabled();
+    }
+  });
+});
+
+describe('conflict tickability is decided by selectableKinds, not by the row (AC-D.2, AC-D.8)', () => {
+  it('leaves the conflict checkbox enabled under the default selectable kinds (per-product panel)', () => {
+    renderReview();
+
+    // MOCK_PROPOSALS order: seat_material (new), dim_height (change), is_rimless
+    // (new), finish (conflict).
+    const checkboxes = screen.getAllByLabelText('Select row');
+    expect(checkboxes[3]).toBeEnabled();
+  });
+
+  // Named after the RULE, not after a surface: the flyer batch passed
+  // `['new', 'change']` until the captain's amendment (AC-F.4) made a ticked
+  // conflict the confirmation, and it now passes `['new', 'change', 'conflict']`.
+  // What this asserts is unchanged and is the point of the prop - a caller that
+  // leaves `conflict` out gets a disabled checkbox for it.
+  it('disables the conflict checkbox when a caller leaves conflict out of selectableKinds (AC-D.2)', () => {
+    renderReview({ selectableKinds: ['new', 'change'] });
+
+    const checkboxes = screen.getAllByLabelText('Select row');
+    expect(checkboxes[3]).toBeDisabled();
+  });
+});
+
+describe('select-all skips non-selectable rows (AC-D.8)', () => {
+  it('ticks only new and change rows, and leaves conflict, unchanged and suppressed alone, when selectableKinds is [new, change]', () => {
+    const proposals = [...MOCK_PROPOSALS, UNCHANGED_ROW, SUPPRESSED_ROW];
+    const { onSelectionChange } = renderReview({
+      proposals,
+      selectedKeys: [],
+      selectableKinds: ['new', 'change'],
+    });
+
+    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+
+    expect(onSelectionChange).toHaveBeenCalled();
+    const called = onSelectionChange.mock.calls[0][0] as string[];
+    expect(called).toEqual(
+      expect.arrayContaining(['seat_material', 'dim_height', 'is_rimless']),
+    );
+    expect(called).not.toContain('finish');
+    expect(called).not.toContain(UNCHANGED_ROW.spec_key);
+    expect(called).not.toContain(SUPPRESSED_ROW.spec_key);
+  });
+
+  it('ticks new and conflict rows under the default selectable kinds, but never unchanged or suppressed', () => {
+    const proposals = [...MOCK_PROPOSALS, UNCHANGED_ROW, SUPPRESSED_ROW];
+    const { onSelectionChange } = renderReview({ proposals, selectedKeys: [] });
+
+    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+
+    const called = onSelectionChange.mock.calls[0][0] as string[];
+    expect(called).toEqual(
+      expect.arrayContaining([
+        'seat_material',
+        'dim_height',
+        'is_rimless',
+        'finish',
+      ]),
+    );
+    expect(called).not.toContain(UNCHANGED_ROW.spec_key);
+    expect(called).not.toContain(SUPPRESSED_ROW.spec_key);
+  });
+});
+
+describe('the two data-driven props a surface with row acts needs (AC-F.3, AC-G.4)', () => {
+  it('marks a row the caller says was edited, and leaves the others unmarked', () => {
+    renderReview({
+      proposals: [
+        { ...MOCK_PROPOSALS[0], edited: true },
+        { ...MOCK_PROPOSALS[1] },
+      ],
+      selectedKeys: [],
+    });
+
+    const marks = screen.getAllByText('edited');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).toHaveAttribute(
+      'data-spec-proposal-edited',
+      MOCK_PROPOSALS[0].spec_key,
+    );
+  });
+
+  it('renders a caller-supplied Value cell in place of the default when renderValue is given', () => {
+    renderReview({
+      proposals: [MOCK_PROPOSALS[0], MOCK_PROPOSALS[1]],
+      selectedKeys: [],
+      renderValue: (proposal, read) =>
+        proposal.spec_key === MOCK_PROPOSALS[0].spec_key ? (
+          <span>MY EDITOR</span>
+        ) : (
+          read
+        ),
+    });
+
+    expect(screen.getByText('MY EDITOR')).toBeInTheDocument();
+    // The row the caller handed back untouched still renders the shared cell.
+    expect(
+      screen.getByText(
+        (_, node) =>
+          node?.getAttribute('data-spec-proposal-value') ===
+          MOCK_PROPOSALS[1].spec_key,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('adds an actions column only when rowActions is given', () => {
+    const { unmount } = renderReview({
+      proposals: [MOCK_PROPOSALS[0]],
+      selectedKeys: [],
+    });
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    unmount();
+
+    renderReview({
+      proposals: [MOCK_PROPOSALS[0]],
+      selectedKeys: [],
+      rowActions: () => <button type="button">Dismiss</button>,
+    });
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+});

@@ -35,11 +35,15 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.config import settings
+# The env-key half of the ladder is read inside `resolve_api_key`, off this same
+# singleton - re-exported here so a test can empty it (`understanding.settings`)
+# and be certain no real provider call can escape, whichever provider the agent
+# resolves to. Not referenced in this module by design; do not prune it.
+from app.config import settings  # noqa: F401
 from app.models.ai_assistant import AIAssistantUsageLog
 from app.models.product_spec import ProductSpecifications
 from app.services.ai_prompt_registry import agent_model, get_prompt
-from app.services.llm_provider import get_provider
+from app.services.llm_provider import get_provider, resolve_api_key, resolve_model
 # The keys a product may hold more than one of. Imported rather than restated: the set
 # is derivation's, and a second copy would let an accepted proposal store a shape a
 # re-derivation of the same words would not.
@@ -363,6 +367,12 @@ def _resolve_provider(db: Session, agent_name: str = AGENT_NAME):
     read its own words (its system prompt IS asked for under `spec_extractor`) with
     whatever model an admin had configured for the enquiry reader, and nothing on
     either screen said so.
+
+    The agent's provider is operator-settable, so it is often NOT the one the
+    assistant row is configured for; the key therefore comes from the shared
+    `resolve_api_key`, which only hands over the generic key column when it
+    belongs to the provider being asked for. Reading that column unconditionally
+    posted the OpenAI key to Google whenever this agent was pointed at Gemini.
     """
     from app.models.ai_assistant import AIAssistantConfig
 
@@ -373,13 +383,11 @@ def _resolve_provider(db: Session, agent_name: str = AGENT_NAME):
     )
     agent_provider, agent_model_name = agent_model(db, agent_name)
     provider_name = agent_provider or (cfg.provider if cfg else "openai") or "openai"
-    model_name = agent_model_name or (cfg.model if cfg else "") or ""
-    api_key = (cfg.api_key_ciphertext if cfg else "") or settings.openai_api_key or ""
+    model_name = resolve_model(cfg, provider_name, agent_model_name)
+    api_key = resolve_api_key(cfg, provider_name)
     if not api_key:
         return None, provider_name, model_name
 
-    if not model_name:
-        model_name = "gpt-4o" if provider_name == "openai" else "claude-sonnet-4-6"
     try:
         return get_provider(provider_name, api_key, model=model_name), provider_name, model_name
     except ValueError:

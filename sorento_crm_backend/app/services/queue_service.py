@@ -24,7 +24,28 @@ _IMMEDIATE_DRAIN_QUEUES: Dict[str, int] = {"notifications": 5}
 
 # Initialize Redis connection for RQ (binary mode required for pickled jobs)
 # RQ stores pickled Python objects which are binary, so decode_responses must be False
-redis_conn = redis.from_url(settings.redis_url, decode_responses=False)
+#
+# Socket timeouts are set so a stalled Redis cannot block a caller indefinitely.
+# Without them an enqueue against an unreachable-but-not-refusing Redis waits on
+# the socket forever, and the /external/media handler awaits that enqueue on a
+# thread it took from the pool. A bounded failure is recoverable; an unbounded
+# wait is not.
+#
+# Safe for the RQ worker, which shares this connection for its BLPOP dequeue:
+# `Worker._set_connection` raises `socket_timeout` to the worker's own
+# connection_timeout whenever it finds a smaller one, so the blocking dequeue is
+# never cut short by the value below. That raise-if-smaller arm exists only in
+# RQ 2.x - under RQ 1.x the worker leaves a configured socket_timeout alone and
+# dies on the first idle BLPOP - which is why requirements.txt floors rq>=2.0.
+REDIS_SOCKET_TIMEOUT_SECONDS = 10
+REDIS_CONNECT_TIMEOUT_SECONDS = 5
+
+redis_conn = redis.from_url(
+    settings.redis_url,
+    decode_responses=False,
+    socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+    socket_connect_timeout=REDIS_CONNECT_TIMEOUT_SECONDS,
+)
 
 # Create default queue
 default_queue = Queue('imports', connection=redis_conn)

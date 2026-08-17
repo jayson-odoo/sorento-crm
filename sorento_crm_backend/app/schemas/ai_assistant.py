@@ -16,6 +16,9 @@ class AIAssistantConfigUpdate(BaseModel):
     anthropic_api_key: Optional[str] = Field(
         None, description="Optional replacement Anthropic key (SCM market web search)"
     )
+    gemini_api_key: Optional[str] = Field(
+        None, description="Optional replacement Google Gemini key (chatbot media image lane)"
+    )
     enabled_tools: list[str] = Field(default_factory=list)
     rag_enabled: bool = True
     is_enabled: bool = True
@@ -31,6 +34,7 @@ class AIAssistantConfigResponse(BaseModel):
     system_prompt: str
     api_key_masked: Optional[str] = None
     anthropic_api_key_masked: Optional[str] = None
+    gemini_api_key_masked: Optional[str] = None
     enabled_tools: list[str]
     rag_enabled: bool
     is_enabled: bool

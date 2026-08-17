@@ -30,7 +30,6 @@ from typing import Any, Iterable
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.ai_assistant import AIAssistantUsageLog
 from app.models.lookup import (
     LookupBinding,
@@ -48,7 +47,9 @@ from app.services.llm_provider import (
     ChatResult,
     ImagePart,
     LLMProvider,
+    default_model_for,
     get_provider,
+    resolve_api_key,
 )
 from app.services.lookup_resolver import LookupResolverService
 
@@ -353,8 +354,15 @@ class AIExtractService:
 
     def _resolve_provider(self) -> tuple[LLMProvider, str, str]:
         """Resolve the active provider from ``AIAssistantConfig`` (same source
-        as the chat assistant). Falls back to ``settings.openai_api_key`` when
-        no DB config is present yet."""
+        as the chat assistant).
+
+        The key comes from the shared ``resolve_api_key``, which reads the
+        provider-specific column first and only hands over the generic
+        ``api_key_ciphertext`` when it belongs to the provider being asked for.
+        Reading that generic column alone left an install configured on
+        Anthropic or Gemini with no key here and silently posted the OpenAI
+        environment key to the wrong vendor.
+        """
         from app.models.ai_assistant import AIAssistantConfig
 
         cfg = (
@@ -364,7 +372,7 @@ class AIExtractService:
         )
         provider_name = (cfg.provider if cfg else "openai") or "openai"
         model_name = (cfg.model if cfg else "") or ""
-        api_key = (cfg.api_key_ciphertext if cfg else "") or settings.openai_api_key or ""
+        api_key = resolve_api_key(cfg, provider_name)
         if not api_key:
             raise AppException(
                 status_code=400,
@@ -375,7 +383,7 @@ class AIExtractService:
                 code="ai_extract_no_api_key",
             )
         if not model_name:
-            model_name = "gpt-4o" if provider_name == "openai" else "claude-sonnet-4-6"
+            model_name = default_model_for(provider_name)
         try:
             provider = get_provider(provider_name, api_key, model=model_name)
         except ValueError as exc:
