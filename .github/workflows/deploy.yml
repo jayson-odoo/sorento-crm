@@ -252,13 +252,174 @@ jobs:
 
       # Everything except tests/ci_excluded.txt — see that file for why each entry
       # is out (they assert against business data a fresh database has no reason
-      # to contain). ~1960 tests, verified deterministic over 13 consecutive runs.
+      # to contain) - MINUS tests/scm, which `test-backend-scm` runs in parallel.
+      #
+      # `--durations=30` prints the 30 slowest tests of the run. It is the only
+      # per-test timing this job produces, and reviewers are pointed at it by
+      # documentation/reference/PR-CHECKLIST.md ("Test cost") to justify a new
+      # slow test rather than discovering it three weeks later as wall clock.
       - name: Run backend suite (executing gate)
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm"
+          python -m pytest -q -p no:cacheprovider --durations=30 $IGNORES --ignore=tests/scm tests/
+
+  # Why tests/scm gets its OWN job rather than another step here.
+  #
+  # Same reasoning as the render split below, applied to size instead of tooling.
+  # tests/scm is the fastest-growing area of the suite (PR #135, commit c738b1ad,
+  # added 119 test files in one merge), and run serially with everything else it
+  # is simply added to the gate's wall clock. Split into two jobs the duplicated
+  # Postgres boot and pip install are paid in PARALLEL, so the gate costs the MAX
+  # of the two halves rather than their SUM. `test-backend` above excludes
+  # tests/scm, this job runs only tests/scm, and between them they cover exactly
+  # what the single job did.
+  #
+  # `$IGNORES` is built from the same tests/ci_excluded.txt here: the entries
+  # that point outside tests/scm are harmless `--ignore` paths for a run that was
+  # never going to collect them, and keeping one shared expression means an
+  # exclusion cannot be added to one half and forgotten in the other.
+  test-backend-scm:
+    name: Backend test suite - SCM (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # pgvector image, not plain postgres: the embedding tables need the
+        # `vector` extension, which bootstrap_env creates.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: sorento
+          POSTGRES_PASSWORD: sorento
+          POSTGRES_DB: sorento_scm_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://sorento:sorento@localhost:5432/sorento_scm_ci
+      DIRECT_URL: postgresql://sorento:sorento@localhost:5432/sorento_scm_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-dummy-secret
+      JWT_ALGORITHM: HS256
+      # No frontend in this job either - see the same note on `test-backend`.
+      DEALER_KIT_RENDER_TESTS: skip
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sorento_crm_backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: sorento_crm_backend
+        run: pip install -r requirements.txt
+
+      # See test-backend: `alembic upgrade head` cannot build this schema from
+      # zero. bootstrap_env creates it from the ORM models and stamps alembic.
+      - name: Bootstrap the database
+        working-directory: sorento_crm_backend
+        run: python -m scripts.bootstrap_env
+
+      - name: Run SCM backend suite (executing gate)
+        working-directory: sorento_crm_backend
+        run: |
+          IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s)"
-          python -m pytest -q -p no:cacheprovider $IGNORES tests/
+          python -m pytest -q -p no:cacheprovider --durations=30 $IGNORES tests/scm/
+
+  # A SHADOW job, deliberately non-blocking.
+  #
+  # It runs the full gated suite (no scm split) under pytest-xdist `-n auto` to
+  # collect evidence for a possible cutover to parallel execution. It gates
+  # nothing: it is absent from `build-and-deploy.needs` AND carries
+  # `continue-on-error: true`, so a red run here never blocks a deploy. What it
+  # buys is weeks of real flake data before anybody trusts `-n auto` as a gate.
+  #
+  # The known risk is order dependence. Each xdist worker is its own process, so
+  # the process-global state in tests/conftest.py (the RBAC cache, the
+  # `_IDEMP_REDIS` list, the `_BLANK` blank-schema dict) is per-worker-safe, and
+  # scratch schema names carry the owning PID so two workers cannot collide on
+  # one. What is NOT preserved is EXECUTION ORDER: any test that passes only
+  # because a neighbour ran before it will fail here, intermittently. That is
+  # precisely the signal this job exists to surface. Whether to cut over is a
+  # follow-up decision, taken on this job's history rather than on an estimate.
+  test-backend-xdist-shadow:
+    name: Backend suite under xdist (SHADOW - non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      postgres:
+        # pgvector image, not plain postgres: the embedding tables need the
+        # `vector` extension, which bootstrap_env creates.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: sorento
+          POSTGRES_PASSWORD: sorento
+          POSTGRES_DB: sorento_xdist_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://sorento:sorento@localhost:5432/sorento_xdist_ci
+      DIRECT_URL: postgresql://sorento:sorento@localhost:5432/sorento_xdist_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-dummy-secret
+      JWT_ALGORITHM: HS256
+      # No frontend in this job either - see the same note on `test-backend`.
+      DEALER_KIT_RENDER_TESTS: skip
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sorento_crm_backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: sorento_crm_backend
+        run: pip install -r requirements.txt
+
+      # See test-backend: `alembic upgrade head` cannot build this schema from
+      # zero. bootstrap_env creates it from the ORM models and stamps alembic.
+      - name: Bootstrap the database
+        working-directory: sorento_crm_backend
+        run: python -m scripts.bootstrap_env
+
+      - name: Run full backend suite under xdist (shadow, non-blocking)
+        working-directory: sorento_crm_backend
+        run: |
+          IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s)"
+          python -m pytest -q -p no:cacheprovider -n auto --durations=30 $IGNORES tests/
 
   # Why a SEPARATE job rather than extra steps on `test-backend`.
   #
@@ -411,7 +572,7 @@ jobs:
       - name: Run the PDF render suite (executing gate)
         working-directory: sorento_crm_backend
         run: |
-          python -m pytest -q -p no:cacheprovider \
+          python -m pytest -q -p no:cacheprovider --durations=30 \
             --junitxml="$RUNNER_TEMP/render-junit.xml" \
             tests/test_dealer_kit_pdf_render.py
 
@@ -495,6 +656,7 @@ jobs:
         validate-mcp,
         validate-frontend,
         test-backend,
+        test-backend-scm,
         test-dealer-kit-render,
       ]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

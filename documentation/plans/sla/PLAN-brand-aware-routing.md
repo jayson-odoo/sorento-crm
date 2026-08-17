@@ -166,7 +166,7 @@ resolver body / `resolve_routing_company(company_id=...)`.
   `brand_code = normalise_brand_code(body brand) or suffix_brand`; store both; RR branch passes
   `brand_code=` to `get_escalation_assignee_for_tier`.
 - `get_escalation_assignee_for_tier(..., brand_code=None)` -> `get_team_id_by_tier(brand_code=)`.
-- `apply_assignee_team_derivation` (review fix, closes BL-015): `derive_team_for_assignee` also
+- `apply_assignee_team_derivation` (review fix, closes BL-016): `derive_team_for_assignee` also
   returns the resolved row's brand, and "did the team change" compares the resolved `team_id`,
   not just agent + set code - since 368 the brand rows of one tier are different teams under one
   code, so a cross-brand reassign at the same tier was a silent no-op. On a team change the
@@ -565,7 +565,7 @@ landed on. With no brand on the row there is nothing to re-stamp from, and the c
 simpler and better: **the brand is what the customer asked about, not who is handling it.**
 Takeover, manual reassign and `apply_assignee_team_derivation` therefore leave `brand_code`
 exactly as it is, and `apply_assignee_team_derivation` is back to its pre-branch
-"agent or tier changed" comparison. BL-015 is updated to say so.
+"agent or tier changed" comparison. BL-016 is updated to say so.
 
 ### R2.6 Migration `371_brand_member_routing`
 
@@ -627,8 +627,8 @@ the three brand suites.
   real bugs (case-sensitive brand validation; a 375px member-row clipping regression), both fixed
   and committed before the redo that produced the PASS result above. The revision-1 evidence run
   further below exercised a UI that no longer exists and does not stand in for either pass.
-- BL-013 (no committed browser regression guard) and BL-017 (the Brand select needs
-  `master_data.brands.view`) still apply, BL-017 now to `MemberBrandEditor`'s catalogue call.
+- BL-014 (no committed browser regression guard) and BL-018 (the Brand select needs
+  `master_data.brands.view`) still apply, BL-018 now to `MemberBrandEditor`'s catalogue call.
 
 ## Evidence run 2026-08-17 (AC2-V1, member-level)
 

@@ -472,7 +472,7 @@ def test_the_create_schema_accepts_the_brand():
 
 
 # ---------------------------------------- the brand is the enquiry's, not the
-#                                          handler's (BL-015, revised)
+#                                          handler's (BL-016, revised)
 
 
 def test_a_manual_reassign_leaves_the_brand_alone(world):
