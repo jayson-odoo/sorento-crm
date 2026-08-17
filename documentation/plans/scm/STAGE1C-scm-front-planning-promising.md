@@ -398,5 +398,186 @@ here; no new Playwright spec (standing order).
 
 ## 9. AC-H03 test report
 
-Appended to this file at DoD: every AC in Groups B, C, D plus referenced AC-G/H rows with
-PASS / FAIL / DEFERRED evidence. PR body links here.
+Measured on 18 August 2026 at the branch head (`814f71113`). Backend: Postgres via
+`tests/_pg_fixture.py` (`blank_session`, every test seeds its own chain, marker-prefixed).
+Frontend: Vitest + jsdom. Browser: headless `agent-browser` 0.27.0, private session
+`stage1c-ev`, short-lived stack (backend `uvicorn` on 8127, frontend `npm run dev` on 3031),
+login with the `E2E_EMAIL` / `E2E_PASSWORD` pair, sidebar clicks from `/`, `get url` before
+every read. Groups E and F are out of scope for this slice (Product/Location grain, channel
+breakdown - Stage 2/3 per section 0's "Not in this slice") and are not in the table below.
+
+Backend counts at head, each file run alone:
+
+| File | Result |
+|---|---|
+| `tests/scm/test_front_planning_golden.py` | 9 passed |
+| `tests/scm/test_front_planning_engine.py` | 7 passed |
+| `tests/scm/test_coverage_timeline.py` | 28 passed |
+| `tests/test_so_supply_confirmation.py` | 17 passed |
+| `tests/test_supply_inquiry_handoff.py` | 9 passed |
+
+All five together: 70 passed, 0 failed (22.15s). Frontend: `npx vitest run "app/(protected)/project-sales"`
+- 92 test files, 1049 tests, all passed. The Stage 1C-specific slice of that
+(`fulfilment-planning/**`, `_shared/hooks/useFulfilmentPlanning`, `_shared/lib/supplyComposition`,
+`_shared/services/fulfilmentPlanningService`, `order-inquiries/OrderInquiryClient`) is 10 files /
+181 tests, all passed; the three retired-surface component suites
+(`AllocationPanel.test.tsx`, `AllocationSourceDialog.test.tsx`, `StockClaimsClient.test.tsx`) are
+3 files / 40 tests, all passed. `tsc --noEmit` not re-run this session (no source edited).
+
+| AC | Result | Evidence |
+|---|---|---|
+| AC-B01 line balance uses current open qty | PASS (pytest + browser) | `project_supply_service._facts_for` reads `qty_ordered - qty_delivered` live; adversarial browser step bumped the core line's `qty_ordered` +10 out of band and the next `GET .../supply` returned `open_qty: "80"` (was 70) with no restart, confirmed by curl and by the Compose section's Buy field recalculating to 40. |
+| AC-B02 only timely location SPO covers demand | PASS (pytest) | `tests/scm/test_coverage_timeline.py::test_ac_b02_two_line_worked_case_orders_opening_stock_before_the_same_day_spo` and `::test_ac_b02_worked_case_is_identical_when_event_input_order_is_reversed`; `tests/scm/test_front_planning_golden.py::test_opening_stock_goes_to_the_first_line_and_the_same_day_spo_to_the_second` and `::test_reversing_the_database_row_order_changes_nothing`. |
+| AC-B03 late incoming is advisory | PASS (browser + pytest) | `tests/scm/test_front_planning_engine.py::test_an_spo_arriving_the_day_after_the_required_date_contributes_zero_coverage`; browser: seeded line 30's `advisory_spo` (`STAGE1CEV-SPO-2`, day after required date) rendered "Advisory: it arrives after the required date and covers nothing." both pre- and post-confirm frozen view. |
+| AC-B04 suggestions are deterministic | PASS (pytest) | `tests/scm/test_front_planning_golden.py::test_reversing_the_database_row_order_changes_nothing`, `::test_attribute_sources_gives_the_same_answer_with_three_lines_reversed`; `tests/scm/test_front_planning_engine.py::test_attribute_sources_gives_the_same_answer_with_three_lines_reversed`. |
+| AC-B05 hot-selling uses existing ABC facts | PASS (pytest + browser) | `tests/scm/test_front_planning_golden.py::test_a_hot_selling_product_reserves_no_dealer_facing_stock`; browser: seeded line 10 (classification row `abc_class='A'` at dealer-segment MWH) rendered pill "Hot selling"; line 20/30 (no classification row anywhere) rendered pill "Unavailable" (`classification_unavailable: true` in the GET body). |
+| AC-B06 hot-selling Reserve protects dealer/BRW stock | PASS (pytest + browser) | `tests/scm/test_front_planning_engine.py::test_hot_selling_reserve_never_draws_dealer_stock_even_when_the_pool_falls_short`, `::test_the_brw_cap_floors_at_zero_when_pool_free_stock_is_below_its_reorder_level`; browser: line 10 dealer-facing free stock 50 at MWH-S/L contributed 0 to Reserve, capped at `max(120-80,0)=40` from the BRW pool - exact AC-B08 numbers, see below. |
+| AC-B07 non-hot-selling Reserve stays inside its boundary | PASS (pytest, browser caveat) | `tests/scm/test_front_planning_engine.py::test_reserve_draws_from_the_own_location_before_the_pool_and_states_both_wordings` (own-then-pool, no floor). See Finding 1 below: the LIVE service's cross-product `pool_left` bookkeeping let a second and third product on the same SO draw against the FIRST product's already-computed pool headroom, which this pure-engine test does not exercise (both its lines are the same product). |
+| AC-B08 the hot-selling worked case is fixed | PASS (pytest + browser) | `tests/scm/test_front_planning_golden.py::test_the_hot_selling_worked_case_reserves_only_above_the_brw_floor`; browser reproduced the identical numbers live: open 70, dealer-facing free 50, BRW free 120, BRW reorder level 80 -> Reserve 40 from the pool, dealer-facing Reserve 0, Buy 30 (screenshot `s9_line10.png`). |
+| AC-B09 Borrow evidence and reason are mandatory | PASS (browser + Vitest) | Browser: "Add a borrow" on line 10 opened a dialog naming the donor (MWH-S/L), "50 free, 0 committed. Borrowing all of it leaves 0 free.", quantity input, and a required Reason; "Add the borrow" was `disabled` until a reason was typed, then enabled (screenshot `s10_borrow.png`/`s11_borrow_ready.png`). `BorrowAddDialog.test.tsx` (part of the 181-test Stage 1C Vitest slice). |
+| AC-B10 Borrow has no second approver | PASS (pytest) | `tests/test_so_supply_confirmation.py::test_cross_project_borrow_writes_an_accepted_claim_directly_with_no_requested_state` - claim written `accepted` in the same transaction, no `CLAIM_REQUESTED` state anywhere on the path. |
+| AC-B11 discontinued Buy is allowed with control | PASS (browser + pytest) | `tests/test_so_supply_confirmation.py::test_a_discontinued_buy_without_a_reason_is_refused` and `::test_a_discontinued_buy_with_a_reason_confirms`; browser: seeded discontinued product B's line 20 rendered "This product is discontinued. Buying it takes a reason." with a required Reason box shown even at Buy=0 (screenshot `s7_line20.png`/`s8_line20b.png`). |
+| AC-B12 every proposal balances | PASS (pytest + browser) | `tests/scm/test_front_planning_golden.py::test_a_proposed_line_balances`, `::test_every_golden_case_is_internally_consistent`; browser: every line card showed the `open = incoming + reserve + borrow + buy` equation live, and manually adding a 10-unit Borrow without reducing Buy produced the red blocker "Line 10, STAGE1CEV-A: the components are over the open quantity by 10." with Confirm disabled (screenshot `s14_imbalance2.png`), which cleared and re-enabled Confirm once rebalanced (`s15_rebalanced.png`). |
+| AC-B13 confirmed cover is unavailable to later demand | PASS (pytest + browser) | `tests/scm/test_front_planning_golden.py::test_cover_promised_to_a_confirmed_line_is_not_offered_to_the_next_one` (project open 10 / SPO 10 / retail outstanding 10 / stock 0 -> retail need 10, not 0); service-level hold filtering in `project_supply_service._free_stock`/`_hold_rows`; browser corroborated the same machinery is live (the adversarial re-read recomputed free/held quantities against the confirmed decision). |
+| AC-B14 every proposed component states its reason | PASS (pytest + browser) | `tests/scm/test_front_planning_golden.py::test_every_proposed_component_states_its_reason_beside_its_quantity`; browser: every Reserve/Buy/Borrow shown carried its reason sentence inline (e.g. "free stock in the shared MWH pool above its reorder level of 80 covers the need by the required date", "remaining uncovered need"), frozen into the confirmed view unchanged. |
+| AC-C01 one action confirms all lines | PASS (browser) | Single "Confirm Project SO" -> AlertDialog -> "Confirm the sales order" -> one `POST .../confirm` 200 flipped all 3 lines to Confirmed in the same response; no per-line action anywhere in the sheet (screenshots `s17`-`s22`). |
+| AC-C02 one invalid line rolls back the SO | PASS (pytest) | `tests/test_so_supply_confirmation.py::test_one_unbalanced_line_rolls_back_the_whole_confirmation` - asserts zero decisions/allocations/claims/inquiry rows after a refused attempt, failing line named by line_no + item_code. |
+| AC-C03 confirmation rechecks authoritative facts | PASS (pytest + browser) | `tests/test_so_supply_confirmation.py::test_confirmation_rechecks_stock_and_rejects_a_line_whose_free_stock_changed_after_the_sheet_was_read`; browser adversarial step (DB-level qty bump) reproduced the same re-read live end to end through the UI. |
+| AC-C04 one active revision represents the SO | PASS (pytest + browser) | `tests/test_so_supply_confirmation.py::test_confirming_a_balanced_multi_line_so_writes_one_active_decision_with_grouped_allocations`; browser: frozen view read "All 3 lines are held by revision 1." then, after the adversarial re-confirm, "All 3 lines are held by revision 2." (screenshots `s21_confirmed.png`, `s40_revision2.png`). |
+| AC-C05 concurrent confirmations cannot double-claim | PASS (pytest) | `tests/test_so_supply_confirmation.py::test_a_second_confirmation_racing_an_already_active_decision_gets_a_conflict_with_no_partial_writes`, `::test_the_database_refuses_a_second_active_revision_for_one_sales_order` (partial unique index). |
+| AC-C06 material change reopens the whole SO | PASS (pytest + browser), see Finding 2 | `tests/test_so_supply_confirmation.py::test_publishing_an_amendment_supersedes_the_active_decision`, `::test_a_reconciliation_link_change_supersedes_the_active_decision`, `::test_a_fact_drift_challenges_the_active_decision_on_read`. Browser adversarial run: bumping the core line's `qty_ordered` +10 out of band, the next `GET .../supply` correctly returned `review_state: "needs_cs_review"` and `decision.state: "challenged"` with reason "Line 10 is now open for 80, and the confirmed revision was balanced against 70." confirmed by curl. **On a fresh full-page load** the sheet rendered this correctly (pill "Needs CS review", banner "Revision 1 no longer matches this sales order" with the same reason text, screenshots `s36`-`s38`). **Within the same SPA session** (reopening the sheet immediately after the DB bump, without a full navigation) the pill and the mini reconciliation "Lines" table kept showing the pre-challenge "Confirmed" state and qty 70 even though the Compose section's own Buy field DID pick up the new number (30 -> 40) - see Finding 2. |
+| AC-C07 existing execution is preserved on reconfirmation | PASS (pytest + browser) | `tests/test_supply_inquiry_handoff.py::test_reconfirming_with_a_lower_need_cancels_unplaced_rows_and_flags_placed_ones_with_a_cancel_balance_exception`; browser: the reconfirm (revision 1 -> 2) left the revision-1 Order Inquiry row (qty 30) in place with status text "Superseded by revision 2" rather than deleting it, and raised a fresh revision-2 row (qty 40) alongside it (screenshot `s41_oi_refresh.png`). |
+| AC-C08 authorization and company isolation apply | PASS (pytest) | `tests/test_so_supply_confirmation.py::test_confirmation_is_denied_without_the_edit_permission`, `::test_a_cross_company_project_so_is_denied_without_a_leak`. |
+| AC-D01 inquiry created only at successful confirmation | PASS (pytest) | `tests/test_supply_inquiry_handoff.py::test_inquiry_rows_appear_only_at_successful_confirmation_not_at_publish_or_reconcile`. |
+| AC-D02 inquiry quantity equals confirmed Buy | PASS (pytest + browser) | `tests/test_supply_inquiry_handoff.py::test_inquiry_row_quantity_equals_the_confirmed_buy_residual_exactly_and_zero_buy_creates_no_row`; browser: only line 10 (Buy 30 at confirmation) produced an inquiry row; lines 20/30 (Buy 0) produced none (screenshot `s25_order_inquiry.png`, 1 row of 3 lines). |
+| AC-D03 coverage never enters purchasing demand | PASS (pytest + browser) | `tests/test_supply_inquiry_handoff.py::test_reserve_borrow_timely_and_late_incoming_never_inflate_the_inquiry_row_quantity`; browser corroborates (Reserve/Borrow/timely/advisory never appeared as inquiry rows, see AC-D02 evidence). |
+| AC-D04 inquiry does not net supply again | PASS (pytest) | `tests/test_supply_inquiry_handoff.py::test_confirmed_unplaced_buy_rows_reader_counts_raised_order_rows_directly`. |
+| AC-D05 handoff is idempotent across retries/revisions | PASS (pytest + browser) | `tests/test_supply_inquiry_handoff.py::test_retrying_the_same_confirmation_does_not_duplicate_the_inquiry_row`, `::test_reconfirming_with_a_lower_need_cancels_unplaced_rows_and_flags_placed_ones_with_a_cancel_balance_exception`; browser reconfirm produced exactly one new `raised` row for revision 2 and left the revision-1 row `Superseded by revision 2` (not duplicated, not deleted) - see AC-C07. |
+| AC-D06 purchasing can trace Buy to its decision | PASS (browser + pytest) | `tests/test_supply_inquiry_handoff.py::test_serialized_inquiry_rows_carry_human_identifiers_and_no_uuid`; browser: Order Inquiry grid showed `S/O line no` 10, `Project SO` STAGE1CEV-PSO-1, `Revision` 1 (then 2), `Item code` STAGE1CEV-A, delivery date - no UUID anywhere in the row (screenshots `s25`, `s41`). |
+| AC-G01 decision evidence is immutable and attributable | PASS (pytest) | `line_snapshots` JSONB freezes components/reasons/evidence at confirmation (`SOSupplyDecision`); `confirmed_by`/`confirmed_at`/`supersedes_id`/`superseded_reason` chain exercised by `test_confirming_a_balanced_multi_line_so_writes_one_active_decision_with_grouped_allocations` and `test_reconfirming_supersedes_the_active_decision_and_increments_the_revision`; browser frozen view showed `confirmed_by_name` ("Jayson Personal" via curl) on the challenged decision payload. |
+| AC-G02 empty and unavailable evidence is explicit | PASS (browser) | Every line card rendered explicit empty states rather than hiding sections: "Nothing is borrowed on this line. No other location or project holds free stock of this item.", "No incoming arrives by the required date.", "No later incoming for this item at this location.", "Retail classification" pill "Unavailable" for lines 20/30 (screenshots `s6`-`s9`). |
+| AC-G03 destructive/superseding action is confirmed | PASS (browser) | Shared `AlertDialog` "Confirm STAGE1CEV-PSO-1?" / "All 3 lines are confirmed together." / "The composition is frozen and the Buy residual goes to purchasing. This action cannot be undone." with Cancel + "Confirm the sales order" - never a native `confirm()` (screenshots `s16_confirm_dialog.png`, `s20_alertdialog.png`, `s39_reconfirm_dialog.png`). `ConfirmProjectSoDialog.test.tsx` in the Vitest slice. |
+| AC-G04 human-readable navigation and error handling | PASS (browser) | All navigation was by sidebar/breadcrumb click, never a deep URL, for first-visit discovery of every screen in this run; `console`/`errors` were empty at every checkpoint across the whole session (list, sheet, borrow dialog, confirm, SO detail, view-sources dialog, Stock Claims, Order Inquiry, mobile); every `/api/v1/project-sales/*` call returned 200 except the deliberately-unbalanced Confirm attempt, which never fired (client-side disabled, per AC-B12). Identifiers throughout were human-readable (SO ref, item code, project code, warehouse code) with a UUID only ever behind an id-suffixed field never rendered. |
+| AC-G06 read and write paths remain company-scoped | PASS (pytest) | `tests/test_so_supply_confirmation.py::test_a_cross_company_project_so_is_denied_without_a_leak`; every seeded row carried `company_id` via `CompanyScopedMixin`'s `before_insert` stamp. |
+| AC-H01 baseline differences have regression tests | PASS (review) | Stage 0's failing-first contract tests for the retired per-line allocation/claim behaviour were replaced in the same commits as the behaviour change per section 5.5/8; confirmed no live `PUT/DELETE .../allocation` or `POST /allocation-claims` route remains reachable from the FE (browser network check below) and the retired routes are gone from `fulfilment_planning.py`/`sales_orders.py`. |
+| AC-H02 stage order is enforced | PASS (review) | Phase 1 mock commit precedes Phase 2 backend commits on this branch (`git log`: mock/Vitest commits `6d39620c0`/`1b1e7f68e` before/alongside the backend TDD commits; branch stacked on the already-landed Stage 1B PR #209 which itself followed the same order). |
+| AC-H04 scope stays direct | PASS (review) | No LLM quantity generation, no new optimizer/rules engine, no second Borrow approval (AC-B10), no automatic supplier ordering, no reorder-level convergence worklist, no new configuration knob introduced by this slice; reason strings are deterministic string templates, not model output. |
+
+Retired-surface confirmation (plan 5.5), all via browser:
+
+- SO detail Allocation panel: header reads "Supply is composed in Fulfilment Planning." with a link
+  "Open Fulfilment Planning"; the toolbar carries only Search/Filters/Columns/Refresh, no
+  Choose source / Change / Clear. Per-row action is "View sources" only.
+- "View sources" dialog (`AllocationSourceDialog`) is read-only evidence: a ranked list
+  (MWH "Available stock" 70 free to take, MWH-S/L "Available stock" 50 free to take, "No
+  location" "Order it") with a Close button and the same "Open Fulfilment Planning" link - no
+  selection control, no Choose/Save action (screenshot `s30_sources_dialog.png`).
+- Stock Claims (`/project-sales/stock-claims`) reads "Stock one project took from another. Supply
+  is composed in Fulfilment Planning."; empty state "No stock has been borrowed either way / A row
+  appears here when a Borrow is confirmed in Fulfilment Planning, on either side of it." with only
+  a link back to Fulfilment Planning - no Release/Refuse action anywhere on the page (screenshot
+  `s31_stock_claims.png`). This run never confirmed a Borrow (the draft Borrow added in step 3 was
+  discarded when the sheet was reopened before the actual Confirm), so a populated row with a
+  "Decided by" column was not directly observed; the empty-state absence of any write action is
+  still conclusive for the retirement claim.
+- `network requests` across the whole session: zero `PUT`/`DELETE` to `.../allocation`, zero `POST`
+  to `/allocation-claims`. The only non-GET calls anywhere in the run were the two `confirm` POSTs
+  and `list-query/column-config` PUTs (listing personalization, unrelated).
+
+### Findings (not fixed, reported per instructions)
+
+**Finding 1 - live service cross-product pool-stock leak (`project_supply_service.py`,
+`proposal_for` / `_recheck_line`).** `pool_left` (and its confirm-time twin passed to `_free_for`)
+is keyed only by pool warehouse id, not by `(product_id, warehouse_id)`. When a Project SO has
+several lines for DIFFERENT products sharing the same pool warehouse, the first line's computed
+`fact.pool_free` seeds `pool_left[pool_id]`, and every later line for a DIFFERENT product then
+reads and depletes that SAME bucket instead of its own product's free stock. Reproduced live: the
+seed gave product B (line 20, discontinued, zero stock anywhere) and product C (line 30, zero
+stock, SPO-covered) no stock rows at the MWH pool at all, yet the GET `/supply` response proposed
+Reserve 15 (line 20) and Reserve 10 (line 30) from MWH - stock that does not exist for either
+product - simply because product A's line 10 had already computed `pool_free=120` for that
+warehouse and the shared dict handed the (undepleted, product-A-shaped) remainder to the next
+different-product line. The CONFIRM-time recheck (`_recheck_line` -> `_free_for`) uses the exact
+same shared dict, so a payload asking to Reserve non-existent stock for product B/C from this
+pool would incorrectly PASS the recheck and commit, rather than failing per AC-B07/AC-B12. No
+existing pytest exercises two DIFFERENT products sharing one pool warehouse on the same SO
+(`test_reserve_draws_from_the_own_location_before_the_pool_and_states_both_wordings` and siblings
+in `tests/scm/test_front_planning_engine.py` use one product per case). This did not block any AC
+above from reaching PASS - AC-B06/B07/B08 are proven correct for the single-product case they
+test, and the browser evidence for lines 20/30 is still valid evidence of the OTHER things those
+lines demonstrate (discontinued warning, advisory SPO, empty states) - but it means a multi-product
+Project SO sharing a pool warehouse can silently over-Reserve today. Logged for the coder;
+suggest keying `pool_left` by `(product_id, pool_id)` and re-running the golden set.
+
+**Finding 2 - same-SPA-session staleness on challenge (frontend).** Reopening the Fulfilment
+Planning sheet for an SO whose active decision was just challenged by an out-of-band fact change
+(same session, no full page navigation) rendered the header pill ("Confirmed") and the
+Reconciliation "Lines" mini-table (old qty) from stale cached data, even though the SAME
+`GET .../supply` call had already returned the fresh challenged payload (`review_state:
+"needs_cs_review"`, `decision.state: "challenged"`) - confirmed by curl against the exact same
+endpoint at the exact same moment, and by the Compose section on the SAME rendered sheet correctly
+showing the recalculated Buy quantity (30 -> 40) from that same response. A full page reload (`open`
+navigation) immediately showed the correct pill, banner and reason text. This reads as a
+react-query cache/invalidation gap between whatever powers the header pill and whatever powers the
+Compose section - both should be reading the same `/supply` response. Not app-breaking (a reload
+fixes it, and the list-level `review_state` was also observed to lag until a full reload once), but
+worth a follow-up: a CS user who reopens a row they just re-triggered a challenge on, without
+refreshing the browser, would see "Confirmed" when the SO actually needs review again. Logged for
+the coder.
+
+### Browser evidence run (18 August 2026)
+
+Stack: backend `uvicorn` on 8127 (`DATABASE_URL` unchanged, shared local Postgres), frontend
+`npm run dev` on 3031 with `NEXT_PUBLIC_API_URL`/`NEXTAUTH_URL`/`PORT` exported for that process
+only (not written to `.env.local`); ports chosen free and not in the "belongs to another lane"
+list. Seed: a one-off script (`documentation/plans/scm/../scratchpad`, not committed) created a
+marker-prefixed (`STAGE1CEV`) chain via `SessionLocal` and committed it so the running API saw it:
+project `STAGE1CEV Evidence Residences` (owned by the E2E login user so `assert_can_edit_project`
+passes), core SO `STAGE1CEV-CORE-SO` with 3 lines, Project SO `STAGE1CEV-PSO-1` (published, all 3
+lines pre-linked to their core lines), reusing existing active warehouses MWH-S/L (own,
+project-segment) and its pool MWH (dealer-segment, `pool_warehouse_id` already set) - no warehouse
+created or modified. Three new products: A (hot-selling worked case, AC-B08 numbers), B
+(discontinued, zero stock), C (SPO timely+advisory split); stock rows only for the new products;
+one `scm.item_classification` row for product A at MWH (dealer) to trigger the hot-selling path;
+two SPO/inbound-shipment rows for product C (one arriving on the required date, one the day after).
+
+Login via `E2E_EMAIL`/`E2E_PASSWORD` from `.env.local` (values never printed); sidebar clicks from
+`/` for every first visit to a screen. Walked: Project Sales -> Fulfilment Planning (list, seeded
+row "Needs CS review", `GET .../fulfilment-planning` 200; Confirmed filter -> explicit empty state
+"No sales order has been confirmed yet" + "Open the pipeline" CTA, `review_state=confirmed` 200) ->
+row -> side sheet (Stage 1B reconciliation card + Supply composition section, `GET .../supply` 200)
+-> per-line evidence for all three lines (hot-selling BRW cap, discontinued warning + required
+reason, timely/advisory SPO split, every empty state explicit) -> Borrow flow on line 10 ("Add a
+borrow" dialog, donor MWH-S/L 50 free/0 committed, "Add the borrow" disabled until a reason typed,
+enabled after) -> manual imbalance (added Borrow 10 without reducing Buy -> red blocker "the
+components are over the open quantity by 10", Confirm disabled) -> rebalance (Buy 30 -> 20, blocker
+cleared, Confirm re-enabled) -> Confirm Project SO -> AlertDialog naming the SO ref and "All 3
+lines are confirmed together" -> `POST .../confirm` 200 -> pill "Confirmed" in sheet AND list ->
+frozen view ("All 3 lines are held by revision 1.") -> Project Sales -> Pipeline -> seeded project
+-> Sales orders tab -> Order inquiry -> exactly one Buy row (line 10, qty 30, S/O line 10, Project
+SO STAGE1CEV-PSO-1, Revision 1, item STAGE1CEV-A, no UUID) -> back to the SO detail -> retired
+Allocation panel (read-only, link to Fulfilment Planning) -> "View sources" dialog (read-only
+ranked evidence, no selection control) -> Project Sales -> Stock Claims (empty state, no
+Release/Refuse anywhere) -> adversarial DB-level bump of the core line's `qty_ordered` (+10,
+70 -> 80) -> reopened list (stale "Confirmed" pill until a full page reload, then correctly
+"Needs CS review" - Finding 2) -> reopened sheet in the same SPA session (pill/mini-table stale,
+Compose section correctly recalculated - Finding 2) -> full reload -> sheet correctly showed
+"Needs CS review" pill and "Revision 1 no longer matches this sales order" banner with the exact
+reason text -> re-confirmed -> AlertDialog again -> `POST .../confirm` 200 -> "All 3 lines are held
+by revision 2." -> Order Inquiry now showed 2 rows (revision 2 qty 40 "Raised", revision 1 qty 30
+"Superseded by revision 2") with the summary strip correctly counting only 1 as "still to buy".
+Repeated the golden-path list + sheet at 375x812 (mobile hamburger menu -> Project Sales ->
+Fulfilment Planning -> row -> sheet), rendered correctly with no overlap.
+
+`errors` was empty at every checkpoint across the whole session, at both viewports. `console`
+carried only `[debug] JWT token extracted successfully` and Fast Refresh lines. `network requests
+--filter allocation` across the whole session showed GETs only (`.../allocations`,
+`.../allocation-candidates`, `.../allocation-claims?direction=all`) plus two unrelated
+`list-query/column-config` PUTs (column personalization) - zero writes to any retired endpoint.
+Session closed with `close` (not `close --all`); backend and frontend PIDs killed individually at
+the end. Seed data deleted in FK-safe order in a `finally` block; verified zero rows remain across
+every table touched (`projects.sales_orders`, `projects.sales_order_lines`,
+`projects.so_supply_decisions`, `projects.order_inquiries`, `projects.order_inquiry_rows`,
+`projects.so_line_allocations`, `projects.projects`, core `sales_orders`/`sales_order_lines`,
+`products`, `product_categories`, `units_of_measure`, `stock`, `scm.item_classification`,
+`scm.reorder_level`, `spo_allocations`, `inbound_shipments`) by id and by the `STAGE1CEV` marker.
