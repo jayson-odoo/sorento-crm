@@ -463,6 +463,10 @@ class ProductSpecFlyerProposal(Base):
             "batch_id", "product_id", "spec_key", name="uq_product_spec_flyer_proposal"
         ),
         CheckConstraint(
+            "kind IN ('new', 'change', 'conflict', 'unchanged', 'suppressed')",
+            name="ck_product_spec_flyer_proposals_kind",
+        ),
+        CheckConstraint(
             "origin IN ('flyer', 'manual')",
             name="ck_product_spec_flyer_proposals_origin",
         ),

@@ -373,7 +373,6 @@ def test_every_company_id_table_is_registered():
     assert len(owned) == 68, f"expected 68 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
-
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------
 # NOTE: ``None`` is NOT in this list — a None-scope (system / all-companies, the
 # n8n no-contact backward-compat path) owned-write now stamps the incumbent
