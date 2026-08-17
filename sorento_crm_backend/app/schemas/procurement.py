@@ -851,6 +851,9 @@ class PurchaseRequestHeaderBase(BaseModel):
     # Site contact, free text ("name and contact number"). Optional.
     pic: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
+    # stays as the display fallback for the rows that predate it (AC-F6).
+    project_id: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form
     total_project_value: Optional[Decimal] = None  # sponsorship form
@@ -915,6 +918,9 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     # Site contact, free text ("name and contact number"). Optional.
     pic: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
+    # stays as the display fallback for the rows that predate it (AC-F6).
+    project_id: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None
     total_project_value: Optional[Decimal] = None
@@ -1019,6 +1025,9 @@ class PurchaseRequestAttachmentLinkRequest(BaseModel):
 
 class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     id: str
+    # Resolved for display (AC-L3): the office-side detail page shows a project CODE, never a
+    # UUID, matching what the portal already resolves for contacts.
+    project_code: Optional[str] = None
     # Requestor display name, resolved live from the FK (read-only, response-only).
     requested_by_contact_name: Optional[str] = None
     request_number: Optional[str] = None
@@ -1104,6 +1113,9 @@ class PublicApprovalSummaryResponse(BaseModel):
     # Site contact, free text ("name and contact number"). Optional.
     pic: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
+    # stays as the display fallback for the rows that predate it (AC-F6).
+    project_id: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form
     total_project_value: Optional[Decimal] = None  # sponsorship form (numeric)

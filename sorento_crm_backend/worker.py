@@ -111,6 +111,8 @@ if __name__ == '__main__':
     # blocks every Excel upload behind it. `flyer_read` is separate for the same
     # reason and is listed LAST: a 20 to 60 second PyMuPDF extraction should not
     # sit in front of every Excel import, and RQ drains queues in list order.
+    # `project_docs` (quotation PDF and Excel rendering) sits between them for the
+    # same reason: slower than an import, faster than a flyer read.
     #
     # PRODUCTION: the compose file on the server is hand-edited and gitignored.
     # If it pins WORKER_QUEUES explicitly, `flyer_read` has to be added there or
@@ -130,7 +132,8 @@ if __name__ == '__main__':
     queues = [
         q.strip()
         for q in os.getenv(
-            'WORKER_QUEUES', 'imports,respond_io,catalogue_render,media,flyer_read'
+            'WORKER_QUEUES',
+            'imports,respond_io,catalogue_render,media,project_docs,flyer_read',
         ).split(',')
         if q.strip()
     ]

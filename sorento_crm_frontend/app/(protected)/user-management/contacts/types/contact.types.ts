@@ -15,6 +15,8 @@ export interface RespondContact {
   workspace_name?: string | null;
   workspace_space_id?: string | null;
   access_type_codes?: string[];
+  /** AC-F4: their sponsorship form demands a registered project. */
+  requires_registered_project?: boolean;
   access_types?: RespondContactAccessType[];
   /** Outbound WhatsApp kill switch. Flipped via the shared outbound endpoints, not a contact update. */
   outbound_enabled?: boolean;
@@ -28,4 +30,6 @@ export interface RespondContactFormData {
   name?: string;
   workspace_id?: string | null;
   access_type_codes?: string[];
+  /** AC-F4: their sponsorship form demands a registered project. */
+  requires_registered_project?: boolean;
 }

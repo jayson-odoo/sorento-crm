@@ -300,6 +300,66 @@ function DataGridTableBodyRow<TData>({
   );
 }
 
+/**
+ * A totals row, INSIDE the table, so the number lines up under the column it sums.
+ *
+ * Rendered only when a column declares `footer` on its definition, so no existing grid gains a
+ * stray empty row. A total placed beside the toolbar instead - "1 PO, RM 1,810,640.62" - reads as
+ * a chip competing with the buttons, and nothing tells the reader WHICH column it totals; sitting
+ * under its own column the number needs no label at all.
+ */
+function DataGridTableFoot({ children }: { children: ReactNode }) {
+  const { props } = useDataGrid();
+
+  return (
+    <tfoot
+      className={cn(
+        'border-t border-border bg-muted/30 font-semibold',
+        props.tableClassNames?.footer,
+      )}
+    >
+      {children}
+    </tfoot>
+  );
+}
+
+function DataGridTableFootRowCell<TData>({
+  children,
+  header,
+}: {
+  children: ReactNode;
+  header: Header<TData, unknown>;
+}) {
+  const { props } = useDataGrid();
+  const { column } = header;
+
+  const bodyCellSpacing = bodyCellSpacingVariants({
+    size: props.tableLayout?.dense ? 'dense' : 'default',
+  });
+
+  return (
+    <td
+      className={cn(
+        'align-middle text-sm',
+        bodyCellSpacing,
+        // A footer carries one number, never an avatar, so it does not need the row min-height.
+        'h-auto',
+        props.tableLayout?.cellBorder && 'border-e',
+        // Inherits the column's own alignment: a right-aligned money column totals right.
+        column.columnDef.meta?.cellClassName,
+      )}
+      style={{
+        ...(props.tableLayout?.columnsPinnable && column.getCanPin()
+          ? getPinningStyles(column)
+          : null),
+        width: props.tableLayout?.width === 'fixed' ? `${header.getSize()}px` : undefined,
+      }}
+    >
+      {children}
+    </td>
+  );
+}
+
 function DataGridTableBodyRowExpandded<TData>({ row }: { row: Row<TData> }) {
   const { props, table } = useDataGrid();
 
@@ -559,6 +619,22 @@ function DataGridTable<TData>() {
             <DataGridTableEmpty />
           )}
         </DataGridTableBody>
+
+        {table.getVisibleFlatColumns().some((column) => Boolean(column.columnDef.footer)) && (
+          <DataGridTableFoot>
+            {table.getFooterGroups().map((footerGroup) => (
+              <tr key={footerGroup.id}>
+                {footerGroup.headers.map((header) => (
+                  <DataGridTableFootRowCell key={header.id} header={header}>
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(header.column.columnDef.footer, header.getContext())}
+                  </DataGridTableFootRowCell>
+                ))}
+              </tr>
+            ))}
+          </DataGridTableFoot>
+        )}
       </DataGridTableBase>
     </div>
   );
@@ -574,6 +650,8 @@ export {
   DataGridTableBodyRowSkeleton,
   DataGridTableBodyRowSkeletonCell,
   DataGridTableEmpty,
+  DataGridTableFoot,
+  DataGridTableFootRowCell,
   DataGridTableHead,
   DataGridTableHeadRow,
   DataGridTableHeadRowCell,

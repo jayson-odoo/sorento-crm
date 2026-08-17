@@ -12,6 +12,8 @@
 
 import type { LucideIcon } from 'lucide-react';
 
+import projectsPurgeTables from './projects/purge_tables.json';
+
 export interface ModuleMenuChildJson {
   title: string;
   path?: string;
@@ -47,7 +49,19 @@ export interface ModuleAsset {
 }
 
 export const MODULE_REGISTRY: ModuleAsset[] = [
-  // Migrated modules append here. Empty by default (Phase 1-3 are infra-only).
+  // Migrated modules append here.
+  //
+  // `projects` ships purge tables only: its menu and routes are still declared the legacy
+  // way in `menu.config.tsx`, and only the uninstall dialog needs the table list. The
+  // backend half is `app/modules/projects/purge.py` (ADR-0009, ADR-0011), whose PURGE_ORDER this
+  // mirrors table for table, in order. Entries are SCHEMA-QUALIFIED (`projects.parties`,
+  // ADR-0011): seven of the module's bare names are also core tables the purge does not
+  // touch, so an operator consenting to it must not be shown `brands` or `sales_orders`
+  // and left to guess which one is meant. Nothing in the frontend build can notice drift, so
+  // the pin is a backend test that reads THIS json:
+  // sorento_crm_backend/tests/test_projects_module_purge_invariants.py
+  // (test_the_frontend_purge_manifest_matches_purge_order_exactly). Edit both together.
+  { key: 'projects', purgeTables: projectsPurgeTables },
 ];
 
 export function moduleRoutePrefixes(): { prefix: string; moduleKey: string }[] {

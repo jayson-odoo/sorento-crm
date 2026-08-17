@@ -11,6 +11,15 @@ import os
 import pytest
 
 
+# Holds the session-long advisory lock. Kept on a module global because the lock lives on the
+# CONNECTION: closing it would release the lock and let a concurrent run start sweeping.
+_SWEEP_LOCK: dict = {}
+
+# Arbitrary but fixed. Every pytest session in every worktree against this database competes for
+# this one key, which is exactly the point.
+_SWEEP_LOCK_KEY = 727327001
+
+
 def _owner_pid(schema_name: str):
     """The PID embedded in a scratch schema name, if it carries one.
 
@@ -70,6 +79,14 @@ def _sweep_orphan_scratch_schemas():
     Two pytest runs on one database remain a bad idea -- they share the real
     tables -- but they no longer sabotage each other's scratch schema, and the
     failures a developer sees are their own.
+
+    A third guard sits in front of both: a Postgres advisory lock held for the
+    WHOLE session rather than just across the sweep. The first session in takes
+    it and cleans up; any session that starts while that one is still running
+    fails to take it and touches nothing. Failing to acquire is therefore not an
+    error, it is the signal that somebody else is working. It buys what the PID
+    check cannot: a schema is not swept between the moment its owner picked the
+    name and the moment it created it.
     """
     try:
         from sqlalchemy import text
@@ -77,26 +94,53 @@ def _sweep_orphan_scratch_schemas():
         from tests._pg_fixture import SCRATCH_SCHEMA_PREFIX
 
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-        try:
-            names = [
-                r[0]
-                for r in admin.execute(
-                    text("SELECT nspname FROM pg_namespace WHERE nspname LIKE :pattern"),
-                    {"pattern": f"{SCRATCH_SCHEMA_PREFIX}\\_%"},
-                )
-            ]
-            for name in names:
-                pid = _owner_pid(name)
-                # Never our own, whatever the ordering: this runs at session
-                # start, but a module-scoped fixture that builds the schema
-                # first would otherwise have it swept from under itself.
-                if pid is not None and (pid == os.getpid() or _process_is_alive(pid)):
-                    continue
-                admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
-        finally:
+        got = admin.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": _SWEEP_LOCK_KEY}
+        ).scalar()
+        if not got:
+            # Another run owns the database. Leave its schemas alone.
             admin.close()
+            return
+
+        # Held until _release_sweep_lock, so nobody else sweeps underneath us.
+        _SWEEP_LOCK["connection"] = admin
+
+        names = [
+            r[0]
+            for r in admin.execute(
+                text("SELECT nspname FROM pg_namespace WHERE nspname LIKE :pattern"),
+                {"pattern": f"{SCRATCH_SCHEMA_PREFIX}\\_%"},
+            )
+        ]
+        for name in names:
+            pid = _owner_pid(name)
+            # Never our own, whatever the ordering: this runs at session start,
+            # but a module-scoped fixture that builds the schema first would
+            # otherwise have it swept from under itself.
+            if pid is not None and (pid == os.getpid() or _process_is_alive(pid)):
+                continue
+            admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
     except Exception:
         pass
+
+
+def _release_sweep_lock():
+    connection = _SWEEP_LOCK.pop("connection", None)
+    if connection is None:
+        return
+    try:
+        from sqlalchemy import text
+
+        connection.execute(
+            text("SELECT pg_advisory_unlock(:key)"), {"key": _SWEEP_LOCK_KEY}
+        )
+    except Exception:
+        pass
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -115,6 +159,8 @@ def _blank_schema_lifecycle():
         drop_blank_schema()
     except Exception:
         pass
+    # Last, so the lock outlives this run's own schema and a queued run finds the DB tidy.
+    _release_sweep_lock()
 
 
 # The per-test metadata-restore backstop that used to live here is gone. It
@@ -123,6 +169,45 @@ def _blank_schema_lifecycle():
 # No fixture mutates model metadata any more, and CLAUDE.md's "Tests run on
 # Postgres ONLY, NEVER sqlite" rule forbids the mutation that made it necessary,
 # so all it bought was a walk over ~2,500 columns on every single test.
+
+
+# Module-level function symbols that tests stub. Same family as the column-type
+# backstop above: a bare ``svc_module.resolve_references = lambda ...`` in a fixture is
+# never undone, so it stayed installed for every test that ran later in the session.
+# Four fixtures did exactly that, and the visible damage was the reverse of a stub's
+# intent -- a WORKING resolution path failed with "lambda() got an unexpected keyword
+# argument", in a file that stubs nothing, only in a full-suite run.
+_STUBBABLE_SYMBOLS: tuple[tuple[str, str], ...] = (
+    ("app.services.ai_assistant_service", "resolve_references"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_stubbed_module_symbols():
+    """Restore module-level symbols a test rebound without undoing it.
+
+    Every current site uses ``monkeypatch``, which restores itself; this is the backstop
+    for the next one, because the failure it causes lands in somebody else's file and
+    reads as a production bug rather than as a leaked stub.
+
+    Reads ``sys.modules`` and never IMPORTS. Importing the module here instead cost 149
+    errors across the suite: the assistant service pulls a large chain in with it, and doing
+    that from a fixture loaded it far earlier than the suite otherwise would, in tests that
+    never touch it. A module that was never imported cannot be holding a leaked stub, so
+    there is nothing to restore anyway.
+    """
+    import sys
+
+    originals = [
+        (module, attr, getattr(module, attr))
+        for module_path, attr in _STUBBABLE_SYMBOLS
+        if (module := sys.modules.get(module_path)) is not None
+        and hasattr(module, attr)
+    ]
+    yield
+    for module, attr, original in originals:
+        if getattr(module, attr, None) is not original:
+            setattr(module, attr, original)
 
 # ---------------------------------------------------------------------------
 # Company-scope test default (multi-company isolation).

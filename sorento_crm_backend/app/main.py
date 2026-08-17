@@ -196,6 +196,30 @@ def _register_activities_adapters() -> None:
             )
         )
         logging.info("Activities adapter registered: ticket")
+
+        from app.services import project_activity_service
+
+        register_activities_adapter(
+            ActivitiesAdapter(
+                entity_type=project_activity_service.ENTITY_TYPE,
+                permission_view="projects.projects.view",
+                permission_post="projects.projects.view",
+                # Posting is deliberately gated on VIEW, not edit: a colleague who can see a
+                # project should be able to add "developer told me the tender closed" without
+                # being able to change its numbers. Silencing observers loses the information
+                # the pursuit record exists to hold.
+                get_respond_contacts=project_activity_service.respond_contacts_for,
+                # Without a can_view the generic gate is a no-op and any project id is
+                # readable by any holder of the view permission, across companies.
+                can_view=project_activity_service.can_view,
+                on_post=lambda db, project_id, actor_id, body_html: (
+                    project_activity_service.note_user_activity(
+                        db, project_id=project_id, actor_id=actor_id
+                    )
+                ),
+            )
+        )
+        logging.info("Activities adapter registered: project")
     except Exception as e:  # noqa: BLE001
         logging.error(
             f"Failed to register activities adapters: {str(e)}", exc_info=True
@@ -347,6 +371,33 @@ async def startup_event():
             _db.close()
     except Exception as e:
         logging.error(f"IT support bootstrap failed at startup: {str(e)}", exc_info=True)
+
+    try:
+        from app.database import SessionLocal
+        from app.services import project_mcp_bootstrap
+        _db = SessionLocal()
+        try:
+            # Runs after sync_catalog so the mcp_tools rows exist: enables the read-only
+            # project tools for the in-app assistant without an admin visiting a settings
+            # screen (AC-K1). Additive and idempotent.
+            project_mcp_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Project MCP bootstrap failed at startup: {str(e)}", exc_info=True)
+
+    try:
+        from app.database import SessionLocal
+        from app.services import project_seed_service
+        _db = SessionLocal()
+        try:
+            # Additive only: never updates or removes a row, so a renamed status or a
+            # deleted project type survives every restart.
+            project_seed_service.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Project Sales seed failed at startup: {str(e)}", exc_info=True)
 
     try:
         from app.database import SessionLocal

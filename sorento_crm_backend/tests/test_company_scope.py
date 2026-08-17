@@ -289,6 +289,12 @@ _COMPANY_ID_ALLOWLIST = {
     # including the ~160 tests and background readers that hold a policy id with no
     # company context at all, and turns each one into an empty result.
     "sla_policies",
+    # Numbering rules key their counter by (company_id, doc_type) with NULL meaning the
+    # legacy/global rule (migration 327). Deliberately NOT the mixin: the resolver names
+    # the company explicitly on every claim, and the auto-filter would hide the NULL
+    # fallback row from every scoped session - a fresh company would then mint no numbers
+    # at all instead of inheriting the default rule.
+    "document_numbering_rules",
     # Container sizes are per-tenant OR global: a row with a NULL company is a default
     # this system ships for everyone, and a tenant row overrides it (hence the unique
     # index on coalesce(company_id, nil)). The mixin's auto-filter would drop every
@@ -329,17 +335,26 @@ def test_every_company_id_table_is_registered():
         f"Tables have a company_id column but are not CompanyScopedMixin subclasses "
         f"(add the mixin or allowlist them): {offenders}"
     )
-    # This is a COUNT, not a list, on purpose: enumerating the owned tables in a comment
-    # is how the number and the prose drifted apart twice already. The rule is what
-    # matters. A table is owned when the row is a fact about ONE company that cannot be
-    # derived from something already scoped:
+    # The count is a tripwire, not a fact about the schema: it forces a human to look
+    # whenever an owned table appears, because an unpartitioned one leaks across
+    # companies silently. Update it deliberately, never to "make the test pass".
+    #
+    # It stays a COUNT, not a list: enumerating the owned tables in a comment is how the
+    # number and the prose drifted apart twice already. The rule is what matters. A table
+    # is owned when the row is a fact about ONE company that cannot be derived from
+    # something already scoped:
     #   - Planning artefacts own their company because a run, a recommendation, a budget or
     #     an exception batch is a company's own decision queue, and an exception's warehouse
     #     is nullable (supply in transit names no location to filter through).
     #   - Fulfilment rows (loading plans, supplier notices, supplier inventory, allocations)
     #     own it for the same reason: they are that company's shipment, not a place.
+    #   - The project-sales domain owns its company the same way: a project, a lead, a
+    #     quotation, an intake PO/SO and their versions are that company's pipeline.
     #   - Certificate children are deliberately NOT owned: they are only reachable through
     #     the certificate, which is scoped, so a second filter is redundant surface (SEC-2a).
+    #     Same reasoning for the project children that inherit their partition through their
+    #     parent (projects.series_categories, projects.brands, projects.collaborators,
+    #     projects.takeover_requests).
     #   - `access_agents` is NOT owned: one agent routes both brands through two ladders.
     # Derived instead of owned: demand_stat / item_classification / the views (via the
     # warehouse join), supplier_performance (via suppliers), market signals (facts about
@@ -370,7 +385,14 @@ def test_every_company_id_table_is_registered():
     # `_assert_reviewer_writable`), and the mixin cannot catch a SAME-company write
     # aimed at another request's person, which is exactly what those ownership checks
     # are for. Both are load-bearing; removing either is a real hole.
-    assert len(owned) == 68, f"expected 68 owned tables, found {len(owned)}: {sorted(owned)}"
+    #
+    # The number is the union of both lineages at this merge: main's 68 (67 plus the
+    # flyer proposal batch above) plus the 41 the project-sales branch brought (which
+    # were audited table by table at its own merge).
+    expected_owned = 109
+    assert len(owned) == expected_owned, (
+        f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
+    )
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

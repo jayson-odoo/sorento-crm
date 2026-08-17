@@ -9,6 +9,8 @@ export const ContactEditSchema = z.object({
   workspace_id: z.string().optional().nullable(),
   access_type_codes: z.array(z.string()),
   company_ids: z.array(z.string()).default([]),
+  // AC-F4: per-contact sponsorship rollout switch.
+  requires_registered_project: z.boolean().default(false),
 });
 
 export type ContactEditSchemaType = z.infer<typeof ContactEditSchema>;

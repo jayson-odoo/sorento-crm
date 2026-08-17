@@ -1,6 +1,16 @@
 # PLAN - the Order Inquiry sheet as a source of sales orders
 
-**Status:** written 5 Aug 2026, pre-code. UAC: `scm-order-inquiry-as-demand-acceptance-criteria.md`.
+**Status:** written 5 Aug 2026. Slices N1 to N5 have SHIPPED on `main`: the reader
+(`app/services/project_order_inquiry_reader.py`), the importer
+(`app/services/project_order_inquiry_import_service.py`), the
+`/api/v1/scm/order-inquiry/preview|apply` routes, the SCM sales-order list, and their tests
+(`tests/test_project_order_inquiry_import_*.py`, `tests/scm/test_order_link_both_ways.py`) all
+exist. The two services carry project names because ownership moved to the Project Sales module
+in the relocation pass; the routes and the `scm.reorder.run` permission did not move. Ownership
+was revised with the client on 2026-08-13 and recorded in
+[ADR 0010](../../adr/0010-order-inquiry-loop-owned-by-project-sales.md); read
+"Ownership revision" below before the ownership rule it amends. UAC:
+`scm-order-inquiry-as-demand-acceptance-criteria.md`.
 
 ## What changes, and why it is not a small change
 
@@ -18,13 +28,32 @@ wrong here before: `apply` once branched on doc type to pick a reader and then u
 wrote SalesOrder rows, so the purchase-order book created sales orders whose `so_number` was a
 PO number. Two writers on one table need an explicit ownership rule, not good intentions.
 
+## Ownership revision (client, 2026-08-13; ADR 0010)
+
+The plan above was written when the sheet looked like a general demand feed sitting in SCM.
+It is not. Three things the client settled on 2026-08-13, recorded in ADR 0010:
+
+- **Joey's sheet carries ONLY project demand.** It is derived from published project sales
+  orders, not from the whole order book.
+- **The loop is owned end to end by the Project Sales module** - derive, export, human edit,
+  import. The Excel round trip is deliberate: Joey's edit between export and import IS the buy
+  signal, and it is the reason the loop is not collapsed into a publish-writes-through.
+- **The importer relocates from `scm` to `projects` ownership.** The route path
+  `/api/v1/scm/order-inquiry/*` and the permission `scm.reorder.run` stay STABLE through the
+  move so the FE upload dialog keeps working; moving them into the projects namespace is a
+  recorded follow-up, not part of the move.
+- **Publishing a project sales order never writes core `sales_orders`.** Only the import does.
+  So there is no project-publish row in the ownership table below.
+- **SCM remains a reader only.** `scm.committed_v` and `demand.py` read core `sales_orders`
+  and never a module table. That is the role SCM already had, unchanged.
+
 ## The ownership rule
 
 **Whoever created the order owns its figures.**
 
 | the order | the sheet does |
 | --------- | -------------- |
-| does not exist | creates it, `source_system = scm_order_inquiry` |
+| does not exist | creates it, `demand_origin = 'scm_order_inquiry'`, `so_number` = the project's `provisional_ref` |
 | exists, created by the sheet | refreshes its lines, keyed by (order, item) |
 | exists from any other source | annotates only: stock location + PO claim, exactly as today |
 
@@ -35,6 +64,35 @@ one person's working record.
 
 Stated as a rule rather than left to whichever upload runs last, because "last writer wins"
 across two feeds with different refresh rhythms is how a quantity silently reverts.
+
+### The two numbers, and who reconciles them
+
+The sheet is exported BEFORE AutoCount has issued the SO number, so a sheet-created row
+carries the project's `provisional_ref` as its `so_number`. The outstanding-book importer
+matches on `so_number` only and inserts on a miss, so the same demand would otherwise land
+twice under two different numbers.
+
+Duplicate prevention is module-side, at the one place where both references are known at
+once: `project_so_ingest_service`, at the moment it learns `autocount_doc_no`.
+
+| when the real number arrives | `project_so_ingest_service` does |
+| ---------------------------- | -------------------------------- |
+| no core row holds it yet | RENUMBERS the sheet-created row in place - matched on `so_number = provisional_ref` AND `demand_origin = 'scm_order_inquiry'` - to the real number. No second row is created. |
+| the outstanding book created the real-numbered row first | LINKS `so_id` to that row and RETIRES the provisional sheet-created row, so committed demand is never counted twice. |
+| the row is not stamped `demand_origin = 'scm_order_inquiry'` | nothing at all. Foreign rows are never renamed, retired or otherwise touched. |
+
+`outstanding_import_service` is unchanged: it keeps matching on `so_number` and knows nothing
+about provisional refs. Putting the reconciliation on the ingest side means the core importer
+carries no module knowledge.
+
+`sales_orders.source_doc_no` is NOT used as the key here - `so_history_service` already stamps
+that column on the same rows with its own doc-number semantics, so claiming it would collide.
+
+The `demand_origin` literal stays `'scm_order_inquiry'` even though ownership moves to
+projects. The string is baked into raw SQL (`scm/demand.py`), into migration 346's backfill,
+and into the `OrderLinkClaim` CHECK constraint; renaming it is a data migration that buys no
+correctness. ADR 0010 records why, so the mismatch between the string and the owning module
+reads as a decision rather than a leftover.
 
 ## What a row can and cannot become
 

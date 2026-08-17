@@ -990,6 +990,34 @@ def _gemini_error_message(response: Any) -> str:
     return str(body)[:500]
 
 
+def _gemini_operator_hint(status_code: int, provider_message: str) -> str:
+    """The sentence that says whose problem this is, appended to Gemini's own words.
+
+    A quota wall and a bad key are the operator's to fix, not the document's,
+    and both used to reach the screen as raw provider JSON that read like the
+    uploaded file was unreadable. The provider message is still carried (it is
+    the only thing that distinguishes one 400 from another); this only adds who
+    can act on it. Everything else gets nothing, because we would be guessing.
+    """
+    if status_code == 429:
+        lowered = (provider_message or "").lower()
+        reason = (
+            "the billing cap has been reached"
+            if "spend" in lowered
+            else "the rate limit has been reached"
+        )
+        return (
+            f" The reader is unavailable because {reason}. Nothing uploaded is lost. "
+            "Raise the cap in Google AI Studio, then try again."
+        )
+    if status_code in (401, 403):
+        return (
+            " The reader rejected our key. Nothing uploaded is lost. "
+            "Check GEMINI_API_KEY, then try again."
+        )
+    return ""
+
+
 class GeminiProvider:
     """Google Gemini over the Generative Language REST API."""
 
@@ -1028,9 +1056,10 @@ class GeminiProvider:
             raise RuntimeError(f"Gemini request failed: {exc}") from exc
 
         if response.status_code >= 400:
+            provider_message = _gemini_error_message(response)
             raise RuntimeError(
-                f"Gemini call failed ({response.status_code}): "
-                f"{_gemini_error_message(response)}"
+                f"Gemini call failed ({response.status_code}): {provider_message}"
+                f"{_gemini_operator_hint(response.status_code, provider_message)}"
             )
         try:
             body = response.json()
@@ -1144,10 +1173,23 @@ class GeminiProvider:
                     }
                 )
 
+        finish = candidate.get("finishReason")
+        # A truncated answer is worse than a failed one: half a purchase order
+        # looks like a whole one with lines missing, and nothing downstream can
+        # tell. Same for a candidate cut short by SAFETY or RECITATION - it
+        # carries real text, so only the finish reason says it is incomplete.
+        # `MAX_TOKENS` is named separately because the caller's answer budget is
+        # already topped up with the thinking budget above, so reaching it means
+        # the answer itself ran out of room.
+        if finish == "MAX_TOKENS":
+            raise RuntimeError("Gemini stopped early: MAX_TOKENS (response truncated).")
+        if finish and finish != "STOP":
+            raise RuntimeError(f"Gemini stopped early: {finish}.")
+
         if not text_chunks and not normalized_calls:
             raise RuntimeError(
                 "Gemini returned an empty candidate "
-                f"(finishReason={candidate.get('finishReason') or 'unknown'})."
+                f"(finishReason={finish or 'unknown'})."
             )
 
         usage = body.get("usageMetadata") or {}

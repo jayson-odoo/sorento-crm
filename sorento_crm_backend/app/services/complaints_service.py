@@ -302,6 +302,7 @@ class ComplaintService:
         handled_by_wa_phone_override=_UNSET,
         rejected_by_wa_phone_override=_UNSET,
         last_responded_by_name_override=_UNSET,
+        project_display_override=_UNSET,
     ) -> dict:
         """Serialize complaint with attachments from generic entity_attachment_links table.
 
@@ -318,6 +319,29 @@ class ComplaintService:
         # response affordances on this rather than mirroring the allowed-status list
         # (UAC O1) - one source for the rule, on both sides of the wire.
         data["response_write_allowed"] = complaint.response_write_allowed
+        # AC-L3 + the no-UUIDs-in-the-UI rule: the FE renders this dict, so a bare
+        # `project_id` would put a UUID on screen. Resolved here rather than in the FE so
+        # every surface (detail, list, PDF, webhook) shows the same identifier.
+        data["project_code"] = None
+        data["project_name"] = None
+        if project_display_override is not _UNSET:
+            # The list path resolved every linked project in one query. Batched for the same
+            # reason as the view tokens and user names above: this lookup fired once per linked
+            # row, which is the N+1 this serializer's whole override convention exists to avoid.
+            code, name = project_display_override or (None, None)
+            data["project_code"] = code
+            data["project_name"] = name
+        elif complaint.project_id:
+            from app.models.projects import Project
+
+            project = (
+                self.db.query(Project.project_code, Project.title)
+                .filter(Project.id == str(complaint.project_id))
+                .first()
+            )
+            if project:
+                data["project_code"] = project[0]
+                data["project_name"] = project[1]
         data["view_url"] = (
             view_url_override
             if view_url_override is not None
@@ -761,6 +785,7 @@ class ComplaintService:
         # Batch the per-row enrichment that previously fired O(rows) queries:
         # view tokens, SLA assignee trackers, and user display names.
         view_url_map = self._batch_complaint_view_urls(complaint_ids)
+        project_display_map = self._batch_project_display(complaints)
         sla_tracker_map = self._batch_latest_unresolved_sla_trackers(complaint_ids)
         wanted_user_ids: set[str] = set()
         for c in complaints:
@@ -802,6 +827,11 @@ class ComplaintService:
                 links_override=links_map.get(str(complaint.id), []),
                 print_count=print_map.get(str(complaint.id), 0),
                 view_url_override=view_url_map.get(str(complaint.id)),
+                project_display_override=(
+                    project_display_map.get(str(complaint.project_id))
+                    if getattr(complaint, "project_id", None)
+                    else None
+                ),
                 assigned_to_name_override=_assigned_name(complaint),
                 handled_by_name_override=_handled_name(complaint),
                 # Banners (handling-lock / rejection) render on the DETAIL page only,
@@ -1042,6 +1072,26 @@ class ComplaintService:
         base_url = self._complaint_view_base_url(base_url_override)
         path = f"/complaint-management/complaints/{complaint_id}"
         return f"{base_url}{path}" if base_url else path
+
+    def _batch_project_display(self, complaints) -> dict:
+        """`{project_id: (project_code, title)}` for the linked projects on one page.
+
+        One query for the page instead of one per linked complaint. Returns `{}` when nothing
+        on the page carries a link, which is the common case.
+        """
+        project_ids = {
+            str(c.project_id) for c in complaints if getattr(c, "project_id", None)
+        }
+        if not project_ids:
+            return {}
+        from app.models.projects import Project
+
+        return {
+            str(row[0]): (row[1], row[2])
+            for row in self.db.query(Project.id, Project.project_code, Project.title)
+            .filter(Project.id.in_(list(project_ids)))
+            .all()
+        }
 
     def _batch_complaint_view_urls(self, complaint_ids: List[str]) -> dict:
         """Resolve view URLs for many complaints with O(1) queries instead of O(rows).

@@ -37,6 +37,20 @@ from app.models.respond_template import (
     RespondTemplateDefault,
 )
 from app.models.status import Status, StatusTransition
+from app.models.projects import (
+    Project,
+    ProjectTask,
+    ProjectTemplateTask,
+    ProjectBrand,
+    ProjectCollaborator,
+    ProjectParty,
+    ProjectSalesProfile,
+    ProjectStakeholder,
+    ProjectTakeoverRequest,
+    ProjectTemplate,
+    ProjectTemplateRole,
+    ProjectType,
+)
 from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import Integration, IntegrationApiKey, IntegrationLog
 from app.models.integration_reference import IntegrationReference
@@ -122,6 +136,23 @@ from app.models.scm import (
     ScmAnalyticsRun,
     MarketResearchRun,
     PriorityPolicy,
+)
+from app.models.project_so import (  # noqa: F401
+    ProjectPOVersion,
+    ProjectPOLine,
+    ProjectPOAnnotation,
+    DeliverySchedule,
+    DeliveryScheduleVersion,
+    ProjectDeliveryPhase,
+    DeliveryScheduleCell,
+    CustomerItemCodeMap,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    SODraftFinding,
+    OrderChangeNotice,
+    SOAmendment,
+    OrderInquiry,
+    OrderInquiryRow,
 )
 
 __all__ = [
@@ -215,6 +246,18 @@ __all__ = [
     "RespondTemplateDefault",
     "Status",
     "StatusTransition",
+    "Project",
+    "ProjectTask",
+    "ProjectTemplateTask",
+    "ProjectBrand",
+    "ProjectCollaborator",
+    "ProjectParty",
+    "ProjectSalesProfile",
+    "ProjectStakeholder",
+    "ProjectTakeoverRequest",
+    "ProjectTemplate",
+    "ProjectTemplateRole",
+    "ProjectType",
     "EntityConversationMessage",
     "IntegrationLog",
     "ImportLog",

@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Upload, X, FileSpreadsheet, TestTube } from 'lucide-react';
+import { TestTube } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import type { SPOImportResult, ValidateImportResult } from '../services/spoAllocationService';
 
 const ACCEPT = '.xlsx,.xls';
@@ -42,7 +43,6 @@ export function SPOImportDialog({
 }: SPOImportDialogProps) {
   const router = useRouter();
   const [files, setFiles] = useState<File[]>([]);
-  const [dragActive, setDragActive] = useState(false);
   const [testResult, setTestResult] = useState<ValidateImportResult | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [isValidatingForImport, setIsValidatingForImport] = useState(false);
@@ -51,63 +51,19 @@ export function SPOImportDialog({
   const [showAllWarnings, setShowAllWarnings] = useState(false);
   const [showAllConfirmWarnings, setShowAllConfirmWarnings] = useState(false);
 
-  const validExtensions = ACCEPT.split(',').map((ext) => ext.trim().replace('.', ''));
-  const isValidFile = (file: File) => {
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    return ext && validExtensions.includes(ext);
-  };
-
-  const handleFiles = useCallback((fileList: FileList | File[]) => {
-    const list = Array.from(fileList);
-    const valid = list.filter(isValidFile);
-    const invalid = list.filter((f) => !isValidFile(f));
-    
-    if (invalid.length > 0) {
-      toast.error(`Skipped ${invalid.length} file(s): only .xlsx and .xls are allowed.`);
-    }
-    
-    if (valid.length > 0) {
-      setFiles((prev) => {
-        const names = new Set(prev.map((f) => f.name));
-        const added = valid.filter((f) => !names.has(f.name));
-        return [...prev, ...added];
-      });
-      setTestResult(null);
-    }
-  }, []);
-
-  const handleDrag = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setDragActive(false);
-    }
-  }, []);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragActive(false);
-      if (e.dataTransfer.files?.length) {
-        handleFiles(e.dataTransfer.files);
-      }
-    },
-    [handleFiles]
-  );
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = e.target.files;
-    if (selected?.length) handleFiles(selected);
-    e.target.value = '';
-  };
-
-  const removeFile = (index: number) => {
-    setFiles((prev) => prev.filter((_, i) => i !== index));
+  // The same workbook dropped twice is the same import twice, so keep the
+  // first-seen copy and ignore the repeat.
+  const handleFilesChange = useCallback((next: File[]) => {
+    const seen = new Set<string>();
+    setFiles(
+      next.filter((file) => {
+        if (seen.has(file.name)) return false;
+        seen.add(file.name);
+        return true;
+      }),
+    );
     setTestResult(null);
-  };
+  }, []);
 
   const handleTest = async () => {
     if (files.length === 0 || !onTest) return;
@@ -213,59 +169,23 @@ export function SPOImportDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
-          <div
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-            className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-              dragActive ? 'border-primary bg-primary/5' : 'border-border'
-            }`}
-          >
-            <Upload className="size-8 mx-auto mb-3 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground mb-2">
-              Drag and drop your Excel files here, or click to browse
-            </p>
-            <input
-              type="file"
-              accept={ACCEPT}
-              multiple
-              onChange={handleFileSelect}
-              className="hidden"
-              id="spo-import-files"
-            />
-            <label htmlFor="spo-import-files">
-              <Button type="button" variant="outline" asChild>
-                <span>Choose files</span>
-              </Button>
-            </label>
-            <p className="text-xs text-muted-foreground mt-2">.xlsx or .xls only</p>
-          </div>
+          <FileDropzone
+            multiple
+            accept={ACCEPT}
+            files={files}
+            onFilesChange={handleFilesChange}
+            onReject={(file) =>
+              toast.error(`Skipped ${file.name}: only .xlsx and .xls are allowed.`)
+            }
+            title="Drag and drop your Excel files here, or click to browse"
+            hint=".xlsx or .xls only"
+            aria-label="SPO allocation workbooks"
+          />
           {files.length > 0 && (
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
                 {files.length} file{files.length !== 1 ? 's' : ''} selected
               </p>
-              <ul className="max-h-40 overflow-y-auto rounded-md border bg-muted/40 p-2 space-y-1 text-sm">
-                {files.map((file, i) => (
-                  <li key={`${file.name}-${i}`} className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-2 truncate">
-                      <FileSpreadsheet className="size-4 shrink-0 text-muted-foreground" />
-                      {file.name}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="size-7 shrink-0"
-                      onClick={() => removeFile(i)}
-                      aria-label={`Remove ${file.name}`}
-                    >
-                      <X className="size-4" />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
               {testResult !== null && (
                 <div className="rounded-md border bg-muted/30 p-3 text-sm">
                   <p className="font-medium">

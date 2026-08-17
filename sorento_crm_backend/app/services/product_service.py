@@ -2868,6 +2868,7 @@ class ProductAttachmentService:
             return row
 
         attachment_dict = product_attachment_data.model_dump()
+        # Held back until the row exists, so the funnel can clear the previous holder first.
         chosen = attachment_dict.pop("is_primary", None)
         if created_by:
             attachment_dict["created_by"] = created_by
@@ -2923,7 +2924,16 @@ class ProductAttachmentService:
             brochure_image_service.clear_brochure_image(self.db, product_id)
 
     def update_product_attachment(self, product_attachment_id: str, product_attachment_data: ProductAttachmentUpdate):
-        """Update a product attachment relationship."""
+        """Update a product attachment relationship.
+
+        ``is_primary`` is the ONE decision about which photograph is the product, read by the
+        brochure, by 3D-model generation and by the quotation. The invariant is exactly one per
+        product, and `product_attachments` holds a partial unique index on
+        `(company_id, product_id) WHERE is_primary IS TRUE` to enforce it - so setting a second
+        one here without clearing the first does not quietly produce two, it 500s the save.
+        Routed through `_apply_brochure_choice` so this endpoint and every other writer record
+        the choice the same way.
+        """
         product_attachment = self.get_product_attachment(product_attachment_id)
 
         update_data = product_attachment_data.model_dump(exclude_unset=True)

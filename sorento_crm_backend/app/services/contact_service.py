@@ -327,6 +327,11 @@ class ContactService:
             "workspace_id": str(contact.workspace_id) if getattr(contact, "workspace_id", None) else None,
             "workspace_name": getattr(ws, "name", None) if ws is not None else None,
             "workspace_space_id": getattr(ws, "space_id", None) if ws is not None else None,
+            # Must be listed explicitly: this dict is built by hand, so a column the
+            # schema inherits still never reaches the FE unless it appears here.
+            "requires_registered_project": bool(
+                getattr(contact, "requires_registered_project", False)
+            ),
             "access_type_codes": [str(a.code) for a in access_types],
             "access_types": [
                 {"code": str(a.code), "name": a.name, "sort_order": a.sort_order}

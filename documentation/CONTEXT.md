@@ -181,8 +181,9 @@ Quotation is won. Real money arriving.
 
 > ⚠ Not the same thing as `purchase_orders`, which is the **outgoing** SCM supply PO issued
 > to a supplier and is wired into on-order supply maths. A Project PO lives in
-> `project_purchase_orders`. The UI says "PO" for both because that is the client's word;
-> the tables must never merge.
+> `projects.purchase_orders`. The UI says "PO" for both because that is the client's word;
+> the tables must never merge. Same bare name, two schemas, two different things
+> (ADR-0002, ADR-0011).
 
 Validation against the bound Quotation Version: model must match, unit price must match the
 initial quotation, quantity may differ freely, and the issuing party need not be whoever was
@@ -199,6 +200,16 @@ the Project, repeatable, and not a pipeline step. Already exists in the system a
 form (`purchase_requests` with `request_type='sponsorship_form'`) submitted by Sorento's own
 salespeople. Gains a link to a Project; the picker is enabled per contact so UAT and live
 cohorts run on one form.
+
+### Order Inquiry
+One artefact seen twice. The **derived rows** are what purchasing is told to do, computed
+from a published project sales order or an amendment to one. Never a second source of
+demand: committed quantity stays on the sales order lines. **The sheet** is the Excel export
+of those rows, which Joey edits and re-imports; it is that import, not the publish, which
+creates core `sales_orders` rows carrying `demand_origin = 'scm_order_inquiry'`.
+
+The loop is owned end to end by the Project Sales module (ADR 0010), despite the `scm_`
+prefix on that stamp.
 
 ### Project Series
 The set of `product_categories` nominated as standard for project sales. A Quotation line

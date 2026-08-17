@@ -61,14 +61,14 @@ Checked against `main` and the dev database on 2026-08-03, not assumed.
 | `respond_channels` | one `whatsapp_business` row | No WeChat. Suppliers are not Respond contacts. |
 | SCM M0-M8 | merged to `main` via PR #13, 2026-07-18 | Engine, policies, cash stage, decisions, overrides all present and tested. |
 | Import machinery | `validate_*` / `process_*` pairs for stock, product, order tracking, SPO, GRN listing, GRN lines, DO detail | New importers follow an established pattern. |
-| project-sales | `order_inquiries`, `so_amendments`, `order_change_notices`, `so_line_allocations` exist on an **unmerged** worktree branch | Do not duplicate. See "Interlock" below. |
+| project-sales | `order_inquiries`, `so_amendments`, `order_change_notices`, `so_line_allocations` exist on an **unmerged** worktree branch (all four now in the `projects` schema) | Do not duplicate. See "Interlock" below. |
 
 ## Interlock with project-sales
 
 The project-sales worktree already models the Project CS side of the flow: `order_inquiries`
 and `order_inquiry_rows` (with verbs and a `covered_by` field), `so_amendments`,
 `order_change_notices`, `so_line_allocations`, `allocation_claims`. It also already declares
-`project_sales_orders.so_id -> sales_orders.id`, described in its own source as "the CORE
+`projects.sales_orders.so_id -> public.sales_orders.id`, described in its own source as "the CORE
 `sales_orders` row created on publish, which is what SCM reads as committed demand".
 
 That is the same bridge this plan depends on. So:
@@ -712,7 +712,7 @@ must not re-derive a need from the shortfall.
 
 AC-C2.3 asks the project drill to show a project name per contributing line. `sales_orders` holds
 customer, order type, priority, status and two dates, and nothing else; the project-sales module's
-`project_sales_orders` is a separate book with no link to this one. So there is no project name to
+`projects.sales_orders` is a separate book with no link to this one. So there is no project name to
 read.
 
 The drill labels the line with its **customer**, which on a project order is the main contractor

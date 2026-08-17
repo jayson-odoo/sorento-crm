@@ -3,7 +3,8 @@
 Both the SCM domain and the Project Sales domain call their document a "PO", but they point
 in opposite directions: `purchase_orders` is the **outgoing** supply PO we issue to a
 supplier, while a Project PO is the **incoming** order a main contractor or trading house
-places with us. They are stored separately in `project_purchase_orders`. The UI says "PO" for
+places with us. They are stored separately in `projects.purchase_orders` (`project_purchase_orders`
+when this ADR was written; moved by ADR-0011). The UI says "PO" for
 both, because that is the client's word — the tables must never merge.
 
 This is not a naming preference. `purchase_orders` is wired into SCM's supply maths:

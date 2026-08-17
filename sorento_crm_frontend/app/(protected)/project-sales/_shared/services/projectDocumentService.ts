@@ -1,0 +1,133 @@
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
+
+/**
+ * Project documents ride the SHARED resource-management attachment API.
+ *
+ * No project_attachments table and no project-specific upload route: the generic
+ * `attachments` endpoint already takes `entity_type` + `entity_id` on the multipart form and
+ * writes the `entity_attachment_links` row itself, and the list endpoint already filters on
+ * the same pair. Building a parallel path would have given tender drawings a second home
+ * that the Files screen, the trash, the storage migration and the preview modal all know
+ * nothing about.
+ *
+ * The Documents tab therefore uploads and lists here, and the file it stores is the same row
+ * Resource Management → Files shows.
+ *
+ * `attachment_type_id` is REQUIRED by that endpoint (it 400s without one, and the type decides
+ * the storage prefix and whether a webhook fires). The dialog does NOT ask for it: everything
+ * filed here is a project document by definition, and a required dropdown with one sensible
+ * answer is a question the user should not be asked. `resolveProjectDocumentTypeId` looks the
+ * type up once by code, falling back to its name.
+ */
+const BASE = '/api/resource-management/attachments';
+
+/**
+ * Field names taken from `AttachmentResponse`, not guessed: the size is `file_size_bytes`,
+ * the uploader is a nested `uploaded_by_user.name`, and the type is a nested
+ * `attachment_type.type_name`. The first pass assumed flat `file_size` / `uploaded_by_name` /
+ * `attachment_type_name` and rendered three columns of "-" against a real row.
+ */
+export interface ProjectDocument {
+  id: string;
+  original_filename?: string | null;
+  stored_filename?: string | null;
+  file_size_bytes?: number | null;
+  mime_type?: string | null;
+  file_path?: string | null;
+  uploaded_at?: string | null;
+  uploaded_by_user?: { id: string; name?: string | null } | null;
+  attachment_type?: { id: string; type_name: string } | null;
+}
+
+export async function listProjectDocuments(projectId: string): Promise<ProjectDocument[]> {
+  const params = new URLSearchParams({
+    entity_type: 'project',
+    entity_id: projectId,
+    limit: '200',
+    sort: 'uploaded_at',
+    dir: 'desc',
+  });
+  const response = await apiFetch(`${BASE}/?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not load this project’s documents'));
+  }
+  const body = await response.json();
+  return body?.data ?? [];
+}
+
+interface AttachmentTypeOption {
+  id: string;
+  type_name: string;
+  code?: string | null;
+}
+
+/**
+ * The one type project documents are filed under.
+ *
+ * Matched on the CODE first (stable) and the name second (what an admin sees and may have
+ * typed), so a rename does not break uploads and a missing type produces a readable error
+ * rather than a 400 from the attachment endpoint.
+ */
+export async function resolveProjectDocumentTypeId(): Promise<string> {
+  const response = await apiFetch(
+    '/api/resource-management/attachment-types?limit=200&sort=type_name&dir=asc',
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not load the document types'));
+  }
+  const body = await response.json();
+  const types: AttachmentTypeOption[] = body?.data ?? [];
+  const match =
+    types.find((type) => (type.code ?? '').toLowerCase() === 'project_document') ??
+    types.find((type) => type.type_name.trim().toLowerCase() === 'project document');
+  if (!match) {
+    throw new Error(
+      'No "Project Document" attachment type exists. Add one under Resource Management, Attachment Types.',
+    );
+  }
+  return match.id;
+}
+
+/** What to do when a file of the same name is already filed here. */
+export type UploadConflictChoice = 'copy' | 'replace';
+
+export type UploadOutcome =
+  | { status: 'uploaded'; document: ProjectDocument }
+  /**
+   * A same-name file already exists. NOT an error: the endpoint answers 409 precisely so the
+   * caller can ask, and it accepts `on_conflict=copy|replace` on the retry. Reporting this as
+   * "Could not upload this document" was the whole complaint - it named no cause and offered
+   * no way forward.
+   */
+  | { status: 'conflict'; existingName: string };
+
+export async function uploadProjectDocument(
+  projectId: string,
+  file: File,
+  attachmentTypeId: string,
+  onConflict?: UploadConflictChoice,
+): Promise<UploadOutcome> {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('entity_type', 'project');
+  form.append('entity_id', projectId);
+  form.append('attachment_type_id', attachmentTypeId);
+  if (onConflict) form.append('on_conflict', onConflict);
+
+  const response = await apiFetch(`${BASE}/`, { method: 'POST', body: form });
+  if (response.status === 409) {
+    return { status: 'conflict', existingName: file.name };
+  }
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not upload this document'));
+  }
+  return { status: 'uploaded', document: await response.json() };
+}
+
+export async function deleteProjectDocument(attachmentId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/${attachmentId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not delete this document'));
+  }
+}

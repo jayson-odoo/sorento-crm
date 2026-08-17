@@ -14,6 +14,12 @@ gateway out mid-write, which is exactly what the imports queue exists to stop.
 
 Every write resolves the SO<->PO claims afterwards - inside the job now, not the request - so
 the linkage is still formed by whichever upload completes the pair.
+
+The two `/order-inquiry/*` routes are a thin SHIM onto Project Sales. Per ADR 0010 the Order
+Inquiry loop is owned by that module and its importer lives in
+`app/services/project_order_inquiry_import_service.py`, but the URL and the `scm.reorder.run`
+permission stay here and stay stable, because the FE upload dialog calls them. Moving the
+routes into the projects namespace is a recorded follow-up, not part of the ownership move.
 """
 from __future__ import annotations
 
@@ -24,10 +30,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
+from app.services import project_order_inquiry_import_service as order_inquiry_service
 from app.services.job_service import JobService, active_company_id_from_scope
 from app.services.queue_service import enqueue_job
 from app.services.scm import (
-    order_inquiry_service,
     order_link_service,
     po_history_service,
     so_history_service,
@@ -220,6 +226,8 @@ async def apply_sales_history(
     )
 
 
+# Project Sales owns what these two routes call (ADR 0010). The path stays under /scm so the
+# FE upload dialog is unaffected by the ownership move.
 @router.post("/order-inquiry/preview")
 async def preview_order_inquiry(
     file: UploadFile = File(..., description="Order Inquiry sheet"),

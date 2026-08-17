@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import { Trash2, Plus, Upload } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useBulkDeleteOrderLines, useCreateOrderLine } from '../hooks/useOrders';
@@ -316,10 +317,14 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
             <DialogDescription>Upload Excel with columns: Doc No, Item Code, Location, Qty, Unit Price, Discount, Total, Tax, Total Excluding Tax, Total Including Tax.</DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <Input
-              type="file"
+            <FileDropzone
               accept=".xlsx,.xls"
-              onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              files={importFile ? [importFile] : []}
+              onFilesChange={(files) => setImportFile(files[0] ?? null)}
+              onReject={() => toast.error('Only .xlsx and .xls files are allowed.')}
+              title="Drop the Excel file here, or click to browse"
+              hint=".xlsx or .xls only"
+              aria-label="Delivery order lines workbook"
             />
           </div>
           <DialogFooter>

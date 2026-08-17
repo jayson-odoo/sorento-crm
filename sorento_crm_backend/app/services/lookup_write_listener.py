@@ -30,9 +30,14 @@ def register_lookup_write_listeners() -> None:
 
 
 def _check(target, mapper, *, only_changed: bool) -> None:
-    table_name = mapper.local_table.name
+    # SCHEMA-QUALIFIED, matching how a binding is stored and how eligibility is keyed
+    # (``app/services/lookup_eligibility.py``). On the bare name a binding made for core
+    # `purchase_orders.status` would also police writes to `projects.purchase_orders`,
+    # rejecting values that are valid there - and neither table's own binding would be
+    # reliably found. For a default-schema table the key IS the bare name.
+    table_name = mapper.local_table.key
     # Avoid recursive triggers when writing into the lookup tables themselves.
-    if table_name.startswith("lookup_"):
+    if mapper.local_table.name.startswith("lookup_"):
         return
     sess = object_session(target)
     if sess is None:

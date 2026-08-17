@@ -57,6 +57,9 @@ def _cleanup():
             s.commit()
 
     _purge()
+    # Force the lazy module discovery before snapshotting; see the matching fixture
+    # in test_status_engine.py for why an empty snapshot poisons the whole session.
+    status_registry.list_status_entities()
     saved = dict(status_registry._REGISTRY)
     yield
     status_registry._REGISTRY.clear()
