@@ -240,3 +240,94 @@ review-round changes are covered by vitest and pytest; the walk itself was not r
   regression count in "Vitest" above, and the skip-reason text in the AC table).
 - No new agent-browser session was opened for this reconstruction, per the assigning agent's
   instruction. No servers were started or stopped.
+
+## Re-check after the Phase 3 fixes (84877f3f)
+
+A short, live agent-browser re-check of the Phase 3 review fixes that had not yet been seen in
+a browser: the class filter dropdown, the row-level Unverify confirmation, page-scoped selection,
+and mobile layout at 375px. Driven on branch `fm/spec-pr3-verification-list` at `84877f3f`.
+
+**Stack.** Backend `uvicorn` on `:8000`, frontend `npm run dev` on `:3050`, this worktree's local
+Postgres (copy of prod, 8,820 live product codes at the time of the run). Login via
+`E2E_EMAIL`/`E2E_PASSWORD` from `sorento_crm_frontend/.env.local` (values never printed).
+
+**Environment note.** This worktree's `.env.local` / backend `.env` are provisioned for ports
+`3031`/`8031` (another lane's assignment), which do not match the `:3050`/`:8000` this task was
+scoped to run against. `NEXT_PUBLIC_API_URL` / `NEXTAUTH_URL` were temporarily pointed at
+`:8000`/`:3050` and the backend's `CORS_ORIGINS` temporarily gained `http://localhost:3050` (both
+files are gitignored, both backed up before editing and restored to their original `3031`/`8031`
+values at the end of the run - confirmed by `grep` immediately after restore). No tracked file was
+touched for this.
+
+Screenshots referenced below live at
+`/private/tmp/claude-501/-Users-tehjayson--treehouse-sorento-crm-732336-1-sorento-crm/42477364-f03d-4393-b62c-917551000a3a/scratchpad/`.
+
+### 1. Class filter dropdown - PASS
+
+Sidebar navigation from `/`: Product Management -> Spec Verification (`e2e2-00-home.png` ->
+`e2e2-01-worklist.png`). Opened Filters, opened the Class combobox: all 15 real class labels
+listed (Bathroom Accessory, Bathroom Furniture, Bathtub, Bathtub and Jacuzzi, Cloth Hanger,
+Flexible Hose, Jacuzzi, Kitchen Sink, Seat Cover, Shower, Squatting Pan, **Tap**, Urinal,
+**Wash Basin**, Water Closet) - `e2e2-02-class-dropdown.png`. Picked "Tap":
+URL became `?class_label=Tap`, network call
+`GET .../verification/worklist?page=1&limit=25&class_label=Tap` - 200, header changed to
+"Verified 0 of 2,871 live codes", rows show Class = Tap, Filters badge reads "1"
+(`e2e2-03-class-tap-applied.png`). Reopened the Class dropdown with the filter still applied: all
+15 classes still listed, "Tap" the current value (confirmed in the interactive snapshot).
+Cleared via the field's own "Clear selection" control: URL returned to
+`/master-data-management/spec-verification` (no `class_label`), combobox back to "Any class"
+(`e2e2-04-filters-cleared.png`). Console clean throughout, no errors.
+
+### 2. Row Unverify confirmation - PASS
+
+Clicked row-level Verify on `11X11` (first row): `POST .../verification/verify-bulk` - 200,
+pill flips to "Verified", header "Verified 1 of 8,820 live codes"
+(`e2e2-05-row-verified.png`). Clicked that row's Unverify: a confirm dialog appeared, heading
+"Confirm unverify", copy **"Withdraw the verification on 1 product code? It reads as unverified
+again and the history keeps who vouched."** (contains "1 product code") - `e2e2-06-confirm-unverify.png`.
+Clicked Cancel: no `unverify-bulk` (or any `unverify`) network call fired, row still read
+"Verified". Reopened the dialog, clicked Unverify (confirm): `POST .../verification/unverify-bulk`
+- 200, pill reads "Unverified" again, header back to "Verified 0 of 8,820 live codes"
+(`e2e2-07-row-unverified-confirmed.png`) - code left unverified, ledger back to 0 active rows.
+Console clean, no errors.
+
+### 3. Page-scoped selection - PASS
+
+Ticked 2 rows on page 1 (`11X11`, `63522-6`): bulk strip appears, "2 selected" / "Verify selected"
+/ "Unverify selected" / "Clear" (`e2e2-08-two-selected.png`). Navigated to page 2 (pagination
+"Go to next page", confirmed via "Go to previous page" flipping from disabled to enabled and the
+row set changing to `26-50 of 8820`): no bulk strip, no "N selected" text anywhere on the page,
+all page-2 checkboxes unchecked (`e2e2-12-page2-top2.png`) - selection did not carry across the
+page change. Navigated back to page 1 (rows `11X11`... reappear, confirming page 1). Ticked 1 row
+(`11X11`): "1 selected" (`e2e2-14-one-selected.png`). Clicked "Verify selected": confirm dialog
+heading "Confirm verify", copy **"Verify 1 product code? A code with open exceptions, or one whose
+values moved while you were reviewing, is reported back as skipped."** - singular, count-correct
+(`e2e2-15-confirm-verify-1.png`). Clicked Cancel: no new `verify-bulk` call fired (network log
+unchanged from before the click). Console clean, no errors. Cleared the row selection afterward
+(no residual verify/unverify call - the code stayed unverified, matching item 2's cleanup).
+
+### 4. Console/errors and 375px - PASS
+
+Console and `errors` were checked after every step above (items 1-3) and stayed clean throughout -
+no unexpected warnings, no uncaught errors, at any point including the empty/no-selection page-2
+state and the two confirm-dialog Cancels.
+
+Set viewport to 375x812: `document.documentElement.scrollWidth === 375` (no page-level horizontal
+overflow). Full-page screenshot shows the worklist, search box and columns rendering cleanly with
+no overlap (`e2e2-16-mobile-375.png`). Opened Filters -> Class dropdown at 375px: the popover and
+its option list render fully on-screen, no clipping, no overlap with the trigger, still usable
+(`e2e2-17-mobile-class-dropdown.png`). Console/errors re-checked clean at 375px after closing the
+popover. Restored viewport to 1280x800 before finishing.
+
+### Cleanup and final state
+
+`--session spec-pr3 close` at the end (own session only, never `close --all`). Killed only the
+PIDs started for this re-check (frontend `npm run dev` process tree, backend `uvicorn`); confirmed
+`:8000`/`:3050` free afterward. `.env.local` / backend `.env` restored to their pre-run values
+(`3031`/`8031`), confirmed by `grep` immediately after restore.
+
+DB check (read-only, `SessionLocal`, `sorento_crm_backend`):
+`product_spec_verifications` - **0 active rows** (`invalidated_at IS NULL`), **6 total rows**
+(one more than the prior run's 5, from this run's own verify -> cancel-then-confirm-unverify cycle
+on `11X11`; the cycle left the code unverified, consistent with "Verified 0 of 8,820 live codes"
+shown on screen throughout). No defects found in this re-check; all four items pass.
