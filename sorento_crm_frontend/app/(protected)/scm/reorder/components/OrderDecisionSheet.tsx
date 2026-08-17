@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { EM_DASH, fmtInt, fmtPct } from '../../lib/format';
+import { EM_DASH, fmtCostNoCurrency, fmtInt, fmtPct } from '../../lib/format';
 import { dayLabel } from '../lib/coverageTimeline';
 import {
   fmtCbm,
@@ -182,7 +182,9 @@ function SupplierRow({
           <dd className="truncate tabular-nums">
             {c.last_incoming_cost === null
               ? 'never received'
-              : fmtCost(c.last_incoming_cost, c.currency)}
+              : c.last_incoming_currency
+                ? fmtCost(c.last_incoming_cost, c.last_incoming_currency)
+                : fmtCostNoCurrency(c.last_incoming_cost)}
           </dd>
         </div>
         <div className="min-w-0">

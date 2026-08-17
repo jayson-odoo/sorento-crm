@@ -153,6 +153,14 @@ export interface SupplierCandidate {
   last_po_number: string | null;
   /** Incoming cost, stamped from the packing list at allocation (AC-C3.2). */
   last_incoming_cost: number | null;
+  /**
+   * ISO 4217 code `last_incoming_cost` is quoted in, from the shipment line itself. NOT
+   * `currency`, which is the PO's: a supplier's pre-loading list prices in their own money
+   * (often CNY) while the order sits in another, so labelling the incoming figure with the
+   * PO's code states a price that was never quoted. Null when the shipment line states
+   * none, and then the figure is shown without a currency rather than under a guess.
+   */
+  last_incoming_currency: string | null;
   last_incoming_date: string | null;
   /**
    * Incoming minus ordered, in `currency`. A first-class output: a supplier whose

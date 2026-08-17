@@ -5,7 +5,7 @@ is written, so every test is expected to be red (404 - the route is not mounted)
 lands, then green against the exact contract in AC-P4.1 / AC-P4.2 / AC-P4.3 / AC-P4.4.
 
 Permissions are granted through a role this suite creates and owns, never a borrowed one -
-CI's database carries no role->permission grants until migration 374's sweep has actually
+CI's database carries no role->permission grants until migration 375's sweep has actually
 run, and even then "whatever roles hold scm.reorder.run" is an assertion about the
 environment this suite must not depend on (see test_coverage_routes.py, same pattern).
 """

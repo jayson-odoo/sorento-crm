@@ -1,14 +1,14 @@
 """AC-P1 / AC-P3 - a proforma invoice becomes a document with priced lines, once.
 
 TEST-FIRST: `app/services/scm/proforma_invoice_service.py`, `app/models/scm.py`'s
-`ProformaInvoice`/`ProformaInvoiceLine`, and migration 374 do not exist yet at the time
+`ProformaInvoice`/`ProformaInvoiceLine`, and migration 375 do not exist yet at the time
 this file is written. Every test is expected to be red until they land - either as an
 ImportError (service/models absent) or as an empty alias resolver (migration not yet
 applied to the shared dev database), never as a wrong number silently accepted.
 
 Runs on the REAL Postgres database via `pg_session` (rolled back at teardown), like
 `test_packing_list_import.py`, because the reader resolves its alias table from the DB
-when no resolver is passed in - so this suite also proves migration 374 was actually run
+when no resolver is passed in - so this suite also proves migration 375 was actually run
 with `alembic upgrade head`, not merely written.
 
 Every row is seeded under the `ZZPI` marker; nothing is borrowed from an existing table.

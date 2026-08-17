@@ -100,6 +100,18 @@ export function fmtSupplierCost(
   return `${currencyLabel(currency)} ${costFmt.format(value)}`;
 }
 
+/**
+ * The same figure with NO currency label, for a price whose currency is genuinely unknown.
+ *
+ * `fmtSupplierCost` reads a blank code as base and writes `RM`, which is right for the old
+ * single-currency rows and wrong for a price that arrived without one: the label would be a
+ * claim nobody made. An unlabelled number says only what is known.
+ */
+export function fmtCostNoCurrency(value: number | null | undefined): string {
+  if (value === null || value === undefined) return EM_DASH;
+  return costFmt.format(value);
+}
+
 /** Short relative "days ago" for last-movement; null → em dash. */
 export function fmtDaysAgo(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;

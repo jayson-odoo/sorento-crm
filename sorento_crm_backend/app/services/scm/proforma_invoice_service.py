@@ -284,7 +284,7 @@ def validate(
     elif summary["priced_lines_without_currency"]:
         problems.append(_NO_CURRENCY)
 
-    warnings: list[str] = [p.reason for p in parsed.problems]
+    warnings: list[str] = [p.reason for p in parsed.problems][:50]
     if summary["unmatched_items"]:
         warnings.append(
             "No product matches "

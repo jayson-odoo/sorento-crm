@@ -644,6 +644,12 @@ def suppliers_for(
             **c,
             "_is_primary": primary,
             "last_incoming_cost": _f(inc_cost),
+            # The SHIPMENT line's own currency, not the candidate's. `currency` above is the
+            # link's or the PO line's, and a CNY pre-loading list price rendered under it
+            # reads as MYR 250.00 for CNY 250.00 with nothing on screen disagreeing. Null
+            # when the shipment line states none, which the screen shows unlabelled rather
+            # than borrowing a code the figure is not in.
+            "last_incoming_currency": inc_ccy,
             "last_incoming_date": inc_date.isoformat() if inc_date else None,
             # None whenever the two sides are not comparable (a missing figure, or two
             # currencies). Subtracting different units would produce a number that looks like

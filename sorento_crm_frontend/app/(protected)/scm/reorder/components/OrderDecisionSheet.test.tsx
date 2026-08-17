@@ -256,6 +256,37 @@ describe('OrderDecisionSheet - supplier is a choice, not a fixed value (AC-C2.5 
   });
 });
 
+describe('OrderDecisionSheet - the incoming cost is labelled with the SHIPMENT currency', () => {
+  function withIncoming(currency: string | null) {
+    const base = SUMMARY_ORDER_FIXTURES.suppliers('B2155-NL-BLUE');
+    return {
+      ...base,
+      candidates: base.candidates.map((c) =>
+        c.supplier_code === 'GDS'
+          ? { ...c, currency: 'MYR', last_incoming_cost: 250, last_incoming_currency: currency }
+          : c,
+      ),
+    };
+  }
+
+  it('uses the shipment line currency, not the purchase order one', () => {
+    // The packing-list ingest stores the supplier's own money (CNY) while the order sits in
+    // MYR, so borrowing the PO's code printed "RM 250.00" for a price of CNY 250.00.
+    renderSheet(state({ data: withIncoming('CNY') }));
+    const gds = screen.getByTestId('supplier-GDS');
+    expect(gds).toHaveTextContent('CNY 250.00');
+    expect(gds).not.toHaveTextContent('RM 250.00');
+  });
+
+  it('shows the figure unlabelled when the shipment states no currency', () => {
+    renderSheet(state({ data: withIncoming(null) }));
+    const gds = screen.getByTestId('supplier-GDS');
+    expect(gds).toHaveTextContent('250.00');
+    expect(gds).not.toHaveTextContent('RM 250.00');
+    expect(gds).not.toHaveTextContent('CNY 250.00');
+  });
+});
+
 describe('OrderDecisionSheet - a stale last PO date is flagged (AC-C2.6)', () => {
   it('flags the 2021 purchase as stale and says how long ago it was', () => {
     renderSheet(state({ data: STALE_SUPPLIERS }), STALE_ROW);

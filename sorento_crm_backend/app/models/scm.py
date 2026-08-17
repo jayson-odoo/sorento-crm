@@ -1138,7 +1138,7 @@ class ProformaInvoice(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_scm_proforma_invoice_supplier", "supplier_id"),
-        # Declared on the MODEL as well as in migration 374, because a CI database is built
+        # Declared on the MODEL as well as in migration 375, because a CI database is built
         # with `create_all` and never runs a migration body: without it the guard against a
         # doubled invoice exists in production and nowhere else (the supplier_inventory
         # precedent).

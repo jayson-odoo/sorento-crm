@@ -223,7 +223,7 @@ Confirm agree (this also covers the latent main bug where `RowProblem.message` d
 and any row problem 500'd preview/validate); the Known-limits note states the 80-char stem
 truncation; the duplicate-line merge no longer turns an explicit cartons_count 0 into 1. (2026-08-17): router thinned to service calls, supplier
 lookups company-scoped, `pi_number_for` truncates the stem, proforma row problems are warnings,
-migration-374 grant sweep test added, currency field added to the packing-list upload, duplicate
+migration-375 grant sweep test added, currency field added to the packing-list upload, duplicate
 shipment lines merge to a quantity-weighted unit cost, an unrecognised form currency is a 422,
 plus the nits. The derived-number limit the review raised is recorded in the UAC's
 `Known limits`.
