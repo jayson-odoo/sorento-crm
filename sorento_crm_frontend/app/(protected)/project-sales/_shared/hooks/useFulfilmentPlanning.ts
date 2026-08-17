@@ -68,6 +68,10 @@ export function useSupply(psoId: string | undefined, enabled = true) {
     queryFn: () => getSupply(psoId as string),
     enabled: Boolean(psoId) && enabled,
     retry: 1,
+    // A focus refetch mid-composition churns the proposal under CS for no decision
+    // change; the confirm rechecks live facts anyway, so the sheet does not need to.
+    refetchOnWindowFocus: false,
+    staleTime: 15_000,
   });
 
   // The supply read is the one that notices an out-of-band change (it rechecks live

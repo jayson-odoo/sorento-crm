@@ -237,16 +237,19 @@ class ProjectOrderInquiryService:
                 .filter(
                     OrderInquiryRow.order_inquiry_id == inquiry.id,
                     OrderInquiryRow.so_line_id == line.id,
-                    OrderInquiryRow.verb == IV_ORDER,
+                    OrderInquiryRow.verb.in_((IV_ORDER, IV_CANCEL_BALANCE)),
                 )
                 .all()
             )
+            # A still-raised CANCEL_BALANCE exception is superseded like a raised ORDER
+            # row, or every reconfirm at the same lower need would stack another copy.
+            # `placed` sums ORDER rows only: the exception row is a message, not supply.
             placed = _ZERO
             for row in rows:
                 if row.state == INQUIRY_RAISED:
                     row.state = INQUIRY_CANCELLED
                     row.note = f"Superseded by revision {decision.revision_no}"
-                elif row.state == INQUIRY_ACTIONED:
+                elif row.state == INQUIRY_ACTIONED and row.verb == IV_ORDER:
                     placed += _dec(row.qty)
 
             outstanding = need - placed
@@ -604,34 +607,39 @@ class ProjectOrderInquiryService:
     ) -> None:
         """A task on the project's delivery phase, with the rows attached (AC-I4).
 
-        Best-effort on purpose. The sales order is already published and its rows are
-        already written when this runs, so a notification backend that is down must not
-        turn a successful publish into a 500 the retry cannot repair.
+        Best-effort on purpose. The rows this task points at are already written when
+        this runs, so a notification backend that is down must not turn that success
+        into a 500 the retry cannot repair. The write sits in a SAVEPOINT because this
+        now also runs INSIDE the atomic confirmation transaction: a swallowed DB error
+        without one would leave that transaction aborted, and the caller's commit would
+        then fail for an operation that had already succeeded (the post-commit
+        side-effect lesson in CLAUDE.md, applied pre-commit).
         """
         try:
-            project = (
-                self.db.query(Project).filter(Project.id == order.project_id).first()
-            )
-            if project is None:
-                return
-            reference = order.autocount_doc_no or order.provisional_ref
-            to_buy = self._buying_count(inquiry.id)
-            task = ProjectTask(
-                company_id=order.company_id,
-                project_id=project.id,
-                name=f"Order inquiry {reference}",
-                description=(
-                    f"{row_count} instruction{'' if row_count == 1 else 's'} from "
-                    f"{reference}, {to_buy} of which still need buying."
-                ),
-                task_phase=TASK_PHASE_DELIVERY,
-                category="Purchasing",
-                linked_entity_type=TASK_LINK_ORDER_INQUIRY,
-                linked_entity_id=inquiry.id,
-            )
-            self.db.add(task)
-            self.db.flush()
-            self._notify_purchasing(project, order, inquiry, row_count, to_buy)
+            with self.db.begin_nested():
+                project = (
+                    self.db.query(Project).filter(Project.id == order.project_id).first()
+                )
+                if project is None:
+                    return
+                reference = order.autocount_doc_no or order.provisional_ref
+                to_buy = self._buying_count(inquiry.id)
+                task = ProjectTask(
+                    company_id=order.company_id,
+                    project_id=project.id,
+                    name=f"Order inquiry {reference}",
+                    description=(
+                        f"{row_count} instruction{'' if row_count == 1 else 's'} from "
+                        f"{reference}, {to_buy} of which still need buying."
+                    ),
+                    task_phase=TASK_PHASE_DELIVERY,
+                    category="Purchasing",
+                    linked_entity_type=TASK_LINK_ORDER_INQUIRY,
+                    linked_entity_id=inquiry.id,
+                )
+                self.db.add(task)
+                self.db.flush()
+                self._notify_purchasing(project, order, inquiry, row_count, to_buy)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "order inquiry %s raised, but the purchasing task was not created (%s)",

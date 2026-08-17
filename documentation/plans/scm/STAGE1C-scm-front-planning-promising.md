@@ -81,7 +81,8 @@ Revision id 23 chars (< 32). All new rows company-scoped (`CompanyScopedMixin`).
   component reason strings (section 3.2 of the plan), `suggestion_basis`
   (hot_selling flag, pool code, pool cap, classification_unavailable), `lifecycle_warning`
   (discontinued) and the CS `reason` texts entered (borrow reason, discontinued-buy reason)
-- `confirmed_by` FK users SET NULL, `confirmed_at` DateTime NOT NULL
+- `confirmed_by` FK users SET NULL, `confirmed_at` DateTime nullable (as shipped; the
+  service always stamps it at confirmation)
 - `supersedes_id` UUID nullable self-FK SET NULL, `superseded_at` DateTime nullable,
   `superseded_reason` Text nullable
 - `created_at`
@@ -484,7 +485,17 @@ Retired-surface confirmation (plan 5.5), all via browser:
   to `/allocation-claims`. The only non-GET calls anywhere in the run were the two `confirm` POSTs
   and `list-query/column-config` PUTs (listing personalization, unrelated).
 
-### Findings (not fixed, reported per instructions)
+### Findings (BOTH FIXED on this branch after the run; original reports kept below)
+
+Finding 1 was fixed in `75333fdc1`: the pool ledger is keyed per product per pool warehouse
+(`_LineFacts.pool_key`), on the proposal path and the confirm-time recheck alike, pinned by
+`tests/test_so_supply_confirmation.py::test_two_products_sharing_one_pool_warehouse_never_share_a_reserve_bucket`
+(proven red against the old keying). Finding 2 was fixed in `1cc8ac5c5`: when the supply
+response's `review_state` disagrees with the cached reconciliation, `useSupply` invalidates the
+reconciliation and worklist queries, pinned in `useFulfilmentPlanning.test.tsx`. With those two
+commits the test counts above move to: `test_so_supply_confirmation.py` 20,
+`test_supply_inquiry_handoff.py` 9 (one extended), all five backend files together 73. The
+original reports as written by the evidence run:
 
 **Finding 1 - live service cross-product pool-stock leak (`project_supply_service.py`,
 `proposal_for` / `_recheck_line`).** `pool_left` (and its confirm-time twin passed to `_free_for`)
@@ -581,3 +592,35 @@ every table touched (`projects.sales_orders`, `projects.sales_order_lines`,
 `projects.so_line_allocations`, `projects.projects`, core `sales_orders`/`sales_order_lines`,
 `products`, `product_categories`, `units_of_measure`, `stock`, `scm.item_classification`,
 `scm.reorder_level`, `spo_allocations`, `inbound_shipments`) by id and by the `STAGE1CEV` marker.
+
+## 10. Independent review pass (Opus, 18 August 2026)
+
+Codex is out of quota until Aug 20; the captain approved substituting an Opus reviewer for
+the independent pass. Verdict on the pre-fix head: needs work, two blockers. All blockers
+and the small should-fixes were addressed on this branch before the PR opened:
+
+- Blocker: per-ITEM negative quantities in the confirm payload were only checked as
+  per-kind totals, so `reserve [-50, +100]` passed and inflated the capacity ledger.
+  Fixed (item-level scan) with a red-proven regression test.
+- Blocker: a `project_line_id` repeated in the payload was processed twice, doubling the
+  promise. Fixed (explicit refusal naming the line) with a regression test.
+- CANCEL_BALANCE exception rows stacked one copy per reconfirm at the same lower need.
+  Fixed: a still-raised exception row is superseded like a raised ORDER row.
+- `_hand_to_purchasing`'s best-effort catch now runs inside the confirmation transaction;
+  its writes sit in a SAVEPOINT so a swallowed DB error cannot abort the outer commit.
+- A background refetch (window focus / unrelated invalidation) reseeded the composition
+  drafts mid-typing. The reseed is now keyed on order + decision revision + review state,
+  and the supply query no longer refetches on focus.
+- Migration 374's downgrade dropped shared objects regardless of who created them. Upgrade
+  now stamps an authorship COMMENT when it creates the shared table/column; downgrade
+  drops only what carries the stamp (proven both directions on a scratch database).
+- `_lock_stock` resolves products the way `_facts_for` does (core line first), and a
+  pure-Buy line's inquiry row falls back to the fulfilment location instead of a blank.
+
+Accepted follow-ups (nits, logged here rather than fixed): `attribute_sources` keying on
+`(so_number, line_no)` could collide for non-project core lines with no line number if a
+future consumer feeds them (key on caller line_id then); `ConfirmResult.review_state` is
+hardcoded `confirmed` while a surplus core line can leave the pill at awaiting
+reconciliation (cosmetic, toast-only consumer); `_donor_impact` freezes pre-transaction
+figures when two lines borrow one donor; an identical retried confirmation churns the
+inquiry row id instead of leaving the row alone.

@@ -1104,3 +1104,69 @@ def test_two_products_sharing_one_pool_warehouse_never_share_a_reserve_bucket(ap
         .count()
         == 0
     ), "the refused confirmation must write nothing"
+
+
+def test_a_negative_component_beside_a_positive_one_is_refused_not_netted(api):
+    """A crafted payload of reserve [-50, +100] sums to 50 and balances, but subtracting
+    the negative row would INFLATE the capacity ledger and the +100 would commit against
+    50 free. Every individual component is checked, not the per-kind totals."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=50)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    payload = {
+        "lines": [
+            _line_payload(
+                line.id,
+                reserve=[
+                    {"warehouse_id": world.own_wh.id, "qty": "-50"},
+                    {"warehouse_id": world.own_wh.id, "qty": "100"},
+                ],
+            ),
+        ]
+    }
+    refused = client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload)
+    assert refused.status_code in (409, 422), refused.text
+    failing = refused.json().get("failing_lines") or []
+    assert any("negative" in (f.get("reason") or "").lower() for f in failing), refused.text
+
+    from app.models.project_so import SOSupplyDecision, SOLineAllocation
+
+    assert db.query(SOSupplyDecision).filter(
+        SOSupplyDecision.project_sales_order_id == order.id
+    ).count() == 0
+    assert db.query(SOLineAllocation).filter(
+        SOLineAllocation.so_line_id == line.id
+    ).count() == 0
+
+
+def test_a_line_named_twice_in_the_payload_is_refused_not_promised_twice(api):
+    """Two payload entries for one line would each be offered the line's undepleted share
+    and each write a full set of allocations: double the promise against the same stock."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=100)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    entry = _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}])
+    refused = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm", json={"lines": [entry, entry]}
+    )
+    assert refused.status_code in (409, 422), refused.text
+    failing = refused.json().get("failing_lines") or []
+    assert any("twice" in (f.get("reason") or "").lower() for f in failing), refused.text
+
+    from app.models.project_so import SOSupplyDecision
+
+    assert db.query(SOSupplyDecision).filter(
+        SOSupplyDecision.project_sales_order_id == order.id
+    ).count() == 0

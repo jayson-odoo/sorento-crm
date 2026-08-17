@@ -24,6 +24,7 @@ from app.models.inventory import Stock, Warehouse
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     INQUIRY_ACTIONED,
+    INQUIRY_RAISED,
     IV_ORDER,
     SO_STATUS_PUBLISHED,
     OrderInquiry,
@@ -414,6 +415,27 @@ def test_reconfirming_with_a_lower_need_cancels_unplaced_rows_and_flags_placed_o
     assert len(exceptions) == 1
     assert "40" in (exceptions[0].note or "")
     assert "15" in (exceptions[0].note or "")
+
+    # A THIRD confirmation at the same lower need supersedes the standing exception row
+    # rather than stacking a copy beside it: exactly one raised CANCEL_BALANCE at a time.
+    third = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="15")]},
+    )
+    assert third.status_code == 200, third.text
+    db.expire_all()
+    raised_exceptions = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.verb == "CANCEL_BALANCE",
+            OrderInquiryRow.state == INQUIRY_RAISED,
+        )
+        .all()
+    )
+    assert len(raised_exceptions) == 1, (
+        "every reconfirm at the same lower need must leave one live exception, not stack"
+    )
 
 
 # --------------------------------------------------------------------------- AC-D04

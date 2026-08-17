@@ -123,6 +123,31 @@ def _has_index(table: str, name: str) -> bool:
     return name in names
 
 
+# Authorship marker for the objects a PARALLEL lane also creates (Stage 2's migration
+# 376 carries the same guarded DDL for the shared table and the inquiry column). Upgrade
+# stamps it only when THIS revision created the object; downgrade drops only what carries
+# it, so downgrading whichever migration landed second never clobbers the survivor's.
+_MARKER = "created-by:374_so_supply_decisions"
+
+
+def _table_comment(name: str):
+    return op.get_bind().execute(
+        sa.text("SELECT obj_description(to_regclass(:qual), 'pg_class')"),
+        {"qual": f"{_SCHEMA}.{name}"},
+    ).scalar()
+
+
+def _column_comment(table: str, column: str):
+    return op.get_bind().execute(
+        sa.text(
+            "SELECT col_description(to_regclass(:qual), a.attnum) "
+            "FROM pg_attribute a "
+            "WHERE a.attrelid = to_regclass(:qual) AND a.attname = :col"
+        ),
+        {"qual": f"{_SCHEMA}.{table}", "col": column},
+    ).scalar()
+
+
 def upgrade() -> None:
     if not _has_table(_DECISIONS):
         op.create_table(
@@ -171,6 +196,9 @@ def upgrade() -> None:
                 name="uq_so_supply_decisions_revision",
             ),
             schema=_SCHEMA,
+        )
+        op.execute(
+            sa.text(f"COMMENT ON TABLE {_SCHEMA}.{_DECISIONS} IS '{_MARKER}'")
         )
 
     if not _has_index(_DECISIONS, "ix_so_supply_decisions_order"):
@@ -232,6 +260,12 @@ def upgrade() -> None:
             sa.Column("supply_decision_id", UUID(as_uuid=False), nullable=True),
             schema=_SCHEMA,
         )
+        op.execute(
+            sa.text(
+                f"COMMENT ON COLUMN {_SCHEMA}.{_INQUIRY_ROWS}.supply_decision_id "
+                f"IS '{_MARKER}'"
+            )
+        )
         op.create_foreign_key(
             "fk_order_inquiry_rows_supply_decision",
             _INQUIRY_ROWS,
@@ -254,21 +288,35 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop only what upgrade created, checked the same way it checked before creating."""
+    """Drop only what upgrade CREATED, proven by the authorship marker it stamped.
+
+    The shared objects (the decisions table and the inquiry column) may have been created
+    by the parallel Stage 2 migration instead, in which case this revision's upgrade was
+    a no-op for them and this downgrade must be too. The view revert is unconditional:
+    the section 4 predicate is this revision's own change regardless of who created the
+    table, and a later view revision's downgrade restores its own definition.
+    """
     op.execute(_AS_OF_346)
 
-    if _has_index(_INQUIRY_ROWS, "ix_project_order_inquiry_rows_decision"):
-        op.drop_index(
-            "ix_project_order_inquiry_rows_decision", _INQUIRY_ROWS, schema=_SCHEMA
-        )
-    if _has_column(_INQUIRY_ROWS, "supply_decision_id"):
+    if _column_comment(_INQUIRY_ROWS, "supply_decision_id") == _MARKER:
+        if _has_index(_INQUIRY_ROWS, "ix_project_order_inquiry_rows_decision"):
+            op.drop_index(
+                "ix_project_order_inquiry_rows_decision", _INQUIRY_ROWS, schema=_SCHEMA
+            )
         op.drop_column(_INQUIRY_ROWS, "supply_decision_id", schema=_SCHEMA)
 
+    # Lane-owned: only this migration adds these, so existence is authorship.
     if _has_index(_ALLOCATIONS, "ix_so_line_allocations_decision"):
         op.drop_index("ix_so_line_allocations_decision", _ALLOCATIONS, schema=_SCHEMA)
     for column in ("donor_impact_snapshot", "reason", "decision_id"):
         if _has_column(_ALLOCATIONS, column):
             op.drop_column(_ALLOCATIONS, column, schema=_SCHEMA)
 
-    if _has_table(_DECISIONS):
+    # The extra column check covers the mixed-authorship edge: a table this revision
+    # created but a referencing column the other lane did would fail the drop on its FK.
+    if (
+        _has_table(_DECISIONS)
+        and _table_comment(_DECISIONS) == _MARKER
+        and not _has_column(_INQUIRY_ROWS, "supply_decision_id")
+    ):
         op.drop_table(_DECISIONS, schema=_SCHEMA)

@@ -643,6 +643,15 @@ class ProjectSupplyService:
                     }
                 )
                 continue
+            if str(line.id) in seen:
+                invalid.append(
+                    {
+                        "line_no": line.line_no,
+                        "item_code": item_codes.get(str(line.id)),
+                        "reason": "This line appears twice in the composition.",
+                    }
+                )
+                continue
             seen.add(str(line.id))
             fact = facts[str(line.id)]
             checked.append((line, entry, fact))
@@ -684,7 +693,23 @@ class ProjectSupplyService:
         Deterministic because two confirmations touching the same two locations in
         opposite orders deadlock, and a deadlock reads to CS as the button doing nothing.
         """
+        # Both spellings of the product: `_facts_for` prefers the CORE line's product when
+        # the two disagree (a remap), and locking only the Project line's would leave the
+        # rechecked free-stock read unprotected on exactly the remapped line.
         product_ids = {str(line.product_id) for line in lines if line.product_id}
+        core_ids = [
+            str(line.core_sales_order_line_id)
+            for line in lines
+            if line.core_sales_order_line_id
+        ]
+        if core_ids:
+            for (core_product_id,) in (
+                self.db.query(SalesOrderLine.product_id)
+                .filter(SalesOrderLine.id.in_(core_ids))
+                .all()
+            ):
+                if core_product_id:
+                    product_ids.add(str(core_product_id))
         warehouse_ids: set = set()
         for entry in payload_lines:
             for source in list(entry.reserve or []) + list(entry.borrow or []):
@@ -728,10 +753,15 @@ class ProjectSupplyService:
             return
 
         timely = _dec(entry.timely_spo_qty)
-        reserve_total = sum((_dec(item.qty) for item in entry.reserve or []), _ZERO)
-        borrow_total = sum((_dec(item.qty) for item in entry.borrow or []), _ZERO)
+        reserve_items = [_dec(item.qty) for item in entry.reserve or []]
+        borrow_items = [_dec(item.qty) for item in entry.borrow or []]
+        reserve_total = sum(reserve_items, _ZERO)
+        borrow_total = sum(borrow_items, _ZERO)
         buy = _dec(entry.buy_qty)
-        if min(timely, reserve_total, borrow_total, buy) < _ZERO:
+        # Every ITEM, not just the per-kind totals: a negative row beside a positive one
+        # sums clean, then inflates the capacity ledger when it is subtracted, and the
+        # snapshot-vs-allocation split drops it - the over-Reserve would commit.
+        if min([timely, buy, *reserve_items, *borrow_items], default=_ZERO) < _ZERO:
             refuse(invalid, "A component quantity is negative.")
             return
 
@@ -1257,6 +1287,11 @@ class ProjectSupplyService:
             code = warehouse.warehouse_code if warehouse else None
             if code and code not in codes:
                 codes.append(code)
+        # A pure-Buy line names no source warehouse, but it is exactly the line that
+        # becomes an inquiry row, and purchasing reads the location off that row: fall
+        # back to the fulfilment location rather than handing over a blank.
+        if not codes and fact.own_code:
+            codes.append(fact.own_code)
         line.stock_location = " + ".join(codes) if codes else None
 
     # ------------------------------------------------------------------- facts

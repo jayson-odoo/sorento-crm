@@ -123,7 +123,7 @@ export function SupplyLineCard({
         {line.pool_location ? (
           <p className="break-words">
             {line.pool_location}
-            {line.pool_reorder_level
+            {line.pool_reorder_level && line.pool_reorder_level !== '0'
               ? `, reorder level ${line.pool_reorder_level}`
               : ', no reorder level set'}
             {line.is_dealer_hot_selling

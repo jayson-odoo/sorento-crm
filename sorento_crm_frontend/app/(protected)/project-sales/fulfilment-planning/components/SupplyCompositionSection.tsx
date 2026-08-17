@@ -60,14 +60,23 @@ export function SupplyCompositionSection({
   const [confirming, setConfirming] = React.useState(false);
   const [failingLines, setFailingLines] = React.useState<SupplyFailingLine[]>([]);
 
-  // Re-seed whenever the proposal itself changes: it is the server's reading of live
-  // stock, and keeping a draft on top of an older one would compose against facts that
-  // have moved.
+  // Re-seed when the ORDER or its decision changes, not on response object identity: a
+  // background refetch of the same state (window focus, an invalidation elsewhere) must
+  // not wipe quantities and reasons CS is mid-way through typing. Facts that moved under
+  // an unchanged decision are the server's to catch: confirmation rechecks everything.
+  const proposalLines = proposal?.lines;
   React.useEffect(() => {
-    setDrafts((proposal?.lines ?? []).map(draftFromLine));
+    setDrafts((proposalLines ?? []).map(draftFromLine));
     setComposingAgain(false);
     setFailingLines([]);
-  }, [proposal]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    proposal?.project_sales_order_id,
+    decision?.revision_no,
+    decision?.state,
+    proposal?.review_state,
+    proposalLines === undefined,
+  ]);
 
   const frozen = isConfirmed && !composingAgain;
   const blockers = React.useMemo(() => (frozen ? [] : draftBlockers(drafts)), [frozen, drafts]);
