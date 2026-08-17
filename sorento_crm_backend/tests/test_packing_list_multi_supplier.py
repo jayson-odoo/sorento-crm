@@ -40,6 +40,9 @@ from tests._pg_fixture import blank_session
 
 MARKER = "ZZMS"
 
+#: "the payload said nothing about this field", as distinct from "the payload said None".
+_UNSET = object()
+
 #: The headers migration 311 seeds for doc type `packing_list`. Seeded by the test rather
 #: than borrowed from the database, because CI's is empty.
 _ALIASES = [
@@ -144,10 +147,15 @@ class World:
         )
         return InboundShipmentService(self.db).create_shipment(payload)
 
-    def update(self, shipment_id, *, lines):
-        """The edit form's save: the whole line set, as `update_shipment` receives it."""
-        payload = InboundShipmentUpdate(
-            shipment_lines=[
+    def update(self, shipment_id, *, lines, supplier_id=_UNSET):
+        """The edit form's save: the whole line set, as `update_shipment` receives it.
+
+        `supplier_id` is left UNSET unless a test states one, because
+        `InboundShipmentUpdate` is dumped with `exclude_unset` - passing None would be a
+        save that clears the header rather than one that says nothing about it.
+        """
+        fields = {
+            "shipment_lines": [
                 InboundShipmentLineCreate(
                     product_id=str(product.id),
                     quantity_shipped=qty,
@@ -155,7 +163,10 @@ class World:
                 )
                 for product, qty, line_supplier in lines
             ]
-        )
+        }
+        if supplier_id is not _UNSET:
+            fields["supplier_id"] = supplier_id
+        payload = InboundShipmentUpdate(**fields)
         return InboundShipmentService(self.db).update_shipment(
             str(shipment_id), payload, updated_by=None
         )
@@ -374,15 +385,23 @@ def test_a_single_supplier_container_still_names_it_on_the_header(db):
 
 
 def _mixed_container(db) -> tuple[World, InboundShipment]:
-    """One container, Kailu's tap and Caizhou's sink, both with volume and a remark."""
+    """One container, Kailu's tap and Caizhou's sink, both with volume and a remark.
+
+    Carton counts are deliberately NOT 1: 1 is the line schema's default for
+    `cartons_count`, the only field on it with a non-None default, so a payload dumped
+    without `exclude_unset` restates it and a save that never mentioned cartons resets
+    every line to a single carton.
+    """
     w = World(db)
     w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None)])
     db.commit()
     shipment = w.upload(supplier_id=str(w.caizhou.id), lines=[(w.sink, 5, None)])
     db.commit()
+    cartons = {str(w.tap.id): 86, str(w.sink.id): 12}
     for line in w.lines(shipment.id):
         line.cbm = Decimal("1.5000")
         line.remarks = "as packed"
+        line.cartons_count = cartons[str(line.product_id)]
     db.commit()
     return w, shipment
 
@@ -409,10 +428,55 @@ def test_an_edit_that_states_only_products_and_quantities_keeps_everything_else(
     assert str(sink.supplier_id) == str(w.caizhou.id)
     assert float(tap.cbm) == pytest.approx(1.5)
     assert tap.remarks == "as packed"
+    # The carton counts the packing list gave, not the schema default of 1.
+    assert (tap.cartons_count, sink.cartons_count) == (86, 12)
     # The same rows, updated - not new ones wearing the old quantities.
     assert {str(ln.product_id): str(ln.id) for ln in lines.values()} == before
     db.refresh(shipment)
     assert shipment.supplier_id is None
+
+
+def test_an_edit_naming_the_supplier_claims_the_n8n_lines_instead_of_replacing_them(db):
+    """An n8n container's lines have NO supplier, and the edit form's save states one.
+
+    Every `(product, supplier)` lookup missed, so every line was deleted and re-inserted
+    from a payload that carries only product and quantity - and the cbm and remarks the PDF
+    had read off the packing list went with them. The rows are the same goods, so they are
+    CLAIMED: they take the supplier the save states and keep everything else.
+    """
+    w = World(db)
+    shipment = w.upload(supplier_id=None, lines=[(w.tap, 10, None), (w.sink, 5, None)])
+    db.commit()
+    assert {ln.supplier_id for ln in w.lines(shipment.id)} == {None}
+    for line in w.lines(shipment.id):
+        line.cbm = Decimal("2.1053")
+        line.remarks = "read off the PDF"
+        line.cartons_count = 40
+    db.commit()
+    before = {str(ln.product_id): str(ln.id) for ln in w.lines(shipment.id)}
+
+    w.update(
+        shipment.id,
+        supplier_id=str(w.kailu.id),
+        lines=[(w.tap, 12, None), (w.sink, 6, None)],
+    )
+    db.commit()
+
+    lines = _by_product(w.lines(shipment.id))
+    assert len(lines) == 2
+    tap = lines[str(w.tap.id)]
+    sink = lines[str(w.sink.id)]
+    # The same two rows, claimed - not new ones wearing the new quantities.
+    assert {str(ln.product_id): str(ln.id) for ln in lines.values()} == before
+    assert (tap.quantity_shipped, sink.quantity_shipped) == (12, 6)
+    for line in (tap, sink):
+        assert str(line.supplier_id) == str(w.kailu.id)
+        assert float(line.cbm) == pytest.approx(2.1053)
+        assert line.remarks == "read off the PDF"
+        assert line.cartons_count == 40
+    # One supplier across the lines now, so the header names them.
+    db.refresh(shipment)
+    assert str(shipment.supplier_id) == str(w.kailu.id)
 
 
 def test_an_edit_that_drops_a_product_deletes_that_line_and_leaves_the_rest(db):

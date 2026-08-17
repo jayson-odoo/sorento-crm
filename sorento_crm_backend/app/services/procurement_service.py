@@ -477,15 +477,31 @@ def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list
     The merge key gained the supplier because a container legitimately carries the same
     product from two factories; merging those two rows into one would lose which factory
     packed what, which is the whole point of the per-supplier line.
+
+    Dumped with `exclude_unset`, so a field the payload never mentioned stays out of the
+    dict. `cartons_count` is the one field on the line schema with a non-None default (1),
+    and dumping it unconditionally turned "not stated" into a stated 1: the procurement
+    edit form sends `{product_id, quantity_shipped}`, and `_upsert_shipment_lines` then
+    wrote that 1 over the carton count the packing list had actually given. Inserts are
+    unaffected because the column carries the same default.
     """
     merged: dict[tuple[str, Optional[str]], dict] = {}
     for line_data in lines_data or []:
-        d = line_data.model_dump()
+        d = line_data.model_dump(exclude_unset=True)
         d["supplier_id"] = _effective_line_supplier(d, header_supplier_id)
         key = (d["product_id"], d["supplier_id"])
         if key in merged:
-            merged[key]["quantity_shipped"] += d.get("quantity_shipped", 0)
-            merged[key]["cartons_count"] += d.get("cartons_count", 1)
+            merged[key]["quantity_shipped"] = merged[key].get(
+                "quantity_shipped", 0
+            ) + d.get("quantity_shipped", 0)
+            # Only a STATED carton count adds to the total. A duplicate row that says
+            # nothing about cartons means "unknown", not "one more carton", and adding a
+            # phantom 1 per silent row is how a save with no cartons on it ends up
+            # restating them.
+            if "cartons_count" in d:
+                merged[key]["cartons_count"] = (
+                    merged[key].get("cartons_count", 0) + d["cartons_count"]
+                )
         else:
             merged[key] = dict(d)
     return list(merged.values())
@@ -1055,11 +1071,17 @@ class InboundShipmentService:
 
         * a line that names a supplier matches on `(product, supplier)` - it says precisely
           which of the two factories' rows it is;
+        * failing that, it CLAIMS the container's one unattributed line for that product:
+          the n8n PDF path writes lines with no supplier at all, so on such a container
+          every pair lookup missed and the save deleted-and-reinserted the lot, wiping the
+          cbm and remarks the PDF had given. The row is the same goods; it gets the
+          supplier the save states and keeps everything else;
         * a line that names none (nothing on it, nothing on the header) matches the one
           existing line for that product, and keeps that line's supplier;
         * when two factories both shipped that product there is no one line it could mean.
           Guessing would move a quantity from one factory to the other silently, so it is
-          refused and the caller is told to say which.
+          refused and the caller is told to say which. Same refusal when a supplier-stated
+          line finds two unattributed rows to claim.
 
         Attributed lines are resolved before unattributed ones, so a payload that mixes the
         two claims the named rows first rather than by payload order.
@@ -1076,28 +1098,51 @@ class InboundShipmentService:
         claimed: set[str] = set()
         updates: list[tuple[InboundShipmentLine, dict]] = []
         inserts: list[dict] = []
+
+        def unclaimed(product_id: str, *, unattributed_only: bool) -> list[InboundShipmentLine]:
+            return [
+                line
+                for line in by_product.get(product_id, [])
+                if str(line.id) not in claimed
+                and (not unattributed_only or line.supplier_id is None)
+            ]
+
+        def ambiguous(product_id: str):
+            code = (
+                self.db.query(Product.product_code)
+                .filter(Product.id == product_id)
+                .scalar()
+            ) or product_id
+            return handle_conflict(
+                f"Product {code} is on this container from more than one supplier; "
+                "state supplier_id per line"
+            )
+
         # Attributed first: see the docstring.
         for d in sorted(incoming, key=lambda d: d.get("supplier_id") is None):
             product_id = str(d["product_id"])
             supplier_id = str(d["supplier_id"]) if d.get("supplier_id") else None
             if supplier_id is not None:
                 target = by_pair.get((product_id, supplier_id))
+                if target is None:
+                    # Nothing on this container under that supplier yet. Claim the
+                    # unattributed row for the product rather than replacing it, so an
+                    # n8n-created container survives its first edit-form save with its
+                    # cbm and remarks. Rows belonging to ANOTHER supplier are never
+                    # candidates - that would move goods between factories.
+                    candidates = unclaimed(product_id, unattributed_only=True)
+                    # Belt and braces: the unique index is NULLS NOT DISTINCT, so one
+                    # product has at most one unattributed row and this cannot fire
+                    # today. If that index ever changes, refuse rather than guess.
+                    if len(candidates) > 1:
+                        raise ambiguous(product_id)
+                    if candidates:
+                        target = candidates[0]
+                        target.supplier_id = supplier_id
             else:
-                candidates = [
-                    line
-                    for line in by_product.get(product_id, [])
-                    if str(line.id) not in claimed
-                ]
+                candidates = unclaimed(product_id, unattributed_only=False)
                 if len(candidates) > 1:
-                    code = (
-                        self.db.query(Product.product_code)
-                        .filter(Product.id == product_id)
-                        .scalar()
-                    ) or product_id
-                    raise handle_conflict(
-                        f"Product {code} is on this container from more than one supplier; "
-                        "state supplier_id per line"
-                    )
+                    raise ambiguous(product_id)
                 target = candidates[0] if candidates else None
             if target is None:
                 inserts.append(d)
