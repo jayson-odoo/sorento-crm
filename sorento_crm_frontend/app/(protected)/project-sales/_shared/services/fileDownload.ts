@@ -24,5 +24,8 @@ export function saveBlobAs(blob: Blob, filename: string): void {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  // Revoked a tick later, not on this one: the click starts the save asynchronously, and
+  // some browsers have not read the object url by the time the synchronous line after the
+  // click runs - the download then fails with nothing on the console to say why.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

@@ -2062,6 +2062,10 @@ class ProjectSODraftService:
         )
         customer = self._customer_for(order)
         published = order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
+        lines = self._lines_of(order.id)
+        # One query for every code on the document. Asked per line, a 101-line order (the
+        # real SO397450 shape) is 101 round trips to render one screen.
+        codes = self._product_codes(line.product_id for line in lines)
         return {
             "id": order.id,
             "provisional_ref": order.provisional_ref,
@@ -2080,7 +2084,7 @@ class ProjectSODraftService:
             "lines": [
                 {
                     "line_no": line.line_no,
-                    "item_code": self._product_code(line.product_id) or None,
+                    "item_code": codes.get(line.product_id) or None,
                     "description": line.description,
                     "reserve_qty": "0",
                     "qty": _qty_str(_dec(line.qty)),
@@ -2090,7 +2094,7 @@ class ProjectSODraftService:
                     "discount": "",
                     "total": str(_money(_dec(line.amount))),
                 }
-                for line in self._lines_of(order.id)
+                for line in lines
             ],
             "total_amount": str(_money(_dec(order.total_amount))),
             "findings": self.serialize_findings(order),
@@ -2273,6 +2277,22 @@ class ProjectSODraftService:
             .scalar()
             or 0
         )
+
+    def _product_codes(self, product_ids: Iterable[Any]) -> Dict[str, str]:
+        """Every code in one query, for a caller that needs a whole document's worth.
+
+        ``Any`` because callers pass model attributes, which the type checker reads as
+        ``Column[str]`` rather than ``str`` on this codebase's SQLAlchemy version.
+        """
+        wanted = {product_id for product_id in product_ids if product_id}
+        if not wanted:
+            return {}
+        rows = (
+            self.db.query(Product.id, Product.product_code)
+            .filter(Product.id.in_(wanted))
+            .all()
+        )
+        return {row[0]: row[1] or "" for row in rows}
 
     def _product_code(self, product_id: Optional[str]) -> str:
         if not product_id:

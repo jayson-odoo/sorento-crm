@@ -188,6 +188,49 @@ describe('SalesOrderWorksheetClient', () => {
     expect(await screen.findAllByText('Not recorded')).toHaveLength(3);
   });
 
+  it('shows a blank Debtor as a blank one, rather than borrowing the customer name', async () => {
+    getSalesOrderWorksheet.mockResolvedValue(
+      worksheet({
+        customer_name: 'Hong Bee Hardware Sdn Bhd',
+        header: {
+          debtor: null,
+          your_ref_no: 'HQ/26/01/121',
+          our_ref_no: 'Tuju Residences',
+          our_qt_ref_no: 'QT-004188 v1',
+          terms: '*Net 60 days',
+        },
+      }),
+    );
+
+    renderWorksheet();
+
+    // The header block is the document. A name printed here that the CSV's Debtor row does
+    // not carry would be the screen and the file disagreeing.
+    expect(await screen.findAllByText('Not recorded')).toHaveLength(1);
+    expect(screen.queryByText('Hong Bee Hardware Sdn Bhd')).not.toBeInTheDocument();
+  });
+
+  it('counts a single blocking finding in the singular', async () => {
+    getSalesOrderWorksheet.mockResolvedValue(
+      worksheet({
+        can_export: false,
+        findings: [
+          {
+            id: 'f1',
+            severity: 'hard',
+            code: 'line_arithmetic',
+            detail: 'Line 4: 351 x 10.00 is 3,510.00 but the PO says 3,150.00.',
+            line_no: 4,
+          },
+        ],
+      }),
+    );
+
+    renderWorksheet();
+
+    expect(await screen.findByText('1 finding stops the export')).toBeInTheDocument();
+  });
+
   it('offers both exports when the server says the worksheet may leave', async () => {
     getSalesOrderWorksheet.mockResolvedValue(worksheet());
 
@@ -302,7 +345,7 @@ describe('SalesOrderWorksheetClient', () => {
     const copy = await screen.findByRole('button', { name: /Copy for AutoCount/ });
     expect(copy).toBeDisabled();
     expect(copy).toHaveAttribute('title', 'Fix the blocking findings first');
-    expect(screen.getByText('2 stops the export')).toBeInTheDocument();
+    expect(screen.getByText('2 findings stop the export')).toBeInTheDocument();
     expect(screen.getByText('Line 4')).toBeInTheDocument();
     // Still no warnings: the section states that rather than disappearing.
     expect(screen.getByText('No warnings.')).toBeInTheDocument();

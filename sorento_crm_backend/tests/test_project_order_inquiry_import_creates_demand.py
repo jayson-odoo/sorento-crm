@@ -133,9 +133,12 @@ def test_a_sheet_row_becomes_a_sales_order_with_a_line(db, world):
     assert order.order_date == date(2026, 7, 1)
     # AC-E01: this is one of the two demand-class stamp points, and the stamp goes through
     # the shared mapper rather than a second literal, so a change to what counts as project
-    # work cannot reach the outstanding import and miss this sheet.
+    # work cannot reach the outstanding import and miss this sheet. Pinned to the literal
+    # the mapper is expected to produce: `class_of("project")` on both sides of the equals
+    # would agree with itself no matter what the mapper did.
     assert order.order_type == "project"
-    assert order.demand_class == class_of("project")
+    assert order.demand_class == "project"
+    assert class_of(order.order_type) == "project"
 
     line = _lines(db, order)[0]
     assert float(line.qty_ordered) == 10.0

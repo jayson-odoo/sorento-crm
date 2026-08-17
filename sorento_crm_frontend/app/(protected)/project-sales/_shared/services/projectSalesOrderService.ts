@@ -661,7 +661,13 @@ const MOCK_WORKSHEET_HEADER = {
   terms: '*Net 60 days',
 };
 
-/** Two delivery dates, one zero-priced companion, all reserve 0 until Stage 1C. */
+/**
+ * Two delivery dates, one zero-priced companion, all reserve 0 until Stage 1C.
+ *
+ * Money is at TWO decimals, unlike the draft-line fixtures above: the worksheet is the CSV,
+ * and the backend writes its cells through `_money`, which quantizes. A fixture carrying the
+ * line table's 5dp would tune the screen against a string the document never contains.
+ */
 const MOCK_WORKSHEET_LINES: SalesOrderWorksheet['lines'] = [
   {
     line_no: 1,
@@ -671,7 +677,7 @@ const MOCK_WORKSHEET_LINES: SalesOrderWorksheet['lines'] = [
     qty: '600',
     delivery_date: '2026-07-01',
     uom: 'UNIT',
-    unit_price: '11.16000',
+    unit_price: '11.16',
     discount: '',
     total: '6696.00',
   },
@@ -683,7 +689,7 @@ const MOCK_WORKSHEET_LINES: SalesOrderWorksheet['lines'] = [
     qty: '135',
     delivery_date: '2026-07-01',
     uom: 'UNIT',
-    unit_price: '13.77000',
+    unit_price: '13.77',
     discount: '',
     total: '1858.95',
   },
@@ -695,7 +701,7 @@ const MOCK_WORKSHEET_LINES: SalesOrderWorksheet['lines'] = [
     qty: '135',
     delivery_date: '2027-01-07',
     uom: 'SET',
-    unit_price: '392.85000',
+    unit_price: '392.85',
     discount: '',
     total: '53034.75',
   },
@@ -707,7 +713,7 @@ const MOCK_WORKSHEET_LINES: SalesOrderWorksheet['lines'] = [
     qty: '135',
     delivery_date: '2027-01-07',
     uom: 'UNIT',
-    unit_price: '0.00000',
+    unit_price: '0.00',
     discount: '',
     total: '0.00',
   },

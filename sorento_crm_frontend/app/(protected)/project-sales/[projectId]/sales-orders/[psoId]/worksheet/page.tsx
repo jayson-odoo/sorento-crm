@@ -42,8 +42,12 @@ export default async function ProjectSalesOrderWorksheetPage({
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
+              {/* Not "Draft": this page is reached most often from a PUBLISHED order, and
+                  a crumb that calls it a draft contradicts the status pill beside the
+                  reference on the screen. The reference itself is not available here -
+                  the page is a server component and the worksheet is fetched below. */}
               <BreadcrumbLink href={`/project-sales/${projectId}/sales-orders/${psoId}`}>
-                Draft
+                Sales order
               </BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />

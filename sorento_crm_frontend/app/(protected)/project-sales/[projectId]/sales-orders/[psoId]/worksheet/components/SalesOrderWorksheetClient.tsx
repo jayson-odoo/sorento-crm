@@ -219,10 +219,13 @@ function WorksheetView({
       {
         id: 'reserve_qty',
         header: ({ column }) => <DataGridColumnHeader title="Reserve Qty" column={column} />,
+        // Reserve is a quantity, so it is compared as one: `formatQty` renders any zero,
+        // whatever its scale, as "0". Nothing is reserved until Stage 1C names a source,
+        // so today every row is muted; a reserved row will stand out on its own.
         cell: ({ row }) => (
           <span
             className={`block truncate tabular-nums ${
-              isZeroMoney(row.original.reserve_qty) ? 'text-muted-foreground' : ''
+              formatQty(row.original.reserve_qty) === '0' ? 'text-muted-foreground' : ''
             }`}
             title={row.original.reserve_qty}
           >
@@ -392,7 +395,10 @@ function WorksheetView({
           <CardTitle className="text-sm">Header fields</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Debtor" value={worksheet.header?.debtor || worksheet.customer_name} />
+          {/* The header block is the document's own, so `debtor` is taken as the server
+              wrote it. Substituting `customer_name` when it is absent would print a name
+              on a worksheet whose Debtor line is genuinely blank. */}
+          <Field label="Debtor" value={worksheet.header?.debtor} />
           <Field label="Your Ref No." value={worksheet.header?.your_ref_no} />
           <Field label="Our Ref No." value={worksheet.header?.our_ref_no} />
           <Field label="Our QT Ref No." value={worksheet.header?.our_qt_ref_no} />
@@ -465,7 +471,9 @@ function WorksheetView({
           </CardTitle>
           {blocking.length > 0 && (
             <Badge variant="destructive" appearance="light">
-              {`${blocking.length} stop${blocking.length === 1 ? '' : 's'} the export`}
+              {blocking.length === 1
+                ? '1 finding stops the export'
+                : `${blocking.length} findings stop the export`}
             </Badge>
           )}
         </CardHeader>

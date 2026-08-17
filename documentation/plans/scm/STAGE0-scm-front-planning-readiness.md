@@ -63,6 +63,11 @@ call with the confirmed Buy residual only. `derive_for_amendment` is untouched (
 exception verbs stay separate). Publish still writes no core `sales_orders` row, so it is not a
 demand-class stamp point.
 
+Untouched means still live: `project_so_delta_service.publish_amendment` (~line 680) calls
+`derive_for_amendment` on every amendment publish, so amendment exception verbs (DELAY, ADVANCE,
+CANCEL BALANCE) still reach `order_inquiry_rows` BEFORE any Stage 1C supply confirmation.
+Filtering them out of the demand readers is Stage 1C's job, and AC-A04 depends on it.
+
 ## 4. Two quantity paths, and the one invariant that replaces them
 
 Baseline path A: `ProjectAllocationService.confirm` writes `so_line_allocations` summing to at most
@@ -142,9 +147,14 @@ The baseline already persists dated release lines: `ProjectSODraftService.build`
 PO lines across confirmed schedule phases into `projects.sales_order_lines` (`delivery_date`,
 `phase_id`) grouped one Project SO per area group, and `import_file` renders the AutoCount CSV.
 Stage 1A adds only: a copy-friendly worksheet read (`GET /project-sales/sales-orders/{id}/worksheet`
-plus the `/worksheet` screen) sharing the CSV row builder, and idempotent rebuild (a repeat build
-from the same PO and schedule keeps each area group's provisional reference and produces the same
-line set). No AutoCount write. Demand stays uncommitted and outside Purchasing.
+plus the `/worksheet` screen) sharing the CSV row builder, and idempotent rebuild. The rebuild
+guarantee is per area group, not per build: a group that was drafted before keeps the provisional
+reference CS has written down, and a group that appears for the first time (a revised schedule
+adding one) is minted a fresh reference that can never be one still owed to a carried group. Same
+inputs, same line set. No AutoCount write. Demand stays uncommitted and outside Purchasing.
+
+`can_export` is enforced, not reported: `GET .../import-file` answers 422 `so_export_blocked`
+unless the order is published (or amended) with no unacknowledged hard finding.
 
 ## 10. Stage 1A evidence run (agent-browser, 2026-08-17)
 
@@ -160,7 +170,8 @@ row PSO-000002, Worksheet button. `get url` confirmed at every hop.
   duplicate-extension warning).
 - Screen: PSO-000002, Blocked, TOWER, customer PO HQ/26/01/121, 101 lines with Reserve Qty 0,
   total RM 454,724.68 (equals the list row), Validation card "36 stops the export" (equals the list
-  row's 36 blocking), both export actions disabled with title "Publish first".
+  row's 36 blocking; the copy now reads "36 findings stop the export" after the review), both
+  export actions disabled with title "Publish first".
 - Viewports 1280x800 and 375x812 both rendered without overflow.
 - Backend tests: `tests/test_project_so_worksheet.py` (12) and
   `tests/test_project_so_draft.py::test_rebuilding_from_the_same_inputs_is_a_no_op` cover the
