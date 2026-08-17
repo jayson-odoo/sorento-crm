@@ -43,6 +43,7 @@ from app.schemas.project_sales_order import (
     PublishResponse,
     RegroupRequest,
     SalesOrderLineUpdate,
+    SalesOrderWorksheet,
     ScheduleVersionOption,
     SODraftFindingRow,
 )
@@ -376,6 +377,25 @@ async def confirm_sales_order_costing(
         return body
     except Exception as exc:
         db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/sales-orders/{pso_id}/worksheet", response_model=SalesOrderWorksheet)
+async def sales_order_worksheet(
+    pso_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The AutoCount worksheet as data (Stage 1A, J02): the same document the CSV carries.
+
+    Read-only, and the same grant as the detail beside it. ``can_export`` is answered here
+    rather than on the screen so the publish gate has one owner.
+    """
+    try:
+        validate_uuid_path(pso_id, resource="Sales order")
+        service = ProjectSODraftService(db)
+        return service.worksheet(service.get_order(pso_id))
+    except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
