@@ -30,6 +30,11 @@ import {
  * containers. A count of lines would hide it: five blocks of seven read as "35 rows", and the
  * user would find out it created five shipments afterwards. So the blocks are listed, each with
  * its own container number, and a block with none says so rather than showing a blank.
+ *
+ * The supplier is not optional. One container holds two or three factories' lines, and a file
+ * uploaded without saying whose it is speaks for the whole container - which is how the first
+ * factory's lines used to disappear. The server refuses it; this dialog does not offer it, and
+ * names the factory it will be filed under.
  */
 
 interface ImportedShipment {
@@ -57,11 +62,14 @@ export function PackingListUploadDialog({
   open,
   onOpenChange,
   supplierId,
+  supplierName,
   onImported,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
   supplierId: string | null;
+  /** Shown in the header so the factory the lines will be filed under is never a guess. */
+  supplierName?: string | null;
   onImported?: (shipments: ImportedShipment[]) => void;
 }) {
   const upload = useTwoStepUpload<PackingListPreview, ApplyResult>({
@@ -93,6 +101,7 @@ export function PackingListUploadDialog({
           <DialogTitle>Upload packing list</DialogTitle>
           <DialogDescription>
             Every container block in the file becomes its own shipment.
+            {supplierName ? ` Uploading as ${supplierName}.` : ''}
           </DialogDescription>
         </DialogHeader>
 
@@ -194,7 +203,8 @@ export function PackingListUploadDialog({
           <Button
             variant="outline"
             onClick={() => void upload.runTest()}
-            disabled={!upload.file || upload.testing || upload.applying}
+            disabled={!supplierId || !upload.file || upload.testing || upload.applying}
+            title={!supplierId ? 'Choose a supplier first' : undefined}
           >
             {upload.testing ? (
               <LoaderCircle className="size-4 animate-spin" />
@@ -207,7 +217,11 @@ export function PackingListUploadDialog({
             {result ? 'Close' : 'Cancel'}
           </Button>
           {!result ? (
-            <Button onClick={() => void upload.confirm()} disabled={!upload.canConfirm}>
+            <Button
+              onClick={() => void upload.confirm()}
+              disabled={!supplierId || !upload.canConfirm}
+              title={!supplierId ? 'Choose a supplier first' : undefined}
+            >
               {upload.applying ? <LoaderCircle className="size-4 animate-spin" /> : null}
               Confirm
             </Button>

@@ -13,7 +13,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EM_DASH, fmtDecimal, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtDate, fmtDecimal, fmtInt } from '../../lib/format';
 import { useConsolidatedPackingList } from '../../hooks/useFulfilment';
 import {
   downloadPackingListExport,
@@ -49,15 +49,21 @@ const COMPANIES: PackingListCompany[] = ['SORENTO', 'MOCHA'];
 
 export function ConsolidatedPackingListPanel({ shipmentId }: { shipmentId: string | null }) {
   const list = useConsolidatedPackingList(shipmentId);
+  const data = list.data;
 
   const exportList = useMutation({
-    mutationFn: () => downloadPackingListExport(shipmentId as string),
+    // The name the file falls back to is the container, never the shipment id: a workbook in
+    // a downloads folder called after a UUID cannot be told from any other one.
+    mutationFn: () =>
+      downloadPackingListExport(
+        shipmentId as string,
+        data?.container_no ?? data?.shipment_number ?? 'container',
+      ),
     onError: (e: Error) => toast.error(e.message),
   });
 
   if (!shipmentId) return null;
 
-  const data = list.data;
   const factories = data?.factories ?? [];
 
   return (
@@ -223,6 +229,7 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
           {factoryLabel(factory)}
         </h4>
         <div className="flex flex-wrap items-center gap-1.5">
+          <NoticeChip factory={factory} />
           <SubtotalChip label="qty" value={fmtInt(factory.subtotal.qty)} />
           <SubtotalChip label="ctn" value={fmtInt(factory.subtotal.cartons)} />
           <SubtotalChip
@@ -259,6 +266,22 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
         </ul>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * Which loading plan the remarks column is comparing against, or that there is none.
+ *
+ * A discrepancy only means anything next to the plan it was measured from, and a factory that
+ * was never sent one has an empty remarks column for a different reason than a factory that
+ * packed its plan exactly.
+ */
+function NoticeChip({ factory }: { factory: PackingListFactory }) {
+  const sent = factory.notice_sent_at ?? factory.notice_created_at;
+  return (
+    <Badge variant="secondary" size="sm" className="font-normal text-muted-foreground">
+      {factory.notice_id ? `vs plan of ${fmtDate(sent)}` : 'no plan sent'}
+    </Badge>
   );
 }
 

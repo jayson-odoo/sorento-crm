@@ -8,7 +8,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { fmtInt } from '../../lib/format';
 import { useFulfilmentSuppliers } from '../../hooks/useFulfilment';
-import { getIncomingShipments } from '../../services/fulfilmentService';
+import { getIncomingShipments, type IncomingShipment } from '../../services/fulfilmentService';
 import { PackingListUploadDialog } from './PackingListUploadDialog';
 import { ConsolidatedPackingListPanel } from './ConsolidatedPackingListPanel';
 import { AllocationPanel } from './AllocationPanel';
@@ -35,6 +35,10 @@ export function IncomingContainersView() {
     refetchOnWindowFocus: false,
   });
   const imported = shipments.data ?? [];
+  // Whose lines the upload will become. The file itself never says, so the supplier chosen
+  // here is the only answer, and an upload without one is refused by the server.
+  const supplierName =
+    (suppliers.data ?? []).find((o) => o.value === supplierId)?.label ?? null;
 
   return (
     <div className="space-y-4">
@@ -54,7 +58,11 @@ export function IncomingContainersView() {
               clearable
             />
           </div>
-          <Button onClick={() => setUploadOpen(true)}>
+          <Button
+            onClick={() => setUploadOpen(true)}
+            disabled={!supplierId}
+            title={!supplierId ? 'Choose a supplier first' : undefined}
+          >
             <Upload className="size-4" />
             Upload packing list
           </Button>
@@ -93,15 +101,7 @@ export function IncomingContainersView() {
                 <div className="truncate text-xs font-medium">
                   {s.container_no || s.shipment_number}
                 </div>
-                <div className="text-2xs text-muted-foreground">
-                  {/* Whose lines these are. One container is routinely loaded by two or three
-                      factories, and the header names none of them once it is mixed. */}
-                  {s.suppliers?.length
-                    ? s.suppliers.map((x) => x.supplier_name ?? x.supplier_code).join(', ')
-                    : s.container_no
-                      ? s.shipment_number
-                      : 'No container number yet'}
-                </div>
+                <div className="truncate text-2xs text-muted-foreground">{subLine(s)}</div>
               </div>
               <span className="shrink-0 text-2xs text-muted-foreground">
                 {fmtInt(s.lines)} lines
@@ -119,6 +119,7 @@ export function IncomingContainersView() {
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         supplierId={supplierId}
+        supplierName={supplierName}
         onImported={(results) => {
           qc.invalidateQueries({ queryKey: ['scm', 'fulfilment', 'incoming', supplierId] });
           setSelected(results[0]?.shipment_id ?? null);
@@ -126,6 +127,27 @@ export function IncomingContainersView() {
       />
     </div>
   );
+}
+
+/**
+ * The line under the container number: whose lines these are, and which shipment they sit on.
+ *
+ * One container is routinely loaded by two or three factories, and the header names none of
+ * them once it is mixed - but the factories must not cost the shipment number its place, since
+ * that is what the SPO and the GRN are keyed on. Both are shown; the shipment number is only
+ * repeated when the heading above is the container number and the two differ.
+ */
+function subLine(s: IncomingShipment): string {
+  const names = (s.suppliers ?? [])
+    .map((x) => x.supplier_name ?? x.supplier_code)
+    .filter(Boolean)
+    .join(', ');
+  const number =
+    s.container_no && s.shipment_number && s.shipment_number !== s.container_no
+      ? s.shipment_number
+      : null;
+  if (!names) return s.container_no ? (s.shipment_number ?? '') : 'No container number yet';
+  return number ? `${number} · ${names}` : names;
 }
 
 export default IncomingContainersView;

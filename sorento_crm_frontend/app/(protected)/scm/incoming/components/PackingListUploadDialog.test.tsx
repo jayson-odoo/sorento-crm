@@ -85,13 +85,17 @@ const PREVIEW = {
   problems: [],
 };
 
-function openDialog(supplierId: string | null = 'sup-1') {
+function openDialog(
+  supplierId: string | null = 'sup-1',
+  supplierName: string | null = 'KAILU HARDWARE FACTORY',
+) {
   const onImported = vi.fn();
   render(
     <PackingListUploadDialog
       open
       onOpenChange={() => {}}
       supplierId={supplierId}
+      supplierName={supplierName}
       onImported={onImported}
     />,
   );
@@ -184,6 +188,29 @@ describe('PackingListUploadDialog - the inherited two-step flow', () => {
   });
 });
 
+describe('PackingListUploadDialog - whose lines these are', () => {
+  it('names the factory the file will be filed under', () => {
+    openDialog();
+
+    expect(screen.getByText(/Uploading as KAILU HARDWARE FACTORY\./)).toBeInTheDocument();
+  });
+
+  it('offers neither Test nor Confirm with no supplier, rather than sending an unowned file',
+    () => {
+      // An upload that does not say whose lines it is speaks for the WHOLE container, which
+      // is how the other factory's lines used to disappear. The server refuses it with a 422;
+      // this dialog does not get that far.
+      openDialog(null, null);
+      pickFile();
+
+      expect(testButton()).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+      expect(testButton()).toHaveAttribute('title', 'Choose a supplier first');
+      expect(applyPackingList).not.toHaveBeenCalled();
+      expect(previewPackingList).not.toHaveBeenCalled();
+    });
+});
+
 describe('PackingListUploadDialog - Confirm, which is still synchronous here', () => {
   const RESULT = {
     shipments_created: 2,
@@ -233,6 +260,19 @@ describe('PackingListUploadDialog - Confirm, which is still synchronous here', (
     await waitFor(() => expect(applyPackingList).toHaveBeenCalledTimes(1));
     expect(previewPackingList).not.toHaveBeenCalled();
   });
+
+  it('shows the failure and leaves the dialog open when the apply is refused, 422 included',
+    async () => {
+      // The server's own message, whatever it says - including the 422 an upload with no
+      // supplier earns - reaches the user through this one path.
+      applyPackingList.mockRejectedValue(new Error('supplier_id is required'));
+      openDialog();
+      pickFile();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+      expect(await screen.findByText('supplier_id is required')).toBeInTheDocument();
+    });
 
   it('shows the failure and leaves the dialog open when the apply is refused', async () => {
     applyPackingList.mockRejectedValue(new Error('Select a single company before uploading.'));

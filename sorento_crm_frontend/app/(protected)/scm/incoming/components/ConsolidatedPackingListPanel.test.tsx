@@ -114,6 +114,8 @@ function packingList(over: Partial<ConsolidatedPackingList> = {}): ConsolidatedP
         supplier_name: 'KAILU HARDWARE FACTORY',
         loading_plan_id: 'lp-1',
         notice_id: 'n-1',
+        notice_created_at: '2026-07-28T09:00:00',
+        notice_sent_at: '2026-07-30T11:20:00',
         lines: [KAILU_LINE, MOCHA_LINE],
         not_packed: [
           {
@@ -131,6 +133,8 @@ function packingList(over: Partial<ConsolidatedPackingList> = {}): ConsolidatedP
         supplier_name: 'CAIZHOU SANITARY',
         loading_plan_id: null,
         notice_id: null,
+        notice_created_at: null,
+        notice_sent_at: null,
         lines: [CAIZHOU_LINE],
         not_packed: [],
         subtotal: { lines: 1, qty: 120, cartons: 30, cbm: 0 },
@@ -240,6 +244,30 @@ describe('ConsolidatedPackingListPanel', () => {
     expect(item).toHaveTextContent('SRTWT7301-BL - not packed - loading plan asked 100');
   });
 
+  it('says which loading plan a factory is being compared against', async () => {
+    renderPanel();
+
+    // The sent date, not the raised date: what the supplier packed against is what they got.
+    expect(await screen.findByText('vs plan of 30/07/2026')).toBeInTheDocument();
+  });
+
+  it('falls back to when the plan was raised if it was never marked sent', async () => {
+    const list = packingList();
+    list.factories[0].notice_sent_at = null;
+    state.getList = vi.fn().mockResolvedValue(list);
+    renderPanel();
+
+    expect(await screen.findByText('vs plan of 28/07/2026')).toBeInTheDocument();
+  });
+
+  it('says a factory was never sent a plan, rather than leaving its remarks unexplained',
+    async () => {
+      // An empty remarks column means one of two different things, and this is which.
+      renderPanel();
+
+      expect(await screen.findByText('no plan sent')).toBeInTheDocument();
+    });
+
   it('prints the grand total and both company rows of the split', async () => {
     renderPanel();
 
@@ -291,6 +319,8 @@ describe('ConsolidatedPackingListPanel', () => {
             supplier_name: 'KAILU HARDWARE FACTORY',
             loading_plan_id: 'lp-1',
             notice_id: 'n-1',
+            notice_created_at: '2026-07-28T09:00:00',
+            notice_sent_at: '2026-07-30T11:20:00',
             lines: [KAILU_LINE, MOCHA_LINE],
             not_packed: [],
             subtotal: { lines: 2, qty: 1390, cartons: 141, cbm: 9.4123, cbm_known_lines: 2 },
@@ -311,7 +341,9 @@ describe('ConsolidatedPackingListPanel', () => {
     await waitFor(() => expect(button).toBeEnabled());
     fireEvent.click(button);
 
-    await waitFor(() => expect(state.download).toHaveBeenCalledWith('sh-1'));
+    // Named after the container, never the shipment id: the fallback filename is what the
+    // workbook is called when the server sends no Content-Disposition.
+    await waitFor(() => expect(state.download).toHaveBeenCalledWith('sh-1', 'FSCU8103365'));
   });
 
   it('says so when the export fails instead of failing silently', async () => {

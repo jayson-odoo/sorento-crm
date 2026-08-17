@@ -550,6 +550,10 @@ export interface PackingListFactory {
   loading_plan_id: string | null;
   /** Null when the supplier was never sent a loading plan, so nothing can be compared. */
   notice_id: string | null;
+  /** When that plan was raised, and when it actually reached the supplier. A shipment is
+   *  compared against a plan of a particular date, and an old plan is worth seeing. */
+  notice_created_at: string | null;
+  notice_sent_at: string | null;
   lines: PackingListLine[];
   not_packed: PackingListNotPacked[];
   subtotal: PackingListTotals;
@@ -578,18 +582,27 @@ export async function getConsolidatedPackingList(
  * The same list as the file Ms Tee used to build by hand.
  *
  * The name comes from the server's `Content-Disposition` rather than being rebuilt here, so
- * the download and the sheet inside it agree on which container this is.
+ * the download and the sheet inside it agree on which container this is. `fallbackName` is
+ * what the file is called if the header is missing - the container or shipment number, never
+ * the shipment id, because a downloaded file named after a UUID tells its reader nothing.
  */
-export async function downloadPackingListExport(shipmentId: string): Promise<void> {
+export async function downloadPackingListExport(
+  shipmentId: string,
+  fallbackName?: string | null,
+): Promise<void> {
   const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/packing-list/export`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to export the packing list'));
   const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '');
-  const filename = match?.[1] ?? `${shipmentId}-packing-list.xlsx`;
+  const filename = match?.[1] ?? `${fallbackName || 'container'}-packing-list.xlsx`;
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  // Revoked on the next tick, not straight after the click: the browser has not necessarily
+  // started reading the blob yet, and revoking under it cancels the download.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
