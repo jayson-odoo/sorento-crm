@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import secrets
+import uuid
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, exists, false, func, select
@@ -399,8 +400,13 @@ def shipment_supplier_predicate(supplier_id):
     that drifts from the others is a screen that quietly disagrees with its neighbour.
 
     Takes one id or an iterable of them (the identifier resolver hands back a list).
+    A single id may be a `uuid.UUID` as well as a string - the ORM hands back UUID objects,
+    and iterating one of those is a TypeError rather than a filter on that supplier.
     """
-    ids = [str(supplier_id)] if isinstance(supplier_id, str) else [str(s) for s in supplier_id]
+    if isinstance(supplier_id, (str, uuid.UUID)):
+        ids = [str(supplier_id)]
+    else:
+        ids = [str(s) for s in supplier_id]
     if not ids:
         return false()
     if len(ids) == 1:
@@ -457,7 +463,12 @@ def _is_superseded_line(
     line_supplier = str(line.supplier_id) if line.supplier_id else None
     if line_supplier is not None:
         return line_supplier in incoming_suppliers
-    return None in incoming_suppliers or str(line.product_id) in incoming_products
+    # Product-scoped, always. A payload that states NO supplier anywhere speaks for the whole
+    # container and never reaches here (the caller replaces every line for it); a payload that
+    # states one somewhere is a factory's list, so the only unattributed lines it speaks for
+    # are the products it actually carries - including when some of its own lines happen to
+    # name no supplier of their own.
+    return str(line.product_id) in incoming_products
 
 
 def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list[dict]:
@@ -1029,6 +1040,90 @@ class InboundShipmentService:
         else:
             shipment.supplier_id = None
 
+    def _upsert_shipment_lines(self, shipment: InboundShipment, incoming: list[dict]) -> None:
+        """Apply an explicit line set to a container without throwing its attribution away.
+
+        An edit form states the whole line set, so a line nobody stated is gone. But it does
+        NOT restate everything ABOUT a line: the procurement edit form sends
+        `{product_id, quantity_shipped}`, and deleting-then-inserting on that payload set
+        every line's supplier, cbm and remark to NULL - one save on a mixed container erased
+        which factory packed what, which is exactly the loss the per-supplier line exists to
+        stop. So an incoming line is matched to the one already there and UPDATED: what the
+        payload states wins, what it leaves out is kept.
+
+        Matching:
+
+        * a line that names a supplier matches on `(product, supplier)` - it says precisely
+          which of the two factories' rows it is;
+        * a line that names none (nothing on it, nothing on the header) matches the one
+          existing line for that product, and keeps that line's supplier;
+        * when two factories both shipped that product there is no one line it could mean.
+          Guessing would move a quantity from one factory to the other silently, so it is
+          refused and the caller is told to say which.
+
+        Attributed lines are resolved before unattributed ones, so a payload that mixes the
+        two claims the named rows first rather than by payload order.
+        """
+        existing = list(shipment.shipment_lines)
+        by_pair: dict[tuple[str, Optional[str]], InboundShipmentLine] = {}
+        by_product: dict[str, list[InboundShipmentLine]] = {}
+        for line in existing:
+            product_id = str(line.product_id)
+            supplier_id = str(line.supplier_id) if line.supplier_id else None
+            by_pair[(product_id, supplier_id)] = line
+            by_product.setdefault(product_id, []).append(line)
+
+        claimed: set[str] = set()
+        updates: list[tuple[InboundShipmentLine, dict]] = []
+        inserts: list[dict] = []
+        # Attributed first: see the docstring.
+        for d in sorted(incoming, key=lambda d: d.get("supplier_id") is None):
+            product_id = str(d["product_id"])
+            supplier_id = str(d["supplier_id"]) if d.get("supplier_id") else None
+            if supplier_id is not None:
+                target = by_pair.get((product_id, supplier_id))
+            else:
+                candidates = [
+                    line
+                    for line in by_product.get(product_id, [])
+                    if str(line.id) not in claimed
+                ]
+                if len(candidates) > 1:
+                    code = (
+                        self.db.query(Product.product_code)
+                        .filter(Product.id == product_id)
+                        .scalar()
+                    ) or product_id
+                    raise handle_conflict(
+                        f"Product {code} is on this container from more than one supplier; "
+                        "state supplier_id per line"
+                    )
+                target = candidates[0] if candidates else None
+            if target is None:
+                inserts.append(d)
+            else:
+                claimed.add(str(target.id))
+                updates.append((target, d))
+
+        # Delete before insert: the unique index on (shipment, product, supplier) treats
+        # NULL as a value, so an insert that reuses a departing row's key would collide if
+        # the unit of work flushed the save first.
+        for line in existing:
+            if str(line.id) not in claimed:
+                self.db.delete(line)
+        self.db.flush()
+
+        for line, d in updates:
+            for field, value in d.items():
+                # None means "the payload did not state it", never "clear it": supplier,
+                # cbm and remarks are read off the packing list, not typed into the edit
+                # form that is saving over them.
+                if value is not None:
+                    setattr(line, field, value)
+        for d in inserts:
+            self.db.add(InboundShipmentLine(**d, shipment_id=shipment.id))
+        self.db.flush()
+
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
         """Create or update-in-place an inbound shipment with lines.
 
@@ -1175,18 +1270,13 @@ class InboundShipmentService:
             setattr(shipment, key, value)
         
         if "shipment_lines" in shipment_data.model_dump(exclude_unset=True):
-            # Replace lines: delete existing, add new (grouped by product AND supplier -
-            # the same key `create_shipment` merges on, because the same product from two
-            # factories is two rows). An explicit update states the whole line set, so it
-            # replaces all of them rather than only one supplier's.
-            for line in shipment.shipment_lines[:]:
-                self.db.delete(line)
-            self.db.flush()
+            # The whole line set, upserted onto what is already there (grouped by product
+            # AND supplier - the same key `create_shipment` merges on, because the same
+            # product from two factories is two rows).
             header_supplier = getattr(shipment, "supplier_id", None)
-            for d in _merge_shipment_lines(shipment_data.shipment_lines, header_supplier):
-                line = InboundShipmentLine(**d, shipment_id=shipment.id)
-                self.db.add(line)
-            self.db.flush()
+            self._upsert_shipment_lines(
+                shipment, _merge_shipment_lines(shipment_data.shipment_lines, header_supplier)
+            )
             # The lines just changed, so the header has to be re-derived from them or it
             # keeps naming a supplier that is no longer on the container.
             self._derive_header_supplier(shipment, header_supplier)

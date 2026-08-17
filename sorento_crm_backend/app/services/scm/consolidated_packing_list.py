@@ -292,6 +292,11 @@ def build(db: Session, shipment_id: str) -> dict:
                 if notice and notice.loading_plan_id
                 else None,
                 "notice_id": str(notice.id) if notice else None,
+                # Whether that notice actually asked for anything to be PACKED. A
+                # produce-only notice is named but compared against nothing, and without
+                # this flag an empty `discrepancies` on every line is indistinguishable
+                # from a container that matched its plan exactly.
+                "has_pack_plan": has_plan,
                 # When the document this container was compared against was written and
                 # when it left, so a comparison that looks wrong can be traced to the
                 # notice it was made against without opening the database.

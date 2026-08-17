@@ -149,7 +149,7 @@ Backend only.
   "factories": [
     {
       "supplier_id": "...|null", "supplier_code": "400-K029|null", "supplier_name": "KAILU HARDWARE FACTORY|Unassigned",
-      "loading_plan_id": "...|null", "notice_id": "...|null",
+      "loading_plan_id": "...|null", "notice_id": "...|null", "has_pack_plan": true,
       "notice_created_at": "2026-08-01T09:00:00|null", "notice_sent_at": "2026-08-01T09:30:00|null",
       "lines": [
         { "line_id": "...", "product_id": "...", "product_code": "SRTWT7443", "product_name": "...",
@@ -185,7 +185,10 @@ Rules:
   is no such notice does the latest overall stand in. Any channel; its lines with `kind='pack'`,
   summed by `product_id`. `notice_created_at` / `notice_sent_at` are reported so a comparison that
   looks wrong can be traced to the document it was made against. A notice whose lines are ALL
-  `produce` has no pack plan in it: `notice_id` is still reported, and nothing is compared. For each
+  `produce` has no pack plan in it: `notice_id` is still reported with `has_pack_plan: false`,
+  and nothing is compared (`has_pack_plan` is true only when the chosen notice carries `pack`
+  lines, so an empty `discrepancies` on every line can be told apart from a container that
+  matched its plan). For each
   shipped line: no plan line -> `"Not on the loading plan"`; planned != qty ->
   `"Loading plan asked {planned}, packed {qty} ({short|over} {abs diff})"`. Plan lines with no
   shipped line for that supplier -> `not_packed[]`. No notice for the supplier -> `notice_id: null`,

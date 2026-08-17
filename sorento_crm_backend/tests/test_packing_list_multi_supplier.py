@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from decimal import Decimal
 from io import BytesIO
 
 import pytest
@@ -27,7 +28,12 @@ import pytest
 from app.models.import_alias import ImportFieldAlias
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
+from app.schemas.procurement import (
+    InboundShipmentCreate,
+    InboundShipmentLineCreate,
+    InboundShipmentUpdate,
+)
+from app.services.error_handler import AppException
 from app.services.procurement_service import InboundShipmentService
 from app.services.scm import packing_list_service
 from tests._pg_fixture import blank_session
@@ -137,6 +143,22 @@ class World:
             ],
         )
         return InboundShipmentService(self.db).create_shipment(payload)
+
+    def update(self, shipment_id, *, lines):
+        """The edit form's save: the whole line set, as `update_shipment` receives it."""
+        payload = InboundShipmentUpdate(
+            shipment_lines=[
+                InboundShipmentLineCreate(
+                    product_id=str(product.id),
+                    quantity_shipped=qty,
+                    supplier_id=line_supplier,
+                )
+                for product, qty, line_supplier in lines
+            ]
+        )
+        return InboundShipmentService(self.db).update_shipment(
+            str(shipment_id), payload, updated_by=None
+        )
 
     def lines(self, shipment_id) -> list[InboundShipmentLine]:
         return (
@@ -288,6 +310,31 @@ def test_a_factorys_upload_supersedes_the_unattributed_lines_for_its_own_product
     assert mats[0].quantity_shipped == 40
 
 
+def test_a_payload_that_names_a_supplier_on_only_some_lines_is_still_product_scoped(db):
+    """A mixed payload does not become a statement about the whole container.
+
+    Kailu's file is uploaded with the supplier on one line and nothing on another (the
+    reader could not tell whose the second was). The unattributed line it carries is still
+    only about the product on it, so an unattributed line already on the container for a
+    product NOBODY in this payload mentions is a different item and survives - the same rule
+    as for a fully-attributed payload.
+    """
+    w = World(db)
+    mat = w.product("MAT")
+    first = w.upload(supplier_id=None, lines=[(w.tap, 100, None), (mat, 40, None)])
+    db.commit()
+
+    w.upload(supplier_id=None, lines=[(w.tap, 100, str(w.kailu.id)), (w.sink, 5, None)])
+    db.commit()
+
+    lines = _by_product(w.lines(first.id))
+    assert set(lines) == {str(w.tap.id), str(mat.id), str(w.sink.id)}
+    assert str(lines[str(w.tap.id)].supplier_id) == str(w.kailu.id)
+    assert lines[str(mat.id)].supplier_id is None
+    assert lines[str(mat.id)].quantity_shipped == 40
+    assert lines[str(w.sink.id)].supplier_id is None
+
+
 def test_one_product_from_two_factories_in_one_payload_is_two_lines(db):
     """The merge key is (product, supplier). Merging on product alone would lose the split."""
     w = World(db)
@@ -319,6 +366,157 @@ def test_a_single_supplier_container_still_names_it_on_the_header(db):
     db.refresh(shipment)
     assert str(shipment.supplier_id) == str(w.kailu.id)
     assert {str(ln.supplier_id) for ln in w.lines(shipment.id)} == {str(w.kailu.id)}
+
+
+# --------------------------------------------------------------------------- #
+# update_shipment - the edit form saves over a mixed container                  #
+# --------------------------------------------------------------------------- #
+
+
+def _mixed_container(db) -> tuple[World, InboundShipment]:
+    """One container, Kailu's tap and Caizhou's sink, both with volume and a remark."""
+    w = World(db)
+    w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None)])
+    db.commit()
+    shipment = w.upload(supplier_id=str(w.caizhou.id), lines=[(w.sink, 5, None)])
+    db.commit()
+    for line in w.lines(shipment.id):
+        line.cbm = Decimal("1.5000")
+        line.remarks = "as packed"
+    db.commit()
+    return w, shipment
+
+
+def test_an_edit_that_states_only_products_and_quantities_keeps_everything_else(db):
+    """The procurement edit form sends `{product_id, quantity_shipped}` and nothing else.
+
+    Deleting every line and re-inserting from that payload set each line's supplier, cbm and
+    remark to NULL, so one save on a mixed container erased which factory packed what. The
+    payload states the line set; it does not state everything about a line.
+    """
+    w, shipment = _mixed_container(db)
+    before = {str(ln.product_id): str(ln.id) for ln in w.lines(shipment.id)}
+
+    w.update(shipment.id, lines=[(w.tap, 12, None), (w.sink, 6, None)])
+    db.commit()
+
+    lines = _by_product(w.lines(shipment.id))
+    assert len(lines) == 2
+    tap = lines[str(w.tap.id)]
+    sink = lines[str(w.sink.id)]
+    assert (tap.quantity_shipped, sink.quantity_shipped) == (12, 6)
+    assert str(tap.supplier_id) == str(w.kailu.id)
+    assert str(sink.supplier_id) == str(w.caizhou.id)
+    assert float(tap.cbm) == pytest.approx(1.5)
+    assert tap.remarks == "as packed"
+    # The same rows, updated - not new ones wearing the old quantities.
+    assert {str(ln.product_id): str(ln.id) for ln in lines.values()} == before
+    db.refresh(shipment)
+    assert shipment.supplier_id is None
+
+
+def test_an_edit_that_drops_a_product_deletes_that_line_and_leaves_the_rest(db):
+    """An explicit update still states the WHOLE line set: what it omits is gone."""
+    w, shipment = _mixed_container(db)
+
+    w.update(shipment.id, lines=[(w.sink, 5, None)])
+    db.commit()
+
+    lines = w.lines(shipment.id)
+    assert len(lines) == 1
+    assert str(lines[0].product_id) == str(w.sink.id)
+    assert str(lines[0].supplier_id) == str(w.caizhou.id)
+    # One supplier left on the container, so the header names them again.
+    db.refresh(shipment)
+    assert str(shipment.supplier_id) == str(w.caizhou.id)
+
+
+def test_editing_a_product_two_factories_shipped_needs_the_supplier_named(db):
+    """There is no one line an unattributed edit of that product could mean.
+
+    Picking either would move a quantity from one factory to the other silently, so the save
+    is refused and says what to state instead.
+    """
+    w = World(db)
+    shipment = w.upload(
+        supplier_id=None,
+        lines=[(w.tap, 16, str(w.kailu.id)), (w.tap, 4, str(w.caizhou.id))],
+    )
+    db.commit()
+
+    with pytest.raises(AppException) as excinfo:
+        w.update(shipment.id, lines=[(w.tap, 20, None)])
+
+    assert excinfo.value.status_code == 409
+    message = excinfo.value.detail["message"]
+    assert w.tap.product_code in message
+    assert "more than one supplier" in message
+    db.rollback()
+    # Nothing was written: both factories' lines are exactly as they were.
+    assert {str(ln.supplier_id): ln.quantity_shipped for ln in w.lines(shipment.id)} == {
+        str(w.kailu.id): 16,
+        str(w.caizhou.id): 4,
+    }
+
+
+def test_the_same_edit_naming_the_supplier_per_line_updates_the_right_one(db):
+    w = World(db)
+    shipment = w.upload(
+        supplier_id=None,
+        lines=[(w.tap, 16, str(w.kailu.id)), (w.tap, 4, str(w.caizhou.id))],
+    )
+    db.commit()
+
+    w.update(
+        shipment.id,
+        lines=[(w.tap, 20, str(w.kailu.id)), (w.tap, 4, str(w.caizhou.id))],
+    )
+    db.commit()
+
+    lines = w.lines(shipment.id)
+    assert len(lines) == 2
+    assert {str(ln.supplier_id): ln.quantity_shipped for ln in lines} == {
+        str(w.kailu.id): 20,
+        str(w.caizhou.id): 4,
+    }
+
+
+def test_the_update_schema_carries_the_per_line_supplier_and_its_volume(db):
+    """`InboundShipmentUpdate.shipment_lines` is the same line schema the upload uses.
+
+    A field the schema does not declare never reaches the row and the save still returns 200,
+    so the supplier a caller states per line has to be on THIS schema, not only on create's.
+    """
+    w = World(db)
+    payload = InboundShipmentUpdate(
+        shipment_lines=[
+            InboundShipmentLineCreate(
+                product_id=str(w.tap.id),
+                quantity_shipped=7,
+                supplier_id=str(w.kailu.id),
+                cbm=Decimal("2.1000"),
+                remarks="one pallet",
+            )
+        ]
+    )
+    line = payload.shipment_lines[0]
+    assert line.supplier_id == str(w.kailu.id)
+    assert line.cbm == Decimal("2.1000")
+    assert line.remarks == "one pallet"
+
+    shipment = w.upload(supplier_id=None, lines=[(w.tap, 1, None)])
+    db.commit()
+    InboundShipmentService(db).update_shipment(str(shipment.id), payload, updated_by=None)
+    db.commit()
+
+    lines = w.lines(shipment.id)
+    assert len(lines) == 1
+    assert str(lines[0].supplier_id) == str(w.kailu.id)
+    assert lines[0].quantity_shipped == 7
+    assert float(lines[0].cbm) == pytest.approx(2.1)
+    assert lines[0].remarks == "one pallet"
+    db.refresh(shipment)
+    assert str(shipment.supplier_id) == str(w.kailu.id)
 
 
 # --------------------------------------------------------------------------- #

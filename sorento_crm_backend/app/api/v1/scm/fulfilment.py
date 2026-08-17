@@ -582,6 +582,35 @@ def list_inbound_shipments(
                     "supplier_name": name,
                 }
             )
+        # A container read before the per-supplier line existed - or read with no lines at
+        # all - has its factory on the header and nowhere else. Reading the lines alone
+        # printed no supplier under those containers, which says "we do not know" about a
+        # container we do know.
+        header_only = {
+            str(r.supplier_id)
+            for r in rows
+            if r.supplier_id is not None and not suppliers_by_shipment.get(str(r.id))
+        }
+        if header_only:
+            header_suppliers = {
+                str(s.id): {
+                    "supplier_id": str(s.id),
+                    "supplier_code": s.supplier_code,
+                    "supplier_name": s.supplier_name,
+                }
+                for s in db.query(Supplier).filter(Supplier.id.in_(header_only)).all()
+            }
+            for r in rows:
+                key = str(r.id)
+                if suppliers_by_shipment.get(key):
+                    continue
+                entry = (
+                    header_suppliers.get(str(r.supplier_id))
+                    if r.supplier_id is not None
+                    else None
+                )
+                if entry is not None:
+                    suppliers_by_shipment[key] = [entry]
     line_counts: dict[str, int] = {}
     if shipment_ids:
         for ship_id, count in (

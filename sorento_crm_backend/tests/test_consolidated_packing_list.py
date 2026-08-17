@@ -439,8 +439,27 @@ def test_a_notice_that_only_asked_for_production_is_not_a_pack_plan(db):
     kailu = _factory(out, "A-KAILU")
 
     assert kailu["notice_id"] == str(notice.id)
+    # Named, but not compared against: without this flag a silent line is indistinguishable
+    # from a line that matched its plan exactly.
+    assert kailu["has_pack_plan"] is False
     assert all(l["discrepancies"] == [] for l in kailu["lines"])
     assert kailu["not_packed"] == []
+
+
+def test_a_factory_says_whether_the_notice_it_names_is_a_pack_plan(db):
+    """`has_pack_plan` is true only when the notice actually asked for goods to be loaded.
+
+    Kailu was sent one; Caizhou was sent nothing at all. Both report a `notice_id` the screen
+    can name (Caizhou's being null), and only Kailu's is something a container can be short of.
+    """
+    w = World(db)
+    w.notice_for_kailu()
+
+    out = svc.build(db, str(w.shipment.id))
+
+    assert _factory(out, "A-KAILU")["has_pack_plan"] is True
+    assert _factory(out, "B-CAIZHOU")["has_pack_plan"] is False
+    assert _factory(out, "Unassigned")["has_pack_plan"] is False
 
 
 def test_the_notice_compared_against_is_the_one_the_container_could_have_been_packed_to(db):
