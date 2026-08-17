@@ -2,8 +2,9 @@
 
 **Status:** IN PROGRESS, 18 August 2026. Branch `fm/scm-stage1c-promising`, stacked on
 `fm/scm-stage1b-reconciliation` (PR #209). Phase 1 (mock) and Phase 2 backend are in;
-the frontend swap off the mock, its Vitest, the evidence run and the AC-H03 report are
-what is left.
+the frontend is off the mock and onto the real routes, the retired write surfaces are
+gone from the screen, and the frontend Vitest is in. The evidence run and the AC-H03
+report are what is left.
 
 **Contract:** `PLAN-scm-front-planning.md` sections 3.1-3.5, 4, and the Stage 1C bullet in
 section 7; `UAC-scm-front-planning.md` Groups B, C, D plus the AC-G / AC-H criteria those
@@ -253,7 +254,11 @@ Transaction (plan 3.1 steps, one commit):
   `DELETE .../allocation`, claim raise/accept/refuse routes and their service methods are
   removed; `rank` / candidates read stays as the Borrow-candidate source (absorbed or
   re-exported by the supply service). The allocation list read stays (now shows decision
-  components). FE surfaces calling the removed routes are removed/redirected to the sheet.
+  components). FE surfaces calling the removed routes are removed/redirected to the sheet:
+  the sales order's Allocation panel keeps its reads and loses Choose source / Change /
+  Clear, the ranked-source dialog becomes read-only evidence, and Stock claims becomes the
+  Borrow history (no Release, no Refuse, a `Decided by` column instead). All three carry
+  one link to **Project Sales -> Fulfilment Planning**, where the composing now happens.
 - Tests pinned in STAGE0 note section 5 ("kept until 1C") are deleted or rewritten to the
   new contract in the same commit as the behaviour change, never before.
 
@@ -325,6 +330,13 @@ difference between this note and the code:
   the sentence through `extractApiError` (which reads `message`) and the list off a clone
   of the same response - and a second key holding the same sentence under another name
   would be one more thing to keep in step.
+- **A refusal, and a confirmation exception, may carry no line number.** `line_no` and
+  `item_code` are both optional on `SupplyFailingLine` and `ConfirmException`
+  (`app/schemas/project_supply.py`), because a refusal can be about the sales order
+  rather than about one of its lines. The frontend types were tightened to match and the
+  sheet names the order itself in that case, the way the reconciliation exception list
+  already names a surplus core line by item code alone. `ConfirmResult.confirmed_at` is
+  optional for the same "the schema is the authority" reason.
 - **Confirmation verifies the LINE links, not the whole Stage 1B review state.** Plan 3.1
   step 2 says "verify that every Project line has a unique reconciled core SO line", and
   that is the check: a line with no `core_sales_order_line_id` refuses the order. The
