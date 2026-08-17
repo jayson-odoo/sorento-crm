@@ -678,9 +678,10 @@ def test_a_whitespace_only_query_filters_nothing():
 
 
 def test_an_unknown_review_state_is_refused_rather_than_silently_emptying_the_list():
-    """`review_state` has exactly two values in this slice. Anything else (a Stage 1C
-    state that has not shipped, a typo) is a 422, because deriving a state nothing can
-    equal and answering 200 with an empty list reads as "no work to do"."""
+    """`review_state` is a closed set (awaiting_reconciliation, needs_cs_review, and
+    Stage 1C's confirmed). Anything else (a typo, a state that has not shipped) is a 422,
+    because deriving a state nothing can equal and answering 200 with an empty list reads
+    as "no work to do"."""
     with blank_session() as db:
         company_id = _sorento(db)
         project_seed_service.run(db, company_id=company_id)
@@ -695,7 +696,7 @@ def test_an_unknown_review_state_is_refused_rather_than_silently_emptying_the_li
         try:
             with company_scope(db, frozenset({company_id})):
                 response = client.get(
-                    f"{BASE}/fulfilment-planning", params={"review_state": "confirmed"}
+                    f"{BASE}/fulfilment-planning", params={"review_state": "half_confirmed"}
                 )
                 assert response.status_code == 422, response.text
         finally:
