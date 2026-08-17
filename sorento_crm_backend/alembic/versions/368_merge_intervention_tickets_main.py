@@ -5,7 +5,7 @@ head to aim at.
 
 Two heads exist after merging main into this branch:
 
-    359_scm_plan_feedback_r2       (main: SCM plan-feedback lane, tip of main)
+    367_promote_flyer_provenance   (main: flyer-provenance lane, tip of main)
     330_conversations_inbox        (this branch: conversations inbox + perms,
                                     tail of the 321..330 intervention-ticket lane)
 
@@ -25,9 +25,9 @@ The id is 22 characters: `scripts/bootstrap_env.py` stamps the head into an
 docstring), so any head id must stay <= 32.
 """
 
-revision = "360_merge_tickets_main"
+revision = "368_merge_tickets_main"
 down_revision = (
-    "359_scm_plan_feedback_r2",
+    "367_promote_flyer_provenance",
     "330_conversations_inbox",
 )
 branch_labels = None
