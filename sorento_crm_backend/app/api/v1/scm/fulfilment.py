@@ -14,7 +14,17 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
@@ -25,6 +35,7 @@ from app.dependencies import require_permission
 from app.models.scm import ContainerSize, LoadingPlan
 from app.services.scm import (
     allocation_suggestion_service,
+    consolidated_packing_list,
     loading_plan_service,
     packing_list_service,
     supplier_inventory_service,
@@ -598,6 +609,32 @@ def allocation_suggestion(
 ):
     """Per shipment line, the proposed Supply PO line and location, with its alternatives."""
     return allocation_suggestion_service.suggest(db, shipment_id)
+
+
+@router.get("/inbound-shipments/{shipment_id}/packing-list")
+def consolidated_packing_list_for_shipment(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The Sorento packing list: every factory on this container, subtotalled and split."""
+    return consolidated_packing_list.build(db, shipment_id)
+
+
+@router.get("/inbound-shipments/{shipment_id}/packing-list/export")
+def export_consolidated_packing_list(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The same list as a workbook, named after the container rather than after its id."""
+    payload = consolidated_packing_list.build(db, shipment_id)
+    filename = consolidated_packing_list.export_filename(payload)
+    return Response(
+        content=consolidated_packing_list.to_xlsx(payload),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/inbound-shipments/{shipment_id}/allocations")

@@ -136,13 +136,13 @@ Backend only.
           "discrepancies": ["Loading plan asked 500, packed 490 (short 10)"] }
       ],
       "not_packed": [ { "product_id": "...", "product_code": "...", "product_name": "...", "planned_qty": 100 } ],
-      "subtotal": { "lines": 21, "qty": 3519, "cartons": 261, "cbm": 8.6033 }
+      "subtotal": { "lines": 21, "qty": 3519, "cartons": 261, "cbm": 8.6033, "cbm_known_lines": 19 }
     }
   ],
-  "total": { "lines": 54, "qty": 7365, "cartons": 685, "cbm": 63.2029 },
+  "total": { "lines": 54, "qty": 7365, "cartons": 685, "cbm": 63.2029, "cbm_known_lines": 50 },
   "split": [
-    { "company": "SORENTO", "lines": 48, "qty": 6465, "cartons": 630, "cbm": 55.8959 },
-    { "company": "MOCHA",   "lines": 6,  "qty": 900,  "cartons": 55,  "cbm": 7.3070 }
+    { "company": "SORENTO", "lines": 48, "qty": 6465, "cartons": 630, "cbm": 55.8959, "cbm_known_lines": 45 },
+    { "company": "MOCHA",   "lines": 6,  "qty": 900,  "cartons": 55,  "cbm": 7.3070, "cbm_known_lines": 5 }
   ]
 }
 ```
