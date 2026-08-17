@@ -52,8 +52,26 @@ def _mapped_classes():
     ]
 
 
+# Born after migration 354, so no pre-move name exists: these models chose their entity
+# type at birth and are pinned by their own test below, not by the rename contract.
+BORN_AFTER_THE_MOVE = frozenset({"so_supply_decisions"})
+
+
 def _projects_classes():
-    return [cls for cls in _mapped_classes() if cls.__table__.schema == "projects"]
+    return [
+        cls
+        for cls in _mapped_classes()
+        if cls.__table__.schema == "projects"
+        and cls.__tablename__ not in BORN_AFTER_THE_MOVE
+    ]
+
+
+def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_with():
+    """`so_supply_decisions` never wrote a pre-move audit row, so nothing constrains it
+    historically; it adopted its siblings' `project_` prefix and this pins that choice."""
+    from app.models.project_so import SOSupplyDecision
+
+    assert _audit_entity_type(SOSupplyDecision) == "project_so_supply_decisions"
 
 
 def test_every_renamed_model_pins_its_pre_move_audit_entity_type():
