@@ -221,6 +221,8 @@ Menu: **AI Agents** (page title *AI Agents*). **This is NOT an administrative lo
 | `policy_id` → sla_policy | Conversation-SLA policy bound to this team set (one per `(agent, code)`, cast onto every tier row). |
 | `notify_on_extension` | Whether this tier's team is notified when a lower-tier deadline is extended (default `true`). |
 
+**Member brand tags (`team_member_brands`)** - on each member row under a Team Assignment, the **Brands** editor lists the brands that member serves (`brand_code`, lower-case, validated against `brands`). Empty = **All brands**. Routing draws from the members tagged with the conversation's brand plus the untagged ones, and falls back to the whole team when nobody carries it - the same rule as the member's market segments. See [Manage teams](manage-teams.md#how-teams-drive-sla-assignment-tiers).
+
 **MCP tool grants** — detail page card **MCP Tools**: many-to-many via `agent_mcp_tools` (agent × tool × optional team × tier). The catalog rows live in `mcp_tools`. Sync from the code catalog never touches ownership — only admins grant/revoke.
 
 **Date columns:** `created_at`, `updated_at` (agent); `created_at` (agent_teams).
@@ -306,7 +308,7 @@ Menu: **Contact Access Types** (page title *Contact Access Types*). The configur
 ## Cross-entity notes
 
 * **Permission path:** `users` → `user_role_assignments` → `user_roles` → `user_role_permissions` → `user_permissions`. A user has a permission iff one of their assigned roles grants it. There is **no** direct user→permission table.
-* **SLA routing path:** `access_agents` → `agent_teams` (team-set `code` + `tier` + `policy_id`) → `teams` → `team_members` (round-robin via `sort_order` + `include_in_round_robin`) → `users` (and the user's `tier` + notify toggles). See [SLA — form-SLA configuration](../sla/form-sla-configuration.md).
+* **SLA routing path:** `access_agents` → `agent_teams` (team-set `code` + `tier` + `policy_id`) → `teams` → `team_members` (round-robin via `sort_order` + `include_in_round_robin`, pool narrowed by `team_member_brands` / `team_member_market_segments`) → `users` (and the user's `tier` + notify toggles). See [SLA — form-SLA configuration](../sla/form-sla-configuration.md).
 * **Access-grant path (conversations):** `respond_contacts` → `contact_agent_access` (Internal Users, time-boxed) → `access_agents` (AI Agents) → `agent_mcp_tools` → `mcp_tools`.
 * **Visibility path (content):** `contact_access_types` (catalog) ↔ `respond_contact_access_types` (a contact's codes) overlapped against a resource's `access_levels` array.
 * **Tier is overloaded.** `users.tier` = the user's conversation-SLA policy tier; `agent_teams.tier` = which escalation level a team plays *for one agent's team-set*. They are related concepts but different columns — be explicit which one a question is about.

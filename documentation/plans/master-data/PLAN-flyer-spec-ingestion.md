@@ -837,14 +837,14 @@ contract moved except AC-F.1, which gains a stated consequence rather than a cha
    AC-F.1, where a ticked `dim_height` conflict is written over the master's own derived value and
    stored as `flyer` with the printed words as evidence.
 
-**The consequence of 7, stated rather than fixed (AC-F.1, BL-016).** `flyer` is an AUTHORED
+**The consequence of 7, stated rather than fixed (AC-F.1, BL-022).** `flyer` is an AUTHORED
 source, which is the point - the reviewed value survives re-derivation. So the next `derive` that
 reads the same description disagrees with it, and `merge_authored_over` raises
 `human_override_conflict` for that key, putting the row in `needs_review`. That is D8 doing its
 job: the paper and the master disagree and a person is meant to see it. But bulk-ticking forty
 dimension conflicts parks forty open exceptions nobody asked for, and whether that should be
 quieter (suppressed where the authored value came from a reviewed flyer proposal, or resolved on
-apply) is the captain's call. Nothing here suppresses it; logged as **BL-016**.
+apply) is the captain's call. Nothing here suppresses it; logged as **BL-022**.
 
 **Counts at the S5 hand-off:** pytest 163 green over
 `test_dealer_kit_flyer_spec_proposal_routes` (50), `test_product_spec_flyer_ingest_service`,

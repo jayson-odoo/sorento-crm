@@ -11,6 +11,7 @@ import {
   type SpecExtractionResult,
   type SpecProposalEntry,
 } from '../../product-specifications/services/productSpecService';
+import { WORKLIST_KEY } from '../../spec-verification/hooks/useSpecVerification';
 import { APPLICABLE_KEY, DETAIL_KEY } from './useProductSpecTable';
 
 /**
@@ -84,6 +85,7 @@ export function useSpecExtraction(
       applySpecProposals(productId, entries),
     onSuccess: (answer) => {
       queryClient.invalidateQueries({ queryKey: DETAIL_KEY(productId) });
+      queryClient.invalidateQueries({ queryKey: [WORKLIST_KEY] });
       // The picker's held/not-held split moves with every write.
       if (productCode) {
         queryClient.invalidateQueries({

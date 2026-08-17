@@ -280,7 +280,7 @@ tombstoned, and which keys apply to the product's class. None of it is asked for
   `human_override_conflict` for that key and the row goes `needs_review`. That is D8 doing its
   job (the disagreement between the paper and the master is exactly what a person should see),
   but bulk-ticking many dimension conflicts parks that many open exceptions. Whether it should
-  be quieter is the captain's call, logged as **BL-016**; nothing in this slice suppresses it.
+  be quieter is the captain's call, logged as **BL-022**; nothing in this slice suppresses it.
 - **AC-F.2** `[BE]` GIVEN `PATCH /dealer-kit/flyer-readings/{id}/spec-proposals/{proposal_id}`
   with `{value}` WHEN called by a holder of both permissions THEN the value is validated via
   `value_for_registry`, stored on the proposal row with `edited_at` / `edited_by`, the row's

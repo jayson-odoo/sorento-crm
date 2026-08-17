@@ -352,6 +352,7 @@ def build_conversation_sla_tracking_response(
         if getattr(tracking, "agent", None)
         else None,
         "team_set_code": getattr(tracking, "team_set_code", None),
+        "brand_code": getattr(tracking, "brand_code", None),
         "message_id": getattr(tracking, "message_id", None),
         **timings,
     }
@@ -1120,6 +1121,9 @@ async def escalate_sla_tracking_integration(
             agent_id_override=resolved_agent_id,
             contact_segments=contact_segments,
             company_id=_tracking_company_id(tracking),
+            # AC-T3: the brand comes off the tracker, like the company - the ladder
+            # this escalation climbs must be the one the assignment came off.
+            brand_code=getattr(tracking, "brand_code", None),
         )
 
         # Assignee is passed into the service so the escalation event log (written inside
@@ -1320,6 +1324,7 @@ async def escalate_conversation_sla_tracking(
         agent_id_override=getattr(tracking, "agent_id", None) or None,
         contact_segments=contact_segments,
         company_id=_tracking_company_id(tracking),
+        brand_code=getattr(tracking, "brand_code", None),
     )
     # AC-F1: escalate the EXACT row this route was called for (tracking_id is the URL
     # param). Without this, escalate_tracking's internal (respond_contact_id, policy_id)

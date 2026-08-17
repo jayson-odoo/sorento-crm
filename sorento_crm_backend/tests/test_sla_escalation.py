@@ -67,7 +67,10 @@ def test_get_escalation_assignee_for_tier_returns_assignee_when_configured():
         svc.get_team_id_by_tier.assert_called_once_with(
             "agent1", 2, team_set_code=None, company_id="00000000-0000-0000-0000-000000000001"
         )
-        svc.get_next_assignee.assert_called_once_with("agent1", "team1")
+        # Both opt-in filters are always passed now, defaulting to "no filter".
+        svc.get_next_assignee.assert_called_once_with(
+            "agent1", "team1", None, brand_code=None
+        )
 
 
 def test_get_escalation_assignee_for_tier_defaults_none_to_complaint():

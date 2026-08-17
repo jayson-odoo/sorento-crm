@@ -302,6 +302,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'user_management.users.view',
       },
       {
+        title: 'Onboarding Requests',
+        path: '/user-management/onboarding-requests',
+        permission: 'user_management.onboarding.view',
+      },
+      {
         title: 'Roles',
         path: '/user-management/roles',
         permission: 'user_management.roles.view',
@@ -586,6 +591,11 @@ export const MENU_SIDEBAR: MenuConfig = [
     {
       title: 'Product Specifications',
       path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Spec Verification',
+      path: '/master-data-management/spec-verification',
       permission: 'master_data.products.view',
     },
     {
@@ -1320,6 +1330,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/users',
       },
       {
+        title: 'Onboarding Requests',
+        path: '/user-management/onboarding-requests',
+      },
+      {
         title: 'Roles',
         path: '/user-management/roles',
       },
@@ -1485,6 +1499,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     {
       title: 'Product Specifications',
       path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Spec Verification',
+      path: '/master-data-management/spec-verification',
       permission: 'master_data.products.view',
     },
     {

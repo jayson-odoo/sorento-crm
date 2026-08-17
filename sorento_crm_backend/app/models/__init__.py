@@ -5,7 +5,7 @@ from app.models.company import Company, UserCompany, RespondContactCompany
 from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess, UserListColumnConfig
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
-from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecFlyerBatch, ProductSpecFlyerProposal
+from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecVerification, ProductSpecFlyerBatch, ProductSpecFlyerProposal
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.sales_agent import SalesAgent
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
@@ -29,7 +29,7 @@ from app.models.ticket_comment import ConversationTicketComment
 from app.models.message_snippet import MessageSnippet
 from app.models.resources import Attachment, AttachmentType
 from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
-from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments
+from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
 from app.models.respond_workspace import RespondWorkspace
 from app.models.respond_template import (
     RespondChannel,
@@ -91,6 +91,11 @@ from app.models.dealer_kit import (
     FlyerReadingRecord,
     Selection,
     SelectionLine,
+)
+from app.models.onboarding import (
+    OnboardingTemplate,
+    OnboardingRequest,
+    OnboardingPerson,
 )
 from app.models.scm import (
     ReorderPolicy,
@@ -294,6 +299,10 @@ __all__ = [
     "SelectionLine",
     "BundleComponent",
     "FlyerReadingRecord",
+    # Onboarding intake / review / provisioning
+    "OnboardingTemplate",
+    "OnboardingRequest",
+    "OnboardingPerson",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

@@ -371,6 +371,11 @@ class TeamMemberResponse(BaseModel):
         from_attributes = True
 
 
+class BrandCodesUpdate(BaseModel):
+    """Replace a team member's brand tags with this exact set (empty = serves all)."""
+    codes: list[str] = []
+
+
 class AgentTeamAssignment(BaseModel):
     code: str
     team_id: str
