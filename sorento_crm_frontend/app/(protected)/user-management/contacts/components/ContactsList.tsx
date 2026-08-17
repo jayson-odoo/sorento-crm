@@ -11,7 +11,19 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Copy, LoaderCircleIcon, Plus, RefreshCw, Search, Trash2, UserCog, X } from 'lucide-react';
+import {
+  ChevronRight,
+  Copy,
+  LoaderCircleIcon,
+  MessageCircle,
+  MessageCircleOff,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  UserCog,
+  X,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -34,6 +46,10 @@ import ContactDeleteDialog from './ContactDeleteDialog';
 import ContactBulkDeleteDialog from './ContactBulkDeleteDialog';
 import BulkCopySettingsFromContactDialog from './BulkCopySettingsFromContactDialog';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
+import ContactOutboundCell from '@/components/contacts/ContactOutboundCell';
+import ContactOutboundDisableDialog from '@/components/contacts/ContactOutboundDisableDialog';
+import ContactOutboundSummary from '@/components/contacts/ContactOutboundSummary';
+import { useRespondContactOutboundMutations } from '@/hooks/useRespondContactOutbound';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -67,6 +83,7 @@ export default function ContactsList() {
   const [bulkCopyDialogOpen, setBulkCopyDialogOpen] = useState(false);
   const [impersonateTarget, setImpersonateTarget] = useState<RespondContact | null>(null);
   const [impersonateStarting, setImpersonateStarting] = useState(false);
+  const [bulkDisableOutboundOpen, setBulkDisableOutboundOpen] = useState(false);
 
   const fetchContacts = async (): Promise<DataGridApiResponse<RespondContact>> => {
     const sortField = sorting?.[0]?.id || 'created_at';
@@ -92,12 +109,27 @@ export default function ContactsList() {
     retry: 1,
   });
 
-  const pageContacts = data?.data ?? [];
+  const pageContacts = useMemo(() => data?.data ?? [], [data]);
   const selectedContactIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
   const selectedContacts = useMemo(
     () => pageContacts.filter((c) => rowSelection[c.id]),
     [pageContacts, rowSelection],
   );
+
+  // One row here is one contact, so the outbound switch is 1:1 with the row and
+  // the selection needs no de-duplication (unlike the contact x agent grants grid).
+  const { setOne: setOutboundOne, setBulk: setOutboundBulk } =
+    useRespondContactOutboundMutations();
+  const outboundBusy = setOutboundOne.isPending || setOutboundBulk.isPending;
+  const outboundCounts = useMemo(() => {
+    let reachable = 0;
+    let silenced = 0;
+    for (const contact of pageContacts) {
+      if (contact.outbound_enabled === false) silenced += 1;
+      else if (contact.outbound_enabled === true) reachable += 1;
+    }
+    return { reachable, silenced };
+  }, [pageContacts]);
 
   function contactSyncErrorMessage(response: Response): Promise<string> {
     return extractApiError(response, `Sync failed (${response.status})`);
@@ -234,6 +266,23 @@ export default function ContactsList() {
         meta: { headerTitle: 'Access types', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
+        accessorKey: 'outbound_enabled',
+        header: ({ column }) => <DataGridColumnHeader title="Outbound" column={column} />,
+        enableSorting: false,
+        cell: ({ row }) => (
+          <ContactOutboundCell
+            enabled={row.original.outbound_enabled}
+            contactLabel={row.original.name || row.original.phone_number}
+            disabled={outboundBusy}
+            onChange={(enabled) =>
+              setOutboundOne.mutate({ contactId: row.original.id, enabled })
+            }
+          />
+        ),
+        size: 210,
+        meta: { headerTitle: 'Outbound', skeleton: <Skeleton className="h-5 w-28" /> },
+      },
+      {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
         cell: ({ row }) => formatDate(new Date(row.original.created_at)),
@@ -293,7 +342,13 @@ export default function ContactsList() {
         size: 90,
       },
     ],
-    [syncContactMutation.isPending, syncContactMutation.variables, bulkSyncMutation.isPending],
+    [
+      syncContactMutation.isPending,
+      syncContactMutation.variables,
+      bulkSyncMutation.isPending,
+      outboundBusy,
+      setOutboundOne,
+    ],
   );
 
   const table = useReactTable({
@@ -317,6 +372,12 @@ export default function ContactsList() {
 
   const clearSelection = () => setRowSelection({});
 
+  const runOutboundBulk = (enabled: boolean) =>
+    setOutboundBulk.mutate(
+      { enabled, contactIds: selectedContactIds },
+      { onSuccess: clearSelection },
+    );
+
   return (
     <DataGrid
       table={table}
@@ -325,6 +386,12 @@ export default function ContactsList() {
       isLoading={isLoading}
     >
       <Card>
+        <CardHeader className="block">
+          <ContactOutboundSummary
+            reachable={outboundCounts.reachable}
+            silenced={outboundCounts.silenced}
+          />
+        </CardHeader>
         <CardHeader className="block">
           <DataGridListToolbar
             table={table}
@@ -359,6 +426,21 @@ export default function ContactsList() {
               </Button>
             }
             bulkActions={[
+              {
+                key: 'outbound-enable',
+                label: `Enable messaging (${selectedContactIds.length})`,
+                icon: MessageCircle,
+                disabled: outboundBusy,
+                onClick: () => runOutboundBulk(true),
+              },
+              {
+                key: 'outbound-disable',
+                label: `Disable messaging (${selectedContactIds.length})`,
+                icon: MessageCircleOff,
+                destructive: true,
+                disabled: outboundBusy,
+                onClick: () => setBulkDisableOutboundOpen(true),
+              },
               {
                 key: 'sync',
                 label: `Sync from Respond (${selectedContactIds.length})`,
@@ -409,6 +491,17 @@ export default function ContactsList() {
         onOpenChange={setBulkDeleteDialogOpen}
         contactIds={selectedContactIds}
         onSuccess={clearSelection}
+      />
+
+      <ContactOutboundDisableDialog
+        open={bulkDisableOutboundOpen}
+        onOpenChange={setBulkDisableOutboundOpen}
+        contactCount={selectedContactIds.length}
+        busy={outboundBusy}
+        onConfirm={() => {
+          setBulkDisableOutboundOpen(false);
+          runOutboundBulk(false);
+        }}
       />
 
       <BulkCopySettingsFromContactDialog

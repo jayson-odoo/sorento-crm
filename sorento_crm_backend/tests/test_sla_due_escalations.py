@@ -139,7 +139,7 @@ def test_list_due_escalations_handles_missing_contact():
 
 
 # ---------------------------------------------------------------------------
-# Service: escalate_tracking — default reason + assignee-before-log ordering
+# Service: escalate_tracking - default reason + assignee-before-log ordering
 # ---------------------------------------------------------------------------
 
 def _run_escalate(service, tracking, **kwargs):
@@ -218,7 +218,7 @@ def test_escalate_tracking_without_assignee_keeps_existing():
 
 
 # ---------------------------------------------------------------------------
-# Service: list_due_escalations — split-clock breach filter (real SQL via sqlite)
+# Service: list_due_escalations - split-clock breach filter (real SQL via sqlite)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -367,7 +367,7 @@ def test_due_escalations_route_empty(mock_service_cls, client):
 
 
 # ---------------------------------------------------------------------------
-# Route: /integration/escalate — optional reason, assignee pass-through, escalated_at
+# Route: /integration/escalate - optional reason, assignee pass-through, escalated_at
 # ---------------------------------------------------------------------------
 
 @patch("app.api.v1.sla.sla_tracking.IntegrationLogService")
@@ -381,12 +381,17 @@ def test_escalate_without_reason_passes_assignee_and_returns_escalated_at(
     after.escalated_at = datetime(2026, 6, 6, 3, 0, 0, tzinfo=timezone.utc)
     after.escalation_reason = "Auto-escalation: tier 1 response due time breached"
     svc.resolve_internal_respond_contact_id.return_value = "contact-1"
+    # get_open_tracking_by_contact is the route's PRIMARY resolver (S2b); an
+    # unconfigured auto-mock is truthy (and its auto-mocked .is_resolved is
+    # truthy too), so it must return None to fall through to the
+    # get_tracking_by_contact_and_policy mock this test actually configures.
+    svc.get_open_tracking_by_contact.return_value = None
     svc.get_tracking_by_contact_and_policy.return_value = before
     svc.get_escalation_assignee_for_tier.return_value = ASSIGNEE
     svc.escalate_tracking.return_value = after
 
     # Explicit null must behave like omitting the field (validators don't run on the
-    # default, so the validator itself must accept None) — was a 422 before the fix.
+    # default, so the validator itself must accept None) - was a 422 before the fix.
     r = client.post(
         "/api/v1/sla-management/conversation-sla-tracking/integration/escalate",
         json={

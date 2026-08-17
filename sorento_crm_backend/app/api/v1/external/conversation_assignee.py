@@ -37,6 +37,14 @@ async def set_conversation_assignee(
     ```
 
     **Returns:** Updated tracking info and assignee details, or 404 if no SLA tracking exists for that contact.
+
+    **AC-F1 caution (multi-open consumer audit):** resolves "the" tracking for the
+    phone via `get_tracking_by_contact_phone` (documented MOST-RECENT-OPEN pick -
+    see `ConversationSLATrackingService.get_preferred_tracking_for_contact`), then
+    MUTATES its assignee. A contact holding 2+ open tickets only ever gets the
+    newest one's assignee changed by this call; siblings are untouched. Kept as-is
+    for backward compat (regression net 3) - a per-ticket contract (tracking_id in
+    the body) is the S3.2 cutover target.
     """
     contact_phone = (
         (body.get("contact_phone_number") or body.get("contact_phone") or "").strip()

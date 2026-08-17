@@ -1,7 +1,7 @@
 """Integration logging service for business logic."""
 from sqlalchemy.orm import Session
-from typing import Optional, List
-from datetime import datetime
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
 import json
 import logging
 import httpx
@@ -9,9 +9,44 @@ from app.config import settings
 from app.models.integration import IntegrationLog
 from app.schemas.integration import IntegrationLogCreate, IntegrationLogUpdate
 from app.services.error_handler import handle_not_found
+from app.services.respond_outbound_service import assert_outbound_enabled
 from app.services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
+
+# Channels whose outbound webhook must carry the AC-J6 shared secret. Resolved
+# from the ROW rather than only at the two direct call sites, because a failed
+# send is reset to `pending` and comes back through the scheduled sweeper or the
+# operator Retry button - lanes that know nothing about headers. Sending those
+# retries unauthenticated meant n8n's fail-closed gate refused exactly the calls
+# that needed a second chance.
+WEBHOOK_AUTH_HEADER_CHANNELS = frozenset({"n8n_crm_chat_outbound", "n8n_crm_close_convo"})
+
+# How long a row created by a direct-send lane is held back from the sweeper.
+# The direct lane commits the row `pending` and then POSTs it on a daemon
+# thread; a sweeper tick landing in that gap would send the same row a second
+# time. `next_retry_at` already means "not before this time", so holding it is
+# the state machine doing its own job rather than a new flag.
+DIRECT_SEND_HOLD_SECONDS = 120
+
+
+def direct_send_retry_hold() -> datetime:
+    """`next_retry_at` for a row a direct-send thread is about to POST itself."""
+    return datetime.utcnow() + timedelta(seconds=DIRECT_SEND_HOLD_SECONDS)
+
+
+def resolve_webhook_auth_headers(integration_channel: Optional[str]) -> Dict[str, str]:
+    """Auth headers a given integration channel's webhook call must carry.
+
+    Empty for every channel that has no shared-secret contract: handing a
+    credential to a lane that never asked for it widens the blast radius for
+    nothing.
+    """
+    if str(integration_channel or "").strip() not in WEBHOOK_AUTH_HEADER_CHANNELS:
+        return {}
+    from app.services.n8n_webhook_settings import crm_webhook_auth_headers
+
+    return crm_webhook_auth_headers() or {}
 
 
 def _decrypt_workspace_key(workspace) -> Optional[str]:
@@ -52,6 +87,7 @@ def _resolve_workspace_credentials(
             db = SessionLocal()
             own_session = True
         from app.models.access import RespondContact
+        from app.services.respond_identifier import contact_for_identifier
         from app.services.respond_workspace_service import RespondWorkspaceService
 
         ws_svc = RespondWorkspaceService(db)
@@ -65,19 +101,10 @@ def _resolve_workspace_credentials(
                 .first()
             )
         elif identifier:
-            val = str(identifier)
-            val = val.split(":", 1)[1] if ":" in val else val
-            contact = (
-                db.query(RespondContact)
-                .filter(RespondContact.respond_io_id == val)
-                .first()
-            )
-            if contact is None:
-                contact = (
-                    db.query(RespondContact)
-                    .filter(RespondContact.phone_number == val)
-                    .first()
-                )
+            # Same lookup the outbound kill switch performs, deliberately shared:
+            # the workspace a send uses and the switch that permits it must never
+            # resolve to different contacts.
+            contact = contact_for_identifier(db, identifier)
         if contact is not None and getattr(contact, "workspace_id", None):
             workspace = ws_svc.get(contact.workspace_id)
         if workspace is None:
@@ -101,7 +128,7 @@ class RespondClient:
 
     Credentials come from `respond_workspaces` (per-contact workspace when an
     identifier/contact resolves, else the default workspace). The env
-    RESPOND_API_KEY is a deprecated last-resort fallback only — being phased out.
+    RESPOND_API_KEY is a deprecated last-resort fallback only - being phased out.
     """
 
     def __init__(
@@ -178,6 +205,41 @@ class RespondClient:
             return identifier or ""
         return f"id:{identifier}"
 
+    def _post_contact_message(
+        self, identifier: str, payload: dict, *, timeout: float = 15
+    ) -> dict:
+        """The ONE place a message to a contact leaves this process.
+
+        Every outbound send - text, attachment, WhatsApp template, and anything
+        added later - builds only its payload and delegates here, so the
+        per-contact outbound switch cannot be forgotten by the next method
+        somebody writes. `tests/test_respond_outbound_switch.py` fails if a
+        second method ever POSTs to a `/message` URL.
+
+        Deliberately NOT gated here: `/conversation/status` (close) and
+        `/conversation/assignee`. Those are not messages to the contact - the
+        switch governs what we SAY to a customer, not our own housekeeping on
+        the conversation, so a muted contact's thread can still be closed and
+        reassigned.
+
+        The failing response is attached to the raised `HTTPStatusError` so
+        callers (the Respond outbox in particular) can log what Respond
+        actually said, not just the status code.
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        assert_outbound_enabled(identifier)
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}/message"
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                e.response = response
+                raise
+            return response.json() if response.content else {}
+
     def get_user_by_id(self, user_id: str) -> dict:
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
@@ -230,15 +292,33 @@ class RespondClient:
 
     def send_message(self, identifier: str, text: str) -> dict:
         """Send a text message to a contact. identifier = last segment of respond inbox URL (e.g. contact_id). Uses id: prefix for API."""
-        if not self.api_key:
-            raise ValueError("Respond API key is not configured.")
-        api_id = self._contact_api_identifier(identifier)
-        url = f"{self.base_url}/v2/contact/{api_id}/message"
         payload = {"message": {"type": "text", "text": text}}
-        with httpx.Client(timeout=15) as client:
-            response = client.post(url, headers=self._headers(), json=payload)
-            response.raise_for_status()
-            return response.json() if response.content else {}
+        return self._post_contact_message(identifier, payload, timeout=15)
+
+    def send_attachment(
+        self,
+        identifier: str,
+        attachment_type: str,
+        url: str,
+        caption: Optional[str] = None,
+    ) -> dict:
+        """Send a media attachment to a contact. message type ``attachment``
+        (R1, resolved 2026-08-12): subtypes are ``image`` / ``video`` / ``audio`` /
+        ``file`` only - Respond.io has no sticker send and no reply-to/context
+        parameter on this endpoint. ``url`` must be reachable by Respond's own
+        fetcher: a permanent CDN link where the active storage provider serves
+        one (R2), or a long-lived signed URL otherwise - never a short presign
+        (see ``respond_chat_template_service.upload_chat_attachment``).
+        """
+        if attachment_type not in ("image", "video", "audio", "file"):
+            raise ValueError(f"Unsupported Respond.io attachment type: {attachment_type}")
+        attachment_payload: dict = {"type": attachment_type, "url": url}
+        if caption:
+            attachment_payload["caption"] = caption
+        payload = {"message": {"type": "attachment", "attachment": attachment_payload}}
+        # Larger timeout than a text send: Respond fetches the media itself
+        # before it can hand back a response.
+        return self._post_contact_message(identifier, payload, timeout=30)
 
     def close_conversation(
         self,
@@ -253,7 +333,7 @@ class RespondClient:
         form the closing note; a workspace may require category before closing, in
         which case omitting it yields a 4xx (callers treat close as best-effort).
         Endpoint: POST /v2/contact/{identifier}/conversation/status, body
-        {status: "close", category, summary}. (No /conversation/close path — that 404s.)
+        {status: "close", category, summary}. (No /conversation/close path - that 404s.)
         """
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
@@ -266,6 +346,34 @@ class RespondClient:
             payload["summary"] = summary
         with httpx.Client(timeout=15) as client:
             response = client.post(url, headers=self._headers(), json=payload)
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                e.response = response
+                raise
+            return response.json() if response.content else {}
+
+    def create_comment(self, identifier: str, text: str) -> dict:
+        """Post an internal comment on a contact's conversation (UAC AC-L2).
+
+        POST /v2/contact/{identifier}/comment, body {text}. NOT a message: a
+        comment is internal to the Respond workspace and is never delivered to
+        the contact, which is why it does NOT go through
+        ``_post_contact_message`` (and is not subject to the per-contact
+        outbound switch - the same reasoning as ``close_conversation`` and
+        ``set_conversation_assignee``).
+
+        Mentions use Respond's own ``{{@user.<respond_user_id>}}`` token syntax;
+        the caller renders them (see ticket_comment_service.build_mirror_text).
+        Create-only: Respond has no comment read-back endpoint, so the CRM DB
+        stays the source of truth.
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}/comment"
+        with httpx.Client(timeout=15) as client:
+            response = client.post(url, headers=self._headers(), json={"text": text})
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as e:
@@ -425,7 +533,7 @@ class RespondClient:
         cursor: Optional[str] = None
         seen_cursors: set[str] = set()
         with httpx.Client(timeout=15) as client:
-            for _ in range(100):  # hard page cap — guards against a cursor loop
+            for _ in range(100):  # hard page cap - guards against a cursor loop
                 params: dict = {"limit": 100}
                 if cursor:
                     params["cursorId"] = cursor
@@ -468,10 +576,6 @@ class RespondClient:
         2026-06-22): ``{"type":"buttons","buttons":[{"type":"url","text":...,
         "url":"https://x/{{1}}","parameters":[{"type":"text","text":<suffix>}]}]}``.
         """
-        if not self.api_key:
-            raise ValueError("Respond API key is not configured.")
-        api_id = self._contact_api_identifier(identifier)
-        url = f"{self.base_url}/v2/contact/{api_id}/message"
         body_component: dict = {"type": "body", "text": body_text}
         if parameters:
             body_component["parameters"] = [{"type": "text", "text": p} for p in parameters]
@@ -503,10 +607,7 @@ class RespondClient:
                 },
             },
         }
-        with httpx.Client(timeout=15) as client:
-            response = client.post(url, headers=self._headers(), json=payload)
-            response.raise_for_status()
-            return response.json() if response.content else {}
+        return self._post_contact_message(identifier, payload, timeout=15)
 
     def update_contact(self, identifier: str, payload: dict) -> dict:
         """Update contact via PUT /v2/contact/{identifier}. payload can include customFields."""
@@ -528,7 +629,7 @@ class IntegrationLogService:
         self.webhook_service = WebhookService()
     
     def create_integration_log(
-        self, 
+        self,
         log_data: IntegrationLogCreate,
         request_payload_dict: Optional[dict] = None
     ) -> IntegrationLog:
@@ -711,8 +812,8 @@ class IntegrationLogService:
             raise
     
     def update_integration_log(
-        self, 
-        log_id: str, 
+        self,
+        log_id: str,
         update_data: IntegrationLogUpdate
     ) -> IntegrationLog:
         """Update an integration log."""
@@ -731,6 +832,7 @@ class IntegrationLogService:
         log_id: str,
         *,
         force_resend: bool = False,
+        extra_headers: Optional[Dict[str, str]] = None,
     ) -> tuple[bool, Optional[str]]:
         """
         Send webhook request for a specific integration log.
@@ -739,6 +841,16 @@ class IntegrationLogService:
             log_id: Integration log ID
             force_resend: If True, send even when status is success/sent and skip max-retry guard
                 (used for manual attachment "Resubmit" with a refreshed payload).
+            extra_headers: Headers merged over the log's stored ones for THIS request only.
+                They are never persisted, which is what credentials need: a shared secret
+                written to `request_headers` would be readable by anyone who can view
+                integration logs, and would stay readable in history after a rotation.
+                Resolving it per send also means a resubmit uses the CURRENT secret
+                rather than replaying a stale one.
+                The AC-J6 shared secret does NOT need to be passed here: it is resolved
+                from the row's own `integration_channel` below, so every lane that
+                resends a row (sweeper, operator Retry) carries it too. `extra_headers`
+                stays an explicit override, merged last.
 
         Returns:
             Tuple of (success: bool, error_message: Optional[str])
@@ -780,7 +892,12 @@ class IntegrationLogService:
                 headers = json.loads(log.request_headers)
             except (json.JSONDecodeError, TypeError):
                 headers = None
-        
+        # Resolved per send and never written back: the secret exists on the
+        # HTTP request and nowhere else (see resolve_webhook_auth_headers).
+        auth_headers = resolve_webhook_auth_headers(log.integration_channel)
+        if auth_headers or extra_headers:
+            headers = {**(headers or {}), **auth_headers, **(extra_headers or {})}
+
         # Send webhook
         success, status_code, response_data, error_code, error_message = self.webhook_service.send_webhook(
             url=log.endpoint,
@@ -829,7 +946,7 @@ class IntegrationLogService:
         Two passes per tick:
         1. Re-send `pending` / `processing` rows past `next_retry_at` (legacy behaviour).
         2. Mark `sent` rows older than the configured callback timeout as `failed`
-           with error_code=N8N_CALLBACK_TIMEOUT — drives the upload-activity drawer
+           with error_code=N8N_CALLBACK_TIMEOUT - drives the upload-activity drawer
            freshness invariant so users never see infinite "Processing…".
 
         See docs/plans/PLAN-upload-activity-drawer.md §4.5.
@@ -934,12 +1051,13 @@ def log_respond_send(
     request_payload: dict,
     response: Optional[object] = None,
     exc: Optional[BaseException] = None,
+    endpoint: Optional[str] = None,
 ) -> None:
     """Write one Respond.io outbox row for a send that did NOT go through
     ``respond_io_tasks._send_and_log``.
 
     Every Respond.io send must leave an ``integration_logs`` trace on success AND
-    failure — local dev runs with deliberately-wrong credentials, so a 401'd send
+    failure - local dev runs with deliberately-wrong credentials, so a 401'd send
     still has to be readable from the Respond outbox. Synchronous senders that
     call ``RespondClient.send_message`` directly (portal link delivery, SLA
     conversation reply) previously wrote nothing at all, so those failures were
@@ -949,6 +1067,10 @@ def log_respond_send(
     attempted (``_attach_send_context`` stamps it on the exception) and capture
     Respond's real HTTP status and body so a 403 is diagnosable rather than just
     "403 Forbidden for url ...".
+
+    ``endpoint`` overrides the logged URL for Respond calls that are not a
+    message send (the AC-L2 comment mirror posts to ``/comment``); it defaults
+    to the contact message endpoint, which is what every other caller uses.
 
     Best-effort by construction: logging must never be the reason a send fails.
     """
@@ -982,7 +1104,8 @@ def log_respond_send(
                 external_reference=identifier or "",
                 direction="outbound",
                 endpoint=(
-                    f"https://api.respond.io/v2/contact/id:{identifier or ''}/message"
+                    endpoint
+                    or f"https://api.respond.io/v2/contact/id:{identifier or ''}/message"
                 ),
                 http_method="POST",
                 status="failed" if exc is not None else "success",
@@ -993,6 +1116,14 @@ def log_respond_send(
             request_payload_dict=payload,
         )
     except Exception:  # noqa: BLE001
+        # Roll back first: the message already reached the contact, and a failed
+        # INSERT leaves the transaction aborted, so the send route would answer
+        # 500 for a send that succeeded. Logging must never be the reason a send
+        # fails - which includes failing the response it still has to build.
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         logger.exception(
             "Failed to write Respond outbox row for %s %s", business_table, business_id
         )

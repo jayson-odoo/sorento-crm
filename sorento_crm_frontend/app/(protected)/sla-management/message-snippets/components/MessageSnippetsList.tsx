@@ -1,0 +1,292 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ColumnDef,
+  PaginationState,
+  SortingState,
+  getCoreRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
+import { Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardFooter,
+  CardHeader,
+  CardHeading,
+  CardTable,
+  CardToolbar,
+} from '@/components/ui/card';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Input } from '@/components/ui/input';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+
+import {
+  useCreateMessageSnippet,
+  useDeleteMessageSnippet,
+  useMessageSnippets,
+  useUpdateMessageSnippet,
+} from '../hooks/useMessageSnippets';
+import type {
+  MessageSnippet,
+  MessageSnippetFormData,
+} from '../types/messageSnippet.types';
+import MessageSnippetFormDialog from './MessageSnippetFormDialog';
+
+export default function MessageSnippetsList() {
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 });
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<MessageSnippet | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<MessageSnippet | null>(null);
+
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
+    return () => clearTimeout(handle);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [debouncedSearch, sorting]);
+
+  const { data, isLoading, isError, error } = useMessageSnippets({
+    pageIndex: pagination.pageIndex,
+    pageSize: pagination.pageSize,
+    sorting,
+    searchQuery: debouncedSearch,
+  });
+  const createSnippet = useCreateMessageSnippet();
+  const updateSnippet = useUpdateMessageSnippet();
+  const deleteSnippet = useDeleteMessageSnippet();
+
+  const rows = useMemo<MessageSnippet[]>(() => data?.data ?? [], [data]);
+  const total = data?.pagination?.total ?? 0;
+
+  const columns = useMemo<ColumnDef<MessageSnippet>[]>(
+    () => [
+      {
+        accessorKey: 'name',
+        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate font-medium" title={row.original.name}>
+            {row.original.name}
+          </span>
+        ),
+        size: 200,
+        meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-5 w-32" /> },
+      },
+      {
+        accessorKey: 'shortcut',
+        header: ({ column }) => <DataGridColumnHeader title="Shortcut" column={column} />,
+        cell: ({ row }) =>
+          row.original.shortcut ? (
+            <span className="truncate font-mono text-xs" title={`/${row.original.shortcut}`}>
+              /{row.original.shortcut}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 130,
+        meta: { headerTitle: 'Shortcut' },
+      },
+      {
+        accessorKey: 'body',
+        header: ({ column }) => <DataGridColumnHeader title="Message" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate text-muted-foreground" title={row.original.body}>
+            {row.original.body}
+          </span>
+        ),
+        enableSorting: false,
+        size: 380,
+        meta: { headerTitle: 'Message' },
+      },
+      {
+        accessorKey: 'is_active',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        cell: ({ row }) =>
+          row.original.is_active ? (
+            <Badge variant="success" appearance="light" size="md">
+              Active
+            </Badge>
+          ) : (
+            <Badge variant="secondary" appearance="light" size="md">
+              Inactive
+            </Badge>
+          ),
+        size: 110,
+        meta: { headerTitle: 'Status' },
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => (
+          <div className="flex justify-end gap-1">
+            <Button
+              mode="icon"
+              variant="ghost"
+              size="sm"
+              aria-label={`Edit ${row.original.name}`}
+              title="Edit snippet"
+              onClick={() => {
+                setEditing(row.original);
+                setFormOpen(true);
+              }}
+            >
+              <Pencil className="size-4" />
+            </Button>
+            <Button
+              mode="icon"
+              variant="ghost"
+              size="sm"
+              aria-label={`Delete ${row.original.name}`}
+              title="Delete snippet"
+              onClick={() => setDeleteTarget(row.original)}
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          </div>
+        ),
+        size: 100,
+        enableSorting: false,
+        meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
+      },
+    ],
+    [],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
+    rowCount: total,
+    getRowId: (row) => row.id,
+    state: { pagination, sorting },
+    onPaginationChange: setPagination,
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    manualPagination: true,
+    manualSorting: true,
+    manualFiltering: true,
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+
+  const submit = async (form: MessageSnippetFormData) => {
+    if (editing) {
+      await updateSnippet.mutateAsync({ id: editing.id, body: form });
+    } else {
+      await createSnippet.mutateAsync(form);
+    }
+    setFormOpen(false);
+    setEditing(null);
+  };
+
+  return (
+    <div className="space-y-3">
+      {isError ? (
+        <div
+          className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+          data-testid="snippets-error"
+        >
+          {error instanceof Error ? error.message : 'Failed to load message snippets.'}
+        </div>
+      ) : null}
+
+      <DataGrid
+        table={table}
+        recordCount={total}
+        isLoading={isLoading}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        emptyMessage="No snippets yet. Add one and it appears in the ticket composer."
+      >
+        <Card>
+          <CardHeader className="flex items-center justify-between gap-3">
+            <CardHeading>
+              <div className="relative">
+                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search snippets..."
+                  aria-label="Search snippets"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-64 ps-9"
+                />
+                {searchQuery ? (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Clear search"
+                  >
+                    <X />
+                  </Button>
+                ) : null}
+              </div>
+            </CardHeading>
+            <CardToolbar>
+              <Button
+                onClick={() => {
+                  setEditing(null);
+                  setFormOpen(true);
+                }}
+              >
+                <Plus className="size-4" />
+                Add snippet
+              </Button>
+            </CardToolbar>
+          </CardHeader>
+
+          <CardTable>
+            <ScrollArea>
+              <DataGridTable />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </CardTable>
+          <CardFooter>
+            <DataGridPagination />
+          </CardFooter>
+        </Card>
+      </DataGrid>
+
+      <MessageSnippetFormDialog
+        open={formOpen}
+        onOpenChange={(next) => {
+          setFormOpen(next);
+          if (!next) setEditing(null);
+        }}
+        snippet={editing}
+        onSubmit={submit}
+        isSubmitting={createSnippet.isPending || updateSnippet.isPending}
+      />
+
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onOpenChange={(next) => !next && setDeleteTarget(null)}
+        title="Confirm delete"
+        description={
+          <>
+            This action cannot be undone. The snippet <strong>{deleteTarget?.name}</strong> will be
+            permanently removed and will no longer appear in the composer.
+          </>
+        }
+        successMessage="Snippet deleted"
+        onDelete={async () => {
+          if (deleteTarget) await deleteSnippet.mutateAsync(deleteTarget.id);
+        }}
+        onSuccess={() => setDeleteTarget(null)}
+      />
+    </div>
+  );
+}

@@ -12,7 +12,7 @@ This pins:
      event_type="assigned:<occ>"), with in_app + email deliveries (email pref default).
   2. Idempotent-active does NOT re-notify (repeat inbound on the open conversation).
   3. Overwrite-resolved (fresh conversation reusing the row) with a DIFFERENT start
-     time re-notifies — the occurrence-suffixed event_type dodges stale dedup on the
+     time re-notifies - the occurrence-suffixed event_type dodges stale dedup on the
      reused tracking id.
   4. Per-user gate: notify_email_on_assignment=False => in_app only, NO email delivery.
 
@@ -65,7 +65,13 @@ def db(monkeypatch):
         yield session
 
 
-def _seed(db, *, email_on_assignment: bool = True) -> dict:
+def _seed(
+    db,
+    *,
+    email_on_assignment: bool = True,
+    whatsapp_on_assignment: bool = False,
+    link_assignee_whatsapp: bool = False,
+) -> dict:
     policy_id = str(uuid.uuid4())
     db.add(SLAPolicy(id=policy_id, code="NORMAL", name="Normal"))
     db.add(
@@ -86,6 +92,21 @@ def _seed(db, *, email_on_assignment: bool = True) -> dict:
     )
     db.add(AccessAgent(id=str(uuid.uuid4()), code="AG1", name="Agent Chain"))
     assignee_id = str(uuid.uuid4())
+    # AC-G1 WhatsApp gating needs the ASSIGNEE (not the enquiry contact) to
+    # resolve to a RespondContact via resolve_user_respond_io_id - a distinct
+    # RespondContact row keyed by the assignee's own WhatsApp number.
+    assignee_respond_contact_id = None
+    if link_assignee_whatsapp:
+        assignee_respond_contact_id = str(uuid.uuid4())
+        db.add(
+            RespondContact(
+                id=assignee_respond_contact_id,
+                phone_number="+60111222333",
+                name="Agent One WhatsApp",
+                respond_io_id="900001",
+                session_vars={},
+            )
+        )
     db.add(
         User(
             id=assignee_id,
@@ -93,6 +114,8 @@ def _seed(db, *, email_on_assignment: bool = True) -> dict:
             name="Agent One",
             respond_user_id="900001",
             notify_email_on_assignment=email_on_assignment,
+            notify_whatsapp_on_assignment=whatsapp_on_assignment,
+            respond_contact_id=assignee_respond_contact_id,
         )
     )
     db.commit()
@@ -100,6 +123,7 @@ def _seed(db, *, email_on_assignment: bool = True) -> dict:
         "policy_id": policy_id,
         "contact_id": contact_id,
         "assignee_id": assignee_id,
+        "assignee_respond_contact_id": assignee_respond_contact_id,
     }
 
 
@@ -157,9 +181,11 @@ def test_new_row_notifies_primary_assignee(db, monkeypatch):
     assert note.type == "conversation_sla"
     assert note.source_entity_id == str(tracking.id)
     assert note.event_type == f"assigned:{int(t0.timestamp())}"
-    # Worded "to you" (assignee), deep-links to the detail page (not the takeover widget).
+    # Worded "to you" (assignee), deep-links to the dashboard with the ticket
+    # targeted (UAC AC-G1) - the assignee answers from the "My Pending" drawer,
+    # not the standalone SLA detail page or Respond.io.
     assert "assigned to you" in (note.body or "")
-    assert f"/sla-management/conversation-sla-tracking/{tracking.id}" in (note.body or "")
+    assert f"/?ticket={tracking.id}" in (note.body or "")
     channels = {d.channel for d in _deliveries(db, note.id)}
     assert "in_app" in channels
     assert "email" in channels
@@ -176,8 +202,10 @@ def test_idempotent_active_does_not_renotify(db):
     first = service.create_tracking(_payload(seed, message_id=111))
     assert len(_assignee_notes(db, seed["assignee_id"])) == 1
 
-    # Repeat inbound on the still-open conversation -> idempotent return, no notify.
-    second = service.create_tracking(_payload(seed, message_id=222))
+    # Repeat of the SAME trigger message on the still-open ticket -> idempotent
+    # return, no notify. A DIFFERENT message_id is a new enquiry (AC-A1), not
+    # this path any more.
+    second = service.create_tracking(_payload(seed, message_id=111))
     assert str(second.id) == str(first.id)
     assert bool(getattr(second, "_already_active", False)) is True
 
@@ -191,11 +219,14 @@ def test_idempotent_active_does_not_renotify(db):
 # --------------------------------------------------------------------------
 
 def test_overwrite_resolved_renotifies_new_occurrence(db):
+    """Overwrite-in-place only happens on the identity-less legacy path now
+    (AC-A1/AC-A2 gave every trigger message its own ticket) - no message_id on
+    either call, so both hit the contact-level singleton fallback."""
     seed = _seed(db)
     service = ConversationSLATrackingService(db)
 
     t0 = datetime(2026, 6, 1, 8, 0, 0)
-    first = service.create_tracking(_payload(seed, message_id=111, started_at=t0))
+    first = service.create_tracking(_payload(seed, started_at=t0))
     assert len(_assignee_notes(db, seed["assignee_id"])) == 1
 
     first.is_resolved = True
@@ -203,7 +234,7 @@ def test_overwrite_resolved_renotifies_new_occurrence(db):
     db.commit()
 
     t1 = datetime(2026, 6, 2, 8, 0, 0)  # different occurrence
-    second = service.create_tracking(_payload(seed, message_id=222, started_at=t1))
+    second = service.create_tracking(_payload(seed, started_at=t1))
     assert str(second.id) == str(first.id)
     assert bool(getattr(second, "_overwrote_resolved", False)) is True
 
@@ -216,15 +247,17 @@ def test_overwrite_resolved_renotifies_new_occurrence(db):
 
 
 def test_same_occurrence_dedups_to_one(db):
-    """Overwrite-resolved with the SAME start time = same occurrence key => one note."""
+    """Overwrite-resolved with the SAME start time = same occurrence key => one
+    note. No message_id on either call - the identity-less legacy singleton
+    path is the only one that still overwrites in place."""
     seed = _seed(db)
     service = ConversationSLATrackingService(db)
 
     t0 = datetime(2026, 6, 1, 8, 0, 0)
-    first = service.create_tracking(_payload(seed, message_id=111, started_at=t0))
+    first = service.create_tracking(_payload(seed, started_at=t0))
     first.is_resolved = True
     db.commit()
-    service.create_tracking(_payload(seed, message_id=222, started_at=t0))
+    service.create_tracking(_payload(seed, started_at=t0))
 
     notes = _assignee_notes(db, seed["assignee_id"])
     assert len(notes) == 1, "same-occurrence start-time must dedup to one note"
@@ -245,3 +278,72 @@ def test_email_toggle_off_suppresses_email_delivery(db):
     channels = {d.channel for d in _deliveries(db, notes[0].id)}
     assert "in_app" in channels
     assert "email" not in channels, "email toggle off must suppress the email delivery"
+
+
+# --------------------------------------------------------------------------
+# 5. Per-user WhatsApp toggle gates the whatsapp channel (UAC AC-G1)
+# --------------------------------------------------------------------------
+# Mirrors the email-toggle pin above: create_with_channel_preferences gates
+# send_whatsapp on BOTH the recipient's notify_whatsapp_on_assignment toggle
+# AND resolve_user_respond_io_id(db, user) (an actually-linked RespondContact) -
+# either one missing must suppress the whatsapp delivery row entirely.
+
+
+def test_whatsapp_toggle_off_suppresses_whatsapp_attempt(db):
+    """Toggle OFF (default) even WITH a linked RespondContact -> no whatsapp
+    delivery is ever created; in-app/email are untouched."""
+    seed = _seed(
+        db, whatsapp_on_assignment=False, link_assignee_whatsapp=True
+    )
+    service = ConversationSLATrackingService(db)
+
+    service.create_tracking(_payload(seed, message_id=111))
+
+    notes = _assignee_notes(db, seed["assignee_id"])
+    assert len(notes) == 1
+    channels = {d.channel for d in _deliveries(db, notes[0].id)}
+    assert "in_app" in channels
+    assert "whatsapp" not in channels, (
+        "whatsapp toggle off must suppress the whatsapp delivery even when a "
+        "RespondContact is linked"
+    )
+
+
+def test_whatsapp_toggle_on_without_linked_contact_is_not_attempted(db):
+    """Toggle ON but the assignee resolves to NO RespondContact (no
+    respond_contact_id, no matching phone) -> still no whatsapp attempt; the
+    gate is an AND of toggle + reachability, not the toggle alone."""
+    seed = _seed(
+        db, whatsapp_on_assignment=True, link_assignee_whatsapp=False
+    )
+    service = ConversationSLATrackingService(db)
+
+    service.create_tracking(_payload(seed, message_id=111))
+
+    notes = _assignee_notes(db, seed["assignee_id"])
+    assert len(notes) == 1
+    channels = {d.channel for d in _deliveries(db, notes[0].id)}
+    assert "whatsapp" not in channels, (
+        "no linked RespondContact must suppress the whatsapp delivery even "
+        "with the toggle on"
+    )
+
+
+def test_whatsapp_toggle_on_with_linked_contact_is_attempted(db):
+    """Toggle ON AND a resolvable RespondContact -> a pending whatsapp
+    delivery row is created (the actual send is async via the notification
+    worker; 'attempted' = the delivery row exists for the worker to pick up)."""
+    seed = _seed(
+        db, whatsapp_on_assignment=True, link_assignee_whatsapp=True
+    )
+    service = ConversationSLATrackingService(db)
+
+    service.create_tracking(_payload(seed, message_id=111))
+
+    notes = _assignee_notes(db, seed["assignee_id"])
+    assert len(notes) == 1
+    deliveries = {d.channel: d for d in _deliveries(db, notes[0].id)}
+    assert "whatsapp" in deliveries, (
+        "toggle on + linked RespondContact must attempt a whatsapp delivery"
+    )
+    assert deliveries["whatsapp"].status == "pending"

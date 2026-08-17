@@ -137,10 +137,17 @@ class ConversationSLATrackingCreate(BaseModel):
     respond_contact_id: Optional[str] = None  # FK to respond_contacts
     resolution_duration: Optional[Decimal] = None  # Will be reset to None
     # Required: the (agent_code, team_set_code) pair is the policy-resolution key.
-    # The backend owns policy selection — n8n's policy_id/current_tier are ignored.
+    # The backend owns policy selection - n8n's policy_id/current_tier are ignored.
     agent_code: str  # resolved → agent_id FK in service
     team_set_code: str  # team set; (agent_code, team_set_code) → SLA policy
     message_id: OptionalMessageId = None
+    # Identity of a conversation intervention ticket: the message that asked for a
+    # human. When absent, the service falls back to message_id, then (with neither)
+    # to the legacy one-open-per-contact singleton - see create_tracking.
+    source_message_id: Optional[str] = None
+    # The trigger message's own text (the enquiry) - stored verbatim so the
+    # worklist snippet and the drawer's quoted header never re-fetch it.
+    source_message_text: Optional[str] = None
     contact_phone_number: str  # Required field
 
     @field_validator('agent_code', 'team_set_code')
@@ -246,12 +253,22 @@ class ConversationSLAEscalateRequest(BaseModel):
     respond_contact_id: CRM respond_contacts.id, Respond.io id, or phone (E.164 / variants).
     """
     respond_contact_id: str
-    # Optional: the open conversation tracking for the contact already stores its
-    # policy (tied at create via agent_code + team_set_code). The server resolves the
-    # row by respond_contact_id (one-open-per-contact) and uses THAT policy. policy_id
-    # here is only a fallback when no open row is found — legacy exact-match lookup.
+    # AC-I5: the exact ticket to escalate. When present it WINS - the server
+    # escalates that row and never re-resolves by contact. GET
+    # /integration/due-escalations already returns one item per row, so the
+    # scheduler can pass the id straight through; without it, a contact holding
+    # several open tickets gets a most-recent-open pick, which can escalate a
+    # different sibling than the one that actually breached. Optional so the
+    # old contact-scoped contract keeps working.
+    tracking_id: Optional[str] = None
+    # Optional: a contact can hold several open tickets at once (per-enquiry,
+    # not one merged conversation), so the server resolves a MOST-RECENT-OPEN
+    # pick for this (contact, policy) pair - see get_tracking_by_contact_and_
+    # policy - and uses THAT row's policy. policy_id here is only a fallback
+    # when no open row is found - legacy exact-match lookup. Ignored entirely
+    # when tracking_id is given.
     policy_id: Optional[str] = None
-    # Target tier after escalation (1–3), must be greater than the row's current tier.
+    # Target tier after escalation (1 - 3), must be greater than the row's current tier.
     # Omit (None) for signal-only escalation: the server escalates to current tier + 1,
     # or returns escalated=false when already at tier 3.
     current_tier: Optional[int] = None
@@ -267,7 +284,7 @@ class ConversationSLAEscalateRequest(BaseModel):
             raise ValueError("respond_contact_id is required")
         return str(v).strip()
 
-    @field_validator("policy_id")
+    @field_validator("policy_id", "tracking_id")
     @classmethod
     def validate_policy_id(cls, v):
         # Optional fallback: blank / explicit null normalizes to None. The server
@@ -285,6 +302,53 @@ class ConversationSLAEscalateRequest(BaseModel):
         if v is None or (isinstance(v, str) and not v.strip()):
             return None
         return str(v).strip()
+
+
+class ConversationSLAAgentRepliedRequest(BaseModel):
+    """AC-I4: a staff member replied to a contact from the Respond app.
+
+    `contact_id` accepts the same identifiers as the sibling reads: CRM
+    `respond_contacts.id`, the Respond.io contact id, or the contact's phone.
+    `replied_by` is the person who actually typed the reply - a Respond user id,
+    a CRM `users.id`, or an email. An id that maps to nobody is NOT an error
+    (see the endpoint): a Respond user with no CRM account is a real state.
+    """
+    contact_id: str
+    replied_by: str
+    replied_at: Optional[datetime] = None
+
+    @field_validator("contact_id", "replied_by")
+    @classmethod
+    def validate_required(cls, v):
+        if v is None or not str(v).strip():
+            raise ValueError("must not be blank")
+        return str(v).strip()
+
+
+class ConversationSLAAgentRepliedResponse(BaseModel):
+    """AC-I4 outcome. Always returned with 200, including every skip.
+
+    `skipped_reason` is null when a ticket was stamped, otherwise "ambiguous"
+    (2+ open unanswered and the replier does not own exactly one) or
+    "no_open_ticket" (nothing unanswered for this contact, including the
+    idempotent replay of a reply already recorded).
+    """
+    matched: bool = False
+    tracking_id: Optional[str] = None
+    skipped_reason: Optional[str] = None
+    open_ticket_count: int = 0
+
+
+class ConversationSLAOpenCountResponse(BaseModel):
+    """AC-I2: how many OPEN conversation-scope tickets a contact holds.
+
+    `contact_id` is the CRM `respond_contacts.id` the caller's identifier resolved
+    to, or null when nothing matched. An unknown contact is `open_count: 0` at
+    200, never a 404 - n8n reads this to decide whether it may tell the contact
+    their conversation is closed and resolved.
+    """
+    contact_id: Optional[str] = None
+    open_count: int = 0
 
 
 class SLAPolicySimple(BaseModel):
@@ -477,6 +541,15 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     # branch its own routing without parsing a 4xx error envelope.
     already_resolved: Optional[bool] = False
     updated_in_request: Optional[bool] = True
+    # AC-I3: true when the caller set is_responded on a tracking that was already
+    # responded. The responded-family fields are dropped (clocks untouched) and the
+    # call still answers 200 - respond is idempotent exactly like resolve.
+    already_responded: Optional[bool] = False
+    # AC-E3: true when a PUT is_responded=true from the n8n Respond-app-reply
+    # fallback was skipped because the resolved assignee holds 2+ open tickets
+    # for this contact (ambiguous which enquiry they answered) - see
+    # ConversationSLATrackingService.is_ambiguous_fallback_response.
+    ambiguous_responded_skipped: Optional[bool] = False
     # Idempotent-create indicator: true when create found an open conversation
     # tracking for the contact and returned it (message_id refreshed) instead of
     # creating a new row. n8n branches on this to skip new-conversation steps.

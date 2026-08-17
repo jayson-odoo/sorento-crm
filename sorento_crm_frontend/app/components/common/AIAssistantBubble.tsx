@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, GitBranch, History, Loader2, Plus, SendHorizonal, X } from 'lucide-react';
+import { Bot, GitBranch, History, Loader2, Plus, SendHorizonal, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -371,19 +371,29 @@ export default function AIAssistantBubble() {
   if (!canUseAIAssistant) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-[120]" data-ai-assistant-root>
-      <Button
-        size="icon"
-        className={`size-12 rounded-full shadow-lg transition-transform ${isSending ? 'animate-pulse' : ''}`}
+    // AC-N5(c): z-40, i.e. ABOVE the header (z-10) and sidebar (z-20) but BELOW
+    // every Sheet / Dialog (z-50). The launcher used to be a round FAB at
+    // z-[120], which floated over an open drawer's bottom controls - the reason
+    // the ticket drawer's actions moved into its header in the same change.
+    <div className="fixed bottom-6 end-0 z-40" data-ai-assistant-root>
+      {/* Slim edge tab ("envelope label") instead of a FAB: it hugs the screen
+          edge, is 40px tall, and takes almost no space over the page beneath.
+          Label from sm up, icon only at phone width. */}
+      <button
+        type="button"
+        data-testid="ai-assistant-tab"
         aria-label="Open AI assistant"
+        aria-expanded={open}
+        className={`flex h-10 items-center gap-1.5 rounded-s-full border border-e-0 border-primary/20 bg-primary ps-3 pe-2.5 text-primary-foreground shadow-lg transition-all hover:ps-4 ${isSending ? 'animate-pulse' : ''}`}
         onClick={() => setOpen((o) => !o)}
       >
-        <Bot className="size-5" />
-      </Button>
+        <Sparkles className="size-4 shrink-0" />
+        <span className="hidden text-xs font-medium sm:inline">AI assistant</span>
+      </button>
 
       {open ? (
         <div
-          className="absolute bottom-20 right-0 flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm"
+          className="absolute bottom-12 end-3 flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm"
           style={{
             width: `${bubbleSize.width}px`,
             height: `${bubbleSize.height}px`,

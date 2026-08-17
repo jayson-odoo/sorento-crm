@@ -3,8 +3,8 @@
 Every test runs against Postgres -- either the live DB (rolled back) or an empty
 scratch schema built from the real DDL, both via tests/_pg_fixture.py. There is
 no sqlite anywhere in the suite. This file now holds only real cross-test
-hygiene: sweeping/dropping the scratch schema, restoring any in-place model
-metadata edits, and resetting leak-prone process globals between tests.
+hygiene: sweeping/dropping the scratch schema and resetting leak-prone
+process globals between tests.
 """
 import os
 
@@ -117,71 +117,12 @@ def _blank_schema_lifecycle():
         pass
 
 
-_ORIGINAL_COLUMN_TYPES: dict = {}
-
-
-def _snapshot_column_types():
-    """Record every model column's declared type, once, before any test runs."""
-    if _ORIGINAL_COLUMN_TYPES:
-        return
-    try:
-        from app.database import Base
-        from app import models  # noqa: F401  register every table
-
-        for table in Base.metadata.tables.values():
-            for column in table.columns:
-                _ORIGINAL_COLUMN_TYPES[(table.key, column.key)] = (
-                    column.type,
-                    column.server_default,
-                )
-    except Exception:
-        pass
-
-
-@pytest.fixture(autouse=True)
-def _restore_column_types():
-    """Undo any test's in-place rewrite of the shared model metadata.
-
-    A guard, now that no test does this. It used to matter a great deal: several
-    sqlite fixtures rewrote columns in their setup --
-
-        if isinstance(col.type, (JSONB, ARRAY)):
-            col.type = JSON()
-
-    -- on ``Model.__table__``, which is process-global, and never undid it.
-    While the whole suite ran on sqlite that was invisible; once tests ran on
-    Postgres in the same process, one such module left later tests binding JSON
-    into columns Postgres types as ``varchar[]``:
-
-        column "notify_stock_role_ids" is of type character varying[]
-        but expression is of type json
-
-    All those fixtures are gone, so this restores nothing today. It is kept as a
-    cheap backstop -- one dict walk per test -- so a future in-place edit cannot
-    silently corrupt its neighbours again.
-
-    The symptom lands in files that contain no sqlite at all and only in
-    full-suite runs -- test_sla_takeover_cooldown and test_sla_kpi both failed
-    this way, from a shim in test_chat_latency.
-
-    Restoring before each test makes the two substrates coexist: a shimming
-    fixture still re-applies its rewrite for its own test, and the next test
-    starts from the real schema. Once no shims remain this becomes a no-op that
-    costs one dict walk per test, and it keeps a future one from silently
-    corrupting its neighbours.
-    """
-    _snapshot_column_types()
-    for (table_key, column_key), (col_type, server_default) in _ORIGINAL_COLUMN_TYPES.items():
-        try:
-            from app.database import Base
-
-            column = Base.metadata.tables[table_key].columns[column_key]
-            if column.type is not col_type:
-                column.type = col_type
-                column.server_default = server_default
-        except Exception:
-            pass
-    yield
+# The per-test metadata-restore backstop that used to live here is gone. It
+# re-applied a snapshot of every model column's declared type before each test,
+# to undo an in-place rewrite of ``Model.__table__`` by a sqlite shim fixture.
+# No fixture mutates model metadata any more, and CLAUDE.md's "Tests run on
+# Postgres ONLY, NEVER sqlite" rule forbids the mutation that made it necessary,
+# so all it bought was a walk over ~2,500 columns on every single test.
 
 # ---------------------------------------------------------------------------
 # Company-scope test default (multi-company isolation).
@@ -271,6 +212,16 @@ def _reset_global_state():
         from app.services.lookup_validator import _cache_clear
 
         _cache_clear()
+    except Exception:
+        pass
+    try:
+        # The 24h-window lookup keeps a short per-identifier TTL cache. Tests
+        # reuse identifiers ("id:123", "437264483") across files with different
+        # mocked message lists, so a surviving entry would answer the next test
+        # with the previous one's window.
+        from app.services.respond_messaging_service import reset_window_cache
+
+        reset_window_cache()
     except Exception:
         pass
     try:
