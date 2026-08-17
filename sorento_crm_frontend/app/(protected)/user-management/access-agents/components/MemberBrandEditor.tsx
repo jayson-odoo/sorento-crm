@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Tag } from 'lucide-react';
+import { Bookmark } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -16,11 +16,8 @@ import {
   SearchableMultiSelect,
   type SearchableMultiSelectOption,
 } from '@/components/common/SearchableMultiSelect';
-import {
-  useMarketSegments,
-  useMemberMarketSegments,
-  useSetMemberMarketSegments,
-} from '@/app/(protected)/user-management/market-segments/hooks/useMarketSegments';
+import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
+import { useMemberBrands, useSetMemberBrands } from '../hooks/useMemberBrands';
 
 // Module-level so an undefined query result yields the SAME array on every
 // render. An inline `= []` default is a fresh array each time, which makes every
@@ -29,26 +26,27 @@ const EMPTY: string[] = [];
 const EMPTY_CATALOG: never[] = [];
 
 /**
- * Per-member market-segment multiselect within a CS team roster. A member's
- * segments (retail / project) restrict which contacts route to them; both =
- * both checked. A member with no segments serves ALL contacts ("Serves all").
- * Keyed by (team_id, user_id) so the same person can serve different segments
- * across teams. See PLAN-cs-team-market-segment-routing.md.
+ * Per-member brand multiselect within a team roster. A member's brands restrict
+ * which work routes to them; a member with no brands serves ALL brands ("All
+ * brands"). When nobody in the team carries the brand asked for, the whole team
+ * round-robins. Keyed by (team_id, user_id) so the same person can serve
+ * different brands across teams. Mirrors MemberMarketSegmentEditor.
  *
- * Dialog rather than popover, for the reason spelled out in MemberBrandEditor:
- * SearchableMultiSelect's own portalled popover reads as an outside click to a
- * parent popover and would dismiss the editor mid-selection.
+ * The picker lives in a dialog rather than a popover: SearchableMultiSelect opens
+ * its own portalled popover, and Radix reads that as an outside click on a parent
+ * popover, which would dismiss the editor mid-selection. DialogContent already
+ * guards against exactly that (see components/ui/dialog.tsx).
  */
-export default function MemberMarketSegmentEditor({
+export default function MemberBrandEditor({
   teamId,
   userId,
 }: {
   teamId: string;
   userId: string;
 }) {
-  const { data: assigned = EMPTY, isLoading } = useMemberMarketSegments(teamId, userId);
-  const { data: catalog = EMPTY_CATALOG } = useMarketSegments(true);
-  const setSegments = useSetMemberMarketSegments(teamId, userId);
+  const { data: assigned = EMPTY, isLoading } = useMemberBrands(teamId, userId);
+  const { data: catalog = EMPTY_CATALOG } = useBrandSelectQuery();
+  const setBrands = useSetMemberBrands(teamId, userId);
 
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string[]>(EMPTY);
@@ -64,18 +62,23 @@ export default function MemberMarketSegmentEditor({
     if (open) setDraft(assignedRef.current);
   }, [open]);
 
+  // Deduped by code (the same brand exists per company) and sorted by name, so the
+  // list reads A to Z whatever order the API happened to return.
   const options: SearchableMultiSelectOption[] = useMemo(() => {
     const byCode = new Map<string, SearchableMultiSelectOption>();
-    for (const s of catalog) {
-      if (!s.code || byCode.has(s.code)) continue;
-      byCode.set(s.code, { value: s.code, label: s.name });
+    for (const b of catalog) {
+      const value = String(b.brand_code ?? '').toLowerCase();
+      if (!value || byCode.has(value)) continue;
+      byCode.set(value, { value, label: b.brand_name });
     }
-    // A tag whose segment has since left the catalogue stays selectable, or the
+    // A tag whose brand has since left the catalogue stays selectable, or the
     // member is stuck with it forever and can never go back to serving all.
     for (const code of assigned) {
-      if (!byCode.has(code)) byCode.set(code, { value: code, label: code });
+      if (!byCode.has(code)) byCode.set(code, { value: code, label: code.toUpperCase() });
     }
-    return Array.from(byCode.values());
+    return Array.from(byCode.values()).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    );
   }, [catalog, assigned]);
 
   const nameByCode = useMemo(() => {
@@ -84,10 +87,10 @@ export default function MemberMarketSegmentEditor({
     return m;
   }, [options]);
 
-  const label = (code: string) => nameByCode.get(code) ?? code;
+  const label = (code: string) => nameByCode.get(code) ?? code.toUpperCase();
 
   function save() {
-    setSegments.mutate(draft, { onSuccess: () => setOpen(false) });
+    setBrands.mutate(draft, { onSuccess: () => setOpen(false) });
   }
 
   return (
@@ -97,44 +100,47 @@ export default function MemberMarketSegmentEditor({
         variant="ghost"
         size="sm"
         className="h-6 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
-        aria-label="Edit market segments"
+        aria-label="Edit brands"
         onClick={() => setOpen(true)}
       >
-        <Tag className="size-3" aria-hidden />
+        <Bookmark className="size-3" aria-hidden />
         {isLoading ? (
           <span>…</span>
         ) : assigned.length > 0 ? (
           <span className="flex flex-wrap items-center gap-1">
             {assigned.map((code) => (
-              <Badge key={code} variant="secondary" className="text-[10px] font-normal">
+              <Badge
+                key={code}
+                variant="secondary"
+                className="text-[10px] font-normal"
+              >
                 {label(code)}
               </Badge>
             ))}
           </span>
         ) : (
-          <span>Serves all</span>
+          <span>All brands</span>
         )}
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Market segments served</DialogTitle>
-            <DialogDescription>Leave empty to serve all contacts.</DialogDescription>
+            <DialogTitle>Brands served</DialogTitle>
+            <DialogDescription>Leave empty to serve all brands.</DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
             <SearchableMultiSelect
               value={draft}
               onChange={setDraft}
               options={options}
-              placeholder="All contacts"
-              emptyMessage="No matching segment."
-              disabled={setSegments.isPending}
+              placeholder="All brands"
+              emptyMessage="No matching brand."
+              disabled={setBrands.isPending}
             />
             {catalog.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No market segments configured. Add some under User Management → Market
-                Segments.
+                No brands configured. Add some under Master Data → Brands.
               </p>
             ) : null}
           </div>
@@ -143,11 +149,11 @@ export default function MemberMarketSegmentEditor({
               variant="outline"
               size="sm"
               onClick={() => setOpen(false)}
-              disabled={setSegments.isPending}
+              disabled={setBrands.isPending}
             >
               Cancel
             </Button>
-            <Button size="sm" onClick={save} disabled={setSegments.isPending}>
+            <Button size="sm" onClick={save} disabled={setBrands.isPending}>
               Save
             </Button>
           </DialogFooter>
