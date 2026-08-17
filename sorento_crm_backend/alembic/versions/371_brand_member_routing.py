@@ -51,7 +51,7 @@ What this deliberately does NOT do:
   column); the people stay where the upgrade put them.
 
 Revision ID: 371_brand_member_routing
-Revises: 367_promote_flyer_provenance
+Revises: 368_merge_tickets_main
 """
 import logging
 
@@ -60,7 +60,7 @@ from sqlalchemy import text as sa_text
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "371_brand_member_routing"
-down_revision = "367_promote_flyer_provenance"
+down_revision = "368_merge_tickets_main"
 branch_labels = None
 depends_on = None
 

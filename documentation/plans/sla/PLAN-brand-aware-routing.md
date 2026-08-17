@@ -570,7 +570,9 @@ exactly as it is, and `apply_assignee_team_derivation` is back to its pre-branch
 ### R2.6 Migration `371_brand_member_routing`
 
 Renumbered off 368 (never deployed; 368/369/370 are claimed by other lanes), `down_revision =
-367_promote_flyer_provenance`, the single head of `origin/main` at the time of writing.
+368_merge_tickets_main`, the single head of `origin/main` after its intervention-tickets merge
+(it was `367_promote_flyer_provenance` when this section was first written; rebasing onto the
+newer head is what keeps the chain at one head).
 
 - creates `team_member_brands`, adds `conversation_sla_tracking.brand_code`, both IF NOT EXISTS;
 - collapses `marketing_promotion_{sorento,mocha,cabana}` per (agent, company) into one
