@@ -565,7 +565,11 @@ def test_no_request_path_ever_calls_the_reader():
             continue
         callers.append(str(path.relative_to(root)))
 
-    assert callers == ["tasks/project_document_tasks.py"], callers
+    # The invariant is "only a task module", not "only this task module": main's chatbot
+    # media lane (`tasks/media_tasks.py`) is a second work-horse caller and is exactly what
+    # this guard permits.
+    assert callers, "no caller found; the scan itself is broken"
+    assert all(c.startswith("tasks/") for c in callers), callers
 
 
 def test_the_worker_this_checkout_starts_listens_on_the_project_documents_queue():
