@@ -24,7 +24,7 @@ finds the other.
 """
 from __future__ import annotations
 
-from sqlalchemy import func, literal, select
+from sqlalchemy import func, select
 
 from app.models.order import SalesOrder, SalesOrderLine
 
@@ -75,11 +75,24 @@ PLAN_DEMAND_ORDER_SQL = (
 )
 
 
-def _has_active_supply_decision():
-    """EXISTS an active `projects.so_supply_decisions` row for this core sales order.
+def _decided_sales_order_ids():
+    """The core sales orders CS has already confirmed a supply decision for.
+
+    UNCORRELATED on purpose, and that is the whole reason it is a list rather than the
+    `NOT EXISTS` the view uses. Callers reach this predicate with `sales_order_lines`
+    aliased (the coverage timeline reads `sales_order_lines AS sales_order_lines_1`), and
+    a correlated sub-select then renders a reference to an alias of `sales_orders` that
+    the enclosing query never made - `missing FROM-clause entry for table
+    "sales_orders_1"`, every demand read in the system. A subquery that names nothing
+    outside itself cannot be adapted wrongly, and `SalesOrder.id` beside it is an ordinary
+    outer column exactly like `SalesOrder.demand_class`. The view keeps its `NOT EXISTS`,
+    which is the same set: raw SQL has no aliasing to get wrong.
+
+    `so_id IS NOT NULL` is load-bearing, not tidiness: a NULL in a `NOT IN` list makes the
+    whole predicate NULL, which would silently drop EVERY sheet-leg order from planning.
 
     Built over the TABLES rather than the mapped classes so the company-scope loader
-    criteria cannot rewrite a sub-select whose only job is to answer "is this order
+    criteria cannot rewrite a sub-select whose only job is to answer "which orders are
     decided": the scoping that matters is the caller's, on `sales_orders` itself.
     """
     from app.models.project_so import (
@@ -91,12 +104,9 @@ def _has_active_supply_decision():
     pso = ProjectSalesOrder.__table__
     decision = SOSupplyDecision.__table__
     return (
-        select(literal(1))
-        .select_from(
-            pso.join(decision, decision.c.project_sales_order_id == pso.c.id)
-        )
-        .where(pso.c.so_id == SalesOrder.id, decision.c.state == DECISION_ACTIVE)
-        .exists()
+        select(pso.c.so_id)
+        .select_from(pso.join(decision, decision.c.project_sales_order_id == pso.c.id))
+        .where(decision.c.state == DECISION_ACTIVE, pso.c.so_id.isnot(None))
     )
 
 
@@ -104,7 +114,7 @@ def is_plan_demand_order():
     """`PLAN_DEMAND_ORDER_SQL`, as a SQLAlchemy expression over `sales_orders`."""
     return SalesOrder.demand_class.is_distinct_from(PROJECT_CLASS) | (
         (SalesOrder.demand_origin == ORDER_INQUIRY_ORIGIN)
-        & ~_has_active_supply_decision()
+        & SalesOrder.id.notin_(_decided_sales_order_ids())
     )
 
 
