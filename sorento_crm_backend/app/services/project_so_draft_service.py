@@ -80,7 +80,6 @@ from app.models.projects import (
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.project_so_reconciliation_service import (
-    REVIEW_AWAITING,
     ProjectSOReconciliationService,
 )
 
@@ -2477,9 +2476,10 @@ class ProjectSODraftService:
             if review_states is not None
             else self.review_states_for([order])
         )
-        state = states.get(
-            str(order.id), {"review_state": REVIEW_AWAITING, "exception_count": 0}
-        )
+        # Absent from the map means the order has no review state at all: a draft or a
+        # blocked order is reconciled against nothing, so it reads as no state rather
+        # than an "awaiting reconciliation" it has not earned (AC-A03).
+        state = states.get(str(order.id), {"review_state": None, "exception_count": 0})
         return {
             "id": order.id,
             "provisional_ref": order.provisional_ref,
@@ -2522,6 +2522,7 @@ class ProjectSODraftService:
             # Stage 1B. Derived, never a column: the whole SO's one pre-confirmation state
             # (AC-A03) and how many exceptions stand between it and Needs CS review, so the
             # project's SO list and the SO detail header read what Fulfilment Planning does.
+            # Null until the order is published or amended - see above.
             "review_state": state["review_state"],
             "exception_count": state["exception_count"],
         }

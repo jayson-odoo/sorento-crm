@@ -36,6 +36,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import text
 
+from app.models.base import company_scope
 from app.models.company import Company
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
@@ -343,6 +344,28 @@ def test_two_project_lines_and_two_core_lines_on_the_same_exact_date_are_ambiguo
     assert {exc["line_no"] for exc in ambiguous} == {1, 2}
 
 
+def test_the_ambiguous_candidate_count_is_the_number_of_core_lines_at_that_date(seeded):
+    """AC-A02. `candidate_count` answers "how many AutoCount lines could this be", so
+    two of ours against ONE of theirs is one candidate each, not two. The screen prints
+    the number, and "2 candidates" beside a document holding one is a wrong instruction."""
+    db, company_id, owner = seeded
+    product = _product(db)
+    project = _project(db, company_id, owner)
+    core_order = _core_order(db, so_number=f"ZZT-SO-{_uid()[:8]}")
+    _core_line(db, core_order, product, required_date=D1)
+    order = _project_order(
+        db, project, autocount_doc_no=core_order.so_number, so_id=core_order.id
+    )
+    _project_line(db, order, product, line_no=1, delivery_date=D1)
+    _project_line(db, order, product, line_no=2, delivery_date=D1)
+
+    summary = ProjectSOReconciliationService(db).evaluate(order)
+
+    for row in summary["lines"]:
+        assert row["link"] == "ambiguous"
+        assert row["candidate_count"] == 1
+
+
 def test_a_surplus_core_line_is_named_by_item_code_and_blocks_needs_cs_review(seeded):
     """AC-A02/AC-A03. The AutoCount document has a line the Project SO does not:
     reported as a surplus exception, and the whole-SO state cannot advance."""
@@ -469,9 +492,10 @@ def test_closed_core_lines_are_never_candidates(seeded):
 
 
 def test_a_core_so_with_the_same_doc_no_in_another_company_is_never_linked(seeded):
-    """AC-A02/AC-G06. Candidates come from `so_id` alone, never re-derived from
-    `autocount_doc_no`: a same-numbered row in another company must never be read,
-    so the header stays `no_core_so` and the line stays unmatched."""
+    """AC-A02/AC-G06. `reconcile()` attempts the header link itself when `so_id` is
+    still null, so this is the call that exercises the ingest service's `_same_company`
+    guard: the same-numbered row belongs to another company, so nothing is adopted,
+    `so_id` stays null, and the line has no candidate to match against."""
     db, company_id, owner = seeded
     other_company_id = _uid()
     db.add(
@@ -490,13 +514,90 @@ def test_a_core_so_with_the_same_doc_no_in_another_company_is_never_linked(seede
 
     project = _project(db, company_id, owner)
     order = _project_order(db, project, autocount_doc_no=doc_no, so_id=None)
-    _project_line(db, order, product, line_no=1, delivery_date=D1)
+    line = _project_line(db, order, product, line_no=1, delivery_date=D1)
 
-    summary = ProjectSOReconciliationService(db).evaluate(order)
+    summary = ProjectSOReconciliationService(db).reconcile(order)
 
+    db.refresh(order)
+    db.refresh(line)
+    assert order.so_id is None
+    assert line.core_sales_order_line_id is None
     assert summary["header"]["outcome"] == "no_core_so"
     assert summary["lines"][0]["link"] == "missing"
     assert summary["lines"][0]["candidate_count"] == 0
+
+
+def test_a_core_sales_order_outside_the_company_scope_reads_no_core_so(seeded):
+    """AC-G06. `so_id` names a row this company cannot see. The header says exactly
+    that rather than claiming a link to a sales order it cannot even name, and the
+    review state cannot advance on a link nobody can read."""
+    db, company_id, owner = seeded
+    other_company_id = _uid()
+    db.add(
+        Company(
+            id=other_company_id,
+            name=f"{MARKER} unseen co",
+            code=f"ZZT{_uid()[:6]}",
+        )
+    )
+    db.flush()
+
+    product = _product(db)
+    doc_no = f"ZZT-SO-{_uid()[:8]}"
+    foreign_order = _core_order(db, so_number=doc_no, company_id=other_company_id)
+    _core_line(db, foreign_order, product, required_date=D1)
+
+    project = _project(db, company_id, owner)
+    order = _project_order(db, project, autocount_doc_no=doc_no, so_id=foreign_order.id)
+    _project_line(db, order, product, line_no=1, delivery_date=D1)
+
+    with company_scope(db, frozenset({company_id})):
+        summary = ProjectSOReconciliationService(db).evaluate(order)
+
+    assert summary["header"]["outcome"] == "no_core_so"
+    assert "not visible" in summary["header"]["reason"]
+    assert summary["header"]["core_so_number"] is None
+    assert summary["review_state"] == "awaiting_reconciliation"
+
+
+def test_a_core_line_already_taken_by_another_project_so_is_reported_duplicate(seeded):
+    """AC-A02. Two Project SOs adopted the same AutoCount document, so both point at
+    one core sales order and one core line. The first to reconcile keeps it; the
+    second must NAME the sales order holding it rather than dying on
+    `uq_projects_so_line_core_line`, and it cannot reach Needs CS review."""
+    db, company_id, owner = seeded
+    product = _product(db)
+    project = _project(db, company_id, owner)
+    core_order = _core_order(db, so_number=f"ZZT-SO-{_uid()[:8]}")
+    core_line = _core_line(db, core_order, product, required_date=D1)
+
+    first = _project_order(
+        db, project, autocount_doc_no=core_order.so_number, so_id=core_order.id
+    )
+    first_line = _project_line(db, first, product, line_no=1, delivery_date=D1)
+    second = _project_order(
+        db, project, autocount_doc_no=core_order.so_number, so_id=core_order.id
+    )
+    second_line = _project_line(db, second, product, line_no=7, delivery_date=D1)
+
+    service = ProjectSOReconciliationService(db)
+    service.reconcile(first)
+    summary = service.reconcile(second)
+
+    db.refresh(first_line)
+    db.refresh(second_line)
+    assert str(first_line.core_sales_order_line_id) == str(core_line.id)
+    assert second_line.core_sales_order_line_id is None
+
+    assert summary["lines"][0]["link"] == "duplicate"
+    assert summary["review_state"] == "awaiting_reconciliation"
+    duplicate = [exc for exc in summary["exceptions"] if exc["kind"] == "duplicate"]
+    assert len(duplicate) == 1
+    assert duplicate[0]["line_no"] == 7
+    assert duplicate[0]["item_code"] == product.product_code
+    assert first.provisional_ref in duplicate[0]["message"]
+    # The core line is accounted for by the duplicate, so it is not ALSO surplus.
+    assert not [exc for exc in summary["exceptions"] if exc["kind"] == "surplus"]
 
 
 # --------------------------------------------------------------------------- #

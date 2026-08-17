@@ -2,7 +2,6 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -49,29 +48,33 @@ const REVIEW_STATE_OPTIONS = [
  * are what a CS reads down the page, and the row is the way into the reconciliation for
  * that order. Nothing here is per line - the whole sales order carries one state (AC-A03),
  * so no column can say "3 of 4 lines confirmed".
- *
- * `?mock=empty` and `?mock=error` reach the empty and failed list while the Phase 1
- * fixtures are serving (`NEXT_PUBLIC_PROJECT_SO_MOCK=1`). The param is inert against the
- * real service and goes when the fixtures do.
  */
 export function FulfilmentPlanningClient() {
-  const searchParams = useSearchParams();
-  const mockCase = searchParams?.get('mock') ?? undefined;
-
   const [reviewState, setReviewState] = React.useState('all');
   const [search, setSearch] = React.useState('');
+  const [debounced, setDebounced] = React.useState('');
   const [openRow, setOpenRow] = React.useState<FulfilmentPlanningRow | null>(null);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
   });
 
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
+  // nothing in the new one.
+  React.useEffect(() => {
+    setPagination((current) => ({ ...current, pageIndex: 0 }));
+  }, [debounced, reviewState]);
+
   const planning = useFulfilmentPlanning({
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
-    query: search.trim() || undefined,
+    query: debounced || undefined,
     review_state: reviewState === 'all' ? undefined : (reviewState as ReviewState),
-    mock_case: mockCase,
   });
 
   const rows = React.useMemo(() => planning.data?.data ?? [], [planning.data]);
@@ -94,6 +97,7 @@ export function FulfilmentPlanningClient() {
         ),
         size: 140,
         minSize: 110,
+        enableSorting: false,
         meta: { headerTitle: 'Project SO', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -109,6 +113,7 @@ export function FulfilmentPlanningClient() {
           ),
         size: 140,
         minSize: 110,
+        enableSorting: false,
         meta: { headerTitle: 'AutoCount doc', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -124,6 +129,7 @@ export function FulfilmentPlanningClient() {
         // exceptions": the count is the instruction, and a truncated one is worse than none.
         size: 275,
         minSize: 200,
+        enableSorting: false,
         meta: { headerTitle: 'Review state', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
@@ -139,6 +145,7 @@ export function FulfilmentPlanningClient() {
         },
         size: 120,
         minSize: 105,
+        enableSorting: false,
         meta: { headerTitle: 'Lines', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
@@ -146,19 +153,26 @@ export function FulfilmentPlanningClient() {
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
         cell: ({ row }) => (
           <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="block truncate" title={row.original.project_name}>
-              {row.original.project_name}
-            </span>
-            <span
-              className="block truncate text-xs text-muted-foreground"
-              title={row.original.project_code}
-            >
-              {row.original.project_code}
-            </span>
+            {row.original.project_name ? (
+              <span className="block truncate" title={row.original.project_name}>
+                {row.original.project_name}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">-</span>
+            )}
+            {row.original.project_code ? (
+              <span
+                className="block truncate text-xs text-muted-foreground"
+                title={row.original.project_code}
+              >
+                {row.original.project_code}
+              </span>
+            ) : null}
           </div>
         ),
         size: 180,
         minSize: 140,
+        enableSorting: false,
         meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
@@ -174,6 +188,7 @@ export function FulfilmentPlanningClient() {
           ),
         size: 180,
         minSize: 140,
+        enableSorting: false,
         meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
@@ -189,6 +204,7 @@ export function FulfilmentPlanningClient() {
           ),
         size: 130,
         minSize: 110,
+        enableSorting: false,
         meta: { headerTitle: 'Customer PO', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
@@ -204,6 +220,7 @@ export function FulfilmentPlanningClient() {
           ),
         size: 130,
         minSize: 110,
+        enableSorting: false,
         meta: { headerTitle: 'Area group', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
@@ -219,6 +236,7 @@ export function FulfilmentPlanningClient() {
           ),
         size: 130,
         minSize: 100,
+        enableSorting: false,
         meta: { headerTitle: 'Updated', skeleton: <Skeleton className="h-4 w-20" /> },
       },
     ],
@@ -246,9 +264,8 @@ export function FulfilmentPlanningClient() {
         <div className="flex min-w-0 items-center gap-2">
           <h1 className="text-xl font-semibold break-words">Fulfilment planning</h1>
           <InfoHint label="About fulfilment planning">
-            A published sales order is planned against the AutoCount document that carries
-            it. Until every line of ours is matched to exactly one line of theirs, the order
-            is awaiting reconciliation and nothing about it has been promised to purchasing.
+            A sales order is awaiting reconciliation until every line of ours matches
+            exactly one line of the AutoCount document.
           </InfoHint>
         </div>
       </div>
@@ -275,10 +292,7 @@ export function FulfilmentPlanningClient() {
                   <Input
                     placeholder="Search sales order, project or customer"
                     value={search}
-                    onChange={(event) => {
-                      setSearch(event.target.value);
-                      setPagination((current) => ({ ...current, pageIndex: 0 }));
-                    }}
+                    onChange={(event) => setSearch(event.target.value)}
                     className="w-full ps-9 sm:w-72"
                   />
                   {search.length > 0 && (
@@ -303,10 +317,7 @@ export function FulfilmentPlanningClient() {
                     <p className="text-sm font-medium">Review state</p>
                     <SearchableSelect
                       value={reviewState}
-                      onChange={(value) => {
-                        setReviewState(value);
-                        setPagination((current) => ({ ...current, pageIndex: 0 }));
-                      }}
+                      onChange={(value) => setReviewState(value)}
                       options={REVIEW_STATE_OPTIONS}
                     />
                   </div>

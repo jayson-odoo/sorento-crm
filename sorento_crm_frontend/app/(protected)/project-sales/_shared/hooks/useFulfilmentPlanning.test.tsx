@@ -61,7 +61,6 @@ function summary(overrides: Partial<ReconciliationSummary> = {}): Reconciliation
     exceptions: [],
     lines_total: 0,
     lines_linked: 0,
-    reconciled_at: '2026-08-14T02:41:00',
     ...overrides,
   };
 }

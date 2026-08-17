@@ -31,14 +31,16 @@ and the core `sales_order_lines` under it (product, quantity, required date, war
    "purchasing-ready" (AC-A03).
 2. **CS opens a row -> the side sheet** (`Sheet` from `@/components/ui/sheet`, right side).
    Header strip: Project SO reference, AutoCount doc no (or "not uploaded"), project, customer,
-   customer PO, area group, review state pill, "Reconciled at" when known.
+   customer PO, area group, review state pill. Nothing states when reconciliation last ran:
+   this slice stores no such column, so the sheet would be printing a moment it does not have.
    **Reconciliation card:** core SO link (linked SO number, or why not), lines linked `n / m`,
    and the exception list - each entry names the Project line number and item code and one
    human-readable reason. Actions: **Re-run reconciliation** (idempotent), and a link to the
    order's AutoCount upload screen (`/project-sales/{projectId}/sales-orders/{psoId}/divergence`)
    when no document has been uploaded yet.
    **Lines table** (`DataGrid`, fixed layout): line no, item code, description, qty + UOM,
-   required date, location, core line (Linked / Missing / Ambiguous (k candidates)).
+   required date, location, core line (Linked / Missing / Ambiguous (k candidates) /
+   Duplicate).
    Empty states are explicit: no lines, no core SO yet, no exceptions ("every line is linked").
 3. **CS resolves an exception outside the sheet** (upload the AutoCount document on the
    order's divergence screen, or the weekly outstanding SO book, or answer a divergence row) and
@@ -56,9 +58,12 @@ state on top of it; it introduces no second upload path.
 ## 2. Line mapping rule (deterministic, AC-A02)
 
 Given the Project SO's `so_id`, the candidate core lines are `public.sales_order_lines` rows with
-`sales_order_id = so_id` and `line_status <> 'closed'`. Links are stable: a Project line whose
+`sales_order_id = so_id`, `line_status <> 'closed'`, and not already held by a
+`projects.sales_order_lines` row of ANOTHER Project SO. Links are stable: a Project line whose
 existing `core_sales_order_line_id` still points at one of those candidates keeps it and that
-core line is taken. The remaining Project lines are mapped against the remaining core lines
+core line is taken. The stability pass keeps an existing link on candidacy alone - it does not
+re-check the product or the date, so a link a person has already read never reshuffles under
+them. The remaining Project lines are mapped against the remaining core lines
 inside each `product_id` group, in the same two passes `app/services/scm/outstanding_diff.py`
 already uses to identify a line across weekly uploads:
 
@@ -68,24 +73,35 @@ already uses to identify a line across weekly uploads:
 
 Outcomes per Project line: **linked** (exactly one core line), **missing** (no candidate left),
 **ambiguous** (in pass 1 the same product and date has more than one Project line or more than
-one core line, so no pair is unique; nothing is written for them). A core line no Project line
-takes is a **surplus** exception naming its item code (the AutoCount document has a line the
+one core line, so no pair is unique; nothing is written for them), **duplicate** (the core line
+for this item is already linked to another Project SO, named by its provisional reference and
+line number - two sales orders adopted the same AutoCount document, and one of them is wrong).
+`uq_projects_so_line_core_line` allows exactly one holder per core line, so `duplicate` is the
+outcome that keeps a second Project SO reporting the conflict rather than dying on the index.
+
+A core line no Project line takes is a **surplus** exception naming its item code (the AutoCount document has a line the
 Project SO does not - answer it in AutoCount Differences). A previously linked core line that
 is now closed or on another SO makes that Project line **missing** again (the stale link is
 cleared).
 
 Header outcomes: **no document** (`autocount_doc_no` is null - upload it), **no core SO**
 (`so_id` is null after `reconcile_core_order` - the outstanding SO book has not carried this
-number yet), **linked**. `so_id` is what decides **linked**, ahead of the document number:
-the review state turns on `so_id`, so an order carrying a core SO must not read "nothing
-uploaded yet" beside a Needs CS review pill.
+number yet, OR the row `so_id` names is not visible under this company's scope), **linked**.
+`so_id` is what decides **linked**, ahead of the document number: the review state turns on the
+header outcome, so an order carrying a core SO must not read "nothing uploaded yet" beside a
+Needs CS review pill.
 
 Review state (derived, never a stored column in this slice):
 
 ```text
-needs_cs_review   iff so_id is set AND lines_total > 0 AND every line linked AND no surplus
+needs_cs_review   iff the header is linked AND lines_total > 0 AND every line linked
+                  AND no surplus
 awaiting_reconciliation  otherwise
 ```
+
+Only a published or amended order has a review state at all. A draft or a blocked order is
+reconciled against nothing, so its list row and its detail carry `review_state: null` and
+`exception_count: 0` rather than an "awaiting reconciliation" it has not earned.
 
 Stage 1C adds `confirmed` on top of this when an active `so_supply_decisions` row exists.
 
@@ -119,12 +135,11 @@ ReconciliationSummary {
   header: { outcome: 'no_document' | 'no_core_so' | 'linked', core_so_number?: string,
             reason: string },
   lines: [{ id, line_no, product_code?, description?, qty, uom?, delivery_date?,
-            stock_location?, link: 'linked' | 'missing' | 'ambiguous',
+            stock_location?, link: 'linked' | 'missing' | 'ambiguous' | 'duplicate',
             candidate_count: number, reason: string }],
   exceptions: [{ line_no?: number, item_code?: string, kind: 'header' | 'missing' |
-                 'ambiguous' | 'surplus', message: string }],
-  lines_total, lines_linked,
-  reconciled_at?
+                 'ambiguous' | 'duplicate' | 'surplus', message: string }],
+  lines_total, lines_linked
 }
 ```
 
@@ -132,24 +147,34 @@ An exception's `message` carries the reason ALONE. The screen prints the subject
 `line_no` and `item_code` ("Line 2, SRT501-CP"), so a message that repeats the subject renders
 the same fact twice.
 
-`reconciled_at` was added to this shape on 17 August 2026, during Phase 1. Section 1 step 2
-puts "Reconciled at" in the sheet's header strip and the shape above carried no timestamp at
-all, so the sheet could not state it. Optional, because an order the engine has never run
-against has no such moment and says so rather than printing a date it does not have.
+`POST .../reconcile` also performs the HEADER link when `so_id` is still null and a document
+number is known: it calls `ProjectSOIngestService.reconcile_core_order`, so a re-run may
+renumber a sheet-created provisional core row or retire it in favour of the outstanding book's,
+exactly as the P8a ingest does. That is why the re-run takes `projects.projects.edit` and the
+read does not.
 
-`ProjectSalesOrderRow` and `ProjectSalesOrderDetail` (existing) gain `review_state` and
-`exception_count` so the project's SO list and the SO detail header read the same state.
+The shape carries no `reconciled_at`. It was added during Phase 1 and removed in the Phase 2
+review: nothing in this slice stores when reconciliation last ran, so the only honest value was
+"now" on a write and null on a read, which is a timestamp about the request rather than about
+the order.
 
-The mock lives behind the existing `NEXT_PUBLIC_PROJECT_SO_MOCK=1` switch in
-`app/(protected)/project-sales/_shared/services/`, and covers: a Needs CS review SO, an SO with a
+`ProjectSalesOrderRow` and `ProjectSalesOrderDetail` (existing) gain `review_state` (nullable,
+see section 2) and `exception_count` so the project's SO list and the SO detail header read the
+same state.
+
+The Phase 1 mock lived behind the existing `NEXT_PUBLIC_PROJECT_SO_MOCK=1` switch in
+`app/(protected)/project-sales/_shared/services/` and covered a Needs CS review SO, an SO with a
 missing line and a surplus core line, an SO with an ambiguous pair, an SO with no document, an
-empty list, and a failed request.
+empty list and a failed request. It was deleted when Phase 2 landed: the component tests carry
+their own fixtures, and a second source of these shapes drifts from the real one.
 
 ## 4. Backend shape (Phase 2)
 
 - `app/services/project_so_reconciliation_service.py`: `evaluate(order)` (pure read, returns
-  the summary and the writes it would make), `reconcile(order)` (evaluate + persist links + clear
-  stale ones + flush), `review_states_for(order_ids)` (one grouped query for list rows).
+  the summary and the writes it would make), `reconcile(order)` (attempt the header link when
+  `so_id` is null, then evaluate + persist links + clear stale ones + flush),
+  `review_states_for(order_ids)` (one grouped query for list rows, published and amended orders
+  only - a draft carries no review state at all, and its row and detail read null).
 - `ProjectSOIngestService.ingest` calls `reconcile` right after `reconcile_core_order` when
   `so_id` is set, so the P8a upload lands with the lines linked in the same transaction.
 - No new table, no migration, no new setting. `derive_for_sales_order` is not called anywhere
@@ -170,16 +195,19 @@ empty list, and a failed request.
 pytest `tests/test_project_so_reconciliation.py` on Postgres via `tests/_pg_fixture.py`, seeding
 its own chain (company, project, PO, Project SO + lines, core SO + lines):
 
-- exact-date pass, date-order pass, missing, ambiguous, surplus, stable relink, stale link
-  cleared, closed core line ignored, cross-company core SO never linked;
-- review state derivation (AC-A02, AC-A03), only entered when header and all lines link;
+- exact-date pass, date-order pass, missing, ambiguous, duplicate (two Project SOs on one
+  core SO, no `IntegrityError`), surplus, stable relink, stale link cleared, closed core line
+  ignored, cross-company core SO never linked (through `reconcile`, which is what attempts the
+  header link), core SO outside the company scope reported as no core SO;
+- review state derivation (AC-A02, AC-A03), only entered when header and all lines link, and
+  absent entirely on a draft or blocked order;
 - ingest triggers reconciliation (AC-A01);
 - zero `order_inquiry_rows` with verb `ORDER` / `RESERVE_AND_ORDER` after reconcile (AC-A04);
 - routes: happy, 403 without permission, 404 unknown id, rerun idempotent.
 
-Vitest: list client (rows, pill per state, empty, error), side sheet (header strip,
-reconciliation card, exceptions, lines table, empty and error states, rerun action), hook and
-service (mock and real paths).
+Vitest: list client (rows, pill per state, empty, error), side sheet (header strip read from
+the summary, reconciliation card, exceptions, lines table including Duplicate, empty and error
+states, rerun action), hook and service (the three documented URLs and their failures).
 
 agent-browser evidence run: sidebar Project Sales -> Fulfilment Planning -> row -> sheet, console
 and network checks, 1280x800 and 375x812.

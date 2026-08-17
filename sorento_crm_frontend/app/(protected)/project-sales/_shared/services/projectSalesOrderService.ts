@@ -369,10 +369,6 @@ const MOCK_ROWS: ProjectSalesOrderRow[] = [
     po_number: 'HQ/26/01/121',
     created_at: '2025-11-07T01:00:00',
     published_at: '2025-11-07T03:20:00',
-    // Only the published row carries a review state: the draft and blocked rows above are
-    // not reconciled against anything yet, and the pill renders nothing without one.
-    review_state: 'awaiting_reconciliation',
-    exception_count: 2,
   },
 ];
 

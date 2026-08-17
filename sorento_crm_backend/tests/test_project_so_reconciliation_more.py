@@ -231,6 +231,46 @@ def test_pagination_total_is_the_filtered_count_when_review_state_is_given():
             _restore(originals)
 
 
+def test_pagination_without_a_review_state_filter_pages_the_orders_themselves():
+    """No ``review_state`` filter means the ORM query is paginated before anything is
+    derived, so a page is a page of the whole set: three published orders at a page
+    size of two are two rows then one, a reported total of three, and no order on both
+    pages (the ``id`` tiebreak makes the split stable)."""
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        owner = _user(db)
+        project = _project(db, company_id, owner)
+        product = _product(db)
+
+        seeded = []
+        for _ in range(3):
+            order = _project_order(db, project, autocount_doc_no=None, so_id=None)
+            _project_line(db, order, product, line_no=1, delivery_date=D1)
+            seeded.append(order.id)
+        db.commit()
+
+        client, originals = _client(db, owner, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                first = client.get(
+                    f"{BASE}/fulfilment-planning", params={"page": 1, "limit": 2}
+                )
+                second = client.get(
+                    f"{BASE}/fulfilment-planning", params={"page": 2, "limit": 2}
+                )
+                assert first.status_code == 200, first.text
+                assert second.status_code == 200, second.text
+                page_one = [row["id"] for row in first.json()["data"]]
+                page_two = [row["id"] for row in second.json()["data"]]
+                assert len(page_one) == 2
+                assert len(page_two) == 1
+                assert first.json()["pagination"]["total"] == 3
+                assert set(page_one) | set(page_two) == set(seeded)
+        finally:
+            _restore(originals)
+
+
 # --------------------------------------------------------------------------- #
 # GET /fulfilment-planning: draft/blocked SOs are excluded                    #
 # --------------------------------------------------------------------------- #
@@ -314,7 +354,7 @@ def test_an_so_of_another_company_never_appears_in_the_list():
 # --------------------------------------------------------------------------- #
 
 
-def test_the_build_route_response_rows_carry_review_state_and_exception_count():
+def test_the_build_route_response_rows_carry_no_review_state_while_they_are_drafts():
     with blank_session() as db:
         company_id = _sorento(db)
         project_seed_service.run(db, company_id=company_id)
@@ -335,14 +375,15 @@ def test_the_build_route_response_rows_carry_review_state_and_exception_count():
                 body = response.json()
                 assert body["data"], "expected at least one drafted sales order"
                 for row in body["data"]:
-                    assert row["review_state"] == "awaiting_reconciliation"
-                    # No document uploaded yet -- at minimum the header exception.
-                    assert row["exception_count"] >= 1
+                    # A draft has not left the building, so there is no AutoCount
+                    # document for it to disagree with and no state to read (AC-A03).
+                    assert row["review_state"] is None
+                    assert row["exception_count"] == 0
         finally:
             _restore(originals)
 
 
-def test_the_regroup_route_response_rows_carry_review_state_and_exception_count():
+def test_the_regroup_route_response_rows_carry_no_review_state_while_they_are_drafts():
     with blank_session() as db:
         company_id = _sorento(db)
         project_seed_service.run(db, company_id=company_id)
@@ -377,16 +418,17 @@ def test_the_regroup_route_response_rows_carry_review_state_and_exception_count(
                 body = response.json()
                 assert body, "expected at least one regrouped sales order"
                 for row in body:
-                    assert row["review_state"] == "awaiting_reconciliation"
-                    assert row["exception_count"] >= 1
+                    assert row["review_state"] is None
+                    assert row["exception_count"] == 0
         finally:
             _restore(originals)
 
 
-def test_a_draft_so_detail_reads_awaiting_reconciliation_without_crashing():
-    """AC-A02/AC-A03. A draft has no ``so_id`` and no document yet -- the review state
-    still derives cleanly rather than raising, so the detail page never crashes on a
-    sales order the fulfilment worklist itself excludes."""
+def test_a_draft_so_detail_carries_no_review_state_at_all():
+    """AC-A02/AC-A03. A draft is not reconciled against anything: it has no AutoCount
+    document, it is excluded from the fulfilment worklist, and its detail must carry NO
+    review state rather than an "awaiting reconciliation" it has not earned. The screen
+    renders no pill without one."""
     with blank_session() as db:
         company_id = _sorento(db)
         project_seed_service.run(db, company_id=company_id)
@@ -403,8 +445,8 @@ def test_a_draft_so_detail_reads_awaiting_reconciliation_without_crashing():
                 response = client.get(f"{BASE}/sales-orders/{order.id}")
                 assert response.status_code == 200, response.text
                 body = response.json()
-                assert body["review_state"] == "awaiting_reconciliation"
-                assert body["exception_count"] >= 1
+                assert body["review_state"] is None
+                assert body["exception_count"] == 0
         finally:
             _restore(originals)
 

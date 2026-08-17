@@ -99,7 +99,6 @@ function summary(overrides: Partial<ReconciliationSummary> = {}): Reconciliation
     exceptions: [],
     lines_total: 1,
     lines_linked: 1,
-    reconciled_at: '2026-08-14T02:41:00',
     ...overrides,
   };
 }
@@ -127,8 +126,11 @@ describe('FulfilmentPlanningSheet', () => {
   it('states an absent field rather than hiding it, in the header strip and the reconciliation card', async () => {
     getReconciliation.mockResolvedValue(
       summary({
+        autocount_doc_no: null,
+        customer_name: null,
+        po_number: null,
+        area_group: null,
         header: { outcome: 'no_document', core_so_number: null, reason: 'No document yet.' },
-        reconciled_at: null,
       }),
     );
 
@@ -142,13 +144,29 @@ describe('FulfilmentPlanningSheet', () => {
     );
 
     const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByText('Not linked')).toBeInTheDocument());
     expect(within(dialog).getByText('Not uploaded')).toBeInTheDocument();
     expect(within(dialog).getByText('Not recorded')).toBeInTheDocument();
     expect(within(dialog).getByText('None')).toBeInTheDocument();
     expect(within(dialog).getByText('No area group')).toBeInTheDocument();
+  });
 
-    await waitFor(() => expect(within(dialog).getByText('Never run')).toBeInTheDocument());
-    expect(within(dialog).getByText('Not linked')).toBeInTheDocument();
+  it('reads the header strip from the summary, so a re-run refreshes what it states', async () => {
+    // The row is what the worklist last fetched; the summary is what the reconciliation
+    // just answered. An order that has since adopted a document number must not keep
+    // reading "Not uploaded" behind a linked core sales order.
+    getReconciliation.mockResolvedValue(
+      summary({ autocount_doc_no: 'SO376299', customer_name: 'Hong Bee Hardware Sdn Bhd' }),
+    );
+
+    renderSheet(row({ autocount_doc_no: null, customer_name: null }));
+
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() =>
+      expect(within(dialog).getAllByText('SO376299').length).toBeGreaterThan(0),
+    );
+    expect(within(dialog).getByText('Hong Bee Hardware Sdn Bhd')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Not uploaded')).not.toBeInTheDocument();
   });
 
   it('links to the AutoCount upload screen only when no document has been uploaded', async () => {
@@ -228,15 +246,16 @@ describe('FulfilmentPlanningSheet', () => {
     expect(within(dialog).getByText('SRT770-BK')).toBeInTheDocument();
   });
 
-  it('shows Linked, Missing and Ambiguous(k) per line, never a workflow state', async () => {
+  it('shows Linked, Missing, Ambiguous(k) and Duplicate per line, never a workflow state', async () => {
     getReconciliation.mockResolvedValue(
       summary({
         lines: [
           { id: 'l1', line_no: 1, product_code: 'CB6633', description: 'Grating', qty: '600', uom: 'UNIT', delivery_date: '2026-07-01', stock_location: 'BRW-BB', link: 'linked', candidate_count: 1, reason: 'Matched.' },
           { id: 'l2', line_no: 2, product_code: 'SRT501-CP', description: 'Mixer', qty: '80', uom: 'UNIT', delivery_date: '2026-07-20', stock_location: 'BRW-BB', link: 'missing', candidate_count: 0, reason: 'No AutoCount line.' },
           { id: 'l3', line_no: 3, product_code: 'SRT382-6', description: 'Sink mixer', qty: '50', uom: 'UNIT', delivery_date: '2026-07-10', stock_location: 'BRW-BB', link: 'ambiguous', candidate_count: 2, reason: 'Two lines carry this item.' },
+          { id: 'l4', line_no: 4, product_code: 'CB2201', description: 'Floor trap', qty: '200', uom: 'UNIT', delivery_date: '2026-08-05', stock_location: 'HQ', link: 'duplicate', candidate_count: 0, reason: 'This core line is already linked to Project SO PSO-000124, line 2.' },
         ],
-        lines_total: 3,
+        lines_total: 4,
         lines_linked: 1,
       }),
     );
@@ -247,6 +266,49 @@ describe('FulfilmentPlanningSheet', () => {
     expect(await within(dialog).findByText('Linked')).toBeInTheDocument();
     expect(within(dialog).getByText('Missing')).toBeInTheDocument();
     expect(within(dialog).getByText('Ambiguous (2 candidates)')).toBeInTheDocument();
+    expect(within(dialog).getByText('Duplicate')).toBeInTheDocument();
+  });
+
+  it('says "1 candidate" rather than "1 candidates"', async () => {
+    getReconciliation.mockResolvedValue(
+      summary({
+        lines: [
+          { id: 'l1', line_no: 1, product_code: 'SRT382-6', description: 'Sink mixer', qty: '50', uom: 'UNIT', delivery_date: '2026-07-10', stock_location: 'BRW-BB', link: 'ambiguous', candidate_count: 1, reason: 'Two of our lines carry this item on this date.' },
+        ],
+        lines_total: 1,
+        lines_linked: 0,
+      }),
+    );
+
+    renderSheet(row());
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Ambiguous (1 candidate)')).toBeInTheDocument();
+  });
+
+  it('names the sales order holding a duplicated core line, and never an id', async () => {
+    getReconciliation.mockResolvedValue(
+      summary({
+        exceptions: [
+          {
+            line_no: 7,
+            item_code: 'CB2201',
+            kind: 'duplicate',
+            message: 'This core line is already linked to Project SO PSO-000124, line 2.',
+          },
+        ],
+      }),
+    );
+
+    renderSheet(row());
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Line 7, CB2201')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        'This core line is already linked to Project SO PSO-000124, line 2.',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('states that a sales order has no lines rather than an empty table', async () => {

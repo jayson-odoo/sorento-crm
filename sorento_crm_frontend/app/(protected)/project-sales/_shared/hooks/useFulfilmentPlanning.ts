@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   getReconciliation,
@@ -22,6 +22,10 @@ export function useFulfilmentPlanning(params: FulfilmentPlanningListParams = {})
   return useQuery({
     queryKey: fulfilmentPlanningKey(params),
     queryFn: () => listFulfilmentPlanning(params),
+    // The page and the search both change the key, so without this the grid empties to a
+    // skeleton on every keystroke and every page turn. The previous page stays on screen
+    // until the next one answers.
+    placeholderData: keepPreviousData,
   });
 }
 

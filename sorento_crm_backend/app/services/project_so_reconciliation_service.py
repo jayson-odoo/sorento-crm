@@ -10,10 +10,11 @@ whole-SO review state that follows from it.
 
 ## The mapping rule, and why it is two passes
 
-Candidates are the core lines of `so_id` that are not closed. A Project line whose existing
-`core_sales_order_line_id` still names one of them KEEPS it: reconciliation runs again every
-time somebody presses Re-run, and a mapping that reshuffles itself under a person who has
-already read it is worse than one that occasionally reports an exception.
+Candidates are the core lines of `so_id` that are not closed AND are not already held by
+another Project SO's line. A Project line whose existing `core_sales_order_line_id` still
+names one of them KEEPS it, on candidacy alone: reconciliation runs again every time somebody
+presses Re-run, and a mapping that reshuffles itself under a person who has already read it is
+worse than one that occasionally reports an exception.
 
 The rest are matched inside each `product_id` group, in the same two passes
 `app/services/scm/outstanding_diff.py` uses to identify a line across weekly uploads:
@@ -26,7 +27,10 @@ The rest are matched inside each `product_id` group, in the same two passes
    the rule a person can check by eye: "you had lines due 1 Jul and 3 Aug, the document has
    15 Jul and 3 Aug, so the 1 Jul line moved."
 
-Leftover Project lines are `missing`, leftover core lines are `surplus` (the document has a
+Leftover Project lines are `missing`, or `duplicate` when the core line for that item is held
+by another Project SO (two sales orders adopted the same AutoCount document, and one of them is
+wrong - `uq_projects_so_line_core_line` allows exactly one holder, so reporting this is the
+only alternative to dying on the index). Leftover core lines are `surplus` (the document has a
 line this sales order does not, which is answered in AutoCount Differences).
 
 ## What this file must never do (AC-A04)
@@ -44,9 +48,10 @@ itself ("Line 2, SRT501-CP"), so a message repeating it renders the same fact tw
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -58,11 +63,16 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
+from app.services.error_handler import AppException
 
 # Per-line outcomes (slice note section 2). `linked` is the only one that writes.
 LINK_LINKED = "linked"
 LINK_MISSING = "missing"
 LINK_AMBIGUOUS = "ambiguous"
+#: The core line this Project line would take is already held by ANOTHER Project SO.
+#: A distinct outcome from `missing` because the answer is somewhere else entirely: one
+#: of the two sales orders adopted the wrong AutoCount document.
+LINK_DUPLICATE = "duplicate"
 
 # Header outcomes.
 HEADER_NO_DOCUMENT = "no_document"
@@ -73,7 +83,15 @@ HEADER_LINKED = "linked"
 KIND_HEADER = "header"
 KIND_MISSING = "missing"
 KIND_AMBIGUOUS = "ambiguous"
+KIND_DUPLICATE = "duplicate"
 KIND_SURPLUS = "surplus"
+
+#: A per-line outcome is its own exception kind; `linked` raises none.
+_KIND_OF_LINK = {
+    LINK_MISSING: KIND_MISSING,
+    LINK_AMBIGUOUS: KIND_AMBIGUOUS,
+    LINK_DUPLICATE: KIND_DUPLICATE,
+}
 
 # The whole SO's one pre-confirmation state (AC-A03). Stage 1C adds `confirmed` on top of
 # these; no line ever carries a state of its own.
@@ -88,10 +106,26 @@ CORE_LINE_CLOSED = "closed"
 #: AutoCount document for it to disagree with.
 LIVE_SO_STATUSES = (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
 
+#: Who holds a core line: the Project SO's id, its provisional reference, and the line
+#: number on it. The reference and the line number are what an exception names.
+_Claim = Tuple[str, Optional[str], Optional[int]]
+
 _SURPLUS_MESSAGE = (
     "On the AutoCount document and not on this sales order. Answer it in AutoCount "
     "Differences."
 )
+
+
+def _duplicate_reason(other_ref: Optional[str], other_line_no: Optional[int]) -> str:
+    """Name the sales order holding the core line, so CS knows where to look.
+
+    A reference, never an id: the two orders are told apart on screen by their
+    provisional reference, which is what the person reading this has in front of them.
+    """
+    where = other_ref or "another sales order"
+    if other_line_no is None:
+        return f"This core line is already linked to Project SO {where}."
+    return f"This core line is already linked to Project SO {where}, line {other_line_no}."
 
 
 def _date_phrase(value: Optional[date]) -> str:
@@ -156,7 +190,7 @@ class _OrderOutcome:
     @property
     def review_state(self) -> str:
         """AC-A02/AC-A03: entered only when the header AND every line map cleanly."""
-        if not self.order.so_id:
+        if self.header_outcome != HEADER_LINKED:
             return REVIEW_AWAITING
         if self.lines_total == 0 or self.lines_linked != self.lines_total:
             return REVIEW_AWAITING
@@ -183,7 +217,7 @@ class _OrderOutcome:
                 {
                     "line_no": row.line.line_no,
                     "item_code": row.item_code,
-                    "kind": KIND_MISSING if row.link == LINK_MISSING else KIND_AMBIGUOUS,
+                    "kind": _KIND_OF_LINK[row.link],
                     "message": row.reason,
                 }
             )
@@ -202,6 +236,10 @@ class _OrderOutcome:
         """The reason, plus where the person goes to answer it. Never an id."""
         if self.header_outcome == HEADER_NO_DOCUMENT:
             return f"{self.header_reason} Upload it on the AutoCount screen for this order."
+        if self.order.so_id:
+            # The link exists and its row is simply out of this company's reach. There
+            # is nothing to re-run, so the reason stands on its own.
+            return self.header_reason
         return (
             f"{self.header_reason} Re-run this once the weekly outstanding sales order "
             "book carries it."
@@ -219,7 +257,7 @@ class ProjectSOReconciliationService:
     def evaluate(self, order: ProjectSalesOrder) -> Dict[str, Any]:
         """What the mapping makes of this order right now. Writes nothing."""
         outcome = self._outcomes_for([order])[str(order.id)]
-        return self._summary(outcome, reconciled_at=None)
+        return self._summary(outcome)
 
     def review_states_for(self, order_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
         """The list row's three numbers, for a whole page of orders at once.
@@ -231,9 +269,16 @@ class ProjectSOReconciliationService:
         ids = [str(order_id) for order_id in order_ids if order_id]
         if not ids:
             return {}
+        # Only a published or amended order has a state at all: a draft is reconciled
+        # against nothing, so it carries no review state rather than an "awaiting
+        # reconciliation" it has not earned (AC-A03). Absent from this map means absent
+        # from the row.
         orders = (
             self.db.query(ProjectSalesOrder)
-            .filter(ProjectSalesOrder.id.in_(ids))
+            .filter(
+                ProjectSalesOrder.id.in_(ids),
+                ProjectSalesOrder.status.in_(LIVE_SO_STATUSES),
+            )
             .all()
         )
         outcomes = self._outcomes_for(orders)
@@ -273,7 +318,7 @@ class ProjectSOReconciliationService:
 
         outcome = self._outcomes_for([order])[str(order.id)]
         self._persist(outcome)
-        return self._summary(outcome, reconciled_at=datetime.utcnow())
+        return self._summary(outcome)
 
     def _persist(self, outcome: _OrderOutcome) -> None:
         """Clear first, then link.
@@ -298,7 +343,18 @@ class ProjectSOReconciliationService:
         for row in outcome.lines:
             if row.core_line_id and not row.line.core_sales_order_line_id:
                 row.line.core_sales_order_line_id = row.core_line_id
-        self.db.flush()
+        try:
+            self.db.flush()
+        except IntegrityError as exc:
+            # Belt and braces behind the `duplicate` outcome: a core line held by another
+            # Project SO is kept out of the pool, so this can only fire on a race between
+            # two reconciliations. Answered as a conflict naming the document, never an id.
+            raise AppException(
+                409,
+                "Another sales order linked a line of AutoCount document "
+                f"{outcome.order.autocount_doc_no or '(none)'} while this one was being "
+                "reconciled. Re-run the reconciliation to see which line it took.",
+            ) from exc
 
     # ---------------------------------------------------------------- the map
 
@@ -337,6 +393,7 @@ class ProjectSOReconciliationService:
                 core_lines.setdefault(str(line.sales_order_id), []).append(line)
 
         core_numbers = self._core_so_numbers(so_ids)
+        claims = self._claims_by_other_orders(core_lines)
         stale = self._stale_link_targets(project_lines, core_lines, orders)
         codes = self._product_codes(
             [line.product_id for lines in project_lines.values() for line in lines]
@@ -349,6 +406,7 @@ class ProjectSOReconciliationService:
                 project_lines.get(str(order.id), []),
                 core_lines.get(str(order.so_id), []) if order.so_id else [],
                 core_numbers=core_numbers,
+                claims=claims,
                 stale=stale,
                 codes=codes,
             )
@@ -362,14 +420,34 @@ class ProjectSOReconciliationService:
         core_lines: Sequence[SalesOrderLine],
         *,
         core_numbers: Dict[str, Optional[str]],
+        claims: Dict[str, _Claim],
         stale: Dict[str, Optional[SalesOrderLine]],
         codes: Dict[str, str],
     ) -> _OrderOutcome:
         header_outcome, header_reason, core_so_number = self._header(order, core_numbers)
-        assignments, ambiguity, leftover_core = _map_lines(project_lines, core_lines)
+
+        # A core line another Project SO already holds is not ours to take: the unique
+        # index would refuse the write, and reporting it as `missing` would send CS
+        # looking for a line that is sitting on the next sales order along. Out of the
+        # pool, and named by the order holding it below.
+        available: List[SalesOrderLine] = []
+        # One claimed core line answers for one unmatched Project line, in required-date
+        # order, so two unmatched lines against one taken core line report one duplicate
+        # and one genuinely missing.
+        duplicates_by_product: Dict[str, List[_Claim]] = {}
+        for line in sorted(core_lines, key=_core_sort_key):
+            claim = claims.get(str(line.id))
+            if claim and claim[0] != str(order.id):
+                duplicates_by_product.setdefault(
+                    str(line.product_id or ""), []
+                ).append(claim)
+            else:
+                available.append(line)
+
+        assignments, ambiguity, leftover_core = _map_lines(project_lines, available)
 
         candidates_by_product: Dict[str, int] = {}
-        for line in core_lines:
+        for line in available:
             key = str(line.product_id or "")
             candidates_by_product[key] = candidates_by_product.get(key, 0) + 1
 
@@ -393,6 +471,19 @@ class ProjectSOReconciliationService:
                     core_line_id=None,
                     candidate_count=ambiguity[str(line.id)][0],
                     reason=ambiguity[str(line.id)][1],
+                    item_code=item_code,
+                )
+            elif duplicates_by_product.get(str(line.product_id or "")):
+                _holder, other_ref, other_line_no = duplicates_by_product[
+                    str(line.product_id or "")
+                ].pop(0)
+                row = _LineOutcome(
+                    line=line,
+                    link=LINK_DUPLICATE,
+                    core_line_id=None,
+                    # Nothing it may take, which is the whole point of the outcome.
+                    candidate_count=0,
+                    reason=_duplicate_reason(other_ref, other_line_no),
                     item_code=item_code,
                 )
             else:
@@ -436,6 +527,15 @@ class ProjectSOReconciliationService:
         screen contradicting itself.
         """
         if order.so_id:
+            if str(order.so_id) not in core_numbers:
+                # The link exists, but the row it names cannot be read under this
+                # company's scope. Claiming `linked` to a sales order we cannot even
+                # name would be the screen asserting something it has not seen.
+                return (
+                    HEADER_NO_CORE_SO,
+                    "The linked core sales order is not visible to this company.",
+                    None,
+                )
             number = core_numbers.get(str(order.so_id))
             if number:
                 return HEADER_LINKED, f"Linked to sales order {number}.", number
@@ -496,6 +596,35 @@ class ProjectSOReconciliationService:
             .all()
         }
 
+    def _claims_by_other_orders(
+        self, core_lines: Dict[str, List[SalesOrderLine]]
+    ) -> Dict[str, _Claim]:
+        """Which Project SO already holds each candidate core line, if any.
+
+        `uq_projects_so_line_core_line` allows exactly one holder, so this is a lookup
+        rather than a list. Read for EVERY order in the batch at once and filtered per
+        order afterwards: two Project SOs that adopted the same document can both be on
+        the page, and each has to see the other's claim.
+        """
+        wanted = {str(line.id) for lines in core_lines.values() for line in lines}
+        if not wanted:
+            return {}
+        rows = (
+            self.db.query(
+                ProjectSalesOrderLine.core_sales_order_line_id,
+                ProjectSalesOrderLine.project_sales_order_id,
+                ProjectSalesOrderLine.line_no,
+                ProjectSalesOrder.provisional_ref,
+            )
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == ProjectSalesOrderLine.project_sales_order_id,
+            )
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(list(wanted)))
+            .all()
+        )
+        return {str(row[0]): (str(row[1]), row[3], row[2]) for row in rows}
+
     def _stale_link_targets(
         self,
         project_lines: Dict[str, List[ProjectSalesOrderLine]],
@@ -541,9 +670,7 @@ class ProjectSOReconciliationService:
 
     # ------------------------------------------------------------- the summary
 
-    def _summary(
-        self, outcome: _OrderOutcome, *, reconciled_at: Optional[datetime]
-    ) -> Dict[str, Any]:
+    def _summary(self, outcome: _OrderOutcome) -> Dict[str, Any]:
         order = outcome.order
         header = self._display_fields(order)
         return {
@@ -582,10 +709,6 @@ class ProjectSOReconciliationService:
             "exceptions": outcome.exceptions,
             "lines_total": outcome.lines_total,
             "lines_linked": outcome.lines_linked,
-            # Nothing stores the moment reconciliation last ran (this slice adds no column),
-            # so a pure read states the absence rather than printing a date it does not
-            # have. A run knows its own moment and says so.
-            "reconciled_at": reconciled_at,
         }
 
     def _display_fields(self, order: ProjectSalesOrder) -> Dict[str, Optional[str]]:
@@ -654,11 +777,17 @@ class ProjectSOReconciliationService:
     ) -> Dict[str, Any]:
         """One row per published or amended Project SO, across projects (J03 step 1).
 
-        The review state is derived rather than stored, so filtering on it means deriving
-        it for every order the other filters leave. That is the honest cost of a state with
-        no column: the alternative is a stored flag that silently disagrees with the
-        mapping the sheet shows. The set is the published Project SOs of one company, and
-        the derivation is a handful of queries whatever its size.
+        The review state is derived rather than stored, so FILTERING on it means deriving
+        it for every order the other filters leave, then paging what is left: a total that
+        counted unfiltered rows would be a lie, and there is no column to put in a WHERE.
+        That is the honest cost of a state with no column, and it is paid only when the
+        filter is actually used.
+
+        Without that filter the database can do the paging, so it does: the ORM query is
+        ordered and windowed first and only the page is derived, which keeps a worklist of
+        a thousand published sales orders to one page's worth of mapping. `id` breaks a
+        tie on `updated_at`, or two orders saved in the same moment could land on both
+        pages, or on neither.
         """
         rows = (
             self.db.query(ProjectSalesOrder)
@@ -673,19 +802,27 @@ class ProjectSOReconciliationService:
                 | ProjectSalesOrder.autocount_doc_no.ilike(needle)
                 | ProjectSalesOrder.area_group.ilike(needle)
             )
-        orders = rows.order_by(ProjectSalesOrder.updated_at.desc()).all()
+        rows = rows.order_by(
+            ProjectSalesOrder.updated_at.desc(), ProjectSalesOrder.id.desc()
+        )
 
-        outcomes = self._outcomes_for(orders)
+        page = max(page, 1)
+        offset = (page - 1) * limit
         if review_state:
+            orders = rows.all()
+            outcomes = self._outcomes_for(orders)
             orders = [
                 order
                 for order in orders
                 if outcomes[str(order.id)].review_state == review_state
             ]
+            total = len(orders)
+            window = orders[offset : offset + limit]
+        else:
+            total = rows.count()
+            window = rows.offset(offset).limit(limit).all()
+            outcomes = self._outcomes_for(window)
 
-        total = len(orders)
-        page = max(page, 1)
-        window = orders[(page - 1) * limit : (page - 1) * limit + limit]
         headers = self._header_rows([str(order.id) for order in window])
 
         data = []

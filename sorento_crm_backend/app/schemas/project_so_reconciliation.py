@@ -63,8 +63,11 @@ class ReconciliationLine(BaseModel):
     uom: Optional[str] = None
     delivery_date: Optional[date] = None
     stock_location: Optional[str] = None
+    #: `linked`, `missing`, `ambiguous` or `duplicate` (the core line this line would take
+    #: is already held by another Project SO).
     link: str
-    #: How many core lines could still be this one: 1 on a linked line, 0 on a missing one.
+    #: How many core lines could still be this one: 1 on a linked line, the number of core
+    #: candidates at that product and date on an ambiguous one, 0 otherwise.
     candidate_count: int = 0
     reason: str
 
@@ -73,6 +76,7 @@ class ReconciliationException(BaseModel):
     #: Absent on a surplus core line, which no Project line claims.
     line_no: Optional[int] = None
     item_code: Optional[str] = None
+    #: `header`, `missing`, `ambiguous`, `duplicate` or `surplus`.
     kind: str
     message: str
 
@@ -94,6 +98,3 @@ class ReconciliationSummary(BaseModel):
     exceptions: List[ReconciliationException] = []
     lines_total: int = 0
     lines_linked: int = 0
-    #: When reconciliation last ran. Null on a pure read: this slice stores no such column,
-    #: so an order states the absence rather than printing a date it does not have.
-    reconciled_at: Optional[datetime] = None

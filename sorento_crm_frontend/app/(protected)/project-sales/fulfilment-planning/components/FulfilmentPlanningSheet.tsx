@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
-import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useReconciliation,
   useReconciliationMutations,
@@ -38,7 +38,7 @@ import type {
 } from '../../_shared/types/fulfilmentPlanning.types';
 
 /**
- * One line's core-SO link. The three outcomes of the section 2 mapping rule and nothing
+ * One line's core-SO link. The four outcomes of the section 2 mapping rule and nothing
  * else: a line is never confirmed, partially confirmed or purchasing-ready here (AC-A03).
  *
  * Ambiguous carries its candidate count because the count is the instruction: two
@@ -48,6 +48,7 @@ const LINK_PALETTE: Record<ReconciliationLineLink, string> = {
   linked: 'active',
   missing: 'rejected',
   ambiguous: 'pending',
+  duplicate: 'rejected',
 };
 
 function LineLinkPill({ line }: { line: ReconciliationLine }) {
@@ -56,7 +57,11 @@ function LineLinkPill({ line }: { line: ReconciliationLine }) {
       ? 'Linked'
       : line.link === 'missing'
         ? 'Missing'
-        : `Ambiguous (${line.candidate_count} candidates)`;
+        : line.link === 'duplicate'
+          ? 'Duplicate'
+          : `Ambiguous (${line.candidate_count} candidate${
+              line.candidate_count === 1 ? '' : 's'
+            })`;
   return (
     <span
       className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(LINK_PALETTE[line.link])}`}
@@ -126,6 +131,15 @@ export function FulfilmentPlanningSheet({
   const { rerun } = useReconciliationMutations();
 
   const summary = reconciliation.data;
+  // The summary is the fresher of the two: a re-run can adopt a document number or resolve
+  // a customer, and the row behind the sheet is whatever the list last fetched. The row is
+  // the fallback so the strip is populated before the read lands.
+  const docNo = summary?.autocount_doc_no ?? row?.autocount_doc_no;
+  const projectName = summary?.project_name ?? row?.project_name;
+  const projectCode = summary?.project_code ?? row?.project_code;
+  const customerName = summary?.customer_name ?? row?.customer_name;
+  const poNumber = summary?.po_number ?? row?.po_number;
+  const areaGroup = summary?.area_group ?? row?.area_group;
   const lines = React.useMemo(() => summary?.lines ?? [], [summary]);
   const exceptions = React.useMemo(() => summary?.exceptions ?? [], [summary]);
 
@@ -230,7 +244,7 @@ export function FulfilmentPlanningSheet({
 
   if (!row) return null;
 
-  const reference = row.autocount_doc_no || row.provisional_ref;
+  const reference = docNo || summary?.provisional_ref || row.provisional_ref;
   const headerOutcome = summary?.header.outcome;
 
   return (
@@ -258,45 +272,38 @@ export function FulfilmentPlanningSheet({
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Meta label="Project SO">
-                <span className="tabular-nums">{row.provisional_ref}</span>
+                <span className="tabular-nums">
+                  {summary?.provisional_ref ?? row.provisional_ref}
+                </span>
               </Meta>
               <Meta label="AutoCount doc">
-                {row.autocount_doc_no ? (
-                  <span className="tabular-nums">{row.autocount_doc_no}</span>
+                {docNo ? (
+                  <span className="tabular-nums">{docNo}</span>
                 ) : (
                   <Absent>Not uploaded</Absent>
                 )}
               </Meta>
               <Meta label="Project">
-                <span title={`${row.project_name} (${row.project_code})`}>
-                  {row.project_name}
-                </span>
+                {projectName ? (
+                  <span title={projectCode ? `${projectName} (${projectCode})` : projectName}>
+                    {projectName}
+                  </span>
+                ) : (
+                  <Absent>-</Absent>
+                )}
               </Meta>
               <Meta label="Customer">
-                {row.customer_name ? (
-                  <span title={row.customer_name}>{row.customer_name}</span>
+                {customerName ? (
+                  <span title={customerName}>{customerName}</span>
                 ) : (
                   <Absent>Not recorded</Absent>
                 )}
               </Meta>
               <Meta label="Customer PO">
-                {row.po_number ? <span>{row.po_number}</span> : <Absent>None</Absent>}
+                {poNumber ? <span>{poNumber}</span> : <Absent>None</Absent>}
               </Meta>
               <Meta label="Area group">
-                {row.area_group ? (
-                  <span>{row.area_group}</span>
-                ) : (
-                  <Absent>No area group</Absent>
-                )}
-              </Meta>
-              <Meta label="Reconciled at">
-                {summary?.reconciled_at ? (
-                  <span className="tabular-nums">
-                    {formatDateTimeInMalaysia(summary.reconciled_at)}
-                  </span>
-                ) : (
-                  <Absent>Never run</Absent>
-                )}
+                {areaGroup ? <span>{areaGroup}</span> : <Absent>No area group</Absent>}
               </Meta>
             </div>
           </section>

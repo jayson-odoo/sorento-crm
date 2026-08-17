@@ -28,14 +28,23 @@ export const REVIEW_STATE_LABELS: Record<ReviewState, string> = {
 /** Why the Project SO header is, or is not, attached to a core sales order. */
 export type ReconciliationHeaderOutcome = 'no_document' | 'no_core_so' | 'linked';
 
-/** What happened to one Project SO line when it was mapped against the core SO lines. */
-export type ReconciliationLineLink = 'linked' | 'missing' | 'ambiguous';
+/**
+ * What happened to one Project SO line when it was mapped against the core SO lines.
+ * `duplicate` is the core line another Project SO already holds, which is a different
+ * problem from `missing`: the line exists, it is just not this sales order's to take.
+ */
+export type ReconciliationLineLink = 'linked' | 'missing' | 'ambiguous' | 'duplicate';
 
 /**
  * `surplus` is the only kind that has no Project line: it is a core line the AutoCount
  * document carries and the Project SO does not, so it is named by item code alone.
  */
-export type ReconciliationExceptionKind = 'header' | 'missing' | 'ambiguous' | 'surplus';
+export type ReconciliationExceptionKind =
+  | 'header'
+  | 'missing'
+  | 'ambiguous'
+  | 'duplicate'
+  | 'surplus';
 
 /** Row of `GET /project-sales/fulfilment-planning`. */
 export interface FulfilmentPlanningRow {
@@ -43,8 +52,8 @@ export interface FulfilmentPlanningRow {
   provisional_ref: string;
   autocount_doc_no?: string | null;
   project_id: string;
-  project_code: string;
-  project_name: string;
+  project_code?: string | null;
+  project_name?: string | null;
   customer_name?: string | null;
   po_number?: string | null;
   area_group?: string | null;
@@ -75,7 +84,10 @@ export interface ReconciliationLine {
   delivery_date?: string | null;
   stock_location?: string | null;
   link: ReconciliationLineLink;
-  /** How many core lines could still be this one. 1 on a linked line, 0 on a missing one. */
+  /**
+   * How many core lines could still be this one: 1 on a linked line, the number of core
+   * candidates at that product and date on an ambiguous one, 0 otherwise.
+   */
   candidate_count: number;
   reason: string;
 }
@@ -97,8 +109,8 @@ export interface ReconciliationSummary {
   provisional_ref: string;
   autocount_doc_no?: string | null;
   project_id: string;
-  project_code: string;
-  project_name: string;
+  project_code?: string | null;
+  project_name?: string | null;
   customer_name?: string | null;
   po_number?: string | null;
   area_group?: string | null;
@@ -109,13 +121,6 @@ export interface ReconciliationSummary {
   exceptions: ReconciliationException[];
   lines_total: number;
   lines_linked: number;
-  /**
-   * When reconciliation last ran for this order. Added to the section 3 contract on
-   * 2026-08-17 because the journey's header strip states it ("Reconciled at" when known)
-   * and the original shape carried no timestamp at all. Optional: an order the engine has
-   * never been run against states that instead of printing a date it does not have.
-   */
-  reconciled_at?: string | null;
 }
 
 export interface FulfilmentPlanningListParams {
@@ -124,12 +129,6 @@ export interface FulfilmentPlanningListParams {
   query?: string;
   review_state?: ReviewState;
   project_id?: string;
-  /**
-   * Mock-only. Selects a whole-list fixture case (`empty`, `error`) while
-   * `NEXT_PUBLIC_PROJECT_SO_MOCK=1`; the real service drops it, and the backend never
-   * sees it. Remove with the fixtures when Phase 2 lands.
-   */
-  mock_case?: string;
 }
 
 export interface FulfilmentPlanningListEnvelope {
