@@ -196,3 +196,124 @@ describe('empty proposals', () => {
     expect(screen.getByText('Nothing to review.')).toBeInTheDocument();
   });
 });
+
+/**
+ * The two kinds the flyer batch adds as DATA (AC-D.2, AC-D.8): `unchanged` and
+ * `suppressed`. Neither is ever tickable, whatever `selectableKinds` says -
+ * there is nothing to write for either, so they are the floor rather than a
+ * default (see `NEVER_SELECTABLE` in the component under test).
+ */
+const UNCHANGED_ROW: SpecProposal = {
+  spec_key: 'dim_width',
+  label: 'Width',
+  data_type: 'numeric',
+  value: 800,
+  unit: 'mm',
+  evidence: 'L1700 x W800 x H590mm',
+  kind: 'unchanged',
+  stored_value: 800,
+  stored_unit: 'mm',
+  stored_source: 'derived',
+};
+
+const SUPPRESSED_ROW: SpecProposal = {
+  spec_key: 'flush_type',
+  label: 'Flush type',
+  data_type: 'text',
+  value: 'dual',
+  unit: null,
+  evidence: 'Dual Flush 3L / 4.5L',
+  kind: 'suppressed',
+  stored_value: null,
+  stored_unit: null,
+  stored_source: 'human',
+};
+
+describe('the two new kinds, unchanged and suppressed (AC-D.2, AC-D.8)', () => {
+  it('badges an unchanged row "Already stored" and disables its checkbox under the default selectable kinds', () => {
+    renderReview({ proposals: [UNCHANGED_ROW], selectedKeys: [] });
+
+    expect(screen.getByText('Already stored')).toBeInTheDocument();
+    expect(screen.getByLabelText('Select row')).toBeDisabled();
+  });
+
+  it('badges a suppressed row "Removed from this product" and disables its checkbox under the default selectable kinds', () => {
+    renderReview({ proposals: [SUPPRESSED_ROW], selectedKeys: [] });
+
+    expect(screen.getByText('Removed from this product')).toBeInTheDocument();
+    expect(screen.getByLabelText('Select row')).toBeDisabled();
+  });
+
+  it('keeps both rows disabled even when a caller names them in selectableKinds explicitly', () => {
+    renderReview({
+      proposals: [UNCHANGED_ROW, SUPPRESSED_ROW],
+      selectedKeys: [],
+      selectableKinds: ['new', 'change', 'conflict', 'unchanged', 'suppressed'],
+    });
+
+    const checkboxes = screen.getAllByLabelText('Select row');
+    expect(checkboxes).toHaveLength(2);
+    for (const checkbox of checkboxes) {
+      expect(checkbox).toBeDisabled();
+    }
+  });
+});
+
+describe('conflict tickability is decided by selectableKinds, not by the row (AC-D.2, AC-D.8)', () => {
+  it('leaves the conflict checkbox enabled under the default selectable kinds (per-product panel)', () => {
+    renderReview();
+
+    // MOCK_PROPOSALS order: seat_material (new), dim_height (change), is_rimless
+    // (new), finish (conflict).
+    const checkboxes = screen.getAllByLabelText('Select row');
+    expect(checkboxes[3]).toBeEnabled();
+  });
+
+  it('disables the conflict checkbox when selectableKinds is [new, change] - the flyer bulk apply (AC-D.2, L6/L7)', () => {
+    renderReview({ selectableKinds: ['new', 'change'] });
+
+    const checkboxes = screen.getAllByLabelText('Select row');
+    expect(checkboxes[3]).toBeDisabled();
+  });
+});
+
+describe('select-all skips non-selectable rows (AC-D.8)', () => {
+  it('ticks only new and change rows, and leaves conflict, unchanged and suppressed alone, when selectableKinds is [new, change]', () => {
+    const proposals = [...MOCK_PROPOSALS, UNCHANGED_ROW, SUPPRESSED_ROW];
+    const { onSelectionChange } = renderReview({
+      proposals,
+      selectedKeys: [],
+      selectableKinds: ['new', 'change'],
+    });
+
+    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+
+    expect(onSelectionChange).toHaveBeenCalled();
+    const called = onSelectionChange.mock.calls[0][0] as string[];
+    expect(called).toEqual(
+      expect.arrayContaining(['seat_material', 'dim_height', 'is_rimless']),
+    );
+    expect(called).not.toContain('finish');
+    expect(called).not.toContain(UNCHANGED_ROW.spec_key);
+    expect(called).not.toContain(SUPPRESSED_ROW.spec_key);
+  });
+
+  it('ticks new and conflict rows under the default selectable kinds, but never unchanged or suppressed', () => {
+    const proposals = [...MOCK_PROPOSALS, UNCHANGED_ROW, SUPPRESSED_ROW];
+    const { onSelectionChange } = renderReview({ proposals, selectedKeys: [] });
+
+    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+
+    const called = onSelectionChange.mock.calls[0][0] as string[];
+    expect(called).toEqual(
+      expect.arrayContaining([
+        'seat_material',
+        'dim_height',
+        'is_rimless',
+        'finish',
+      ]),
+    );
+    expect(called).not.toContain(UNCHANGED_ROW.spec_key);
+    expect(called).not.toContain(SUPPRESSED_ROW.spec_key);
+  });
+});
