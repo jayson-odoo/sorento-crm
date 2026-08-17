@@ -8,6 +8,7 @@ import {
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
+  OnChangeFn,
   PaginationState,
   RowSelectionState,
   SortingState,
@@ -39,6 +40,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { usePermissions } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { readable, readableEntry } from '@/lib/spec-readable';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
@@ -189,6 +191,11 @@ export default function SpecVerificationList() {
   });
   const { verify, unverify } = useSpecVerificationMutations();
   const pending = verify.isPending || unverify.isPending;
+  // The server is the guard; this only decides what to SHOW - the same slug and the
+  // same rule the Specifications tab uses, so a reader is not offered a button that
+  // would 403 at submit.
+  const { permissionSet } = usePermissions();
+  const canEdit = permissionSet.has('master_data.products.edit');
 
   const rows = useMemo(() => data?.data ?? [], [data]);
   const summary = data?.summary;
@@ -365,7 +372,7 @@ export default function SpecVerificationList() {
               className="flex items-center justify-end gap-1"
               onClick={(e) => e.stopPropagation()}
             >
-              {isVerified ? (
+              {!canEdit ? null : isVerified ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -398,12 +405,19 @@ export default function SpecVerificationList() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pending, rows],
+    [pending, rows, canEdit],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
     columns.map((column) => column.id as string),
   );
+
+  const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
+    setSorting(updater);
+    // Page 4 of the old order is a different set of rows in the new one; the filters
+    // already go back to the first page for the same reason.
+    setPagination((prev) => (prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }));
+  };
 
   const table = useReactTable({
     columns,
@@ -416,7 +430,7 @@ export default function SpecVerificationList() {
     onRowSelectionChange: setRowSelection,
     onColumnOrderChange: setColumnOrder,
     onPaginationChange: setPagination,
-    onSortingChange: setSorting,
+    onSortingChange: handleSortingChange,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -448,22 +462,26 @@ export default function SpecVerificationList() {
     else await runUnverify(target.codes);
   };
 
-  const bulkActions: ToolbarAction[] = [
-    {
-      key: 'verify',
-      label: 'Verify selected',
-      icon: BadgeCheck,
-      disabled: pending,
-      onClick: () => setConfirmTarget({ action: 'verify', codes: selectedCodes }),
-    },
-    {
-      key: 'unverify',
-      label: 'Unverify selected',
-      icon: BadgeX,
-      disabled: pending,
-      onClick: () => setConfirmTarget({ action: 'unverify', codes: selectedCodes }),
-    },
-  ];
+  // A reader is offered no bulk action; the toolbar then shows only the selection
+  // count and Clear, which is what an empty list means to it.
+  const bulkActions: ToolbarAction[] = canEdit
+    ? [
+        {
+          key: 'verify',
+          label: 'Verify selected',
+          icon: BadgeCheck,
+          disabled: pending,
+          onClick: () => setConfirmTarget({ action: 'verify', codes: selectedCodes }),
+        },
+        {
+          key: 'unverify',
+          label: 'Unverify selected',
+          icon: BadgeX,
+          disabled: pending,
+          onClick: () => setConfirmTarget({ action: 'unverify', codes: selectedCodes }),
+        },
+      ]
+    : [];
 
   const applySearch = () => {
     setSearchQuery(searchInput);

@@ -48,6 +48,7 @@ from app.models.product_spec import (
 )
 from app.services.product_spec_write import (
     authored_keys,
+    lock_product_code,
     merge_authored_over,
     write_spec_row,
 )
@@ -1280,6 +1281,12 @@ def derive_for_code(
         rules_by_key = configured_rules(db)
     if scopes_by_key is None:
         scopes_by_key = configured_scopes(db)
+
+    # The same lock the authored write and the verify guard take, before anything is
+    # read: a code with no spec row yet has no row to lock FOR UPDATE, so two writers
+    # racing to create the first one would otherwise both pass their reads. Released by
+    # the caller's commit, which for `derive_all` is its per-chunk one.
+    lock_product_code(db, product_code)
 
     rows = (
         db.query(Product, ProductCategory)

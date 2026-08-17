@@ -26,7 +26,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import event, inspect
+from sqlalchemy import event, inspect, text
 from sqlalchemy.orm import Session
 
 from app.models.base import company_scope
@@ -329,6 +329,29 @@ def _apply(values: dict, provenance: dict, entry: dict) -> None:
     provenance[key] = stamp
 
 
+def lock_product_code(db: Session, product_code: str) -> None:
+    """Serialise every writer, and the verify guard, on ONE product code.
+
+    `FOR UPDATE` locks the code's spec ROWS, and a code with no spec row yet has
+    nothing to lock: two concurrent first-writes, or a first-write racing a verify,
+    both pass their reads and the second lands on top of the first with nothing
+    recording that it happened. This lock is keyed on the code itself rather than on a
+    row, so it serialises them whether or not a row exists.
+
+    Held to the end of the transaction, so the caller's own commit releases it. Taken
+    per code and never for a whole batch, which is what keeps `derive_all` bounded: its
+    per-chunk commit releases every code it has taken so far. Re-entrant, so
+    `apply_spec_values` calling `derive_for_code` inside its own lock is fine.
+
+    Defined here because this module is already the one writer of `spec.values`, and
+    the verification service imports it from here so there is exactly one definition.
+
+    The race itself is not unit-testable (it needs two concurrent transactions); what
+    the tests pin is that a code with no spec row still writes normally under it.
+    """
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:code))"), {"code": product_code})
+
+
 def apply_spec_values(
     db: Session,
     product_code: str,
@@ -374,6 +397,10 @@ def apply_spec_values(
         if not prepared:
             return {"product_code": product_code, "rows_written": 0, "spec_keys": []}
 
+        # Before the row lock below, and in the same order the verify guard takes them:
+        # the FOR UPDATE alone cannot serialise a code that holds no spec row yet.
+        lock_product_code(db, product_code)
+
         existing = {
             spec.product_id: spec
             for spec in db.query(ProductSpecifications)
@@ -383,6 +410,7 @@ def apply_spec_values(
             # back, and the second commit would erase the first with nothing recording
             # that it happened. PR 3's verify guard reads the same rows in the same
             # transaction and needs the same lock.
+            .order_by(ProductSpecifications.product_id)
             .with_for_update()
             .all()
         }

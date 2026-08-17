@@ -25,7 +25,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
-from sqlalchemy import Text, and_, case, column, func, literal, literal_column, or_, select, text
+from sqlalchemy import Text, and_, case, column, func, literal, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -39,7 +39,7 @@ from app.models.product_spec import (
     ProductSpecifications,
 )
 from app.services.company_scope import build_company_predicate
-from app.services.product_spec_write import canonical_values_hash
+from app.services.product_spec_write import canonical_values_hash, lock_product_code
 
 # `supplier` arrives with the supplier portal in milestone 2. The party is a parameter
 # everywhere rather than an assumption, so an internal withdrawal cannot reach a
@@ -315,8 +315,10 @@ def verify_code(
         # A code with no spec row at all has nothing to lock FOR UPDATE, so two
         # concurrent verifies of such a code would both pass the reads below. The
         # advisory lock is held to the end of the transaction and is keyed on the code
-        # itself, so the serialisation does not depend on a row existing.
-        db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:code))"), {"code": product_code})
+        # itself, so the serialisation does not depend on a row existing. The writers
+        # take the SAME lock, from the same helper, or a first write could still land
+        # between the reads below.
+        lock_product_code(db, product_code)
 
         specs = (
             db.query(ProductSpecifications)
@@ -384,17 +386,35 @@ def verify_codes_bulk(
     actor: Mapping | None,
     party: str = PARTY_INTERNAL,
 ) -> list[dict]:
-    """The same guards, code by code, in input order. The caller commits once."""
-    return [
-        verify_code(
+    """The same guards, code by code. COMMITS PER CODE; the caller must not commit again.
+
+    Two departures from "loop, and let the caller commit once", both about a batch of
+    up to 500:
+
+      * the codes are locked in `product_code` order, so two bulk runs over overlapping
+        selections queue behind each other instead of deadlocking, and a run racing
+        `derive_all` (which walks its chunk in whatever order it was handed) can only
+        wait, never cross;
+      * each code commits as it is decided, which releases that code's locks at once
+        and, more to the point, matches the contract: the response is per-code
+        outcomes, so a code that fails at 400 must not silently un-stamp the 399 the
+        reviewer was already told were done.
+
+    Results come back in INPUT order whatever order they ran in, because that is the
+    order the screen listed them in.
+    """
+    results: dict[int, dict] = {}
+    ordered = sorted(enumerate(items), key=lambda pair: str(pair[1].get("product_code") or ""))
+    for index, item in ordered:
+        results[index] = verify_code(
             db,
             str(item.get("product_code") or ""),
             values_hash=str(item.get("values_hash") or ""),
             actor=actor,
             party=party,
         )
-        for item in items
-    ]
+        db.commit()
+    return [results[index] for index in range(len(items))]
 
 
 # --------------------------------------------------------------------------- #
@@ -465,9 +485,13 @@ def unverify_codes_bulk(
     actor: Mapping | None,
     party: str = PARTY_INTERNAL,
 ) -> list[dict]:
-    return [
-        unverify_code(db, code, actor=actor, party=party) for code in product_codes
-    ]
+    """Withdraw a batch. COMMITS PER CODE, in code order, for the reasons
+    `verify_codes_bulk` gives; results come back in the order the caller asked for."""
+    results: dict[int, dict] = {}
+    for index, code in sorted(enumerate(product_codes), key=lambda pair: str(pair[1])):
+        results[index] = unverify_code(db, code, actor=actor, party=party)
+        db.commit()
+    return [results[index] for index in range(len(product_codes))]
 
 
 # --------------------------------------------------------------------------- #
@@ -492,6 +516,27 @@ def _have_expr():
         .where(func.jsonb_typeof(func.coalesce(entry.c.value["value"], json_null)) != "null")
         .scalar_subquery()
     )
+
+
+def _class_label_expr():
+    """The class as every surface here reads it: what the specs say, else the category's.
+
+    One definition, because the list column, the class facet/filter and the registry's
+    `applies_when` gate must agree about what class a product is. They did not: the gate
+    read `values['class']` alone, so a product whose class comes from its category (the
+    common case - derivation only writes `class` when it reads one) failed every gated
+    key and was told it needs fewer specs than it does.
+    """
+    return func.coalesce(
+        ProductSpecifications.values["class"]["value"].astext, ProductCategory.class_label
+    )
+
+
+def _gate_value_expr(gate_key: str):
+    """What a registry gate compares against. `class` has a second source; nothing else does."""
+    if gate_key == "class":
+        return _class_label_expr()
+    return ProductSpecifications.values[gate_key]["value"].astext
 
 
 def _applicable_expr(db: Session):
@@ -519,11 +564,7 @@ def _applicable_expr(db: Session):
             if not allowed:
                 # An empty list is no constraint at all, not an impossible one.
                 continue
-            clauses.append(
-                func.lower(
-                    ProductSpecifications.values[gate_key]["value"].astext
-                ).in_(allowed)
-            )
+            clauses.append(func.lower(_gate_value_expr(gate_key)).in_(allowed))
         if not clauses:
             ungated += 1
             continue
@@ -586,8 +627,8 @@ def worklist(
     Three statements plus the ledger read, in this shape for a measured reason. The
     slim projection (code, class, state) answers the facet, the progress line, the
     total AND the page's ordering; the coverage subquery, the 52-CASE applicable
-    expression, the open-exception count and the `values` column are then fetched for
-    the 25 codes on the page and nothing else.
+    expression, the open-exception count and the values a row's hash is taken over are
+    then fetched for the 25 codes on the page and nothing else.
 
     Measured on the prod-copy database, Sorento scope, page 1, 8,820 live codes,
     `time.perf_counter` around the whole call, 3 runs after one warm-up:
@@ -615,9 +656,7 @@ def worklist(
     narrowed. That is what stops the dropdown emptying itself, and it stays far inside
     the 400 ms threshold.
     """
-    class_label_expr = func.coalesce(
-        ProductSpecifications.values["class"]["value"].astext, ProductCategory.class_label
-    )
+    class_label_expr = _class_label_expr()
     latest = _latest_select(party).subquery("latest_verification")
     state_expr = func.coalesce(latest.c.state, literal(STATE_UNVERIFIED))
 
@@ -723,6 +762,31 @@ def worklist(
     }
 
 
+def _page_values_hashes(db: Session, page_codes: Sequence[str]) -> dict[str, str]:
+    """The hash each row echoes back, read from the copy `current_values_hash` reads.
+
+    The listing is company-scoped and de-duplicates to the lowest product id IN SCOPE;
+    `current_values_hash` and `verify_code` read the lowest product id of ALL companies.
+    Those are usually the same row, and when they are not (a scoped re-derive can move
+    one copy without the other) a row hashed from the scoped copy is refused by the
+    verify guard for ever, with a "changed while you were reviewing" that no reload can
+    clear. One small unscoped read per page keeps exactly ONE answer to "what does this
+    code currently say".
+    """
+    if not page_codes:
+        return {}
+    with company_scope(db, None):
+        rows = db.execute(
+            select(Product.product_code, ProductSpecifications.values)
+            .select_from(Product)
+            .outerjoin(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+            .where(Product.product_code.in_(list(page_codes)))
+            .distinct(Product.product_code)
+            .order_by(Product.product_code, Product.id)
+        ).all()
+    return {code: canonical_values_hash(values or {}) for code, values in rows}
+
+
 def _hydrate_page(
     db: Session,
     page_codes: Sequence[str],
@@ -736,7 +800,7 @@ def _hydrate_page(
 
     Split out from `worklist` because it is where the expensive expressions live, and
     keeping them off the ordering query is the whole point: coverage, the open-exception
-    count and the `values` column are evaluated 25 times rather than 8,820.
+    count and the per-code hash are computed for 25 codes rather than 8,820.
     """
     if not page_codes:
         return []
@@ -749,7 +813,6 @@ def _hydrate_page(
             Product.is_discontinued.label("is_discontinued"),
             class_label_expr.label("class_label"),
             Brand.brand_name.label("brand_name"),
-            ProductSpecifications.values.label("values"),
             _have_expr().label("have"),
             _applicable_expr(db).label("applicable"),
             _open_exceptions_expr().label("open_exceptions"),
@@ -770,6 +833,7 @@ def _hydrate_page(
 
     by_code = {row["product_code"]: row for row in db.execute(rows).mappings().all()}
     blocks = verification_blocks(db, list(page_codes), party)
+    hashes = _page_values_hashes(db, page_codes)
 
     data = []
     # The page query answers in whatever order it likes; the ordering query already
@@ -788,7 +852,9 @@ def _hydrate_page(
                 "is_discontinued": bool(row["is_discontinued"]),
                 "coverage": {"have": row["have"], "applicable": row["applicable"]},
                 "open_exceptions": row["open_exceptions"],
-                "values_hash": canonical_values_hash(row["values"] or {}),
+                # NOT hashed from the row above: that is the in-scope copy, and the
+                # verify guard compares against the all-companies one.
+                "values_hash": hashes[row["product_code"]],
                 "verification": blocks[row["product_code"]],
             }
         )

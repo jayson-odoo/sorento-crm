@@ -104,9 +104,12 @@ def _product(
     category: str | None = None,
     company_id: str | None = None,
     discontinued: bool = False,
+    product_id: str | None = None,
 ) -> Product:
     row = Product(
-        id=str(uuid.uuid4()),
+        # `product_id` is passed only where a test needs to know WHICH copy of a code
+        # sorts lowest - "the lowest product id" is a real rule in this module.
+        id=product_id or str(uuid.uuid4()),
         product_code=code,
         product_name=name or code,
         description=description,
@@ -934,3 +937,105 @@ def test_worklist_resolves_a_two_company_code_to_the_copy_in_the_callers_scope(d
         assert len(result["data"]) == 1
         assert result["data"][0]["product_id"] == p_company2.id
         assert result["data"][0]["product_id"] != p_default.id
+
+
+# --------------------------------------------------------------------------- #
+# review round 2 - the writer lock, one hash source, the class gate
+# --------------------------------------------------------------------------- #
+def test_derive_for_code_writes_a_code_that_holds_no_spec_row_yet(db):
+    """Smoke for the advisory lock `derive_for_code` now takes.
+
+    The race it closes (two writers creating the FIRST spec row for a code at once)
+    needs two concurrent transactions and is not unit-testable; what IS testable, and
+    what a lock keyed on a code rather than on a row could break, is the ordinary write
+    of a code that has no row to lock.
+    """
+    code = unique_code("VS-LOCK-DERIVE")
+    product = _product(db, code)
+    assert db.query(ProductSpecifications).filter_by(product_id=product.id).count() == 0
+
+    derive_for_code(db, code, commit=True)
+
+    assert db.query(ProductSpecifications).filter_by(product_id=product.id).count() == 1
+
+
+def test_apply_spec_values_writes_a_code_that_holds_no_spec_row_yet(db):
+    """The other half of the same smoke: the authored write takes the same lock."""
+    code = unique_code("VS-LOCK-APPLY")
+    product = _product(db, code)
+    assert db.query(ProductSpecifications).filter_by(product_id=product.id).count() == 0
+
+    apply_spec_values(
+        db, code, [{"spec_key": "mounting", "op": "set", "value": "wall_hung"}], actor=_ACTOR
+    )
+
+    spec = db.query(ProductSpecifications).filter_by(product_id=product.id).one()
+    assert spec.values["mounting"]["value"] == "wall_hung"
+
+
+def test_worklist_hashes_the_copy_the_verify_guard_hashes(db):
+    """One answer to "what does this code currently say", whoever is asking.
+
+    The listing de-duplicates to the lowest product id IN SCOPE; `current_values_hash`
+    and `verify_code` read the lowest id of ALL companies. Where the copies have
+    drifted, a row hashed from the scoped copy would be refused by the verify guard for
+    ever, with a "changed while you were reviewing" that no reload can clear.
+    """
+    code = unique_code("WL-HASHSRC")
+    low_id, high_id = sorted(str(uuid.uuid4()) for _ in range(2))
+    with company_scope(db, None):
+        low = _product(db, code, name="Hash Source", product_id=low_id)
+        high = _product(
+            db,
+            code,
+            name="Hash Source",
+            product_id=high_id,
+            company_id=_REFS["company2"],
+        )
+        _spec(db, low, {"wl_material": {"value": "ceramic"}})
+        _spec(db, high, {"wl_material": {"value": "brass"}})
+    db.commit()
+
+    with company_scope(db, frozenset({_REFS["company2"]})):
+        result = psv.worklist(db, page=1, limit=50, query=code)
+        assert len(result["data"]) == 1
+        row = result["data"][0]
+        # Still the copy the caller can actually open ...
+        assert row["product_id"] == high.id
+        # ... but hashed from the copy the guard reads.
+        assert row["values_hash"] == psv.current_values_hash(db, code)
+
+        verified = psv.verify_code(db, code, values_hash=row["values_hash"], actor=_ACTOR)
+    db.commit()
+
+    assert verified["outcome"] == "verified", "the hash the list showed must be verifiable"
+
+
+def test_applicable_counts_a_key_gated_on_a_class_the_category_supplies(db):
+    """A gate on `class` reads the same class the Class column shows.
+
+    Derivation only writes a `class` value when it reads one, so for most products the
+    class comes from the category. A gate that looked only at `values['class']` failed
+    for those products and told the reviewer a kitchen sink needs fewer specs than it
+    does.
+    """
+    _registry_key(db, "cg_material", data_type="enum", allowed_values=["ceramic"])
+    _registry_key(db, "cg_trap", data_type="enum", applies_when={"class": ["kitchen sink"]})
+
+    sink = _product(db, unique_code("WL-CLASSGATE-KS"), name="Class Gate Sink")
+    _spec(db, sink, {"cg_material": {"value": "ceramic"}})
+    bidet = _product(db, unique_code("WL-CLASSGATE-BD"), name="Class Gate Bidet", category="cat_b")
+    _spec(db, bidet, {"cg_material": {"value": "ceramic"}})
+    db.commit()
+
+    rows = {
+        row["product_code"]: row
+        for row in psv.worklist(db, page=1, limit=50, query="WL-CLASSGATE")["data"]
+    }
+
+    assert rows[sink.product_code]["coverage"] == {"have": 1, "applicable": 2}, (
+        "the category says Kitchen Sink, so the gated trap key counts"
+    )
+    assert rows[bidet.product_code]["coverage"] == {"have": 1, "applicable": 1}, (
+        "a Bidet does not carry the gated key"
+    )

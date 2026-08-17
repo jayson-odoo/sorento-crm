@@ -27,12 +27,15 @@ import {
   addValueToSpecKey,
   getApplicableSpecKeys,
   getProductSpecDetail,
+  setSpecValueByHand,
 } from '../../product-specifications/services/productSpecService';
+import { WORKLIST_KEY } from '../../spec-verification/hooks/useSpecVerification';
 import { useProductSpecTable } from './useProductSpecTable';
 
 const mockDetail = getProductSpecDetail as unknown as ReturnType<typeof vi.fn>;
 const mockKeys = getApplicableSpecKeys as unknown as ReturnType<typeof vi.fn>;
 const mockAddValue = addValueToSpecKey as unknown as ReturnType<typeof vi.fn>;
+const mockSetValue = setSpecValueByHand as unknown as ReturnType<typeof vi.fn>;
 
 const DETAIL = {
   product_id: 'p-1',
@@ -41,8 +44,7 @@ const DETAIL = {
   exceptions: [],
 };
 
-function wrapper() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function wrapper(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
     return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
   };
@@ -100,5 +102,30 @@ describe('useProductSpecTable addValue', () => {
     await result.current.addValue('finish', 'brushed brass');
 
     expect(mockAddValue).toHaveBeenCalledWith('finish', 'brushed brass');
+  });
+});
+
+describe('useProductSpecTable value writes and the verification worklist', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('invalidates the worklist, because a value write withdraws the code\'s stamp', async () => {
+    // The worklist shows this code's hash and its verification pill. A write moves
+    // both, so leaving that cache alone is how the list and the record end up
+    // disagreeing about a code somebody just edited.
+    mockDetail.mockResolvedValue(DETAIL);
+    mockKeys.mockResolvedValue({ keys: [] });
+    mockSetValue.mockResolvedValue({ product_code: 'WC100' });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useProductSpecTable('p-1'), {
+      wrapper: wrapper(client),
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    invalidate.mockClear();
+
+    await result.current.setValue('material', 'ceramic');
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: [WORKLIST_KEY] });
   });
 });

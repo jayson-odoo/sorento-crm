@@ -24,6 +24,7 @@ from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_spec import ProductSpecException
 from app.services.product_class_signal import backfill_category_signals
 from app.services.product_spec_derivation import derive_for_code
+from app.services.product_spec_write import apply_spec_values
 from app.services import product_spec_verification as psv
 from tests._pg_fixture import blank_session, unique_code
 
@@ -254,6 +255,51 @@ def test_verify_409s_with_values_changed_and_the_current_hash(api, db):
     body = response.json()
     assert body["error"] == "values_changed"
     assert body["values_hash"] == current_hash
+
+
+def test_verify_409s_with_values_changed_and_a_json_encodable_verification_block(api, db):
+    """The refusal must survive being serialised when the code HAS ledger history.
+
+    `_verification_conflict` replaces the error envelope with its own payload, and the
+    global handler hands that straight to `JSONResponse` - no FastAPI response encoding
+    on the way. A VerificationBlock carries datetimes, so an unencoded payload raised
+    TypeError inside the handler and the caller got a 500, in exactly the case this
+    refusal exists for: a stamped code whose values then moved. The test above passes
+    without any of that because a never-verified code's block is all nulls.
+    """
+    client, allow = api
+    allow.add(EDIT)
+    code = unique_code("VR-VFY-STAMPED")
+    _product(db, code)
+    db.commit()
+    derive_for_code(db, code, commit=True)
+    stamped_hash = psv.current_values_hash(db, code)
+
+    stamped = client.post(
+        f"{ENDPOINT}/verification/verify",
+        json={"product_code": code, "values_hash": stamped_hash},
+    )
+    assert stamped.status_code == 200, stamped.text
+
+    # Moves the values under the stamp, which withdraws it as needs-re-verify.
+    apply_spec_values(
+        db, code, [{"spec_key": "material", "op": "set", "value": "brass"}], actor=_USER
+    )
+    db.commit()
+
+    response = client.post(
+        f"{ENDPOINT}/verification/verify",
+        json={"product_code": code, "values_hash": stamped_hash},
+    )
+
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["error"] == "values_changed"
+    assert body["values_hash"] == psv.current_values_hash(db, code)
+    assert body["values_hash"] != stamped_hash
+    assert body["verification"]["state"] == "needs_reverify"
+    assert isinstance(body["verification"]["verified_at"], str), "datetimes must arrive encoded"
+    assert isinstance(body["verification"]["invalidated_at"], str)
 
 
 def test_verify_409s_with_exceptions_open(api, db):

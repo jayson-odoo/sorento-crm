@@ -143,6 +143,10 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     if (productCode) {
       queryClient.invalidateQueries({ queryKey: APPLICABLE_KEY(productCode) });
     }
+    // A value write moves the code's hash and withdraws any stamp made against it, so
+    // the worklist's row for this code is wrong the moment this returns - it is not
+    // only the verify/unverify buttons that change what that list shows.
+    queryClient.invalidateQueries({ queryKey: [WORKLIST_KEY] });
   }, [queryClient, productId, productCode]);
 
   const setValueMutation = useMutation({
@@ -265,6 +269,9 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     refetch: () => {
       void detailQuery.refetch();
       void keysQuery.refetch();
+      // Re-deriving is a value write by another name, and it reaches this hook through
+      // `refetch` rather than through `invalidate`.
+      queryClient.invalidateQueries({ queryKey: [WORKLIST_KEY] });
     },
     setValue: async (specKey, value) => {
       await setValueMutation.mutateAsync({ specKey, value });

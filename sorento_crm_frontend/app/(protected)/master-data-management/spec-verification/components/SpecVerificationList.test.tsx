@@ -18,6 +18,11 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
+const usePermissions = vi.fn();
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => usePermissions(),
+}));
+
 const nav = vi.hoisted(() => ({
   params: new URLSearchParams(),
   push: vi.fn(),
@@ -82,6 +87,7 @@ function renderList() {
 beforeEach(() => {
   vi.clearAllMocks();
   nav.params = new URLSearchParams();
+  usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.edit']) });
 });
 
 afterEach(() => cleanup());
@@ -216,6 +222,24 @@ describe('data state', () => {
     expect(within(rowWC100).getByRole('button', { name: 'Verify' })).toBeInTheDocument();
     expect(within(rowWC200).getByRole('button', { name: 'Verify' })).toBeInTheDocument();
     expect(within(rowWC300).getByRole('button', { name: 'Unverify' })).toBeInTheDocument();
+  });
+
+  it('offers no Verify or Unverify to a user without master_data.products.edit', async () => {
+    // The server refuses them anyway; showing the button would mean a 403 is the first
+    // thing a reader learns. Same slug the Specifications tab gates its editors on.
+    usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.view']) });
+    mockWorklist();
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+
+    expect(screen.queryByRole('button', { name: 'Verify' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Unverify' })).not.toBeInTheDocument();
+
+    // ... and neither does the bulk bar, once rows are selected.
+    fireEvent.click(screen.getAllByRole('checkbox')[1]);
+    await waitFor(() => expect(screen.getByText('1 selected')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Verify selected' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Unverify selected' })).not.toBeInTheDocument();
   });
 
   it('clicking a row navigates to the product Specifications tab, not a new detail route', async () => {

@@ -14,6 +14,7 @@ when a product person types real phrases and says which results are wrong.
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -750,7 +751,15 @@ def _verification_conflict(payload: dict) -> AppException:
     branch on - and the two refusals are deliberately distinguishable (AC-D.4): one
     means "re-read the values", the other "answer the exceptions first". `message` is
     kept alongside so a generic error reader still has something to show.
+
+    Encoded HERE, because that handler hands the detail to `JSONResponse` as-is rather
+    than through FastAPI's response encoding. A VerificationBlock carries datetimes, so
+    an unencoded payload raised TypeError inside the handler and turned the refusal into
+    a 500 - in exactly the case the refusal exists for, a stamped code whose values
+    moved. A code with no ledger history has nothing but strings in it, which is why
+    the first tests of this path passed.
     """
+    payload = jsonable_encoder(payload)
     exc = AppException(status_code=409, message=payload["message"], code=payload["error"])
     exc.detail = payload
     return exc
@@ -846,12 +855,13 @@ def verify_spec_codes_bulk(
     Also what the per-row button calls, with one item: one code path to keep honest
     (AC-D.16, AC-D.23).
     """
+    # The service commits per code (it locks up to 500 of them, and a code decided is
+    # a code the reviewer was told about), so there is nothing left to commit here.
     results = product_spec_verification.verify_codes_bulk(
         db,
         [item.model_dump() for item in payload.items],
         actor=current_user,
     )
-    db.commit()
 
     verified = sum(1 for r in results if r["outcome"] in ("verified", "already_verified"))
     return {
@@ -891,10 +901,10 @@ def unverify_spec_codes_bulk(
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    # Commits per code, like verify-bulk. The single-code routes still commit themselves.
     results = product_spec_verification.unverify_codes_bulk(
         db, payload.product_codes, actor=current_user
     )
-    db.commit()
 
     unverified = sum(1 for r in results if r["outcome"] == "unverified")
     return {
