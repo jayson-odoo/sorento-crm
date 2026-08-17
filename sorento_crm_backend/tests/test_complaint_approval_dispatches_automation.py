@@ -31,17 +31,49 @@ def _safe_exec(conn, sql: str):
 
 @pytest.fixture(autouse=True)
 def _clean_state():
+    """Delete ONLY this file's own rows.
+
+    Every automation-side delete is scoped through automation_runs back to
+    automations with ``trigger_type = 'complaint_approved'`` (this file is the
+    only one in the suite that creates those). The scoping is load-bearing under
+    pytest-xdist ``--dist loadfile``: other files' automations, runs and
+    notifications live in the same shared DB and are being written concurrently,
+    so an unscoped ``DELETE FROM automation_runs`` / ``DELETE FROM notifications
+    WHERE source_entity_type = 'automation_run'`` destroys rows another worker is
+    actively asserting on.
+    """
     with engine.connect() as conn:
         _safe_exec(
             conn,
             """
             DELETE FROM notification_deliveries WHERE notification_id IN (
-                SELECT id FROM notifications WHERE source_entity_type = 'automation_run'
+                SELECT id FROM notifications
+                WHERE source_entity_type = 'automation_run'
+                  AND source_entity_id IN (
+                      SELECT id FROM automation_runs WHERE automation_id IN (
+                          SELECT id FROM automations WHERE trigger_type = 'complaint_approved'
+                      )
+                  )
             )
             """,
         )
-        _safe_exec(conn, "DELETE FROM notifications WHERE source_entity_type = 'automation_run'")
-        _safe_exec(conn, "DELETE FROM automation_runs")
+        _safe_exec(
+            conn,
+            """
+            DELETE FROM notifications
+            WHERE source_entity_type = 'automation_run'
+              AND source_entity_id IN (
+                  SELECT id FROM automation_runs WHERE automation_id IN (
+                      SELECT id FROM automations WHERE trigger_type = 'complaint_approved'
+                  )
+              )
+            """,
+        )
+        _safe_exec(
+            conn,
+            "DELETE FROM automation_runs WHERE automation_id IN "
+            "(SELECT id FROM automations WHERE trigger_type = 'complaint_approved')",
+        )
         _safe_exec(conn, "DELETE FROM automations WHERE trigger_type = 'complaint_approved'")
         _safe_exec(conn, "DELETE FROM email_templates WHERE code LIKE 'tpl-cmpapp-%'")
         _safe_exec(conn, "DELETE FROM integration_log WHERE business_id LIKE 'CMPAPP-%'")

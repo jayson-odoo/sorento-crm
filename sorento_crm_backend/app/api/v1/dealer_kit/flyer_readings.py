@@ -319,31 +319,11 @@ def read_flyer_from_attachment(
     return _summary(record)
 
 
-def _assert_read(record) -> None:
-    """Refuse to build anything out of a flyer that has not been read yet.
-
-    409 rather than 404 or 422: the reading EXISTS and the request is
-    well-formed, it is the state that is wrong, and it will stop being wrong on
-    its own in a few seconds. The two states get different words because the
-    next action differs - one is "wait", the other is "read a different file".
-
-    The screens do not offer either action before a reading is done, so nothing
-    in the UI can reach this. That is exactly why it is here: a stale tab, a
-    retried request or a script are all outside what the UI can promise, and
-    seeding a brochure from an empty reading would produce a catalogue with no
-    products and no error to explain it.
-    """
-    reading_status = getattr(record, "status", None) or svc.ReadingStatus.DONE
-    if reading_status == svc.ReadingStatus.DONE:
-        return
-    if reading_status == svc.ReadingStatus.PROCESSING:
-        message = "That flyer is still being read. Try again once it says Done."
-    else:
-        message = (
-            "That flyer could not be read, so there is nothing to build from it. "
-            + (record.error_message or "Read the flyer again, or try another file.")
-        )
-    raise AppException(status_code=409, message=message, code="FLYER_NOT_READ_YET")
+# Refusing to build anything out of a flyer that has not been read yet. Lifted into
+# the service (``flyer_reading_service.assert_read``) so the flyer-spec-proposal routes
+# refuse in the SAME words rather than in a second copy of them; aliased here so the
+# two call sites below read unchanged.
+_assert_read = svc.assert_read
 
 
 @router.get("/flyer-readings", response_model=list[FlyerReadingSummary])

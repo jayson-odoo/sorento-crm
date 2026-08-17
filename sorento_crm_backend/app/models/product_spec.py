@@ -8,11 +8,25 @@ See documentation/plans/products/PLAN-spec-search.md section 6.
 """
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 
 
 class ProductSpecRegistry(Base):
@@ -307,6 +321,156 @@ class ProductFindabilityResult(Base):
     __table_args__ = (
         Index("ix_findability_results_run", "run_id"),
         Index("ix_findability_results_boundary", "boundary"),
+    )
+
+
+class ProductSpecFlyerBatch(Base, CompanyScopedMixin):
+    """One proposal pass over one flyer reading.
+
+    The dealer kit reads a flyer; this is master data's answer to "what does that
+    flyer SAY about the products it names". It is a separate table from
+    `dealer_kit.flyer_reading` because it has its own lifecycle - proposing,
+    proposed or failed, its own counts, and its own applied stamp - and folding
+    that onto another module's row would put master-data state on a table the
+    dealer kit owns and may drop.
+
+    UNIQUE on `flyer_reading_id`: one batch per reading (AC-A.5). Re-proposing
+    deletes the batch's proposals and recomputes them against the master as it is
+    NOW, rather than accumulating a second set nobody asked for. The history of
+    what was ever applied lives in the spec provenance, which survives the delete.
+    """
+
+    __tablename__ = "product_spec_flyer_batches"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    flyer_reading_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("dealer_kit.flyer_reading.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    # proposing | proposed | failed. The database CHECK holds the same three.
+    status = Column(String(16), nullable=False, server_default=text("'proposing'"))
+    # Why the pass failed, in the words the job recorded. NULL on a row that has
+    # not failed.
+    error_message = Column(Text, nullable=True)
+    # The RQ job, for an operator asking where a pass went.
+    job_id = Column(String(64), nullable=True)
+
+    product_count = Column(Integer, nullable=False, server_default=text("0"))
+    proposal_count = Column(Integer, nullable=False, server_default=text("0"))
+    new_count = Column(Integer, nullable=False, server_default=text("0"))
+    change_count = Column(Integer, nullable=False, server_default=text("0"))
+    conflict_count = Column(Integer, nullable=False, server_default=text("0"))
+    unchanged_count = Column(Integer, nullable=False, server_default=text("0"))
+    suppressed_count = Column(Integer, nullable=False, server_default=text("0"))
+    # How many rows of this batch have ever been written, over every apply.
+    applied_count = Column(Integer, nullable=False, server_default=text("0"))
+
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    finished_at = Column(DateTime(timezone=False), nullable=True)
+    # The LATEST apply, not the first: a reviewer works through a batch over
+    # several sittings, and "when was this last written from" is the question the
+    # list screen asks.
+    applied_at = Column(DateTime(timezone=False), nullable=True)
+    applied_by = Column(UUID(as_uuid=False), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('proposing', 'proposed', 'failed')",
+            name="ck_product_spec_flyer_batches_status",
+        ),
+        Index("ix_product_spec_flyer_batches_created", "created_at"),
+    )
+
+
+class ProductSpecFlyerProposal(Base):
+    """One key a flyer states about one product, and how it stands against the master.
+
+    Stored rather than recomputed on read, because the apply payload names these
+    ids (never values - the values come off the reading, which is the whole
+    security model of the route) and because a row remembers its own `outcome`
+    after somebody has decided about it.
+
+    `kind` is a SNAPSHOT taken when the pass ran. Apply re-classifies against the
+    live spec row before writing anything, so a batch proposed yesterday cannot
+    overwrite what somebody set this morning.
+
+    Not `CompanyScopedMixin`: a proposal is reachable only through its batch,
+    which is scoped, and the cascade below is what removes it.
+    """
+
+    __tablename__ = "product_spec_flyer_proposals"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    batch_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_spec_flyer_batches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # The match as it stood when the pass ran. Kept as BOTH id and code: the id
+    # links to the product record, the code is what the person reads and what the
+    # write choke point takes.
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+    )
+    product_code = Column(String(100), nullable=False)
+    # Which flyer pages the code was printed on, for ordering and for a reviewer
+    # holding the paper.
+    pages = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+
+    spec_key = Column(String(100), nullable=False)
+    # Scalar or list, exactly as `propose_from_text` returned it.
+    value = Column(JSONB, nullable=False)
+    # The registry's unit, never the flyer's: the unit belongs to the key.
+    unit = Column(String(32), nullable=True)
+    # The printed words the value was read from. What makes the badge honest a
+    # year later.
+    evidence = Column(Text, nullable=False, server_default="")
+    # new | change | conflict | unchanged | suppressed, at propose time.
+    kind = Column(String(16), nullable=False)
+    # What the product held when the pass ran, so the review screen can show the
+    # two side by side without a second query per row.
+    stored_value = Column(JSONB, nullable=True)
+    stored_unit = Column(String(32), nullable=True)
+    stored_source = Column(String(32), nullable=True)
+
+    # flyer | manual. Who put this row here: the pass that read the paper, or a
+    # person who added the key the flyer missed while reviewing it. It decides the
+    # SOURCE the value is written under (AC-G.2) - a machine read stays `flyer`,
+    # a person's typing is `human` - so it is a column rather than a guess made
+    # from whether `edited_at` is set.
+    origin = Column(String(16), nullable=False, server_default=text("'flyer'"))
+    # When a person last changed this row's value on the review screen, and who.
+    # `edited` on the wire is derived from `edited_at`, so there is one fact here
+    # rather than a flag that can disagree with its own timestamp.
+    edited_at = Column(DateTime(timezone=False), nullable=True)
+    edited_by = Column(UUID(as_uuid=False), nullable=True)
+
+    # applied | already_matches | conflict_not_confirmed | product_spec_bad_value |
+    # product_not_found. NULL until somebody has decided about this row.
+    outcome = Column(String(32), nullable=True)
+    applied_at = Column(DateTime(timezone=False), nullable=True)
+    applied_by = Column(UUID(as_uuid=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        # One row per key per product per batch. A flyer printing a code twice is
+        # one product, so the second card must not produce a second row nobody can
+        # tell from the first.
+        UniqueConstraint(
+            "batch_id", "product_id", "spec_key", name="uq_product_spec_flyer_proposal"
+        ),
+        CheckConstraint(
+            "kind IN ('new', 'change', 'conflict', 'unchanged', 'suppressed')",
+            name="ck_product_spec_flyer_proposals_kind",
+        ),
+        CheckConstraint(
+            "origin IN ('flyer', 'manual')",
+            name="ck_product_spec_flyer_proposals_origin",
+        ),
+        Index("ix_product_spec_flyer_proposals_batch", "batch_id"),
     )
 
 

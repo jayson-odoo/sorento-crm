@@ -599,6 +599,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       permission: 'master_data.products.view',
     },
     {
+      title: 'Flyer Spec Proposals',
+      path: '/master-data-management/flyer-spec-proposals',
+      permission: 'master_data.products.edit',
+    },
+    {
       title: 'Brands',
       path: '/master-data-management/brands',
       permission: 'master_data.brands.view',
@@ -1500,6 +1505,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       title: 'Spec Verification',
       path: '/master-data-management/spec-verification',
       permission: 'master_data.products.view',
+    },
+    {
+      title: 'Flyer Spec Proposals',
+      path: '/master-data-management/flyer-spec-proposals',
+      permission: 'master_data.products.edit',
     },
     {
       title: 'Brands',
