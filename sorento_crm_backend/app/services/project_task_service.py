@@ -893,6 +893,14 @@ _HISTORY_FIELDS = {
     "category": "Category",
 }
 
+# The audit listener writes "CREATE" for a new row (audit_service._session_before_flush);
+# older and hand-written rows say "INSERT". Reading only one of them is not a cosmetic
+# miss: a creation that is not recognised as one falls through to the field diff below
+# and the timeline opens with "Name changed to Visit the architect", "Status changed to
+# Not Started" - every populated column reported as a change nobody made, and no "created"
+# row at all. Same pair as activity_service._fe_action, for the same reason.
+_CREATED_ACTIONS = ("CREATE", "INSERT")
+
 
 def task_history(db: Session, task_id: str) -> List[Dict[str, Any]]:
     """One task's timeline, read from the audit trail (AC-N7).
@@ -947,7 +955,7 @@ def task_history(db: Session, task_id: str) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for row in rows:
         actor = names.get(row.user_id) or "System"
-        if row.action == "INSERT":
+        if row.action in _CREATED_ACTIONS:
             out.append(
                 {
                     "at": row.changed_at,

@@ -382,8 +382,9 @@ def test_every_company_id_table_is_registered():
     # aimed at another request's person, which is exactly what those ownership checks
     # are for. Both are load-bearing; removing either is a real hole.
     #
-    # The number is the union of both lineages at this merge: main's 67 plus the 41 the
-    # project-sales branch brought (which were audited table by table on that branch).
+    # The number is the union of both lineages at this merge: main's 67 (64 plus the 3
+    # onboarding tables above) plus the 41 the project-sales branch brought (which were
+    # audited table by table at its own merge).
     expected_owned = 108
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"

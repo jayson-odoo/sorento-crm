@@ -1224,32 +1224,6 @@ def _slim_grn_response(data: Any) -> Any:
     return data
 
 
-# --- project sales -------------------------------------------------------------
-# Internal UUIDs the agent must never quote (the chat and WhatsApp surfaces are the same
-# renderer), plus browser-only fields it cannot act on. `id` deliberately SURVIVES: both
-# crm_project_detail and crm_project_quotations_list take it, and the two-call pattern is how
-# a project answer gets any depth. Every dropped key has a human-readable twin that stays
-# (developer_name, type_name, owner_name, status_label, brands), so nothing becomes
-# unanswerable -- it becomes answerable in words.
-_PROJECT_SLIM_TOOLS = ("crm_projects_list", "crm_project_detail")
-_PROJECT_DROP_KEYS = frozenset(
-    {
-        "developer_party_id",
-        "type_id",
-        "template_id",
-        "lead_id",
-        "lead_owner_user_id",
-        "status_id",
-        "owner_user_id",
-        "architect_party_id",
-        "main_contractor_party_id",
-        "brand_ids",
-        # A permission answer for rendering a button.
-        "can_edit",
-    }
-)
-
-
 def _drop_company_id(node: Any) -> Any:
     if isinstance(node, dict):
         return {k: _drop_company_id(v) for k, v in node.items() if k != "company_id"}
@@ -1276,6 +1250,58 @@ _COMPANY_ID_STRIP_TOOLS = frozenset(
         "crm_marketing_promotion_products_list",
         ORDERS_LIST_TOOL,
         "crm_order_management_orders_by_product_list",
+    }
+)
+
+
+def _strip_row_company_ids(tool_name: str, data: Any) -> Any:
+    """Drop the raw `company_id` UUID from the rows of the labelled tools.
+
+    The multi-company labelling put `company_id` on the affected row schemas,
+    and the rows are ORM instances, so `from_attributes` now fills it on every
+    row of those tools. It is a UUID, and no UUID belongs in an agent-facing
+    row (the same rule `_ORDERS_LIST_DROP_ROW_KEYS` and
+    `_PROMOTIONS_LIST_DROP_KEYS` enforce per tool) - `company_name` is the
+    readable form the presenter shows. Recurses into nested rows (`product`,
+    `promotion`, lines, attachments), because those are ORM rows of their own.
+    Top-level `lookup_companies` is untouched: it is the envelope's company
+    list and n8n matches on its ids.
+
+    Only `_COMPANY_ID_STRIP_TOOLS` are affected: a tool outside that set keeps
+    whatever it decided to publish.
+    """
+    if tool_name not in _COMPANY_ID_STRIP_TOOLS:
+        return data
+    if not isinstance(data, dict):
+        return data
+    rows = data.get("data")
+    if not isinstance(rows, list):
+        return data
+    return {**data, "data": [_drop_company_id(row) for row in rows]}
+
+
+# --- project sales -------------------------------------------------------------
+# Internal UUIDs the agent must never quote (the chat and WhatsApp surfaces are the same
+# renderer), plus browser-only fields it cannot act on. `id` deliberately SURVIVES: both
+# crm_project_detail and crm_project_quotations_list take it, and the two-call pattern is how
+# a project answer gets any depth. Every dropped key has a human-readable twin that stays
+# (developer_name, type_name, owner_name, status_label, brands), so nothing becomes
+# unanswerable -- it becomes answerable in words.
+_PROJECT_SLIM_TOOLS = ("crm_projects_list", "crm_project_detail")
+_PROJECT_DROP_KEYS = frozenset(
+    {
+        "developer_party_id",
+        "type_id",
+        "template_id",
+        "lead_id",
+        "lead_owner_user_id",
+        "status_id",
+        "owner_user_id",
+        "architect_party_id",
+        "main_contractor_party_id",
+        "brand_ids",
+        # A permission answer for rendering a button.
+        "can_edit",
     }
 )
 
@@ -1316,32 +1342,6 @@ def _slim_rows(data: Any, drop_keys: frozenset) -> Any:
 def _slim_projects_response(data: Any) -> Any:
     """Same rule for a list payload, a bare list, and one detail row."""
     return _slim_rows(data, _PROJECT_DROP_KEYS)
-
-
-def _strip_row_company_ids(tool_name: str, data: Any) -> Any:
-    """Drop the raw `company_id` UUID from the rows of the labelled tools.
-
-    The multi-company labelling put `company_id` on the affected row schemas,
-    and the rows are ORM instances, so `from_attributes` now fills it on every
-    row of those tools. It is a UUID, and no UUID belongs in an agent-facing
-    row (the same rule `_ORDERS_LIST_DROP_ROW_KEYS` and
-    `_PROMOTIONS_LIST_DROP_KEYS` enforce per tool) - `company_name` is the
-    readable form the presenter shows. Recurses into nested rows (`product`,
-    `promotion`, lines, attachments), because those are ORM rows of their own.
-    Top-level `lookup_companies` is untouched: it is the envelope's company
-    list and n8n matches on its ids.
-
-    Only `_COMPANY_ID_STRIP_TOOLS` are affected: a tool outside that set keeps
-    whatever it decided to publish.
-    """
-    if tool_name not in _COMPANY_ID_STRIP_TOOLS:
-        return data
-    if not isinstance(data, dict):
-        return data
-    rows = data.get("data")
-    if not isinstance(rows, list):
-        return data
-    return {**data, "data": [_drop_company_id(row) for row in rows]}
 
 
 def _sanitize_tool_response(

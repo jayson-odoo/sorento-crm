@@ -80,12 +80,13 @@ def _sweep_orphan_scratch_schemas():
     tables -- but they no longer sabotage each other's scratch schema, and the
     failures a developer sees are their own.
 
-    A THIRD guard sits outside both: a Postgres advisory lock held for the whole
-    session. The first session in takes it and sweeps; a session that starts
-    while that one is still running fails to take it and touches nothing.
-    Failing to acquire is not an error, it is the signal that somebody else is
-    working. It covers the case the PID check cannot see -- a run whose schema
-    has not been created yet, so there is no name carrying its PID to skip.
+    A third guard sits in front of both: a Postgres advisory lock held for the
+    WHOLE session rather than just across the sweep. The first session in takes
+    it and cleans up; any session that starts while that one is still running
+    fails to take it and touches nothing. Failing to acquire is therefore not an
+    error, it is the signal that somebody else is working. It buys what the PID
+    check cannot: a schema is not swept between the moment its owner picked the
+    name and the moment it created it.
     """
     try:
         from sqlalchemy import text
@@ -113,9 +114,9 @@ def _sweep_orphan_scratch_schemas():
         ]
         for name in names:
             pid = _owner_pid(name)
-            # Never our own, whatever the ordering: this runs at session
-            # start, but a module-scoped fixture that builds the schema
-            # first would otherwise have it swept from under itself.
+            # Never our own, whatever the ordering: this runs at session start,
+            # but a module-scoped fixture that builds the schema first would
+            # otherwise have it swept from under itself.
             if pid is not None and (pid == os.getpid() or _process_is_alive(pid)):
                 continue
             admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')

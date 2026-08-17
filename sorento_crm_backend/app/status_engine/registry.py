@@ -158,19 +158,19 @@ def _register_core() -> None:
     The engine is infrastructure: it ships with an empty registry and every
     entity arrives from a module (ADR-0001). Existing hardcoded status vocabularies
     (complaints, PR/SF, stock inquiries, orders) are deliberately NOT migrated
-    here -- they move entity by entity, later (ADR-0001).
+    here -- they move entity by entity, later.
 
-    Two arrival paths, and both run. The preferred one is CONVENTION: a module
-    joins by adding ``app/modules/<key>/status_entities.py`` exposing
-    ``register()``, so core never has to learn the name of a module. The named
-    ``_MODULE_BOOTSTRAPS`` list is the older path, kept for the modules that
-    still register from their ``bootstrap`` side effect (Dealer Kit); a module
-    is moved onto the convention when it is next touched.
+    Two routes in, because the modules arrived by two roads and both still carry
+    live entities. ``_MODULE_BOOTSTRAPS`` is the named list (Dealer Kit's
+    bootstrap, the first entity on the engine); ``register_module_entities()`` is
+    the convention (``app/modules/<key>/status_entities.py``), so a module joining
+    that way needs no edit to core. A module listed in both registers once:
+    registration is idempotent.
 
-    An import failure is logged rather than raised. This runs on the first read
-    of the registry, which can be deep inside an unrelated request, and one
-    module failing to import must not take down every status surface in the
-    system.
+    An import failure is logged rather than raised, on both routes. This runs on
+    the first read of the registry, which can be deep inside an unrelated request,
+    and one module failing to import must not take down every status surface in
+    the system.
     """
     import importlib
     import logging

@@ -7,6 +7,7 @@ the one nobody updates is the one the pipeline report reads.
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from datetime import date, timedelta
 
 import pytest
@@ -611,6 +612,23 @@ def test_editing_a_template_checklist_does_not_retro_apply_to_existing_projects(
 # ------------------------------------------------------- history (AC-N7)
 
 
+@contextmanager
+def _session_owning_the_task_audit_trail():
+    """A session where the audit rows for a task are the ones this file writes.
+
+    The audit listeners are global and installed by whoever reaches
+    ``register_audit_listeners`` first - the app at startup, and ``test_customer_audit``
+    in a suite run - so whether merely seeding a ProjectTask ALSO writes a CREATE row
+    depends on which files ran before this one. These three tests state the trail they
+    render in full, so they turn the per-row listener off for ``project_tasks`` (the same
+    documented hook a bulk import uses) instead of passing alone and failing in a full
+    run, which reads as flakiness rather than as an ordering dependency.
+    """
+    with blank_session() as db:
+        db.info["skip_audit_entity_types"] = {ProjectTask.__audit_entity_type__}
+        yield db
+
+
 def test_task_history_reads_from_the_audit_trail_with_readable_values():
     """A timeline row saying "status_id changed from 6dca3796 to f8744fb5" is
     technically a history and practically useless, so ids are resolved to labels.
@@ -620,7 +638,7 @@ def test_task_history_reads_from_the_audit_trail_with_readable_values():
     """
     from app.models.audit import AuditLog
 
-    with blank_session() as db:
+    with _session_owning_the_task_audit_trail() as db:
         company_id = _sorento(db)
         owner = _user(db, f"{MARKER} Ali")
         eric = _user(db, f"{MARKER} Eric")
@@ -636,13 +654,15 @@ def test_task_history_reads_from_the_audit_trail_with_readable_values():
         db.add(task)
         db.flush()
 
-        # Stand in for the audit listeners, which fire on a real request flush.
+        # Stand in for the audit listeners, which fire on a real request flush. The
+        # action is the one THEY write - "CREATE"; "INSERT" only ever came from a
+        # hand-written call - so a timeline that renders this row renders a real one.
         db.add(
             AuditLog(
                 id=_uid(),
                 entity_type="project_tasks",
                 entity_id=task.id,
-                action="INSERT",
+                action="CREATE",
                 user_id=owner,
                 new_values={"name": "Visit the architect"},
             )
@@ -674,7 +694,7 @@ def test_task_history_ignores_noise_fields():
     changes people actually look for."""
     from app.models.audit import AuditLog
 
-    with blank_session() as db:
+    with _session_owning_the_task_audit_trail() as db:
         company_id = _sorento(db)
         owner = _user(db, f"{MARKER} Ali")
         not_started, _ip, _done = _task_graph(db)
@@ -705,7 +725,7 @@ def test_task_history_ignores_noise_fields():
 
 
 def test_a_task_with_no_audit_rows_has_an_empty_history():
-    with blank_session() as db:
+    with _session_owning_the_task_audit_trail() as db:
         company_id = _sorento(db)
         owner = _user(db, f"{MARKER} Ali")
         not_started, _ip, _done = _task_graph(db)

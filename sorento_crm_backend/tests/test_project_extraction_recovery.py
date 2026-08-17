@@ -550,18 +550,18 @@ def test_no_request_path_ever_calls_the_reader():
 
     root = Path(__file__).resolve().parents[1] / "app"
     callers = []
-    for path in root.rglob("*.py"):
-        if "run_extraction(" not in path.read_text():
+    for path in sorted(root.rglob("*.py")):
+        mentions = [
+            line.strip() for line in path.read_text().splitlines() if "run_extraction(" in line
+        ]
+        if not mentions:
             continue
-        # The definitions themselves, and the docstrings that name the caller.
-        # `project_po_intake_lifecycle.py` is one of the mixins `ProjectPOExtractionService`
-        # is assembled from (2026-08-12 audit split), so it HOLDS the definition rather
-        # than calling it: no request path gained a caller.
-        if path.name in {
-            "project_po_extraction_service.py",
-            "project_po_intake_lifecycle.py",
-            "project_schedule_service.py",
-        }:
+        # A file that only DEFINES the method is not a caller of it. Recognised by shape
+        # rather than by a list of filenames: the PO reader's definition has already moved
+        # once (the 2026-08-12 split of the service into three mixins carried it into
+        # `project_po_intake_lifecycle.py`), and a hardcoded exclusion list goes stale on
+        # every such move - failing here for a refactor, which is not what this guards.
+        if all(line.startswith("def ") for line in mentions):
             continue
         callers.append(str(path.relative_to(root)))
 

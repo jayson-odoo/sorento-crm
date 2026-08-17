@@ -2856,9 +2856,6 @@ class ProductAttachmentService:
                 setattr(existing, key, value)
             from datetime import datetime as _dt
             existing.updated_at = _dt.utcnow()
-            # Same single decision as the update path: setting this flag without clearing the
-            # previous holder trips the partial unique index, so the n8n re-post of a replaced
-            # photograph would 500 rather than move the choice.
             self._apply_brochure_choice(existing, chosen)
             self.db.commit()
             self.db.refresh(existing)
@@ -2871,8 +2868,7 @@ class ProductAttachmentService:
             return row
 
         attachment_dict = product_attachment_data.model_dump()
-        # Held back until the row exists, so the choice funnel can clear the previous holder
-        # first.
+        # Held back until the row exists, so the funnel can clear the previous holder first.
         chosen = attachment_dict.pop("is_primary", None)
         if created_by:
             attachment_dict["created_by"] = created_by

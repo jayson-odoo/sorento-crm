@@ -50,7 +50,7 @@ def _require_db_url() -> str:
 def create_schema() -> None:
     """Create every table declared by the ORM models, plus the module schemas.
 
-    The schema creation is not optional decoration. ``create_all`` emits
+    The `CREATE SCHEMA` step is not optional decoration. ``create_all`` emits
     ``CREATE TABLE scm.x`` / ``CREATE TABLE projects.x`` and never creates the schema
     itself, so a from-zero database (CI, disaster recovery) dies here with
     ``schema "projects" does not exist`` - a failure that never reproduces on a
@@ -69,8 +69,7 @@ def create_schema() -> None:
         # bootstrap with "schema does not exist" - and bootstrap is the ONLY way
         # this database is built from zero, in CI and anywhere else. That is how
         # `dealer_kit` broke it: the list here said `scm` and nobody remembered
-        # to add the second one, and `projects` (migration 354) would have been
-        # the next one to be forgotten.
+        # to add the second one, and `projects` (ADR-0011) is the third.
         #
         # Derived rather than listed for exactly that reason. A hand-maintained
         # list is a step somebody has to remember at the moment they are thinking
