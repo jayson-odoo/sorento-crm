@@ -47,6 +47,7 @@ from app.api.v1.external import (
     memory,
     ideation,
     ingest,
+    media,
 )
 
 router = APIRouter()
@@ -238,4 +239,10 @@ router.include_router(
     prefix="/ideation",
     tags=["external"],
     dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["ideation"]))],
+)
+router.include_router(
+    media.router,
+    prefix="/media",
+    tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["media"]))],
 )

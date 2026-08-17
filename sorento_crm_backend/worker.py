@@ -2,8 +2,8 @@
 """RQ worker + APScheduler combined.
 
 Single process owns both queue draining (`imports`, `respond_io`, `catalogue_render`,
-`flyer_read`) and cron ticks fired by `app.scheduler.task_scheduler`. Compose runs
-exactly one `worker` service so jobs and ticks are never duplicated across
+`media`, `flyer_read`) and cron ticks fired by `app.scheduler.task_scheduler`. Compose
+runs exactly one `worker` service so jobs and ticks are never duplicated across
 blue/green API containers.
 
 Set `ENABLE_SCHEDULER=true` in the worker container; API containers leave it false.
@@ -117,6 +117,11 @@ if __name__ == '__main__':
     # a flyer read enqueues and never runs. If it does not pin it, this default
     # is picked up on the next deploy.
     #
+    # 'media' drains the chatbot media extraction jobs. The /external/media
+    # endpoint enqueues and then AWAITS the job, so a worker that is not draining
+    # this queue does not merely delay the work - every media turn waits out
+    # media_sync_wait_seconds and returns `pending`.
+    #
     # WORKER_QUEUES makes the list overridable, matching the project-sales
     # checkout. Every worktree on this machine points at the SAME Redis db 0, so
     # a hardcoded list means whichever worker happens to be running drains
@@ -125,7 +130,7 @@ if __name__ == '__main__':
     queues = [
         q.strip()
         for q in os.getenv(
-            'WORKER_QUEUES', 'imports,respond_io,catalogue_render,flyer_read'
+            'WORKER_QUEUES', 'imports,respond_io,catalogue_render,media,flyer_read'
         ).split(',')
         if q.strip()
     ]

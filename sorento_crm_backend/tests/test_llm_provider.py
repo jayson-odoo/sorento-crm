@@ -12,13 +12,23 @@ from typing import Any
 import pytest
 
 from app.services.llm_provider import (
+    DEFAULT_MODELS,
     AnthropicProvider,
     ChatResult,
+    GeminiProvider,
+    ImagePart,
     OpenAIProvider,
     _convert_messages_to_anthropic,
+    _convert_messages_to_gemini,
     _convert_tools_to_anthropic,
+    _convert_tools_to_gemini,
+    _gemini_schema,
+    _gemini_thinking_budget,
     _split_system_messages,
+    default_model_for,
     get_provider,
+    resolve_api_key,
+    resolve_model,
 )
 
 
@@ -352,5 +362,782 @@ def test_get_provider_factory():
     assert isinstance(p1, OpenAIProvider)
     p2 = get_provider("anthropic", "k")
     assert isinstance(p2, AnthropicProvider)
+    p3 = get_provider("gemini", "k")
+    assert isinstance(p3, GeminiProvider)
+    assert p3.default_model == "gemini-2.5-flash"
+    assert get_provider("gemini", "k", "gemini-2.5-pro").default_model == "gemini-2.5-pro"
     with pytest.raises(ValueError):
         get_provider("nope", "k")
+
+
+def test_default_model_for_covers_every_registered_provider():
+    """One table, so registering a provider cannot leave a caller handing it
+    another vendor's model id."""
+    assert set(DEFAULT_MODELS) == {"openai", "anthropic", "gemini"}
+    assert default_model_for("openai") == "gpt-4o"
+    assert default_model_for("anthropic") == "claude-sonnet-4-6"
+    assert default_model_for("gemini") == "gemini-2.5-flash"
+    # Case and padding come off a settings row, so they are normalized.
+    assert default_model_for(" Gemini ") == "gemini-2.5-flash"
+
+
+def test_get_provider_accepts_every_default_model():
+    for name, expected in DEFAULT_MODELS.items():
+        model = default_model_for(name)
+        assert model == expected
+        provider = get_provider(name, "k", model=model)
+        assert provider.name == name
+        assert provider.default_model == model
+
+
+# ---- GeminiProvider ------------------------------------------------------
+#
+# Gemini goes over the REST API with `httpx`, not an SDK, so the seam stubbed
+# here is `httpx.request` - the exact call `GeminiProvider._request` makes.
+
+
+class _StubHTTPResponse:
+    def __init__(self, payload: Any, status_code: int = 200) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.text = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+
+    def json(self):
+        return self._payload
+
+
+class _GeminiTransport:
+    """Records every request and replays a canned response."""
+
+    def __init__(self, payload: Any, status_code: int = 200) -> None:
+        self.payload = payload
+        self.status_code = status_code
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, method: str, url: str, **kwargs: Any) -> _StubHTTPResponse:
+        self.calls.append({"method": method, "url": url, **kwargs})
+        return _StubHTTPResponse(self.payload, self.status_code)
+
+    @property
+    def last(self) -> dict[str, Any]:
+        return self.calls[-1]
+
+    @property
+    def body(self) -> dict[str, Any]:
+        return self.calls[-1]["json"]
+
+
+def _gemini_text_response(text: str = "ok-from-gemini") -> dict:
+    return {
+        "candidates": [
+            {"content": {"role": "model", "parts": [{"text": text}]}, "finishReason": "STOP"}
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 11,
+            "candidatesTokenCount": 5,
+            "totalTokenCount": 16,
+        },
+    }
+
+
+def _install(monkeypatch, transport: _GeminiTransport) -> _GeminiTransport:
+    monkeypatch.setattr("httpx.request", transport)
+    return transport
+
+
+def test_gemini_chat_hoists_system_into_system_instruction(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    provider = GeminiProvider("k", default_model="gemini-2.5-flash")
+
+    result = provider.chat(
+        [
+            {"role": "system", "content": "be terse"},
+            {"role": "user", "content": "hi"},
+        ],
+        temperature=0.0,
+        max_tokens=64,
+    )
+
+    assert result.content == "ok-from-gemini"
+    assert result.prompt_tokens == 11
+    assert result.completion_tokens == 5
+    assert result.total_tokens == 16
+    assert result.tool_calls == []
+    assert result.raw is t.payload
+
+    assert t.last["method"] == "POST"
+    assert t.last["url"].endswith("/models/gemini-2.5-flash:generateContent")
+    assert t.last["headers"]["x-goog-api-key"] == "k"
+    assert t.body["systemInstruction"] == {"parts": [{"text": "be terse"}]}
+    assert t.body["contents"] == [{"role": "user", "parts": [{"text": "hi"}]}]
+    assert t.body["generationConfig"]["temperature"] == 0.0
+    assert t.body["generationConfig"]["maxOutputTokens"] == 64
+
+
+def test_gemini_chat_uses_the_per_call_model_over_the_default(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k", default_model="gemini-2.5-flash").chat(
+        [{"role": "user", "content": "hi"}], model="gemini-2.5-pro"
+    )
+    assert t.last["url"].endswith("/models/gemini-2.5-pro:generateContent")
+
+
+def test_gemini_flash_thinks_zero_and_keeps_the_callers_answer_budget(monkeypatch):
+    """The media image lane's 2048 must all be answer tokens.
+
+    Thinking is on by default on 2.5 and is spent out of `maxOutputTokens`, so
+    an unset budget can burn the whole 2048 and return a candidate with no
+    parts (`finishReason=MAX_TOKENS`).
+    """
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k", default_model="gemini-2.5-flash").chat(
+        [{"role": "user", "content": "read it"}], max_tokens=2048
+    )
+    generation = t.body["generationConfig"]
+    assert generation["thinkingConfig"] == {"thinkingBudget": 0}
+    assert generation["maxOutputTokens"] == 2048
+
+
+def test_gemini_flash_lite_also_thinks_zero(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [{"role": "user", "content": "hi"}],
+        model="gemini-2.5-flash-lite",
+        max_tokens=512,
+    )
+    assert t.body["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+    assert t.body["generationConfig"]["maxOutputTokens"] == 512
+
+
+def test_gemini_pro_gets_a_small_budget_added_on_top_of_the_answer_budget(monkeypatch):
+    """2.5 Pro cannot go below 128, so it thinks on a small fixed budget - and
+    the caller's `max_tokens` is raised by it rather than shared with it."""
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [{"role": "user", "content": "hi"}], model="gemini-2.5-pro", max_tokens=2048
+    )
+    generation = t.body["generationConfig"]
+    assert generation["thinkingConfig"] == {"thinkingBudget": 1024}
+    assert generation["maxOutputTokens"] == 2048 + 1024
+
+
+def test_gemini_sends_the_thinking_config_even_without_a_max_tokens(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k", default_model="gemini-2.5-flash").chat(
+        [{"role": "user", "content": "hi"}]
+    )
+    generation = t.body["generationConfig"]
+    assert generation["thinkingConfig"] == {"thinkingBudget": 0}
+    assert "maxOutputTokens" not in generation
+
+
+def test_gemini_2_0_gets_no_thinking_config_and_an_untouched_answer_budget(monkeypatch):
+    """Thinking budgets are a 2.5 feature: 2.0 rejects `thinkingConfig` with a
+    400, and the media model box is free text, so an operator typing
+    `gemini-2.0-flash` would fail every call."""
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [{"role": "user", "content": "read it"}],
+        model="gemini-2.0-flash",
+        max_tokens=2048,
+    )
+    generation = t.body["generationConfig"]
+    assert "thinkingConfig" not in generation
+    assert generation["maxOutputTokens"] == 2048
+
+
+def test_gemini_thinking_budget_helper():
+    assert _gemini_thinking_budget("gemini-2.5-flash") == 0
+    assert _gemini_thinking_budget("gemini-2.5-flash-lite") == 0
+    assert _gemini_thinking_budget("gemini-2.5-pro") == 1024
+    # Newer families think too, and a Pro-family model rejects a zero budget.
+    assert _gemini_thinking_budget("gemini-3-something") == 1024
+    # None means "this model has no thinking to budget", so the caller leaves
+    # `thinkingConfig` off the request: 2.0 and older reject the field with a
+    # 400, and the model box on the settings page is free text.
+    assert _gemini_thinking_budget("gemini-2.0-flash") is None
+    assert _gemini_thinking_budget("gemini-1.5-pro") is None
+    assert _gemini_thinking_budget(None) is None
+
+
+def test_gemini_counts_thinking_tokens_as_completion(monkeypatch):
+    """`thoughtsTokenCount` is billed as output and IS inside the total, so
+    leaving it out makes prompt + completion disagree with `totalTokenCount`."""
+    _install(
+        monkeypatch,
+        _GeminiTransport(
+            {
+                "candidates": [
+                    {
+                        "content": {"role": "model", "parts": [{"text": "ok"}]},
+                        "finishReason": "STOP",
+                    }
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": 100,
+                    "candidatesTokenCount": 40,
+                    "thoughtsTokenCount": 60,
+                    "totalTokenCount": 200,
+                },
+            }
+        ),
+    )
+    result = GeminiProvider("k").chat([{"role": "user", "content": "hi"}])
+    assert result.prompt_tokens == 100
+    assert result.completion_tokens == 100
+    assert result.total_tokens == 200
+    assert result.prompt_tokens + result.completion_tokens == result.total_tokens
+
+
+def test_gemini_chat_rejects_tools_together_with_json_mode(monkeypatch):
+    """Gemini 400s on function declarations plus a JSON response mime type, so
+    the contradiction is refused before the request is built."""
+
+    def _explode(*_a, **_kw):
+        raise AssertionError("no request should be made for a rejected combination")
+
+    monkeypatch.setattr("httpx.request", _explode)
+    tools = [
+        {"type": "function", "function": {"name": "do_thing", "parameters": {}}}
+    ]
+
+    with pytest.raises(ValueError) as excinfo:
+        GeminiProvider("k").chat(
+            [{"role": "user", "content": "hi"}],
+            tools=tools,
+            response_format={"type": "json_object"},
+        )
+    assert "function calling" in str(excinfo.value)
+
+    with pytest.raises(ValueError):
+        GeminiProvider("k").chat(
+            [{"role": "user", "content": "hi"}],
+            tools=tools,
+            json_schema={"type": "object", "properties": {}},
+            json_schema_name="thing",
+        )
+
+
+def test_gemini_chat_appends_images_to_the_last_user_turn(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [
+            {"role": "system", "content": "read it"},
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "noted"},
+            {"role": "user", "content": "what does this say"},
+        ],
+        images=[
+            ImagePart(mime="image/png", data_b64="AAAA"),
+            ImagePart(mime="image/webp", data_b64="BBBB"),
+        ],
+    )
+
+    contents = t.body["contents"]
+    # Same placement rule as the OpenAI adapter: the LAST user turn, text kept.
+    assert contents[-1]["role"] == "user"
+    assert contents[-1]["parts"] == [
+        {"text": "what does this say"},
+        {"inlineData": {"mimeType": "image/png", "data": "AAAA"}},
+        {"inlineData": {"mimeType": "image/webp", "data": "BBBB"}},
+    ]
+    assert contents[0]["parts"] == [{"text": "first"}]
+
+
+def test_gemini_chat_creates_a_user_turn_for_images_when_there_is_none(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [{"role": "system", "content": "read it"}],
+        images=[ImagePart(mime="image/jpeg", data_b64="CCCC")],
+    )
+    assert t.body["contents"] == [
+        {
+            "role": "user",
+            "parts": [{"inlineData": {"mimeType": "image/jpeg", "data": "CCCC"}}],
+        }
+    ]
+
+
+def test_gemini_chat_never_attaches_images_to_a_tool_result_turn(monkeypatch):
+    """Gemini has no `tool` role, so a tool result comes back as `role: user`.
+
+    Attaching the image to it would mix an `inlineData` part into a
+    `functionResponse` turn; the real user turn above it is the target.
+    """
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [
+            {"role": "user", "content": "what does this say"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "stock_balance", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": '{"on_hand": 12}'},
+        ],
+        images=[ImagePart(mime="image/png", data_b64="AAAA")],
+    )
+
+    contents = t.body["contents"]
+    assert contents[0]["parts"] == [
+        {"text": "what does this say"},
+        {"inlineData": {"mimeType": "image/png", "data": "AAAA"}},
+    ]
+    # The tool result turn is left exactly as converted.
+    assert contents[-1]["parts"] == [
+        {"functionResponse": {"name": "stock_balance", "response": {"on_hand": 12}}}
+    ]
+
+
+def test_gemini_chat_adds_a_user_turn_when_only_tool_results_remain(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [{"role": "tool", "tool_call_id": "c1", "name": "do_thing", "content": "{}"}],
+        images=[ImagePart(mime="image/jpeg", data_b64="CCCC")],
+    )
+    contents = t.body["contents"]
+    assert len(contents) == 2
+    assert "functionResponse" in contents[0]["parts"][0]
+    assert contents[1] == {
+        "role": "user",
+        "parts": [{"inlineData": {"mimeType": "image/jpeg", "data": "CCCC"}}],
+    }
+
+
+def test_gemini_chat_declares_tools_as_function_declarations(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [{"role": "user", "content": "hi"}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "do_thing",
+                    "description": "does",
+                    "parameters": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {"x": {"type": "integer"}},
+                        "required": ["x"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {"name": "other", "parameters": {"type": "object"}},
+            },
+        ],
+    )
+
+    # ONE tools entry holding every declaration, not one entry per tool.
+    assert len(t.body["tools"]) == 1
+    declarations = t.body["tools"][0]["functionDeclarations"]
+    assert [d["name"] for d in declarations] == ["do_thing", "other"]
+    # `additionalProperties` is not in Gemini's schema dialect and is a 400.
+    assert "additionalProperties" not in declarations[0]["parameters"]
+    assert declarations[0]["parameters"]["required"] == ["x"]
+
+
+def test_gemini_chat_normalizes_function_calls_with_synthesized_ids(monkeypatch):
+    _install(
+        monkeypatch,
+        _GeminiTransport(
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [
+                                {"text": "let me look"},
+                                {"functionCall": {"name": "do_thing", "args": {"x": 1}}},
+                                {"functionCall": {"name": "do_thing", "args": {"x": 2}}},
+                            ],
+                        }
+                    }
+                ],
+                "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 4},
+            }
+        ),
+    )
+
+    result = GeminiProvider("k").chat([{"role": "user", "content": "hi"}])
+
+    assert result.content == "let me look"
+    assert result.prompt_tokens == 3
+    assert result.completion_tokens == 4
+    # No totalTokenCount in the payload -> derived, never left at zero.
+    assert result.total_tokens == 7
+    assert [c["name"] for c in result.tool_calls] == ["do_thing", "do_thing"]
+    assert [c["arguments"] for c in result.tool_calls] == [{"x": 1}, {"x": 2}]
+    # Gemini returns no ids; the same tool called twice must still get two.
+    ids = [c["id"] for c in result.tool_calls]
+    assert len(set(ids)) == 2
+    assert all(i for i in ids)
+
+
+def test_gemini_chat_round_trips_an_assistant_tool_call_and_its_result(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [
+            {"role": "user", "content": "stock for SRTKS6647?"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "gemini_0_stock_balance",
+                        "type": "function",
+                        "function": {
+                            "name": "stock_balance",
+                            "arguments": json.dumps({"code": "SRTKS6647"}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "gemini_0_stock_balance",
+                "content": json.dumps({"on_hand": 12}),
+            },
+        ]
+    )
+
+    contents = t.body["contents"]
+    assert contents[1]["role"] == "model"
+    assert contents[1]["parts"] == [
+        {"functionCall": {"name": "stock_balance", "args": {"code": "SRTKS6647"}}}
+    ]
+    # Gemini keys the response by NAME, resolved from the call it answers.
+    assert contents[2]["role"] == "user"
+    assert contents[2]["parts"] == [
+        {"functionResponse": {"name": "stock_balance", "response": {"on_hand": 12}}}
+    ]
+
+
+def test_gemini_json_object_response_format_sets_the_response_mime_type(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response('{"a":1}')))
+    result = GeminiProvider("k").chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+    assert result.content == '{"a":1}'
+    assert t.body["generationConfig"]["responseMimeType"] == "application/json"
+    assert "responseSchema" not in t.body["generationConfig"]
+
+
+def test_gemini_json_schema_sets_a_translated_response_schema(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response('{"intent":"x"}')))
+    GeminiProvider("k").chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "intent": {"type": "string"},
+                "note": {"type": ["string", "null"]},
+            },
+            "required": ["intent", "note"],
+        },
+        json_schema_name="structured_result",
+    )
+
+    schema = t.body["generationConfig"]["responseSchema"]
+    assert t.body["generationConfig"]["responseMimeType"] == "application/json"
+    assert "additionalProperties" not in schema
+    # OpenAI spells a nullable as ["string","null"]; Gemini wants a flag.
+    assert schema["properties"]["note"] == {"type": "string", "nullable": True}
+    assert schema["properties"]["intent"] == {"type": "string"}
+
+
+def test_gemini_json_schema_drops_the_null_member_from_a_nullable_enum(monkeypatch):
+    """The real schema every assistant turn sends. `_semantic_parse` calls
+    `provider.chat(json_schema=PARSE_RESULT_JSON_SCHEMA)`, whose `form_target`,
+    `entities.domain` and `entities.time_scope` each spell the null branch as a
+    literal `None` inside `enum` (OpenAI strict mode's form). Gemini's
+    `Schema.enum` is a proto `repeated string`, so a null member is a 400 and
+    semantic routing dies silently into `fallback_parse` on every turn."""
+    from app.schemas.ai_semantic_parser import PARSE_RESULT_JSON_SCHEMA
+
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response('{"intent":"x"}')))
+    GeminiProvider("k").chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+        json_schema=PARSE_RESULT_JSON_SCHEMA,
+        json_schema_name="parse_result",
+    )
+
+    schema = t.body["generationConfig"]["responseSchema"]
+
+    form_target = schema["properties"]["form_target"]
+    assert None not in form_target["enum"]
+    assert form_target["enum"] == [
+        "complaint",
+        "stock_inquiry",
+        "purchase_request",
+        "sponsorship_form",
+    ]
+    assert form_target["nullable"] is True
+    assert form_target["type"] == "string"
+
+    entities = schema["properties"]["entities"]["properties"]
+    assert None not in entities["domain"]["enum"]
+    assert entities["domain"]["nullable"] is True
+    assert None not in entities["time_scope"]["enum"]
+    assert entities["time_scope"]["nullable"] is True
+
+    # A non-nullable enum is untouched, so the translation cannot be passing by
+    # emptying every enum it sees.
+    intent = schema["properties"]["intent"]
+    assert "unknown" in intent["enum"]
+    assert "nullable" not in intent
+
+    def _no_null_enum(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("enum"), list):
+                assert None not in node["enum"], node
+            for value in node.values():
+                _no_null_enum(value)
+        elif isinstance(node, list):
+            for item in node:
+                _no_null_enum(item)
+
+    _no_null_enum(schema)
+
+
+def test_gemini_chat_surfaces_the_provider_error_message(monkeypatch):
+    _install(
+        monkeypatch,
+        _GeminiTransport(
+            {"error": {"code": 400, "message": "API key not valid. Please pass a valid API key."}},
+            status_code=400,
+        ),
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        GeminiProvider("k").chat([{"role": "user", "content": "hi"}])
+    assert "API key not valid" in str(excinfo.value)
+    assert "400" in str(excinfo.value)
+
+
+def test_gemini_chat_raises_when_the_prompt_was_blocked(monkeypatch):
+    _install(
+        monkeypatch,
+        _GeminiTransport({"candidates": [], "promptFeedback": {"blockReason": "SAFETY"}}),
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        GeminiProvider("k").chat([{"role": "user", "content": "hi"}])
+    assert "SAFETY" in str(excinfo.value)
+
+
+def test_gemini_chat_raises_on_an_empty_candidate(monkeypatch):
+    _install(
+        monkeypatch,
+        _GeminiTransport(
+            {
+                "candidates": [{"content": {"role": "model"}, "finishReason": "MAX_TOKENS"}],
+                "usageMetadata": {"promptTokenCount": 3},
+            }
+        ),
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        GeminiProvider("k").chat([{"role": "user", "content": "hi"}])
+    assert "MAX_TOKENS" in str(excinfo.value)
+
+
+def test_gemini_chat_without_an_api_key_never_reaches_the_network(monkeypatch):
+    def _explode(*_a, **_kw):
+        raise AssertionError("no request should be made without a key")
+
+    monkeypatch.setattr("httpx.request", _explode)
+    with pytest.raises(RuntimeError) as excinfo:
+        GeminiProvider("").chat([{"role": "user", "content": "hi"}])
+    assert "Gemini API key" in str(excinfo.value)
+
+
+def test_gemini_embed_returns_a_vector_sized_to_the_column(monkeypatch):
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "embedding_dimensions", 4, raising=False)
+    t = _install(
+        monkeypatch,
+        _GeminiTransport({"embedding": {"values": [3.0, 0.0, 4.0, 0.0]}}),
+    )
+
+    vector = GeminiProvider("k").embed("hello")
+
+    assert t.last["url"].endswith("/models/gemini-embedding-001:embedContent")
+    assert t.body["outputDimensionality"] == 4
+    assert t.body["content"] == {"parts": [{"text": "hello"}]}
+    # Truncated below the native size, so re-normalized to unit length.
+    assert vector == [0.6, 0.0, 0.8, 0.0]
+
+
+def test_gemini_embed_raises_when_no_vector_came_back(monkeypatch):
+    _install(monkeypatch, _GeminiTransport({"embedding": {}}))
+    with pytest.raises(RuntimeError):
+        GeminiProvider("k").embed("hello")
+
+
+def test_gemini_test_connection_ok(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport({"models": [{"name": "models/x"}]}))
+    ok, message, latency = GeminiProvider("k").test_connection()
+    assert ok is True
+    assert message == "OK"
+    assert isinstance(latency, int) and latency >= 0
+    # Free and authenticated: a list, not a generate that a thinking model
+    # would truncate to an empty candidate.
+    assert t.last["method"] == "GET"
+    assert t.last["url"].endswith("/models")
+
+
+def test_gemini_test_connection_failure_carries_the_provider_message(monkeypatch):
+    _install(
+        monkeypatch,
+        _GeminiTransport({"error": {"message": "API key not valid"}}, status_code=403),
+    )
+    ok, message, latency = GeminiProvider("k").test_connection()
+    assert ok is False
+    assert "API key not valid" in message
+    assert isinstance(latency, int)
+
+
+# ---- Gemini conversion helpers -------------------------------------------
+
+
+def test_convert_tools_to_gemini_skips_unusable_entries():
+    assert _convert_tools_to_gemini([{"type": "function", "function": {}}]) == []
+    assert _convert_tools_to_gemini([]) == []
+
+
+def test_convert_messages_to_gemini_maps_assistant_to_model():
+    out = _convert_messages_to_gemini(
+        [
+            {"role": "user", "content": "u"},
+            {"role": "assistant", "content": "a"},
+        ]
+    )
+    assert [c["role"] for c in out] == ["user", "model"]
+
+
+def test_convert_messages_to_gemini_wraps_a_non_object_tool_result():
+    """Gemini's functionResponse.response must be an object; a bare string or
+    list is a 400, so it is wrapped rather than sent through."""
+    out = _convert_messages_to_gemini(
+        [{"role": "tool", "tool_call_id": "c1", "name": "do_thing", "content": "plain text"}]
+    )
+    assert out[0]["parts"][0]["functionResponse"]["response"] == {"result": "plain text"}
+
+
+def test_gemini_schema_drops_unsupported_keys_recursively():
+    out = _gemini_schema(
+        {
+            "type": "object",
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": False,
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {"raw": {"type": "string", "default": ""}},
+                    },
+                }
+            },
+        }
+    )
+    assert "$schema" not in out and "additionalProperties" not in out
+    nested = out["properties"]["items"]["items"]
+    assert "additionalProperties" not in nested
+    assert nested["properties"]["raw"] == {"type": "string"}
+
+
+@pytest.mark.parametrize("asked", ["gemini", "Gemini", " gemini "])
+def test_resolve_api_key_normalizes_the_provider_name(asked, monkeypatch):
+    """`get_provider` and `default_model_for` both lower/strip the name, so the
+    key resolver must agree - otherwise a stored "Gemini" resolves an OpenAI key
+    and hands it to a Gemini client."""
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "openai_api_key", "ZZT-openai-env-key", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "", raising=False)
+    cfg = types.SimpleNamespace(
+        provider="Gemini",
+        api_key_ciphertext="ZZT-generic-key",
+        gemini_api_key_ciphertext="ZZT-gemini-column-key",
+        anthropic_api_key_ciphertext="",
+    )
+
+    assert resolve_api_key(cfg, asked) == "ZZT-gemini-column-key"
+
+
+def test_convert_tools_to_gemini_omits_parameters_for_a_parameterless_tool():
+    """Gemini's REST API 400s an OBJECT schema with empty `properties`, so a
+    tool that takes no arguments must carry no `parameters` at all - one such
+    MCP tool would otherwise fail every agent-loop turn on the first call."""
+    declarations = _convert_tools_to_gemini(
+        [
+            {"type": "function", "function": {"name": "no_args"}},
+            {
+                "type": "function",
+                "function": {
+                    "name": "empty_object",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "with_args",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"q": {"type": "string"}},
+                    },
+                },
+            },
+        ]
+    )[0]["functionDeclarations"]
+
+    by_name = {d["name"]: d for d in declarations}
+    assert "parameters" not in by_name["no_args"]
+    assert "parameters" not in by_name["empty_object"]
+    assert by_name["with_args"]["parameters"]["properties"] == {"q": {"type": "string"}}
+
+
+def test_gemini_chat_sends_a_parameterless_tool_without_a_parameters_field(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "ping", "description": "p"}}],
+    )
+    declaration = t.body["tools"][0]["functionDeclarations"][0]
+    assert declaration == {"name": "ping", "description": "p"}
+
+
+def test_resolve_model_prefers_the_explicit_model():
+    cfg = types.SimpleNamespace(provider="openai", model="gpt-4o")
+    assert resolve_model(cfg, "gemini", "gemini-2.5-pro") == "gemini-2.5-pro"
+
+
+@pytest.mark.parametrize("asked", ["openai", "OpenAI", " openai "])
+def test_resolve_model_inherits_the_assistant_model_only_for_the_same_provider(asked):
+    cfg = types.SimpleNamespace(provider="OpenAI ", model="gpt-4o")
+    assert resolve_model(cfg, asked, None) == "gpt-4o"
+
+
+def test_resolve_model_never_hands_one_vendors_model_to_another():
+    """The assistant runs on gpt-4o; a lane pointed at Gemini with no model of its
+    own must get Gemini's default, not `gpt-4o` posted to Google."""
+    cfg = types.SimpleNamespace(provider="openai", model="gpt-4o")
+    assert resolve_model(cfg, "gemini", None) == default_model_for("gemini")
+    assert resolve_model(cfg, "gemini", "") == default_model_for("gemini")
+
+
+def test_resolve_model_without_a_config_row_uses_the_provider_default():
+    assert resolve_model(None, "anthropic", None) == default_model_for("anthropic")

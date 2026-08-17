@@ -23,7 +23,7 @@ httpx>=0.25.0
 bcrypt>=4.1.0
 openpyxl>=3.1.2
 redis>=5.0.0
-rq>=1.15.0
+rq>=2.0
 pywebpush>=1.14.0
 pytest>=7.0.0
 # Parallel test execution. Powers the blocking `test-backend` CI gate, which
@@ -51,3 +51,8 @@ playwright>=1.40
 # Optional at runtime (local import), but must ship in the image or the search no-ops.
 anthropic>=0.96.0
 xlrd>=2.0.1
+# Reads the real length of a chatbot voice note (OGG/Opus, MP4/M4A, MP3, WAV) so
+# the per-contact clip cap is enforced against measured audio instead of the
+# duration the caller claimed. Pure Python, so it needs no ffprobe/ffmpeg binary
+# in the image, and nothing else in this repo can measure audio.
+mutagen>=1.47

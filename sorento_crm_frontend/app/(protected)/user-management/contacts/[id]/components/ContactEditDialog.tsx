@@ -370,6 +370,7 @@ export default function ContactEditDialog({
                           : 'Select workspace…'
                       }
                       emptyMessage="No matching workspaces"
+                      clearable
                       disabled={mutation.isPending || workspaceOptions.length === 0}
                     />
                   </FormControl>

@@ -38,6 +38,10 @@ export default function AIAssistantSettingsForm() {
   // while the assistant itself can run on the primary provider above.
   const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
   const [anthropicKeyEdited, setAnthropicKeyEdited] = useState(false);
+  // Dedicated Gemini key - the chatbot media image lane can run on Gemini while
+  // the assistant itself stays on the primary provider above.
+  const [geminiKeyInput, setGeminiKeyInput] = useState('');
+  const [geminiKeyEdited, setGeminiKeyEdited] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState('');
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
@@ -62,6 +66,8 @@ export default function AIAssistantSettingsForm() {
     setApiKeyEdited(false);
     setAnthropicKeyInput(data.anthropic_api_key_masked || '');
     setAnthropicKeyEdited(false);
+    setGeminiKeyInput(data.gemini_api_key_masked || '');
+    setGeminiKeyEdited(false);
   }, [data]);
 
   const filteredTools = useMemo(() => {
@@ -233,6 +239,22 @@ export default function AIAssistantSettingsForm() {
       </div>
 
       <div className="space-y-2">
+        <Label>Google Gemini API key</Label>
+        <p className="text-xs text-muted-foreground">
+          Used when a lane runs on Gemini (chatbot media image reading). Leave blank if unused.
+        </p>
+        <Input
+          type="text"
+          value={geminiKeyInput}
+          onChange={(e) => {
+            setGeminiKeyInput(e.target.value);
+            setGeminiKeyEdited(true);
+          }}
+          placeholder="AIza****"
+        />
+      </div>
+
+      <div className="space-y-2">
         <Label>Enabled tools</Label>
         {toolsQuery.isError ? (
           <p className="text-xs text-destructive">
@@ -335,6 +357,7 @@ export default function AIAssistantSettingsForm() {
               anthropic_api_key: anthropicKeyEdited
                 ? anthropicKeyInput.trim() || undefined
                 : undefined,
+              gemini_api_key: geminiKeyEdited ? geminiKeyInput.trim() || undefined : undefined,
               enabled_tools: enabledTools,
               rag_enabled: ragEnabled,
               is_enabled: isEnabled,
@@ -346,6 +369,8 @@ export default function AIAssistantSettingsForm() {
                 setApiKeyEdited(false);
                 setAnthropicKeyInput(saved.anthropic_api_key_masked || '');
                 setAnthropicKeyEdited(false);
+                setGeminiKeyInput(saved.gemini_api_key_masked || '');
+                setGeminiKeyEdited(false);
               },
               onError: (e: Error) => toast.error(e.message),
             },
