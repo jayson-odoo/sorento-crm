@@ -6,6 +6,7 @@ import {
   approveLoadingPlan,
   createLoadingPlan,
   deleteLoadingPlan,
+  getConsolidatedPackingList,
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlan,
@@ -143,5 +144,15 @@ export function useApproveLoadingPlan() {
       else toast.warning('Notice created. No channel could send it, so send the document by hand.');
     },
     onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** S10 - the consolidated packing list for one container, grouped by factory. */
+export function useConsolidatedPackingList(shipmentId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'packing-list', shipmentId],
+    queryFn: () => getConsolidatedPackingList(shipmentId as string),
+    enabled: !!shipmentId,
+    refetchOnWindowFocus: false,
   });
 }

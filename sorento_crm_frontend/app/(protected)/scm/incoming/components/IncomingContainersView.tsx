@@ -10,6 +10,7 @@ import { fmtInt } from '../../lib/format';
 import { useFulfilmentSuppliers } from '../../hooks/useFulfilment';
 import { getIncomingShipments } from '../../services/fulfilmentService';
 import { PackingListUploadDialog } from './PackingListUploadDialog';
+import { ConsolidatedPackingListPanel } from './ConsolidatedPackingListPanel';
 import { AllocationPanel } from './AllocationPanel';
 
 /**
@@ -93,7 +94,13 @@ export function IncomingContainersView() {
                   {s.container_no || s.shipment_number}
                 </div>
                 <div className="text-2xs text-muted-foreground">
-                  {s.container_no ? s.shipment_number : 'No container number yet'}
+                  {/* Whose lines these are. One container is routinely loaded by two or three
+                      factories, and the header names none of them once it is mixed. */}
+                  {s.suppliers?.length
+                    ? s.suppliers.map((x) => x.supplier_name ?? x.supplier_code).join(', ')
+                    : s.container_no
+                      ? s.shipment_number
+                      : 'No container number yet'}
                 </div>
               </div>
               <span className="shrink-0 text-2xs text-muted-foreground">
@@ -103,6 +110,8 @@ export function IncomingContainersView() {
           ))}
         </Card>
       )}
+
+      <ConsolidatedPackingListPanel shipmentId={selected} />
 
       {selected ? <AllocationPanel shipmentId={selected} /> : null}
 

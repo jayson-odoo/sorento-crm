@@ -475,6 +475,10 @@ export interface IncomingShipment {
   status: string | null;
   lines: number;
   created_at: string | null;
+  /** Every factory that loaded this container, not just the one the header names: one
+   *  container is routinely filled by two or three suppliers, and the header goes null
+   *  once it is mixed. */
+  suppliers?: { supplier_id: string; supplier_code: string | null; supplier_name: string | null }[];
 }
 
 export async function getIncomingShipments(supplierId?: string | null): Promise<IncomingShipment[]> {
@@ -482,4 +486,107 @@ export async function getIncomingShipments(supplierId?: string | null): Promise<
   const res = await apiFetch(`/api/v1/scm/inbound-shipments${qs}`);
   const body = await readJson<{ data: IncomingShipment[] }>(res, 'Failed to load the containers');
   return body.data;
+}
+
+/**
+ * S10 - the Sorento packing list: one container, every factory that loaded it.
+ *
+ * ── BACKEND CONTRACT ───────────────────────────────────────────────────────
+ *  GET /api/v1/scm/inbound-shipments/{id}/packing-list        -> 200 ConsolidatedPackingList
+ *  GET /api/v1/scm/inbound-shipments/{id}/packing-list/export -> 200 .xlsx bytes
+ *       Content-Disposition: attachment; filename="<container>-packing-list.xlsx"
+ *  Auth on both: `scm.dashboard.view`. 200 with no factories on an empty container;
+ *  404 only when the shipment id is unknown.
+ *
+ * `discrepancies` and `company` are DERIVED - the first from the loading plan the supplier
+ * was sent, the second from the product's brand. Neither is ever typed in, which is why they
+ * arrive as strings to print rather than as fields to edit.
+ */
+export type PackingListCompany = 'SORENTO' | 'MOCHA';
+
+export interface PackingListLine {
+  line_id: string;
+  product_id: string;
+  product_code: string;
+  product_name: string | null;
+  brand: string | null;
+  company: PackingListCompany;
+  qty: number;
+  cartons: number | null;
+  /** Null when neither the supplier's file nor our catalogue dimensions give a volume. */
+  cbm: number | null;
+  /** What the supplier wrote on the line, never our own words. */
+  remarks: string | null;
+  /** Where this differs from the loading plan we sent that supplier. */
+  discrepancies: string[];
+}
+
+/** On the loading plan, absent from what the supplier actually loaded. */
+export interface PackingListNotPacked {
+  product_id: string;
+  product_code: string;
+  product_name: string | null;
+  planned_qty: number;
+}
+
+export interface PackingListTotals {
+  lines: number;
+  qty: number;
+  cartons: number;
+  cbm: number;
+}
+
+export interface PackingListSplitRow extends PackingListTotals {
+  company: PackingListCompany;
+}
+
+export interface PackingListFactory {
+  supplier_id: string | null;
+  supplier_code: string | null;
+  supplier_name: string | null;
+  loading_plan_id: string | null;
+  /** Null when the supplier was never sent a loading plan, so nothing can be compared. */
+  notice_id: string | null;
+  lines: PackingListLine[];
+  not_packed: PackingListNotPacked[];
+  subtotal: PackingListTotals;
+}
+
+export interface ConsolidatedPackingList {
+  shipment_id: string;
+  shipment_number: string | null;
+  container_no: string | null;
+  bl_no: string | null;
+  status: string | null;
+  factories: PackingListFactory[];
+  total: PackingListTotals;
+  /** Both companies, always, zeros included: an absent row reads as a missing figure. */
+  split: PackingListSplitRow[];
+}
+
+export async function getConsolidatedPackingList(
+  shipmentId: string,
+): Promise<ConsolidatedPackingList> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/packing-list`);
+  return readJson<ConsolidatedPackingList>(res, 'Failed to load the packing list');
+}
+
+/**
+ * The same list as the file Ms Tee used to build by hand.
+ *
+ * The name comes from the server's `Content-Disposition` rather than being rebuilt here, so
+ * the download and the sheet inside it agree on which container this is.
+ */
+export async function downloadPackingListExport(shipmentId: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/packing-list/export`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to export the packing list'));
+  const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '');
+  const filename = match?.[1] ?? `${shipmentId}-packing-list.xlsx`;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
