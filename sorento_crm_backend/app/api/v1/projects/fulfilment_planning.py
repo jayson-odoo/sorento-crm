@@ -17,7 +17,7 @@ plain `/sales-orders/{pso_id}` one removes any question of shadowing.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -49,9 +49,18 @@ EDIT = "projects.projects.edit"
 @router.get("/fulfilment-planning", response_model=ListResponse[FulfilmentPlanningRow])
 def list_fulfilment_planning(
     query: Optional[str] = Query(
-        None, description="Matches provisional ref, AutoCount doc no or area group"
+        None,
+        description=(
+            "Matches provisional ref, AutoCount doc no, area group, project code, "
+            "project title or customer name"
+        ),
     ),
-    review_state: Optional[str] = Query(None),
+    # A closed set, so an unknown value is a 422 rather than a 200 with an empty list:
+    # the state is derived, and a filter nothing can equal reads on screen as "no work
+    # to do" when the truth is "that is not a state".
+    review_state: Optional[
+        Literal["awaiting_reconciliation", "needs_cs_review"]
+    ] = Query(None),
     project_id: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),

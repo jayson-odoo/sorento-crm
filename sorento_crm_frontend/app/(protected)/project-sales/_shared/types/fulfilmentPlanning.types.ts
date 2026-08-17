@@ -115,7 +115,12 @@ export interface ReconciliationSummary {
   po_number?: string | null;
   area_group?: string | null;
   status: string;
-  review_state: ReviewState;
+  /**
+   * Null on an order that is not published or amended: a draft is reconciled against
+   * nothing, so it carries no state rather than one it has not earned (AC-A03), and
+   * `ReviewStatePill` renders nothing for it.
+   */
+  review_state: ReviewState | null;
   header: ReconciliationHeader;
   lines: ReconciliationLine[];
   exceptions: ReconciliationException[];

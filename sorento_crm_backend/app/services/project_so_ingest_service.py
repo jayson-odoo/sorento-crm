@@ -39,6 +39,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -210,7 +211,24 @@ class ProjectSOIngestService:
                 ProjectSOReconciliationService,
             )
 
-            ProjectSOReconciliationService(self.db).reconcile(order)
+            # Best effort, and inside a savepoint. Adopting the document number and
+            # recording the divergence are what the upload was FOR; a line write that
+            # loses a race on `uq_projects_so_line_core_line` must not take those down
+            # with it, and re-running the reconciliation from the sheet is one button.
+            # The savepoint is what makes that survivable: an IntegrityError leaves the
+            # transaction unusable otherwise, so the divergence write would fail too.
+            try:
+                with self.db.begin_nested():
+                    ProjectSOReconciliationService(self.db).reconcile(order)
+            except (AppException, SQLAlchemyError) as exc:
+                logger.warning(
+                    "Reconciling the lines of sales order %s against AutoCount document "
+                    "%s failed (%s). The document number and the comparison stand; the "
+                    "lines can be re-run from the sales order.",
+                    order.provisional_ref,
+                    document.doc_no,
+                    exc,
+                )
 
         report = compare(*self._ours(order), *self._theirs(document))
         existing = self._open_divergence(order.id)

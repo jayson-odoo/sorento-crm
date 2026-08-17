@@ -76,10 +76,11 @@ export interface ProjectSalesOrderRow {
    * The whole order's one pre-confirmation state (Stage 1B, AC-A03), and how many
    * exceptions stand between it and Needs CS review. Optional because they are derived
    * rather than stored, so a backend that has not shipped the derivation yet simply
-   * renders no pill instead of an invented one.
+   * renders no pill instead of an invented one; explicitly NULL on an order that is not
+   * published or amended, which the backend sends rather than omitting.
    */
-  review_state?: ReviewState;
-  exception_count?: number;
+  review_state?: ReviewState | null;
+  exception_count?: number | null;
 
   /**
    * Not promised by the contract. When present it saves resolving the PO by its number;

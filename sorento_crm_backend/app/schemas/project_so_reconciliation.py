@@ -92,7 +92,9 @@ class ReconciliationSummary(BaseModel):
     po_number: Optional[str] = None
     area_group: Optional[str] = None
     status: str
-    review_state: str
+    #: None on an order that is not published or amended: it is reconciled against
+    #: nothing, so it carries no state rather than one it has not earned (AC-A03).
+    review_state: Optional[str] = None
     header: ReconciliationHeader
     lines: List[ReconciliationLine] = []
     exceptions: List[ReconciliationException] = []

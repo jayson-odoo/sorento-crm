@@ -289,6 +289,38 @@ def test_date_order_pass_pairs_a_moved_date_once_the_exact_pass_is_exhausted(see
     assert summary["lines_linked"] == summary["lines_total"] == 2
 
 
+def test_a_line_left_over_after_an_ambiguity_is_not_told_the_document_has_fewer(seeded):
+    """N1. Ours A on D1 and B on D2; theirs C and D both on D1, same product.
+
+    Pass 1 finds two core lines at D1 against our one, so A is ambiguous and BOTH core
+    lines are accounted for by that ambiguity, which leaves B with nothing to pair with.
+    The document carries exactly as many lines for the item as this sales order does, so
+    a reason claiming it carries FEWER is a sentence CS would go and check and find false;
+    and it carries lines for the item, so "no line for this item" is false too.
+    """
+    db, company_id, owner = seeded
+    product = _product(db)
+    project = _project(db, company_id, owner)
+    core_order = _core_order(db, so_number=f"ZZT-SO-{_uid()[:8]}")
+    _core_line(db, core_order, product, required_date=D1)
+    _core_line(db, core_order, product, required_date=D1)
+    order = _project_order(
+        db, project, autocount_doc_no=core_order.so_number, so_id=core_order.id
+    )
+    line_a = _project_line(db, order, product, line_no=1, delivery_date=D1)
+    line_b = _project_line(db, order, product, line_no=2, delivery_date=D2)
+
+    summary = ProjectSOReconciliationService(db).evaluate(order)
+
+    rows = {row["id"]: row for row in summary["lines"]}
+    assert rows[line_a.id]["link"] == "ambiguous"
+    assert rows[line_b.id]["link"] == "missing"
+    reason = rows[line_b.id]["reason"]
+    assert "fewer lines" not in reason, reason
+    assert "no line for this item" not in reason, reason
+    assert "accounted for" in reason, reason
+
+
 def test_a_line_with_no_core_candidate_at_all_is_missing(seeded):
     """AC-A02. Product B has no core line whatsoever; its Project line stays open
     and is named in the exceptions by line number and item code."""
@@ -600,6 +632,88 @@ def test_a_core_line_already_taken_by_another_project_so_is_reported_duplicate(s
     assert not [exc for exc in summary["exceptions"] if exc["kind"] == "surplus"]
 
 
+def test_a_line_whose_own_core_line_closed_is_told_that_not_about_someone_elses(seeded):
+    """N3. This line HELD a core line and that core line is now closed; a different core
+    line for the same item is held by another Project SO.
+
+    The two answers live in different places - "your line closed, look at the document"
+    versus "go and look at sales order X" - so telling this line about a core line it
+    never touched sends CS to the wrong screen. The reason it held one wins.
+    """
+    db, company_id, owner = seeded
+    product = _product(db)
+    project = _project(db, company_id, owner)
+    core_order = _core_order(db, so_number=f"ZZT-SO-{_uid()[:8]}")
+    closed_line = _core_line(
+        db, core_order, product, required_date=D1, line_status="closed"
+    )
+    taken_line = _core_line(db, core_order, product, required_date=D1)
+
+    theirs = _project_order(
+        db, project, autocount_doc_no=core_order.so_number, so_id=core_order.id
+    )
+    _project_line(
+        db,
+        theirs,
+        product,
+        line_no=1,
+        delivery_date=D1,
+        core_sales_order_line_id=taken_line.id,
+    )
+    ours = _project_order(
+        db, project, autocount_doc_no=core_order.so_number, so_id=core_order.id
+    )
+    line = _project_line(
+        db,
+        ours,
+        product,
+        line_no=1,
+        delivery_date=D1,
+        core_sales_order_line_id=closed_line.id,
+    )
+
+    summary = ProjectSOReconciliationService(db).evaluate(ours)
+
+    row = next(r for r in summary["lines"] if r["id"] == line.id)
+    assert row["link"] == "missing"
+    assert row["reason"] == "Its previous core line is now closed."
+    assert not [
+        exc for exc in summary["exceptions"] if "already linked" in exc["message"]
+    ]
+
+
+def test_a_stale_reason_reads_as_state_not_as_something_this_read_did(seeded):
+    """N2. `evaluate` writes nothing, so a reason claiming the link "was cleared" would
+    describe a write the reader never asked for. It states the core line's state."""
+    db, company_id, owner = seeded
+    product = _product(db)
+    project = _project(db, company_id, owner)
+    core_order = _core_order(db, so_number=f"ZZT-SO-{_uid()[:8]}")
+    closed_line = _core_line(
+        db, core_order, product, required_date=D1, line_status="closed"
+    )
+    order = _project_order(
+        db, project, autocount_doc_no=core_order.so_number, so_id=core_order.id
+    )
+    line = _project_line(
+        db,
+        order,
+        product,
+        line_no=1,
+        delivery_date=D1,
+        core_sales_order_line_id=closed_line.id,
+    )
+
+    summary = ProjectSOReconciliationService(db).evaluate(order)
+
+    row = next(r for r in summary["lines"] if r["id"] == line.id)
+    assert "was cleared" not in row["reason"], row["reason"]
+    assert row["reason"] == "Its previous core line is now closed."
+    # And the link really is untouched: the read wrote nothing.
+    db.refresh(line)
+    assert str(line.core_sales_order_line_id) == str(closed_line.id)
+
+
 # --------------------------------------------------------------------------- #
 # Header outcomes (section 2)                                                  #
 # --------------------------------------------------------------------------- #
@@ -869,7 +983,7 @@ def test_ingest_links_so_id_and_every_line_in_the_same_call(seeded):
 
     doc_no = f"ZZT-SO-{_uid()[:8]}"
     real_core_order = _core_order(db, so_number=doc_no)
-    _core_line(db, real_core_order, product, required_date=D1)
+    real_core_line = _core_line(db, real_core_order, product, required_date=D1)
 
     document = IngestDocument(
         doc_no=doc_no,
@@ -894,7 +1008,9 @@ def test_ingest_links_so_id_and_every_line_in_the_same_call(seeded):
     db.refresh(order)
     db.refresh(line)
     assert order.so_id == real_core_order.id
-    assert line.core_sales_order_line_id is not None
+    # The specific core line, not merely "something": the point of doing the line half in
+    # the same call is that each Project line ends up on the line it actually became.
+    assert str(line.core_sales_order_line_id) == str(real_core_line.id)
 
 
 # --------------------------------------------------------------------------- #

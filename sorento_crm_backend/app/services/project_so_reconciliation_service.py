@@ -188,8 +188,16 @@ class _OrderOutcome:
         return sum(1 for row in self.lines if row.link == LINK_LINKED)
 
     @property
-    def review_state(self) -> str:
-        """AC-A02/AC-A03: entered only when the header AND every line map cleanly."""
+    def review_state(self) -> Optional[str]:
+        """AC-A02/AC-A03: entered only when the header AND every line map cleanly.
+
+        None on an order that is not published or amended. A draft, a blocked order or
+        one still being costed is reconciled against nothing - there is no AutoCount
+        document for it to disagree with - so it carries NO state rather than an
+        "awaiting reconciliation" it has not earned, and the screen renders no pill.
+        """
+        if self.order.status not in LIVE_SO_STATUSES:
+            return None
         if self.header_outcome != HEADER_LINKED:
             return REVIEW_AWAITING
         if self.lines_total == 0 or self.lines_linked != self.lines_total:
@@ -305,7 +313,13 @@ class ProjectSOReconciliationService:
         has carried it yet - the outstanding SO book may have created the row since the
         upload, and asking CS to re-upload the same document to pick it up would be a step
         the system can take itself.
+
+        An order that is not published or amended is READ and nothing else: it carries no
+        review state (AC-A03), and linking its lines to a core sales order it has not been
+        published against would be the system deciding something on its own.
         """
+        if order.status not in LIVE_SO_STATUSES:
+            return self.evaluate(order)
         if order.so_id is None and order.autocount_doc_no:
             # Imported here rather than at module scope: the ingest service calls back into
             # this one at the end of an upload, and a top-level import both ways is a cycle.
@@ -450,6 +464,12 @@ class ProjectSOReconciliationService:
         for line in available:
             key = str(line.product_id or "")
             candidates_by_product[key] = candidates_by_product.get(key, 0) + 1
+        # How many lines WE carry for the item, which is what makes "the document has
+        # fewer lines for this item" a statement that can be checked rather than a guess.
+        lines_by_product: Dict[str, int] = {}
+        for line in project_lines:
+            key = str(line.product_id or "")
+            lines_by_product[key] = lines_by_product.get(key, 0) + 1
 
         rows: List[_LineOutcome] = []
         for line in project_lines:
@@ -473,35 +493,41 @@ class ProjectSOReconciliationService:
                     reason=ambiguity[str(line.id)][1],
                     item_code=item_code,
                 )
-            elif duplicates_by_product.get(str(line.product_id or "")):
-                _holder, other_ref, other_line_no = duplicates_by_product[
-                    str(line.product_id or "")
-                ].pop(0)
-                row = _LineOutcome(
-                    line=line,
-                    link=LINK_DUPLICATE,
-                    core_line_id=None,
-                    # Nothing it may take, which is the whole point of the outcome.
-                    candidate_count=0,
-                    reason=_duplicate_reason(other_ref, other_line_no),
-                    item_code=item_code,
-                )
             else:
-                row = _LineOutcome(
-                    line=line,
-                    link=LINK_MISSING,
-                    core_line_id=None,
-                    candidate_count=0,
-                    reason=self._missing_reason(
-                        order,
-                        line,
-                        stale=stale,
-                        product_candidates=candidates_by_product.get(
-                            str(line.product_id or ""), 0
+                product_key = str(line.product_id or "")
+                # A line that HELD a core line has its own answer, and it is a truer one
+                # than the duplicate fallback: "your core line is now closed" sends CS to
+                # the document, while "line 3 of another sales order holds it" would send
+                # them to a sales order that never touched this line. So the stale reason
+                # is read FIRST, and the duplicate is only for a line that held nothing.
+                stale_reason = self._stale_reason(order, line, stale)
+                if stale_reason is None and duplicates_by_product.get(product_key):
+                    _holder, other_ref, other_line_no = duplicates_by_product[
+                        product_key
+                    ].pop(0)
+                    row = _LineOutcome(
+                        line=line,
+                        link=LINK_DUPLICATE,
+                        core_line_id=None,
+                        # Nothing it may take, which is the whole point of the outcome.
+                        candidate_count=0,
+                        reason=_duplicate_reason(other_ref, other_line_no),
+                        item_code=item_code,
+                    )
+                else:
+                    row = _LineOutcome(
+                        line=line,
+                        link=LINK_MISSING,
+                        core_line_id=None,
+                        candidate_count=0,
+                        reason=stale_reason
+                        or self._missing_reason(
+                            order,
+                            product_candidates=candidates_by_product.get(product_key, 0),
+                            product_lines=lines_by_product.get(product_key, 0),
                         ),
-                    ),
-                    item_code=item_code,
-                )
+                        item_code=item_code,
+                    )
             rows.append(row)
 
         return _OrderOutcome(
@@ -557,31 +583,57 @@ class ProjectSOReconciliationService:
             None,
         )
 
-    def _missing_reason(
+    def _stale_reason(
         self,
         order: ProjectSalesOrder,
         line: ProjectSalesOrderLine,
-        *,
         stale: Dict[str, Optional[SalesOrderLine]],
+    ) -> Optional[str]:
+        """What became of the core line this Project line used to hold, if it held one.
+
+        Stated as the core line's CURRENT state, never as something this call did: the
+        read path (`evaluate`) writes nothing, so "the link was cleared" would be a
+        sentence about an action the reader has not asked for yet.
+        """
+        if not order.so_id or not line.core_sales_order_line_id:
+            return None
+        key = str(line.core_sales_order_line_id)
+        if key not in stale:
+            # Still a candidate of this order, so the link is not stale at all.
+            return None
+        target = stale[key]
+        if target is None:
+            return "Its previous core line no longer exists."
+        if target.line_status == CORE_LINE_CLOSED:
+            return "Its previous core line is now closed."
+        return "Its previous core line now belongs to another sales order."
+
+    def _missing_reason(
+        self,
+        order: ProjectSalesOrder,
+        *,
         product_candidates: int,
+        product_lines: int,
     ) -> str:
+        """Why nothing on the document could be this line, in a checkable sentence.
+
+        The counts are the whole point. Saying the document carries FEWER lines for the
+        item is something CS will go and count, so it is said only when it is true; when
+        the document carries as many as we do and they were spoken for by an ambiguity
+        elsewhere on the order, that is what the sentence says instead.
+        """
         if not order.so_id:
             return "There is no core sales order to map this line against."
-        if line.core_sales_order_line_id:
-            target = stale.get(str(line.core_sales_order_line_id))
-            if target is None:
-                return "Its previous core line no longer exists, so the link was cleared."
-            if target.line_status == CORE_LINE_CLOSED:
-                return "Its previous core line is now closed, so the link was cleared."
-            return (
-                "Its previous core line now belongs to another sales order, so the link "
-                "was cleared."
-            )
         if product_candidates == 0:
             return "The AutoCount document has no line for this item."
+        if product_candidates < product_lines:
+            return (
+                "The AutoCount document has fewer lines for this item than this sales "
+                "order does."
+            )
         return (
-            "The AutoCount document has fewer lines for this item than this sales order "
-            "does."
+            "Every AutoCount line for this item is already accounted for by another line "
+            "on this sales order."
         )
 
     # ----------------------------------------------------------------- lookups
@@ -637,16 +689,23 @@ class ProjectSOReconciliationService:
         different problems answered in different places, and the difference is only
         knowable by reading the row the dead link points at.
         """
-        candidate_ids = {
-            str(line.id) for lines in core_lines.values() for line in lines
-        }
-        wanted = {
-            str(line.core_sales_order_line_id)
-            for order in orders
-            for line in project_lines.get(str(order.id), [])
-            if line.core_sales_order_line_id
-            and str(line.core_sales_order_line_id) not in candidate_ids
-        }
+        # Candidacy is per ORDER, not per batch: another order's core line is not this
+        # order's candidate, so a batch-wide set would silently declare a genuinely stale
+        # link healthy whenever the two orders happen to land on the same page.
+        wanted: set[str] = set()
+        for order in orders:
+            candidate_ids = {
+                str(candidate.id)
+                for candidate in core_lines.get(str(order.so_id), [])
+            }
+            for line in project_lines.get(str(order.id), []):
+                link_id = (
+                    str(line.core_sales_order_line_id)
+                    if line.core_sales_order_line_id
+                    else None
+                )
+                if link_id and link_id not in candidate_ids:
+                    wanted.add(link_id)
         if not wanted:
             return {}
         found = {
@@ -795,12 +854,35 @@ class ProjectSOReconciliationService:
         )
         if project_id:
             rows = rows.filter(ProjectSalesOrder.project_id == project_id)
-        if query:
-            needle = f"%{query.strip()}%"
-            rows = rows.filter(
-                ProjectSalesOrder.provisional_ref.ilike(needle)
-                | ProjectSalesOrder.autocount_doc_no.ilike(needle)
-                | ProjectSalesOrder.area_group.ilike(needle)
+        needle = (query or "").strip()
+        if needle:
+            # Everything the row PRINTS is searchable, through the same outer joins
+            # `_header_rows` reads those columns with: the screen offers "sales order,
+            # project or customer", and a search that quietly covered only the sales
+            # order would answer "no results" for a project code sitting in the list.
+            like = f"%{needle}%"
+            rows = (
+                rows.outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
+                .outerjoin(
+                    ProjectPurchaseOrder,
+                    ProjectPurchaseOrder.id == ProjectSalesOrder.purchase_order_id,
+                )
+                .outerjoin(
+                    ProjectParty,
+                    ProjectParty.id == ProjectPurchaseOrder.issuing_party_id,
+                )
+                .outerjoin(Customer, Customer.id == ProjectParty.customer_id)
+                .filter(
+                    ProjectSalesOrder.provisional_ref.ilike(like)
+                    | ProjectSalesOrder.autocount_doc_no.ilike(like)
+                    | ProjectSalesOrder.area_group.ilike(like)
+                    | Project.project_code.ilike(like)
+                    | Project.title.ilike(like)
+                    | Customer.customer_name.ilike(like)
+                    # The party's own name is the customer column's fallback, so it has
+                    # to be searchable or a row would not answer to the name it shows.
+                    | ProjectParty.name.ilike(like)
+                )
             )
         rows = rows.order_by(
             ProjectSalesOrder.updated_at.desc(), ProjectSalesOrder.id.desc()
@@ -851,7 +933,9 @@ class ProjectSOReconciliationService:
         return {
             "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
-            "empty": not data,
+            # The whole result set, not this page: page 3 of 2 pages is empty of rows
+            # without the worklist being empty, and the siblings all read it this way.
+            "empty": total == 0,
         }
 
 
