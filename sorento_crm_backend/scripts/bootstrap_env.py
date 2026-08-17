@@ -358,12 +358,24 @@ def seed_scm_module_data() -> None:
     module_358 = importlib.util.module_from_spec(spec_358)
     spec_358.loader.exec_module(module_358)
 
+    # 375 adds the bare packing-list spellings the captain's Kailu list uses (`型号`, `货名`,
+    # `体积`, `牌子/LOGO` plus nine columns resolved only so they stop reporting as
+    # unrecognised). Same create_all gap as 311/338/347/357/358, and like 358 it decides
+    # whether the file is read at all - without them the reader finds no item_code column and
+    # the preview rejects the file as having no item_code or qty.
+    spec_375 = importlib.util.spec_from_file_location(
+        "_scm_seed_375", versions / "375_kailu_packing_list_aliases.py"
+    )
+    module_375 = importlib.util.module_from_spec(spec_375)
+    spec_375.loader.exec_module(module_375)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
         aliases += module_338.seed(conn)
         aliases += module_357.seed(conn)
         aliases += module_358.seed(conn)
+        aliases += module_375.seed(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
