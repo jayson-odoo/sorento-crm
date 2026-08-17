@@ -802,6 +802,25 @@ class ProjectSupplyService:
             return fact.pool_code
         return None
 
+    def _reserve_location_ids(self, fact: _LineFacts) -> set:
+        """The warehouses Reserve MAY draw this line from (PLAN 3.3), by id.
+
+        Structural, not "wherever there happens to be stock": for a dealer hot-selling
+        product it is the shared pool and nothing else, so the line's OWN dealer location
+        is outside Reserve and is therefore a legitimate BORROW source - which is exactly
+        what 3.3 means by "Borrow may still deliberately use a non-Reserve source,
+        including dealer stock". For every other product it is the fulfilment location and
+        the pool.
+        """
+        if fact.is_hot_selling:
+            return {str(fact.pool.id)} if fact.pool else set()
+        ids = set()
+        if fact.warehouse:
+            ids.add(str(fact.warehouse.id))
+        if fact.pool:
+            ids.add(str(fact.pool.id))
+        return ids
+
     def _check_borrow(
         self,
         item: Any,
@@ -824,7 +843,7 @@ class ProjectSupplyService:
             refuse(invalid, "That location no longer exists.")
             return
         if item.source == ALLOC_SOURCE_OTHER_LOCATION:
-            if self._warehouse_of(fact, str(item.warehouse_id)) is not None:
+            if str(item.warehouse_id) in self._reserve_location_ids(fact):
                 refuse(
                     invalid,
                     f"{warehouse.warehouse_code} is inside this line's Reserve pool. "
@@ -981,6 +1000,9 @@ class ProjectSupplyService:
                     "kind": TIMELY_SPO,
                     "qty": qty_text(_dec(entry.timely_spo_qty)),
                     "source_location": fact.own_code,
+                    "source_warehouse_id": (
+                        str(fact.warehouse.id) if fact.warehouse else None
+                    ),
                     "reason": self._timely_reason(fact),
                 }
             )
@@ -1701,10 +1723,10 @@ class ProjectSupplyService:
         """
         if not fact.product_id:
             return []
-        inside = {
-            str(fact.warehouse.id) if fact.warehouse else "",
-            str(fact.pool.id) if fact.pool else "",
-        }
+        # Everything Reserve cannot reach. For a hot-selling product that INCLUDES the
+        # line's own dealer location: Reserve may not touch it, and CS borrowing it with a
+        # reason is the sanctioned way to use it (PLAN 3.3).
+        inside = self._reserve_location_ids(fact)
         out: List[Dict[str, Any]] = []
 
         free_cache = self._free_cache
