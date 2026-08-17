@@ -471,6 +471,16 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
     project_sales_order_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
     )
+    # The reconciled CORE line (PLAN-scm-front-planning.md 6.1). Unqualified on purpose,
+    # so this is `public.sales_order_lines`, not the module table of the same bare name.
+    #
+    # Nullable, because reconciliation is a later step: the AutoCount upload in stage 1B is
+    # what fills it, and a line with no link is simply not confirmable yet. `SET NULL`
+    # rather than CASCADE because losing the core line loses the LINK, never the project
+    # record of what was committed.
+    core_sales_order_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("sales_order_lines.id", ondelete="SET NULL"), nullable=True
+    )
     line_no = Column(Integer, nullable=False)
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
@@ -501,6 +511,15 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_project_so_lines_order", "project_sales_order_id"),
+        # One Project line per core line: the "unique reconciled link" the atomic SO
+        # confirmation is written against. Partial, because NULL is the normal state for
+        # every unreconciled line and there is no reason to index them.
+        Index(
+            "uq_projects_so_line_core_line",
+            "core_sales_order_line_id",
+            unique=True,
+            postgresql_where=text("core_sales_order_line_id IS NOT NULL"),
+        ),
         {"schema": "projects"},
     )
 

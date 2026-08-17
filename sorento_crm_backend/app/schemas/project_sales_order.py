@@ -190,14 +190,18 @@ class RegroupRequest(BaseModel):
 
 
 class PublishResponse(BaseModel):
+    """No `order_inquiry_id` (PLAN-scm-front-planning.md section 4, AC-D01).
+
+    Publish used to raise the inquiry in the same transaction and return its id. It no
+    longer raises one at all: the handoff to purchasing happens inside the atomic Project
+    SO confirmation, and carries the confirmed Buy residual only.
+    """
+
     status: str
     provisional_ref: str
     import_file_url: str
     total_amount: Optional[Decimal] = None
     line_count: int = 0
-    # P10: publishing raises the order inquiry in the same transaction, so the caller
-    # can go straight to what purchasing has just been told to do.
-    order_inquiry_id: Optional[str] = None
 
 
 # ------------------------------------------------------------------------ delta

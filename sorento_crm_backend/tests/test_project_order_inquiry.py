@@ -2,10 +2,15 @@
 
 The netting arithmetic is proven without a database in
 ``test_project_order_inquiry_engine.py``. What is proven HERE is everything the engine
-cannot see: that publishing writes the rows once and only once, that a pre-order on the
+cannot see: that deriving writes the rows once and only once, that a pre-order on the
 same project actually reaches the engine as a pool, that the stock location comes from a
 CONFIRMED allocation and is left empty when there is not one, that purchasing gets a task
 rather than an email, and that the spreadsheet comes out with the client's own headings.
+
+**Publish no longer derives** (PLAN-scm-front-planning.md section 4, AC-D01). Stage 1C's
+atomic CS confirmation becomes the only caller, with the confirmed Buy residual only, so
+every case below drives ``derive_for_sales_order`` directly. The trigger moved; the
+derivation is unchanged and stays pinned here until 1C replaces it.
 
 Postgres, blank scratch schema, rolled back at teardown. Every FK target is real: the
 constraints this slice leans on are enforced, so an invented uuid aborts the transaction
@@ -23,7 +28,7 @@ import pytest
 from sqlalchemy import text
 
 from app.models.inventory import Warehouse
-from app.models.order import Customer
+from app.models.order import Customer, SalesOrder
 from app.models.procurement import InboundShipment, SPOAllocation, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
@@ -232,7 +237,18 @@ def seeded():
 # ------------------------------------------------------------------ derivation
 
 
-def test_publishing_a_sales_order_raises_one_inquiry_row_per_line(seeded):
+def test_publishing_a_sales_order_raises_no_inquiry_row(seeded):
+    """AC-D01 / AC-A04. Publish is not the handoff to purchasing any more.
+
+    A published sales order has not yet been reconciled to AutoCount and CS has not yet
+    composed its supply, so nothing about it is a purchase requirement: Reserve, Borrow and
+    timely SPO cover may account for all of it. The inquiry is created inside atomic
+    confirmation (PLAN-scm-front-planning.md section 4), and until then the whole SO reads
+    **Needs CS review** and contributes zero demand.
+
+    The derivation engine itself is unchanged and still pinned by every other test in this
+    file; only its TRIGGER moved.
+    """
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
     order = _sales_order(db, project)
@@ -243,14 +259,42 @@ def test_publishing_a_sales_order_raises_one_inquiry_row_per_line(seeded):
 
     result = ProjectSODraftService(db).publish(order, actor_user_id=owner)
 
-    assert result["order_inquiry_id"]
-    rows = _rows(db, result["order_inquiry_id"])
-    assert [(row.item_code, row.qty, row.verb) for row in rows] == [
-        ("CB6633", Decimal("600.0000"), IV_ORDER),
-        ("SRTWC8613-RL", Decimal("135.0000"), IV_ORDER),
-    ]
-    assert {row.state for row in rows} == {INQUIRY_RAISED}
-    assert [row.delivery_date for row in rows] == [date(2027, 1, 7), date(2027, 2, 1)]
+    assert result["status"] == SO_STATUS_PUBLISHED
+    assert "order_inquiry_id" not in result
+    assert (
+        db.query(OrderInquiry)
+        .filter(OrderInquiry.project_sales_order_id == order.id)
+        .count()
+        == 0
+    )
+    assert (
+        db.query(OrderInquiryRow)
+        .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+        .filter(OrderInquiry.project_sales_order_id == order.id)
+        .count()
+        == 0
+    )
+
+
+def test_publishing_a_sales_order_writes_no_core_sales_order(seeded):
+    """Plan 5.2: publish is not a demand-class stamp point, because it stamps nothing.
+
+    The two stamp points are the outstanding-order import and the Order Inquiry sheet
+    import. Publish produces an AutoCount import FILE; the core `sales_orders` row arrives
+    later, on the upload of what AutoCount made of it. A core row written here would be a
+    third stamp point nobody classifies.
+    """
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    order = _sales_order(db, project)
+    _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
+    before = db.query(SalesOrder).count()
+
+    ProjectSODraftService(db).publish(order, actor_user_id=owner)
+
+    db.refresh(order)
+    assert order.so_id is None
+    assert db.query(SalesOrder).count() == before
 
 
 def test_deriving_twice_does_not_double_the_rows(seeded):
@@ -948,9 +992,12 @@ def test_a_sponsorship_sales_order_derives_rows_exactly_as_a_commercial_one(seed
     grating = _product(db, "CB6633")
     _line(db, order, grating, "600", date(2027, 1, 7))
 
-    result = ProjectSODraftService(db).publish(order, actor_user_id=owner)
+    ProjectSODraftService(db).publish(order, actor_user_id=owner)
+    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
+        order, actor_user_id=owner
+    )
 
-    rows = _rows(db, result["order_inquiry_id"])
+    rows = _rows(db, inquiry.id)
     assert [(row.item_code, row.qty, row.verb) for row in rows] == [
         ("CB6633", Decimal("600.0000"), IV_ORDER)
     ]
@@ -971,9 +1018,12 @@ def test_a_price_zero_sponsorship_line_still_raises_an_instruction(seeded):
     line.amount = Decimal("0")
     db.flush()
 
-    result = ProjectSODraftService(db).publish(order, actor_user_id=owner)
+    ProjectSODraftService(db).publish(order, actor_user_id=owner)
+    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
+        order, actor_user_id=owner
+    )
 
-    rows = _rows(db, result["order_inquiry_id"])
+    rows = _rows(db, inquiry.id)
     assert [(row.item_code, row.qty) for row in rows] == [("SRT382-6", Decimal("135.0000"))]
 
 
@@ -993,7 +1043,10 @@ def test_a_sponsorship_order_is_not_treated_as_a_covering_pool(seeded):
     commercial = _sales_order(db, project)
     _line(db, commercial, product, "600", date(2027, 6, 1))
 
-    result = ProjectSODraftService(db).publish(commercial, actor_user_id=owner)
+    ProjectSODraftService(db).publish(commercial, actor_user_id=owner)
+    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
+        commercial, actor_user_id=owner
+    )
 
-    rows = _rows(db, result["order_inquiry_id"])
+    rows = _rows(db, inquiry.id)
     assert [(row.qty, row.verb) for row in rows] == [(Decimal("600.0000"), IV_ORDER)]

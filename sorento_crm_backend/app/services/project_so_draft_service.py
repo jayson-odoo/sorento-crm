@@ -1766,20 +1766,18 @@ class ProjectSODraftService:
         order.published_at = datetime.utcnow()
         self.db.flush()
 
-        # P10 (AC-I1): publishing is the moment purchasing is told what to do about the
-        # quantity that has just been committed. Derived here rather than in the route
-        # so an amendment, a corrective publish or a future caller all raise it the same
-        # way. Idempotent on its own, so a second publish cannot double the rows.
-        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-
-        inquiry = ProjectOrderInquiryService(self.db).derive_for_sales_order(
-            order, actor_user_id=actor_user_id
-        )
+        # Publishing raises NO order inquiry (PLAN-scm-front-planning.md section 4,
+        # AC-D01). It used to, on the reading that a published order is committed demand,
+        # but a published order has not been reconciled to AutoCount and CS has not
+        # composed its supply yet: Reserve, Borrow and timely SPO cover may account for all
+        # of it, and telling purchasing to buy the whole quantity here is how the same
+        # units get bought twice. The inquiry is created inside the atomic Project SO
+        # confirmation, carrying the confirmed Buy residual only. Until then the whole SO
+        # is Needs CS review and contributes zero purchase requirement.
 
         return {
             "status": order.status,
             "provisional_ref": order.provisional_ref,
-            "order_inquiry_id": inquiry.id,
             # Stage 1 (D3): an AutoCount import file carrying our own reference. The
             # returned document number is adopted later, and the ESB call replaces this
             # transport in stage 2 without changing a table or a status.
