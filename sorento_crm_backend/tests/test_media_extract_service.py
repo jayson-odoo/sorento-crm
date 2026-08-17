@@ -1513,3 +1513,45 @@ def test_the_image_lane_on_openai_never_borrows_a_gemini_assistants_key(monkeypa
         assert "'openai'" in message
         assert "No API key is configured" in message
         assert "ZZT-gemini-key" not in message
+
+
+def test_image_lane_never_inherits_the_assistants_model_across_providers():
+    """`media_image_provider=gemini` with `media_image_model` blank while the
+    assistant runs on `gpt-4o`: the lane must fall to Gemini's default, not post
+    `gpt-4o` to Google and read the 404 as a provider outage."""
+    with blank_session() as db:
+        _seed_ai_config(
+            db,
+            provider="openai",
+            model="gpt-4o",
+            api_key_ciphertext="ZZT-openai-key",
+            gemini_api_key_ciphertext="ZZT-gemini-key",
+        )
+        settings = _media_settings(
+            db, image_provider="gemini", image_model=None, image_degraded_model=None
+        )
+
+        _, provider_name, model_name = MediaExtractService(db)._resolve_image_provider(
+            None, settings
+        )
+
+        assert provider_name == "gemini"
+        assert model_name == "gemini-2.5-flash"
+
+
+def test_image_lane_inherits_the_assistants_model_when_the_provider_matches():
+    with blank_session() as db:
+        _seed_ai_config(
+            db,
+            provider="Gemini",
+            model="gemini-2.5-pro",
+            gemini_api_key_ciphertext="ZZT-gemini-key",
+        )
+        settings = _media_settings(
+            db, image_provider="gemini", image_model=None, image_degraded_model=None
+        )
+
+        assert (
+            MediaExtractService(db)._resolve_image_provider(None, settings)[2]
+            == "gemini-2.5-pro"
+        )

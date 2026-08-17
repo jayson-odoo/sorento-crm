@@ -346,20 +346,34 @@ def _apply_conflicts(
 
     So, per conflict:
 
-    * an entity whose `raw` is the named one is unconfident;
+    * an entity whose `raw` is the named one is unconfident; so is an entity
+      whose `raw` is one of the disputed `values` when the conflict names no
+      line - a document-wide conflict's disputed readings are then the only
+      handle on which entity it is about;
     * an attribute whose own `raw` is the named value is unconfident - it IS the
-      thing being disputed, whatever its kind;
+      thing being disputed, whatever its kind - and so is one whose `raw` is a
+      disputed value on the named line (or anywhere, when no line is named);
     * an attribute of the conflicted `kind` is unconfident when it sits on the
       named line, or when the conflict names no line at all.
     """
     for conflict in conflicts:
         target = norm_code(conflict.entity_raw)
         field_name = _norm(conflict.field)
+        disputed = {norm_code(item.value) for item in conflict.values if item.value}
+        disputed.discard("")
         for entity in entities:
-            if target and norm_code(entity.raw) == target:
+            entity_code = norm_code(entity.raw)
+            if target:
+                if entity_code == target:
+                    entity.confident = False
+            elif entity_code in disputed:
                 entity.confident = False
         for attribute in attributes:
-            if target and norm_code(attribute.raw) == target:
+            attribute_code = norm_code(attribute.raw)
+            on_line = not target or norm_code(attribute.entity_raw) == target
+            if (target and attribute_code == target) or (
+                on_line and attribute_code in disputed
+            ):
                 attribute.confident = False
                 continue
             if _norm(attribute.kind) != field_name:

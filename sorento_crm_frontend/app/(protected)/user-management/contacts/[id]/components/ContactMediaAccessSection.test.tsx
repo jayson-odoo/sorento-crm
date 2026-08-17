@@ -347,3 +347,50 @@ describe('ContactMediaAccessSection - bounds', () => {
     expect(JSON.parse(putCalls()[0][1].body).monthly_limit).toBeNull();
   });
 });
+
+describe('ContactMediaAccessSection - a failed limits save', () => {
+  it('keeps the dialog open, toasts, and never surfaces an unhandled rejection', async () => {
+    const { toast } = await import('sonner');
+    const unhandled: unknown[] = [];
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      unhandled.push(event.reason);
+      event.preventDefault();
+    };
+    window.addEventListener('unhandledrejection', onUnhandled);
+    process.on('unhandledRejection', onUnhandled as unknown as (reason: unknown) => void);
+
+    apiFetch.mockImplementation((_url: string, options?: { method?: string }) => {
+      if (options?.method === 'PUT') {
+        return Promise.resolve({
+          ok: false,
+          status: 422,
+          json: () => Promise.resolve({ detail: 'monthly_limit out of range' }),
+        });
+      }
+      return ok(
+        accessResponse([
+          item({ modality: 'image', is_allowed: true, has_row: true }),
+          item({ modality: 'voice' }),
+        ]),
+      );
+    });
+    renderWithClient();
+    await screen.findByText('Photos');
+    fireEvent.click(screen.getByLabelText(/edit photos limits/i));
+
+    const limitInput = await screen.findByLabelText('Monthly limit');
+    fireEvent.change(limitInput, { target: { value: '25' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(putCalls()).toHaveLength(1));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    // Let any rejection that was going to escape do so before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByLabelText('Monthly limit')).toBeInTheDocument();
+    expect(unhandled).toEqual([]);
+
+    window.removeEventListener('unhandledrejection', onUnhandled);
+    process.off('unhandledRejection', onUnhandled as unknown as (reason: unknown) => void);
+  });
+});

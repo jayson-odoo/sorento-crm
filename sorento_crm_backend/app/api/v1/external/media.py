@@ -51,6 +51,7 @@ from app.services.media_access_service import (
     _now_utc,
     decide_and_record,
     mark_usage_outcome,
+    reclaim_stranded_job,
     resolve_media_settings,
 )
 from app.services.queue_service import enqueue_job
@@ -192,6 +193,20 @@ def _decide_meter_record_and_enqueue(
 
     if not decision.idempotent_replay:
         fast.job_status, fast.job_error = _enqueue(db, decision.job, fast.job_id)
+        return fast
+
+    # A replay of a job stranded in a non-terminal state (or refunded after a
+    # failed enqueue) is the one place it can be recovered: the retry n8n
+    # already sends is the sweep.
+    if decision.usage is not None and reclaim_stranded_job(
+        db, decision.job, decision.usage, settings
+    ):
+        db.commit()
+        fast.job_status, fast.job_error = _enqueue(db, decision.job, fast.job_id)
+    else:
+        db.commit()
+        fast.job_status = str(decision.job.status)
+        fast.job_error = decision.job.error
     return fast
 
 

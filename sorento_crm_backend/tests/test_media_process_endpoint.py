@@ -924,3 +924,180 @@ def test_a_replayed_failed_enqueue_still_reports_the_accept_decision(monkeypatch
 
         row = _usage_row(db, contact.respond_io_id, "qr-1")
         assert count_usage(db, contact.respond_io_id, "image", row.period_key) == 0
+
+
+# --------------------------------------------------------------------------- #
+# Stranded-job recovery on the idempotent replay (review-7)                   #
+# --------------------------------------------------------------------------- #
+
+
+def _job_for(db, respond_io_id, message_id):
+    from app.models.media import MediaExtractionJob
+
+    row = _usage_row(db, respond_io_id, message_id)
+    return (
+        db.query(MediaExtractionJob).filter(MediaExtractionJob.usage_id == row.id).one()
+    )
+
+
+def _counting_enqueue(monkeypatch):
+    calls: list[str] = []
+
+    def _enqueue(_func, db_job_id, *a, **kw):
+        calls.append(db_job_id)
+        return MagicMock(id=kw.get("job_id", db_job_id))
+
+    monkeypatch.setattr("app.api.v1.external.media.enqueue_job", _enqueue)
+    return calls
+
+
+def test_a_replay_of_a_fresh_queued_job_does_not_enqueue_it_again(monkeypatch):
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        calls = _counting_enqueue(monkeypatch)
+        contact = _contact(db, "freshq")
+        _allow(db, contact, "image", monthly_limit=50)
+        payload = _body(respond_io_id=contact.respond_io_id, message_id="fq-1")
+
+        client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        second = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+
+        assert second.json()["idempotent_replay"] is True
+        assert second.json()["status"] == "pending"
+        assert len(calls) == 1
+
+
+def test_a_replay_re_enqueues_a_queued_job_that_no_worker_ever_picked_up(monkeypatch):
+    """Crash between the usage commit and the enqueue, or Redis losing the RQ
+    job: the row sits at `queued` with the allowance spent and nothing coming.
+    The retry n8n already sends is where it gets enqueued again."""
+    from datetime import timedelta
+
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        calls = _counting_enqueue(monkeypatch)
+        contact = _contact(db, "stalq")
+        _allow(db, contact, "image", monthly_limit=50)
+        payload = _body(respond_io_id=contact.respond_io_id, message_id="sq-1")
+
+        client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        job = _job_for(db, contact.respond_io_id, "sq-1")
+        assert job.status == "queued"
+        job.created_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+        db.commit()
+
+        second = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+
+        assert second.json()["idempotent_replay"] is True
+        assert second.json()["decision"] == "accepted"
+        assert calls == [job.id, job.id]
+        # Still one spend: the replay recovered the job, it did not re-meter it.
+        assert second.json()["quota"]["used"] == 1
+
+
+def test_a_replay_fails_a_running_job_whose_worker_died(monkeypatch):
+    """A work-horse killed mid-extraction leaves `running` forever. Past the
+    extraction ceiling the replay marks it failed - the provider may well have
+    been called, so the allowance stays spent - and the contact gets a terminal
+    answer instead of `pending` on every retry."""
+    from datetime import timedelta
+
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        calls = _counting_enqueue(monkeypatch)
+        contact = _contact(db, "stalr")
+        _allow(db, contact, "image", monthly_limit=50)
+        payload = _body(respond_io_id=contact.respond_io_id, message_id="sr-1")
+
+        client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        job = _job_for(db, contact.respond_io_id, "sr-1")
+        job.status = "running"
+        job.started_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+        db.commit()
+
+        second = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+
+        assert second.json()["status"] == "failed"
+        assert second.json()["error"]
+        assert len(calls) == 1
+        db.expire_all()
+        assert _job_for(db, contact.respond_io_id, "sr-1").status == "failed"
+        assert _usage_row(db, contact.respond_io_id, "sr-1").outcome == "failed"
+        assert second.json()["quota"]["used"] == 1
+
+
+def test_a_replay_leaves_a_running_job_inside_its_ceiling_alone(monkeypatch):
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        _counting_enqueue(monkeypatch)
+        contact = _contact(db, "liver")
+        _allow(db, contact, "image", monthly_limit=50)
+        payload = _body(respond_io_id=contact.respond_io_id, message_id="lr-1")
+
+        client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        job = _job_for(db, contact.respond_io_id, "lr-1")
+        job.status = "running"
+        job.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+
+        second = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+
+        assert second.json()["status"] == "pending"
+        db.expire_all()
+        assert _job_for(db, contact.respond_io_id, "lr-1").status == "running"
+
+
+def test_a_replay_after_a_failed_enqueue_runs_the_job_once_the_queue_is_back(monkeypatch):
+    """`not_queued` means nothing ran and the allowance was kept, so the retry of
+    the same message must actually run it rather than replay the failure forever."""
+    from app.services.media_access_service import count_usage
+
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        contact = _contact(db, "qback")
+        _allow(db, contact, "image", monthly_limit=50)
+        payload = _body(respond_io_id=contact.respond_io_id, message_id="qb-1")
+
+        def _queue_is_down(*_args, **_kwargs):
+            raise RuntimeError("redis refused the connection")
+
+        monkeypatch.setattr("app.api.v1.external.media.enqueue_job", _queue_is_down)
+        first = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        assert first.json()["status"] == "failed"
+
+        calls = _counting_enqueue(monkeypatch)
+        second = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+
+        assert second.json()["idempotent_replay"] is True
+        assert second.json()["decision"] == "accepted"
+        assert second.json()["status"] == "pending"
+        assert len(calls) == 1
+        db.expire_all()
+        job = _job_for(db, contact.respond_io_id, "qb-1")
+        assert job.status == "queued"
+        assert job.error is None
+        row = _usage_row(db, contact.respond_io_id, "qb-1")
+        assert row.outcome == "accepted"
+        assert count_usage(db, contact.respond_io_id, "image", row.period_key) == 1
+
+
+def test_a_replay_never_re_runs_a_job_that_failed_after_the_provider_was_called(monkeypatch):
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        calls = _counting_enqueue(monkeypatch)
+        contact = _contact(db, "realfail")
+        _allow(db, contact, "image", monthly_limit=50)
+        payload = _body(respond_io_id=contact.respond_io_id, message_id="rf-1")
+
+        client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        job = _job_for(db, contact.respond_io_id, "rf-1")
+        job.status = "failed"
+        job.error = "The vision model returned an empty response."
+        row = _usage_row(db, contact.respond_io_id, "rf-1")
+        row.outcome = "failed"
+        db.commit()
+
+        second = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+
+        assert second.json()["status"] == "failed"
+        assert len(calls) == 1

@@ -28,6 +28,7 @@ from app.services.llm_provider import (
     default_model_for,
     get_provider,
     resolve_api_key,
+    resolve_model,
 )
 
 
@@ -1074,3 +1075,69 @@ def test_resolve_api_key_normalizes_the_provider_name(asked, monkeypatch):
     )
 
     assert resolve_api_key(cfg, asked) == "ZZT-gemini-column-key"
+
+
+def test_convert_tools_to_gemini_omits_parameters_for_a_parameterless_tool():
+    """Gemini's REST API 400s an OBJECT schema with empty `properties`, so a
+    tool that takes no arguments must carry no `parameters` at all - one such
+    MCP tool would otherwise fail every agent-loop turn on the first call."""
+    declarations = _convert_tools_to_gemini(
+        [
+            {"type": "function", "function": {"name": "no_args"}},
+            {
+                "type": "function",
+                "function": {
+                    "name": "empty_object",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "with_args",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"q": {"type": "string"}},
+                    },
+                },
+            },
+        ]
+    )[0]["functionDeclarations"]
+
+    by_name = {d["name"]: d for d in declarations}
+    assert "parameters" not in by_name["no_args"]
+    assert "parameters" not in by_name["empty_object"]
+    assert by_name["with_args"]["parameters"]["properties"] == {"q": {"type": "string"}}
+
+
+def test_gemini_chat_sends_a_parameterless_tool_without_a_parameters_field(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_text_response()))
+    GeminiProvider("k").chat(
+        [{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "ping", "description": "p"}}],
+    )
+    declaration = t.body["tools"][0]["functionDeclarations"][0]
+    assert declaration == {"name": "ping", "description": "p"}
+
+
+def test_resolve_model_prefers_the_explicit_model():
+    cfg = types.SimpleNamespace(provider="openai", model="gpt-4o")
+    assert resolve_model(cfg, "gemini", "gemini-2.5-pro") == "gemini-2.5-pro"
+
+
+@pytest.mark.parametrize("asked", ["openai", "OpenAI", " openai "])
+def test_resolve_model_inherits_the_assistant_model_only_for_the_same_provider(asked):
+    cfg = types.SimpleNamespace(provider="OpenAI ", model="gpt-4o")
+    assert resolve_model(cfg, asked, None) == "gpt-4o"
+
+
+def test_resolve_model_never_hands_one_vendors_model_to_another():
+    """The assistant runs on gpt-4o; a lane pointed at Gemini with no model of its
+    own must get Gemini's default, not `gpt-4o` posted to Google."""
+    cfg = types.SimpleNamespace(provider="openai", model="gpt-4o")
+    assert resolve_model(cfg, "gemini", None) == default_model_for("gemini")
+    assert resolve_model(cfg, "gemini", "") == default_model_for("gemini")
+
+
+def test_resolve_model_without_a_config_row_uses_the_provider_default():
+    assert resolve_model(None, "anthropic", None) == default_model_for("anthropic")

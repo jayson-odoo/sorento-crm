@@ -365,6 +365,57 @@ def test_conflicted_attribute_is_not_also_listed_under_not_certain():
     assert "not certain" not in message
 
 
+def test_a_disputed_entity_is_named_once_by_the_conflict_sentence_only():
+    """A product code that is itself one of two disagreeing readings is named by
+    the conflict sentence; listing it again as read, and a third time as "not
+    certain", reads as three separate problems. The other product was read and
+    stays listed."""
+    entities = [
+        MediaEntity(raw="SRTKS6647", hint="product", confident=False),
+        MediaEntity(raw="SRTBF31610", hint="product", confident=True),
+    ]
+    conflicts = [
+        MediaConflict(
+            field="product code",
+            entity_raw=None,
+            values=[
+                MediaConflictValue(value="SRTKS6647", source="printed"),
+                MediaConflictValue(value="SRTKS6641", source="handwritten"),
+            ],
+        )
+    ]
+
+    message = wording.confirmation(entities, [], conflicts)
+
+    assert message == (
+        "I read SRTBF31610 from that photo. On the product code I can see "
+        "SRTKS6647 (printed) and SRTKS6641 (handwritten). Which one should I use?"
+    )
+    assert "not certain" not in message
+
+
+def test_the_line_a_conflict_sits_on_stays_listed_as_read_but_not_as_uncertain():
+    """`entity_raw` is the LINE the conflict is about, not the disputed value:
+    the product was read, so it is listed, and the conflict sentence is what
+    explains the uncertainty."""
+    entities = [MediaEntity(raw="SRTBF31610", hint="product", confident=False)]
+    conflicts = [
+        MediaConflict(
+            field="quantity",
+            entity_raw="SRTBF31610",
+            values=[
+                MediaConflictValue(value="6", source="printed"),
+                MediaConflictValue(value="4", source="handwritten"),
+            ],
+        )
+    ]
+
+    message = wording.confirmation(entities, [], conflicts)
+
+    assert message.startswith("I read SRTBF31610 from that photo. On the quantity")
+    assert "not certain" not in message
+
+
 def test_confirmation_nothing_read_delegates_to_nothing_read():
     assert wording.confirmation([], [], []) == wording.nothing_read()
 

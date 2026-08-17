@@ -468,3 +468,50 @@ def test_an_agent_on_the_assistants_own_provider_still_uses_the_generic_key(
         assert isinstance(provider, OpenAIProvider)
         assert provider.api_key == "ZZT-openai-key"
         assert provider_name == "openai"
+
+
+# --------------------------------------------------------------------------- #
+# provider / model pairing: an agent pointed at Gemini with no model of its own
+# must not inherit the assistant's OpenAI model id and post it to Google
+# --------------------------------------------------------------------------- #
+
+
+def test_an_agent_on_gemini_without_a_model_gets_gemini_default_not_the_assistants(
+    db, monkeypatch
+):
+    from app.models.ai_assistant import AIAssistantConfig
+    from app.services import llm_provider
+
+    db.add(
+        AIAssistantConfig(
+            provider="openai",
+            model="gpt-4o",
+            api_key_ciphertext="ZZT-openai-key",
+            gemini_api_key_ciphertext="ZZT-gemini-key",
+        )
+    )
+    db.flush()
+    monkeypatch.setattr(understanding, "agent_model", lambda *_a, **_k: ("gemini", None))
+
+    provider, provider_name, model_name = understanding._resolve_provider(db)
+
+    assert provider_name == "gemini"
+    assert isinstance(provider, llm_provider.GeminiProvider)
+    assert model_name == llm_provider.default_model_for("gemini")
+    assert provider.api_key == "ZZT-gemini-key"
+
+
+def test_an_agent_with_no_provider_of_its_own_inherits_the_assistants_pair(db, monkeypatch):
+    from app.models.ai_assistant import AIAssistantConfig
+
+    db.add(
+        AIAssistantConfig(
+            provider="openai", model="gpt-4o", api_key_ciphertext="ZZT-openai-key"
+        )
+    )
+    db.flush()
+    monkeypatch.setattr(understanding, "agent_model", lambda *_a, **_k: (None, None))
+
+    _, provider_name, model_name = understanding._resolve_provider(db)
+
+    assert (provider_name, model_name) == ("openai", "gpt-4o")

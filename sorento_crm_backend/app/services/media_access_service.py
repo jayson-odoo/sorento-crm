@@ -23,6 +23,7 @@ from __future__ import annotations
 import calendar
 import logging
 import math
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
@@ -240,16 +241,22 @@ def _clamp(value: Any, low: int, high: int) -> float:
 
 
 def get_limit_row(
-    db: Session, contact_id: str, modality: str
+    db: Session, contact_id: str, modality: str, *, for_update: bool = False
 ) -> Optional[ContactMediaLimit]:
-    return (
-        db.query(ContactMediaLimit)
-        .filter(
-            ContactMediaLimit.contact_id == contact_id,
-            ContactMediaLimit.modality == modality,
-        )
-        .first()
+    """The gate row, or None.
+
+    `for_update` takes a row lock for the rest of the transaction. The fast path
+    uses it so two requests for the same contact decide the quota one after the
+    other rather than both reading `used = limit - 1` and both passing; the same
+    lock serializes the once-per-period notice stamps on the row.
+    """
+    query = db.query(ContactMediaLimit).filter(
+        ContactMediaLimit.contact_id == contact_id,
+        ContactMediaLimit.modality == modality,
     )
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
 
 
 def resolve_effective_limit(
@@ -457,16 +464,26 @@ def upsert_access(
     system default - live, with no deploy. `max_clip_seconds` is voice-only and
     is ignored for image rather than silently stored where nothing reads it.
     """
-    row = get_limit_row(db, contact_id, modality)
-    if row is None:
-        row = ContactMediaLimit(contact_id=contact_id, modality=modality)
-        db.add(row)
-    row.is_allowed = bool(is_allowed)
-    row.monthly_limit = monthly_limit
-    row.max_clip_seconds = max_clip_seconds if modality == "voice" else None
-    row.updated_by = updated_by
-    row.updated_at = _now_utc().replace(tzinfo=None)
+    values = {
+        "is_allowed": bool(is_allowed),
+        "monthly_limit": monthly_limit,
+        "max_clip_seconds": max_clip_seconds if modality == "voice" else None,
+        "updated_by": updated_by,
+        "updated_at": _now_utc().replace(tzinfo=None),
+    }
+    statement = pg_insert(ContactMediaLimit.__table__).values(
+        id=str(uuid.uuid4()),
+        contact_id=contact_id,
+        modality=modality,
+        **values,
+    )
+    db.execute(
+        statement.on_conflict_do_update(
+            constraint="uq_contact_media_limit_contact_modality", set_=values
+        )
+    )
     db.flush()
+    db.expire_all()
     return build_access_item(db, contact_id, modality)
 
 
@@ -569,6 +586,18 @@ def decide_and_record(
     if existing is not None:
         return _replay(db, existing, settings, resets_on)
 
+    # 3. Gate row, locked for the rest of the transaction. Absence of a row is
+    #    denial - fail closed, by construction. The lock is what makes the quota
+    #    count below a serialized decision per contact and modality: without it
+    #    two concurrent items both read `used = limit - 1`, both pass, and both
+    #    stamp the once-per-period notices. The burst limiter normally bounds
+    #    that overshoot, but it fails open on a Redis outage, so the bound has
+    #    to live in the transaction that spends.
+    limit_row = (
+        get_limit_row(db, contact.id, request.modality, for_update=True)
+        if contact is not None
+        else None
+    )
     limit = (
         resolve_effective_limit(db, contact.id, request.modality, settings=settings)
         if contact is not None
@@ -599,10 +628,6 @@ def decide_and_record(
             notices=notices,
         )
 
-    # 3. Gate. Absence of a row is denial - fail closed, by construction.
-    limit_row = (
-        get_limit_row(db, contact.id, request.modality) if contact is not None else None
-    )
     if limit_row is None or not limit_row.is_allowed:
         return _refuse(
             "refused_gate",
@@ -743,6 +768,74 @@ def decide_and_record(
             settings.language_strategy() if request.modality == "voice" else None
         ),
     )
+
+
+# A `queued` job older than the synchronous wait plus this grace, or a `running`
+# job older than the extraction ceiling plus this grace, is stranded: no worker
+# is going to finish it. The grace absorbs an honest queue backlog.
+STRANDED_GRACE_SECONDS = 120.0
+
+
+def reclaim_stranded_job(
+    db: Session,
+    job: MediaExtractionJob,
+    usage: ContactMediaUsage,
+    settings: MediaSettings,
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    """On an idempotent replay, recover a job nothing else will ever recover.
+
+    Returns True when the caller must enqueue the job again. Three strand paths,
+    all closed on the replay itself rather than by a sweeper, because the replay
+    IS the retry n8n already sends:
+
+    * `queued` past the synchronous wait plus a grace: the enqueue never landed
+      (crash between the usage commit and the enqueue, or Redis lost the RQ
+      job). Enqueue again; the task is a no-op on a job that meanwhile finished.
+    * `running` past the extraction ceiling plus a grace: the work-horse died
+      mid-extraction. Marked failed and the allowance is kept as spent - the
+      provider may well have been called - so the contact gets a terminal answer
+      instead of `pending` forever.
+    * `failed` with the allowance refunded (`not_queued`): nothing ran, so the
+      job goes back to `queued`, the ledger back to `accepted`, and it is
+      enqueued once more. A job that failed AFTER the provider was called keeps
+      its `failed` outcome and is never re-run.
+    """
+    now = (now or _now_utc()).replace(tzinfo=None)
+
+    def _age(since: Optional[datetime]) -> float:
+        if since is None:
+            return float("inf")
+        return (now - since.replace(tzinfo=None)).total_seconds()
+
+    if job.status == "queued":
+        return _age(job.created_at) > settings.sync_wait_seconds + STRANDED_GRACE_SECONDS
+
+    if job.status == "running":
+        if _age(job.started_at or job.created_at) > (
+            settings.extraction_timeout_seconds + STRANDED_GRACE_SECONDS
+        ):
+            job.status = "failed"
+            job.result = None
+            job.error = "Extraction did not finish; the worker running it stopped."
+            job.completed_at = now
+            mark_usage_outcome(db, usage.id, "failed")
+            db.flush()
+        return False
+
+    if job.status == "failed" and usage.outcome == "not_queued":
+        job.status = "queued"
+        job.error = None
+        job.result = None
+        job.rq_job_id = None
+        job.started_at = None
+        job.completed_at = None
+        usage.outcome = "accepted"
+        db.flush()
+        return True
+
+    return False
 
 
 def _warn_threshold_count(limit: int, percent: int) -> int:

@@ -125,7 +125,7 @@ export default function ContactLayout({
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Internal Users</BreadcrumbPage>
+                  <BreadcrumbPage>Contacts</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

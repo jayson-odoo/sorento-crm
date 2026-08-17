@@ -21,6 +21,7 @@ import {
 } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { PROVIDER_OPTIONS } from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
+import { wholeNumberRangeError } from '@/lib/whole-number-range';
 
 import {
   useChatbotMediaSettings,
@@ -133,14 +134,6 @@ const NUMBER_BOUNDS = {
 
 type NumberKey = keyof typeof NUMBER_BOUNDS;
 
-function rangeError(raw: string, min: number, max: number): string | undefined {
-  const trimmed = raw.trim();
-  const message = `Enter a whole number between ${min} and ${max}.`;
-  if (!/^\d+$/.test(trimmed)) return message;
-  const value = Number(trimmed);
-  return value < min || value > max ? message : undefined;
-}
-
 /**
  * Every numeric field is bounded, and the two waits are additionally validated
  * against each other because the backend rejects the pair rather than either
@@ -152,7 +145,7 @@ function numberErrors(draft: Draft): Partial<Record<NumberKey, string>> {
   const errors: Partial<Record<NumberKey, string>> = {};
   for (const key of Object.keys(NUMBER_BOUNDS) as NumberKey[]) {
     const [min, max] = NUMBER_BOUNDS[key];
-    const error = rangeError(draft[key], min, max);
+    const error = wholeNumberRangeError(draft[key], min, max);
     if (error) errors[key] = error;
   }
   if (!errors.syncWaitSeconds && !errors.extractionTimeoutSeconds) {

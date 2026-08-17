@@ -272,3 +272,89 @@ def test_no_system_settings_row_means_no_degraded_tier_for_either_modality():
 
         assert settings.degraded_model_for("image") is None
         assert settings.degraded_model_for("voice") is None
+
+
+# --------------------------------------------------------------------------- #
+# upsert_access is a single INSERT ... ON CONFLICT DO UPDATE                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_upsert_access_a_second_save_updates_the_same_row_in_place():
+    from app.models.media import ContactMediaLimit
+    from app.services.media_access_service import upsert_access
+
+    with blank_session() as db:
+        _system_setting_row(db, media_image_monthly_limit=50)
+        contact = _contact(db, "upsert2")
+
+        first = upsert_access(
+            db, contact.id, "image", is_allowed=True, monthly_limit=10, max_clip_seconds=None
+        )
+        second = upsert_access(
+            db, contact.id, "image", is_allowed=False, monthly_limit=None, max_clip_seconds=None
+        )
+
+        rows = (
+            db.query(ContactMediaLimit)
+            .filter(ContactMediaLimit.contact_id == contact.id)
+            .all()
+        )
+        assert len(rows) == 1
+        assert first["is_allowed"] is True and first["effective_monthly_limit"] == 10
+        assert second["is_allowed"] is False and second["effective_monthly_limit"] == 50
+
+
+def test_upsert_access_ignores_a_clip_override_for_the_image_modality():
+    from app.models.media import ContactMediaLimit
+    from app.services.media_access_service import upsert_access
+
+    with blank_session() as db:
+        contact = _contact(db, "upsertclip")
+
+        upsert_access(
+            db, contact.id, "image", is_allowed=True, monthly_limit=None, max_clip_seconds=30
+        )
+
+        row = (
+            db.query(ContactMediaLimit)
+            .filter(ContactMediaLimit.contact_id == contact.id)
+            .one()
+        )
+        assert row.max_clip_seconds is None
+
+
+def test_upsert_access_survives_a_row_inserted_underneath_it():
+    """Two operators saving a never-configured contact at once: the second save
+    must land as an update of the first's row, never a unique-violation 500."""
+    from sqlalchemy import text
+
+    from app.models.media import ContactMediaLimit
+    from app.services.media_access_service import upsert_access
+
+    with blank_session() as db:
+        contact = _contact(db, "upsertrace")
+        # The other operator's row appears between "is there a row?" and the write:
+        # inserted with raw SQL so this session's identity map knows nothing of it.
+        db.execute(
+            text(
+                "INSERT INTO contact_media_limit "
+                "(id, contact_id, modality, is_allowed, monthly_limit) "
+                "VALUES (:id, :contact_id, 'image', true, 7)"
+            ),
+            {"id": str(uuid.uuid4()), "contact_id": contact.id},
+        )
+
+        item = upsert_access(
+            db, contact.id, "image", is_allowed=False, monthly_limit=99, max_clip_seconds=None
+        )
+
+        rows = (
+            db.query(ContactMediaLimit)
+            .filter(ContactMediaLimit.contact_id == contact.id)
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].is_allowed is False
+        assert rows[0].monthly_limit == 99
+        assert item["is_allowed"] is False
+        assert item["effective_monthly_limit"] == 99

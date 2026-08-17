@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 from app.models.ai_assistant import AIAssistantUsageLog
 from app.models.product_spec import ProductSpecifications
 from app.services.ai_prompt_registry import agent_model, get_prompt
-from app.services.llm_provider import default_model_for, get_provider, resolve_api_key
+from app.services.llm_provider import get_provider, resolve_api_key, resolve_model
 # The keys a product may hold more than one of. Imported rather than restated: the set
 # is derivation's, and a second copy would let an accepted proposal store a shape a
 # re-derivation of the same words would not.
@@ -378,13 +378,11 @@ def _resolve_provider(db: Session, agent_name: str = AGENT_NAME):
     )
     agent_provider, agent_model_name = agent_model(db, agent_name)
     provider_name = agent_provider or (cfg.provider if cfg else "openai") or "openai"
-    model_name = agent_model_name or (cfg.model if cfg else "") or ""
+    model_name = resolve_model(cfg, provider_name, agent_model_name)
     api_key = resolve_api_key(cfg, provider_name)
     if not api_key:
         return None, provider_name, model_name
 
-    if not model_name:
-        model_name = default_model_for(provider_name)
     try:
         return get_provider(provider_name, api_key, model=model_name), provider_name, model_name
     except ValueError:

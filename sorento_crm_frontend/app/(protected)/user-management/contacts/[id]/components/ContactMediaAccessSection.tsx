@@ -27,6 +27,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { wholeNumberRangeError } from '@/lib/whole-number-range';
 
 import {
   useContactMediaAccess,
@@ -112,10 +113,12 @@ export default function ContactMediaAccessSection({ contactId }: { contactId: st
           if (!open) setEditing(null);
         }}
         isSaving={update.isPending}
-        onSave={async (input) => {
+        onSave={(input) => {
           if (!editing) return;
-          await update.mutateAsync({ modality: editing.modality, input });
-          setEditing(null);
+          update.mutate(
+            { modality: editing.modality, input },
+            { onSuccess: () => setEditing(null) },
+          );
         }}
       />
 
@@ -260,20 +263,6 @@ function ModalityPanel({
   );
 }
 
-/**
- * Blank is always valid here - it clears the override and inherits the default.
- * Anything else is held to the bounds the PUT already enforces, so an out-of-range
- * override is refused inline instead of coming back as a 422 to interpret.
- */
-function boundedError(raw: string, min: number, max: number): string | undefined {
-  const trimmed = raw.trim();
-  if (trimmed === '') return undefined;
-  const message = `Enter a whole number between ${min} and ${max}, or leave it blank.`;
-  if (!/^\d+$/.test(trimmed)) return message;
-  const value = Number(trimmed);
-  return value < min || value > max ? message : undefined;
-}
-
 function MediaLimitsDialog({
   item,
   onOpenChange,
@@ -298,8 +287,9 @@ function MediaLimitsDialog({
     setClipSeconds(item.max_clip_seconds === null ? '' : String(item.max_clip_seconds));
   }, [item]);
 
-  const limitError = boundedError(limit, 0, 100000);
-  const clipError = boundedError(clipSeconds, 1, 3600);
+  // Blank is always valid here - it clears the override and inherits the default.
+  const limitError = wholeNumberRangeError(limit, 0, 100000, { allowBlank: true });
+  const clipError = wholeNumberRangeError(clipSeconds, 1, 3600, { allowBlank: true });
   const label = item ? MEDIA_MODALITY_LABELS[item.modality] : '';
 
   // The default is the effective limit, and only while no override is set - once

@@ -447,9 +447,9 @@ class MediaExtractService:
         """
         from app.models.ai_assistant import AIAssistantConfig
         from app.services.llm_provider import (
-            default_model_for,
             get_provider,
             resolve_api_key,
+            resolve_model,
         )
 
         cfg = (
@@ -461,11 +461,9 @@ class MediaExtractService:
             settings.image_provider or (cfg.provider if cfg else None) or "openai"
         )
         if tier == "degraded" and settings.image_degraded_model:
-            model_name = settings.image_degraded_model
+            model_name = str(settings.image_degraded_model)
         else:
-            model_name = settings.image_model or (cfg.model if cfg else "") or ""
-        if not model_name:
-            model_name = default_model_for(provider_name)
+            model_name = resolve_model(cfg, provider_name, settings.image_model)
 
         api_key = resolve_api_key(cfg, provider_name)
         if not api_key:

@@ -117,6 +117,64 @@ def test_conflict_entity_raw_matching_is_dash_and_case_insensitive(spelling):
     assert by_line["SRTA"].confident is True
 
 
+def test_document_wide_conflict_unconfidents_the_entity_it_disputes():
+    """S4-03, the RMA-photo case: printed and handwritten product codes disagree,
+    the model reports the conflict with no `entity_raw` (it cannot say which
+    line - the line IS the dispute), and the code it emitted as an entity must
+    not still ship `confident: true`. The disputed `values` are the handle."""
+    extraction = parse_extraction(
+        {
+            "entities": [
+                {"raw": "SRT-KS-6647", "hint": "product"},
+                {"raw": "SRTBF31610", "hint": "product"},
+            ],
+            "attributes": [{"kind": "quantity", "raw": "3", "entity_raw": "SRTBF31610"}],
+            "conflicts": [
+                {
+                    "field": "product code",
+                    "entity_raw": None,
+                    "values": [
+                        {"value": "SRTKS6647", "source": "printed"},
+                        {"value": "SRTKS6641", "source": "handwritten"},
+                    ],
+                }
+            ],
+        },
+        max_entities=10,
+    )
+
+    by_raw = {entity.raw: entity for entity in extraction.entities}
+    assert by_raw["SRT-KS-6647"].confident is False
+    # The other product is not in dispute and keeps its confidence: a flag
+    # that fires on correct lines is a flag nobody can act on.
+    assert by_raw["SRTBF31610"].confident is True
+    assert extraction.attributes[0].confident is True
+
+
+def test_a_disputed_value_carried_as_an_attribute_is_unconfident_too():
+    extraction = parse_extraction(
+        {
+            "entities": [{"raw": "SRTBF31610", "hint": "product"}],
+            "attributes": [
+                {"kind": "batch_number", "raw": "YG2539", "entity_raw": "SRTBF31610"},
+                {"kind": "batch_number", "raw": "YG2540", "entity_raw": "SRTBF31610"},
+            ],
+            "conflicts": [
+                {
+                    "field": "lot",
+                    "entity_raw": None,
+                    "values": [{"value": "YG-2539", "source": "printed"}],
+                }
+            ],
+        },
+        max_entities=10,
+    )
+
+    by_raw = {a.raw: a for a in extraction.attributes}
+    assert by_raw["YG2539"].confident is False
+    assert by_raw["YG2540"].confident is True
+
+
 def test_norm_code_strips_dashes_spaces_and_case():
     assert norm_code("SRT-D") == norm_code("srt d") == norm_code("  SrtD ") == "srtd"
 

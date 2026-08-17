@@ -875,13 +875,16 @@ def test_a_truly_concurrent_duplicate_replays_the_winners_job_not_a_500(
     against `uq_media_extraction_job_usage_id`. Exactly one ledger row, one job
     row and one enqueue must exist afterwards.
 
-    The rendezvous is the burst check (`rate_limit.hit`): it sits after the
-    idempotency probe and before the record, is called exactly once per
-    non-replayed request here (burst_limit=1000, and a replay never reaches
-    it), so a two-party barrier there guarantees both requests probed an empty
-    ledger - the race is forced, not hoped for. The barrier is scoped to
-    `_BURST_BUCKET` because other subsystems (auth, integration sends) share
-    `rate_limit.hit` and must not consume a slot.
+    The rendezvous is the idempotency probe itself (`_find_usage`): a two-party
+    barrier on each request's FIRST probe guarantees both looked at an empty
+    ledger before either recorded - the race is forced, not hoped for. It has
+    to be the probe rather than anything later, because the fast path then
+    takes the contact's gate row `FOR UPDATE`, which serializes the two requests
+    from that point on: the loser waits for the winner's commit and only then
+    reaches the ledger insert, where the `ON CONFLICT` hands it the winner's
+    row. Later `_find_usage` calls (the re-select inside `_record`) pass
+    straight through, or the loser - still parked on the lock - could never
+    make the barrier's second party.
 
     Two deliberate departures from S3-01b's shape, both required for genuine
     concurrency: the client is NOT a context manager (each request then gets
@@ -907,14 +910,18 @@ def test_a_truly_concurrent_duplicate_replays_the_winners_job_not_a_500(
     monkeypatch.setattr(media_route, "enqueue_job", _counting_enqueue)
 
     barrier = threading.Barrier(2)
-    inner_hit = media_access_service.rate_limit.hit
+    inner_probe = media_access_service._find_usage
+    probed = threading.local()
 
-    def _rendezvous_hit(bucket, *args, **kwargs):
-        if bucket == media_access_service._BURST_BUCKET:
+    def _rendezvous_probe(db, request):
+        if not getattr(probed, "done", False):
+            probed.done = True
+            result = inner_probe(db, request)
             barrier.wait(timeout=10)
-        return inner_hit(bucket, *args, **kwargs)
+            return result
+        return inner_probe(db, request)
 
-    monkeypatch.setattr(media_access_service.rate_limit, "hit", _rendezvous_hit)
+    monkeypatch.setattr(media_access_service, "_find_usage", _rendezvous_probe)
 
     app.dependency_overrides[get_external_api_user] = lambda: {"id": "ext"}
     frozen_contact = SimpleNamespace(respond_io_id=real_chain.contact.respond_io_id)

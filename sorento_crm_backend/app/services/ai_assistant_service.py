@@ -43,7 +43,7 @@ from app.services.ai_trace import (
 )
 from app.services.embedding_service import EmbeddingReadService
 from app.services.entity_resolver import ResolutionResult, resolve_references
-from app.services.llm_provider import ChatResult, LLMProvider, get_provider
+from app.services.llm_provider import ChatResult, LLMProvider, get_provider, resolve_api_key
 from app.schemas.ai_semantic_parser import (
     PARSE_RESULT_JSON_SCHEMA,
     PARSE_RESULT_SCHEMA_NAME,
@@ -1256,7 +1256,7 @@ class AIAssistantChatService:
         raw = (user_message or "").strip()
         if not raw:
             return fallback_parse(raw)
-        api_key = config.api_key_ciphertext or settings.openai_api_key
+        api_key = resolve_api_key(config, config.provider)
         if not api_key:
             return fallback_parse(raw)
 
@@ -2252,7 +2252,7 @@ class AIAssistantChatService:
         ``token_usage_dict`` aggregates ``prompt_tokens`` / ``completion_tokens`` /
         ``total_tokens`` across every provider call made by this turn.
         """
-        api_key = config.api_key_ciphertext or settings.openai_api_key
+        api_key = resolve_api_key(config, config.provider)
         tool_calls_log: list[MCPToolCallResult] = []
         token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -2828,7 +2828,7 @@ class AIAssistantChatService:
         token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         tool_calls_log: list[MCPToolCallResult] = []
 
-        api_key = config.api_key_ciphertext or settings.openai_api_key
+        api_key = resolve_api_key(config, config.provider)
         if not api_key:
             return self._deterministic_fallback(tool_calls_log), tool_calls_log, token_usage
         try:
@@ -3120,7 +3120,7 @@ class AIAssistantChatService:
         # to OpenAI; a non-OpenAI configuration therefore falls through to the
         # env key, which is the only one known to belong to OpenAI.
         config = self.cfg.get()
-        api_key = config.api_key_ciphertext if config.provider == "openai" else settings.openai_api_key
+        api_key = resolve_api_key(config, "openai")
         if not api_key:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

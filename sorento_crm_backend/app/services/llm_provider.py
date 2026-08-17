@@ -76,6 +76,28 @@ def default_model_for(provider_name: Optional[str]) -> str:
     return DEFAULT_MODELS.get(key, DEFAULT_MODELS["anthropic"])
 
 
+def resolve_model(cfg: Any, provider_name: str, explicit: Optional[str] = None) -> str:
+    """The model to run on ``provider_name``: ``explicit`` first, else the
+    assistant row's model, but only when that row is configured for the same
+    provider, else the provider's default.
+
+    Model ids are vendor-specific. A lane pointed at Gemini with no model of its
+    own must not inherit the assistant's ``gpt-4o`` and post it to Google, which
+    404s in a way that reads like an outage rather than a configuration gap.
+    Names are normalized the same way ``resolve_api_key`` normalizes them.
+    """
+    if explicit:
+        return str(explicit)
+    provider_key = (provider_name or "").strip().lower()
+    cfg_provider = (
+        (getattr(cfg, "provider", None) or "") if cfg is not None else ""
+    ).strip().lower()
+    cfg_model = (getattr(cfg, "model", None) if cfg is not None else None) or ""
+    if cfg_model and cfg_provider == provider_key:
+        return str(cfg_model)
+    return default_model_for(provider_key)
+
+
 def resolve_api_key(cfg: Any, provider_name: str) -> str:
     """The key to send to ``provider_name``, given the AI assistant config row.
 
@@ -809,15 +831,17 @@ def _convert_tools_to_gemini(tools: list[dict]) -> list[dict]:
         name = fn.get("name")
         if not name:
             continue
-        declarations.append(
-            {
-                "name": name,
-                "description": fn.get("description") or "",
-                "parameters": _gemini_schema(
-                    fn.get("parameters") or {"type": "object", "properties": {}}
-                ),
-            }
-        )
+        declaration: dict[str, Any] = {
+            "name": name,
+            "description": fn.get("description") or "",
+        }
+        raw_params = fn.get("parameters")
+        parameters = _gemini_schema(raw_params) if isinstance(raw_params, dict) else {}
+        # Gemini rejects an OBJECT schema whose `properties` is empty with a 400,
+        # so a parameterless tool carries no `parameters` at all.
+        if parameters.get("properties"):
+            declaration["parameters"] = parameters
+        declarations.append(declaration)
     if not declarations:
         return []
     return [{"functionDeclarations": declarations}]

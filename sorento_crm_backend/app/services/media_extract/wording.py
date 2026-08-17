@@ -254,11 +254,36 @@ def _covered_by_conflict(
         target = norm_code(conflict.entity_raw)
         if target and raw == target:
             return True
+        on_line = not target or norm_code(attribute.entity_raw) == target
+        if on_line and raw and raw in _disputed_values(conflict):
+            return True
         if conflict.field.strip().casefold() != kind:
             continue
         if not target or norm_code(attribute.entity_raw) == target:
             return True
     return False
+
+
+def _disputed_values(conflict: MediaConflict) -> set[str]:
+    """The readings a conflict sentence itself names, normalized as codes."""
+    return {norm_code(value.value) for value in conflict.values if value.value}
+
+
+def _entity_is_disputed(
+    entity: MediaEntity, conflicts: Sequence[MediaConflict]
+) -> bool:
+    """Is this entity one of the values a conflict sentence names?
+
+    Distinct from being the LINE a conflict sits on (`entity_raw`): a product
+    whose quantity is disputed was still read, and is still listed as read; a
+    product code that is itself one of two disagreeing readings is named by the
+    conflict sentence already, and naming it a second time as read - or a third
+    time as "not certain" - reads as three separate problems.
+    """
+    raw = norm_code(entity.raw)
+    return bool(raw) and any(
+        not c.entity_raw and raw in _disputed_values(c) for c in conflicts
+    )
 
 
 def nothing_read() -> str:
@@ -282,13 +307,16 @@ def confirmation(
 
     # A value already covered by a conflict sentence is neither listed as read
     # nor as "not certain" - the conflict sentence names both of its values, so
-    # repeating one of them reads as two separate problems.
+    # repeating one of them reads as two separate problems. The LINE a conflict
+    # sits on (`entity_raw`) is different: it was read, so it stays listed as
+    # read, but it is not repeated as "not certain" because the conflict
+    # sentence is what says why it is uncertain.
     conflicted_raws = {
         norm_code(conflict.entity_raw) for conflict in conflicts if conflict.entity_raw
     }
 
     phrases = _read_phrases(
-        entities,
+        [entity for entity in entities if not _entity_is_disputed(entity, conflicts)],
         [
             attribute
             for attribute in attributes
@@ -302,7 +330,9 @@ def confirmation(
     unsure = [
         entity.raw
         for entity in entities
-        if not entity.confident and norm_code(entity.raw) not in conflicted_raws
+        if not entity.confident
+        and norm_code(entity.raw) not in conflicted_raws
+        and not _entity_is_disputed(entity, conflicts)
     ]
     unsure += [
         f"{ATTRIBUTE_LABELS.get(attribute.kind, attribute.kind)} {attribute.raw}"
