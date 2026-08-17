@@ -985,12 +985,12 @@ def test_worklist_resolves_a_two_company_code_to_the_copy_in_the_callers_scope(d
 # review round 2 - the writer lock, one hash source, the class gate
 # --------------------------------------------------------------------------- #
 def test_derive_for_code_writes_a_code_that_holds_no_spec_row_yet(db):
-    """Smoke for the advisory lock `derive_for_code` now takes.
+    """Smoke for the product-row lock `derive_for_code` now takes.
 
     The race it closes (two writers creating the FIRST spec row for a code at once)
     needs two concurrent transactions and is not unit-testable; what IS testable, and
-    what a lock keyed on a code rather than on a row could break, is the ordinary write
-    of a code that has no row to lock.
+    what a lock on the code's product rows rather than on its spec row could break, is
+    the ordinary write of a code that has no spec row to lock.
     """
     code = unique_code("VS-LOCK-DERIVE")
     product = _product(db, code)

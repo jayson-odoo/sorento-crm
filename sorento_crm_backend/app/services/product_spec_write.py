@@ -26,7 +26,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import event, inspect, text
+from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
 from app.models.base import company_scope
@@ -329,14 +329,29 @@ def _apply(values: dict, provenance: dict, entry: dict) -> None:
     provenance[key] = stamp
 
 
-def lock_product_code(db: Session, product_code: str) -> None:
+def lock_product_code(db: Session, product_code: str) -> list[str]:
     """Serialise every writer, and the verify guard, on ONE product code.
 
-    `FOR UPDATE` locks the code's spec ROWS, and a code with no spec row yet has
-    nothing to lock: two concurrent first-writes, or a first-write racing a verify,
-    both pass their reads and the second lands on top of the first with nothing
-    recording that it happened. This lock is keyed on the code itself rather than on a
-    row, so it serialises them whether or not a row exists.
+    `FOR UPDATE` on the code's spec ROWS is not enough on its own: a code with no spec
+    row yet has nothing to lock, so two concurrent first-writes, or a first-write
+    racing a verify, both pass their reads and the second lands on top of the first
+    with nothing recording that it happened. A product row, on the other hand, always
+    exists for a code anyone can write - that is what makes the code real - so locking
+    the code's `products` rows serialises the writers whether or not a spec row does.
+
+    Read all-companies and ordered by product id, and every caller (`verify_code`,
+    `apply_spec_values`, `derive_for_code`) takes the SAME rows in the SAME order,
+    products first and `product_specifications` second, so the lock order is consistent
+    and two writers on overlapping codes cannot deadlock each other.
+
+    An earlier version keyed a `pg_advisory_xact_lock` on the code text instead. It
+    closed the same race, but it locked a name rather than data, so a second SESSION
+    that could not see the caller's uncommitted rows still blocked on it - which is
+    exactly what the post-commit re-derive listener does, and under the tests' nested
+    transaction (where "commit" only releases a savepoint) it waited on a lock its own
+    caller would never release. Row locks are invisible to a session that cannot see
+    the rows, so that self-deadlock is gone while production serialisation, which is
+    always against COMMITTED product rows, is unchanged.
 
     Held to the end of the transaction, so the caller's own commit releases it. Taken
     per code and never for a whole batch, which is what keeps `derive_all` bounded: its
@@ -346,10 +361,19 @@ def lock_product_code(db: Session, product_code: str) -> None:
     Defined here because this module is already the one writer of `spec.values`, and
     the verification service imports it from here so there is exactly one definition.
 
-    The race itself is not unit-testable (it needs two concurrent transactions); what
-    the tests pin is that a code with no spec row still writes normally under it.
+    Returns the locked product ids. The race itself is not unit-testable (it needs two
+    concurrent transactions); what the tests pin is that a code with no spec row still
+    writes normally under it.
     """
-    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:code))"), {"code": product_code})
+    with company_scope(db, None):
+        return [
+            row[0]
+            for row in db.query(Product.id)
+            .filter(Product.product_code == product_code)
+            .order_by(Product.id)
+            .with_for_update()
+            .all()
+        ]
 
 
 def apply_spec_values(
@@ -402,8 +426,9 @@ def apply_spec_values(
         if not prepared:
             return {"product_code": product_code, "rows_written": 0, "spec_keys": []}
 
-        # Before the row lock below, and in the same order the verify guard takes them:
-        # the FOR UPDATE alone cannot serialise a code that holds no spec row yet.
+        # Before the spec-row lock below, and in the same order the verify guard takes
+        # them (products, then `product_specifications`): the FOR UPDATE on the spec
+        # rows alone cannot serialise a code that holds no spec row yet.
         lock_product_code(db, product_code)
 
         existing = {

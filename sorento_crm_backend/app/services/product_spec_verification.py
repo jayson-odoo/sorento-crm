@@ -313,11 +313,11 @@ def verify_code(
             }
 
         # A code with no spec row at all has nothing to lock FOR UPDATE, so two
-        # concurrent verifies of such a code would both pass the reads below. The
-        # advisory lock is held to the end of the transaction and is keyed on the code
-        # itself, so the serialisation does not depend on a row existing. The writers
-        # take the SAME lock, from the same helper, or a first write could still land
-        # between the reads below.
+        # concurrent verifies of such a code would both pass the reads below. This
+        # locks the code's PRODUCT rows, which always exist, so the serialisation does
+        # not depend on a spec row existing. The writers take the SAME rows, from the
+        # same helper and in the same order, or a first write could still land between
+        # the reads below.
         lock_product_code(db, product_code)
 
         specs = (

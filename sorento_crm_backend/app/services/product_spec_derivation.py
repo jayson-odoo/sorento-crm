@@ -1284,8 +1284,10 @@ def derive_for_code(
 
     # The same lock the authored write and the verify guard take, before anything is
     # read: a code with no spec row yet has no row to lock FOR UPDATE, so two writers
-    # racing to create the first one would otherwise both pass their reads. Released by
-    # the caller's commit, which for `derive_all` is its per-chunk one.
+    # racing to create the first one would otherwise both pass their reads. Locking the
+    # code's product rows covers that, and taking them first keeps the lock order the
+    # same everywhere. Released by the caller's commit, which for `derive_all` is its
+    # per-chunk one.
     lock_product_code(db, product_code)
 
     rows = (
