@@ -1068,6 +1068,13 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     if triggered and rounded > 0:
         split = eng.allocate(rounded, agg["warehouses"])
         allocation = _allocation_lines(split, wh_meta)
+        # ONE basis for the whole pool, carried identically by every row the pool emits.
+        # A member the split gave nothing to emits no row at all, so without this its
+        # channel needs never reach the product's readings - and a demand statement does
+        # not stop being true because the allocator sent the goods to a sibling.
+        pool_basis = _plan_basis(pool_id, "pool", prows, cells, split,
+                                 retail_need=retail_recommended,
+                                 recommended=recommended, rounded=rounded)
         if chosen:
             # ONE ROW PER LOCATION THAT ASKED, never one row on the pool root.
             #
@@ -1121,14 +1128,15 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                     warehouse_id=wid, order_qty=portion, rounded=float(qty),
                     # The split stays on every row: it is how a reader sees that this buy
                     # was sized against the whole pool, not against this bin alone.
-                    allocation=allocation))
+                    allocation=allocation, plan_basis=pool_basis))
             if not placed:
                 # The allocator gave the whole buy to a location outside the planned set,
                 # which should not happen. Emitting nothing would drop a triggered buy in
                 # silence, so it lands on the anchor and says so.
                 recs.append(_build_rec(
                     run_id, "buy", anchor, agg_cell, warehouse_id=pool_id,
-                    order_qty=recommended, rounded=rounded, allocation=allocation))
+                    order_qty=recommended, rounded=rounded, allocation=allocation,
+                    plan_basis=pool_basis))
         else:
             recs.append(_build_rec(
                 run_id, "exception", anchor, agg_cell, warehouse_id=pool_id,
@@ -1392,8 +1400,17 @@ def _emit_cell(run_id: str, row: dict, c: dict,
                               reason_label=_needs_level_label(c)))
     elif not disp and c["triggered"] and rounded > 0:
         if chosen:
-            out.append(_build_rec(run_id, "buy", row, c, warehouse_id=str(row["warehouse_id"]),
-                                  order_qty=c["recommended"], rounded=c["rounded"]))
+            wid = str(row["warehouse_id"])
+            out.append(_build_rec(run_id, "buy", row, c, warehouse_id=wid,
+                                  order_qty=c["recommended"], rounded=c["rounded"],
+                                  # The degenerate group: one location, sized on itself,
+                                  # taking its whole buy. Stated in the SAME shape a pool
+                                  # or a network buy states, so the product freeze has
+                                  # one thing to read rather than three.
+                                  plan_basis=_plan_basis(
+                                      wid, "location", [row], [c], {wid: rounded},
+                                      retail_need=float(c.get("retail_need") or 0.0),
+                                      recommended=c["recommended"], rounded=c["rounded"])))
         else:
             out.append(_build_rec(run_id, "exception", row, c,
                                   warehouse_id=str(row["warehouse_id"]),
@@ -1533,7 +1550,17 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
             allocation = _allocation_lines(allocation_map, wh_meta)
             recs.append(_build_rec(run_id, "buy", first, agg_cell, warehouse_id=None,
                                    order_qty=recommended, rounded=rounded,
-                                   allocation=allocation))
+                                   allocation=allocation,
+                                   # The network buy names NO warehouse, so without this
+                                   # the product row's only location evidence is one
+                                   # nameless entry with every shared fact null, and its
+                                   # netted replenishment reads as the sum of member
+                                   # cells that individually never triggered (AC-F08).
+                                   plan_basis=_plan_basis(
+                                       "network", "network", prows, computed,
+                                       allocation_map,
+                                       retail_need=retail_recommended,
+                                       recommended=recommended, rounded=rounded)))
         elif triggered and rounded > 0 and not chosen:
             recs.append(_build_rec(run_id, "exception", first, agg_cell, warehouse_id=None,
                                    order_qty=None, rounded=None,
@@ -1625,6 +1652,78 @@ def _allocation_lines(allocation: dict, wh_meta: dict) -> list[dict]:
 
 
 # ===========================================================================
+# the sizing group's own basis (front planning 5.3, AC-F03, AC-F07, AC-F08)
+# ===========================================================================
+
+def _plan_basis(group: str, scope: str, prows: list[dict], cells: list[dict],
+                shares: dict, *, retail_need: float,
+                recommended: Optional[float], rounded: Optional[float]) -> dict:
+    """What ONE sizing group was sized on, and the locations it read.
+
+    A buy is sized against a GROUP of locations - one on its own, the members of a
+    fulfilment pool, or the whole network - and the product row has to be able to state
+    that group's figures without re-deriving them from the recommendation rows the group
+    happened to emit. Two things went wrong when it tried:
+
+    * a network buy emits ONE row with no warehouse at all, so the product's location
+      evidence had a single nameless entry and the drill rendered a row with no identity
+      (AC-F08);
+    * a pool or network buy is netted on the AGGREGATE, so summing the member cells' own
+      `retail_need` answers a different question - each member was measured against its own
+      trigger and can be 0 while the group is short 213 (AC-F03: one calculation, two
+      presentations).
+
+    So the group states itself: its own netted replenishment (`retail_need`, the figure
+    the aggregate was actually sized on), its firm Project Buy, the sheet leg and the
+    unclassified demand it carries, and every member location it covered - INCLUDING the
+    ones the split gave nothing to, because a location's channel needs are a demand
+    statement and not an allocation statement.
+
+    ``group`` is the dedupe key: the sibling rows of one pooled buy all carry the same
+    basis, and the product freeze must count it once. ``shares`` is the engine's own split
+    of its once-rounded buy, ``{warehouse_id: qty}``.
+    """
+    locations = []
+    for r, c in zip(prows, cells):
+        wid = str(r["warehouse_id"])
+        locations.append({
+            # Kept for the allocator replay, which needs a location it can address; the
+            # read endpoint copies code and name only, so no UUID reaches a screen.
+            "warehouse_id": wid,
+            "warehouse_code": r.get("warehouse_code"),
+            "warehouse_name": r.get("warehouse_name"),
+            "project_need": _r(c.get("project_need")) or 0.0,
+            "retail_need": _r(c.get("retail_need")) or 0.0,
+            "project_sheet_need": _r(c.get("project_sheet_need")) or 0.0,
+            "unclassified_need": _r(c.get("unclassified_need")) or 0.0,
+            # Shared facts of the product-location, carrying no channel dimension.
+            "on_hand": _fnum(c.get("on_hand")),
+            "incoming_spo": _fnum(c.get("on_order")),
+            "on_order_po": _fnum(c.get("po_ordered")),
+            "reorder_level": _fnum(c.get("reorder_level")),
+            "avg_daily_demand": _r(c.get("demand_rate")),
+            # This location's share of the group's once-rounded buy. 0 is a real answer:
+            # the location asked for nothing, not that it was left out.
+            "location_suggested_qty": float(shares.get(wid) or 0.0),
+        })
+    locations.sort(key=lambda x: (x["warehouse_code"] or ""))
+    return {
+        "group": group,
+        "scope": scope,
+        # Project, the sheet leg and unclassified are additive across locations, so the
+        # group's figure IS the sum of its members'. Retail is not: it is netted once, on
+        # the aggregate, and only the aggregate knows what it sized.
+        "project_need": _r(sum(l["project_need"] for l in locations)),
+        "retail_need": _r(retail_need) or 0.0,
+        "project_sheet_need": _r(sum(l["project_sheet_need"] for l in locations)),
+        "unclassified_need": _r(sum(l["unclassified_need"] for l in locations)),
+        "recommended": _r(recommended),
+        "rounded": _r(rounded),
+        "locations": locations,
+    }
+
+
+# ===========================================================================
 # recommendation builder (freezes inputs)
 # ===========================================================================
 
@@ -1633,7 +1732,8 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
                rounded: Optional[float], allocation: Optional[list] = None,
                reason_enum: Optional[str] = None, reason_label: Optional[str] = None,
                disposition_action: Optional[str] = None,
-               transfer_flag: Optional[str] = None) -> ReorderRecommendation:
+               transfer_flag: Optional[str] = None,
+               plan_basis: Optional[dict] = None) -> ReorderRecommendation:
     chosen = c["chosen"]
     reason = reason_enum or _reason_enum(c["policy_type"])
     label = reason_label if reason_label is not None else c.get("reason_label")
@@ -1701,6 +1801,13 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "unclassified_need": _r(c.get("unclassified_need")),
         "project_supply_reduction": _r(c.get("project_supply_reduction")),
         "retail_net": _r(c.get("retail_net")),
+        # The SIZING GROUP this buy belongs to, and the locations it was sized over
+        # (`_plan_basis`). The four channel figures above describe THIS row's place; the
+        # basis describes the decision, which for a pool or a network buy spans more
+        # places than the row names - including ones the split gave nothing to. The
+        # product freeze reads this and nothing else, so Product and Location can only
+        # ever be two presentations of one calculation (AC-F03, AC-F07, AC-F08).
+        "plan_basis": plan_basis,
         # M4 cash-ranking factor inputs (frozen for the cash stage + explainability).
         "list_price": c.get("list_price"),
         "committed": c.get("committed"),

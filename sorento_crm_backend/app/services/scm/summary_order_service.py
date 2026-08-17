@@ -282,13 +282,43 @@ def _quantize_up(qty: float, decimal_places: int) -> float:
     return math.ceil(round(float(qty) * scale, 6)) / scale
 
 
+def _sizing_groups(recs: list) -> dict:
+    """``{group key: frozen plan basis}`` for the buy rows of one product.
+
+    A buy is sized against a GROUP of locations, not against a row: a pool emits one row
+    per location that was allocated something, all describing ONE decision, and a network
+    buy emits a single row that names no location at all. The engine freezes that group's
+    own basis on every row it produced (`reorder_run_service._plan_basis`), so this
+    collapses the rows back to the decisions they came from - once per group, however many
+    rows carried it.
+    """
+    groups: dict = {}
+    for r in recs:
+        basis = (r.inputs or {}).get("plan_basis")
+        if basis:
+            groups.setdefault(basis.get("group") or str(r.warehouse_id), basis)
+    return groups
+
+
 def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
                     constraints: dict) -> dict:
     """The product row's channel readings, its once-rounded suggestion, and the evidence.
 
-    Sums the SAME per-location `project_need` / `retail_need` / `unclassified_need` the
-    engine froze on each recommendation, so the Product and Location views cannot disagree
-    about a number (AC-F03): there is one calculation and two presentations of it.
+    Reads the SAME frozen basis the engine sized each buy on, so the Product and Location
+    views cannot disagree about a number (AC-F03): there is one calculation and two
+    presentations of it.
+
+    **The unit is the sizing GROUP, not the recommendation row.** Project need, the sheet
+    leg and unclassified demand are additive across locations, so summing rows happened to
+    work for them. Netted Retail replenishment is not: a pool and a network buy are netted
+    ONCE on the aggregate, and their member cells can each read 0 - individually
+    untriggered under their own reorder level - while the group is short 213. Summing the
+    rows therefore stated "Suggested 0" for a run that had just sized a 213-unit buy. The
+    group states its own netted figure and the freeze reads that.
+
+    A run frozen before the basis existed (or a hand-built recommendation) has no group,
+    and falls back to the row-wise sum, which is exactly right for the per-warehouse shape
+    it was written for.
 
     `project_buy_qty` is CONFIRMED unplaced Buy only, which is what plan 5.3 and AC-E04
     define it as. The unconfirmed sheet leg was netted by the engine alongside Retail, so
@@ -298,12 +328,53 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
     leave a reader to notice a project-class quantity missing from both columns. The open
     project-class order book is separately visible as `project_demand` on the same row.
     """
-    project = sum(float((r.inputs or {}).get("project_need") or 0.0) for r in recs)
-    retail = sum(float((r.inputs or {}).get("retail_need") or 0.0) for r in recs)
-    unclassified = sum(
-        float((r.inputs or {}).get("unclassified_need") or 0.0) for r in recs)
-    project_sheet = sum(
-        float((r.inputs or {}).get("project_sheet_need") or 0.0) for r in recs)
+    groups = _sizing_groups(recs)
+    if groups:
+        sources: list = list(groups.values())
+        locations = [
+            # `warehouse_id` stays inside the recommendation snapshot, where the allocator
+            # replay reads it; the product row's basis is addressed by code alone.
+            {k: v for k, v in loc.items() if k != "warehouse_id"}
+            for g in sources for loc in (g.get("locations") or [])
+        ]
+    else:
+        sources = [
+            {
+                "project_need": (r.inputs or {}).get("project_need"),
+                "retail_need": (r.inputs or {}).get("retail_need"),
+                "project_sheet_need": (r.inputs or {}).get("project_sheet_need"),
+                "unclassified_need": (r.inputs or {}).get("unclassified_need"),
+            }
+            for r in recs
+        ]
+        locations = []
+        for r in recs:
+            inp = r.inputs or {}
+            code, name = wh_meta.get(str(r.warehouse_id), (None, None))
+            locations.append({
+                "warehouse_code": code,
+                "warehouse_name": name,
+                "project_need": _f(inp.get("project_need")) or 0.0,
+                "retail_need": _f(inp.get("retail_need")) or 0.0,
+                # Netted inside `retail_need` above, never added to it: an unconfirmed
+                # sheet-origin project quantity is demand the engine put through ordinary
+                # netting, so it is stated for the reader and summed nowhere.
+                "project_sheet_need": _f(inp.get("project_sheet_need")) or 0.0,
+                "unclassified_need": _f(inp.get("unclassified_need")) or 0.0,
+                # Shared facts of the product-location, counted ONCE and carrying no
+                # channel dimension (AC-F07).
+                "on_hand": _f(inp.get("on_hand")),
+                "incoming_spo": _f(inp.get("on_order")),
+                "on_order_po": _f(inp.get("po_ordered")),
+                "reorder_level": _f(inp.get("reorder_level")),
+                "avg_daily_demand": _f(inp.get("demand_rate")),
+                "location_suggested_qty": _f(r.rounded_qty) or 0.0,
+            })
+
+    project = sum(float(s.get("project_need") or 0.0) for s in sources)
+    retail = sum(float(s.get("retail_need") or 0.0) for s in sources)
+    unclassified = sum(float(s.get("unclassified_need") or 0.0) for s in sources)
+    project_sheet = sum(float(s.get("project_sheet_need") or 0.0) for s in sources)
     raw_need = project + retail
     moq = constraints.get("moq")
     multiple = constraints.get("order_multiple")
@@ -314,29 +385,6 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
         eng_round_order_qty(raw_need, moq, multiple) if raw_need > 0 else 0.0,
         decimal_places,
     )
-    locations = []
-    for r in recs:
-        inp = r.inputs or {}
-        code, name = wh_meta.get(str(r.warehouse_id), (None, None))
-        locations.append({
-            "warehouse_code": code,
-            "warehouse_name": name,
-            "project_need": _f(inp.get("project_need")) or 0.0,
-            "retail_need": _f(inp.get("retail_need")) or 0.0,
-            # Netted inside `retail_need` above, never added to it: an unconfirmed
-            # sheet-origin project quantity is demand the engine put through ordinary
-            # netting, so it is stated for the reader and summed nowhere.
-            "project_sheet_need": _f(inp.get("project_sheet_need")) or 0.0,
-            "unclassified_need": _f(inp.get("unclassified_need")) or 0.0,
-            # Shared facts of the product-location, counted ONCE and carrying no channel
-            # dimension (AC-F07).
-            "on_hand": _f(inp.get("on_hand")),
-            "incoming_spo": _f(inp.get("on_order")),
-            "on_order_po": _f(inp.get("po_ordered")),
-            "reorder_level": _f(inp.get("reorder_level")),
-            "avg_daily_demand": _f(inp.get("demand_rate")),
-            "location_suggested_qty": _f(r.rounded_qty) or 0.0,
-        })
     locations.sort(key=lambda x: (x["warehouse_code"] or ""))
     return {
         "project_buy_qty": project,
@@ -1382,17 +1430,17 @@ def _persist_location_split(db: Session, row: OrderSummaryRow) -> list[dict]:
     ).delete(synchronize_session=False)
 
     chosen = float(row.chosen_qty or 0)
-    recs = (
+    all_recs = (
         db.query(ReorderRecommendation)
         .filter(
             ReorderRecommendation.run_id == str(row.run_id),
             ReorderRecommendation.product_id == str(row.product_id),
             ReorderRecommendation.rec_type == "buy",
-            ReorderRecommendation.warehouse_id.isnot(None),
         )
         .all()
     )
-    if chosen <= 0 or not recs:
+    recs = [r for r in all_recs if r.warehouse_id is not None]
+    if chosen <= 0 or not all_recs:
         return []
 
     inputs = []
@@ -1409,6 +1457,24 @@ def _persist_location_split(db: Session, row: OrderSummaryRow) -> list[dict]:
             "demand_rate": _f(rec.forecast_daily_demand) or _f(frozen.get("demand_rate")) or 0.0,
             "recommendation_id": str(rec.id),
         })
+    if not inputs:
+        # A NETWORK buy names no warehouse, so there is no per-location row to replay
+        # over - and a product-grain decision that could not be split would leave the
+        # buyer with a quantity and nowhere to put it (AC-F08, AC-F12). The run's own
+        # frozen basis carries the member locations and the share the engine gave each,
+        # which is exactly the deficit signal the per-location rows would have supplied.
+        for g in _sizing_groups(all_recs).values():
+            for loc in g.get("locations") or []:
+                if not loc.get("warehouse_id"):
+                    continue
+                inputs.append({
+                    "warehouse_id": str(loc["warehouse_id"]),
+                    "deficit": float(loc.get("location_suggested_qty") or 0.0),
+                    "demand_rate": float(loc.get("avg_daily_demand") or 0.0),
+                    "recommendation_id": None,
+                })
+    if not inputs:
+        return []
     rec_by_wid = {i["warehouse_id"]: i["recommendation_id"] for i in inputs}
     allocation = eng_allocate(chosen, inputs,
                               decimal_places=int(row.uom_decimal_places or 0))

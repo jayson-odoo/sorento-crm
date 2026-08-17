@@ -53,7 +53,7 @@ from app.services.scm.demand import COMMITTED_V_SQL
 from app.services.scm import reorder_run_service as run_svc
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 from tests._pg_fixture import pg_session
-from tests.scm.conftest import requires_pg
+from tests.scm.conftest import requires_pg, set_plan_grain
 from tests.scm.test_m3_run import (
     _client,
     _link,
@@ -601,6 +601,292 @@ def test_recommendations_api_carries_the_sheet_leg_beside_the_confirmed_need(scm
         assert row["project_need"] == 0, "nothing confirmed here, so nothing is firm"
         assert row["project_sheet_need"] == 20, "the sheet quantity must reach the wire"
         assert row["unclassified_need"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# channel disjointness, end to end through the REAL engine and the freeze
+# --------------------------------------------------------------------------- #
+#
+# Everything above pins one leg at a time. These put all four classes on ONE
+# (product, warehouse) at once and follow them through `create_run` ->
+# `run_reorder` -> `write_rows`, because the defect these exist for was invisible to
+# any test that hand-builds a recommendation `inputs` dict in the per-warehouse shape:
+# the network and pool paths freeze a DIFFERENT shape, and the product freeze read the
+# per-warehouse one.
+#
+# The rule being pinned (AC-E01, AC-E02, AC-F07): one open quantity lands in EXACTLY
+# ONE of `project_need` (confirmed, firm), `project_sheet_need` (stated, netted inside
+# Retail), `retail_need`'s netted basis, or `unclassified_need`. Never two.
+
+#: One SO per class at one location. Chosen so every figure below is unambiguous:
+#: no two of them are equal, and no sum of two equals a third.
+_DJ_RETAIL = 30
+_DJ_SHEET = 9
+_DJ_UNCLASSIFIED = 7
+_DJ_CONFIRMED = 12
+#: Retail replenishment the engine must size: the netted basis is Retail plus the
+#: unconfirmed sheet leg, and nothing else. Firm Project Buy is added past the trigger
+#: and unclassified demand is excluded entirely (AC-E05, AC-E06).
+_DJ_RETAIL_NEED = _DJ_RETAIL + _DJ_SHEET                       # 39
+_DJ_ORDER = _DJ_RETAIL_NEED + _DJ_CONFIRMED                    # 51
+
+
+def _seed_one_of_each_class(db, pid, wid):
+    """One open SO per demand class at a single (product, warehouse)."""
+    _core_line_for_run(db, pid, wid, qty=_DJ_RETAIL, demand_class="retail")
+    _core_line_for_run(db, pid, wid, qty=_DJ_SHEET, demand_class="project",
+                       demand_origin="scm_order_inquiry")
+    _core_line_for_run(db, pid, wid, qty=_DJ_UNCLASSIFIED, demand_class=None)
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=_DJ_CONFIRMED)
+    db.flush()
+
+
+def _summary(db, run_id, pid):
+    return db.execute(
+        text(
+            "SELECT project_buy_qty, retail_replenishment_qty, unclassified_demand_qty, "
+            "suggested_qty, uom_decimal_places, channel_calculation_basis "
+            "FROM scm.order_summary_row WHERE run_id = :r AND product_id = :p"
+        ),
+        {"r": run_id, "p": pid},
+    ).mappings().one()
+
+
+def _assert_channels_are_disjoint(inputs):
+    """Each seeded quantity in exactly one field, and the sized order excluding the rest."""
+    assert inputs["project_need"] == _DJ_CONFIRMED, "confirmed Buy is the firm leg"
+    assert inputs["project_sheet_need"] == _DJ_SHEET, (
+        "the unconfirmed sheet leg is stated on its own, not folded into the firm figure"
+    )
+    assert inputs["unclassified_need"] == _DJ_UNCLASSIFIED
+    assert inputs["retail_need"] == _DJ_RETAIL_NEED, (
+        "the netted basis is Retail plus the sheet leg - the confirmed leg and the "
+        "unclassified demand were taken back out of the net position before netting"
+    )
+    # The netted position is short exactly Retail + sheet: neither the confirmed Buy nor
+    # the unclassified demand may appear in it a second time.
+    assert inputs["retail_net"] == -_DJ_RETAIL_NEED
+
+
+def _assert_location_basis_is_named(basis, *, warehouse_code, expect_locations):
+    locations = basis["locations"]
+    assert len(locations) == expect_locations
+    for loc in locations:
+        assert loc["warehouse_code"], "a location with no code cannot be read by a buyer"
+        assert loc["warehouse_name"], "and it must carry the name the screen renders"
+        for shared in ("on_hand", "incoming_spo", "on_order_po"):
+            assert loc[shared] is not None, (
+                f"{shared} is a shared fact of the product-location and the run knew it"
+            )
+        assert "warehouse_id" not in loc, "the product row's basis is addressed by code"
+    assert warehouse_code in {l["warehouse_code"] for l in locations}
+
+
+def test_per_warehouse_run_keeps_every_demand_class_in_exactly_one_channel(scm_app):
+    """AC-E01/E02/F07 through the real engine, per-warehouse scope (the default).
+
+    Four open quantities, one per class, at one location. Each must reach exactly one
+    frozen field, the sized order must be firm Buy plus netted Retail and nothing else,
+    and the product row's basis must name the location it was read from.
+    """
+    _, db, _, _ = scm_app
+    set_plan_grain(db, "product")
+    wid = _mk_warehouse(db, "ZZTCHRM-DJ-W")
+    pid = _mk_product(db, "ZZTCHRM-DJ-W")
+    _mk_stock(db, pid, wid, 0)
+    _link(db, pid, _mk_supplier(db, "ZZTCHRM Disjoint Supplier W"), moq=None, mult=None)
+    _seed_one_of_each_class(db, pid, wid)
+
+    created = run_svc.create_run(db, ["ZZTCHRM-DJ-W"], "warehouse", enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    rows = _recs(db, created["run_id"], pid, wid)
+    assert [r["rec_type"] for r in rows] == ["buy"]
+    _assert_channels_are_disjoint(rows[0]["inputs"])
+    assert float(rows[0]["rounded_qty"]) == _DJ_ORDER, (
+        "firm Buy plus netted Retail; the unclassified quantity is visible, never sized"
+    )
+
+    row = _summary(db, created["run_id"], pid)
+    assert float(row["project_buy_qty"]) == _DJ_CONFIRMED
+    assert float(row["retail_replenishment_qty"]) == _DJ_RETAIL_NEED
+    assert float(row["unclassified_demand_qty"]) == _DJ_UNCLASSIFIED
+    assert float(row["suggested_qty"]) == float(rows[0]["rounded_qty"]) == _DJ_ORDER, (
+        "the product row must state the run's OWN sized buy, not a second derivation"
+    )
+    basis = row["channel_calculation_basis"]
+    assert basis["project_sheet_netted"] == _DJ_SHEET
+    assert basis["unclassified_excluded"] == _DJ_UNCLASSIFIED
+    _assert_location_basis_is_named(
+        basis, warehouse_code="ZZTCHRM-DJ-W", expect_locations=1)
+
+
+def test_network_run_keeps_every_demand_class_in_exactly_one_channel(scm_app):
+    """The same seeding under `buy_scope='network'`, which sizes ONE buy naming NO
+    warehouse.
+
+    Same four quantities, same four fields, same order - and the frozen basis still has
+    to name the location. Before this, a network run's basis carried a single entry with
+    warehouse_code, warehouse_name, on_hand, incoming SPO, the PO book and the reorder
+    level all NULL, because the freeze read them off a recommendation row that has no
+    warehouse at all (AC-F08).
+    """
+    _, db, _, _ = scm_app
+    set_plan_grain(db, "product")
+    wid = _mk_warehouse(db, "ZZTCHRM-DJ-N")
+    pid = _mk_product(db, "ZZTCHRM-DJ-N")
+    _mk_stock(db, pid, wid, 0)
+    _link(db, pid, _mk_supplier(db, "ZZTCHRM Disjoint Supplier N"), moq=None, mult=None)
+    _seed_one_of_each_class(db, pid, wid)
+
+    created = run_svc.create_run(db, ["ZZTCHRM-DJ-N"], "network", enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    buy = db.execute(
+        text(
+            "SELECT rounded_qty, warehouse_id, inputs FROM scm.reorder_recommendation "
+            "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
+        ),
+        {"r": created["run_id"], "p": pid},
+    ).mappings().one()
+    assert buy["warehouse_id"] is None, "a network buy is an aggregate, by construction"
+    _assert_channels_are_disjoint(buy["inputs"])
+    assert float(buy["rounded_qty"]) == _DJ_ORDER
+
+    row = _summary(db, created["run_id"], pid)
+    assert float(row["project_buy_qty"]) == _DJ_CONFIRMED
+    assert float(row["retail_replenishment_qty"]) == _DJ_RETAIL_NEED
+    assert float(row["unclassified_demand_qty"]) == _DJ_UNCLASSIFIED
+    assert float(row["suggested_qty"]) == float(buy["rounded_qty"]) == _DJ_ORDER
+    _assert_location_basis_is_named(
+        row["channel_calculation_basis"], warehouse_code="ZZTCHRM-DJ-N",
+        expect_locations=1)
+
+
+def test_a_network_sized_buy_states_its_own_replenishment_not_the_sum_of_its_cells(
+    scm_app,
+):
+    """AC-F03 / AC-F11: the product row must state the buy the RUN sized.
+
+    Two locations, netted together: A holds 50 with nothing asked of it, B is short 30,
+    and a confirmed Project Buy of 5 sits at B. The network position is +20, so Retail
+    triggers NOTHING - the surplus at A covers B - and the only reason a buy exists at
+    all is the firm 5.
+
+    Summing the member cells' own `retail_need` answers a different question: B, measured
+    alone, is short 30. Doing that made the product row suggest 35 for a run that had
+    sized 5. (The live defect ran the other way and was worse: three locations each
+    untriggered under their own reorder level summed to 0 while the run bought 213, so
+    the row read "Suggested 0".)
+    """
+    _, db, _, _ = scm_app
+    set_plan_grain(db, "product")
+    wa = _mk_warehouse(db, "ZZTCHRM-DJ-AGGA")
+    wb = _mk_warehouse(db, "ZZTCHRM-DJ-AGGB")
+    pid = _mk_product(db, "ZZTCHRM-DJ-AGG")
+    _mk_stock(db, pid, wa, 50)
+    _mk_stock(db, pid, wb, 0)
+    _link(db, pid, _mk_supplier(db, "ZZTCHRM Disjoint Supplier Agg"), moq=None, mult=None)
+    _core_line_for_run(db, pid, wb, qty=30, demand_class="retail")
+    _confirmed_leg(db, product_id=pid, warehouse_id=wb, buy_qty=5)
+    db.flush()
+
+    created = run_svc.create_run(db, ["ZZTCHRM-DJ-AGGA", "ZZTCHRM-DJ-AGGB"], "network",
+                                 enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    buy = db.execute(
+        text(
+            "SELECT rounded_qty, inputs FROM scm.reorder_recommendation "
+            "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
+        ),
+        {"r": created["run_id"], "p": pid},
+    ).mappings().one()
+    assert float(buy["rounded_qty"]) == 5.0, (
+        "the surplus at A covers B's Retail shortage; only the firm Project Buy remains"
+    )
+    row = _summary(db, created["run_id"], pid)
+    assert float(row["retail_replenishment_qty"]) == 0.0, (
+        "summing the member cells reads 30 here, which is not what the run sized"
+    )
+    assert float(row["project_buy_qty"]) == 5.0
+    assert float(row["suggested_qty"]) == float(buy["rounded_qty"]) == 5.0
+
+    basis = buy["inputs"]["plan_basis"]
+    assert basis["scope"] == "network"
+    assert basis["retail_need"] == 0.0, "the AGGREGATE was not short of Retail"
+    assert basis["project_need"] == 5.0
+    # The member cells keep their own honest readings, which do NOT sum to the group's.
+    by_code = {l["warehouse_code"]: l for l in basis["locations"]}
+    assert by_code["ZZTCHRM-DJ-AGGB"]["retail_need"] == 30.0, (
+        "B, measured alone, IS short 30 - a demand statement, not the sized order"
+    )
+    assert by_code["ZZTCHRM-DJ-AGGA"]["on_hand"] == 50.0
+
+    _assert_location_basis_is_named(
+        row["channel_calculation_basis"], warehouse_code="ZZTCHRM-DJ-AGGA",
+        expect_locations=2)
+
+
+def test_a_pool_member_the_split_gave_nothing_to_still_reaches_the_product_row(scm_app):
+    """AC-F07 for the pool path: a reading is a demand statement, not an allocation one.
+
+    Two bins share a pool. A is short 40 of Retail; B holds enough for itself and carries
+    20 of unclassified demand nobody has classified. Netted over the pool the buy is 10,
+    and the allocator gives every unit of it to A - so B emits no recommendation row at
+    all. Its 20 must still reach the product row, because the product's unclassified
+    reading is a statement about demand and not about where the goods were sent.
+    """
+    _, db, _, _ = scm_app
+    set_plan_grain(db, "product")
+    pool = _mk_warehouse(db, "ZZTCHRM-DJ-POOL")
+    wa = _mk_warehouse(db, "ZZTCHRM-DJ-BINA")
+    wb = _mk_warehouse(db, "ZZTCHRM-DJ-BINB")
+    db.execute(
+        text("UPDATE warehouses SET pool_warehouse_id = :p WHERE id::text = ANY(:ids)"),
+        {"p": pool, "ids": [pool, wa, wb]},
+    )
+    pid = _mk_product(db, "ZZTCHRM-DJ-POOLED")
+    _mk_stock(db, pid, wa, 0)
+    _mk_stock(db, pid, wb, 30)
+    _link(db, pid, _mk_supplier(db, "ZZTCHRM Disjoint Supplier Pool"), moq=None, mult=None)
+    _core_line_for_run(db, pid, wa, qty=40, demand_class="retail")
+    _core_line_for_run(db, pid, wb, qty=20, demand_class=None)
+    db.flush()
+    # Pooled netting is opt-in; this test is ABOUT the pool path, so it is turned on the
+    # same way `tests/scm/test_pool_netting_parity.py` turns it on, inside the savepoint.
+    run_svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    db.flush()
+
+    created = run_svc.create_run(
+        db, ["ZZTCHRM-DJ-BINA", "ZZTCHRM-DJ-BINB"], "warehouse", enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    buys = db.execute(
+        text(
+            "SELECT warehouse_id, rounded_qty, inputs FROM scm.reorder_recommendation "
+            "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
+        ),
+        {"r": created["run_id"], "p": pid},
+    ).mappings().all()
+    assert len(buys) == 1, "the pool sized ONE buy and the split put all of it at A"
+    assert str(buys[0]["warehouse_id"]) == wa
+
+    row = _summary(db, created["run_id"], pid)
+    assert float(row["unclassified_demand_qty"]) == 20.0, (
+        "B was allocated nothing, so it emitted no row - its demand is still real"
+    )
+    assert float(row["retail_replenishment_qty"]) == 10.0, (
+        "the POOL was short 10; A measured alone is short 40, which is a different fact"
+    )
+    assert float(row["suggested_qty"]) == float(buys[0]["rounded_qty"]) == 10.0
+    basis = row["channel_calculation_basis"]
+    _assert_location_basis_is_named(
+        basis, warehouse_code="ZZTCHRM-DJ-BINB", expect_locations=2)
+    by_code = {l["warehouse_code"]: l for l in basis["locations"]}
+    assert by_code["ZZTCHRM-DJ-BINB"]["location_suggested_qty"] == 0.0
+    assert by_code["ZZTCHRM-DJ-BINA"]["location_suggested_qty"] == 10.0
 
 
 # --------------------------------------------------------------------------- #

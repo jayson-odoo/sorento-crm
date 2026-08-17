@@ -404,3 +404,157 @@ because the prod-copy database holds a `scm.reorder_policy` row with
 golden file expects a forecast buy. Re-run with `policy_type` forced to `reorder_point` (the
 shape CI's empty database has) and both pin exactly: PARTIAL buys 340.0 across POOL 71 /
 POOL-A 161 / POOL-B 108, POOLED buys nothing and reads `covered`.
+
+## The freeze reads the SIZING GROUP, not the row (BE-6)
+
+A real-stack evidence run over the whole catalogue (network scope, product grain) exposed
+three defects the unit tests could not see, because every one of those tests hand-builds a
+recommendation `inputs` dict in the PER-WAREHOUSE shape and the network and pool paths
+freeze a different one.
+
+**Defect 1 - the basis had no warehouse identity (AC-F08).** `_plan_network` emits ONE buy
+per product with `warehouse_id = NULL` and a `_network_agg_cell` snapshot whose shared facts
+are all `None`. `summary_order_service._channel_freeze` assumed one buy row per LOCATION and
+built `basis.locations` off those rows via `wh_meta.get(str(r.warehouse_id))`, so every
+network-mode basis had exactly one entry with `warehouse_code`, `warehouse_name`, `on_hand`,
+`incoming_spo`, `on_order_po` and `reorder_level` all null. All 755 rows of the seeded run
+were like that, and `/order-summary/{code}/locations` rendered location rows with no
+identity.
+
+**Defect 1b - the product row contradicted its own run.** `retail_need` on the aggregate
+cell is the SUM of the member cells' `retail_need`, and a member measured alone can be 0 -
+untriggered under its own reorder level - while the aggregate is short. Product `MWB242`
+carried a buy of 213 (split BRW 0 / BRW-BB 51 / BRW-IB 162) and its summary row read
+`project_buy_qty 0 / retail_replenishment_qty 0 / suggested_qty 0`, because the freeze
+re-derived a raw need of 0 instead of stating the figure the run had sized. The pool path
+had the same shape plus a second hole: a pool member the allocator gave nothing to emits no
+row at all, so its channel needs never reached the product's readings.
+
+**Defect 2 - channel disjointness was unproven.** No test put all four classes on one
+(product, warehouse) and followed them through the real engine, so nothing would have caught
+one open quantity being counted in two channels.
+
+**The fix, one canonical shape everywhere.** Every buy the engine emits now carries
+`inputs["plan_basis"]` (`reorder_run_service._plan_basis`) - the basis of the SIZING GROUP
+it belongs to rather than of the row it happens to be:
+
+```text
+plan_basis = {
+  group,                       # dedupe key: warehouse_id | pool_id | "network"
+  scope,                       # location | pool | network
+  project_need,                # the group's firm confirmed Buy
+  retail_need,                 # the group's OWN netted replenishment (the aggregate's)
+  project_sheet_need,          # netted inside retail_need, stated not summed
+  unclassified_need,           # visible, never sized
+  recommended, rounded,        # what the engine sized, before and after supplier terms
+  locations: [ { warehouse_id, warehouse_code, warehouse_name,
+                 project_need, retail_need, project_sheet_need, unclassified_need,
+                 on_hand, incoming_spo, on_order_po, reorder_level, avg_daily_demand,
+                 location_suggested_qty } ]   # EVERY member, including zero-allocated
+}
+```
+
+`_channel_freeze` collapses a product's buy rows to their groups (`_sizing_groups`) and sums
+the group figures once - a pool emits one row per allocated location, all carrying the same
+basis, and counting it per row would multiply it. Project, sheet and unclassified stay
+additive across locations; **netted Retail is the group's own figure**, because a pool or a
+network buy is netted ONCE on the aggregate. A run frozen before `plan_basis` existed has no
+group and falls back to the row-wise sum, which is exactly right for the per-warehouse shape
+it was written in.
+
+Two consequences worth stating rather than discovering:
+
+* A location's channel needs are a **demand statement**, not an allocation statement. Under
+  aggregate sizing they do NOT sum to the product's suggestion - a bin can be short 30 while
+  the network holds a surplus. What reconciles to the order is `location_suggested_qty`, the
+  engine's own split. Under per-warehouse scope (the default, singleton pools) each group is
+  one location and the channel sums reconcile exactly as before.
+* `warehouse_id` lives in the recommendation snapshot, where the allocator replay reads it;
+  `_channel_freeze` strips it from the product row's stored basis, which is addressed by code.
+
+`_persist_location_split` gained the matching fallback: a NETWORK buy names no warehouse, so
+there was no per-location row to replay the allocator over and a product-grain decision on a
+network run could not be split at all. It now reads the frozen basis's member locations and
+their engine shares as the deficit signal (AC-F08, AC-F12).
+
+### Evidence
+
+Re-seeded run `76efe9f7-879a-4d33-b1ff-663d506bda13` (network scope, `decision_grain
+product`, contract 1, company `...0001`), 8,327 recommendations, 507 summary rows. The stale
+`57022069-...` run was deleted first.
+
+* 2,043 frozen basis location entries, **0** with a null `warehouse_code`, **0** with a null
+  `on_hand`.
+* 507 of 507 rows: `suggested_qty = ceil(engine rounded_qty)` - the only difference from the
+  engine's raw figure is the quantize to the row's frozen `uom_decimal_places` (0 here), which
+  is what AC-F11 asks for. `basis.raw_need` equals the engine's figure on 506; the one
+  exception is `MWB248`, where the engine had already applied MOQ 100 to a raw need of 33 and
+  both answers are 100.
+* `MWB242`, the row that read 0: now `retail_replenishment_qty 213`, `suggested_qty 213`,
+  matching the engine's buy exactly.
+
+```json
+{
+  "raw_need": 213.0,
+  "locations": [
+    {"warehouse_code": "BRW",    "warehouse_name": "BRW",    "on_hand": 0.0, "incoming_spo": 0.0, "on_order_po": 0.0, "reorder_level": null, "project_need": 0.0, "retail_need": 0.0, "project_sheet_need": 0.0,   "unclassified_need": 0.0,    "avg_daily_demand": 0.0, "location_suggested_qty": 0.0},
+    {"warehouse_code": "BRW-BB", "warehouse_name": "BRW-BB", "on_hand": 0.0, "incoming_spo": 0.0, "on_order_po": 0.0, "reorder_level": null, "project_need": 0.0, "retail_need": 0.0, "project_sheet_need": 51.0,  "unclassified_need": 1238.0, "avg_daily_demand": 0.0, "location_suggested_qty": 51.0},
+    {"warehouse_code": "BRW-IB", "warehouse_name": "BRW-IB", "on_hand": 0.0, "incoming_spo": 0.0, "on_order_po": 0.0, "reorder_level": null, "project_need": 0.0, "retail_need": 0.0, "project_sheet_need": 162.0, "unclassified_need": 0.0,    "avg_daily_demand": 0.0, "location_suggested_qty": 162.0}
+  ],
+  "rounded_qty": 213.0,
+  "supplier_moq": null,
+  "supplier_order_multiple": null,
+  "uom_decimal_places": 0,
+  "project_sheet_netted": 213.0,
+  "unclassified_excluded": 1238.0
+}
+```
+
+`svc.locations(db, "SRTWC286-SH-NEW-P", run_id=...)` on the same run returns two NAMED
+locations with disjoint channels (BRW: unclassified 44; BRW-BB: sheet 37, unclassified 38),
+`suggested_qty 37`. `record_decision(..., chosen_qty=37)` on that network run splits back to
+BRW 0 / BRW-BB 37 - previously it could not split at all. That decision is left in place on
+the run (`record_decision` commits), so `SRTWC286-SH-NEW-P` is the one decided row of 507 and
+carries two `scm.order_summary_location_allocation` children; every other row is an
+undecided freeze.
+
+**No confirmed Project Buy exists anywhere in the local data**, because Stage 1C has not
+landed and `projects.so_supply_decisions` is empty, so every `project_buy_qty` in the
+evidence run is 0 and the whole project-class book reads through the sheet leg. That is the
+honest state, not a defect.
+
+### Tests
+
+Four real-engine regressions in `tests/scm/test_channel_read_model.py`, all driving
+`create_run` -> `run_reorder` -> `write_rows` rather than a hand-built `inputs` dict:
+
+* `test_per_warehouse_run_keeps_every_demand_class_in_exactly_one_channel` and
+  `test_network_run_keeps_every_demand_class_in_exactly_one_channel` - one SO per class at
+  one location (retail 30, sheet 9, unclassified 7, confirmed Buy 12) under BOTH buy scopes.
+  Each quantity in exactly one field, `retail_net` short exactly Retail + sheet, the order
+  51 = firm 12 + netted 39 with the unclassified 7 excluded, and the frozen basis naming its
+  location with non-null shared facts.
+* `test_a_network_sized_buy_states_its_own_replenishment_not_the_sum_of_its_cells` - the
+  1b regression in miniature: A holds 50 spare, B is short 30, confirmed Buy 5 at B. The
+  network buys 5; summing the member cells says 35.
+* `test_a_pool_member_the_split_gave_nothing_to_still_reaches_the_product_row` - the pool
+  hole: B is allocated nothing and emits no row, and its 20 of unclassified demand must
+  still reach the product row.
+
+Hand-built fixtures moved to the canonical shape via
+`tests/scm/conftest.py::single_location_plan_basis` (`test_product_grain_summary.py::_rec`
+attaches it by default; `test_order_summary_routes.py::channel_chain` builds it inline), with
+`test_a_run_frozen_before_plan_basis_existed_still_sums_its_rows` keeping the row-wise
+fallback pinned. `test_summary_order_service.py` needed no change: its recommendations carry
+no channel figures at all and exercise the pre-channel derivation.
+
+Counts (Postgres, prod-copy database): `test_product_grain_summary` 36,
+`test_channel_read_model` 21, `test_order_summary_routes` 22, `test_summary_order_service`
+52, `test_plan_grain_policy` 20, `test_demand_breakdown` 14,
+`test_committed_v_migration_chain` 4, `test_pool_netting_parity::
+test_a_shared_pool_covers_its_bins_so_nothing_is_bought` 1 - **170 passed** together.
+Neighbours `test_m3_engine test_m4_decisions test_demand_reads_the_decision
+test_demand_source_split test_m0_view_correctness test_reorder_level_run` green; the two
+`test_m3_run` failures and the two remaining `test_pool_netting_parity` failures are the
+prod-copy-data ones already recorded above and fail identically at `HEAD`. `pyright` on the
+two touched service files: 88 errors before and after, none new.

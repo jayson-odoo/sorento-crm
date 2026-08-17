@@ -17,6 +17,13 @@ same "manually built recommendation, `write_rows` reads it" idiom
 so the arithmetic under test is isolated from engine trigger/sizing behaviour (which
 `test_channel_read_model.py` covers separately with a real run).
 
+Those hand-built rows carry the CANONICAL shape (`inputs["plan_basis"]`, via
+`tests.scm.conftest.single_location_plan_basis`), because a fixture in a shape the engine
+never emits proves nothing: the per-warehouse shape these were originally written in is
+exactly what hid the network and pool freeze defects. `canonical=False` keeps the
+pre-`plan_basis` shape available for the one test that pins the row-wise fallback a run
+frozen by an older deploy still needs.
+
 Every construction of a not-yet-existing column or model (`OrderSummaryRow.project_buy_qty`,
 `OrderSummaryLocationAllocation`, `ReorderRun.decision_grain`, `UnitOfMeasure.decimal_places`,
 ...) is deliberate: it is what makes the test fail for "the feature does not exist yet"
@@ -44,6 +51,7 @@ from app.services.scm import reorder_engine as eng
 from app.services.scm import summary_order_service as svc
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 from tests._pg_fixture import pg_session
+from tests.scm.conftest import single_location_plan_basis
 
 MARKER = "ZZTPGS"
 
@@ -117,11 +125,27 @@ def _run(db, *, decision_grain=None, contract_version=None, status="completed") 
 
 
 def _rec(db, run, product, warehouse, *, rounded_qty=0, inputs=None,
-         net_position=None, forecast_daily_demand=None) -> ReorderRecommendation:
+         net_position=None, forecast_daily_demand=None,
+         canonical=True) -> ReorderRecommendation:
+    """One frozen buy row in the shape the engine actually emits.
+
+    `canonical=True` attaches the `plan_basis` every buy carries - the sizing group's own
+    figures and the locations it read (`reorder_run_service._plan_basis`) - derived from
+    the same `inputs` this call already states. A per-warehouse buy is sized on ONE
+    location, so its group figures are that location's; the aggregate shapes, where they
+    are NOT, are proven against the real engine in `test_channel_read_model.py`.
+
+    `canonical=False` is the pre-`plan_basis` snapshot a run frozen by an older deploy
+    carries, which the freeze still has to read row-wise.
+    """
+    inputs = dict(inputs or {})
+    if canonical and inputs:
+        inputs["plan_basis"] = single_location_plan_basis(
+            inputs, warehouse, rounded=float(rounded_qty or 0))
     r = ReorderRecommendation(
         id=_u(), run_id=run.id, rec_type="buy", product_id=product.id,
         warehouse_id=warehouse.id, rounded_qty=rounded_qty, net_position=net_position,
-        forecast_daily_demand=forecast_daily_demand, inputs=inputs or {}, status="proposed",
+        forecast_daily_demand=forecast_daily_demand, inputs=inputs, status="proposed",
     )
     db.add(r)
     db.flush()
@@ -288,6 +312,33 @@ def test_write_rows_sums_project_and_retail_need_across_locations(db):
     assert float(row.project_buy_qty) == 1
     assert float(row.retail_replenishment_qty) == 1
     assert float(row.unclassified_demand_qty) == 2
+
+
+def test_a_run_frozen_before_plan_basis_existed_still_sums_its_rows(db):
+    """The fallback, kept honest. A run frozen by a deploy that predates `plan_basis`
+    carries only the per-location channel figures, and the freeze must still read them
+    row-wise - the shape is old, not legacy, so its product row is a real answer and not
+    an unavailable one."""
+    product = _product(db)
+    run = _run(db, decision_grain="product", contract_version=1)
+    brw, jb = _warehouse(db, "BRW"), _warehouse(db, "JB")
+    _rec(db, run, product, brw, rounded_qty=1, canonical=False,
+         inputs={"project_need": 1, "retail_need": 0, "unclassified_need": 0})
+    _rec(db, run, product, jb, rounded_qty=1, canonical=False,
+         inputs={"project_need": 0, "retail_need": 1, "unclassified_need": 2})
+
+    assert svc.write_rows(db, run.id) == 1
+    row = _row(db, run, product)
+
+    assert float(row.project_buy_qty) == 1
+    assert float(row.retail_replenishment_qty) == 1
+    assert float(row.unclassified_demand_qty) == 2
+    assert "plan_basis" not in (
+        db.query(ReorderRecommendation)
+        .filter(ReorderRecommendation.run_id == run.id).first().inputs
+    )
+    codes = {l["warehouse_code"] for l in row.channel_calculation_basis["locations"]}
+    assert codes == {brw.warehouse_code, jb.warehouse_code}
 
 
 def test_earliest_project_need_date_is_null_when_project_buy_qty_is_zero(db):

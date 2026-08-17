@@ -35,7 +35,11 @@ from app.services.scm import summary_order_service as svc
 from app.services.scm.demand import ORDER_INQUIRY_ORIGIN
 from app.services.scm.demand_class import class_of
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
-from tests.scm.conftest import requires_pg, scm_app  # noqa: F401  (fixture)
+from tests.scm.conftest import (  # noqa: F401  (scm_app is a fixture)
+    requires_pg,
+    scm_app,
+    single_location_plan_basis,
+)
 
 pytestmark = requires_pg
 
@@ -271,17 +275,21 @@ def channel_chain(scm_app):  # noqa: F811
     )
     db.add(run)
     db.flush()
-    db.add(ReorderRecommendation(
-        id=_u(), run_id=run.id, rec_type="buy", product_id=product.id,
-        warehouse_id=brw.id, rounded_qty=6, status="proposed",
-        inputs={"project_need": 4, "retail_need": 2, "unclassified_need": 1,
-                "project_sheet_need": 5},
-    ))
-    db.add(ReorderRecommendation(
-        id=_u(), run_id=run.id, rec_type="buy", product_id=product.id,
-        warehouse_id=jb.id, rounded_qty=5, status="proposed",
-        inputs={"project_need": 0, "retail_need": 3, "unclassified_need": 2},
-    ))
+    # The CANONICAL frozen shape: every buy carries the basis of the sizing group it was
+    # netted over (`reorder_run_service._plan_basis`), which for a per-warehouse buy is
+    # its own single location. Building these in the old row-only shape is what let the
+    # network and pool freeze defects through.
+    for warehouse, rounded, channel in (
+        (brw, 6, {"project_need": 4, "retail_need": 2, "unclassified_need": 1,
+                  "project_sheet_need": 5}),
+        (jb, 5, {"project_need": 0, "retail_need": 3, "unclassified_need": 2}),
+    ):
+        db.add(ReorderRecommendation(
+            id=_u(), run_id=run.id, rec_type="buy", product_id=product.id,
+            warehouse_id=warehouse.id, rounded_qty=rounded, status="proposed",
+            inputs={**channel, "plan_basis": single_location_plan_basis(
+                channel, warehouse, rounded=rounded)},
+        ))
     db.flush()
     svc.write_rows(db, run.id)
 
