@@ -21,6 +21,7 @@ from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.import_log_service import ImportLogService
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
+from app.services.company_scope import stamp_lookup_companies
 from app.services.embedding_change_listener import (
     suppress_embedding_events,
     bulk_enqueue_embedding_events,
@@ -134,12 +135,16 @@ class OrderService:
             if not entity_buckets.has_resolved_filter:
                 if ids_only:
                     return []
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                     "resolved_entities": entity_buckets.as_echo(),
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=_product_uuid_filter
+                )
+                return payload
 
         filters = []
 
@@ -196,11 +201,15 @@ class OrderService:
             if not customer_ids:
                 if ids_only:
                     return []
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=_product_uuid_filter
+                )
+                return payload
             filters.append(Order.customer_id.in_(customer_ids))
             _customer_scoped = True
 
@@ -214,11 +223,15 @@ class OrderService:
             if not status_ids:
                 if ids_only:
                     return []
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=_product_uuid_filter
+                )
+                return payload
             filters.append(Order.order_status_id.in_(status_ids))
 
         # Semantic outstanding/delivered bucket (CRM-003). Distinct from the exact
@@ -479,6 +492,11 @@ class OrderService:
             },
             "empty": total == 0
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(
+            self.db, payload, orders, product_ids=_product_uuid_filter
+        )
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
         # Date-axis relaxation (§3.4): the customer (and any product/status scope)
@@ -1151,12 +1169,16 @@ class OrderService:
             # unintentionally list every order. Echo the unresolved inputs so the
             # agent surfaces "no match" to the user.
             if not entity_buckets.has_resolved_filter:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                     "resolved_entities": entity_buckets.as_echo(),
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=_product_uuid_filter
+                )
+                return payload
 
         filters = []
         product_match_filters: list = []
@@ -1238,11 +1260,15 @@ class OrderService:
                     product_ids.extend(str(r[0]) for r in fuzzy_rows)
             product_ids = list(dict.fromkeys(product_ids))
             if not product_ids:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=_product_uuid_filter
+                )
+                return payload
             filters.append(OrderLine.product_id.in_(product_ids))
             product_match_filters.append(OrderLine.product_id.in_(product_ids))
 
@@ -1350,12 +1376,19 @@ class OrderService:
             and not product_query
             and not (query and query.strip())
         ):
-            return {
+            payload = {
                 "data": [],
                 "pagination": {"total": 0, "page": page, "limit": limit},
                 "empty": True,
                 "resolved_entities": entity_buckets.as_echo(),
             }
+            stamp_lookup_companies(
+                self.db,
+                payload,
+                [],
+                product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+            )
+            return payload
 
         base_q = q.filter(and_(*filters)) if filters else q
         q = base_q.filter(query_filter) if query_filter is not None else base_q
@@ -1431,6 +1464,16 @@ class OrderService:
             },
             "empty": total == 0,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched. Both
+        # the typed uuid filter and the ids resolved from free-text product tokens
+        # count as "what was asked about".
+        stamp_lookup_companies(
+            self.db,
+            payload,
+            orders,
+            product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+        )
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
         return payload

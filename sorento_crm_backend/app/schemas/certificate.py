@@ -191,6 +191,11 @@ class CertificateProductResponse(BaseModel):
 
 class CertificateResponse(BaseModel):
     id: str
+    # Multi-company reply clarity: the owning company. ``company_name`` is
+    # resolved ONLY when the lookup spanned more than one company
+    # (`company_scope.stamp_lookup_companies`), and is null otherwise.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
     scheme: str
     certificate_number: str
     certifying_body: Optional[str] = None
@@ -241,6 +246,12 @@ class CertificateResponse(BaseModel):
     current_revision: Optional[CertificateRevisionResponse] = None
     possible_duplicate_of: Optional[CertificateRef] = None
     reminders: Optional[List[CertificateReminderResponse]] = None
+
+    @field_validator("company_id", mode="before")
+    @classmethod
+    def _company_id_to_str(cls, v):
+        """Convert UUID objects to strings."""
+        return str(v) if v else None
 
     class Config:
         from_attributes = True

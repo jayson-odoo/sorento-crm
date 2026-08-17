@@ -215,6 +215,7 @@ from app.schemas.product import (
     ProductAttachmentCreate, ProductAttachmentUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict, AppException
+from app.services.company_scope import stamp_lookup_companies
 from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
@@ -549,12 +550,14 @@ class ProductService:
                 ),
             )
             if not entity_buckets.product_codes:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                     "resolved_entities": entity_buckets.as_echo(),
                 }
+                stamp_lookup_companies(self.db, payload, [], product_ids=product_ids)
+                return payload
 
         q = self._build_list_query(
             query=query,
@@ -586,6 +589,7 @@ class ProductService:
                 "pagination": {"total": 0, "page": page, "limit": limit},
                 "empty": True,
             }
+            stamp_lookup_companies(self.db, payload, [], product_ids=product_ids)
             if entity_buckets is not None:
                 payload["resolved_entities"] = entity_buckets.as_echo()
             self._attach_product_alternatives(payload, query)
@@ -620,6 +624,9 @@ class ProductService:
             },
             "empty": total == 0
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(self.db, payload, products, product_ids=product_ids)
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
         if total == 0:
@@ -2562,13 +2569,18 @@ class ProductAttachmentService:
             resolve_or_empty,
         )
 
+        # Track which product(s) the caller scoped to, so an empty result can offer
+        # data-bearing variant/neighbour alternatives (§3.4 M5 entity-axis) and so
+        # EVERY exit, early returns included, can label per company.
+        _scoped_product_ids: set[str] = {str(pid) for pid in (product_ids or []) if pid}
+
         entity_buckets = resolve_or_empty(self.db, entities)
         if entity_buckets is not None and not entity_buckets.product_codes:
-            return empty_payload(entity_buckets, page=page, limit=limit)
-
-        # Track which product(s) the caller scoped to, so an empty result can offer
-        # data-bearing variant/neighbour alternatives (§3.4 M5 entity-axis).
-        _scoped_product_ids: set[str] = set()
+            payload = empty_payload(entity_buckets, page=page, limit=limit)
+            stamp_lookup_companies(
+                self.db, payload, [], product_ids=_scoped_product_ids
+            )
+            return payload
 
         q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
@@ -2595,11 +2607,15 @@ class ProductAttachmentService:
         if product_id:
             resolved_product_ids = self._resolve_product_identifiers(product_id)
             if not resolved_product_ids:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=_scoped_product_ids
+                )
+                return payload
             q = q.filter(ProductAttachment.product_id.in_(resolved_product_ids))
             _scoped_product_ids.update(str(pid) for pid in resolved_product_ids)
 
@@ -2608,7 +2624,6 @@ class ProductAttachmentService:
 
         if product_ids:
             q = q.filter(ProductAttachment.product_id.in_(product_ids))
-            _scoped_product_ids.update(str(pid) for pid in product_ids)
         if attachment_ids:
             q = q.filter(ProductAttachment.attachment_id.in_(attachment_ids))
         if attachment_type_ids:
@@ -2700,6 +2715,11 @@ class ProductAttachmentService:
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(
+            self.db, payload, payload["data"], product_ids=_scoped_product_ids
+        )
         # Entity-axis relaxation (§3.4 M5): the product resolved but has no
         # (matching-type) attachment. Offer data-bearing variant/neighbour
         # products that DO have such an attachment. Only on the empty path — a

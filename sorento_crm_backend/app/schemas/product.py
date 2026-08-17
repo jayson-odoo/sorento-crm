@@ -307,11 +307,16 @@ class ProductResponse(ProductBase):
     # detail-page Specifications tooltip and by the AI agent (so it can
     # answer "how big is product X" without a second tool call).
     field_attachments: Optional[dict] = None
+    # Multi-company reply clarity: the owning company. ``company_name`` is
+    # resolved ONLY when the lookup spanned more than one company
+    # (`company_scope.stamp_lookup_companies`), and is null otherwise.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
 
-    @field_validator('created_by', 'updated_by', mode='before')
+    @field_validator('created_by', 'updated_by', 'company_id', mode='before')
     @classmethod
     def convert_uuid_to_str(cls, v):
-        """Convert UUID objects to strings for created_by/updated_by."""
+        """Convert UUID objects to strings for created_by/updated_by/company_id."""
         if v is None:
             return None
         if isinstance(v, uuid.UUID):
@@ -521,8 +526,13 @@ class ProductAttachmentResponse(ProductAttachmentBase):
     product: Optional[ProductSimple] = None
     attachment: Optional[AttachmentSimple] = None
     certificate: Optional[ProductAttachmentCertificate] = None
+    # Multi-company reply clarity: the owning company. ``company_name`` is
+    # resolved ONLY when the lookup spanned more than one company
+    # (`company_scope.stamp_lookup_companies`), and is null otherwise.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
 
-    @field_validator('id', 'product_id', 'attachment_id', 'created_by', mode='before')
+    @field_validator('id', 'product_id', 'attachment_id', 'created_by', 'company_id', mode='before')
     @classmethod
     def convert_uuid_to_string(cls, v):
         """Convert UUID objects to strings."""
