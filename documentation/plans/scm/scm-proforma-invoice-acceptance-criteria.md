@@ -148,8 +148,9 @@ nothing resolved, it says so before Confirm is pressed.
 
 - **A derived document number is only as unique as the file name.** A block that states no PI
   number is named `PI-<file stem>-<block index>` (AC-P2.5), so two DIFFERENT files uploaded for
-  the same supplier under the SAME filename derive the same numbers and the second one replaces
-  the first in place. That is the price of idempotency without a generated id: the alternative
+  the same supplier under the SAME filename - or filenames sharing their first 80 characters,
+  since the stem is truncated to 80 so the block index always survives - derive the same
+  numbers and the second one replaces the first in place. That is the price of idempotency without a generated id: the alternative
   makes a genuine re-upload create a second set. A supplier whose documents state their own
   number is unaffected. Where it bites, rename the file.
 

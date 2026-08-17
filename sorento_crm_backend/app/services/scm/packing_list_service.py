@@ -173,7 +173,10 @@ def validate(
     summary["currency_source"] = source
     summary["priced_lines"] = _priced(parsed)
 
-    problems: list[str] = [p.reason for p in parsed.problems]
+    # Row problems are WARNINGS, mirroring the proforma channel: apply loads the readable
+    # rows regardless, and a Test that says "invalid" about a file Confirm then accepts is
+    # a verdict the operator learns to ignore. Errors are only what apply refuses.
+    problems: list[str] = []
     if parsed.missing_columns:
         problems.append(
             "The file does not name "
@@ -187,7 +190,7 @@ def validate(
         # so it is refused here rather than landed as a bare figure (AC-P5.2).
         problems.append(_NO_CURRENCY)
 
-    warnings: list[str] = []
+    warnings: list[str] = [p.reason for p in parsed.problems][:50]
     if summary["unmatched_items"]:
         warnings.append(
             "No product matches "

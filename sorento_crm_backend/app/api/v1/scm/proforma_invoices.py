@@ -10,7 +10,7 @@ currency does NOT have to travel with it: the document usually states it and the
 price list often does, so the form field is the last resort rather than the first question
 (AC-P3.1).
 
-Nothing in here queries the database. Every read, every lookup and every refusal lives in
+No SQL is written in here; the handlers call service functions that do their own scoped reads. Every read, every lookup and every refusal lives in
 `proforma_invoice_service`; this module takes the HTTP shape apart, calls one function and
 commits. That is the layering rule, and it is also what makes the company scope impossible to
 forget - a raw supplier SELECT written here would have bypassed the ORM's filter.

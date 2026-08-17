@@ -216,7 +216,11 @@ first line's price silently valued the whole merged quantity at one of two price
 
 ## Review status
 
-Reviewer pass 1 findings addressed (2026-08-17): router thinned to service calls, supplier
+Reviewer pass 1 findings addressed; pass 2 verified them (no blockers) and its three
+should-fixes are applied: packing-list Test now reports row problems as warnings so Test and
+Confirm agree (this also covers the latent main bug where `RowProblem.message` did not exist
+and any row problem 500'd preview/validate); the Known-limits note states the 80-char stem
+truncation; the duplicate-line merge no longer turns an explicit cartons_count 0 into 1. (2026-08-17): router thinned to service calls, supplier
 lookups company-scoped, `pi_number_for` truncates the stem, proforma row problems are warnings,
 migration-374 grant sweep test added, currency field added to the packing-list upload, duplicate
 shipment lines merge to a quantity-weighted unit cost, an unrecognised form currency is a 422,

@@ -529,7 +529,6 @@ class SupplierService:
         return supplier
 
 
-
 def _merge_shipment_lines(line_payloads) -> list[dict]:
     """One row per product per shipment, merging the file's duplicate lines by product.
 
@@ -556,7 +555,10 @@ def _merge_shipment_lines(line_payloads) -> list[dict]:
         kept_qty = kept.get("quantity_shipped") or 0
         add_qty = d.get("quantity_shipped") or 0
         kept["quantity_shipped"] = kept_qty + add_qty
-        kept["cartons_count"] = (kept.get("cartons_count") or 0) + (d.get("cartons_count") or 1)
+        incoming_cartons = d.get("cartons_count")
+        kept["cartons_count"] = (kept.get("cartons_count") or 0) + (
+            incoming_cartons if incoming_cartons is not None else 1
+        )
 
         kept_cost, add_cost = kept.get("unit_cost"), d.get("unit_cost")
         if kept_cost is None or add_cost is None:
