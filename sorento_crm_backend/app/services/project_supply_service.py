@@ -178,6 +178,16 @@ class _LineFacts:
         return self.pool.warehouse_code if self.pool else None
 
     @property
+    def pool_key(self) -> str:
+        """Ledger key for pool draws: one bucket per PRODUCT per pool warehouse.
+
+        `pool_free` is this product's free stock at the pool, so the running balance
+        must be scoped the same way. Keyed by warehouse alone, a second product on the
+        same SO would read the first product's remaining headroom as its own.
+        """
+        return f"{self.product_id}:{self.pool.id}" if self.pool else ""
+
+    @property
     def pool_cap(self) -> Decimal:
         return max(self.pool_free - self.pool_reorder_level, _ZERO)
 
@@ -289,7 +299,7 @@ class ProjectSupplyService:
         payload_lines: List[Dict[str, Any]] = []
         for line in lines:
             fact = facts[str(line.id)]
-            pool_key = str(fact.pool.id) if fact.pool else ""
+            pool_key = fact.pool_key
             if pool_key and pool_key not in pool_left:
                 pool_left[pool_key] = fact.pool_free
             free_stock: Dict[str, Decimal] = {}
@@ -763,8 +773,8 @@ class ProjectSupplyService:
                 continue
             capacity[warehouse] -= qty
             if fact.pool_code and warehouse == fact.pool_code and fact.pool:
-                pool_left[str(fact.pool.id)] = max(
-                    pool_left.get(str(fact.pool.id), fact.pool_free) - qty, _ZERO
+                pool_left[fact.pool_key] = max(
+                    pool_left.get(fact.pool_key, fact.pool_free) - qty, _ZERO
                 )
 
         for item in entry.borrow or []:
@@ -792,7 +802,7 @@ class ProjectSupplyService:
         if fact.own_code:
             free[fact.own_code] = fact.own_free
         if fact.pool_code and fact.pool:
-            free[fact.pool_code] = pool_left.get(str(fact.pool.id), fact.pool_free)
+            free[fact.pool_code] = pool_left.get(fact.pool_key, fact.pool_free)
         return free
 
     def _warehouse_of(self, fact: _LineFacts, warehouse_id: str) -> Optional[str]:

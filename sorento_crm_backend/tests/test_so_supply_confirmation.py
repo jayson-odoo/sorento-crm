@@ -1049,3 +1049,58 @@ def test_the_fulfilment_planning_list_filters_by_the_confirmed_review_state(api)
     now_confirmed = client.get(f"{BASE}/fulfilment-planning?review_state=confirmed")
     assert now_confirmed.status_code == 200, now_confirmed.text
     assert order.id in {row["id"] for row in now_confirmed.json()["data"]}
+
+
+# --------------------------------------------------------------- pool buckets per product
+
+
+def test_two_products_sharing_one_pool_warehouse_never_share_a_reserve_bucket(api):
+    """The pool ledger is per PRODUCT per pool warehouse (AC-B07, AC-B12).
+
+    Product A has 40 free at the shared pool; product B has no stock anywhere. Keyed by
+    warehouse alone, B's line would read A's remaining headroom as its own free stock:
+    the proposal would offer B a Reserve out of a pile that holds none of B, and the
+    confirm-time recheck would let that over-Reserve commit.
+    """
+    client, world = api
+    db = world.db
+    product_b = _product(db)
+    _stock(db, world.product, world.pool_wh, on_hand=40)
+    core_so = _core_so(db, world.company_id)
+    core_line_a = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    core_line_b = _core_line(db, core_so, product_b, world.own_wh, qty_ordered="15")
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line_a = _project_line(db, order, line_no=10, product=world.product, core_line=core_line_a)
+    line_b = _project_line(db, order, line_no=20, product=product_b, core_line=core_line_b)
+    db.commit()
+
+    proposal = client.get(f"{BASE}/sales-orders/{order.id}/supply")
+    assert proposal.status_code == 200, proposal.text
+    by_line = {row["line_no"]: row for row in proposal.json()["lines"]}
+    kinds_b = {c["kind"]: Decimal(str(c["qty"])) for c in by_line[20]["components"]}
+    assert kinds_b == {"buy": Decimal("15")}, (
+        "product B holds nothing at the pool, so its whole open quantity is Buy; "
+        f"proposed {by_line[20]['components']}"
+    )
+    kinds_a = {c["kind"]: Decimal(str(c["qty"])) for c in by_line[10]["components"]}
+    assert kinds_a == {"reserve": Decimal("10")}
+
+    payload = {
+        "lines": [
+            _line_payload(line_a.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "10"}]),
+            _line_payload(line_b.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "15"}]),
+        ]
+    }
+    refused = client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload)
+    assert refused.status_code in (409, 422), refused.text
+    failing = refused.json().get("failing_lines") or []
+    assert any(f["line_no"] == 20 for f in failing), refused.text
+
+    from app.models.project_so import SOSupplyDecision
+
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .count()
+        == 0
+    ), "the refused confirmation must write nothing"
