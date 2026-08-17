@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
@@ -543,6 +544,79 @@ def test_a_legacy_run_reports_is_legacy_and_no_channel_fields(db):
 
 
 # =========================================================================== #
+# svc.locations: the drill reconciles against the product row (AC-F07, F08)
+# =========================================================================== #
+
+def test_locations_drill_reconciles_the_product_rows_three_quantities(db):
+    """AC-F03/F07/F08: the per-location channel breakdown the drill opens to must sum back
+    to exactly the three quantities the product row carries - one calculation, two
+    presentations, never two different answers for the same number."""
+    product = _product(db)
+    run = _run(db, decision_grain="product", contract_version=1)
+    brw, jb = _warehouse(db, "BRW"), _warehouse(db, "JB")
+    _rec(db, run, product, brw, rounded_qty=6,
+         inputs={"project_need": 4, "retail_need": 2, "unclassified_need": 1})
+    _rec(db, run, product, jb, rounded_qty=5,
+         inputs={"project_need": 0, "retail_need": 3, "unclassified_need": 2})
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+
+    out = svc.locations(db, product.product_code, run_id=run.id)
+
+    assert len(out["locations"]) == 2
+    assert sum(l["project_need"] for l in out["locations"]) == float(row.project_buy_qty) == 4
+    assert (sum(l["retail_need"] for l in out["locations"])
+            == float(row.retail_replenishment_qty) == 5)
+    assert (sum(l["unclassified_need"] for l in out["locations"])
+            == float(row.unclassified_demand_qty) == 3)
+    assert out["suggested_qty"] == float(row.suggested_qty)
+    assert out["uom_decimal_places"] == row.uom_decimal_places
+
+
+def test_locations_drill_earliest_need_date_is_null_when_project_buy_qty_is_zero(db):
+    """AC-F08: the gate follows `project_buy_qty`, read through the drill rather than off
+    the row directly - nothing confirmed anywhere in the locations means no date, even
+    though the product still shows retail need."""
+    product = _product(db)
+    run = _run(db, decision_grain="product", contract_version=1)
+    wh = _warehouse(db)
+    _rec(db, run, product, wh, rounded_qty=3,
+         inputs={"project_need": 0, "retail_need": 3, "unclassified_need": 0})
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+
+    out = svc.locations(db, product.product_code, run_id=run.id)
+
+    assert sum(l["project_need"] for l in out["locations"]) == 0 == float(row.project_buy_qty)
+    assert row.earliest_project_need_date is None
+
+
+def test_locations_drill_earliest_need_date_gate_opens_for_a_real_confirmed_buy(db):
+    """AC-F08: once a real confirmed Buy backs `project_buy_qty > 0` (the same section-4
+    chain `test_channel_read_model.py` proves at the read-model layer), the gate opens and
+    the drill's own per-location sum still reconciles against it."""
+    from tests.scm.test_channel_read_model import _confirmed_leg  # noqa: PLC0415
+
+    product = _product(db)
+    run = _run(db, decision_grain="product", contract_version=1)
+    brw, jb = _warehouse(db, "BRW"), _warehouse(db, "JB")
+    _confirmed_leg(db, product_id=product.id, warehouse_id=brw.id, buy_qty=4)
+    _rec(db, run, product, brw, rounded_qty=6,
+         inputs={"project_need": 4, "retail_need": 2, "unclassified_need": 1})
+    _rec(db, run, product, jb, rounded_qty=5,
+         inputs={"project_need": 0, "retail_need": 3, "unclassified_need": 2})
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+
+    out = svc.locations(db, product.product_code, run_id=run.id)
+
+    assert sum(l["project_need"] for l in out["locations"]) == float(row.project_buy_qty) == 4
+    assert row.earliest_project_need_date is not None, (
+        "a real confirmed Buy backs project_buy_qty > 0, so the gate must open"
+    )
+
+
+# =========================================================================== #
 # record_decision: precision validation, the frozen split, re-deciding
 # =========================================================================== #
 
@@ -670,6 +744,77 @@ def test_editing_the_uom_afterwards_does_not_change_a_frozen_rows_precision(db):
             db, product.product_code, run_id=run.id, chosen_qty=2.5,
             supplier_code=sup.supplier_code, actor="mr loo",
         )
+    assert e.value.detail["code"] == "chosen_qty_precision"
+
+
+def test_a_dp3_decisions_durability_survives_a_uom_downgrade_but_a_new_run_does_not(db):
+    """AC-F12, the full replay path. Record 2.75 on a dp-3 row (its split rows must sum
+    EXACTLY to 2.75 as Decimal - a float near-miss must not pass). Downgrade the UOM
+    master to dp-0 AFTER the run is decided: re-recording the SAME 2.75 on the SAME run
+    still succeeds and re-splits exactly, because validation and the allocator both replay
+    the ROW's own frozen snapshot (3), never live master data. A brand NEW run for the SAME
+    product, planned AFTER the downgrade, freezes 0 from the (now-downgraded) master - its
+    own decision rejects 2.75.
+    """
+    from app.models.scm import OrderSummaryLocationAllocation  # noqa: PLC0415
+
+    product = _product(db, decimal_places=3, stem="KG")
+    run = _run(db, decision_grain="product", contract_version=1)
+    brw, jb = _warehouse(db, "BRW"), _warehouse(db, "JB")
+    sup = _supplier_link(db, product)
+    _rec(db, run, product, brw, rounded_qty=1.375, net_position=-10, forecast_daily_demand=1,
+         inputs={"project_need": 1.375, "retail_need": 0, "unclassified_need": 0})
+    _rec(db, run, product, jb, rounded_qty=1.375, net_position=-10, forecast_daily_demand=1,
+         inputs={"project_need": 0, "retail_need": 1.375, "unclassified_need": 0})
+    svc.write_rows(db, run.id)
+
+    svc.record_decision(db, product.product_code, run_id=run.id, chosen_qty=2.75,
+                        supplier_code=sup.supplier_code, actor="mr loo")
+    row = _row(db, run, product)
+    assert row.uom_decimal_places == 3
+
+    def _splits(summary_row_id):
+        return (
+            db.query(OrderSummaryLocationAllocation)
+            .filter(OrderSummaryLocationAllocation.order_summary_row_id == summary_row_id)
+            .all()
+        )
+
+    assert sum(Decimal(str(s.allocated_qty)) for s in _splits(row.id)) == Decimal("2.75"), (
+        "split rows must sum EXACTLY to chosen_qty as Decimal, not a float near-miss"
+    )
+
+    # Downgrade the UOM master AFTER the run was decided.
+    db.execute(
+        text("UPDATE units_of_measure SET decimal_places = 0 WHERE id = :id"),
+        {"id": product.base_uom_id},
+    )
+    db.flush()
+    assert _row(db, run, product).uom_decimal_places == 3, "the row's own snapshot is untouched"
+
+    # Re-recording the SAME 2.75 on the SAME run still succeeds: the replay reads the row
+    # snapshot, not the downgraded master.
+    out = svc.record_decision(db, product.product_code, run_id=run.id, chosen_qty=2.75,
+                              supplier_code=sup.supplier_code, actor="mr loo again")
+    assert out["chosen_qty"] == 2.75
+    replay = _splits(row.id)
+    assert len(replay) == 2, "the old split rows are replaced, not accumulated alongside the new"
+    assert sum(Decimal(str(s.allocated_qty)) for s in replay) == Decimal("2.75")
+
+    # A brand NEW run for the SAME product, planned after the downgrade, freezes 0.
+    new_run = _run(db, decision_grain="product", contract_version=1)
+    _rec(db, new_run, product, brw, rounded_qty=1.375, net_position=-10, forecast_daily_demand=1,
+         inputs={"project_need": 1.375, "retail_need": 0, "unclassified_need": 0})
+    _rec(db, new_run, product, jb, rounded_qty=1.375, net_position=-10, forecast_daily_demand=1,
+         inputs={"project_need": 0, "retail_need": 1.375, "unclassified_need": 0})
+    svc.write_rows(db, new_run.id)
+    assert _row(db, new_run, product).uom_decimal_places == 0, (
+        "a NEW run's snapshot must read the downgraded master, not the old run's frozen 3"
+    )
+
+    with pytest.raises(AppException) as e:
+        svc.record_decision(db, product.product_code, run_id=new_run.id, chosen_qty=2.75,
+                            supplier_code=sup.supplier_code, actor="mr loo")
     assert e.value.detail["code"] == "chosen_qty_precision"
 
 

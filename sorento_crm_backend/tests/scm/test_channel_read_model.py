@@ -54,7 +54,14 @@ from app.services.scm import reorder_run_service as run_svc
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 from tests._pg_fixture import pg_session
 from tests.scm.conftest import requires_pg
-from tests.scm.test_m3_run import _link, _mk_product, _mk_stock, _mk_supplier, _mk_warehouse
+from tests.scm.test_m3_run import (
+    _client,
+    _link,
+    _mk_product,
+    _mk_stock,
+    _mk_supplier,
+    _mk_warehouse,
+)
 
 pytestmark = requires_pg
 
@@ -416,6 +423,33 @@ def test_project_confirmed_committed_counts_only_the_confirmed_leg(db, world):
     )
 
 
+def test_mixed_legs_from_different_sos_plus_retail_and_unclassified_do_not_double_count(
+    db, world,
+):
+    """The full breadth in one place: a sheet-origin project SO (order A), a confirmed
+    Buy read through a DIFFERENT order's Order Inquiry (order B), a retail line and an
+    unclassified line, all landing at the SAME (product, warehouse). Every channel must
+    keep its own figure and `committed` must still equal exactly the three channel columns
+    - the confirmed leg is a SUBSET of `project_committed`, never a fourth addend, so
+    summing all four would double count it.
+    """
+    _line(db, world, qty=18, demand_class="project", demand_origin="scm_order_inquiry")  # order A, sheet leg
+    _confirmed_leg(db, product_id=world["product"].id, warehouse_id=world["own"].id,
+                   buy_qty=8)  # order B, confirmed leg
+    _line(db, world, qty=15, demand_class="retail")
+    _line(db, world, qty=5, demand_class=None)
+
+    row = _row(db, world)
+
+    assert row["project_committed"] == 26, "sheet (18) + confirmed (8), two different SOs"
+    assert row["project_confirmed_committed"] == 8, "the confirmed leg alone"
+    assert row["retail_committed"] == 15
+    assert row["unclassified_committed"] == 5
+    assert row["committed"] == 46 == (
+        row["project_committed"] + row["retail_committed"] + row["unclassified_committed"]
+    )
+
+
 # --------------------------------------------------------------------------- #
 # recommendation inputs snapshot (AC-F05, AC-F07, AC-E05)
 # --------------------------------------------------------------------------- #
@@ -536,3 +570,96 @@ def test_sheet_leg_project_demand_is_netted_and_buys_nothing_when_stock_covers_i
     # Netted like any other commitment: 100 on hand less 20 committed, which is what the
     # engine saw before the channel split existed.
     assert inputs["retail_net"] == 80
+
+
+def test_recommendations_api_carries_the_sheet_leg_beside_the_confirmed_need(scm_app):
+    """AC-F05/F07 at the wire: `GET .../reorder-runs/{id}/recommendations` must expose
+    `project_sheet_need` beside `project_need` / `retail_need` / `unclassified_need` - the
+    same frozen figures `test_sheet_leg_project_demand_is_netted_and_buys_nothing_when_
+    stock_covers_it` pins directly on `inputs` above, read back here through the route the
+    FE actually calls rather than the ORM.
+    """
+    from fastapi.testclient import TestClient  # noqa: PLC0415
+
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, "ZZTCHRM-RUN-D")
+    pid = _mk_product(db, "ZZTCHRM-RUN-D")
+    _mk_stock(db, pid, wid, 100)
+    _link(db, pid, _mk_supplier(db, "ZZTCHRM Run Supplier D"), moq=None, mult=None)
+    _core_line_for_run(db, pid, wid, qty=20, demand_class="project",
+                       demand_origin="scm_order_inquiry")
+    db.flush()
+
+    created = run_svc.create_run(db, ["ZZTCHRM-RUN-D"], "warehouse", enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/reorder-runs/{created['run_id']}/recommendations",
+                    params={"page": 1, "limit": 50})
+        assert res.status_code == 200, res.text
+        row = next(r for r in res.json()["data"] if r["sku"] == "ZZTCHRM-RUN-D")
+        assert row["project_need"] == 0, "nothing confirmed here, so nothing is firm"
+        assert row["project_sheet_need"] == 20, "the sheet quantity must reach the wire"
+        assert row["unclassified_need"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# net_position_v: unchanged cardinality and column set (AC-F07)
+# --------------------------------------------------------------------------- #
+
+def test_net_position_v_keeps_its_columns_and_cardinality_after_the_channel_split(scm_app):
+    """`net_position_v` joins `committed_v` on its scalar `committed` column alone (migration
+    311/274's body, unedited by this slice) - growing `committed_v` by four channel columns
+    must not fan a (product, warehouse) key out into more than one row, and must not add or
+    remove a column downstream. Seeded with all four legs at once so `committed` here is
+    genuinely the three-channel sum, not a coincidental single-leg figure.
+    """
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTCHRM-NPV")
+    pid = _mk_product(db, "ZZTCHRM-NPV")
+    _mk_stock(db, pid, wid, 50)
+    _core_line_for_run(db, pid, wid, qty=10, demand_class="retail")
+    _core_line_for_run(db, pid, wid, qty=8, demand_class="project",
+                       demand_origin="scm_order_inquiry")
+    _core_line_for_run(db, pid, wid, qty=4, demand_class=None)
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=6)
+    db.flush()
+
+    cols = [
+        r[0] for r in db.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'scm' AND table_name = 'net_position_v' "
+            "ORDER BY ordinal_position"
+        )).all()
+    ]
+    assert cols == [
+        "product_id", "warehouse_id", "quantity_on_hand", "on_order", "committed",
+        "net_position",
+    ], "net_position_v's own column set must not grow just because committed_v's did"
+
+    rows = db.execute(
+        text(
+            "SELECT quantity_on_hand, on_order, committed, net_position "
+            "FROM scm.net_position_v WHERE product_id = :p AND warehouse_id = :w"
+        ),
+        {"p": pid, "w": wid},
+    ).mappings().all()
+    assert len(rows) == 1, "one row per (product, warehouse), not one per channel"
+    row = rows[0]
+
+    committed_row = db.execute(
+        text(
+            "SELECT committed, project_committed, project_confirmed_committed, "
+            "retail_committed, unclassified_committed FROM scm.committed_v "
+            "WHERE product_id = :p AND warehouse_id = :w"
+        ),
+        {"p": pid, "w": wid},
+    ).mappings().one()
+    assert float(committed_row["project_committed"]) == 14  # 8 sheet + 6 confirmed
+    assert float(committed_row["project_confirmed_committed"]) == 6
+    assert float(committed_row["retail_committed"]) == 10
+    assert float(committed_row["unclassified_committed"]) == 4
+
+    assert float(row["committed"]) == float(committed_row["committed"]) == 28
+    assert float(row["quantity_on_hand"]) == 50
+    assert float(row["net_position"]) == 50 + float(row["on_order"] or 0) - 28
