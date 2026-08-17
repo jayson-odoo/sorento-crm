@@ -558,3 +558,31 @@ test_demand_source_split test_m0_view_correctness test_reorder_level_run` green;
 `test_m3_run` failures and the two remaining `test_pool_netting_parity` failures are the
 prod-copy-data ones already recorded above and fail identically at `HEAD`. `pyright` on the
 two touched service files: 88 errors before and after, none new.
+
+### 4.4 Real-stack evidence run after the sizing-group fix (agent-browser, 2026-08-18)
+
+Stack: backend `uvicorn` :8022, frontend `next dev` :3022 (this worktree's `.env.local`),
+private session `scm-stage2-product-plan`, login with the `E2E_EMAIL` / `E2E_PASSWORD` pair,
+session closed and both servers stopped after the run. Data: the re-seeded network-scope run
+`76efe9f7-879a-4d33-b1ff-663d506bda13` (decision_grain `product`, contract 1; 2,043 basis
+location entries, 0 with a null identity; 507/507 rows `suggested_qty` = the engine's own
+rounded figure at frozen dp - measured in BE-6). Navigation by sidebar clicks from `/`:
+Supply Chain > Reorder Planning, then Actions > Order summary.
+
+- Chip **Plan grain: Product** on the stamped run; Order summary renders one row per
+  product with stacked Project / Retail / Unclass. readings and per-channel drill buttons
+  (AC-E03 live; AC15S row reads Project 2 / Retail 0 / Unclass. 2 off live
+  `demand_class` aggregates).
+- `SRTWC286-SH-NEW-P` (the row the defect froze anonymously): Member locations drill now
+  shows **named** BRW and BRW-BB rows with per-channel columns, shared Stock / SPO / PO /
+  Level shown once, "Suggested once at the product: 37", "Chosen: 37", split BRW 0 /
+  BRW-BB 37 - the decision recorded in BE-6's service-level proof survives to the UI
+  (AC-F08, AC-F12 durable split). Screenshot `40-real-locations-drill-fixed.png`.
+- Run history > a pre-contract run flips the chip to **Legacy run** with "You are viewing a
+  past run from ..." and every decision cell reading "Legacy run - read only. Create a new
+  plan to decide." (AC-F10 live). Screenshot `41-real-legacy-readonly.png`.
+- `errors` empty; console shows no errors beyond dev noise.
+
+Two freeze defects the first real-stack run surfaced (anonymous basis locations; a product
+row contradicting its own run's sizing) are the subject of BE-6 above and are what this run
+re-verifies as fixed.
