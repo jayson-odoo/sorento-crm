@@ -45,9 +45,16 @@ def _normalize(sql: str) -> str:
 
 @requires_pg
 def test_migration_bodies_are_frozen_not_imported():
-    """No view migration may import the live SQL - that import IS the outage."""
+    """No migration may import the live application code - that import IS the outage.
+
+    Wider than the view chain the file is named for: 374 adds `units_of_measure
+    .decimal_places` and BACKFILLS it, and it originally called
+    `app.services.uom_decimal_places.backfill_uom_decimal_places` - the same shape as the
+    340/346 failure, with the same replay hazard. Its name lists and observed-scale SQL are
+    frozen in the migration now, and the service keeps the live copy for admin re-runs.
+    """
     for name in ("340_scm_committed_reads_the_decision", "346_scm_demand_origin_split",
-                 "376_scm_channel_read_model"):
+                 "374_uom_decimal_places", "376_scm_channel_read_model"):
         source = (_VERSIONS / f"{name}.py").read_text()
         assert "from app.services" not in source, (
             f"{name} imports live application code; freeze the SQL in the migration "

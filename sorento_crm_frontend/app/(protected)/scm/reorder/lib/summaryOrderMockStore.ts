@@ -52,10 +52,11 @@
  *
  * ## Stage 2 scenarios
  *
- * Which of the six Stage-2 states this store serves is decided by the ONE switch
- * in `frontPlanningMockStore` (`?plan_mock=product|location|legacy|empty|loading|
- * decision_error`), so the report, the plan grid and the PO worklist can never
- * disagree about the run they are describing.
+ * Which of the six Stage-2 states this store serves is decided by the ONE constant
+ * in `frontPlanningMockStore` (`DEFAULT_SCENARIO`), so this store and the PO
+ * worklist can never disagree about the run they are describing. It is a
+ * compile-time constant with no runtime selector - the Phase-1 `?plan_mock=` URL
+ * switch is gone.
  * ============================================================================
  */
 import { frontPlanningScenario, runGrainFields } from './frontPlanningMockStore';
@@ -129,14 +130,6 @@ const ROWS: OrderSummaryRow[] = [
     retail_replenishment_qty: 80,
     earliest_project_need_date: '2026-09-15',
     uom_decimal_places: 0,
-    channel_calculation_basis: {
-      raw_need: 260,
-      supplier_moq: 200,
-      supplier_order_multiple: 50,
-      rounded_qty: 300,
-      uom_decimal_places: 0,
-      unclassified_excluded: 12,
-    },
     location_allocations: [
       { warehouse_code: 'BRW', warehouse_name: 'Bandar Baru Warehouse', allocated_qty: 400 },
       { warehouse_code: 'JB', warehouse_name: 'Johor Bahru Branch', allocated_qty: 200 },
@@ -171,14 +164,6 @@ const ROWS: OrderSummaryRow[] = [
     retail_replenishment_qty: 0,
     earliest_project_need_date: null,
     uom_decimal_places: 0,
-    channel_calculation_basis: {
-      raw_need: 0,
-      supplier_moq: 100,
-      supplier_order_multiple: 20,
-      rounded_qty: 0,
-      uom_decimal_places: 0,
-      unclassified_excluded: 0,
-    },
     location_allocations: null,
     chosen_qty: null,
     chosen_supplier_code: null,
@@ -212,14 +197,6 @@ const ROWS: OrderSummaryRow[] = [
     retail_replenishment_qty: 0,
     earliest_project_need_date: '2026-08-03',
     uom_decimal_places: 0,
-    channel_calculation_basis: {
-      raw_need: 100,
-      supplier_moq: 100,
-      supplier_order_multiple: 25,
-      rounded_qty: 100,
-      uom_decimal_places: 0,
-      unclassified_excluded: 0,
-    },
     location_allocations: null,
     chosen_qty: null,
     chosen_supplier_code: null,
@@ -251,14 +228,6 @@ const ROWS: OrderSummaryRow[] = [
     retail_replenishment_qty: 8,
     earliest_project_need_date: null,
     uom_decimal_places: 0,
-    channel_calculation_basis: {
-      raw_need: 8,
-      supplier_moq: 50,
-      supplier_order_multiple: 10,
-      rounded_qty: 50,
-      uom_decimal_places: 0,
-      unclassified_excluded: 0,
-    },
     location_allocations: null,
     chosen_qty: null,
     chosen_supplier_code: null,
@@ -289,14 +258,6 @@ const ROWS: OrderSummaryRow[] = [
     retail_replenishment_qty: 10,
     earliest_project_need_date: '2026-08-19',
     uom_decimal_places: 0,
-    channel_calculation_basis: {
-      raw_need: 40,
-      supplier_moq: 40,
-      supplier_order_multiple: 10,
-      rounded_qty: 40,
-      uom_decimal_places: 0,
-      unclassified_excluded: 0,
-    },
     location_allocations: [
       { warehouse_code: 'BRW', warehouse_name: 'Bandar Baru Warehouse', allocated_qty: 30 },
       { warehouse_code: 'IPH', warehouse_name: 'Ipoh Branch', allocated_qty: 10 },
@@ -330,7 +291,6 @@ const ROWS: OrderSummaryRow[] = [
     retail_replenishment_qty: 0,
     earliest_project_need_date: null,
     uom_decimal_places: 0,
-    channel_calculation_basis: null,
     location_allocations: null,
     chosen_qty: null,
     chosen_supplier_code: null,
@@ -365,14 +325,6 @@ const ROWS: OrderSummaryRow[] = [
     earliest_project_need_date: '2026-09-02',
     // Counted in whole units, so 2.5 is refused on this row (AC-F12).
     uom_decimal_places: 0,
-    channel_calculation_basis: {
-      raw_need: 2,
-      supplier_moq: null,
-      supplier_order_multiple: 10,
-      rounded_qty: 10,
-      uom_decimal_places: 0,
-      unclassified_excluded: 0,
-    },
     location_allocations: null,
     chosen_qty: null,
     chosen_supplier_code: null,
@@ -406,14 +358,6 @@ const ROWS: OrderSummaryRow[] = [
     retail_replenishment_qty: 1.25,
     earliest_project_need_date: '2026-08-28',
     uom_decimal_places: 3,
-    channel_calculation_basis: {
-      raw_need: 2.5,
-      supplier_moq: null,
-      supplier_order_multiple: null,
-      rounded_qty: 2.5,
-      uom_decimal_places: 3,
-      unclassified_excluded: 0,
-    },
     location_allocations: null,
     chosen_qty: null,
     chosen_supplier_code: null,
@@ -1070,7 +1014,6 @@ function toLegacyRow(row: OrderSummaryRow): OrderSummaryRow {
     retail_replenishment_qty: null,
     earliest_project_need_date: null,
     uom_decimal_places: null,
-    channel_calculation_basis: null,
     location_allocations: null,
     unclassified_line_count: 0,
   };

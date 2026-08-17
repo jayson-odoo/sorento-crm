@@ -13,7 +13,7 @@ planning.md` AC-F12, `STAGE2-scm-front-planning-worknotes.md` slice S2-BE-1.
 * `CanonicalUnitOfMeasure` / `_uom_columns` do not accept it.
 
 Every test below is written to PASS once the coder lands that surface, and to fail NOW for a
-reason that names the missing piece — a route assertion on a dropped/absent field, a
+reason that names the missing piece - a route assertion on a dropped/absent field, a
 `TypeError: 'decimal_places' is an invalid keyword argument` from the ORM, or an `ImportError`
 on the not-yet-created service module (imported locally inside the classify/backfill tests so
 one missing module does not mask the unrelated CRUD/model failures in this same file).

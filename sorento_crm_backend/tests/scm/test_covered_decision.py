@@ -15,7 +15,7 @@ from sqlalchemy import text
 from app.services.error_handler import AppException
 from app.services.scm import decision_service as dsvc
 from app.services.scm import reorder_run_service as svc
-from tests.scm.conftest import requires_pg
+from tests.scm.conftest import requires_pg, set_plan_grain
 from tests.scm.test_m3_run import (
     _link,
     _mk_demand,
@@ -46,6 +46,12 @@ def _covered_row(db):
     _link(db, pid, _mk_supplier(db, "ZZT Dec Supplier"), moq=None, mult=None, cost=20)
     db.flush()
 
+    # Answering a covered-by-stock row IS a location decision (front planning 5.4,
+    # AC-F09), so the run has to be created under the LOCATION policy - under the
+    # rollout default, `product`, the run owns the `order_summary_row` decision instead
+    # and refuses this one with `decision_grain_mismatch`, which is the contract rather
+    # than a defect. Same idiom as tests/scm/test_m4_decisions.py.
+    set_plan_grain(db, "location")
     created = svc.create_run(db, ["ZZTW-DEC"], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     row = db.execute(text(

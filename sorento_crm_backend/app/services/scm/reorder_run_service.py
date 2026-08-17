@@ -898,7 +898,8 @@ def _apply_unlocated_demand(db: Session, by_product: dict[str, list[dict]]) -> N
 
 def _covered_rec(run_id: str, pool_id: str, prows: list[dict], anchor: dict, agg_cell: dict,
                  *, moq: Optional[float] = None,
-                 order_multiple: Optional[float] = None) -> Optional[ReorderRecommendation]:
+                 order_multiple: Optional[float] = None,
+                 plan_basis: Optional[dict] = None) -> Optional[ReorderRecommendation]:
     """A demand line the pool's own stock covers is a SUGGESTION, never a silent omission.
 
     An order-inquiry line reaching the plan has already been through CS: they decided this
@@ -913,6 +914,11 @@ def _covered_rec(run_id: str, pool_id: str, prows: list[dict], anchor: dict, agg
 
     ``None`` when the pool has no committed demand at all - that is genuinely nothing to
     say, not a decision withheld.
+
+    It carries its sizing group's ``plan_basis`` like every other row, because the demand
+    the group holds is true whether or not the group ended up buying: a product whose
+    location A buys and location B is covered would otherwise lose B's unclassified and
+    project-sheet readings, and every member location of B, from the product row.
     """
     committed = sum(float(r["committed"] or 0.0) for r in prows)
     if committed <= 0:
@@ -930,6 +936,7 @@ def _covered_rec(run_id: str, pool_id: str, prows: list[dict], anchor: dict, agg
         order_qty=committed, rounded=rounded,
         reason_label=(f"{_qty_label(available)} available in this pool covers "
                       f"{_qty_label(committed)} committed"),
+        plan_basis=plan_basis,
     )
 
 
@@ -1000,7 +1007,7 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     # exist gives 0, and 0 is a real target that any deficit trips - so the pool bought its
     # whole shortage on a number nobody chose, which is the exact failure the needs_level
     # row exists to prevent. None means "do not plan this pool"; the members are still each
-    # named above, so the work is visible rather than silent.
+    # named below, so the work is visible rather than silent.
     pool_unplannable = (pool_levels is not None
                         and all(v is None for v in pool_levels.values()))
     if pool_unplannable:
@@ -1009,15 +1016,6 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     agg = eng.aggregate_network(wh_inputs, lead_time_days=lead, safety_days=safety_days,
                                 review_days=review_days, moq=moq,
                                 order_multiple=order_multiple, levels=pool_levels)
-
-    # Named one row per bin, not once for the pool: the buyer has to set each one, and a
-    # single pool-level "somebody needs a level" would not say which.
-    for r, c in unset:
-        recs.append(_build_rec(run_id, "needs_level", r, c,
-                               warehouse_id=str(r["warehouse_id"]),
-                               order_qty=None, rounded=None,
-                               reason_enum="needs_level",
-                               reason_label=_needs_level_label(c)))
 
     min_override = _fnum(policy.get("min_override"))
     max_override = _fnum(policy.get("max_override"))
@@ -1065,16 +1063,30 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                                  target_oup=target_oup, triggered=triggered,
                                  reason_label=reason_label, recommended=recommended,
                                  rounded=rounded, cells=cells)
+    # ONE basis for the whole pool, carried identically by every row the pool emits -
+    # including the rows that buy nothing. A member the split gave nothing to emits no row
+    # at all, and a group that was covered or could not be sourced emits no buy at all, so
+    # without this their channel needs never reach the product's readings. A demand
+    # statement does not stop being true because the allocator sent the goods to a sibling,
+    # or because the pool had enough already.
+    split = eng.allocate(rounded, agg["warehouses"]) if triggered and rounded > 0 else {}
+    pool_basis = _plan_basis(pool_id, "pool", prows, cells, split,
+                             retail_need=retail_recommended,
+                             recommended=recommended, rounded=rounded)
+
+    # Named one row per bin, not once for the pool: the buyer has to set each one, and a
+    # single pool-level "somebody needs a level" would not say which. Emitted here rather
+    # than where `unset` was collected, so each row can carry the pool's basis; they still
+    # come first in the pool's rows, exactly as before.
+    for r, c in unset:
+        recs.append(_build_rec(run_id, "needs_level", r, c,
+                               warehouse_id=str(r["warehouse_id"]),
+                               order_qty=None, rounded=None,
+                               reason_enum="needs_level",
+                               reason_label=_needs_level_label(c),
+                               plan_basis=pool_basis))
     if triggered and rounded > 0:
-        split = eng.allocate(rounded, agg["warehouses"])
         allocation = _allocation_lines(split, wh_meta)
-        # ONE basis for the whole pool, carried identically by every row the pool emits.
-        # A member the split gave nothing to emits no row at all, so without this its
-        # channel needs never reach the product's readings - and a demand statement does
-        # not stop being true because the allocator sent the goods to a sibling.
-        pool_basis = _plan_basis(pool_id, "pool", prows, cells, split,
-                                 retail_need=retail_recommended,
-                                 recommended=recommended, rounded=rounded)
         if chosen:
             # ONE ROW PER LOCATION THAT ASKED, never one row on the pool root.
             #
@@ -1141,10 +1153,12 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
             recs.append(_build_rec(
                 run_id, "exception", anchor, agg_cell, warehouse_id=pool_id,
                 order_qty=None, rounded=None,
-                reason_label="no linked supplier - cannot source this pool reorder"))
+                reason_label="no linked supplier - cannot source this pool reorder",
+                plan_basis=pool_basis))
     else:
         covered = _covered_rec(run_id, pool_id, prows, anchor, agg_cell,
-                               moq=moq, order_multiple=order_multiple)
+                               moq=moq, order_multiple=order_multiple,
+                               plan_basis=pool_basis)
         if covered is not None:
             recs.append(covered)
 
@@ -1380,6 +1394,20 @@ def _emit_cell(run_id: str, row: dict, c: dict,
     out: list[ReorderRecommendation] = []
     chosen = c["chosen"]
     disp = c["disposition"]
+    wid = str(row["warehouse_id"])
+
+    def _basis(shares: Optional[dict] = None, *, recommended=None, rounded=None) -> dict:
+        """This cell's sizing group, in the ONE shape the product freeze reads.
+
+        Per-warehouse scope makes every cell its own group: one location, sized on itself.
+        A cell that sized no purchase (needs_level / exception / covered) still states its
+        group, because its channel needs are a demand statement - the product row has to
+        show them and the drill has to name the location - and it simply took no share of
+        a buy, which is what the empty ``shares`` says.
+        """
+        return _plan_basis(wid, "location", [row], [c], shares or {},
+                           retail_need=float(c.get("retail_need") or 0.0),
+                           recommended=recommended, rounded=rounded)
 
     # #8: a cell classified for disposition (dead OR overstock) must NOT also emit a buy
     # — buying more of dead/overstocked stock is contradictory. The disposition rec
@@ -1394,37 +1422,42 @@ def _emit_cell(run_id: str, row: dict, c: dict,
         # emitted as its own kind, carrying the suggestion and the months behind it. One
         # click on that row turns it into a plannable item next run.
         out.append(_build_rec(run_id, "needs_level", row, c,
-                              warehouse_id=str(row["warehouse_id"]),
+                              warehouse_id=wid,
                               order_qty=None, rounded=None,
                               reason_enum="needs_level",
-                              reason_label=_needs_level_label(c)))
+                              reason_label=_needs_level_label(c),
+                              plan_basis=_basis()))
     elif not disp and c["triggered"] and rounded > 0:
         if chosen:
-            wid = str(row["warehouse_id"])
             out.append(_build_rec(run_id, "buy", row, c, warehouse_id=wid,
                                   order_qty=c["recommended"], rounded=c["rounded"],
                                   # The degenerate group: one location, sized on itself,
                                   # taking its whole buy. Stated in the SAME shape a pool
                                   # or a network buy states, so the product freeze has
                                   # one thing to read rather than three.
-                                  plan_basis=_plan_basis(
-                                      wid, "location", [row], [c], {wid: rounded},
-                                      retail_need=float(c.get("retail_need") or 0.0),
-                                      recommended=c["recommended"], rounded=c["rounded"])))
+                                  plan_basis=_basis({wid: rounded},
+                                                    recommended=c["recommended"],
+                                                    rounded=c["rounded"])))
         else:
+            # The sharpest case for carrying a basis on a row that buys nothing: a
+            # location holding CONFIRMED unplaced Project Buy with no linked supplier
+            # triggers and then cannot be sourced, so without this its firm demand
+            # reaches no product row at all (AC-E04, AC-E06).
             out.append(_build_rec(run_id, "exception", row, c,
-                                  warehouse_id=str(row["warehouse_id"]),
+                                  warehouse_id=wid,
                                   order_qty=None, rounded=None,
-                                  reason_label="no linked supplier — cannot source this reorder"))
+                                  reason_label="no linked supplier - cannot source this reorder",
+                                  plan_basis=_basis()))
     elif not disp:
         # Same rule as the pool path: stock covering the demand is a SUGGESTION, and
         # writing nothing here would silently decide "use stock" for the single-location
         # case, which is most of the catalogue. A cell already destined for disposition is
         # excluded - "buy more of this dead stock" is the contradiction the gate above
         # exists to prevent, and offering it as a choice is the same contradiction.
-        covered = _covered_rec(run_id, str(row["warehouse_id"]), [row], row, c,
+        covered = _covered_rec(run_id, wid, [row], row, c,
                                moq=_fnum(c.get("moq")),
-                               order_multiple=_fnum(c.get("order_multiple")))
+                               order_multiple=_fnum(c.get("order_multiple")),
+                               plan_basis=_basis())
         if covered is not None:
             out.append(covered)
 
@@ -1489,16 +1522,14 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         # S10 - same rule as the pool path: the network target is the sum of the levels the
         # buyer owns, and a location with no level is named rather than guessed at.
         net_levels = None
+        # Collected here, emitted after the network has been sized, so each row can carry
+        # the network's own basis; they still come first in this product's rows.
+        unset_levels: list[tuple[dict, dict]] = []
         if policy_type == "reorder_level":
             net_levels = {str(r["warehouse_id"]): c.get("reorder_level")
                           for r, c in zip(prows, computed)}
-            for r, c in zip(prows, computed):
-                if c.get("reorder_level") is None:
-                    recs.append(_build_rec(run_id, "needs_level", r, c,
-                                           warehouse_id=str(r["warehouse_id"]),
-                                           order_qty=None, rounded=None,
-                                           reason_enum="needs_level",
-                                           reason_label=_needs_level_label(c)))
+            unset_levels = [(r, c) for r, c in zip(prows, computed)
+                            if c.get("reorder_level") is None]
 
         agg = eng.aggregate_network(wh_inputs, lead_time_days=lead, safety_days=safety_days,
                                     review_days=review_days, moq=moq,
@@ -1545,26 +1576,35 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
                                      target_oup=target_oup, triggered=triggered,
                                      reason_label=reason_label, recommended=recommended,
                                      rounded=rounded, cells=computed)
+        # The network buy names NO warehouse, so without this the product row's only
+        # location evidence is one nameless entry with every shared fact null, and its
+        # netted replenishment reads as the sum of member cells that individually never
+        # triggered (AC-F08). Built for the unsourceable and the un-levelled network too:
+        # those rows carry the same demand, and only the purchase is missing.
+        allocation_map = (eng.allocate(rounded, agg["warehouses"])
+                          if triggered and rounded > 0 else {})
+        network_basis = _plan_basis("network", "network", prows, computed, allocation_map,
+                                    retail_need=retail_recommended,
+                                    recommended=recommended, rounded=rounded)
+        for r, c in unset_levels:
+            recs.append(_build_rec(run_id, "needs_level", r, c,
+                                   warehouse_id=str(r["warehouse_id"]),
+                                   order_qty=None, rounded=None,
+                                   reason_enum="needs_level",
+                                   reason_label=_needs_level_label(c),
+                                   plan_basis=network_basis))
         if triggered and rounded > 0 and chosen:
-            allocation_map = eng.allocate(rounded, agg["warehouses"])
             allocation = _allocation_lines(allocation_map, wh_meta)
             recs.append(_build_rec(run_id, "buy", first, agg_cell, warehouse_id=None,
                                    order_qty=recommended, rounded=rounded,
                                    allocation=allocation,
-                                   # The network buy names NO warehouse, so without this
-                                   # the product row's only location evidence is one
-                                   # nameless entry with every shared fact null, and its
-                                   # netted replenishment reads as the sum of member
-                                   # cells that individually never triggered (AC-F08).
-                                   plan_basis=_plan_basis(
-                                       "network", "network", prows, computed,
-                                       allocation_map,
-                                       retail_need=retail_recommended,
-                                       recommended=recommended, rounded=rounded)))
+                                   plan_basis=network_basis))
         elif triggered and rounded > 0 and not chosen:
-            recs.append(_build_rec(run_id, "exception", first, agg_cell, warehouse_id=None,
-                                   order_qty=None, rounded=None,
-                                   reason_label="no linked supplier — cannot source this network reorder"))
+            recs.append(_build_rec(
+                run_id, "exception", first, agg_cell, warehouse_id=None,
+                order_qty=None, rounded=None,
+                reason_label="no linked supplier - cannot source this network reorder",
+                plan_basis=network_basis))
 
         # --- per-warehouse disposition recs (dead/overstock) ---
         for r, cell in zip(prows, computed):

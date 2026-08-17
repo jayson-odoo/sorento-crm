@@ -7,8 +7,8 @@ version, and neither ever changes afterwards - so changing the policy affects on
 created later, and the grain a screen shows for an existing run is its stamp, never the
 live setting (AC-F09, AC-F10).
 
-Two writes are therefore refused, and both are 409 because the request is well-formed and
-the state is what makes it wrong:
+Writes are therefore refused in two ways, and both are 409 because the request is
+well-formed and the state is what makes it wrong:
 
 * `legacy_run_read_only` - the run predates the contract (`front_planning_contract_version
   IS NULL`). Its recommendations, overrides and summary rows stay exactly as they are, and
@@ -20,8 +20,9 @@ the state is what makes it wrong:
   accept / adjust / reject. Exactly one of the two is actionable per run, which is what
   stops both grains ordering the same requirement.
 
-Both services route through `assert_decision_grain` so the two refusals cannot drift apart
-in wording or in status code.
+Both services route through `assert_decision_grain` (or `assert_not_legacy`, its first
+half, for a write that belongs to neither grain) so the two refusals cannot drift apart in
+wording or in status code.
 """
 from __future__ import annotations
 
@@ -68,8 +69,14 @@ def decision_grain_of(run) -> Optional[str]:
     return getattr(run, "decision_grain", None)
 
 
-def assert_decision_grain(run, expected: str) -> None:
-    """Refuse a decision write this run cannot own. Raises `AppException` (409)."""
+def assert_not_legacy(run) -> None:
+    """Refuse ANY write to a pre-contract run. Raises `AppException` (409).
+
+    Split out of `assert_decision_grain` for the writes that belong to neither grain and
+    still may not touch a legacy run - clearing a run's decisions back to as-generated is
+    the one that exists today. Same wording and same code as the grain guard, because a
+    caller reads one refusal and cannot be told two different stories about the same run.
+    """
     if is_legacy_run(run):
         raise AppException(
             status_code=409,
@@ -79,6 +86,11 @@ def assert_decision_grain(run, expected: str) -> None:
             ),
             code="legacy_run_read_only",
         )
+
+
+def assert_decision_grain(run, expected: str) -> None:
+    """Refuse a decision write this run cannot own. Raises `AppException` (409)."""
+    assert_not_legacy(run)
     grain = getattr(run, "decision_grain", None)
     if grain != expected:
         raise AppException(

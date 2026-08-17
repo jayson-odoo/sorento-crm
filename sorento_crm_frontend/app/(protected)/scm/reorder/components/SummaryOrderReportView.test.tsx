@@ -250,6 +250,100 @@ describe('SummaryOrderReportView - the decision (AC-C2.7 / AC-C2.8)', () => {
   });
 });
 
+describe('SummaryOrderReportView - channel is analysis inside the row, never row identity (AC-E03 / AC-E06)', () => {
+  it('stacks Project, Retail and Unclassified demand readings in one SO demand cell', () => {
+    renderView(state({ data: REPORT }));
+    const row = rowFor('B2155-NL-BLUE');
+    // "Retail" labels both the SO demand row and the Suggested row, so scope by the
+    // hint text unique to the SO-demand reading.
+    expect(within(row).getByTitle('Open Project-class SO quantity')).toHaveTextContent('Project');
+    expect(within(row).getByTitle('Open Retail-class SO quantity')).toHaveTextContent('Retail');
+    expect(within(row).getByText('Unclass.')).toBeInTheDocument();
+    expect(row).toHaveTextContent('480'); // project_demand
+    expect(row).toHaveTextContent('186'); // retail_outstanding
+    expect(row).toHaveTextContent('12'); // unclassified_demand_qty
+  });
+
+  it('stacks Project Buy, Retail replenishment and the once-rounded Total in one Suggested cell', () => {
+    renderView(state({ data: REPORT }));
+    const row = rowFor('B2155-NL-BLUE');
+    expect(within(row).getByText('Project Buy')).toBeInTheDocument();
+    expect(row).toHaveTextContent('180'); // project_buy_qty
+    expect(row).toHaveTextContent('80'); // retail_replenishment_qty
+    expect(row).toHaveTextContent('300'); // suggested_qty, the once-rounded total
+  });
+
+  it('renders exactly one row for a product with both Project and Retail demand', () => {
+    renderView(state({ data: REPORT }));
+    expect(screen.getAllByTitle('B2155-NL-BLUE')).toHaveLength(1);
+  });
+});
+
+describe('SummaryOrderReportView - the run states its stamped plan grain (AC-F01)', () => {
+  it('renders "Plan grain: Product" for a run stamped at Product grain', () => {
+    renderView(state({ data: REPORT }));
+    expect(screen.getByTestId('plan-grain-chip')).toHaveTextContent('Plan grain: Product');
+    // A fact about the run, not a control: no selector renders anywhere on this screen.
+    expect(screen.queryByRole('combobox', { name: /grain/i })).not.toBeInTheDocument();
+  });
+
+  it('renders "Legacy run" instead of a grain, for a run that predates the contract', () => {
+    renderView(state({ data: SUMMARY_ORDER_FIXTURES.legacyReport() }));
+    expect(screen.getByTestId('plan-grain-chip')).toHaveTextContent('Legacy run');
+  });
+
+  it('renders no grain chip before the report has arrived', () => {
+    renderView(state({ isLoading: true }));
+    expect(screen.queryByTestId('plan-grain-chip')).not.toBeInTheDocument();
+  });
+});
+
+describe('SummaryOrderReportView - a run decided at the other grain locks the Product decision (AC-F09)', () => {
+  it('states the grain-lock reason under the header', () => {
+    renderView(state({ data: SUMMARY_ORDER_FIXTURES.locationGrainReport() }));
+    expect(screen.getByTestId('grain-lock-note')).toHaveTextContent('Decided at Location grain');
+  });
+
+  it('renders every chosen quantity as read-only text instead of an editable cell', () => {
+    renderView(state({ data: SUMMARY_ORDER_FIXTURES.locationGrainReport() }));
+    const row = rowFor('B2155-NL-BLUE');
+    expect(within(row).getByTestId('chosen-qty-locked-B2155-NL-BLUE')).toHaveTextContent('600');
+    expect(within(row).queryByTestId('chosen-qty-B2155-NL-BLUE')).not.toBeInTheDocument();
+    expect(within(rowFor('SRTBS4832')).queryByTestId('set-qty-SRTBS4832')).not.toBeInTheDocument();
+  });
+
+  it('states the legacy-run lock reason instead, on a legacy run', () => {
+    renderView(state({ data: SUMMARY_ORDER_FIXTURES.legacyReport() }));
+    expect(screen.getByTestId('grain-lock-note')).toHaveTextContent(
+      'Legacy run - read only. Create a new plan to decide.',
+    );
+  });
+
+  it('renders no lock note when the run accepts the Product decision', () => {
+    renderView(state({ data: REPORT }));
+    expect(screen.queryByTestId('grain-lock-note')).not.toBeInTheDocument();
+  });
+});
+
+describe('SummaryOrderReportView - a legacy run states its channel breakdown is unavailable (AC-F10)', () => {
+  it('renders "Unavailable" for every channel a legacy run cannot state, never zero', () => {
+    renderView(state({ data: SUMMARY_ORDER_FIXTURES.legacyReport() }));
+    const row = rowFor('B2155-NL-BLUE');
+    // Unclassified demand, Project Buy and Retail replenishment are all nulled on a
+    // legacy row - three separate "Unavailable" cells, not a zeroed figure.
+    expect(within(row).getAllByText('Unavailable')).toHaveLength(3);
+    // Project demand and Retail outstanding are ordinary SO totals, not a Stage-2
+    // channel split, and stay stated on a legacy run.
+    expect(row).toHaveTextContent('480');
+    expect(row).toHaveTextContent('186');
+  });
+
+  it('still states the once-rounded suggested total on a legacy run', () => {
+    renderView(state({ data: SUMMARY_ORDER_FIXTURES.legacyReport() }));
+    expect(rowFor('B2155-NL-BLUE')).toHaveTextContent('300');
+  });
+});
+
 describe('SummaryOrderReportView - onBack (this report has no row in the buy grid to return to)', () => {
   it('renders no back link when the caller supplies none', () => {
     renderView(state({ data: REPORT }));

@@ -98,8 +98,6 @@ export interface OrderSummaryRow {
    * NULL during rollout and on legacy runs, which resolves to 0.
    */
   uom_decimal_places: number | null;
-  /** The frozen channel arithmetic behind `suggested_qty`. NULL on a legacy run. */
-  channel_calculation_basis: ChannelCalculationBasis | null;
   /**
    * The chosen quantity split back to locations by the allocator rerun (AC-F08).
    * The quantities sum EXACTLY to `chosen_qty`. NULL until a quantity is chosen, and
@@ -163,21 +161,6 @@ export interface OrderSummaryReport {
    */
   is_legacy: boolean;
   rows: OrderSummaryRow[];
-}
-
-/** The frozen arithmetic behind one product's `suggested_qty` (AC-E06 / AC-F11). */
-export interface ChannelCalculationBasis {
-  /** Firm Project Buy plus netted Retail replenishment, before supplier rounding. */
-  raw_need: number;
-  /** The supplier constraints applied ONCE to `raw_need`. Null when none is set. */
-  supplier_moq: number | null;
-  supplier_order_multiple: number | null;
-  /** The rounded result, which is the row's `suggested_qty`. */
-  rounded_qty: number;
-  /** The precision the rounding was done at, frozen with the row. */
-  uom_decimal_places: number;
-  /** Named so the drill can say why unclassified demand is not in `raw_need`. */
-  unclassified_excluded: number;
 }
 
 /** One location's share of a chosen product quantity. Sums exactly to `chosen_qty`. */

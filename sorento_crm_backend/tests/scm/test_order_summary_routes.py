@@ -604,6 +604,34 @@ def test_the_locations_drill_on_a_legacy_run_returns_none_channel_fields_not_zer
     assert body["locations"] == []
 
 
+def test_the_report_does_not_ship_the_per_location_basis_on_every_row(channel_chain):
+    """The evidence belongs to the drill, not to the book.
+
+    The report is returned unpaginated, so a row carrying its whole
+    `channel_calculation_basis` multiplies out: one real run shipped 2,043 location
+    entries across 507 rows to every reader, for a panel most of them never open. The
+    stored column and the drill are untouched - this pins that the LIST does not carry it.
+    """
+    f = channel_chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM])
+    client = TestClient(f["app"])
+
+    row = next(
+        r for r in client.get(
+            f"/api/v1/scm/order-summary?run_id={f['run'].id}"
+        ).json()["rows"]
+        if r["product_code"] == f["product"].product_code
+    )
+    assert "channel_calculation_basis" not in row
+
+    # ... and the same evidence is still one request away, per product.
+    drill = client.get(
+        f"/api/v1/scm/order-summary/{f['product'].product_code}/locations",
+        params={"run_id": str(f["run"].id)},
+    ).json()
+    assert len(drill["locations"]) == 2
+
+
 def test_reading_the_locations_drill_requires_the_view_permission(channel_chain):
     """A principal holding only the write permission must not read the drill."""
     f = channel_chain

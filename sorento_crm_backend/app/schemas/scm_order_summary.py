@@ -23,7 +23,7 @@ this repo has already shipped once.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -31,8 +31,11 @@ from pydantic import BaseModel, Field
 class OrderSummaryLocationAllocationOut(BaseModel):
     """One location's share of a Product-grain chosen quantity (AC-F08).
 
-    The shares sum EXACTLY to `chosen_qty`: the allocator apportions integer minor units of
-    the row's frozen UOM precision, so there is no rescaling residue to explain away.
+    The stored shares sum exactly to `chosen_qty`: the allocator apportions integer minor
+    units of the row's frozen UOM precision, so there is no rescaling residue to explain
+    away. Exact in the persisted decimals - adding these floats back up at a non-zero
+    precision can still land an ulp away, which is binary floating point and not a split
+    that lost a unit.
     """
 
     warehouse_code: Optional[str] = None
@@ -70,7 +73,10 @@ class OrderSummaryRowOut(BaseModel):
     unclassified_demand_qty: Optional[float] = None
     earliest_project_need_date: Optional[str] = None
     uom_decimal_places: Optional[int] = None
-    channel_calculation_basis: Optional[Dict[str, Any]] = None
+    # No `channel_calculation_basis` here on purpose: the row's per-location evidence is a
+    # drill, and the report is unpaginated, so shipping it per row sent thousands of
+    # location entries to every reader for a panel most of them never open. It is served
+    # per product by `GET /order-summary/{code}/locations`; the stored column is unchanged.
     location_allocations: Optional[List[OrderSummaryLocationAllocationOut]] = None
     # Separate columns (AC-C2.2): only the on-order half can still be re-dated or cancelled.
     qty_on_order: float = 0.0

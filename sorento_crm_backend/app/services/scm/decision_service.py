@@ -43,6 +43,13 @@ _SRC = "scm_recommendation"
 # lookups
 # ---------------------------------------------------------------------------
 
+def _run_or_404(db: Session, run_id: str) -> ReorderRun:
+    run = db.query(ReorderRun).filter(ReorderRun.id == run_id).first()
+    if run is None:
+        raise AppException(status_code=404, message="Reorder run not found.")
+    return run
+
+
 def _assert_location_grain(db: Session, run_id: str) -> None:
     """A location decision may only be written on a run stamped at location grain.
 
@@ -50,10 +57,19 @@ def _assert_location_grain(db: Session, run_id: str) -> None:
     pre-contract run decides nowhere at all (plan 5.4, AC-F09). Shared with that service
     through `plan_grain.assert_decision_grain`, so the two refusals cannot drift.
     """
-    run = db.query(ReorderRun).filter(ReorderRun.id == run_id).first()
-    if run is None:
-        raise AppException(status_code=404, message="Reorder run not found.")
-    plan_grain.assert_decision_grain(run, plan_grain.LOCATION_GRAIN)
+    plan_grain.assert_decision_grain(_run_or_404(db, run_id), plan_grain.LOCATION_GRAIN)
+
+
+def _assert_not_legacy(db: Session, run_id: str) -> None:
+    """A write that belongs to NEITHER grain still may not touch a legacy run (AC-F10).
+
+    Clearing a run's decisions is not a decision, so it is not refused for being the other
+    grain - a product-grain run's location recommendations are read-only and resetting
+    them to as-generated changes nothing anybody decided. A legacy run is different: its
+    history is closed, and rewriting the statuses on it would be an edit to a plan that is
+    supposed to be immutable.
+    """
+    plan_grain.assert_not_legacy(_run_or_404(db, run_id))
 
 
 def _get_buy_rec(db: Session, rec_id: str) -> ReorderRecommendation:
@@ -415,7 +431,13 @@ def confirm_decisions(
     — accepted/adjusted → upsert its line into the supplier's draft PO (latest
     override qty/supplier honoured); dismissed → pull its line back out. Re-running
     after a re-adjust just updates the line. Returns how many decisions were
-    confirmed and how many distinct draft POs were touched."""
+    confirmed and how many distinct draft POs were touched.
+
+    Guarded like the decisions it materialises (AC-F09): confirming is the step that turns
+    staged location decisions into draft purchase orders, so a run that may not hold those
+    decisions may not have them materialised either - otherwise the grain guard on Accept /
+    Adjust / Reject is bypassed by whatever staged status a run happens to carry."""
+    _assert_location_grain(db, run_id)
     q = db.query(ReorderRecommendation).filter(
         ReorderRecommendation.run_id == run_id,
         ReorderRecommendation.status.in_(("accepted", "adjusted", "dismissed")),
@@ -451,7 +473,11 @@ def reset_run_decisions(db: Session, run_id: str, actor: Optional[str]) -> dict:
     deleted with it), drop its append-only override rows, and reset its status back to
     'proposed'. Only DRAFT (``draft_recommendation``) POs are touched — a confirmed
     (active) PO is a real order and is never rolled back. Idempotent: running it on an
-    already-clean run is a no-op. Returns what was cleared for the toast."""
+    already-clean run is a no-op. Returns what was cleared for the toast.
+
+    Refused on a legacy run (AC-F10): its decisions are history, and a demo reset that
+    rewrote them would edit a plan nothing else may touch."""
+    _assert_not_legacy(db, run_id)
     recs = (
         db.query(ReorderRecommendation)
         .filter(ReorderRecommendation.run_id == run_id)
@@ -607,6 +633,11 @@ def decide_covered(db: Session, rec_id: str, choice: str,
             status_code=422,
             message="Only a covered-by-stock row can be decided this way.",
         )
+    # A covered-by-stock answer IS a location decision - it is what turns a location's
+    # stock into either cover or a purchase - so it is guarded exactly like Accept /
+    # Adjust / Reject, and in the same order as them: what the row is, then what the run
+    # may hold (AC-F09, AC-F10).
+    _assert_location_grain(db, str(rec.run_id))
     if choice not in ("use_stock", "buy", "pending"):
         raise AppException(
             status_code=422, message="Choice must be use_stock, buy or pending.")

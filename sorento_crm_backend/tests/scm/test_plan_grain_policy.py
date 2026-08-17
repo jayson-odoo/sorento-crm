@@ -68,7 +68,7 @@ def _code(stem: str = "") -> str:
 
 
 # =========================================================================== #
-# section A — the admin plan-grain policy setting
+# section A - the admin plan-grain policy setting
 # (blank_session + monkeypatched permission check, mirrors
 #  tests/test_settings_app_config_gate.py)
 # =========================================================================== #
@@ -155,8 +155,8 @@ def test_settings_post_general_rejects_unknown_plan_grain_value(settings_api, bl
 
 
 # =========================================================================== #
-# section B — create_run stamps decision_grain + contract version
-# (real, rolled-back DB via pg_session; no HTTP, no auth — service-level)
+# section B - create_run stamps decision_grain + contract version
+# (real, rolled-back DB via pg_session; no HTTP, no auth - service-level)
 # =========================================================================== #
 
 
@@ -288,7 +288,7 @@ def _recommendation(db, run, product, wh, qty=50):
 
 
 # =========================================================================== #
-# section C — a legacy run (both new columns NULL) is read-only everywhere
+# section C - a legacy run (both new columns NULL) is read-only everywhere
 # =========================================================================== #
 
 
@@ -343,7 +343,7 @@ def test_adjust_recommendation_refused_on_a_legacy_run(db):
 
 
 # =========================================================================== #
-# section D — a decision write in the OTHER stamped grain is rejected
+# section D - a decision write in the OTHER stamped grain is rejected
 # =========================================================================== #
 
 
@@ -427,7 +427,7 @@ def test_bulk_accept_refused_on_a_product_grain_run(db):
 
 
 # =========================================================================== #
-# section E — matching grain still works (the guard rejects only the OTHER
+# section E - matching grain still works (the guard rejects only the OTHER
 # grain; on a match the existing happy path is untouched)
 # =========================================================================== #
 
@@ -464,7 +464,7 @@ def test_accept_recommendation_still_works_on_a_matching_location_grain_run(db):
 
 
 # =========================================================================== #
-# section F — response contracts carry the new fields
+# section F - response contracts carry the new fields
 # (real, rolled-back savepoint DB + TestClient, mirrors
 #  tests/scm/test_order_summary_routes.py's `_company` / `_principal` idiom)
 # =========================================================================== #
@@ -579,6 +579,153 @@ def test_order_summary_report_marks_a_legacy_run(db):
     report = svc.report(db, run_id=run.id)
 
     assert report["is_legacy"] is True
+
+# =========================================================================== #
+# section G - the decision routes that were guarded nowhere (AC-F09, AC-F10)
+# (real DB + TestClient, mirrors tests/scm/test_order_summary_routes.py's
+#  HTTP-guard tests: the guard has to hold at the WIRE, not only in the service)
+# =========================================================================== #
+#
+# `accept` / `adjust` / `reject` / `bulk-accept` were guarded from the start (sections
+# C/D above). Three sibling writes on the same router were not, and each is a live
+# route: `covered-decision` sets a recommendation status, `confirm-decisions`
+# materialises draft POs out of staged ones, and `reset-decisions` wipes decisions and
+# overrides. A guard the neighbouring route enforces and this one does not is worse
+# than no guard, because the run reads as protected.
+
+
+def _covered_recommendation(db, run, product, wh, qty=50):
+    rec = ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="covered", product_id=product.id,
+        warehouse_id=wh.id, rounded_qty=qty, status="proposed",
+    )
+    db.add(rec)
+    db.flush()
+    return rec
+
+
+@pytest.fixture()
+def decision_api(scm_app):  # noqa: F811
+    """A caller holding `scm.reorder.run`, with a company the seeded rows belong to."""
+    app, db, gcu, gcuk = scm_app
+    _company(app, db)
+    _principal(app, db, gcu, gcuk, perms=[_VIEW_PERM, _RUN_PERM])
+    cat, uom = _category_and_uom(db)
+    return {
+        "app": app, "db": db, "client": TestClient(app),
+        "product": _product(db, cat, uom), "warehouse": _warehouse(db),
+    }
+
+
+def test_covered_decision_over_http_refuses_a_product_grain_run(decision_api):
+    """A covered-by-stock answer is a LOCATION decision, so a product-grain run must
+    refuse it the same way it refuses Accept - it is the same recommendation row."""
+    f = decision_api
+    run = _run(f["db"], decision_grain="product", contract_version=1)
+    rec = _covered_recommendation(f["db"], run, f["product"], f["warehouse"])
+
+    res = f["client"].post(
+        f"/api/v1/scm/recommendations/{rec.id}/covered-decision",
+        json={"choice": "buy"},
+    )
+
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "decision_grain_mismatch"
+    assert rec.status == "proposed", "the refused write must not have landed"
+
+
+def test_covered_decision_over_http_refuses_a_legacy_run(decision_api):
+    f = decision_api
+    run = _run(f["db"])  # legacy: no decision_grain, no contract version
+    rec = _covered_recommendation(f["db"], run, f["product"], f["warehouse"])
+
+    res = f["client"].post(
+        f"/api/v1/scm/recommendations/{rec.id}/covered-decision",
+        json={"choice": "use_stock"},
+    )
+
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "legacy_run_read_only"
+    assert rec.status == "proposed"
+
+
+def test_covered_decision_over_http_still_works_on_a_location_grain_run(decision_api):
+    """The guard rejects only the other grain; the planner's own run still decides."""
+    f = decision_api
+    run = _run(f["db"], decision_grain="location", contract_version=1)
+    rec = _covered_recommendation(f["db"], run, f["product"], f["warehouse"])
+
+    res = f["client"].post(
+        f"/api/v1/scm/recommendations/{rec.id}/covered-decision",
+        json={"choice": "buy"},
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "buy"
+
+
+def test_confirm_decisions_over_http_refuses_a_legacy_run(decision_api):
+    """Materialising a legacy run's staged decisions into draft POs would make a plan
+    that is supposed to be closed produce real purchasing work."""
+    f = decision_api
+    run = _run(f["db"])
+    _recommendation(f["db"], run, f["product"], f["warehouse"])
+
+    res = f["client"].post(
+        f"/api/v1/scm/reorder-runs/{run.id}/confirm-decisions", json={"ids": []})
+
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "legacy_run_read_only"
+
+
+def test_confirm_decisions_over_http_refuses_a_product_grain_run(decision_api):
+    """Confirm is the step that turns staged LOCATION decisions into draft POs, so a
+    product-grain run refuses it - otherwise the guard on Accept is bypassed by whatever
+    status a recommendation happens to carry."""
+    f = decision_api
+    run = _run(f["db"], decision_grain="product", contract_version=1)
+    rec = _recommendation(f["db"], run, f["product"], f["warehouse"])
+    rec.status = "accepted"
+    f["db"].flush()
+
+    res = f["client"].post(
+        f"/api/v1/scm/reorder-runs/{run.id}/confirm-decisions", json={"ids": []})
+
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "decision_grain_mismatch"
+
+
+def test_reset_decisions_over_http_refuses_a_legacy_run(decision_api):
+    """A legacy run's decisions are history: the demo reset may not rewrite them."""
+    f = decision_api
+    run = _run(f["db"])
+    rec = _recommendation(f["db"], run, f["product"], f["warehouse"])
+    rec.status = "accepted"
+    f["db"].flush()
+
+    res = f["client"].post(f"/api/v1/scm/reorder-runs/{run.id}/reset-decisions")
+
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "legacy_run_read_only"
+    assert rec.status == "accepted", "the refused reset must not have cleared anything"
+
+
+def test_reset_decisions_over_http_still_works_on_a_current_run(decision_api):
+    """Reset is not a decision, so it is refused for being LEGACY only - never for being
+    the other grain. A product-grain run's location recommendations are read-only, and
+    putting their status back to as-generated undoes nothing anybody decided."""
+    f = decision_api
+    run = _run(f["db"], decision_grain="product", contract_version=1)
+    rec = _recommendation(f["db"], run, f["product"], f["warehouse"])
+    rec.status = "accepted"
+    f["db"].flush()
+
+    res = f["client"].post(f"/api/v1/scm/reorder-runs/{run.id}/reset-decisions")
+
+    assert res.status_code == 200, res.text
+    assert res.json()["decisions_cleared"] == 1
+    assert rec.status == "proposed"
+
 
 # No new gated GET under app.api.v1.user_management: the plan-grain policy field rides the
 # EXISTING `GET /settings/` blob and `POST/PUT /settings/general` (sections A above), covered

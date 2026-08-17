@@ -92,7 +92,6 @@ import type { PriceHistoryPayload } from '../lib/priceAdvice';
 import type { PurchaseTrendPayload } from '../lib/purchaseTrend';
 import type { TrajectoryPayload } from '../lib/trajectory';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
-import { withChannelNeeds, withRunGrain } from '../lib/frontPlanningMockStore';
 import type { PlanGrain } from '../lib/planGrain';
 import type {
   BuyScope,
@@ -234,9 +233,9 @@ export async function getTodayRun(): Promise<TodayRun | null> {
   const res = await apiFetch('/api/v1/scm/reorder-runs/today');
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load today’s plan'));
   const body = (await res.json()) as TodayRun | null;
-  // Phase 1 only: the run does not carry its stamped grain yet (AC-F01). Phase 2
-  // (S2-BE-2) removes the overlay and the two fields arrive on the payload.
-  return withRunGrain(body ?? null);
+  // The run carries its own stamped `decision_grain` /
+  // `front_planning_contract_version` (AC-F01).
+  return body ?? null;
 }
 
 /** Open demand the plan cannot net, because the sales-order line names no warehouse.
@@ -393,11 +392,8 @@ export async function getRecommendations(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/recommendations?${params}`,
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load recommendations'));
-  const page = (await res.json()) as RecommendationPage;
-  // Phase 1 only: the frozen location facts do not carry their demand-channel split
-  // yet, so the mock store adds it here. Phase 2 (S2-BE-3) removes this line and the
-  // fields arrive on the payload (AC-F07).
-  return { ...page, data: withChannelNeeds(page.data) };
+  // The frozen location facts carry their own demand-channel split (AC-F07).
+  return (await res.json()) as RecommendationPage;
 }
 
 /**
@@ -514,13 +510,9 @@ export async function listReorderRuns(
   });
   const res = await apiFetch(`/api/v1/scm/reorder-runs?${params}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load run history'));
-  const body = (await res.json()) as ReorderRunHistoryPage;
-  // Phase 1 only, as in `getTodayRun`: a history run carries its OWN stamped grain,
-  // so opening a past run must not relabel it with today's policy (AC-F10).
-  return {
-    ...body,
-    data: body.data.map((run) => withRunGrain(run) as ReorderRunHistoryItem),
-  };
+  // As in `getTodayRun`: a history run carries its OWN stamped grain, so opening a
+  // past run never relabels it with today's policy (AC-F10).
+  return (await res.json()) as ReorderRunHistoryPage;
 }
 
 // ── M4 cash co-pilot ────────────────────────────────────────────────────────

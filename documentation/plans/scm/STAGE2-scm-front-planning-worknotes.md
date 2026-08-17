@@ -189,7 +189,7 @@ Backend (`sorento_crm_backend/`):
 
 Frontend (`sorento_crm_frontend/`):
 
-- Plan: `app/(protected)/scm/reorder/` — `SummaryOrderReportView.tsx`, `OrderDecisionSheet.tsx`,
+- Plan: `app/(protected)/scm/reorder/` - `SummaryOrderReportView.tsx`, `OrderDecisionSheet.tsx`,
   `DemandDrillPopover.tsx`, `PoWorklistView.tsx`, `PlanLinesGrid.tsx`, `ReorderPlanningView.tsx`,
   `RunPlanningModal.tsx`; hooks `useSummaryOrder.ts`, `usePoWorklist.ts`, `useReorderRun.ts`;
   services `summaryOrderService.ts`, `poWorklistService.ts`, `reorderRunService.ts`; types
@@ -586,3 +586,87 @@ Supply Chain > Reorder Planning, then Actions > Order summary.
 Two freeze defects the first real-stack run surfaced (anonymous basis locations; a product
 row contradicting its own run's sizing) are the subject of BE-6 above and are what this run
 re-verifies as fixed.
+
+## Independent-review fixes (BE-7)
+
+Six findings from the independent review of BE-1..BE-6, fixed in one pass. Two carried a
+decision worth stating rather than leaving in a diff.
+
+**1. Decision-grain guard bypasses (AC-F09, AC-F10).** `decide_covered`,
+`confirm_decisions` and `reset_run_decisions` were live routes with no guard at all, beside
+`accept` / `adjust` / `reject`, which have had one since BE-2. A covered-by-stock answer IS
+a location decision (it turns a location's stock into cover or into a purchase) and confirm
+is what materialises staged location decisions into draft POs, so both now take
+`_assert_location_grain`. Reset is not a decision - putting a product-grain run's read-only
+recommendations back to as-generated undoes nothing anybody decided - so it is refused only
+for being LEGACY, through the new `plan_grain.assert_not_legacy` (the first half of
+`assert_decision_grain`, shared so the wording and the 409 cannot drift). Seven route-level
+tests in `test_plan_grain_policy.py` section G; five of them fail at the pre-fix code.
+`tests/scm/test_covered_decision.py` now creates its run under the `location` policy, the
+same idiom `test_m4_decisions.py` uses - its decisions were always location-grain.
+
+**2. Migration 374 imported live code.** It called
+`app.services.uom_decimal_places.backfill_uom_decimal_places`, which is exactly the shape of
+the 340/346 replay outage this repo already records. The name lists, the observed-scale SQL
+and the "NULL or 0" predicate are now frozen inside the migration as `_backfill_374`, with a
+comment naming the service as the live twin; the service is unchanged and still runs for
+admin re-runs. Verified byte-identical against the prod copy: 12 units, all resolving to 0,
+both implementations writing the same 12 rows, and a carried value of 3 left alone by both
+(11 rows rewritten). `test_committed_v_migration_chain::
+test_migration_bodies_are_frozen_not_imported` now covers 374. Revision id and chain
+position untouched; `alembic heads` stays `377_merge_stage2_main`.
+
+**3. Non-buy sizing groups were invisible (AC-E06, AC-F08).** `write_rows` read
+`rec_type = 'buy'` only, so a product buying at location A lost location B entirely when B
+came back `covered` / `exception` / `needs_level` - B's unclassified and sheet readings, and
+B itself from the basis. Every one of those rows now carries its sizing group's
+`plan_basis` (the same `_plan_basis` the buy path already built; the pool and network paths
+emit their `needs_level` rows after sizing instead of before, which leaves the row order
+unchanged), and the freeze reads all four kinds.
+
+*Decision A - what a non-buy group contributes.* Project, the sheet leg and unclassified
+demand are statements about the order book, so they are additive across every group. Netted
+Retail replenishment is a SIZED figure and comes only from groups that bought: a covered
+group's is 0 by definition, and a group that could not be sourced sized no purchase either.
+
+*Decision B - whose row exists at all.* Reading all four kinds does NOT mean every product
+that produced one gets a Product-grain row. On the live catalogue that is 2,691 rows against
+507 on the network run (2,599 against 186 per-warehouse), on an unpaginated report, almost
+all of them with a suggestion of 0 - the information fatigue AC-C2.2a exists to prevent. So
+`_belongs_on_the_book`: a product gets a row when the run sized a purchase for it, OR when
+it owes firm confirmed Project Buy the run could not size (AC-E04: a confirmed unplaced Buy
+at a supplierless location emits `exception` and no buy anywhere, and dropping it hides a
+commitment CS has already made). A covered-only or needs-level-only product stays the
+Location grain's work, where each row states its own reason. Both halves are pinned by
+tests. Measured consequence: re-freezing the two newest real runs is byte-identical, row for
+row and field for field (507 and 186 rows).
+
+**4. The float-sum claim.** `reorder_engine.allocate` returns `parts[i] / scale`, so at a
+non-zero precision a Python float sum of the children can land an ulp from `chosen_qty`
+while the persisted `Numeric` sum is exact. The allocate docstring, the
+`OrderSummaryLocationAllocation` model docstring and the `OrderSummaryLocationAllocationOut`
+comment now claim exactness in the stored decimals, and say to reconcile against those
+rather than against the returned floats. No behaviour change.
+
+**5. Em-dashes** removed from the lines this branch added (banned by `PRINCIPLES.md`).
+
+**6. The report shipped the whole basis on every row.** `_serialise_row` carried
+`channel_calculation_basis` - 2,043 location entries across 507 rows in the evidence run -
+on an unpaginated report, for a drill served separately by
+`GET /order-summary/{code}/locations` and read by no FE component. Dropped from the
+serialiser AND from `OrderSummaryRowOut`, so the contract states it; the stored column and
+the drill endpoint are untouched. Pinned by
+`test_the_report_does_not_ship_the_per_location_basis_on_every_row`.
+
+Counts (Postgres, prod-copy database): the review's green gate -
+`test_product_grain_summary` `test_channel_read_model` `test_order_summary_routes`
+`test_summary_order_service` `test_plan_grain_policy` `test_demand_breakdown`
+`test_committed_v_migration_chain` `test_m4_decisions` `tests/test_uom_decimal_places`
+`tests/test_alembic_revision_ids` - **276 passed**, up from 265 before (11 new tests).
+Neighbours `test_covered_decision test_cover_from_stock test_covered_demand_surfaces
+test_m4_cash test_m8_slice_a test_m8_slice_c test_m3_engine test_reorder_level_run
+test_front_planning_golden` green. Still failing and still failing IDENTICALLY at `HEAD`,
+with the same messages: the two `test_m3_run`, the two `test_pool_netting_parity` and the
+eleven `test_m5_explainer` / `test_m8_slice_e` prod-copy-data ones. `pyright` per touched
+file: identical error counts before and after (40 / 48 / 32 / 2 / 1 / 0 / 0 / 0), `pyflakes`
+only its pre-existing findings.

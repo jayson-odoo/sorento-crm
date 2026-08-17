@@ -724,9 +724,12 @@ class OrderSummaryLocationAllocation(Base, CompanyScopedMixin):
     row's frozen UOM minor units, and the resulting decimal quantities are persisted here.
 
     Narrow on purpose: this is persistence for the PO worklist, not a second allocator.
-    The children sum EXACTLY to the parent's `chosen_qty` because the allocator apportions
-    integer minor units - no rescaling formula is applied, and a re-decision REPLACES the
-    split rather than scaling the old one.
+    These STORED quantities sum exactly to the parent's `chosen_qty` because the allocator
+    apportions integer minor units of the frozen precision - no rescaling formula is
+    applied, and a re-decision REPLACES the split rather than scaling the old one. The
+    exactness is a property of the persisted decimals: the allocator hands its shares back
+    as floats, and at a non-zero precision a float sum of them can differ from `chosen_qty`
+    in the last bit, so reconcile against these columns rather than against that sum.
 
     `reorder_recommendation_id` is nullable: a product-grain split has no single owning
     recommendation row, and naming one would imply a location decision that was never made.

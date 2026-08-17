@@ -392,7 +392,8 @@ def allocate(buy_qty: float, warehouses: list[dict],
              decimal_places: int = 0) -> dict[str, float]:
     """Split a buy across warehouses: each warehouse's deficit first, then the rounding
     surplus velocity-proportional (by demand). When buy < Σdeficit the whole buy is
-    apportioned proportional to deficit. Result sums EXACTLY to the rounded total.
+    apportioned proportional to deficit. The apportionment is exact: no minor unit of the
+    total is created or lost.
 
     ``warehouses``: [{warehouse_id, deficit, demand_rate}].
 
@@ -404,10 +405,16 @@ def allocate(buy_qty: float, warehouses: list[dict],
     because they only ever decide proportions, so branch selection and the surplus split
     are identical at any precision.
 
-    That is what keeps the children summing EXACTLY to the parent: 2.75 kg at three places
-    is 2750 thousandths, and 2750 apportioned as integers cannot lose a unit to rounding
-    the way a proportional rescale of 2.75 would. The default 0 is today's behaviour byte
-    for byte - whole units in, whole units out.
+    That is what keeps the children summing to the parent: 2.75 kg at three places is 2750
+    thousandths, and 2750 apportioned as integers cannot lose a unit to rounding the way a
+    proportional rescale of 2.75 would. The default 0 is today's behaviour byte for byte -
+    whole units in, whole units out.
+
+    The exactness is in the MINOR UNITS, and therefore in the `Numeric` the caller stores:
+    the children are returned as `parts[i] / scale`, so at a non-zero precision a Python
+    float sum of them can land an ulp off `buy_qty` (0.1 + 0.2 is not 0.3 in binary) while
+    the persisted decimal sum is exact. Reconcile a split against the stored quantities, or
+    compare in minor units - never by summing the returned floats and testing equality.
     """
     scale = 10 ** max(int(decimal_places or 0), 0)
     total = int(round(float(buy_qty) * scale))

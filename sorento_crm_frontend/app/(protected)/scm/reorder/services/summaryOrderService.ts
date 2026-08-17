@@ -40,7 +40,7 @@
  *    Stage 2 adds to the same response and changes no key: the report carries the
  *    run's stamped `decision_grain` and `is_legacy` (AC-F01 / AC-F10), and each row
  *    carries `project_buy_qty`, `retail_replenishment_qty`, `unclassified_demand_qty`,
- *    `earliest_project_need_date`, `uom_decimal_places`, `channel_calculation_basis`,
+ *    `earliest_project_need_date`, `uom_decimal_places`,
  *    `location_allocations`, and `retail_outstanding` (+ its line count) as the API
  *    name of the stored `dealer_outstanding` column (AC-E03). One row per product,
  *    still: channel is analysis inside the row, never part of row identity.

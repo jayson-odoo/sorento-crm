@@ -890,6 +890,139 @@ def test_a_pool_member_the_split_gave_nothing_to_still_reaches_the_product_row(s
 
 
 # --------------------------------------------------------------------------- #
+# groups that bought NOTHING still hold demand (AC-E06, AC-F08)
+# --------------------------------------------------------------------------- #
+#
+# The pool test above covers a location the SPLIT skipped. These two cover a whole
+# sizing GROUP that emitted no buy at all: the freeze read `rec_type = 'buy'` and
+# nothing else, so a group that ended as `covered`, `exception` or `needs_level`
+# contributed neither its channel readings nor its member locations to the product
+# row - and in the exception case a firm, confirmed customer commitment reached no
+# product row anywhere.
+
+
+def test_a_covered_location_still_states_its_demand_on_the_product_row(scm_app):
+    """AC-E06 / AC-F08: one product, two groups, only one of them buying.
+
+    A is short 40 of Retail and buys. B holds enough for itself and carries 20 of
+    unclassified demand, so the engine suggests using that stock (`covered`) rather than
+    deciding for the planner. The product row must show B's 20 and name B among its
+    locations, while the sized figures stay A's alone: B's netted replenishment is 0
+    because its own stock is the answer, and the suggestion is A's 40.
+    """
+    _, db, _, _ = scm_app
+    set_plan_grain(db, "product")
+    wa = _mk_warehouse(db, "ZZTCHRM-CV-A")
+    wb = _mk_warehouse(db, "ZZTCHRM-CV-B")
+    pid = _mk_product(db, "ZZTCHRM-CV")
+    _mk_stock(db, pid, wa, 0)
+    _mk_stock(db, pid, wb, 30)
+    _link(db, pid, _mk_supplier(db, "ZZTCHRM Covered Supplier"), moq=None, mult=None)
+    _core_line_for_run(db, pid, wa, qty=40, demand_class="retail")
+    _core_line_for_run(db, pid, wb, qty=20, demand_class=None)
+    db.flush()
+
+    created = run_svc.create_run(db, ["ZZTCHRM-CV-A", "ZZTCHRM-CV-B"], "warehouse",
+                                 enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    assert [r["rec_type"] for r in _recs(db, created["run_id"], pid, wa)] == ["buy"]
+    assert [r["rec_type"] for r in _recs(db, created["run_id"], pid, wb)] == ["covered"], (
+        "B's own stock covers its demand, so the engine may only suggest using it"
+    )
+
+    row = _summary(db, created["run_id"], pid)
+    assert float(row["unclassified_demand_qty"]) == 20.0, (
+        "B bought nothing, and its unclassified demand is a statement about the order "
+        "book rather than about the purchase"
+    )
+    assert float(row["retail_replenishment_qty"]) == 40.0, (
+        "sizing comes from the group that bought; a covered group replenishes 0"
+    )
+    assert float(row["project_buy_qty"]) == 0.0
+    assert float(row["suggested_qty"]) == 40.0
+    basis = row["channel_calculation_basis"]
+    _assert_location_basis_is_named(
+        basis, warehouse_code="ZZTCHRM-CV-B", expect_locations=2)
+    by_code = {l["warehouse_code"]: l for l in basis["locations"]}
+    assert by_code["ZZTCHRM-CV-B"]["unclassified_need"] == 20.0
+    assert by_code["ZZTCHRM-CV-B"]["location_suggested_qty"] == 0.0
+    assert by_code["ZZTCHRM-CV-A"]["retail_need"] == 40.0
+    assert by_code["ZZTCHRM-CV-A"]["location_suggested_qty"] == 40.0
+    assert basis["unclassified_excluded"] == 20.0, (
+        "visible and named, never inside the actionable total (AC-E06)"
+    )
+
+
+def test_a_product_the_run_only_covered_gets_no_product_row(scm_app):
+    """The other half of the scoping rule, pinned so it cannot drift by accident.
+
+    A product whose every group was covered by its own stock has an actionable suggestion
+    of 0: there is nothing to decide on the Product grain, and the live catalogue holds
+    roughly 2,400 of them against 507 that buy. Putting them on an unpaginated book is the
+    information fatigue AC-C2.2a exists to prevent, so the row belongs to the Location
+    grain, which states each one's reason. What such a group DOES do is speak on a product
+    that bought - the test above.
+    """
+    _, db, _, _ = scm_app
+    set_plan_grain(db, "product")
+    wid = _mk_warehouse(db, "ZZTCHRM-CVO-W")
+    pid = _mk_product(db, "ZZTCHRM-CVO")
+    _mk_stock(db, pid, wid, 30)
+    _link(db, pid, _mk_supplier(db, "ZZTCHRM Covered Only Supplier"), moq=None, mult=None)
+    _core_line_for_run(db, pid, wid, qty=20, demand_class="retail")
+    db.flush()
+
+    created = run_svc.create_run(db, ["ZZTCHRM-CVO-W"], "warehouse", enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    assert [r["rec_type"] for r in _recs(db, created["run_id"], pid, wid)] == ["covered"]
+    assert db.execute(
+        text("SELECT count(*) FROM scm.order_summary_row "
+             "WHERE run_id = :r AND product_id = :p"),
+        {"r": created["run_id"], "p": pid},
+    ).scalar() == 0
+
+
+def test_confirmed_project_buy_survives_a_location_with_no_supplier(scm_app):
+    """AC-E04 / AC-E06: firm demand outlives the group's inability to source it.
+
+    12 units of CONFIRMED unplaced Project Buy at a location whose product has no linked
+    supplier. The trigger is bypassed by the firm figure (AC-E05), the engine then finds
+    nobody to buy from and emits `exception` instead of `buy` - and the product has no buy
+    row anywhere. Project need is a demand statement, so it must still reach the product
+    row: silently dropping it would hide a customer commitment CS has already promised.
+    """
+    _, db, _, _ = scm_app
+    set_plan_grain(db, "product")
+    wid = _mk_warehouse(db, "ZZTCHRM-EX-W")
+    pid = _mk_product(db, "ZZTCHRM-EX")
+    _mk_stock(db, pid, wid, 0)
+    # No `_link`: the product has no supplier, which is what makes this an exception.
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=12)
+    db.flush()
+
+    created = run_svc.create_run(db, ["ZZTCHRM-EX-W"], "warehouse", enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    rows = _recs(db, created["run_id"], pid, wid)
+    assert [r["rec_type"] for r in rows] == ["exception"], (
+        "firm project Buy triggers, and with no supplier the engine cannot source it"
+    )
+    assert rows[0]["inputs"]["project_need"] == 12
+
+    row = _summary(db, created["run_id"], pid)
+    assert float(row["project_buy_qty"]) == 12.0, (
+        "a confirmed unplaced Buy that nobody could source is still owed to a customer"
+    )
+    assert float(row["retail_replenishment_qty"]) == 0.0
+    assert float(row["suggested_qty"]) == 12.0
+    _assert_location_basis_is_named(
+        row["channel_calculation_basis"], warehouse_code="ZZTCHRM-EX-W",
+        expect_locations=1)
+
+
+# --------------------------------------------------------------------------- #
 # net_position_v: unchanged cardinality and column set (AC-F07)
 # --------------------------------------------------------------------------- #
 

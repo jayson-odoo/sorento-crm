@@ -91,6 +91,16 @@ def _channel_of(demand_class: Optional[str]) -> str:
         return UNCLASSIFIED_KIND
     return PROJECT_KIND if str(demand_class).strip().lower() == PROJECT_KIND else RETAIL_KIND
 
+
+# The recommendation kinds that carry a product-location DEMAND reading (front planning
+# 5.3). A buy is the only one that sizes a purchase, but a group that was covered by its
+# own stock, could not be sourced, or is waiting on a reorder level still holds real
+# demand at real locations - and a product whose location A buys while location B is
+# covered would otherwise lose B's readings and B itself from the evidence. A
+# `disposition` is deliberately absent: it is a statement about idle stock, not demand.
+CHANNEL_REC_TYPES = ("buy", "covered", "exception", "needs_level")
+BUY_REC_TYPE = "buy"
+
 # How long since the last purchase order before an item reads as a dead line rather than a
 # fast mover (AC-C2.6). The SERVER owns this verdict so the flag cannot drift between screens.
 DEFAULT_STALE_AFTER_DAYS = 365
@@ -145,6 +155,11 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     key stays `(run_id, product_id)`, because a purchase order is raised once for the
     company and channel is not part of that identity.
 
+    The freeze READS every kind of planning row (`CHANNEL_REC_TYPES`), not only the buys:
+    a product buying at location A must still show what location B - covered by its own
+    stock, unsourceable, or waiting on a level - holds and where it is. Which products get
+    a row is a narrower question and is `_belongs_on_the_book`.
+
     **`suggested_qty` is rounded ONCE** (AC-F11). The old derivation summed each location's
     already-rounded quantity and ceiled the total, which applies the supplier's terms per
     location and then rounds a second time; the product total now goes through MOQ and the
@@ -171,19 +186,20 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         db.query(
             ReorderRecommendation.product_id,
             ReorderRecommendation.warehouse_id,
+            ReorderRecommendation.rec_type,
             ReorderRecommendation.rounded_qty,
             ReorderRecommendation.inputs,
         )
         .filter(
             ReorderRecommendation.run_id == run_id,
-            ReorderRecommendation.rec_type == "buy",
+            ReorderRecommendation.rec_type.in_(CHANNEL_REC_TYPES),
         )
         .all()
     )
     by_product: dict[str, list] = {}
     for r in rec_rows:
         by_product.setdefault(str(r.product_id), []).append(r)
-    product_ids = list(by_product)
+    product_ids = [pid for pid, recs in by_product.items() if _belongs_on_the_book(recs)]
     if not product_ids:
         return 0
 
@@ -239,10 +255,13 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         has_channel = any("project_need" in (r.inputs or {}) for r in recs)
         if is_legacy or not has_channel:
             # Rounded UP to a whole unit, which is the conservative direction. Kept
-            # verbatim so re-freezing such a run cannot silently restate a figure somebody
-            # already decided against.
+            # verbatim - the BUY rows only, exactly as before channels existed - so
+            # re-freezing such a run cannot silently restate a figure somebody already
+            # decided against. A `covered` row carries the quantity that WOULD be bought,
+            # and summing it here would turn a suggestion into an order.
             row.suggested_qty = float(math.ceil(
-                sum(float(r.rounded_qty or 0) for r in recs)))
+                sum(float(r.rounded_qty or 0)
+                    for r in recs if r.rec_type == BUY_REC_TYPE)))
         else:
             channel = _channel_freeze(recs, wh_meta,
                                       decimal_places=decimals.get(pid, 0),
@@ -282,15 +301,48 @@ def _quantize_up(qty: float, decimal_places: int) -> float:
     return math.ceil(round(float(qty) * scale, 6)) / scale
 
 
-def _sizing_groups(recs: list) -> dict:
-    """``{group key: frozen plan basis}`` for the buy rows of one product.
+def _belongs_on_the_book(recs: list) -> bool:
+    """Does this product get a Summary Order Report row at all?
 
-    A buy is sized against a GROUP of locations, not against a row: a pool emits one row
+    Yes when the run SIZED a purchase for it. Yes, too, when it owes firm Project Buy the
+    run could not size: a confirmed unplaced Buy at a location with no linked supplier
+    triggers and then emits `exception` with no buy anywhere, and leaving the product off
+    the book hides a commitment CS has already made to a customer (AC-E04, AC-E06).
+
+    No for a product whose only outcome was `covered` or `needs_level`. Its actionable
+    suggestion is 0 by definition - its own stock is the answer, or nobody has set the
+    level it would be planned against - so the Product grain has nothing to decide, and
+    on the live catalogue that would put roughly 2,400 undecidable rows on an unpaginated
+    report: the information fatigue AC-C2.2a exists to prevent. Those rows remain the
+    Location grain's work, where each states its own reason.
+
+    Both kinds still SPEAK on the products that do get a row: a covered group at location
+    B contributes its channel readings and its member locations to a product buying at
+    location A (`_channel_freeze`). What is scoped here is whose row exists, not what a
+    row is allowed to read.
+    """
+    for r in recs:
+        if r.rec_type == BUY_REC_TYPE:
+            return True
+        basis = (r.inputs or {}).get("plan_basis") or {}
+        if float(basis.get("project_need") or 0.0) > 0:
+            return True
+    return False
+
+
+def _sizing_groups(recs: list) -> dict:
+    """``{group key: frozen plan basis}`` for the rows of one product.
+
+    A plan is made against a GROUP of locations, not against a row: a pool emits one row
     per location that was allocated something, all describing ONE decision, and a network
     buy emits a single row that names no location at all. The engine freezes that group's
     own basis on every row it produced (`reorder_run_service._plan_basis`), so this
     collapses the rows back to the decisions they came from - once per group, however many
-    rows carried it.
+    rows carried it, and however many KINDS of row it carried: a group that emitted both a
+    buy and a needs_level is still one group and must be counted once.
+
+    Pass whichever rows the question is about. The demand readings want every kind
+    (`CHANNEL_REC_TYPES`); the sized figures want the buys alone.
     """
     groups: dict = {}
     for r in recs:
@@ -316,9 +368,17 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
     rows therefore stated "Suggested 0" for a run that had just sized a 213-unit buy. The
     group states its own netted figure and the freeze reads that.
 
+    **Demand is read from every kind of row, sizing only from the buys.** Project, the
+    sheet leg and unclassified demand are statements about the order book, so they come
+    from every group the product produced - covered, unsourceable and un-levelled included,
+    or a product buying at location A silently loses location B's readings and B itself
+    from the evidence. Netted Retail replenishment is the figure a purchase was sized on,
+    so it comes only from groups that bought; a covered group's is 0 by definition.
+
     A run frozen before the basis existed (or a hand-built recommendation) has no group,
-    and falls back to the row-wise sum, which is exactly right for the per-warehouse shape
-    it was written for.
+    and falls back to the row-wise sum over the BUY rows, which is exactly right for the
+    per-warehouse shape it was written for and leaves those runs byte for byte as they
+    were.
 
     `project_buy_qty` is CONFIRMED unplaced Buy only, which is what plan 5.3 and AC-E04
     define it as. The unconfirmed sheet leg was netted by the engine alongside Retail, so
@@ -328,9 +388,16 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
     leave a reader to notice a project-class quantity missing from both columns. The open
     project-class order book is separately visible as `project_demand` on the same row.
     """
+    buy_recs = [r for r in recs if r.rec_type == BUY_REC_TYPE]
     groups = _sizing_groups(recs)
     if groups:
         sources: list = list(groups.values())
+        # Netted Retail is a SIZED figure, so it is read only off the groups that actually
+        # bought. A covered group's replenishment is 0 by definition (its stock covers the
+        # need), and a group that could not be sourced or is waiting on a level sized no
+        # purchase either - while their Project, sheet and unclassified readings above are
+        # demand and stay additive across every group.
+        retail_sources: list = list(_sizing_groups(buy_recs).values())
         locations = [
             # `warehouse_id` stays inside the recommendation snapshot, where the allocator
             # replay reads it; the product row's basis is addressed by code alone.
@@ -345,10 +412,11 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
                 "project_sheet_need": (r.inputs or {}).get("project_sheet_need"),
                 "unclassified_need": (r.inputs or {}).get("unclassified_need"),
             }
-            for r in recs
+            for r in buy_recs
         ]
+        retail_sources = sources
         locations = []
-        for r in recs:
+        for r in buy_recs:
             inp = r.inputs or {}
             code, name = wh_meta.get(str(r.warehouse_id), (None, None))
             locations.append({
@@ -372,7 +440,7 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
             })
 
     project = sum(float(s.get("project_need") or 0.0) for s in sources)
-    retail = sum(float(s.get("retail_need") or 0.0) for s in sources)
+    retail = sum(float(s.get("retail_need") or 0.0) for s in retail_sources)
     unclassified = sum(float(s.get("unclassified_need") or 0.0) for s in sources)
     project_sheet = sum(float(s.get("project_sheet_need") or 0.0) for s in sources)
     raw_need = project + retail
@@ -737,7 +805,12 @@ def _serialise_row(row: OrderSummaryRow, product: Product, supplier, pool,
             if row.earliest_project_need_date else None
         ),
         "uom_decimal_places": row.uom_decimal_places,
-        "channel_calculation_basis": row.channel_calculation_basis,
+        # `channel_calculation_basis` is deliberately NOT here. It is the row's whole
+        # per-location evidence set, the report is returned unpaginated, and on a real run
+        # that was 2,043 location entries across 507 rows - shipped to every reader of the
+        # book so that a drill nobody had opened yet would already have its data. The drill
+        # fetches it per product from `/order-summary/{code}/locations`, which is one row's
+        # worth on demand. The column and that endpoint are untouched.
         "location_allocations": allocations or None,
         "qty_on_order": _f(row.qty_on_order) or 0.0,
         "qty_in_transit": _f(row.qty_in_transit) or 0.0,
