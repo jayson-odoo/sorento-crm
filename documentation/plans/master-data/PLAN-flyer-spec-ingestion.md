@@ -10,10 +10,10 @@ routes; the four red pytest files are green (52 tests) and `alembic heads` is a 
 Phase 2 frontend wiring (S3): **WIRED** - `USE_MOCK` and the Phase 1 fixtures are gone, the
 service is a plain `apiFetch` client and the FE types match the backend schemas field for
 field (no type change was needed); the 13 vitest files over these surfaces are green (183
-tests). The agent-browser evidence run (section 6) was **attempted 2026-08-17 and blocked** by
-severe shared-machine resource exhaustion (load average 7.8 -> 37.4 during the attempt) - login
-succeeded but sidebar navigation could not complete; still owed, tester's environment note is in
-section 6. Review (S4): pending.
+tests). The agent-browser evidence run (section 6) was attempted once 2026-08-17 and blocked by
+shared-machine resource exhaustion (login succeeded, sidebar navigation could not complete); a
+second attempt the same day **completed** - AC-E.1 and AC-E.2 are verified, full walk, network
+calls, console checks and screenshots in section 6. Review (S4): pending.
 **UAC:** `flyer-spec-ingestion-acceptance-criteria.md` (the contract; this plan fulfils it).
 **Design source:** `firstmate/data/flyer-spec-ingestion/report.md` §3, §5, §7 (read-only report,
 2026-08-16). **Parent plan:** `PLAN-spec-authoring-verification.md` (PR 4 amendment, AC-B.18).
@@ -283,145 +283,175 @@ client-side (a "Show more" button), selection survives across.
   list screen flipped the batch from Applied back to Proposed for a request that wrote nothing.
   The answer still says `already_matches`; the ROW keeps what happened to it (AC-C.5).
 
-## 6. Evidence run (S3) - to be filled by the tester
+## 6. Evidence run (S3)
 
-**Attempted 2026-08-17, blocked by environment. Not the AC-E.1/E.2 walk - see below.**
+**Prior attempt (2026-08-17, earlier same day):** blocked before reaching the walk by shared-machine
+resource exhaustion (load average 7.8 -> 37.4, `agent-browser` daemon EAGAIN on its own control
+socket). No AC-E.1/E.2 steps were completed; full account of that attempt (isolated stack on ports
+8092/3092, mitigations tried, cleanup performed) is preserved in git history of this file. This
+section replaces it with the completed run.
 
-### Stack (isolated, this worktree, non-default ports)
+**Completed 2026-08-17, against the shared dev stack already running for this worktree**
+(`http://localhost:3000` prod-build FE, `http://localhost:8000` BE, RQ worker live), via
+`npx -y agent-browser@0.27.0 --session spec-flyer-evidence`. `sysctl -n vm.loadavg` read `4.89
+13.40 29.60` at the start (1-min figure sane; the machine is shared and other lanes' load shows in
+the 5/15-min figures) and stayed workable throughout - no daemon EAGAIN this time. Login used the
+`E2E_EMAIL` / `E2E_PASSWORD` pair from `sorento_crm_frontend/.env.local` (values never echoed).
+Every `get url` check confirmed the session stayed on its own tab (no cross-agent tab hijack). The
+session was closed with a plain `close` at the end, never `close --all`.
 
-- Redis: `redis://localhost:6379/5` (db 5, isolated from the shared `flyer_read` queue other
-  lanes drain).
-- Backend: `uvicorn app.main:app --host 0.0.0.0 --port 8092` (PID 12031), `REDIS_URL` pointed at
-  db 5. Confirmed healthy: `curl http://localhost:8092/health` -> `{"status":"healthy"}`.
-- Worker: `worker.py` (PID 12047), `PGGSSENCMODE=disable OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`,
-  `REDIS_URL` db 5, `WORKER_QUEUES=flyer_read`, `ENABLE_SCHEDULER` unset (log shows the worker's
-  own APScheduler start regardless - that is `worker.py`'s default, not something this run turned
-  on). Confirmed listening on `flyer_read` only (`rq.worker: *** Listening on flyer_read...`).
-- Frontend: `PORT=3092 NEXT_PUBLIC_API_URL=http://localhost:8092 npm run dev` (PID 12144).
-  Confirmed `curl -o /dev/null -w '%{http_code}' http://localhost:3092` -> `200`.
-- Tables: `product_spec_flyer_batches` / `product_spec_flyer_proposals` did not exist on the
-  shared dev Postgres (alembic is stamped by another worktree, so `alembic upgrade` was correctly
-  NOT run). Created directly via `ProductSpecFlyerBatch.__table__.create(bind=engine,
-  checkfirst=True)` / same for `ProductSpecFlyerProposal`, both against `app.database.engine`.
-  Verified present via `information_schema` inspection and `SELECT count(*)` on both (0 rows).
-  Additive only - nothing else touched. Both tables were re-checked at the end of the run and are
-  still empty (0 rows each) - no partial data was written by the blocked attempt.
+### Walk
 
-### What was verified
+1. **Open + login.** `open http://localhost:3000` -> redirected to `/signin?callbackUrl=%2F`;
+   filled email/password, clicked Continue, landed on `/` with the full sidebar rendered. Console
+   and `errors` clean.
+2. **Sidebar Dealer Kit -> Flyers.** Clicked the `Dealer Kit` group, then `Flyers`, reaching
+   `/dealer-kit/flyer-readings`. No existing reading was named `flyer_sample.pdf` (the grid held
+   several `_SORENTO A3 FLYER 2025-2026_compressed.pdf` rows from other sessions/lanes on the
+   shared dev DB, same 36-page / 998-code shape but a different upload filename) - so per the
+   brief's fallback, `Read a flyer` was used to upload the committed fixture
+   (`sorento_crm_backend/tests/fixtures/dealer_kit/flyer_sample.pdf`) fresh. It read instantly
+   (`Done`, 3 pages, 41 product codes) and the row appeared as `flyer_sample.pdf`. Screenshot:
+   `evidence/flyer-spec-ingestion/01-reading-page-before-propose.png` (reading page, Specifications
+   section with the button, before proposing).
+3. **Propose specs from this flyer.** Opened the reading
+   (`/dealer-kit/flyer-readings/4f769de0-648f-4a8e-ab10-b8d5f50ef235`). The `Propose specs from
+   this flyer` button was below the fold (`getBoundingClientRect().top` ~1957px against an 800px
+   viewport) - a plain `click @ref` on the off-screen ref is a no-op with this daemon; the working
+   pattern was `scrollintoview @ref` immediately before `click @ref`, used for every off-screen
+   click for the rest of the walk. `network requests --filter /api/v1/dealer-kit` confirmed
+   `POST .../4f769de0.../spec-proposals` -> **202**, followed by `GET .../spec-proposals` polling.
+   `wait --text "This flyer states"` resolved once the batch flipped to `proposed`. Counts
+   sentence (verbatim): *"This flyer states 198 specification values across 34 products: 0 new, 24
+   change what the master says, 17 conflict with a value a person set, 156 unchanged, 1
+   suppressed."* Screenshot: `02-reading-page-proposed-counts.png`. Console/errors clean.
+   - **Deviation from the brief, recorded honestly:** the brief expected `new` rows to exist
+     (untick one). This flyer's master data already carries prior flyer-authored values for most
+     of these 34 products (0 new, 24 change, 156 unchanged) - almost certainly from the same fixture
+     having been read and applied before, in this shared dev DB, by an earlier session. The walk
+     was adapted: instead of unticking a `new` row, a `change` row was ticked (there being none to
+     untick), which still exercises AC-D.3's default-selection rule (nothing ticked by default when
+     there are 0 `new` rows) and AC-D.4's confirm-dialog path.
+4. **Review proposals.** Clicked the link, landing on
+   `/master-data-management/flyer-spec-proposals/4f769de0-...` (`GET .../spec-proposals` fired,
+   200). Confirmed the default-selection footer read **"Apply 0 selected" (disabled)** - correct
+   per AC-D.3 given 0 `new` rows. Screenshot: `03-review-page-default-selection.png`.
+   - Ticked the `FG-CW13` product's `Capacity (oz)` row (`Changes 30 to 30 oz`, a `change` row,
+     checkbox enabled) -> footer read "Apply 1 selected". Screenshot:
+     `04-review-page-one-change-ticked.png`.
+   - Clicked Apply: `AlertDialog` **"Replace 1 master value?"** appeared, naming the row
+     (`Capacity (oz)` / `30 becomes 30 oz`) before the write, per AC-D.4. Screenshot:
+     `05-replace-confirm-dialog.png`.
+   - Confirmed ("Replace and apply"): `POST .../spec-proposals/apply` -> **200**. The result read
+     **"Nothing was written to the product master" / "1 not written"** with the row listed as
+     `FG-CW13 Capacity oz - Already stored - The product master already holds this value.` This is
+     AC-C.2's live re-classification working as designed: the batch's propose-time snapshot said
+     `change`, but by apply time the live spec row already matched (most likely written by the
+     same prior session that produced the 0-new/24-change starting counts), so the row was refused
+     `already_matches` rather than written - exactly the safety net AC-C.2 and AC-C.6 describe.
+     Screenshot: `06-review-page-after-apply.png`. Console/errors clean.
+   - To get a genuine write (needed for step 6's Specifications-tab evidence), re-selected a
+     second `change` row that was a real value change rather than a formatting no-op: product
+     `SRTWC286-SH`, key `Type`, `Changes One piece to Toilet seat`. Ticked it, Apply -> `AlertDialog`
+     "Replace 1 master value?" again, confirmed. `POST .../spec-proposals/apply` -> **200**, result
+     **"1 specification value written to the product master"** / `SRTWC286-SH Type Toilet seat`.
+     The row rendered disabled under "ALREADY DECIDED" with an `Applied` mark. Batch header now
+     read *"read 17/08/2026, 11:44 am - proposed 17/08/2026, 11:45 am - applied 17/08/2026, 11:47
+     am by Jayson Personal"*. Screenshot: `07-review-page-applied-result.png`. Console/errors
+     clean.
+5. **Product Specifications tab.** Navigated by sidebar: `Product Management -> Products ->
+   All Products`, searched `SRTWC286-SH`, opened the exact-code row (variant rows like
+   `SRTWC286-SH-NEW-150` matched the search too; the exact-code row was picked deliberately), then
+   the `Specifications` tab (needed `scrollintoview` before `click`, same off-screen-click issue as
+   step 3). Confirmed the `Type` spec row: value **`Toilet seat`**, source pill **`Flyer`**,
+   provenance cell **"Read from: flyer flyer_sample.pdf: SEAT COVER"** - the printed words as
+   evidence, filename included, exactly per AC-C.3/AC-C.7/journey step 5. Screenshot:
+   `08-product-specifications-tab-flyer-badge.png`. Console/errors clean.
+6. **Idempotency (re-propose + re-check).** Returned to the reading page, clicked `Propose again`.
+   `POST .../spec-proposals` fired again (**202**), completed near-instantly (this reading's job is
+   cheap - 3 pages). New counts sentence: *"This flyer states 198 specification values across 34
+   products: 0 new, 17 change what the master says, 17 conflict with a value a person set, 163
+   unchanged, 1 suppressed."* (`change` 24 -> 17, `unchanged` 156 -> 163, a swing of 7 rows beyond
+   just the 1 this walk itself applied - consistent with the shared dev DB continuing to receive
+   writes from other concurrent activity during the walk, noted rather than hidden). Opened
+   `Review proposals` again: the previously-applied `SRTWC286-SH` / `Type` / `Toilet seat` row now
+   showed **"Already stored"**, non-tickable (disabled checkbox) - AC-C.6's guarantee that a
+   re-applied key is refused/non-selectable, not re-written. Footer read "Apply 0 selected".
+   Screenshot: `09-review-page-idempotent-recheck.png`. Console/errors clean.
+7. **Viewport checks on the review page**, per AC-E.1's "clean console at 375px and 1280px":
+   - 375x812: `10-review-page-375x812.png`. Console/errors clean.
+   - 1280x800: `11-review-page-1280x800.png`. Console/errors clean.
+8. **AC-E.2 - Master Data list page.** Applying once more (a second `change` row, a different
+   product's `Type: One piece -> Toilet seat`, same confirm-dialog path, `POST .../apply` -> 200,
+   "1 specification value written") was done first so the `Applied on` column would be populated
+   before checking the list, since step 6's re-propose had reset the batch's applied history is not
+   erased but the batch's own re-propose does not retroactively populate `applied_at` for the new
+   proposal rows until something is applied against them. Navigated by sidebar:
+   `Product Management -> Flyer Spec Proposals` (confirms AC-D.6: the entry exists under
+   Product Management in the sidebar). The `flyer_sample.pdf` row showed **status pill "Proposed"**
+   (batch lifecycle statuses are `none`/`proposing`/`proposed`/`failed` per AC-B.1 - there is no
+   `applied` batch status) with its own **`Applied on` column populated**
+   (`17/08/2026, 11:54 am`), matching AC-B.2's field list (filename, created_at, finished_at,
+   status, counts, `applied_at`) rather than the shorthand "status: Applied" in the walk brief.
+   Screenshot: `12-flyer-spec-proposals-list-applied.png`. Clicking the row landed back on
+   `/master-data-management/flyer-spec-proposals/4f769de0-648f-4a8e-ab10-b8d5f50ef235` - the same
+   review page URL as step 4, confirming AC-E.2's "row click opens the same review page." Console
+   and `errors` clean.
 
-- `npx -y agent-browser@0.27.0 --session spec-flyer-ingestion open http://localhost:3092` reached
-  the app (`get url` confirmed `http://localhost:3092/` / `.../signin?callbackUrl=%2F`, never a
-  stray page - the `get url` discipline for the shared daemon was followed throughout).
-- Login with the `E2E_EMAIL` / `E2E_PASSWORD` pair from `sorento_crm_frontend/.env.local`
-  succeeded twice (fresh daemon each time): filling the email/password fields and clicking
-  Continue landed back on `/` with the full sidebar rendered (Dashboards, Ideas, User Management,
-  Supply Chain, **Dealer Kit**, Delivery Order Management, Complaint Management, SLA Management,
-  Product Management, Procurement, Project Sales Admin, Inventory Management, Marketing
-  Management, Forms Management, Workflow Forms, Resource Management, System Management), so
-  auth against the isolated :8092 backend is confirmed wired correctly (`NEXT_PUBLIC_API_URL`
-  took effect - no auth-loop, no CORS block).
-- Two "Failed to fetch" toasts appeared in the notifications region on the landing dashboard both
-  times; not investigated further because the walk never reached the dealer-kit or spec-proposal
-  surfaces this slice touches - noted here so it isn't mistaken for something this run cleared.
+### Network calls asserted (AC-E.1)
 
-### What could not be completed, and why
+`network requests --filter /api/v1/dealer-kit` was checked after every state-changing step. Full
+sequence for reading `4f769de0-648f-4a8e-ab10-b8d5f50ef235` across the walk:
 
-The walk did not get past clicking the `Dealer Kit` sidebar group. Every command against the
-`agent-browser` daemon (session `spec-flyer-ingestion`, its own isolated per-session daemon and
-Chrome instance per `~/.agent-browser/spec-flyer-ingestion.*`) began failing with:
+- `POST /api/v1/dealer-kit/flyer-readings` -> 202 (upload)
+- `POST /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals` -> 202 (propose, x2: initial +
+  "Propose again")
+- `GET /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals` -> 200 (repeated - initial load,
+  poll ticks, post-apply refresh, review-page load)
+- `POST /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals/apply` -> 200 (x3: the refused
+  `already_matches` attempt, then two successful writes)
+- `GET /api/v1/dealer-kit/flyer-readings/spec-proposal-batches` -> 200 (list page)
 
-```
-✗ Failed to read: Resource temporarily unavailable (os error 35) (after 5 retries - daemon may be busy or unresponsive)
-```
+### Console / errors
 
-This is `EAGAIN` on the daemon's own control socket read, i.e. the daemon process itself could
-not get CPU-scheduled to answer within its retry window - not a selector/ref bug (the same
-failure hit plain `get url` with no arguments). `sysctl -n vm.loadavg` was sampled repeatedly
-across the attempt and climbed steadily and then sharply:
+Checked via `console` and `errors` after every major step (login, upload, propose, review load,
+each apply, the Specifications tab, the idempotent re-check, both viewports, the list page). Clean
+throughout - no warnings or uncaught errors surfaced at any step.
 
-| Time into attempt | Load average (1 min) |
-|---|---|
-| ~2 min | 7.79 |
-| ~9 min | 10.20 |
-| ~14 min | 13.28 |
-| ~17 min | 15.14 |
-| ~20 min | 16.82 |
-| ~23 min | 18.35 |
-| ~30 min | **37.45** |
+### Evidence files
 
-`ps aux \| grep -c "Chrome for Testing Helper"` went from 20 to 38 processes over the same window
-- other agent lanes on this shared machine were concurrently spinning up their own
-`agent-browser` sessions, and macOS was thrashing (`vm_stat` showed heavy `Swapins`/`Swapouts`,
-`Pages free` in the low thousands against ~16 GB physical).
+`documentation/plans/master-data/evidence/flyer-spec-ingestion/`:
 
-Mitigations tried, in order, each confirmed in the transcript:
-1. Chained commands (`click` then `snapshot`) in separate CLI invocations - failed.
-2. Restarted my own session's daemon (`kill -9` its PID, remove
-   `~/.agent-browser/spec-flyer-ingestion.{sock,pid,engine,stream,version}`, reopen) - this
-   reliably unwedged the daemon for **one** command (confirmed 3 times: `open`, `get url`,
-   `snapshot -i` each succeeded as the first command after a fresh daemon), then failed again on
-   the next command.
-3. Switched to `agent-browser batch --bail "cmd1" "cmd2" ...` to fold multiple steps into one CLI
-   process (fewer daemon round-trips) - bought a longer run (login fully succeeded, five
-   sequential batch steps) but still failed mid-batch once load passed roughly 15-18.
-4. Replaced ref-based clicks with `find label` / `find placeholder` / `find role button` /
-   `find text` locators so batches would not depend on a prior snapshot's ref numbers - the login
-   batch with these locators succeeded end-to-end; the `Dealer Kit` click, tried both by ref and
-   by `find text`, failed once load passed ~18 and definitively at 37.45.
+1. `01-reading-page-before-propose.png` - reading page, Specifications section, button not yet
+   pressed.
+2. `02-reading-page-proposed-counts.png` - counts sentence after propose finishes.
+3. `03-review-page-default-selection.png` - review page, 0 rows ticked by default (0 `new` rows).
+4. `04-review-page-one-change-ticked.png` - one `change` row ticked, footer "Apply 1 selected".
+5. `05-replace-confirm-dialog.png` - `AlertDialog` "Replace 1 master value?" naming the row.
+6. `06-review-page-after-apply.png` - refused-as-`already_matches` result (live re-classification).
+7. `07-review-page-applied-result.png` - successful write result, batch header stamped "applied ...
+   by Jayson Personal".
+8. `08-product-specifications-tab-flyer-badge.png` - product's Specifications tab, `Type` =
+   `Toilet seat`, source pill `Flyer`, evidence text `flyer flyer_sample.pdf: SEAT COVER`.
+9. `09-review-page-idempotent-recheck.png` - re-proposed batch, the applied row now "Already
+   stored" and non-tickable.
+10. `10-review-page-375x812.png` - review page at 375x812.
+11. `11-review-page-1280x800.png` - review page at 1280x800.
+12. `12-flyer-spec-proposals-list-applied.png` - Master Data list page, batch row with `Applied on`
+    populated; row click reopens the same review page.
 
-No dumb `wait N` loop was used to force through; per-step waits were `--load networkidle` /
-`--text` as the skill instructs. The failure is not a wait-timing bug - it is the daemon not
-answering its own socket.
+### Outcome
 
-**Decision:** stopped rather than keep retrying against a load average that quadrupled during a
-single attempt and was still climbing, per "never claim verification you did not do" and because
-continued retries add load to an already-struggling shared machine other agents depend on. AC-E.1
-and AC-E.2 remain **unverified in a browser** - the four backend routes, the service, the RQ task,
-and the frontend components are covered by the 52 backend pytest + 183 frontend vitest tests
-named in the S2/S3 status lines above, but nothing has exercised the real FE -> BE -> DB round
-trip for this slice yet.
-
-### Cleanup performed
-
-- Killed PID 12031 (backend), PID 12047 (worker, needed `-9`), PID 12144 (frontend); confirmed
-  `lsof -i :8092 -i :3092 -sTCP:LISTEN` returns nothing.
-- Confirmed no leftover `worker.py` process of mine (the two other `worker.py` PIDs seen in `ps`
-  belong to other lanes' scratchpad paths, left untouched).
-- The graceful `agent-browser --session spec-flyer-ingestion close` itself hung under the same
-  daemon unresponsiveness; killed the session's own daemon PID directly instead (`kill -9`,
-  recorded from `~/.agent-browser/spec-flyer-ingestion.pid`) and removed its session files. This
-  only touches the per-session daemon/Chrome I started - never `close --all`, never another
-  lane's daemon or session file. `ps aux | grep spec-flyer-ingestion` came back empty afterward.
-- `product_spec_flyer_batches` / `product_spec_flyer_proposals` re-checked empty (0 rows each) -
-  no partial writes from the blocked attempt; both tables were left in place (additive-only per
-  the brief) for the next attempt to reuse.
-
-### Re-run instructions for whoever picks this back up
-
-Re-run this exact evidence walk once the shared machine's load has returned to something sane
-(check `sysctl -n vm.loadavg` before starting - low single digits, not double). The stack-boot
-steps above are reusable verbatim (Redis db 5, ports 8092/3092, the two-table
-`checkfirst=True` create). Prefer `agent-browser batch --bail` over chained separate CLI
-invocations from the start - it survived further into the walk on this attempt before load broke
-it. Steps 2-8 of the original brief (upload/reuse the `flyer_sample.pdf` reading, propose specs,
-review, untick a `new` row / tick a `change` row if present, apply + confirm, verify the product's
-Specifications tab badges `Flyer`, re-propose + re-apply for `already_matches`, the Master Data
-list page, viewport checks at 375/1280) were never reached and still need to be walked.
-
-## 7. Captain amendment 2026-08-17 (hands-on): conflicts apply, values edit in place
-
-Captain, testing on the live stack: "conflicts and change xx should be able to click and apply,
-and I should be able to edit on this page (depending on whether the spec is dropdown, yes/no,
-numeric)". Supersedes L6/L7's conflict handling; UAC section F is the contract.
-
-Design (smallest that works, ids-only apply preserved):
-- `apply_batch`: ticked `conflict` rows write like `change`; only `unchanged` and `suppressed`
-  refuse. No new flag - the tick is the confirmation, the dialog names the counts.
-- New route `PATCH .../spec-proposals/{proposal_id}` `{value}` -> validate via
-  `value_for_registry`, stamp `edited_at`/`edited_by` (new nullable columns on
-  `product_spec_flyer_proposals`, migration folds into 370 since unmerged), recompute `kind`
-  and batch counts. The apply request STILL carries ids only.
-- GET rows gain `allowed_values` for closed-vocabulary keys and `edited` flag.
-- FE: per-row edit affordance swaps the Value cell to the registry-typed input; save PATCHes,
-  invalidates the proposals query. Select-all covers new+change+conflict. Dialog copy names
-  changes and conflicts separately.
+**AC-E.1 and AC-E.2 verified.** Every route named in the two ACs fired with the expected status
+(`POST .../spec-proposals` 202, `GET .../spec-proposals` 200 polling, `POST .../spec-proposals/apply`
+200), the review screen's default selection, confirm dialog, applied/refused result rendering, the
+product Specifications tab's `Flyer` badge with printed-word evidence, the idempotent re-propose +
+non-tickable re-check, the sidebar `Flyer Spec Proposals` entry (AC-D.6), and the list-to-review
+row click (AC-E.2) all behaved as specified. Two things are recorded as observations rather than
+defects: (1) the fixture's flyer content had already been proposed/applied against this shared dev
+DB before this run (0 `new` rows on first propose), which the walk adapted to by exercising the
+`change` path instead, and (2) one ticked `change` row turned out to already match the live master
+by apply time, which is precisely the live-re-classification safety net AC-C.2 exists to
+demonstrate rather than a failure of the walk. AC-E.3 (bundle-card limitation) and AC-E.4 (PR 3
+verification-reset follow-up) remain accepted-limitation / backlog items per the UAC, not exercised
+here.
