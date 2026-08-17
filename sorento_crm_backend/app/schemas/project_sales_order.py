@@ -86,6 +86,10 @@ class ProjectSalesOrderRow(BaseModel):
     # Present only once the order is committed: nothing uncommitted should be importable
     # into AutoCount, and a published order the user comes back to still needs its file.
     import_file_url: Optional[str] = None
+    # Whether that url may be fetched. Not the same question: a published order carrying an
+    # unacknowledged hard finding keeps the address of its file and loses permission to
+    # take it, so the screens gate the download on this rather than on the url's presence.
+    can_export: bool = False
     line_count: int = 0
     total_amount: Optional[Decimal] = None
     hard_findings: int = 0
@@ -260,6 +264,9 @@ class PublishResponse(BaseModel):
     status: str
     provisional_ref: str
     import_file_url: str
+    # The same answer the row and the worksheet carry, so the publish dialog's download
+    # button reads the server's gate rather than the presence of the url beside it.
+    can_export: bool = False
     total_amount: Optional[Decimal] = None
     line_count: int = 0
 

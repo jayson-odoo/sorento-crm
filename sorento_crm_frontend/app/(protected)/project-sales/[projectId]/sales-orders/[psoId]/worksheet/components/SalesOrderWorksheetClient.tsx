@@ -154,8 +154,11 @@ function WorksheetView({
 
   const lines = worksheet.lines ?? [];
   const findings = worksheet.findings ?? [];
+  // Acknowledged is `acknowledged_at`, which is what the backend's own gate reads. The
+  // name beside it is a display field and is absent whenever the acknowledger no longer
+  // resolves, which would silently turn a cleared finding back into a blocking one.
   const blocking = findings.filter(
-    (finding) => finding.severity === 'hard' && !finding.acknowledged_by_name,
+    (finding) => finding.severity === 'hard' && !finding.acknowledged_at,
   );
   const warnings = findings.filter((finding) => finding.severity !== 'hard');
   const reference = worksheet.autocount_doc_no || worksheet.provisional_ref;

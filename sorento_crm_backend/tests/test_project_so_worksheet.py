@@ -207,7 +207,13 @@ def test_a_published_order_with_nothing_outstanding_can_be_exported(seeded):
 
 
 def test_an_unacknowledged_hard_finding_refuses_the_export_even_once_published(seeded):
-    """The file exists, the export is refused: the publish gate, still holding after it."""
+    """The url survives, the export does not: the publish gate, still holding after it.
+
+    `import_file_url` stays non-null because the order IS in AutoCount already and the
+    address of its file has not changed. What the finding takes away is permission to
+    fetch it, which is `can_export` and is enforced on the route (below), not a hint the
+    screen is trusted to obey.
+    """
     db, company_id, owner = seeded
     service, order, _po_row = _built(db, company_id, owner)
     service.publish(order, actor_user_id=owner)
@@ -226,7 +232,7 @@ def test_an_unacknowledged_hard_finding_refuses_the_export_even_once_published(s
     worksheet = service.worksheet(order)
 
     assert worksheet["can_export"] is False
-    # The file itself is still reachable: the order IS in AutoCount already.
+    assert service.can_export(order) is False
     assert worksheet["import_file_url"] is not None
     assert any(row["severity"] == "hard" for row in worksheet["findings"])
 
@@ -255,6 +261,41 @@ def test_an_acknowledged_hard_finding_no_longer_blocks_the_export(seeded):
     worksheet = service.worksheet(order)
 
     assert worksheet["can_export"] is True
+
+
+def test_the_sales_order_row_answers_the_export_question_the_worksheet_does(seeded):
+    """One rule, one owner. The detail screen gates its Import file button on this.
+
+    Without it the button had only `import_file_url` to go on, which stays non-null on a
+    published order carrying a hard finding -- so it offered a download the server refuses.
+    """
+    db, company_id, owner = seeded
+    service, order, _po_row = _built(db, company_id, owner)
+
+    assert service.serialize_row(order)["can_export"] is False
+
+    service.publish(order, actor_user_id=owner)
+    published = service.serialize_row(order)
+    assert published["can_export"] is True
+    assert published["can_export"] == service.worksheet(order)["can_export"]
+    assert service.serialize_detail(order)["can_export"] is True
+
+    db.add(
+        SODraftFinding(
+            id=_uid(),
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            severity="hard",
+            code="line_arithmetic",
+            detail=f"{MARKER} the line does not add up",
+        )
+    )
+    db.flush()
+
+    blocked = service.serialize_row(order)
+    assert blocked["can_export"] is False
+    # The address of the file is unchanged; permission to fetch it is what moved.
+    assert blocked["import_file_url"] is not None
 
 
 # --------------------------------------------------------------------- parity
@@ -374,6 +415,65 @@ def test_the_route_serves_the_worksheet(api):
     assert isinstance(body["total_amount"], str)
     assert isinstance(body["lines"][0]["unit_price"], str)
     assert body["import_file_url"].endswith(f"/sales-orders/{order.id}/import-file")
+
+
+def test_the_route_serves_the_import_file_of_an_exportable_order(api):
+    client, _service, order = api
+
+    response = client.get(f"{BASE}/sales-orders/{order.id}/import-file")
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/csv")
+    assert f'filename="{order.provisional_ref}.csv"' in (
+        response.headers.get("content-disposition") or ""
+    )
+    assert "Item,Description,Reserve Qty,Qty,Delivery Date,UOM,U/Price,Disc.,Total" in (
+        response.text
+    )
+
+
+def test_the_route_refuses_the_import_file_the_gate_has_not_cleared(api):
+    """`can_export` is a rule, not advice: the server refuses the fetch itself.
+
+    A screen that respects it is not the enforcement. Anybody with the url -- a bookmark, a
+    second tab open since before the finding was raised, curl -- would otherwise walk a
+    document AutoCount must not import straight out of the building.
+    """
+    client, service, order = api
+    service.db.add(
+        SODraftFinding(
+            id=_uid(),
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            severity="hard",
+            code="line_arithmetic",
+            detail=f"{MARKER} the line does not add up",
+        )
+    )
+    service.db.flush()
+
+    response = client.get(f"{BASE}/sales-orders/{order.id}/import-file")
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "so_export_blocked"
+
+
+def test_the_route_refuses_the_import_file_of_an_unpublished_order(seeded):
+    """A draft is not a document yet, so there is nothing to import."""
+    from app.models.base import company_scope
+
+    db, company_id, owner = seeded
+    service, order, _po_row = _built(db, company_id, owner, customer=_customer(db, "Buimaco"))
+    db.commit()
+    client, originals = _client(db, owner)
+    try:
+        with company_scope(db, frozenset({company_id})):
+            response = client.get(f"{BASE}/sales-orders/{order.id}/import-file")
+    finally:
+        _restore(originals)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "so_export_blocked"
 
 
 def test_the_route_404s_on_an_unknown_sales_order(api):

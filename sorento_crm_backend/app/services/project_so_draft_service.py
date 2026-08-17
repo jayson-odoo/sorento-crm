@@ -1820,6 +1820,7 @@ class ProjectSODraftService:
             # returned document number is adopted later, and the ESB call replaces this
             # transport in stage 2 without changing a table or a status.
             "import_file_url": f"/api/v1/project-sales/sales-orders/{order.id}/import-file",
+            "can_export": self.can_export(order),
             "total_amount": _money(_dec(order.total_amount)),
             "line_count": len(lines),
         }
@@ -2093,16 +2094,40 @@ class ProjectSODraftService:
             ],
             "total_amount": str(_money(_dec(order.total_amount))),
             "findings": self.serialize_findings(order),
-            # The server's own answer, so the screen never re-derives the rule: an
-            # unpublished order is not a document yet, and a published one still carrying
-            # an unacknowledged hard stop must not reach AutoCount.
-            "can_export": published and not self.blocking_findings(order),
+            "can_export": self.can_export(order),
             "import_file_url": (
                 f"/api/v1/project-sales/sales-orders/{order.id}/import-file"
                 if published
                 else None
             ),
         }
+
+    def can_export(self, order: ProjectSalesOrder) -> bool:
+        """May this order's document leave the building (AC-A01)?
+
+        The one owner of the rule: an unpublished order is not a document yet, and a
+        published one still carrying an unacknowledged hard stop must not reach AutoCount.
+        Read by the worksheet, by the sales order row the screens gate their buttons on,
+        and by the import-file route, which refuses the fetch outright -- a frontend that
+        respects the answer is not enforcement.
+        """
+        published = order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
+        return published and not self.blocking_findings(order)
+
+    def assert_can_export(self, order: ProjectSalesOrder) -> None:
+        if self.can_export(order):
+            return
+        if order.status not in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED):
+            message = (
+                f"{order.provisional_ref} is not published yet, so there is no import "
+                "file to take. Publish it first."
+            )
+        else:
+            message = (
+                f"{order.provisional_ref} still carries an unacknowledged hard finding. "
+                "Clear it with a reason before the import file leaves for AutoCount."
+            )
+        raise AppException(status_code=422, message=message, code="so_export_blocked")
 
     def import_file(self, order: ProjectSalesOrder) -> Tuple[str, str]:
         """The stage 1 AutoCount import file, as CSV. Returns (filename, body).
@@ -2418,6 +2443,11 @@ class ProjectSODraftService:
                 if order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
                 else None
             ),
+            # Whether that url may actually be fetched, which is NOT the same question:
+            # a published order carrying an unacknowledged hard finding keeps its file's
+            # address and loses permission to take it. The screens gate their download on
+            # this; the route enforces it (`assert_can_export`).
+            "can_export": self.can_export(order),
             "line_count": len(lines),
             "total_amount": _money(_dec(order.total_amount)),
             "hard_findings": counts.get(SEVERITY_HARD, 0),

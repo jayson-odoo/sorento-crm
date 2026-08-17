@@ -381,7 +381,7 @@ async def confirm_sales_order_costing(
 
 
 @router.get("/sales-orders/{pso_id}/worksheet", response_model=SalesOrderWorksheet)
-async def sales_order_worksheet(
+def sales_order_worksheet(
     pso_id: str,
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
@@ -390,6 +390,10 @@ async def sales_order_worksheet(
 
     Read-only, and the same grant as the detail beside it. ``can_export`` is answered here
     rather than on the screen so the publish gate has one owner.
+
+    Plain ``def``, so FastAPI runs the whole handler in a threadpool: everything below is
+    synchronous SQLAlchemy over a 100-line order, and on the event loop it holds up every
+    other request the worker is serving (CLAUDE.md, the flyer-read measurement).
     """
     try:
         validate_uuid_path(pso_id, resource="Sales order")
@@ -400,7 +404,7 @@ async def sales_order_worksheet(
 
 
 @router.get("/sales-orders/{pso_id}/import-file")
-async def sales_order_import_file(
+def sales_order_import_file(
     pso_id: str,
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -410,11 +414,18 @@ async def sales_order_import_file(
     Generated per request so it always matches the order as it stands: a stored file goes
     stale the moment an amendment publishes, and a stale import file is how a wrong
     document reaches AutoCount.
+
+    The export gate is enforced here, not merely reported: `can_export` false means this
+    document must not reach AutoCount, and a bookmarked url or a tab opened before the
+    finding was raised would otherwise walk it straight out. Plain ``def`` for the same
+    reason as the worksheet above.
     """
     try:
         validate_uuid_path(pso_id, resource="Sales order")
         service = ProjectSODraftService(db)
-        filename, body = service.import_file(service.get_order(pso_id))
+        order = service.get_order(pso_id)
+        service.assert_can_export(order)
+        filename, body = service.import_file(order)
         return Response(
             content=body,
             media_type="text/csv",

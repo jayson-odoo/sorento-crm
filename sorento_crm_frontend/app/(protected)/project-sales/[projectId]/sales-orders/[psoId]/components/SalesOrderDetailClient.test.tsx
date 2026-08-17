@@ -331,6 +331,7 @@ describe('SalesOrderDetailClient', () => {
             ...WARN,
             acknowledged_by_name: 'Eling',
             acknowledged_reason: 'Customer agreed the revised price on 01/04.',
+            acknowledged_at: '2026-04-01T09:12:00',
           },
         ],
       }),
@@ -340,6 +341,7 @@ describe('SalesOrderDetailClient', () => {
       provisional_ref: 'PSO-000123',
       autocount_doc_no: 'SO397450',
       import_file_url: 'https://example.test/import.csv',
+      can_export: true,
     });
 
     renderDetail();
@@ -435,11 +437,50 @@ describe('SalesOrderDetailClient', () => {
     expect(screen.getByRole('button', { name: 'Import file' })).toBeInTheDocument();
   });
 
+  it('refuses the import file the server has not cleared, whatever the url says', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        status: 'published',
+        autocount_doc_no: 'SO397450',
+        // Published, so the file has an address; blocked, so it may not be taken. The
+        // route 422s this fetch, and the button has to say so before it is clicked.
+        import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
+        can_export: false,
+        hard_findings: 1,
+        findings: [HARD],
+      }),
+    );
+
+    renderDetail();
+
+    const button = await screen.findByRole('button', { name: 'Import file' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'Clear the blocking findings first');
+    expect(downloadSalesOrderImportFile).not.toHaveBeenCalled();
+  });
+
+  it('offers the import file when the server has cleared the export', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        status: 'published',
+        autocount_doc_no: 'SO397450',
+        import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
+        can_export: true,
+      }),
+    );
+
+    renderDetail();
+
+    expect(await screen.findByRole('button', { name: 'Import file' })).toBeEnabled();
+  });
+
   it('fetches the import file through the service and names it as the backend did', async () => {
     getProjectSalesOrder.mockResolvedValue(
       detail({
         status: 'published',
         autocount_doc_no: 'SO397450',
+        // No `can_export`: a row cached from before the field shipped falls back to the
+        // url being there, which is what the button used to go on.
         import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
       }),
     );

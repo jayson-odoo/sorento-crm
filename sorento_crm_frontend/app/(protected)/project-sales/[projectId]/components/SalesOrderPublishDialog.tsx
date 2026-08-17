@@ -47,6 +47,13 @@ export function SalesOrderPublishDialog({
 }) {
   const [result, setResult] = React.useState<SalesOrderPublishResult | null>(null);
 
+  // The server's gate, read off the publish response rather than re-derived here. A
+  // response from before `can_export` shipped falls back to the url being there at all,
+  // which is what this button used to go on.
+  const canDownload = result
+    ? (result.can_export ?? Boolean(result.import_file_url))
+    : false;
+
   if (blocking.length > 0) {
     return (
       <AlertDialog open onOpenChange={(next) => !next && onDone()}>
@@ -102,7 +109,8 @@ export function SalesOrderPublishDialog({
                     variant="outline"
                     size="sm"
                     onClick={onDownloadImportFile}
-                    disabled={downloading}
+                    disabled={!canDownload || downloading}
+                    title={canDownload ? undefined : 'Clear the blocking findings first'}
                   >
                     <Download className="size-4" aria-hidden />
                     Download the import file

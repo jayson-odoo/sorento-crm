@@ -216,6 +216,11 @@ export async function getSalesOrderWorksheet(psoId: string): Promise<SalesOrderW
  *
  * The filename is the one the backend stamped on the response; the caller supplies a
  * fallback for a response that carries no `Content-Disposition`.
+ *
+ * The export gate is the SERVER's: an order that is not published, or is published and
+ * still carries an unacknowledged hard finding, answers 422 `so_export_blocked` here. The
+ * screens disable their download on the same `can_export` flag so the refusal is visible
+ * before the click, but this call is what actually enforces it.
  */
 export async function downloadSalesOrderImportFile(
   psoId: string,

@@ -77,6 +77,13 @@ export interface ProjectSalesOrderRow {
   purchase_order_id?: string | null;
   published_at?: string | null;
   import_file_url?: string | null;
+  /**
+   * Whether that url may actually be fetched, which is not the same question: a published
+   * order carrying an unacknowledged hard finding keeps the address of its file and loses
+   * permission to take it. Optional so a cached row from before the field shipped falls
+   * back to the url's presence rather than hiding the button.
+   */
+  can_export?: boolean;
 }
 
 export interface ProjectSalesOrderLine {
@@ -170,6 +177,8 @@ export interface SalesOrderPublishResult {
   status: string;
   provisional_ref: string;
   import_file_url?: string | null;
+  /** The same gate the row and the worksheet carry. Absent on an older backend. */
+  can_export?: boolean;
   autocount_doc_no?: string | null;
 }
 

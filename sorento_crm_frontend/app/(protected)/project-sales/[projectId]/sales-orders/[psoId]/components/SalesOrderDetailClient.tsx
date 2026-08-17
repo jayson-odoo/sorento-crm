@@ -100,13 +100,19 @@ export function SalesOrderDetailClient({
   const findings = so.findings ?? [];
   const lines = so.lines ?? [];
 
+  // Acknowledged is `acknowledged_at`, which is what the backend's own gate reads. The
+  // name beside it is a display field and is absent whenever the acknowledger no longer
+  // resolves, which would silently turn a cleared finding back into a blocking one.
   const blocking = findings.filter(
-    (finding) => finding.severity === 'hard' && !finding.acknowledged_by_name,
+    (finding) => finding.severity === 'hard' && !finding.acknowledged_at,
   );
   const unacknowledgedWarnings = findings.filter(
-    (finding) => finding.severity === 'warn' && !finding.acknowledged_by_name,
+    (finding) => finding.severity === 'warn' && !finding.acknowledged_at,
   );
   const isPublished = so.status === 'published' || so.status === 'amended';
+  // The server owns the export gate. `can_export` is optional so a row cached from before
+  // it shipped still offers the download it used to.
+  const canExport = so.can_export ?? Boolean(so.import_file_url);
 
   // Summed from the line amounts as decimal strings so the figure can be read straight off
   // the printed order. `total_amount` is shown beside it and disagreement is worth seeing.
@@ -206,13 +212,17 @@ export function SalesOrderDetailClient({
               </Link>
             </Button>
           )}
+          {/* Shown while the order has a file, disabled while the server refuses it: the
+              route 422s an export the gate has not cleared, and a button that vanished
+              would not say that a blocking finding is what took it away. */}
           {so.import_file_url && (
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => importFile.mutate(so.provisional_ref)}
-              disabled={importFile.isPending}
+              disabled={!canExport || importFile.isPending}
+              title={canExport ? undefined : 'Clear the blocking findings first'}
             >
               <Download className="size-4" aria-hidden />
               Import file
