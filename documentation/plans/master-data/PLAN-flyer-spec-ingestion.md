@@ -7,7 +7,10 @@ once PR 4 merges). Phase 1 mock (S1): BUILT, browser verification outstanding.
 Phase 2 backend (S2): **BUILT** - classifier + registry-helper lift, `AUTHORED_SOURCES` flip,
 migration `368_flyer_spec_proposals`, both models, the ingest service, the RQ task and the four
 routes; the four red pytest files are green (52 tests) and `alembic heads` is a single head.
-Phase 2 frontend wiring (S3): pending. Review (S4): pending.
+Phase 2 frontend wiring (S3): **WIRED** - `USE_MOCK` and the Phase 1 fixtures are gone, the
+service is a plain `apiFetch` client and the FE types match the backend schemas field for
+field (no type change was needed); the 13 vitest files over these surfaces are green (183
+tests). The agent-browser evidence run (section 6) is still owed. Review (S4): pending.
 **UAC:** `flyer-spec-ingestion-acceptance-criteria.md` (the contract; this plan fulfils it).
 **Design source:** `firstmate/data/flyer-spec-ingestion/report.md` §3, §5, §7 (read-only report,
 2026-08-16). **Parent plan:** `PLAN-spec-authoring-verification.md` (PR 4 amendment, AC-B.18).
@@ -180,7 +183,11 @@ client-side (a "Show more" button), selection survives across.
   rewritten to assert one head with 367 on its path so it does not fail on every later
   migration.
 - **S3 - Phase 2 FE wiring (coder) + vitest (tester):** swap mock, delete fixtures not used by
-  tests, AC-D.8 tests, agent-browser evidence run written into §6 below.
+  tests, AC-D.8 tests, agent-browser evidence run written into §6 below. **Mock swapped and
+  fixtures deleted** (nothing imported them: the vitest files stub the service module itself,
+  so there was no reason to keep a second copy of the shapes). The four route bodies needed
+  no correction on either side - the batch, proposal and group field sets are identical to
+  `FlyerSpecBatchOut` / `FlyerSpecProposalOut` / `FlyerSpecProductGroupOut`. Evidence run owed.
 - **S4 - Review:** `reviewer` agent + `/code-review`, then an independent Codex review of the
   final diff; findings fixed by the coder; then no-mistakes.
 

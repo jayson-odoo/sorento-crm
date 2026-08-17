@@ -3,10 +3,10 @@
  * API CONTRACT - flyer / catalogue ingestion into product specifications (PR 5)
  * ============================================================================
  *
- * Written HERE, before any of it exists, because this is Phase 1: the screens
- * below were built against `__mocks__/flyerSpecProposals.fixtures.ts` and the
- * backend of Phase 2 is held to what is written in this block. A deviation is
- * allowed only by changing this block and the two sides in the same commit.
+ * Written HERE before any of it existed, in Phase 1, when the screens below
+ * answered from an in-memory mock. Phase 2 built the backend to this block and
+ * this service now calls it; the block stays because it is the contract, and a
+ * deviation is allowed only by changing it and the two sides in one commit.
  *
  * Plan: `documentation/plans/master-data/PLAN-flyer-spec-ingestion.md` §3.4.
  * Contract: `flyer-spec-ingestion-acceptance-criteria.md`, sections A, B and C.
@@ -71,22 +71,6 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { SpecProposal } from '@/components/spec-proposals';
-
-import {
-  mockApplyFlyerSpecProposals,
-  mockGetFlyerSpecProposals,
-  mockListFlyerSpecBatches,
-  mockProposeFlyerSpecs,
-} from '../__mocks__/flyerSpecProposals.fixtures';
-
-/**
- * PHASE 1. Every call below answers from `__mocks__` while this is true.
- *
- * This is DEBT, and it is the one line Phase 2 flips (plan slice S3): the
- * fixtures go, this constant goes, and the four functions keep their signatures
- * so nothing above the service boundary moves.
- */
-const USE_MOCK = true;
 
 const BASE = '/api/v1/dealer-kit/flyer-readings';
 
@@ -228,8 +212,6 @@ function toProposals(
 
 /** Every proposal pass, newest first. The Master Data list is this call. */
 export async function listFlyerSpecBatches(): Promise<FlyerSpecBatch[]> {
-  if (USE_MOCK) return mockListFlyerSpecBatches();
-
   const response = await apiFetch(`${BASE}/spec-proposal-batches`);
   if (!response.ok) {
     throw new Error(
@@ -249,8 +231,6 @@ export async function listFlyerSpecBatches(): Promise<FlyerSpecBatch[]> {
 export async function getFlyerSpecProposals(
   readingId: string,
 ): Promise<FlyerSpecProposals> {
-  if (USE_MOCK) return mockGetFlyerSpecProposals(readingId);
-
   const response = await apiFetch(
     `${BASE}/${encodeURIComponent(readingId)}/spec-proposals`,
   );
@@ -271,8 +251,6 @@ export async function getFlyerSpecProposals(
 export async function proposeFlyerSpecs(
   readingId: string,
 ): Promise<FlyerSpecBatch> {
-  if (USE_MOCK) return mockProposeFlyerSpecs(readingId);
-
   const response = await apiFetch(
     `${BASE}/${encodeURIComponent(readingId)}/spec-proposals`,
     { method: 'POST' },
@@ -299,8 +277,6 @@ export async function applyFlyerSpecProposals(
   readingId: string,
   proposalIds: string[],
 ): Promise<FlyerSpecApplyResult> {
-  if (USE_MOCK) return mockApplyFlyerSpecProposals(readingId, proposalIds);
-
   const response = await apiFetch(
     `${BASE}/${encodeURIComponent(readingId)}/spec-proposals/apply`,
     {
