@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -61,12 +62,32 @@ export function useReconciliation(psoId: string | undefined, enabled = true) {
  * for every row of the worklist would price the whole list on nobody's behalf.
  */
 export function useSupply(psoId: string | undefined, enabled = true) {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: [SUPPLY_KEY, psoId ?? ''],
     queryFn: () => getSupply(psoId as string),
     enabled: Boolean(psoId) && enabled,
     retry: 1,
   });
+
+  // The supply read is the one that notices an out-of-band change (it rechecks live
+  // facts and may flip the decision to challenged), so when its review_state disagrees
+  // with the cached reconciliation the pill sources are stale, not the sheet: refetch
+  // them rather than letting "Confirmed" sit over a composition that says otherwise.
+  const freshState = query.data?.review_state;
+  useEffect(() => {
+    if (!psoId || freshState === undefined) return;
+    const summary = queryClient.getQueryData<{ review_state?: string | null }>([
+      RECONCILIATION_KEY,
+      psoId,
+    ]);
+    if (summary && (summary.review_state ?? null) !== (freshState ?? null)) {
+      void queryClient.invalidateQueries({ queryKey: [RECONCILIATION_KEY, psoId] });
+      void queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
+    }
+  }, [psoId, freshState, queryClient]);
+
+  return query;
 }
 
 /**

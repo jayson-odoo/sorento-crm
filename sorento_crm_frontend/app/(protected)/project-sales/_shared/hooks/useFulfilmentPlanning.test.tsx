@@ -193,6 +193,45 @@ describe('useSupply', () => {
 
     expect(getSupply).not.toHaveBeenCalled();
   });
+
+  it('refetches the pill sources when the composition disagrees about the review state', async () => {
+    // An out-of-band change flips the decision to challenged; only the supply read
+    // notices, so a cached "Confirmed" reconciliation must be refetched, not trusted.
+    // Both hooks render, as they do in the open sheet, so the reconciliation data is
+    // held by an observer rather than collected by gcTime: 0.
+    getReconciliation.mockResolvedValue(summary({ review_state: 'confirmed' }));
+    getSupply.mockResolvedValue(supplyProposal({ review_state: 'needs_cs_review' }));
+
+    renderHook(
+      () => {
+        useReconciliation('pso-1');
+        return useSupply('pso-1');
+      },
+      { wrapper: wrapper() },
+    );
+
+    await waitFor(() =>
+      expect(invalidated).toEqual(
+        expect.arrayContaining([[RECONCILIATION_KEY, 'pso-1'], [FULFILMENT_PLANNING_KEY]]),
+      ),
+    );
+  });
+
+  it('leaves the caches alone when both sources agree', async () => {
+    getReconciliation.mockResolvedValue(summary({ review_state: 'needs_cs_review' }));
+    getSupply.mockResolvedValue(supplyProposal({ review_state: 'needs_cs_review' }));
+
+    const { result } = renderHook(
+      () => {
+        useReconciliation('pso-1');
+        return useSupply('pso-1');
+      },
+      { wrapper: wrapper() },
+    );
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(invalidated).toEqual([]);
+  });
 });
 
 describe('useReconciliationMutations', () => {
