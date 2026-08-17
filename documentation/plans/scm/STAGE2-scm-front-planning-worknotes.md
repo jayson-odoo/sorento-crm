@@ -18,6 +18,48 @@ supported by the data model but not built here, and no "Needs level" state or le
    (plan 6.3) exists yet because Stage 1C has not started. Stage 2 creates both exactly to the 6.2/6.3
    column list so the section 4 predicate is a real SQL predicate and AC-E04 can seed decisions in
    tests. No service writes them in Stage 2; Stage 1C owns the atomic confirmation that does.
+   **Exact shape Stage 2 creates and Stage 1C must match** (source: plan section 6.2 and 6.3,
+   `projects` schema, `__table_args__ schema="projects"`, uuid ids like every other `projects.*`
+   table):
+
+   `projects.so_supply_decisions`
+
+   | Column | Type | Null | Notes |
+   |---|---|---|---|
+   | `id` | UUID | no | PK, `gen_random_uuid()` default |
+   | `company_id` | UUID | no | FK `companies.id`; `CompanyScopedMixin` (owned, not shared) |
+   | `project_sales_order_id` | UUID | no | FK `projects.sales_orders.id` ON DELETE CASCADE |
+   | `revision_no` | Integer | no | 1-based per Project SO |
+   | `state` | String(16) | no | CHECK in (`active`, `superseded`, `challenged`) |
+   | `source_revision` | String(64) | yes | source document/version reference the decision was taken on |
+   | `line_snapshots` | JSONB | no | list of per-line objects (plan 6.2 list); default `[]` |
+   | `confirmed_by` | UUID | yes | FK `users.id` ON DELETE SET NULL |
+   | `confirmed_at` | TIMESTAMP (naive UTC) | no | `now()` default |
+   | `supersedes_id` | UUID | yes | self FK ON DELETE SET NULL |
+   | `superseded_at` | TIMESTAMP | yes | |
+   | `superseded_reason` | Text | yes | |
+   | `created_at` / `updated_at` | TIMESTAMP | no | audit convention |
+
+   Constraints: `uq_projects_so_supply_decision_rev` UNIQUE `(project_sales_order_id, revision_no)`;
+   partial unique index `uq_projects_so_supply_decision_active` on `(project_sales_order_id)`
+   WHERE `state = 'active'`; index on `(company_id, state)`.
+
+   `projects.order_inquiry_rows.supply_decision_id` UUID NULL, FK `projects.so_supply_decisions.id`
+   ON DELETE SET NULL, index `ix_project_order_inquiry_rows_supply_decision`. Stage 1C adds the
+   "one active unplaced row per active decision and SO line" enforcement; Stage 2 only reads.
+
+   **What the Stage 2 predicate reads:** an SO row `sales_orders.id` is *decided* iff
+   `EXISTS (SELECT 1 FROM projects.sales_orders pso JOIN projects.so_supply_decisions d
+   ON d.project_sales_order_id = pso.id AND d.state = 'active' WHERE pso.so_id = sales_orders.id)`.
+   Confirmed unplaced Buy at `(product_id, warehouse_id)` = `SUM(oir.qty)` over
+   `projects.order_inquiry_rows oir JOIN projects.so_supply_decisions d ON d.id = oir.supply_decision_id
+   AND d.state = 'active' JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id JOIN
+   sales_order_lines sol ON sol.id = psl.core_sales_order_line_id` where `oir.verb` is the Buy verb
+   (`ORDER`) and `oir.state` is an unplaced state (not placed / received / cancelled - the coder pins
+   the exact state constants from `app/models/project_so.py` and records them here). Product and
+   warehouse come from the core line (`sol.product_id`, `sol.warehouse_id`). Nothing matches on
+   `provisional_ref`, `autocount_doc_no`, or item code.
+
 2. **Confirmed-Buy leg + sheet leg** are the two Project sources in the read model, exactly as
    section 4: confirmed leg = `order_inquiry_rows` with the Buy verb and an unplaced state, whose
    inquiry row carries a `supply_decision_id` pointing at an `active` decision; sheet leg =
