@@ -10,6 +10,7 @@ import {
   Loader2,
   ScanLine,
   Search,
+  X,
 } from 'lucide-react';
 
 import {
@@ -45,6 +46,7 @@ import type {
   FlyerSpecProposals,
 } from '../services/flyerSpecProposalService';
 import {
+  BULK_SELECTABLE_KINDS,
   OUTCOME_LABEL,
   OutcomePill,
   ProductProposalGroup,
@@ -186,6 +188,23 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
       );
     });
   }, [data?.groups, search]);
+
+  /**
+   * Narrowing the list starts its paging again from the top.
+   *
+   * `shown` is a depth into whatever list is on screen, and the filtered list
+   * and the whole one are different lengths - so a depth reached inside a
+   * filter, carried back out of it, either paints every product in the batch at
+   * once or leaves the restored list capped at a number nobody chose with no
+   * `Show more` to ask for the rest. The second is what the F+G evidence run
+   * caught (plan section 6b, step 8): groups became unreachable without
+   * reloading the page. The ticks are untouched either way - they are held by
+   * id, not by position.
+   */
+  const changeSearch = (next: string) => {
+    setSearch(next);
+    setShown(PRODUCTS_PER_PAGE);
+  };
 
   const write = () => {
     setConfirming(false);
@@ -391,12 +410,29 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
               <Search className="pointer-events-none absolute inset-y-0 start-3 my-auto size-4 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => changeSearch(event.target.value)}
                 placeholder="Search product or specification"
                 aria-label="Search product or specification"
-                className="ps-9"
+                className="ps-9 pe-9"
                 data-testid="fsp-search"
               />
+              {search !== '' && (
+                // One deterministic way back to the whole batch. Emptying the
+                // box by hand does the same thing, but a filter that hid the
+                // product somebody wants next is a dead end until it is empty,
+                // and asking them to select-and-delete is asking them to work
+                // out why the list is short.
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute inset-y-0 end-1 my-auto size-7"
+                  aria-label="Clear the search"
+                  data-testid="fsp-search-clear"
+                  onClick={() => changeSearch('')}
+                >
+                  <X className="size-4" />
+                </Button>
+              )}
             </div>
           )}
 
@@ -425,16 +461,46 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
                 }
                 onDismiss={
                   canWriteMaster
-                    ? (proposalId) => dismiss.mutateAsync(proposalId)
+                    ? async (proposalId) => {
+                        const summary = await dismiss.mutateAsync(proposalId);
+                        // The row is gone from the batch, so a tick naming it
+                        // is a tick on nothing: the sticky bar would count it,
+                        // and the apply would send an id the server answers
+                        // `not_in_batch` for. Pruned only once the delete has
+                        // actually happened - a refused dismissal leaves the
+                        // row, and its tick, where they were.
+                        setSelected((previous) => {
+                          if (!previous.has(proposalId)) return previous;
+                          const next = new Set(previous);
+                          next.delete(proposalId);
+                          return next;
+                        });
+                        return summary;
+                      }
                     : undefined
                 }
                 onAddRow={
                   canWriteMaster
-                    ? (input) =>
-                        addRow.mutateAsync({
+                    ? async (input) => {
+                        const row = await addRow.mutateAsync({
                           product_id: group.product_id,
                           ...input,
-                        })
+                        });
+                        // Somebody typed this row a second ago, which is a
+                        // stronger statement of intent than anything the flyer
+                        // said - so it arrives ticked, the way a `new` row the
+                        // page loaded with does. The load-time seeding pass
+                        // does not run again for this batch, so without this
+                        // the row they just added is the one row Apply leaves
+                        // out. Unless the value they typed is what the product
+                        // already holds, which is not tickable at all.
+                        if (BULK_SELECTABLE_KINDS.includes(row.kind)) {
+                          setSelected((previous) =>
+                            new Set(previous).add(row.id),
+                          );
+                        }
+                        return row;
+                      }
                     : undefined
                 }
               />

@@ -272,6 +272,14 @@ tombstoned, and which keys apply to the product's class. None of it is asked for
   WRITTEN (source `flyer`, same evidence rules); only `unchanged` (`already_matches`) and
   `suppressed` (`conflict_not_confirmed`) refuse. Live re-classification still runs: a row that
   became `unchanged` since propose still refuses with no write (AC-C.6 idempotency holds).
+  **Both shapes of `conflict` are written**: a value somebody authored, and a description-first
+  key (`dim_*`, `diameter`, `depth`, `thickness`) where the master's own description disagrees.
+  **Stated consequence of the second, accepted 2026-08-17:** `flyer` is an authored source, so
+  the value survives re-derivation - and the next `derive` that reads the description raises
+  `human_override_conflict` for that key and the row goes `needs_review`. That is D8 doing its
+  job (the disagreement between the paper and the master is exactly what a person should see),
+  but bulk-ticking many dimension conflicts parks that many open exceptions. Whether it should
+  be quieter is the captain's call, logged as **BL-016**; nothing in this slice suppresses it.
 - **AC-F.2** `[BE]` GIVEN `PATCH /dealer-kit/flyer-readings/{id}/spec-proposals/{proposal_id}`
   with `{value}` WHEN called by a holder of both permissions THEN the value is validated via
   `value_for_registry`, stored on the proposal row with `edited_at` / `edited_by`, the row's

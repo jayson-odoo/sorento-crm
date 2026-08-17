@@ -41,7 +41,13 @@ const BOOLEAN_OPTIONS = [
   { value: 'false', label: 'No' },
 ];
 
-/** The editor's string form of a proposed value. A list shows as its first value. */
+/**
+ * The editor's string form of a proposed value.
+ *
+ * A list of one shows as that value. A list of SEVERAL never reaches here - the
+ * group offers no pencil for it, because this editor holds one value and saving
+ * it would drop the rest (`MULTI_VALUE_HINT` in `ProductProposalGroup`).
+ */
 export function toDraft(value: SpecProposalValue): string {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) return value.length > 0 ? String(value[0]) : '';

@@ -78,7 +78,7 @@ import {
  * whatever is passed: the first would write what is already there, and the
  * second would overturn a removal somebody made on purpose.
  */
-const BULK_SELECTABLE_KINDS: readonly SpecProposalKind[] = [
+export const BULK_SELECTABLE_KINDS: readonly SpecProposalKind[] = [
   'new',
   'change',
   'conflict',
@@ -87,11 +87,37 @@ const BULK_SELECTABLE_KINDS: readonly SpecProposalKind[] = [
 /** The two kinds that offer no in-place edit: there is nothing to write either way. */
 const NOT_EDITABLE: readonly SpecProposalKind[] = ['unchanged', 'suppressed'];
 
-/** What each outcome is called on screen. No reason code ever reaches a reader. */
+/**
+ * Why a proposal stating several values at once is not corrected here.
+ *
+ * The editor holds ONE value - one input, one dropdown, one number - so opening
+ * it on `["rose_gold", "matt_black"]` shows the first, and saving stores the
+ * first: the second value is gone, and nothing on screen said it would be. A
+ * key that carries a list is a list on the product's own Specifications tab,
+ * which is built for it, so the pencil says so instead of quietly dropping half
+ * the value. Applying the row untouched still writes BOTH.
+ */
+const MULTI_VALUE_HINT =
+  'Multi-value specifications are edited on the product page';
+
+/** A proposal stating more than one value for one key. One is not a list. */
+function isMultiValue(value: SpecProposalValue): boolean {
+  return Array.isArray(value) && value.length > 1;
+}
+
+/**
+ * What each outcome is called on screen. No reason code ever reaches a reader.
+ *
+ * `conflict_not_confirmed` reads as a removal rather than a refusal to replace,
+ * because that is the only thing it can mean now: since the captain's amendment
+ * (AC-F.1) a ticked `conflict` IS written, so the one row this outcome comes
+ * back for is a key somebody tombstoned on that product. "Not replaced" sent
+ * the reader looking for a confirmation they were never asked for.
+ */
 export const OUTCOME_LABEL: Record<FlyerSpecOutcome, string> = {
   applied: 'Applied',
   already_matches: 'Already stored',
-  conflict_not_confirmed: 'Not replaced',
+  conflict_not_confirmed: 'Removed by a person',
   product_spec_bad_value: 'Value refused',
   product_not_found: 'Product not found',
   not_in_batch: 'Not in this batch',
@@ -325,18 +351,35 @@ export function ProductProposalGroup({
                   if (!row) return null;
                   return (
                     <>
-                      {onEditValue && !NOT_EDITABLE.includes(row.kind) && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-8"
-                          disabled={disabled || editingId === row.id}
-                          aria-label={`Edit ${row.label || readable(row.spec_key)}`}
-                          onClick={() => startEdit(row)}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                      )}
+                      {onEditValue &&
+                        !NOT_EDITABLE.includes(row.kind) &&
+                        (isMultiValue(row.value) ? (
+                          // The title sits on the wrapper: a disabled button
+                          // takes no pointer events, so its own tooltip would
+                          // never open.
+                          <span title={MULTI_VALUE_HINT} className="inline-flex">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="size-8"
+                              disabled
+                              aria-label={`Edit ${row.label || readable(row.spec_key)}`}
+                            >
+                              <Pencil className="size-4" />
+                            </Button>
+                          </span>
+                        ) : (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-8"
+                            disabled={disabled || editingId === row.id}
+                            aria-label={`Edit ${row.label || readable(row.spec_key)}`}
+                            onClick={() => startEdit(row)}
+                          >
+                            <Pencil className="size-4" />
+                          </Button>
+                        ))}
                       {onDismiss && (
                         <Button
                           size="icon"

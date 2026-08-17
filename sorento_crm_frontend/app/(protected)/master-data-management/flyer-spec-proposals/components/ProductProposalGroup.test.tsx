@@ -306,6 +306,56 @@ describe('ProductProposalGroup, correcting a value in place (AC-F.3)', () => {
     expect(screen.queryByLabelText('Edit Flush type')).toBeNull();
   });
 
+  it('offers no in-place edit for a multi-value proposal, and says where it is edited', () => {
+    const multi: FlyerSpecProductGroup = {
+      ...GROUP,
+      proposals: [
+        row({
+          id: 'p-multi',
+          spec_key: 'finish',
+          label: 'Finish or colour',
+          data_type: 'enum',
+          kind: 'change',
+          value: ['rose_gold', 'matt_black'],
+          allowed_values: ['rose_gold', 'matt_black', 'chrome'],
+          stored_value: 'chrome',
+          stored_source: 'derived',
+        }),
+        row({
+          id: 'p-one-value-list',
+          spec_key: 'seat_material',
+          label: 'Seat cover material',
+          value: ['duroplast'],
+        }),
+      ],
+    };
+
+    render(
+      <ProductProposalGroup
+        group={multi}
+        selectedIds={new Set()}
+        onSelectionChange={vi.fn()}
+        onEditValue={vi.fn()}
+      />,
+    );
+
+    // The editor holds ONE value, so opening it on a list of two would save the
+    // first and lose the second.
+    const pencil = screen.getByLabelText('Edit Finish or colour');
+    expect(pencil).toBeDisabled();
+    expect(
+      screen.getByTitle(
+        'Multi-value specifications are edited on the product page',
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(pencil);
+    expect(screen.queryByLabelText('Save Finish or colour')).toBeNull();
+
+    // A list of one loses nothing, so it edits here like any other value.
+    expect(screen.getByLabelText('Edit Seat cover material')).toBeEnabled();
+  });
+
   it('offers no pencil at all when the caller passes no edit handler', () => {
     renderGroup();
 

@@ -563,8 +563,8 @@ that mattered; the session stayed on its own tab throughout. Closed with a plain
    "search clears back to the un-filtered view" half does not. Screenshot (state after clearing,
    list still capped): `fg-17-search-cleared-selection-intact.png`. Worked around by reloading the
    page fresh for the remaining steps. Filed as a follow-up rather than fixed here (tester scope
-   is verification, not repair); recommend logging to `documentation/backlogs/backlog.md` before
-   this slice is called done.
+   is verification, not repair). **Fixed in the follow-up commit recorded in section 7c** - not
+   logged to the backlog, because it is repaired rather than deferred.
 9. **Apply: one conflict + one change + the manual row (AC-F.1, AC-F.4, AC-G.2).** Fresh page
    load, re-ticked `SRTWC7614-RL`'s select-all (`Length` conflict, `Type` change, `Trap` change -
    the `Trap` edit from step 5 was on a DIFFERENT product, `SRTWC287-RL`, so it did not interfere)
@@ -703,6 +703,12 @@ observation, both recorded rather than silently worked around:
   against "a search input filters product groups ... client-side" (the implicit contract is that
   clearing IS a filter, to the empty string, and should show everything) and should be fixed
   before this slice is signed off; logged as a follow-up rather than fixed by the tester.
+  **Fixed in the follow-up commit recorded in section 7c**: `shown` is a depth into whichever
+  list is on screen, and it was carried across a change of list, so a depth reached inside a
+  filter came back out of it either painting every product at once or capping the restored list
+  with no `Show more` to ask for the rest. Every search change now restarts the paging from the
+  top, and the box carries its own clear button so emptying it is one deterministic click.
+  Three vitest cases on `FlyerSpecReviewScreen` hold it.
 - **Tooling friction, not a product defect:** two Radix-style dropdown listboxes (the `Add
   specification` key/value pickers) needed `scrollintoview` on the option ref before `click`, same
   as section 6's off-screen-Propose-button finding - the daemon's coordinate click is a no-op on
@@ -777,10 +783,71 @@ folded ALTERs do not re-run there. This worktree's shared dev database had the t
 applied by hand with exactly the statements above. A fresh database, and production, get them from
 the migration.
 
-**Counts at hand-off:** pytest 163 green over
+### 7d. The review page findings, after the F+G evidence run (S6)
+
+The evidence run (section 6b) and the review that followed it left five findings on the review
+page and three test gaps behind the routes. All eight are closed in one commit; nothing in the
+contract moved except AC-F.1, which gains a stated consequence rather than a changed rule.
+
+**Frontend.**
+
+1. **Clearing the search left the list stranded** (6b step 8, the one defect the run found).
+   `shown` is a depth into whatever list is on screen, and it survived a change of list: a depth
+   reached inside a filter, carried back out of it, either painted every product in the batch at
+   once or left the restored list capped with no `Show more` to ask for the rest, so groups became
+   unreachable without reloading the page. Every search change now restarts the paging from the
+   top, and the box carries its own clear button - one deterministic click back to the whole
+   batch, which the tester's three repros had to do with a page reload.
+2. **A dismissed row kept its tick.** The dismiss went to the server and the row left the batch,
+   but its id stayed in the page's selection: the sticky bar counted a row that no longer exists
+   and Apply sent an id the server answers `not_in_batch` for. Pruned once the delete resolves -
+   a REFUSED dismissal leaves the row and its tick alone.
+3. **A just-added row was never ticked.** The load-time seeding pass ticks every `new` row and
+   does not run again for the batch, so a specification somebody typed a second ago was the one
+   row Apply left out. The add now ticks the returned row - unless the value they typed is what
+   the product already holds, which is not tickable at all.
+4. **A multi-value proposal offered an edit that lost half of it.** `toDraft`/`fromDraft` carry
+   ONE value, so opening the editor on `finish = ["rose_gold", "matt_black"]` showed the first and
+   saving stored the first. The pencil is disabled for a proposal holding more than one value,
+   with the reason on it ("Multi-value specifications are edited on the product page"); applying
+   the row untouched still writes both. A list of one is not a list and still edits here.
+5. **`conflict_not_confirmed` read as the wrong refusal.** "Not replaced" was written when a
+   conflict could not be applied at all; since AC-F.1 a ticked conflict IS written, so the only
+   row that comes back with this outcome is a key somebody tombstoned. It now reads "Removed by a
+   person", which is what happened.
+
+**Backend.**
+
+6. **`proposal_id` (PATCH, DELETE) and `product_id` (`POST .../rows`) are `UUID`, not `str`.**
+   They are UUID columns, so a malformed value went to the driver and came back a 500 - our fault
+   for a request the caller got wrong. 422 at the edge now, naming the field; the service layer
+   still takes the canonical string. The apply body already declared `list[UUID]`.
+7. **Three test gaps closed, no behaviour changed by any of them:** AC-G.1's
+   `flyer_spec_key_not_applicable` (400) had no test - a `bowl_count` (gated `Kitchen Sink`) added
+   to a product whose DESCRIPTION reads Water Closet, which is what the gate needs, since a class
+   inherited from the category deliberately gates nothing; a proposal id from another reading's
+   batch, on both PATCH and DELETE, answering 404 `not_in_batch`; and the description-first half of
+   AC-F.1, where a ticked `dim_height` conflict is written over the master's own derived value and
+   stored as `flyer` with the printed words as evidence.
+
+**The consequence of 7, stated rather than fixed (AC-F.1, BL-016).** `flyer` is an AUTHORED
+source, which is the point - the reviewed value survives re-derivation. So the next `derive` that
+reads the same description disagrees with it, and `merge_authored_over` raises
+`human_override_conflict` for that key, putting the row in `needs_review`. That is D8 doing its
+job: the paper and the master disagree and a person is meant to see it. But bulk-ticking forty
+dimension conflicts parks forty open exceptions nobody asked for, and whether that should be
+quieter (suppressed where the authored value came from a reviewed flyer proposal, or resolved on
+apply) is the captain's call. Nothing here suppresses it; logged as **BL-016**.
+
+**Counts at the S5 hand-off:** pytest 163 green over
 `test_dealer_kit_flyer_spec_proposal_routes` (50), `test_product_spec_flyer_ingest_service`,
 `test_product_spec_flyer_classify`, `test_product_spec_flyer_authored_source`,
 `test_product_spec_write`, `test_product_spec_batch_apply_route` and
 `test_dealer_kit_flyer_dimensions`; vitest 212 green over 13 files across
 `flyer-spec-proposals`, `components/spec-proposals` and `dealer-kit/flyer-readings`.
 `alembic heads` is one head, `370_flyer_spec_proposals`.
+
+**Counts after the S6 follow-up above:** pytest 170 green over the same seven files
+(`test_dealer_kit_flyer_spec_proposal_routes` 57, `test_product_spec_flyer_ingest_service` 19,
+and 94 across the other five); vitest 219 green over the same 13 files. No migration, so
+`alembic heads` is unchanged at the single head `370_flyer_spec_proposals`.

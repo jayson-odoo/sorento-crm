@@ -1562,3 +1562,222 @@ def test_delete_proposal_403_names_products_edit_when_it_is_the_missing_permissi
 
     assert response.status_code == 403, response.text
     assert _EDIT in response.text
+
+
+# --------------------------------------------------------------------------- #
+# S7 - the ids on the wire are UUIDs, so a malformed one is a 422 and not a 500
+#
+# `proposal_id` and `product_id` are UUID columns in Postgres. Typed `str` they
+# reached the query as-is, and the driver raised on "not-a-uuid" - a 500 for a
+# request the caller got wrong, which reads as our fault and tells them nothing.
+# The apply body already declared `list[UUID]`; these are the three that did not.
+# --------------------------------------------------------------------------- #
+def test_patch_refuses_422_for_a_proposal_id_that_is_not_a_uuid(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-S7A", "SORENTO ONE PIECE WC ZZT-FLYRT-S7A")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-S7A", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, "not-a-uuid"), json={"value": "p_trap"}
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_delete_refuses_422_for_a_proposal_id_that_is_not_a_uuid(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-S7B", "SORENTO ONE PIECE WC ZZT-FLYRT-S7B")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-S7B", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.delete(_DELETE_PROPOSAL.format(reading.id, "not-a-uuid"))
+
+    assert response.status_code == 422, response.text
+
+
+def test_add_row_refuses_422_for_a_product_id_that_is_not_a_uuid(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-S7C", "SORENTO ONE PIECE WC ZZT-FLYRT-S7C")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-S7C", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(
+        _ADD_ROW.format(reading.id),
+        json={"product_id": "nope", "spec_key": "seat_material", "value": "pp"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+# --------------------------------------------------------------------------- #
+# S4 - AC-G.1's `flyer_spec_key_not_applicable` (400), the refusal the line asked
+# for without naming: the key is real, this product's class simply cannot carry it
+# --------------------------------------------------------------------------- #
+def test_add_row_refuses_400_when_the_key_cannot_apply_to_this_products_class(api, db):
+    """`bowl_count` is gated `applies_when: {class: [Kitchen Sink]}` and this
+    product derives as a Water Closet, so derivation's own scope gate drops it -
+    the same gate the propose pass runs, which is what stops a reviewer
+    hand-placing a key the pass would never have proposed.
+
+    400 and not 404: the registry defines `bowl_count`, so "unknown key" would
+    send the reader off to add something that is already there."""
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    # The class has to be read from the DESCRIPTION's trailing noun, not inherited
+    # from the category: `_apply_scope` refuses to drop a key on the strength of a
+    # category label, so a class that came from the filing code gates nothing.
+    product = _product(db, "ZZT-FLYRT-S4A", "SORENTO ZZT-FLYRT-S4A ONE PIECE WC")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-S4A", commit=True)
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-S4A", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    derived = _spec_of(db, product.id)
+    assert derived.values["class"]["value"] == "Water Closet"
+    assert derived.provenance["class"]["source"] == "derived"
+
+    response = client.post(
+        _ADD_ROW.format(reading.id),
+        json={"product_id": str(product.id), "spec_key": "bowl_count", "value": 2},
+    )
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body.get("code") == "flyer_spec_key_not_applicable"
+
+    db.expire_all()
+    assert (
+        db.query(ProductSpecFlyerProposal)
+        .filter_by(batch_id=batch.id, spec_key="bowl_count")
+        .first()
+        is None
+    ), "nothing is stored for a refused key"
+
+
+# --------------------------------------------------------------------------- #
+# S5 - a proposal id is scoped to ITS batch: the same id under another reading's
+# path is 404 `not_in_batch`, on both routes that name one
+# --------------------------------------------------------------------------- #
+def _two_batches(db, marker: str):
+    """Two readings, each with its own batch, and one proposal row under the second."""
+    product = _product(db, marker, f"SORENTO ONE PIECE WC {marker}")
+    first = _reading(db, filename=f"{marker}-A.pdf", cards=[_card(marker, "Washdown")])
+    second = _reading(db, filename=f"{marker}-B.pdf", cards=[_card(marker, "Washdown")])
+    _batch(db, first, status="proposed")
+    other_batch = _batch(db, second, status="proposed")
+    row = _proposal(db, other_batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+    return first, row
+
+
+def test_patch_refuses_404_for_a_proposal_belonging_to_another_reading(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    reading, other_row = _two_batches(db, "ZZT-FLYRT-S5A")
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, other_row.id), json={"value": "p_trap"}
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json().get("code") == "not_in_batch"
+
+    db.expire_all()
+    assert (
+        db.query(ProductSpecFlyerProposal).filter_by(id=other_row.id).one().value
+        == "s_trap"
+    ), "the other batch's row is untouched"
+
+
+def test_delete_refuses_404_for_a_proposal_belonging_to_another_reading(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    reading, other_row = _two_batches(db, "ZZT-FLYRT-S5B")
+
+    response = client.delete(_DELETE_PROPOSAL.format(reading.id, other_row.id))
+
+    assert response.status_code == 404, response.text
+    assert response.json().get("code") == "not_in_batch"
+
+    db.expire_all()
+    assert (
+        db.query(ProductSpecFlyerProposal).filter_by(id=other_row.id).first() is not None
+    ), "the other batch's row is still there"
+
+
+# --------------------------------------------------------------------------- #
+# S6 - a description-first dimension conflict, ticked, is written as `flyer`
+# --------------------------------------------------------------------------- #
+def test_apply_writes_a_ticked_description_first_dimension_conflict_as_flyer(api, db):
+    """AC-F.1 for the OTHER kind of `conflict`. The neighbouring test covers a
+    value a person authored; this one is the description-first rule (`dim_height`
+    and its five siblings), where nobody authored anything - the master's own
+    description states the height and the flyer's rounded number disagrees.
+
+    Ticking it writes the flyer's number over the derived one, badged `flyer`,
+    which is an AUTHORED source: the value now survives re-derivation. The cost
+    of that is stated in the UAC (AC-F.1) and PLAN section 7c - the next derive
+    that reads the description raises `human_override_conflict` for this key.
+    """
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(
+        db, "ZZT-FLYRT-S6A", "SORENTO ONE PIECE WC ZZT-FLYRT-S6A L680XW375XH770"
+    )
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-S6A", commit=True)
+
+    derived = _spec_of(db, product.id)
+    assert derived.values["dim_height"]["value"] == 770
+    assert derived.provenance["dim_height"]["source"] == "derived", "nobody authored it"
+
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-S6A", "L680 x W375 x H790mm")])
+    batch = _batch(db, reading)
+    # Stored as `change`; apply re-classifies it live and finds `conflict`,
+    # because `dim_height` is description-first (AC-A.3).
+    proposal = _proposal(
+        db,
+        batch,
+        product,
+        spec_key="dim_height",
+        value=790,
+        unit="mm",
+        kind="change",
+        evidence="L680 x W375 x H790mm",
+        stored_value=770,
+        stored_unit="mm",
+        stored_source="description",
+    )
+    db.commit()
+
+    response = client.post(
+        _APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["refused"] == []
+    assert body["applied"][0]["spec_key"] == "dim_height"
+
+    stored = _spec_of(db, product.id)
+    assert stored.values["dim_height"]["value"] == 790
+    assert stored.provenance["dim_height"]["source"] == "flyer"
+    assert "H790" in stored.provenance["dim_height"].get("evidence", "")
+
+    db.expire_all()
+    assert (
+        db.query(ProductSpecFlyerProposal).filter_by(id=proposal.id).one().outcome
+        == "applied"
+    )

@@ -1092,11 +1092,15 @@ class FlyerSpecProposalRowIn(BaseModel):
     the key by slug because that is what the registry is keyed on. There is no `kind`
     and no `origin` on the wire: the first is computed against the live spec row and the
     second is `manual` by the fact of this route being the one that was called.
+
+    `UUID`, like the apply body's `proposal_ids`: `products.id` is a UUID column, and a
+    `str` here handed "nope" straight to the driver for a 500 on a request the caller
+    got wrong.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    product_id: str
+    product_id: UUID
     spec_key: str
     value: Any
 

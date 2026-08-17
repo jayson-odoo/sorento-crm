@@ -23,6 +23,12 @@ not the principal for one.
 match `/flyer-readings/spec-proposal-batches` and answer 404 for a reading called
 "spec-proposal-batches".
 
+**Every id on the wire is a `UUID`, never a `str`** - the path's `proposal_id`, the
+body's `product_id`, the apply body's `proposal_ids`. They are UUID columns, so a
+malformed one typed `str` reached the driver and came back a 500: our fault, for a
+request the caller got wrong. Typed here it is a 422 naming the field, and the service
+layer takes the canonical string.
+
 **200 with refusals, never a 4xx for a refused row.** A row the master already agrees
 with, or one that disagrees with a value somebody set, is an answer - so the status says
 the request was understood and the BODY says what happened to each row. A 4xx here would
@@ -35,6 +41,7 @@ F.1, F.2, F.5, G.1-G.3.
 from __future__ import annotations
 
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
@@ -298,7 +305,7 @@ def apply_flyer_spec_proposals(
 )
 def edit_flyer_spec_proposal(
     reading_id: str,
-    proposal_id: str,
+    proposal_id: UUID,
     payload: FlyerSpecProposalEditIn,
     db: Session = Depends(get_db),
     _reader: dict = Depends(_READ_THE_FLYER),
@@ -317,7 +324,7 @@ def edit_flyer_spec_proposal(
     stop offering to write it.
     """
     _record, batch = _settled_batch(db, reading_id)
-    row = ingest.proposal_in(db, batch, proposal_id)
+    row = ingest.proposal_in(db, batch, str(proposal_id))
     return FlyerSpecProposalOut(
         **ingest.edit_proposal(db, batch, row, value=payload.value, user=user)
     )
@@ -329,7 +336,7 @@ def edit_flyer_spec_proposal(
 )
 def dismiss_flyer_spec_proposal(
     reading_id: str,
-    proposal_id: str,
+    proposal_id: UUID,
     db: Session = Depends(get_db),
     _reader: dict = Depends(_READ_THE_FLYER),
     _writer: dict = Depends(_WRITE_THE_MASTER),
@@ -345,7 +352,7 @@ def dismiss_flyer_spec_proposal(
     with the row it just removed.
     """
     record, batch = _settled_batch(db, reading_id)
-    row = ingest.proposal_in(db, batch, proposal_id)
+    row = ingest.proposal_in(db, batch, str(proposal_id))
     ingest.delete_proposal(db, batch, row)
     names = ingest.user_names(db, [batch.created_by, batch.applied_by])
     return _summary(batch, record, names)
@@ -378,7 +385,7 @@ def add_flyer_spec_proposal_row(
         **ingest.add_proposal_row(
             db,
             batch,
-            product_id=payload.product_id,
+            product_id=str(payload.product_id),
             spec_key=payload.spec_key,
             value=payload.value,
             user=user,

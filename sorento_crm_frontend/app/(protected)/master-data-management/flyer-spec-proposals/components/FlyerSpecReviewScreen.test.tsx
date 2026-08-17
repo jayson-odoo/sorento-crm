@@ -678,6 +678,90 @@ describe('FlyerSpecReviewScreen, the search box (AC-G.5)', () => {
   });
 });
 
+describe('FlyerSpecReviewScreen, clearing the search (AC-G.5)', () => {
+  function pagedGroups(count: number): FlyerSpecProductGroup[] {
+    return Array.from({ length: count }, (_, i) => ({
+      product_id: `paged-${i}`,
+      product_code: `SRTP${String(i).padStart(4, '0')}`,
+      product_name: `Paged product ${i}`,
+      pages: [i + 1],
+      proposals: [
+        proposalRow({
+          id: `paged-new-${i}`,
+          spec_key: `paged_key_${i}`,
+          label: `Paged key ${i}`,
+          kind: 'new',
+        }),
+      ],
+    }));
+  }
+
+  function shownProductCodes(): string[] {
+    return Array.from(
+      document.querySelectorAll('[data-flyer-spec-product]'),
+    ).map((node) => node.getAttribute('data-flyer-spec-product') ?? '');
+  }
+
+  it('restores the full first page and the Show more button', () => {
+    setQuery({ data: countedBatch(pagedGroups(34)) });
+
+    renderScreen();
+
+    expect(shownProductCodes()).toHaveLength(25);
+    expect(screen.getByTestId('fsp-show-more')).toHaveTextContent('9 left');
+
+    fireEvent.change(screen.getByTestId('fsp-search'), {
+      target: { value: 'SRTP0003' },
+    });
+
+    expect(shownProductCodes()).toEqual(['SRTP0003']);
+    expect(screen.queryByTestId('fsp-show-more')).toBeNull();
+
+    fireEvent.change(screen.getByTestId('fsp-search'), {
+      target: { value: '' },
+    });
+
+    expect(shownProductCodes()).toHaveLength(25);
+    expect(screen.getByTestId('fsp-show-more')).toHaveTextContent('9 left');
+  });
+
+  it('pages the restored list from the top, not from the filtered page depth', () => {
+    setQuery({ data: countedBatch(pagedGroups(34)) });
+
+    renderScreen();
+
+    fireEvent.change(screen.getByTestId('fsp-search'), {
+      target: { value: 'Paged product' },
+    });
+    fireEvent.click(screen.getByTestId('fsp-show-more'));
+    expect(shownProductCodes()).toHaveLength(34);
+
+    fireEvent.change(screen.getByTestId('fsp-search'), {
+      target: { value: '' },
+    });
+
+    expect(shownProductCodes()).toHaveLength(25);
+    expect(screen.getByTestId('fsp-show-more')).toHaveTextContent('9 left');
+  });
+
+  it('clears the box from its own button, and the whole list comes back', () => {
+    setQuery({ data: countedBatch(pagedGroups(34)) });
+
+    renderScreen();
+
+    fireEvent.change(screen.getByTestId('fsp-search'), {
+      target: { value: 'SRTP0003' },
+    });
+    expect(shownProductCodes()).toEqual(['SRTP0003']);
+
+    fireEvent.click(screen.getByTestId('fsp-search-clear'));
+
+    expect(screen.getByTestId('fsp-search')).toHaveValue('');
+    expect(shownProductCodes()).toHaveLength(25);
+    expect(screen.getByTestId('fsp-show-more')).toHaveTextContent('9 left');
+  });
+});
+
 describe('FlyerSpecReviewScreen, the row acts reach the hooks (AC-F.3, AC-G.4)', () => {
   it('sends a corrected value to the edit hook, naming the proposal id', async () => {
     setQuery({ data: countedBatch([MIXED_GROUP]) });
@@ -706,6 +790,108 @@ describe('FlyerSpecReviewScreen, the row acts reach the hooks (AC-F.3, AC-G.4)',
     fireEvent.click(screen.getByTestId('fsp-dismiss-confirm'));
 
     expect(dismiss.mutateAsync).toHaveBeenCalledWith('p-new');
+  });
+
+  it('drops a dismissed row from the selection, so the bar cannot count it', async () => {
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    renderScreen();
+
+    // The `new` row arrives ticked, and it is the one being dismissed.
+    expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent(
+      '1 ticked',
+    );
+
+    fireEvent.click(screen.getByLabelText('Dismiss Seat cover material'));
+    fireEvent.click(screen.getByTestId('fsp-dismiss-confirm'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent(
+        'Nothing ticked',
+      ),
+    );
+    expect(dismiss.mutateAsync).toHaveBeenCalledWith('p-new');
+  });
+
+  it('keeps a ticked row ticked when the dismissal is refused', async () => {
+    dismiss.mutateAsync = vi.fn().mockRejectedValue(new Error('nope'));
+    useDismissFlyerSpecProposal.mockReturnValue(dismiss);
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    renderScreen();
+
+    fireEvent.click(screen.getByLabelText('Dismiss Seat cover material'));
+    fireEvent.click(screen.getByTestId('fsp-dismiss-confirm'));
+
+    await waitFor(() => expect(dismiss.mutateAsync).toHaveBeenCalled());
+    expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent(
+      '1 ticked',
+    );
+  });
+
+  it('ticks a row somebody just added, so Apply carries what they typed', async () => {
+    useApplicableSpecKeysQuery.mockReturnValue({
+      data: {
+        code: 'SRTWC8066',
+        keys: [
+          {
+            spec_key: 'flush_volume',
+            label: 'Flush volume',
+            data_type: 'numeric',
+            unit: 'l',
+            allowed_values: [],
+            synonyms: {},
+            applicable: true,
+            held: false,
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    addRow.mutateAsync = vi.fn().mockResolvedValue(
+      proposalRow({
+        id: 'p-added',
+        spec_key: 'flush_volume',
+        label: 'Flush volume',
+        data_type: 'numeric',
+        kind: 'new',
+        value: 4.5,
+        unit: 'l',
+        origin: 'manual',
+        edited: true,
+      }),
+    );
+    useAddFlyerSpecProposalRow.mockReturnValue(addRow);
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    renderScreen();
+
+    expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent(
+      '1 ticked',
+    );
+
+    fireEvent.click(screen.getByText('Add specification'));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(
+      within(dialog).getByRole('combobox', { name: /specification/i }),
+    );
+    fireEvent.click(screen.getByText('Flush volume'));
+    fireEvent.change(within(dialog).getByLabelText('Flush volume'), {
+      target: { value: '4.5' },
+    });
+    fireEvent.click(screen.getByTestId('fsp-add-row-submit'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent(
+        '2 ticked',
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId('fsp-apply'));
+    expect(apply.mutate).toHaveBeenCalledWith(
+      expect.arrayContaining(['p-new', 'p-added']),
+      expect.anything(),
+    );
   });
 
   it('offers neither act to a reader who may not write the master', () => {
