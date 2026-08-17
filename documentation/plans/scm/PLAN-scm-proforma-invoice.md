@@ -203,3 +203,21 @@ untouched (another worker owns the container-replace behaviour and `supplier_id`
 3. New permission -> grant sweep in the migration (AC-P4.3).
 4. New DB column reaches the FE: n/a this slice; recorded for the verification task.
 5. User-perspective verification: API evidence run recorded in the PR body.
+
+## Review findings still open (2026-08-17, reviewer pass 1) - resume here
+
+Blockers: (1) move router DB work (supplier assert, invoice-or-404, list, delete) into
+`proforma_invoice_service`; (2) supplier lookups in route + `_supplier_label` are raw SQL with
+no `company_sql_predicate` - scope them. Should-fix: (3) `pi_number_for` truncate the STEM
+(`stem[:80]`) not the composed string; (4) proforma Test vs Apply disagree on row problems -
+make row problems warnings; (5) add `tests/test_migration_374_...` grant-sweep test mirroring
+361's; (6) FE packing-list upload has no `currency` field - add to
+`fulfilmentService.ts` + dialog or backlog it and say so in PR; (7) `create_shipment` merges
+duplicate product lines and keeps the first line's `unit_cost` - weight-average or refuse when
+prices differ; (8) unrecognised form currency must 422, not fall through; (9) model docstring
+says NOT NULL. Nits: anchor short currency tokens (`rm` matches FORM), drop dead
+`ProformaReadResult.currency_hint`, `_summarise` computed twice in apply, rename
+`unpriced_without_currency`, fix reader test row alignment (:220), add `%d/%m/%Y`,
+AppException consistency in route, validate list `supplier_id` query param, packing-list
+`preview` should take supplier_id/currency, assert container_ref/bl_ref/uom/description
+after apply.
