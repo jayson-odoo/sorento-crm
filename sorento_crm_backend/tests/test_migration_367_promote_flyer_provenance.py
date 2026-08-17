@@ -241,6 +241,14 @@ def test_upgrade_leaves_a_row_with_no_flyer_entries_completely_untouched(db, see
 
 
 def test_upgrade_and_downgrade_skip_a_row_whose_provenance_is_not_an_object(db, seeded):
+    """A provenance that is not an object is stepped over, both ways.
+
+    Both halves of 367 are guarded by `jsonb_typeof(provenance) = 'object'`, and this
+    is what pins it: a row holding an array (the shape a bad hand-write leaves behind)
+    must come out of the migration byte-identical rather than aborting the statement
+    that is promoting everybody else's. Deleted with the flyer-ingestion slice for no
+    recorded reason; the guard it covers is still in the migration, so it is back.
+    """
     product_a, _ = seeded["a"]
     product_e = _product(db, "ZZT-PROMOTE-E")
     spec_e = _spec_row(db, product_e, values={}, provenance={}, status="derived")
@@ -445,7 +453,15 @@ def test_merge_authored_over_keeps_a_promoted_value_against_a_differing_derived_
 # --------------------------------------------------------------------------- #
 # single alembic head after both new migrations exist
 # --------------------------------------------------------------------------- #
-def test_367_is_the_single_alembic_head():
+def test_there_is_one_alembic_head_and_367_is_on_its_path():
+    """One head, and this revision is an ancestor of it.
+
+    It used to assert the head IS 367, which was true for exactly as long as 367 was
+    the newest migration - the bulk flyer-ingestion slice chained 370 onto it and the
+    assertion failed for the one reason that is not a defect. The invariant worth
+    guarding is that the branches never split, not which revision happens to be last,
+    so it is written that way now.
+    """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
@@ -458,5 +474,6 @@ def test_367_is_the_single_alembic_head():
     # never have matched, single head or not.
     heads = list(script_dir.get_heads())
     assert len(heads) == 1, heads
-    lineage = [rev.revision for rev in script_dir.walk_revisions("base", heads[0])]
-    assert "367_promote_flyer_provenance" in lineage, lineage
+
+    ancestry = {rev.revision for rev in script_dir.walk_revisions(base="base", head=heads[0])}
+    assert "367_promote_flyer_provenance" in ancestry

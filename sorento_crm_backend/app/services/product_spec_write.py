@@ -41,12 +41,13 @@ logger = logging.getLogger(__name__)
 # test in the codebase: a bare equality against the single string below would silently
 # treat a supplier-submitted entry as machine-derived everywhere that test runs.
 # `supplier` has no writer in this milestone; it is reserved for the supplier portal.
-# `flyer` joins this set in the bulk flyer-ingestion slice after PRs 1-4, once the
-# promote migration (367) has re-stamped the legacy entries in every environment, and
-# not before (AC-F.7): derivation no longer writes `source='flyer'` (PR 4, AC-B.18),
-# but rows written before the promote still carry it, so an early flip would badge a
-# machine read as a person's own work.
-AUTHORED_SOURCES: frozenset[str] = frozenset({"human", "supplier"})
+# `flyer` joined this set in the bulk flyer-ingestion slice (AC-C.7), and it could not
+# have joined earlier: derivation used to write `source='flyer'` itself on every run, so
+# the flip would have badged a machine read as a person's own work. Migration 367
+# re-stamped every one of those legacy entries and derivation no longer reads a flyer at
+# all, so the only writer of `flyer` now is a person ticking a proposal off a flyer they
+# are looking at - which is authorship, and outranks what the rules read.
+AUTHORED_SOURCES: frozenset[str] = frozenset({"human", "supplier", "flyer"})
 
 DEFAULT_AUTHORED_SOURCE = "human"
 
@@ -391,12 +392,19 @@ def apply_spec_values(
     *,
     actor: Mapping | None = None,
     commit: bool = True,
+    rules_by_key: dict[str, list[dict]] | None = None,
+    scopes_by_key: dict[str, dict] | None = None,
 ) -> dict:
     """Write what a person set onto every company copy of a code, then re-derive it.
 
     Batch-capable from day one. One call per key would produce one fan-out, one rendered
     sentence rebuild and one verification diff PER KEY for what the user experienced as
     a single action, so a batch of one is the narrow case rather than the shape.
+
+    `rules_by_key` / `scopes_by_key` are handed straight to the re-derive. Left `None`
+    (every caller writing ONE product) it loads them itself, exactly as before; a caller
+    walking a whole flyer's worth of products in one transaction loads them ONCE and
+    passes them, instead of re-reading the registry twice per product.
 
     The all-companies scope is taken HERE rather than left to the caller: a code exists
     once per company and a value a person set is true of the model, not of one company's
@@ -511,7 +519,13 @@ def apply_spec_values(
             after_values=after_values,
         )
         # In the caller's transaction, so a conflict surfaces in the same click.
-        derive_for_code(db, product_code, commit=False)
+        derive_for_code(
+            db,
+            product_code,
+            commit=False,
+            rules_by_key=rules_by_key,
+            scopes_by_key=scopes_by_key,
+        )
 
     if commit:
         db.commit()

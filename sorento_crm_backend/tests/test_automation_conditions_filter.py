@@ -87,14 +87,11 @@ def _wipe():
         )
         conn.execute(text("DELETE FROM automations WHERE name LIKE '%(cond)%'"))
         conn.execute(text("DELETE FROM email_templates WHERE code LIKE 'tpl-cond-%'"))
-        # Both prefixes: our CondPromo rows AND the sibling file's Test Promo rows,
-        # so neither file pollutes the other's match counts.
-        conn.execute(
-            text(
-                "DELETE FROM promotions WHERE description LIKE 'CondPromo%' "
-                "OR description LIKE 'Test Promo%'"
-            )
-        )
+        # Our CondPromo rows ONLY. Deleting another file's rows (the sibling's
+        # 'Test Promo%') is forbidden under concurrent execution: on a separate
+        # xdist worker that file is asserting on them right now. Isolation from
+        # the sibling comes from the disjoint _UNIQUE_OFFSET date window instead.
+        conn.execute(text("DELETE FROM promotions WHERE description LIKE 'CondPromo%'"))
         # Marked test users last (after their automations + notifications above).
         conn.execute(text("DELETE FROM users WHERE email LIKE 'condtest-%@test.local'"))
         conn.commit()
@@ -121,7 +118,12 @@ def db() -> Iterator[Session]:
 # exactly ``days_before`` out — including real promos on the shared prod-copy dev
 # DB. Push this file's test promos ~10 years out (and the automation's target to
 # match) so no real promo can ever collide with the assertions on match count.
-_UNIQUE_OFFSET = 3650
+#
+# This value MUST stay disjoint from tests/test_automation_service.py's 3650 by
+# more than the largest ``days_until_end`` either file uses (about 30), so the two
+# files' expiry-matcher windows can never overlap when they run concurrently on
+# separate xdist workers under ``--dist loadfile``.
+_UNIQUE_OFFSET = 3950
 
 
 def _malaysia_today():

@@ -1129,6 +1129,38 @@ def get_reading(db: Session, reading_id: str) -> FlyerReadingRecord:
     return record
 
 
+def assert_read(record: FlyerReadingRecord) -> None:
+    """Refuse to build anything out of a flyer that has not been read yet.
+
+    409 rather than 404 or 422: the reading EXISTS and the request is
+    well-formed, it is the state that is wrong, and it will stop being wrong on
+    its own in a few seconds. The two states get different words because the
+    next action differs - one is "wait", the other is "read a different file".
+
+    The screens do not offer the actions this guards before a reading is done,
+    so nothing in the UI can reach it. That is exactly why it is here: a stale
+    tab, a retried request or a script are all outside what the UI can promise,
+    and seeding a brochure - or proposing specs - from an empty reading would
+    produce an answer with nothing in it and no error to explain why.
+
+    It lives in the service rather than beside its first caller because three
+    routes across two modules now refuse on the same condition (seed, apply the
+    printed sizes, propose the specs), and three copies of a refusal are three
+    sets of words that drift.
+    """
+    reading_status = getattr(record, "status", None) or ReadingStatus.DONE
+    if reading_status == ReadingStatus.DONE:
+        return
+    if reading_status == ReadingStatus.PROCESSING:
+        message = "That flyer is still being read. Try again once it says Done."
+    else:
+        message = (
+            "That flyer could not be read, so there is nothing to build from it. "
+            + (record.error_message or "Read the flyer again, or try another file.")
+        )
+    raise AppException(status_code=409, message=message, code="FLYER_NOT_READ_YET")
+
+
 def list_readings(db: Session) -> list[FlyerReadingRecord]:
     """Newest first: the flyer somebody is working on is the one they just read.
 

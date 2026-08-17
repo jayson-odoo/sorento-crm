@@ -18,7 +18,7 @@ worklist, group D plus the PR-3 half of AC-D.17) implemented on
 `fm/spec-pr3-verification-list`, 2026-08-17: migration `369_product_spec_verifications`
 (renumbered from 367 because sibling branches took 367/368; chained on PR 4's
 `367_promote_flyer_provenance`), evidence run recorded in
-`spec-authoring-verification-evidence-pr3.md`, missing regression guard logged as BL-014. PR 4 IN PROGRESS on
+`spec-authoring-verification-evidence-pr3.md`, missing regression guard logged as BL-020. PR 4 IN PROGRESS on
 `fm/spec-pr4-extraction-prompt` (2026-08-16), contract below; its deploy runbook exists at
 `documentation/plans/master-data/RUNBOOK-flyer-promote.md` (steps 1-6 with the exact pre-flight,
 checksum and post-run SQL, re-measured 2026-08-16).

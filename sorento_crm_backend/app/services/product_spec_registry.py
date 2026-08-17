@@ -19,6 +19,8 @@ why a key is weighted the way it is without redoing the work.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy.orm import Session
 
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
@@ -1225,6 +1227,85 @@ def merged_allowed_values(row: ProductSpecRegistry) -> list:
             merged.append(value)
     dropped = {str(v).strip() for v in (row.suppressed_values or [])}
     return [v for v in merged if str(v).strip() not in dropped]
+
+
+def value_for_registry(row: ProductSpecRegistry, raw: Any, reject) -> Any:
+    """One value, forced into the shape the registry describes, or refused.
+
+    Every write path calls this and none keeps its own copy: a value a reviewer accepts
+    off a pasted flyer card (the batch route), the same value typed into the same field
+    (the PUT), and the same value ticked out of a whole flyer's proposals (the bulk
+    apply) are one claim about the product. Two copies of the coercion would mean one
+    surface could store a word another refuses - an out-of-vocabulary enum, a
+    "measurement" that is not a number - and the vocabulary is the whole reason the
+    registry is shared with the parser and the ranker.
+
+    It lives HERE rather than in a route module because a service (the flyer ingest)
+    is now one of the callers, and a service reaching into `app/api` for a helper is
+    the wrong direction. `app/api/v1/master_data/product_specifications.py` keeps a
+    one-line alias, so its two existing callers do not change.
+
+    `reject` builds the refusal, because the callers are refusing different things: a
+    value typed into one field is a bad business state (400), and a body naming a value
+    the registry cannot accept is the wrong shape for the call (422). The blank case
+    answers 400 either way - it is the write choke point's own refusal
+    (`product_spec_write._prepare`), reproduced here only so the message can name the
+    key's label instead of its slug.
+    """
+    from app.services.error_handler import AppException
+
+    def _blank():
+        # An empty value is not a value, it is a removal wearing one. Stored, it
+        # canonicalises to nothing while derivation keeps producing something, so the
+        # merge would raise the same conflict on every run forever - in a table whose
+        # contract is exceptions only.
+        return AppException(
+            status_code=400,
+            message=(
+                f"{row.label} cannot be blank. To take the value away, remove the "
+                f"specification instead."
+            ),
+            code="product_spec_bad_value",
+        )
+
+    if isinstance(raw, (list, tuple)):
+        # A product can genuinely carry two of these at once: SRTWT9605-RG is "Rose
+        # Gold + Matt Black", and derivation stores both. So the list is coerced
+        # element-wise and KEPT as a list, or accepting a proposal would write a
+        # different shape from the one a re-derivation of the same words produces.
+        from app.services.product_spec_derivation import MULTI_VALUE_KEYS
+
+        if row.spec_key not in MULTI_VALUE_KEYS:
+            raise reject(f"{row.label} holds one value, not several.")
+        items = [value_for_registry(row, item, reject) for item in raw]
+        if not items:
+            raise _blank()
+        # One tone is stored as the tone, exactly as `apply_rules` does it: a
+        # one-element list and the value itself must not be two different answers.
+        return items[0] if len(items) == 1 else items
+
+    data_type = (row.data_type or "").lower()
+    if data_type == "boolean":
+        return str(raw).strip().lower() in {"true", "yes", "1"}
+
+    if data_type == "numeric":
+        try:
+            number = float(raw)
+        except (TypeError, ValueError):
+            raise reject(f"{row.label} is a measurement, so it needs a number.")
+        return int(number) if number.is_integer() else number
+
+    value = str(raw).strip()
+    if not value:
+        raise _blank()
+
+    allowed = merged_allowed_values(row)
+    if allowed and value not in allowed:
+        raise reject(
+            f"{row.label} does not have a value called \"{value}\". "
+            f"Add it to the specification first, or pick one of: {', '.join(allowed)}."
+        )
+    return value
 
 
 def merged_synonyms(row: ProductSpecRegistry) -> dict:

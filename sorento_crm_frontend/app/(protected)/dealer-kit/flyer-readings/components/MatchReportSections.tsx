@@ -9,12 +9,14 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
 import type {
+  FlyerReadingStatus,
   MatchReport,
   MatchedCode,
   PageHeading,
   UnmatchedCode,
 } from '../../services/flyerReadingService';
 import { DimensionReviewSection } from './DimensionReviewSection';
+import { SpecProposalSection } from './SpecProposalSection';
 import { Empty, Section, printedOn } from './ReportSection';
 import { ReportGrid } from './ReportGrid';
 
@@ -31,6 +33,9 @@ import { ReportGrid } from './ReportGrid';
  * - Sizes can now be applied to the product master, one ticked row at a time
  *   and never as a side effect of reading the flyer (S7.6). That section owns
  *   its own mutation and lives in `DimensionReviewSection`.
+ * - Specifications work the same way one step removed: the flyer is READ for
+ *   them here and reviewed in Master Data, because a batch spanning two hundred
+ *   products is not something to judge on a page about one flyer.
  * - Every section renders even when it is empty, because "no promotion gaps" is
  *   an answer somebody needs, and a section that vanishes on zero looks like a
  *   section that failed to load.
@@ -82,6 +87,13 @@ export interface MatchReportSectionsProps {
    * it.
    */
   headings: PageHeading[];
+  /**
+   * Where the READING got to. Optional and `done` by default, because today the
+   * only caller renders this whole component once the read has finished and the
+   * existing tests pass no such prop - but the spec section below has to be able
+   * to say "read the flyer first" rather than offer a button that cannot work.
+   */
+  readingStatus?: FlyerReadingStatus;
 }
 
 export function MatchReportSections({
@@ -90,6 +102,7 @@ export function MatchReportSections({
   codeCount,
   promotionLabel,
   headings,
+  readingStatus = 'done',
 }: MatchReportSectionsProps) {
   const duplicateRows = useMemo(
     () =>
@@ -371,6 +384,10 @@ export function MatchReportSections({
         readingId={readingId}
         candidates={report.dimensionCandidates}
       />
+
+      {/* Beside the sizes, and for the same reason: both are the flyer telling
+          the product master something it may not know. */}
+      <SpecProposalSection readingId={readingId} readingStatus={readingStatus} />
 
       <Section
         id="duplicates"

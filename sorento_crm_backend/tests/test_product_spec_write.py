@@ -31,8 +31,17 @@ def _spec() -> ProductSpecifications:
 # --------------------------------------------------------------------------- #
 # AC-F.7 - AUTHORED_SOURCES, never a bare '== human' (M2-S1)
 # --------------------------------------------------------------------------- #
-def test_authored_sources_contains_human_and_supplier():
-    assert AUTHORED_SOURCES == frozenset({"human", "supplier"})
+def test_authored_sources_contains_human_supplier_and_flyer():
+    """`flyer` was added by the bulk flyer-ingestion slice (AC-C.7).
+
+    This test asserted `{"human", "supplier"}` until then, and the change is
+    deliberate rather than a broken assertion: migration 367 re-stamped every
+    legacy machine-written `flyer` provenance entry as `human`, and derivation
+    no longer reads a flyer at all, so the only writer of `flyer` now is a person
+    accepting a proposal off a flyer they are looking at. Membership here is what
+    makes that value survive re-derivation, exactly as a hand-typed one does.
+    """
+    assert AUTHORED_SOURCES == frozenset({"human", "supplier", "flyer"})
 
 
 def test_authored_sources_is_a_frozenset():

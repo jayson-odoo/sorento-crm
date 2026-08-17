@@ -31,6 +31,7 @@ from app.schemas.common import MAX_PAGE_LIMIT
 from app.services import product_spec_verification
 from app.services.error_handler import AppException, handle_internal_error, handle_not_found
 from app.services.product_class_signal import explain_code
+from app.services.product_spec_registry import value_for_registry
 from app.services.product_spec_search import RELEVANCE_FLOOR, search_specs
 
 router = APIRouter()
@@ -50,73 +51,10 @@ def _spec_reject_unprocessable(message: str):
     return AppException(status_code=422, message=message, code="product_spec_bad_text")
 
 
-def _value_for_registry(row: ProductSpecRegistry, raw: Any, reject) -> Any:
-    """One value, forced into the shape the registry describes, or refused.
-
-    Both write paths call this and neither keeps its own copy: a value a reviewer
-    accepts off a pasted flyer card is written by the batch route, and the same value
-    typed into the same field is written by the PUT. Two copies of the coercion would
-    mean the batch could store a word the field itself refuses - an out-of-vocabulary
-    enum, a "measurement" that is not a number - and the vocabulary is the whole
-    reason the registry is shared with the parser and the ranker.
-
-    `reject` builds the refusal, because the two callers are refusing different
-    things: a value typed into one field is a bad business state (400), and a body
-    naming a value the registry cannot accept is the wrong shape for the call (422).
-    The blank case answers 400 either way - it is the write choke point's own refusal
-    (`product_spec_write._prepare`), reproduced here only so the message can name the
-    key's label instead of its slug.
-    """
-    from app.services.product_spec_registry import merged_allowed_values
-
-    def _blank():
-        # An empty value is not a value, it is a removal wearing one. Stored, it
-        # canonicalises to nothing while derivation keeps producing something, so the
-        # merge would raise the same conflict on every run forever - in a table whose
-        # contract is exceptions only.
-        return _spec_reject(
-            f"{row.label} cannot be blank. To take the value away, remove the "
-            f"specification instead."
-        )
-
-    if isinstance(raw, (list, tuple)):
-        # A product can genuinely carry two of these at once: SRTWT9605-RG is "Rose
-        # Gold + Matt Black", and derivation stores both. So the list is coerced
-        # element-wise and KEPT as a list, or accepting a proposal would write a
-        # different shape from the one a re-derivation of the same words produces.
-        from app.services.product_spec_derivation import MULTI_VALUE_KEYS
-
-        if row.spec_key not in MULTI_VALUE_KEYS:
-            raise reject(f"{row.label} holds one value, not several.")
-        items = [_value_for_registry(row, item, reject) for item in raw]
-        if not items:
-            raise _blank()
-        # One tone is stored as the tone, exactly as `apply_rules` does it: a
-        # one-element list and the value itself must not be two different answers.
-        return items[0] if len(items) == 1 else items
-
-    data_type = (row.data_type or "").lower()
-    if data_type == "boolean":
-        return str(raw).strip().lower() in {"true", "yes", "1"}
-
-    if data_type == "numeric":
-        try:
-            number = float(raw)
-        except (TypeError, ValueError):
-            raise reject(f"{row.label} is a measurement, so it needs a number.")
-        return int(number) if number.is_integer() else number
-
-    value = str(raw).strip()
-    if not value:
-        raise _blank()
-
-    allowed = merged_allowed_values(row)
-    if allowed and value not in allowed:
-        raise reject(
-            f"{row.label} does not have a value called \"{value}\". "
-            f"Add it to the specification first, or pick one of: {', '.join(allowed)}."
-        )
-    return value
+# The registry coercion, lifted to `app/services/product_spec_registry.py` so a SERVICE
+# (the flyer ingest) can call it without reaching into `app/api`. Aliased rather than
+# renamed at the two call sites below: one helper, three callers, one name each side.
+_value_for_registry = value_for_registry
 
 
 _INTERNAL_ONLY_VALUE_KEYS: set[str] = set()
