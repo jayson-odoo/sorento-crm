@@ -183,8 +183,10 @@ export function SalesOrderLinesTable({
         cell: ({ row }) => {
           const code = row.original.line.product_code || 'Not resolved';
           const flagged = findingsByLine.get(row.original.line.id) ?? [];
+          // `acknowledged_at` is the backend's own gate; the name is a display field that
+          // goes null when the acknowledger no longer resolves.
           const blocking = flagged.some(
-            (finding) => finding.severity === 'hard' && !finding.acknowledged_by_name,
+            (finding) => finding.severity === 'hard' && !finding.acknowledged_at,
           );
           return (
             <div className={`flex min-w-0 items-center gap-1 ${row.original.isCompanion ? 'pl-4' : ''}`}>
