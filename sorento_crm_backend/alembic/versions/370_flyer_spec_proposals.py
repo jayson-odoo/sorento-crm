@@ -36,13 +36,13 @@ Every statement is idempotent (IF NOT EXISTS / a `pg_constraint` probe) so this 
 no-op on a database where it has already been applied by hand.
 
 Revision ID: 370_flyer_spec_proposals
-Revises: 367_promote_flyer_provenance
+Revises: 368_merge_tickets_main
 """
 
 from alembic import op
 
 revision = "370_flyer_spec_proposals"
-down_revision = "367_promote_flyer_provenance"
+down_revision = "368_merge_tickets_main"
 branch_labels = None
 depends_on = None
 
