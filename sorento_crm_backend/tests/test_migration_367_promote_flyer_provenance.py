@@ -31,6 +31,7 @@ import uuid
 from decimal import Decimal
 
 import pytest
+import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
@@ -237,6 +238,42 @@ def test_upgrade_leaves_a_row_with_no_flyer_entries_completely_untouched(db, see
     assert values == before_values
     assert provenance == before_provenance
     assert status == before_status == "derived"
+
+
+def test_upgrade_and_downgrade_skip_a_row_whose_provenance_is_not_an_object(db, seeded):
+    """A provenance that is not an object is stepped over, both ways.
+
+    Both halves of 367 are guarded by `jsonb_typeof(provenance) = 'object'`, and this
+    is what pins it: a row holding an array (the shape a bad hand-write leaves behind)
+    must come out of the migration byte-identical rather than aborting the statement
+    that is promoting everybody else's. Deleted with the flyer-ingestion slice for no
+    recorded reason; the guard it covers is still in the migration, so it is back.
+    """
+    product_a, _ = seeded["a"]
+    product_e = _product(db, "ZZT-PROMOTE-E")
+    spec_e = _spec_row(db, product_e, values={}, provenance={}, status="derived")
+    db.execute(
+        sa.text("UPDATE product_specifications SET provenance = '[]'::jsonb WHERE id = :id"),
+        {"id": spec_e.id},
+    )
+    db.commit()
+
+    _run_upgrade(db)
+
+    _, provenance_a, status_a = _snapshot(db, product_a.id)
+    assert provenance_a["finish"]["migrated_from"] == "flyer"
+    assert status_a == "authored"
+    kind, status_e = db.execute(
+        sa.text("SELECT jsonb_typeof(provenance), status FROM product_specifications WHERE id = :id"),
+        {"id": spec_e.id},
+    ).one()
+    assert (kind, status_e) == ("array", "derived")
+
+    _run_downgrade(db)
+
+    _, provenance_a, status_a = _snapshot(db, product_a.id)
+    assert provenance_a["finish"] == {"source": "flyer", "confidence": 1.0, "evidence": "CHROME"}
+    assert status_a == "derived"
 
 
 def test_upgrade_completes_a_half_promoted_row(db, seeded):

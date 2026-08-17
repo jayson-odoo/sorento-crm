@@ -4,16 +4,22 @@ Plan: `documentation/plans/master-data/PLAN-flyer-spec-ingestion.md` section 3.4
 UAC: `flyer-spec-ingestion-acceptance-criteria.md` AC-A.1, AC-A.5, AC-A.7, AC-B.1,
 AC-B.2, AC-C.1 through AC-C.7.
 
-None of the four routes exist yet (`app/api/v1/dealer_kit/flyer_spec_proposals.py`
-is not written and not mounted), so every request below 404s today - that IS the
-expected red state, mirroring `tests/test_product_spec_batch_apply_route.py` and
-`tests/test_product_spec_extract_route.py`.
+Written red, against routes that did not exist yet, and green since S2 built
+`app/api/v1/dealer_kit/flyer_spec_proposals.py` and mounted it. What it covers:
+the list, the propose, the per-reading read and the apply, each at the HTTP
+boundary - the permission pair on all four (401, and 403 for each slug missing),
+the two 409s propose can answer (not read yet, already proposing), the
+`status: "none"` answer for a reading nobody has proposed from, and the apply's
+per-row outcomes including the ids-only body, the size ceiling and the refusal to
+apply a batch that is not `proposed`.
 
-Fixture/dependency-override pattern copied from those two files: bare
-`TestClient(app)` (no `with`, so the app's startup event and its company-scope
-listeners never register - the same reason those two files need no company-scope
-plumbing), `get_db` / `get_current_user` / `get_current_user_or_api_key` /
-`apply_company_scope` overridden, `UserPermissionService.check_user_has_
+Fixture/dependency-override pattern copied from
+`tests/test_product_spec_batch_apply_route.py` and
+`tests/test_product_spec_extract_route.py`: bare `TestClient(app)` (no `with`, so
+the app's startup event and its company-scope listeners never register - the same
+reason those two files need no company-scope plumbing), `get_db` /
+`get_current_user` / `get_current_user_or_api_key` / `apply_company_scope`
+overridden, `UserPermissionService.check_user_has_
 permission` monkeypatched against an `allow` set. The two routes' own permission
 dependencies (`require_permission`, not `_with_api_key` - see `apply_flyer_
 dimensions` for the precedent AC-A.7/L9 names) resolve through `get_current_
@@ -762,3 +768,106 @@ def test_reapplying_the_same_id_keeps_the_row_marked_applied(api, db):
 
     stored_batch = db.query(ProductSpecFlyerBatch).filter_by(id=batch.id).one()
     assert stored_batch.applied_count == 1
+
+
+# --------------------------------------------------------------------------- #
+# Apply refuses a batch that is not `proposed` (second-review finding 7)
+# --------------------------------------------------------------------------- #
+def test_apply_refuses_409_while_the_batch_is_being_re_proposed(api, db):
+    """Mid-re-propose the batch holds the OLD ids briefly and then none of them.
+
+    Answering the apply from that window either writes rows from a superseded pass or
+    comes back every-row-`not_in_batch`, which reads as a bug rather than as timing.
+    """
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-REPRO", "SORENTO ONE PIECE WC ZZT-FLYRT-REPRO")
+    db.commit()
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-REPRO", "Washdown. S-Trap outlet 250mm")])
+    batch = _batch(db, reading, status="proposing")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(_APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]})
+
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["code"] == "FLYER_SPEC_NOT_PROPOSED"
+    assert "again" in body["message"].lower()
+
+    db.expire_all()
+    assert db.query(ProductSpecFlyerProposal).filter_by(id=proposal.id).one().outcome is None
+
+
+def test_apply_refuses_409_when_the_last_pass_failed(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-FAILED", "SORENTO ONE PIECE WC ZZT-FLYRT-FAILED")
+    db.commit()
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-FAILED", "Washdown. S-Trap outlet 250mm")])
+    batch = _batch(db, reading, status="failed", error_message="the rules could not be loaded")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(_APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]})
+
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["code"] == "FLYER_SPEC_NOT_PROPOSED"
+    assert "did not finish" in body["message"]
+
+
+# --------------------------------------------------------------------------- #
+# One registry load per apply, not one per product (second-review finding 3)
+# --------------------------------------------------------------------------- #
+def test_apply_loads_the_rule_registry_once_for_a_two_product_apply(api, db, monkeypatch):
+    """`configured_rules` is read ONCE for the whole request, not once per product.
+
+    `apply_spec_values` re-derives the code it wrote, and the re-derive loads the rule
+    and scope registries unless it is handed them - two registry scans per product,
+    inside one transaction, for a flyer that can name two hundred of them. The counter
+    is installed on BOTH namespaces (the derivation module's own global, which
+    `derive_for_code` reads, and the ingest module's imported name) so it counts every
+    load on the path rather than only the one the service makes.
+    """
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+
+    import app.services.product_spec_derivation as derivation
+    import app.services.product_spec_flyer_ingest as ingest
+
+    first = _product(db, "ZZT-FLYRT-ONCE-A", "SORENTO ONE PIECE WC ZZT-FLYRT-ONCE-A")
+    second = _product(db, "ZZT-FLYRT-ONCE-B", "SORENTO ONE PIECE WC ZZT-FLYRT-ONCE-B")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-ONCE-A", commit=True)
+    derive_for_code(db, "ZZT-FLYRT-ONCE-B", commit=True)
+
+    reading = _reading(
+        db,
+        cards=[
+            _card("ZZT-FLYRT-ONCE-A", "Washdown. S-Trap outlet 250mm"),
+            _card("ZZT-FLYRT-ONCE-B", "Washdown. S-Trap outlet 250mm"),
+        ],
+    )
+    batch = _batch(db, reading)
+    p1 = _proposal(db, batch, first, spec_key="trap_type", value="s_trap", kind="new")
+    p2 = _proposal(db, batch, second, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    real_rules = derivation.configured_rules
+    loads: list[int] = []
+
+    def _counting_rules(session):
+        loads.append(1)
+        return real_rules(session)
+
+    monkeypatch.setattr(derivation, "configured_rules", _counting_rules)
+    monkeypatch.setattr(ingest, "configured_rules", _counting_rules)
+
+    response = client.post(
+        _APPLY.format(reading.id), json={"proposal_ids": [str(p1.id), str(p2.id)]}
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["applied"]) == 2
+    assert len(loads) == 1, f"one load for the request, not one per product: {len(loads)}"

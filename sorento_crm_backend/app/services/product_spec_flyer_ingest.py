@@ -31,9 +31,10 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import app.services.product_spec_write as spec_write
@@ -83,7 +84,14 @@ MAX_ROWS = 5000
 
 # 15 minutes, matching the read's own ceiling. The pass is one report plus a rule pass
 # per matched code, so this is a bound on a job that has gone wrong rather than a budget.
-FLYER_SPEC_JOB_TIMEOUT = 900
+FLYER_SPEC_JOB_TIMEOUT = flyer_svc.FLYER_READ_JOB_TIMEOUT
+
+# How long a batch may sit in `proposing` before somebody may propose over it. A
+# work-horse that dies (RQ's forked child, an OOM kill, a deploy mid-job) leaves the row
+# `proposing` with nobody left to finish it, and a flat 409 would make that reading
+# permanently unproposable without a hand-written UPDATE. Past the job's own timeout the
+# job is not running by definition, so the refusal has nothing left to protect.
+FLYER_SPEC_STALE_AFTER = timedelta(seconds=FLYER_SPEC_JOB_TIMEOUT)
 
 # Where a product whose pages nobody recorded sorts. Products are ordered by the page
 # they are printed on, so a product with no page has to go somewhere: last, because the
@@ -123,13 +131,36 @@ def _enqueue(batch: ProductSpecFlyerBatch) -> Optional[str]:
     return getattr(job, "id", None)
 
 
-def batch_for(db: Session, record: FlyerReadingRecord) -> Optional[ProductSpecFlyerBatch]:
-    """This reading's batch, or nothing. One batch per reading (AC-A.5)."""
-    return (
-        db.query(ProductSpecFlyerBatch)
-        .filter(ProductSpecFlyerBatch.flyer_reading_id == record.id)
-        .first()
+def batch_for(
+    db: Session, record: FlyerReadingRecord, *, for_update: bool = False
+) -> Optional[ProductSpecFlyerBatch]:
+    """This reading's batch, or nothing. One batch per reading (AC-A.5).
+
+    `for_update` takes a row lock for the rest of the transaction, which is what makes
+    `start_batch`'s "is one already running" a decision rather than a guess: without it
+    two overlapping presses both read `proposed`, both wipe, and both queue a pass over
+    the same rows. Every read that only wants to SHOW the batch leaves it off.
+    """
+    query = db.query(ProductSpecFlyerBatch).filter(
+        ProductSpecFlyerBatch.flyer_reading_id == record.id
     )
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
+
+
+def _is_stale(batch: ProductSpecFlyerBatch) -> bool:
+    """True when a `proposing` batch has been proposing longer than a pass may run.
+
+    Past `FLYER_SPEC_STALE_AFTER` the job is not running - RQ has given up on it - so
+    the row is a headstone rather than a claim, and refusing on it would leave the
+    reading unproposable forever. A batch with no start time recorded counts as stale
+    for the same reason: there is nothing there to defend.
+    """
+    started = batch.created_at
+    if started is None:
+        return True
+    return (_now() - started) > FLYER_SPEC_STALE_AFTER
 
 
 def list_batches(db: Session) -> list[tuple[ProductSpecFlyerBatch, FlyerReadingRecord]]:
@@ -190,6 +221,18 @@ def _reset(batch: ProductSpecFlyerBatch) -> None:
     batch.applied_by = None
 
 
+def _already_proposing() -> AppException:
+    """One set of words for "a pass is already running", raised from both races."""
+    return AppException(
+        status_code=409,
+        message=(
+            "This flyer is already being read for specifications. "
+            "Wait for it to finish, then propose again."
+        ),
+        code="FLYER_SPEC_PROPOSING",
+    )
+
+
 def start_batch(
     db: Session, record: FlyerReadingRecord, *, user_id: Optional[str] = None
 ) -> ProductSpecFlyerBatch:
@@ -200,6 +243,17 @@ def start_batch(
     `FLYER_SPEC_PROPOSING`) - the second because two passes over one reading would race
     to write the same rows and one of them would lose without saying so.
 
+    **The check and the set are one transaction.** The batch is read `FOR UPDATE`, so a
+    second press blocks on the row until the first has committed and then sees
+    `proposing` for real rather than the state it read a moment before. When the reading
+    has NO batch yet there is no row to lock, so the two presses race to the INSERT
+    instead and the loser takes a unique violation on `flyer_reading_id` - which is the
+    same fact, and is answered with the same 409 rather than a 500.
+
+    A pass that has been `proposing` longer than `FLYER_SPEC_STALE_AFTER` is not
+    protected: the job is dead, and refusing on its behalf would leave the reading
+    unproposable without a hand-written UPDATE (`_is_stale`).
+
     Anything else re-proposes: the old rows go and the pass runs against the master as
     it is NOW (AC-A.5). That is the point of pressing it again.
 
@@ -208,16 +262,9 @@ def start_batch(
     """
     flyer_svc.assert_read(record)
 
-    batch = batch_for(db, record)
-    if batch is not None and batch.status == PROPOSING:
-        raise AppException(
-            status_code=409,
-            message=(
-                "This flyer is already being read for specifications. "
-                "Wait for it to finish, then propose again."
-            ),
-            code="FLYER_SPEC_PROPOSING",
-        )
+    batch = batch_for(db, record, for_update=True)
+    if batch is not None and batch.status == PROPOSING and not _is_stale(batch):
+        raise _already_proposing()
 
     if batch is None:
         batch = ProductSpecFlyerBatch(
@@ -237,7 +284,13 @@ def start_batch(
 
     batch.created_by = user_id
     batch.created_at = _now()
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # `flyer_reading_id` is unique, so this is the concurrent press that got to the
+        # INSERT first. It is proposing; say so in the words the screen already renders.
+        db.rollback()
+        raise _already_proposing()
     db.refresh(batch)
 
     try:
@@ -715,6 +768,13 @@ def apply_batch(
     index = {row.spec_key: row for row in active_registry(db)}
     stored = _stored(db, [row.product_id for row in rows])
 
+    # Loaded ONCE for the whole request, not once per product. `apply_spec_values`
+    # re-derives the code it wrote, and the re-derive reads the rule and scope registries
+    # unless it is handed them - which is two registry scans per product, inside a single
+    # transaction, for a flyer that can name two hundred of them.
+    rules_by_key = configured_rules(db)
+    scopes_by_key = configured_scopes(db)
+
     per_product: dict[str, list[ProductSpecFlyerProposal]] = {}
     for row in rows:
         per_product.setdefault(row.product_id, []).append(row)
@@ -798,7 +858,13 @@ def apply_batch(
         code = writing[0].product_code
         try:
             spec_write.apply_spec_values(
-                db, code, entries, actor=user, commit=False
+                db,
+                code,
+                entries,
+                actor=user,
+                commit=False,
+                rules_by_key=rules_by_key,
+                scopes_by_key=scopes_by_key,
             )
         except AppException as exc:
             # One product's write failing is not the request failing. Its rows are

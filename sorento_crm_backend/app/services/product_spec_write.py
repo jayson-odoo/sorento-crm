@@ -337,12 +337,19 @@ def apply_spec_values(
     *,
     actor: Mapping | None = None,
     commit: bool = True,
+    rules_by_key: dict[str, list[dict]] | None = None,
+    scopes_by_key: dict[str, dict] | None = None,
 ) -> dict:
     """Write what a person set onto every company copy of a code, then re-derive it.
 
     Batch-capable from day one. One call per key would produce one fan-out, one rendered
     sentence rebuild and one verification diff PER KEY for what the user experienced as
     a single action, so a batch of one is the narrow case rather than the shape.
+
+    `rules_by_key` / `scopes_by_key` are handed straight to the re-derive. Left `None`
+    (every caller writing ONE product) it loads them itself, exactly as before; a caller
+    walking a whole flyer's worth of products in one transaction loads them ONCE and
+    passes them, instead of re-reading the registry twice per product.
 
     The all-companies scope is taken HERE rather than left to the caller: a code exists
     once per company and a value a person set is true of the model, not of one company's
@@ -423,7 +430,13 @@ def apply_spec_values(
 
         db.flush()
         # In the caller's transaction, so a conflict surfaces in the same click.
-        derive_for_code(db, product_code, commit=False)
+        derive_for_code(
+            db,
+            product_code,
+            commit=False,
+            rules_by_key=rules_by_key,
+            scopes_by_key=scopes_by_key,
+        )
 
     if commit:
         db.commit()

@@ -472,3 +472,70 @@ describe('FlyerSpecReviewScreen, without master_data.products.edit (AC-D.2)', ()
     expect(screen.queryByTestId('fsp-apply')).toBeNull();
   });
 });
+
+describe('FlyerSpecReviewScreen, a re-propose (AC-A.5, AC-D.3)', () => {
+  // A reading has exactly ONE batch row - `flyer_reading_id` is unique and
+  // `start_batch` wipes it in place - so a re-propose keeps `id` and replaces
+  // every proposal under it. Seeding on the id alone would therefore never
+  // re-seed: the screen would hold ids the re-propose deleted, show nothing
+  // ticked, offer to apply them anyway, and get them all back `not_in_batch`.
+  const SECOND_PASS: FlyerSpecProductGroup = {
+    ...MIXED_GROUP,
+    proposals: [
+      proposalRow({
+        id: 'p-new-second-pass',
+        spec_key: 'seat_material',
+        label: 'Seat cover material',
+        kind: 'new',
+      }),
+      proposalRow({
+        id: 'p-change-second-pass',
+        spec_key: 'dim_height',
+        label: 'Height',
+        kind: 'change',
+        value: 770,
+        unit: 'mm',
+        stored_value: 750,
+        stored_unit: 'mm',
+        stored_source: 'derived',
+      }),
+    ],
+  };
+
+  it('re-seeds the default selection on the new rows, and drops the old result', () => {
+    applyResult = {
+      applied: [
+        { proposal_id: 'p-new', product_code: 'SRTWC8066', spec_key: 'seat_material', value: 'pp' },
+      ],
+      refused: [],
+    };
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    const { rerender } = renderScreen();
+
+    fireEvent.click(screen.getByTestId('fsp-apply'));
+    expect(screen.getByTestId('fsp-result')).toBeInTheDocument();
+
+    // Propose again: same batch id, no finish stamp while the pass runs.
+    setQuery({
+      data: batch({ status: 'proposing', finished_at: null, groups: [] }),
+    });
+    rerender(<FlyerSpecReviewScreen readingId="r-1" />);
+    expect(screen.getByTestId('fsp-proposing')).toBeInTheDocument();
+
+    // The pass settles: same batch row, a later stamp, entirely new proposal ids.
+    setQuery({
+      data: { ...countedBatch([SECOND_PASS]), finished_at: '2026-08-16T11:41:07' },
+    });
+    rerender(<FlyerSpecReviewScreen readingId="r-1" />);
+
+    // Exactly the new pass's `new` row, and nothing carried over from the old one.
+    expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent('1 ticked');
+    const newRow = screen.getAllByText('New')[0].closest('tr') as HTMLElement;
+    expect(within(newRow).getByLabelText('Select row')).toBeChecked();
+    expect(screen.getByTestId('fsp-apply')).toHaveTextContent('Apply 1 selected');
+
+    // The previous apply described rows that no longer exist.
+    expect(screen.queryByTestId('fsp-result')).toBeNull();
+  });
+});

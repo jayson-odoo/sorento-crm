@@ -225,7 +225,9 @@ def apply_flyer_spec_proposals(
     written, so a batch proposed yesterday cannot overwrite what somebody set this
     morning, and re-applying the same flyer writes nothing at all.
 
-    200 with per-row outcomes rather than a 4xx: see the module docstring.
+    200 with per-row outcomes rather than a 4xx: see the module docstring. The one
+    exception is a batch that is not `proposed` - mid-re-propose or failed - which is
+    409 `FLYER_SPEC_NOT_PROPOSED`, because its rows are not the rows the caller ticked.
     """
     record = svc.get_reading(db, reading_id)
     batch = ingest.batch_for(db, record)
@@ -237,6 +239,23 @@ def apply_flyer_spec_proposals(
                 "nothing to apply."
             ),
             code="FLYER_SPEC_NO_BATCH",
+        )
+
+    if batch.status != ingest.PROPOSED:
+        # A batch mid-re-propose holds the OLD ids for a moment and then holds none of
+        # them, so an apply landing in that window either writes rows from a pass that
+        # has been superseded or comes back every-row-`not_in_batch` with no reason a
+        # reader can act on. Say which state it is in instead.
+        raise AppException(
+            status_code=409,
+            message=(
+                "This flyer is being read for specifications again. Wait for it to "
+                "finish, then apply what it proposes."
+                if batch.status == ingest.PROPOSING
+                else "The last pass over this flyer did not finish, so there is "
+                "nothing to apply. Propose from it again."
+            ),
+            code="FLYER_SPEC_NOT_PROPOSED",
         )
 
     result = ingest.apply_batch(

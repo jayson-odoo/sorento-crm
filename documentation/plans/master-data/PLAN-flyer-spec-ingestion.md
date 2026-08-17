@@ -241,6 +241,22 @@ client-side (a "Show more" button), selection survives across.
   too) make every state reachable from the list, and pressing Propose on any real reading walks the
   transition. Deleted in S3.
 
+### Recorded limitations (S4 review), not defects
+
+- **The menu entry can gate on ONE slug, so the pair is enforced only at the route.**
+  `MenuItem` has no AND form: `permission: 'master_data.products.edit'` is the whole gate the
+  sidebar can express, and the four routes require `dealer_kit.page.view` AND
+  `master_data.products.edit` (L9). A role holding `products.edit` without `page.view`
+  therefore SEES `Product Management -> Flyer Spec Proposals`, clicks it, and gets the error
+  alert the list already renders for a 403 rather than a hidden entry. Left as it is: the
+  authority that matters is the route's, hiding the entry would need a menu concept nothing
+  else in this application has, and the two slugs are held by the same roles in practice.
+- **The stored proposal `unit` is display decoration.** It is copied off the registry row when
+  the pass runs so the review screen can read "770 mm" rather than "770", but the apply does
+  NOT use it: `apply_batch` re-reads the registry live and writes `registry_row.unit`. A key
+  whose unit changed between propose and apply is written with the unit it has NOW, and the
+  older unit on the proposal row is a snapshot of what the reviewer was shown.
+
 ### Amended during review (S4), with the reason
 
 - **The menu entry lives in `MENU_SIDEBAR` and `MENU_SIDEBAR_COMPACT`, not `MENU_MEGA`.** Section

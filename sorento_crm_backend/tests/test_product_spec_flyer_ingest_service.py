@@ -506,3 +506,93 @@ def test_a_batch_is_only_visible_under_its_own_companys_scope(db):
         theirs = list_batches(db)
         assert [str(row.id) for row, _reading_row in theirs] == []
         assert batch_for(db, reading) is None
+
+
+# --------------------------------------------------------------------------- #
+# start_batch is a real check-and-set, and a dead pass does not own the reading
+# forever (second-review findings 2 and 4)
+# --------------------------------------------------------------------------- #
+def test_start_batch_refuses_409_while_a_fresh_pass_is_still_proposing(db):
+    import app.services.product_spec_flyer_ingest as ingest
+
+    _product(db, "ZZT-FLYJOB-FRESH", "SORENTO ONE PIECE WC ZZT-FLYJOB-FRESH")
+    reading = _reading(db, cards=[_card("ZZT-FLYJOB-FRESH", "Washdown")])
+    batch = _batch_row(db, reading, status="proposing")
+    batch.created_at = ingest._now()
+    db.commit()
+
+    with pytest.raises(AppException) as excinfo:
+        ingest.start_batch(db, reading, user_id=_USER["id"])
+
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail["code"] == "FLYER_SPEC_PROPOSING"
+
+
+def test_start_batch_takes_over_a_pass_proposing_longer_than_the_job_timeout(db, monkeypatch):
+    """A dead work-horse must not make a reading permanently unproposable.
+
+    RQ's forked child can die without ever marking its job failed (the macOS
+    segfault, an OOM kill, a deploy mid-job), which leaves the batch `proposing`
+    with nobody left to finish it. Past `FLYER_SPEC_STALE_AFTER` - the job's own
+    timeout, so the job is not running by definition - the next press takes the row
+    over rather than 409ing forever with only a hand-written UPDATE as the way out.
+    """
+    from datetime import timedelta
+
+    import app.services.product_spec_flyer_ingest as ingest
+
+    product = _product(db, "ZZT-FLYJOB-STALE", "SORENTO ONE PIECE WC ZZT-FLYJOB-STALE")
+    reading = _reading(db, cards=[_card("ZZT-FLYJOB-STALE", "Washdown")])
+    batch = _batch_row(db, reading, status="proposing")
+    batch.created_at = ingest._now() - ingest.FLYER_SPEC_STALE_AFTER - timedelta(seconds=1)
+    db.add(
+        ProductSpecFlyerProposal(
+            id=str(uuid.uuid4()),
+            batch_id=batch.id,
+            product_id=product.id,
+            product_code=product.product_code,
+            pages=[1],
+            spec_key="trap_type",
+            value="s_trap",
+            evidence="S-TRAP",
+            kind="new",
+        )
+    )
+    db.commit()
+
+    calls = []
+    monkeypatch.setattr(
+        ingest, "_enqueue", lambda b: calls.append(str(b.id)) or "zzt-job-stale"
+    )
+
+    again = ingest.start_batch(db, reading, user_id=_USER["id"])
+
+    assert str(again.id) == str(batch.id), "the same row is taken over, not a second batch"
+    assert again.status == "proposing"
+    assert calls == [str(batch.id)], "the takeover queues a real pass"
+    assert _proposals_for(db, batch.id) == [], "the dead pass's rows go with it"
+
+
+def test_start_batch_answers_409_when_a_concurrent_press_won_the_insert(db, monkeypatch):
+    """The insert race, which no row lock can cover because there is no row yet.
+
+    Two presses on a reading nobody has proposed from both find nothing and both go
+    to the INSERT; `flyer_reading_id` is unique, so the loser takes an integrity
+    error. That is the same fact as "a pass is already running", and it is answered
+    with the same 409 rather than surfacing as a 500. Simulated by blinding this
+    caller's read, which is exactly what the other request's uncommitted INSERT does.
+    """
+    import app.services.product_spec_flyer_ingest as ingest
+
+    _product(db, "ZZT-FLYJOB-RACE", "SORENTO ONE PIECE WC ZZT-FLYJOB-RACE")
+    reading = _reading(db, cards=[_card("ZZT-FLYJOB-RACE", "Washdown")])
+    _batch_row(db, reading, status="proposing")
+    db.commit()
+
+    monkeypatch.setattr(ingest, "batch_for", lambda *args, **kwargs: None)
+
+    with pytest.raises(AppException) as excinfo:
+        ingest.start_batch(db, reading, user_id=_USER["id"])
+
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail["code"] == "FLYER_SPEC_PROPOSING"

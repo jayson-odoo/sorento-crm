@@ -93,15 +93,20 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
   const [shown, setShown] = useState(PRODUCTS_PER_PAGE);
   const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<FlyerSpecApplyResult | null>(null);
-  // Which batch the ticks below belong to. A re-propose replaces every row, so
-  // ticks carried across it would name ids that no longer exist.
-  const seededBatch = useRef<string | null>(null);
+  // Which PASS the ticks below belong to, which is not the same thing as which
+  // batch. A reading has exactly one batch row (`flyer_reading_id` is unique and
+  // `start_batch` wipes it in place), so a re-propose keeps the id and replaces
+  // every proposal under it: keyed on the id alone this would never re-seed, and
+  // the ticks would go on naming rows the re-propose deleted - a table with
+  // nothing ticked over a bar offering to apply forty of them, every one of which
+  // comes back `not_in_batch`. The settle stamp is what moves per pass.
+  const seededPass = useRef<string | null>(null);
 
   useEffect(() => {
     if (!data || data.status !== 'proposed') return;
-    const key = data.id ?? '';
-    if (seededBatch.current === key) return;
-    seededBatch.current = key;
+    const key = `${data.id ?? ''}:${data.finished_at ?? data.created_at ?? ''}`;
+    if (seededPass.current === key) return;
+    seededPass.current = key;
     setShown(PRODUCTS_PER_PAGE);
     setResult(null);
     // Only `new`, and only what has not already been through an apply (AC-D.3):

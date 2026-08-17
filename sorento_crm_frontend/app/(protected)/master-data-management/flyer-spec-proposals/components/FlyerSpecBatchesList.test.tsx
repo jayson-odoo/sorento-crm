@@ -207,3 +207,34 @@ describe('FlyerSpecBatchesList, empty state (AC-D.6)', () => {
     expect(screen.queryByTestId('fsp-list-empty')).toBeNull();
   });
 });
+
+describe('FlyerSpecBatchesList, sorting (AC-D.6)', () => {
+  // The header offered a sort the table never performed: the arrow toggled and
+  // `sorting` updated, but with no sorted row model the rows stayed where they
+  // were. Asserting on the ORDER of the rendered rows, not on the arrow.
+  it('moves the rows when a sortable header is clicked', async () => {
+    listFlyerSpecBatches.mockResolvedValue([
+      batch({ reading_id: 'r-1', filename: 'Zinc Taps Winter.pdf' }),
+      batch({ reading_id: 'r-2', filename: 'Alpha Basins Spring.pdf' }),
+    ]);
+
+    renderList();
+
+    await screen.findByText('Zinc Taps Winter.pdf');
+
+    const flyerColumn = () =>
+      screen
+        .getAllByRole('row')
+        .map((row) => row.textContent ?? '')
+        .filter((text) => text.includes('.pdf'));
+
+    expect(flyerColumn()[0]).toContain('Zinc Taps Winter.pdf');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Flyer' }));
+
+    await waitFor(() =>
+      expect(flyerColumn()[0]).toContain('Alpha Basins Spring.pdf'),
+    );
+    expect(flyerColumn()[1]).toContain('Zinc Taps Winter.pdf');
+  });
+});
