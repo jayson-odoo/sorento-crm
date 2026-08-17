@@ -42,6 +42,9 @@ const READING = {
   pageCount: 3,
   codeCount: 61,
   uploadedAt: '2026-08-01T02:00:00',
+  status: 'done',
+  errorMessage: null,
+  finishedAt: '2026-08-01T02:00:41',
   report: {
     matched: [{ code: 'SRT1', productId: 'p-1', productCode: 'SRT1', productName: 'Sink', pages: [1] }],
     unmatched: [{ code: 'SRT9', pages: [2], suggestion: null }],
@@ -50,6 +53,19 @@ const READING = {
     duplicates: {},
     promotionId: null,
   },
+};
+
+/** What a POST answers with: the row, in processing, and no report at all. */
+const ACCEPTED = {
+  id: 'r-1',
+  filename: 'flyer.pdf',
+  byteSize: 4200,
+  pageCount: 0,
+  codeCount: 0,
+  uploadedAt: '2026-08-01T02:00:00',
+  status: 'processing',
+  errorMessage: null,
+  finishedAt: null,
 };
 
 beforeEach(() => {
@@ -75,6 +91,11 @@ describe('listFlyerReadings', () => {
         pageCount: 3,
         codeCount: 0,
         uploadedAt: '',
+        // Every row that predates the queue was read in the request and
+        // succeeded, which is what the column's server default says too.
+        status: 'done',
+        errorMessage: null,
+        finishedAt: null,
       },
     ]);
   });
@@ -160,7 +181,7 @@ describe('getFlyerReading', () => {
 
 describe('uploadFlyerReading', () => {
   it('sends multipart and never names the content type itself', async () => {
-    mockFetch.mockResolvedValue(ok(READING));
+    mockFetch.mockResolvedValue(ok(ACCEPTED));
     const file = new File(['%PDF-1.4'], 'flyer.pdf', { type: 'application/pdf' });
 
     const reading = await uploadFlyerReading(file);
@@ -173,12 +194,16 @@ describe('uploadFlyerReading', () => {
     // The browser adds the multipart boundary. Naming it here produces a body
     // FastAPI cannot parse, and the failure reads like a broken endpoint.
     expect(init?.headers).toBeUndefined();
-    // The report comes back on the SAME call: extraction runs in the request.
-    expect(reading.report.unmatched).toHaveLength(1);
+    // 202: the row, in processing, and no report - the read has not happened
+    // yet. Carrying a report field here would be an empty answer that looks
+    // like a real one.
+    expect(reading.status).toBe('processing');
+    expect(reading.id).toBe('r-1');
+    expect(reading).not.toHaveProperty('report');
   });
 
   it('passes the promotion through so the first report is already scoped', async () => {
-    mockFetch.mockResolvedValue(ok(READING));
+    mockFetch.mockResolvedValue(ok(ACCEPTED));
 
     await uploadFlyerReading(new File([''], 'f.pdf'), 'promo-7');
 
@@ -190,7 +215,7 @@ describe('uploadFlyerReading', () => {
 
 describe('createFlyerReadingFromAttachment', () => {
   it('sends only the attachmentId when no promotion is chosen', async () => {
-    mockFetch.mockResolvedValue(ok(READING));
+    mockFetch.mockResolvedValue(ok(ACCEPTED));
 
     await createFlyerReadingFromAttachment('att-1');
 
@@ -204,7 +229,7 @@ describe('createFlyerReadingFromAttachment', () => {
   });
 
   it('includes the promotion when one is chosen', async () => {
-    mockFetch.mockResolvedValue(ok(READING));
+    mockFetch.mockResolvedValue(ok(ACCEPTED));
 
     await createFlyerReadingFromAttachment('att-1', 'promo-7');
 
@@ -212,13 +237,14 @@ describe('createFlyerReadingFromAttachment', () => {
     expect(body).toEqual({ attachmentId: 'att-1', promotionId: 'promo-7' });
   });
 
-  it('returns the same shape the upload route returns, report and all', async () => {
-    mockFetch.mockResolvedValue(ok(READING));
+  it('returns the same shape the upload route returns: the row, in processing', async () => {
+    mockFetch.mockResolvedValue(ok(ACCEPTED));
 
     const reading = await createFlyerReadingFromAttachment('att-1');
 
-    expect(reading.report.matched).toHaveLength(1);
-    expect(reading.report.unmatched).toHaveLength(1);
+    expect(reading.status).toBe('processing');
+    expect(reading.finishedAt).toBeNull();
+    expect(reading).not.toHaveProperty('report');
   });
 
   it('surfaces a 4xx failure through extractApiError, same message the upload route would give', async () => {

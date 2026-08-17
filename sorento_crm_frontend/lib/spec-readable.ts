@@ -54,6 +54,16 @@ export function readable(key: string): string {
  * human reads off a product page.
  */
 export function readableValue(value: unknown, unit?: string): string {
+  // A key a product may hold more than one of (a two-tone finish) is stored as a LIST,
+  // by derivation and by an accepted proposal alike. Each element is read exactly as a
+  // single value would be, so "Rose Gold + Matt Black" comes back as the two words a
+  // person recognises rather than as the array Javascript would print.
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => readableValue(item, unit))
+      .filter((text) => text !== '')
+      .join(', ');
+  }
   if (value === true) return 'Yes';
   if (value === false) return 'No';
   if (typeof value === 'number') return unit ? `${value} ${unit}` : String(value);

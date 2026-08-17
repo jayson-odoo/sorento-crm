@@ -31,6 +31,7 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import RecordNavigation from '@/components/common/RecordNavigation';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { UserProvider } from './components/user-context';
 import UserHero from './components/user-hero';
 
@@ -60,6 +61,10 @@ export default function UserLayout({
   // Use local state to control active tab
   const [activeTab, setActiveTab] = useState<string>('');
 
+  // The logs tab reads GET /system-logs/users/{user_id}, gated on
+  // user_management.logs.view - without it the tab is a guaranteed error.
+  const canViewLogs = useHasPermission('user_management.logs.view');
+
   // Define your nav routes
   const navRoutes = useMemo<NavRoutes>(
     () => ({
@@ -68,13 +73,17 @@ export default function UserLayout({
         icon: UserPen,
         path: `/user-management/users/${id}`,
       },
-      logs: {
-        title: 'Activity Logs',
-        icon: Activity,
-        path: `/user-management/users/${id}/logs`,
-      },
+      ...(canViewLogs
+        ? {
+            logs: {
+              title: 'Activity Logs',
+              icon: Activity,
+              path: `/user-management/users/${id}/logs`,
+            },
+          }
+        : {}),
     }),
-    [id],
+    [id, canViewLogs],
   );
 
   // Set initial active tab based on the pathname

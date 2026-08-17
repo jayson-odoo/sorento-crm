@@ -335,12 +335,25 @@ def test_ai_assistant_prompt_version(
     overridden to ``version_id`` (rest = production). The throwaway conversation
     is deleted afterwards so it never pollutes history, and write-capable MCP
     tools (``*_submit`` / ``*_create`` / ``*_link``) are stripped for the turn so
-    a test can never persist real business data. Dormant key → 400."""
+    a test can never persist real business data. Dormant key → 400; a key that is not
+    an assistant-pipeline node → 400 as well."""
     _ensure_known_prompt(name)
     if not PROMPT_KEYS[name].active:
         raise HTTPException(
             status_code=400,
             detail=f"Prompt '{name}' is dormant and has no runtime call site to test.",
+        )
+    if not PROMPT_KEYS[name].dry_runnable:
+        # Checked BEFORE the version lookup: running a non-assistant key (the spec
+        # extractor, the SCM advisory) through the chat pipeline produces an answer
+        # from prompts the tester did not edit, which reads as a result rather than
+        # as a category error.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Prompt '{name}' is not part of the assistant pipeline, so a chat "
+                f"dry-run would not exercise it. Test it from the screen that uses it."
+            ),
         )
     # Validate the version belongs to this key before running a real turn.
     from app.models.ai_prompt import AIPromptVersion

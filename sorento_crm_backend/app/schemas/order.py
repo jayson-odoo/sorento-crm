@@ -168,11 +168,22 @@ class OrderLineProductMatch(BaseModel):
 
 class OrderSimpleRef(BaseModel):
     id: str
+    # Multi-company reply clarity: the owning company. ``company_name`` is
+    # resolved ONLY when the lookup spanned more than one company
+    # (`company_scope.stamp_lookup_companies`), and is null otherwise.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
     order_number: str
     order_date: Optional[datetime] = None
     actual_delivery_date: Optional[datetime] = None
     debtor_name: Optional[str] = None
     matched_products: list[OrderLineProductMatch] = []
+
+    @field_validator('company_id', mode='before')
+    @classmethod
+    def _company_id_to_str(cls, v):
+        """Convert UUID objects to strings."""
+        return str(v) if v else None
 
     class Config:
         from_attributes = True
@@ -180,6 +191,11 @@ class OrderSimpleRef(BaseModel):
 
 class OrderResponse(OrderBase):
     id: str
+    # Multi-company reply clarity: the owning company. ``company_name`` is
+    # resolved ONLY when the lookup spanned more than one company
+    # (`company_scope.stamp_lookup_companies`), and is null otherwise.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
     # True when this DO is delivered AND linked to >=1 complaint, so Remarks CS is
     # frozen (its fulfilment is historical / already notified). Computed on the
     # single-order GET / PUT; defaults False on list rows (the edit form reads the
@@ -196,6 +212,12 @@ class OrderResponse(OrderBase):
     order_status: Optional[OrderStatusSimple] = None
     lines: Optional[list["OrderLineResponse"]] = []
     
+    @field_validator('company_id', mode='before')
+    @classmethod
+    def _company_id_to_str(cls, v):
+        """Convert UUID objects to strings."""
+        return str(v) if v else None
+
     @field_validator('created_by', mode='before')
     @classmethod
     def convert_created_by_uuid(cls, v):

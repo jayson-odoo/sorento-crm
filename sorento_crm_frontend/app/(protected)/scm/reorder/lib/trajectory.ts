@@ -13,6 +13,21 @@ import { fmtInt } from '../../lib/format';
 
 export type TrajectoryVerdict = 'rising' | 'holding' | 'falling' | 'quiet' | 'no_history';
 
+/**
+ * One Who-bought-it row.
+ *
+ * `customer_key` is what the drill into the orders behind the row is keyed by: the
+ * customer id, `debtor:<code>` when the order's debtor code resolves to no customer, or
+ * `none` when it names neither. The label falls back through the same three cases, so a
+ * row that cannot be named is still a row that can be opened.
+ */
+export interface TrajectoryCustomer {
+  customer_name: string;
+  customer_key: string;
+  qty: number;
+  last_order_date?: string | null;
+}
+
 export interface TrajectoryEntry {
   verdict: TrajectoryVerdict;
   recent_qty: number;
@@ -22,13 +37,16 @@ export interface TrajectoryEntry {
   year_change_pct: number | null;
   window_months: number;
   months: { month: string; qty: number }[];
-  customers: { customer_name: string; qty: number }[];
+  customers: TrajectoryCustomer[];
   agents: { name: string; qty: number }[];
   agents_available: boolean;
 }
 
 export interface TrajectoryPayload {
   windows: { retail_months: number; project_months: number };
+  /** How far back the monthly series reaches, so the empty state can say it rather than
+   *  carry a second copy of the backend's window. */
+  series_months: number;
   movement_threshold_pct: number;
   series: Record<string, TrajectoryEntry>;
 }

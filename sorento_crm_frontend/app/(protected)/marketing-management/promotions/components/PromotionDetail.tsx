@@ -577,6 +577,34 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                 <p className="font-medium">{promotion.description}</p>
               </div>
             )}
+            {/* Always rendered, with an explicit empty state: the type is what
+                decides whether this promotion still applies once it ends, and a
+                hidden field reads as "there is no such thing". */}
+            <div className="md:col-span-2">
+              <p className="text-sm text-muted-foreground">Promotion Type</p>
+              {promotion.promotion_type_name ? (
+                <p className="font-medium">
+                  {promotion.promotion_type_name}
+                  {promotion.promotion_type_source === 'auto' && (
+                    <span className="text-muted-foreground text-sm">
+                      {' '}
+                      (from the file name)
+                    </span>
+                  )}
+                </p>
+              ) : (
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <p className="text-muted-foreground">
+                    Unclassified - follows the default type.
+                  </p>
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={`/marketing-management/promotions/${promotionId}/edit`}>
+                      Set a type
+                    </Link>
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>

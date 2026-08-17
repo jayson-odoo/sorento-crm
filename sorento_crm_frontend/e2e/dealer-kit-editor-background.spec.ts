@@ -290,9 +290,28 @@ test.describe('Dealer Kit builder backgrounds', () => {
     );
     await tap(page.getByTestId('dk-fr-upload-submit'));
     const readingResponse = await uploaded;
-    expect(readingResponse.status(), await readingResponse.text()).toBe(201);
-    const reading = (await readingResponse.json()) as { id: string };
+    // The read is queued: 202 with a `processing` row, and the dialog closes
+    // without navigating. The report arrives on the row, not in this response.
+    expect(readingResponse.status(), await readingResponse.text()).toBe(202);
+    const reading = (await readingResponse.json()) as { id: string; status: string };
     createdReadings.push(reading.id);
+    expect(reading.status).toBe('processing');
+
+    await expect(page.getByRole('dialog', { name: /read a flyer/i })).toBeHidden({
+      timeout: 15_000,
+    });
+
+    // The Flyers list polls until the job finishes, then the row opens the
+    // review screen the seed is driven from.
+    const pill = page.getByTestId('dk-fr-status-pill').first();
+    await expect(pill).toBeVisible({ timeout: 30_000 });
+    await expect(pill, 'the queued read should reach Done on its own').toHaveText(/done/i, {
+      timeout: 180_000,
+    });
+
+    await tap(
+      page.getByRole('row').filter({ has: page.getByTestId('dk-fr-status-pill') }).first(),
+    );
     await page.waitForURL(new RegExp(`flyer-readings/${reading.id}`), {
       timeout: 30_000,
     });

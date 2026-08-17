@@ -83,6 +83,19 @@ export type SearchableSelectProps = {
     open: boolean;
     disabled: boolean;
   }) => React.ReactNode;
+  /**
+   * A last row offering to create what was typed, for vocabularies a user may extend.
+   *
+   * Opt-in and absent by default, so every existing caller is untouched: a select over
+   * customers or warehouses must never invite someone to invent one. `label` is called
+   * with the trimmed search text; returning null suppresses the row for that text,
+   * which is how a caller says "that word already exists under another name" without
+   * this component needing to know the matching rules.
+   */
+  createOption?: {
+    label: (query: string) => React.ReactNode | null;
+    onCreate: (query: string) => void;
+  };
 };
 
 export function SearchableSelect({
@@ -105,6 +118,7 @@ export function SearchableSelect({
   renderTriggerLabel,
   renderOption,
   renderTrigger,
+  createOption,
 }: SearchableSelectProps) {
   const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
@@ -223,6 +237,12 @@ export function SearchableSelect({
     setOpen(false);
   };
 
+  // Resolved once per render so the empty-state branch and the row itself cannot
+  // disagree: without it, a query matching nothing renders "No results found." AND the
+  // create row, which reads as the list contradicting itself.
+  const createQuery = query.trim();
+  const createLabel = createOption && createQuery ? createOption.label(createQuery) : null;
+
   const handleQueryChange = (q: string) => {
     setQuery(q);
     onSearchChange?.(q);
@@ -290,7 +310,7 @@ export function SearchableSelect({
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" /> Searching...
               </div>
-            ) : visibleOptions.length === 0 ? (
+            ) : visibleOptions.length === 0 && !createLabel ? (
               <CommandEmpty>{emptyMessage}</CommandEmpty>
             ) : null}
             {grouped.map(([groupKey, opts]) => (
@@ -325,6 +345,21 @@ export function SearchableSelect({
                 ))}
               </CommandGroup>
             ))}
+            {createLabel ? (
+              <div className="border-t p-1">
+                <button
+                  type="button"
+                  data-slot="searchable-select-create"
+                  onClick={() => {
+                    createOption!.onCreate(createQuery);
+                    setOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start text-sm hover:bg-accent"
+                >
+                  {createLabel}
+                </button>
+              </div>
+            ) : null}
             {hasMore ? (
               <div className="border-t p-1">
                 <button

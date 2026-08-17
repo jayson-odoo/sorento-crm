@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 from sqlalchemy.orm import Session
@@ -495,6 +495,42 @@ Reply with JSON only:
 "free_terms": ["..."], "notes": "<one short sentence on anything ambiguous>"}"""
 
 
+def _spec_extractor_fallback() -> str:
+    """System prompt for the paste-once spec extractor (`product_spec_understanding.
+    extract_specs_from_text`), used by the product page's "Read specs from this" box.
+
+    A different job from `spec_understanding`, which reads a CUSTOMER'S enquiry and is
+    allowed to interpret it. This one reads a supplier's or a flyer's statement ABOUT one
+    product and may only report what the text says, quoting the words it read it from -
+    every proposal is shown to a person beside the value already stored, so an invented
+    one costs somebody a decision rather than a search result.
+    """
+    return """You read a piece of text about ONE product - a flyer card, a leaflet \
+paragraph, a supplier blurb - and report the product specifications it states.
+
+You will be given the ONLY specifications that exist. Use nothing else.
+
+Rules:
+- Report a specification ONLY when the text states it. Silence is correct and expected; \
+a person is going to accept or reject every line you return, so a wrong one wastes their \
+attention and a guessed one destroys their trust in the rest.
+- Never invent a spec_key and never invent a value. Use the exact strings given to you.
+- Never infer from what the product probably is. A washdown toilet is not evidence of a \
+seat material; a brand is not evidence of a finish.
+- One value per key. When the text states the same measurement twice, report it once.
+- For numeric specs return a plain number in the unit stated for that key, converting if \
+the text used another unit (1.2m = 1200 mm).
+- `evidence` is the text's OWN words for that value, quoted verbatim and as short as \
+possible ("Matt Black finish", "L680xW375xH770mm"). Never paraphrase it, never write a \
+sentence of your own, and never leave it out.
+- If the text states nothing about any specification you were given, return an empty \
+list.
+
+Reply with JSON only:
+{"specs": [{"key": "<spec_key>", "value": <string|number|boolean>, \
+"evidence": "<the words you read it from>"}]}"""
+
+
 @dataclass(frozen=True)
 class PromptKeySpec:
     name: str
@@ -503,6 +539,12 @@ class PromptKeySpec:
     activates_in: str | None
     variables: list[str]
     fallback: Callable[[], str]
+    # Can the assistant dry-run (`POST .../prompts/{name}/test`) exercise this key?
+    # True only for the keys `AIAssistantChatService.respond` actually resolves - the
+    # dry-run IS one whole assistant turn, so testing a key no turn reads would show
+    # the tester an answer their edit had no part in. Defaults False so a new key
+    # fails safe: a key that is genuinely a pipeline node says so.
+    dry_runnable: bool = False
 
 
 PROMPT_KEYS: dict[str, PromptKeySpec] = {
@@ -514,6 +556,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=["current_date"],
         fallback=_semantic_parser_fallback,
+        dry_runnable=True,
     ),
     # --- Ideation pipeline brain extractor (D-CONFIRM) — active, gated by the
     #     ideation config being set (dormant when unset). Emits structured
@@ -552,6 +595,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_agent_system_fallback,
+        dry_runnable=True,
     ),
     "synthesizer": PromptKeySpec(
         name="synthesizer",
@@ -560,6 +604,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_synthesizer_fallback,
+        dry_runnable=True,
     ),
     # --- M2.5 role-split nodes (active; call sites gated by the
     #     ``ai_assistant_role_split_enabled`` system setting) ---
@@ -570,6 +615,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_planner_fallback,
+        dry_runnable=True,
     ),
     "semantic_compressor": PromptKeySpec(
         name="semantic_compressor",
@@ -578,6 +624,7 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_semantic_compressor_fallback,
+        dry_runnable=True,
     ),
     # --- Registered but dormant (seed + editable, no call site yet) ---
     "validator": PromptKeySpec(
@@ -639,6 +686,18 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_scm_market_advisory_fallback,
+    ),
+    # --- Spec authoring (the product page's paste-once prompt box) ---
+    # Zero declared variables on purpose (AC-B.6): the vocabulary and the pasted text
+    # are handed to the model as the user message, so any `{{token}}` an editor types
+    # here is an unknown one and is refused at save.
+    "spec_extractor": PromptKeySpec(
+        name="spec_extractor",
+        role="Spec extractor - read pasted product text onto the Spec Registry",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_spec_extractor_fallback,
     ),
 }
 

@@ -380,6 +380,9 @@ export function usePlanLines(runId: string | null, enabled = true) {
     levelFor,
     poFor,
     purchaseTrendFor,
+    // How far back the ORDER trend's series reaches, off the payload rather than repeated
+    // as a literal on the screen that renders it.
+    trendSeriesMonths: trend.data?.series_months ?? 24,
     purchaseTrendWindowMonths: purchaseTrend.data?.window_months ?? 3,
     requestPurchaseTrend,
     hasPhotoFor,

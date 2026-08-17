@@ -1,8 +1,8 @@
 /**
- * The review screen as a whole (S7.4).
+ * The review screen as a whole (S7.4, plus the states a queued read added).
  *
  * The panel-level honesty lives in `MatchReportSections.test.tsx` and
- * `SeedPanel.test.tsx`. What this file owes is the screen's own four states and
+ * `SeedPanel.test.tsx`. What this file owes is the screen's own states and
  * the one wire it owns: the promotion chosen at the top is the promotion the
  * report is computed against AND the promotion the seed applies. A screen that
  * reported the gaps of one promotion and then seeded with another would be
@@ -71,6 +71,9 @@ const READING: FlyerReading = {
   pageCount: 36,
   codeCount: 998,
   uploadedAt: '2026-08-01T02:00:00',
+  status: 'done',
+  errorMessage: null,
+  finishedAt: '2026-08-01T02:00:41',
   headings: [
     { page: 1, text: 'Inspiring Designs, Exciting Promotions' },
     // The known misread: the paper says "BATHTUB COLLECTION".
@@ -87,6 +90,50 @@ const READING: FlyerReading = {
       },
     ],
     unmatched: [{ code: 'SRTKS7850', pages: [2], suggestion: null }],
+    notPromoted: [],
+    dimensionCandidates: [],
+    duplicates: {},
+    promotionId: null,
+  },
+};
+
+/** A row that exists but has not been read yet - the queued-job state (AC-FE.4). */
+const PROCESSING_READING: FlyerReading = {
+  id: 'r-1',
+  filename: 'flyer-being-read.pdf',
+  byteSize: 20_000_000,
+  pageCount: 0,
+  codeCount: 0,
+  uploadedAt: '2026-08-10T02:00:00',
+  status: 'processing',
+  errorMessage: null,
+  finishedAt: null,
+  headings: [],
+  report: {
+    matched: [],
+    unmatched: [],
+    notPromoted: [],
+    dimensionCandidates: [],
+    duplicates: {},
+    promotionId: null,
+  },
+};
+
+/** A row whose job ran and refused the file, in the request's own words. */
+const FAILED_READING: FlyerReading = {
+  id: 'r-1',
+  filename: 'flyer-that-failed.pdf',
+  byteSize: 0,
+  pageCount: 0,
+  codeCount: 0,
+  uploadedAt: '2026-08-10T02:00:00',
+  status: 'failed',
+  errorMessage: 'That file is not a PDF. Export the flyer as a PDF and upload it again.',
+  finishedAt: '2026-08-10T02:00:05',
+  headings: [],
+  report: {
+    matched: [],
+    unmatched: [],
     notPromoted: [],
     dimensionCandidates: [],
     duplicates: {},
@@ -257,5 +304,49 @@ describe('FlyerReviewScreen', () => {
 
     await screen.findByTestId('dk-fr-filename');
     expect(document.body.textContent ?? '').not.toMatch(/\bp-1\b|\br-1\b/);
+  });
+});
+
+describe('FlyerReviewScreen, the queued-job states (AC-FE.4 / AC-FE.6)', () => {
+  it('shows a waiting state while the reading is processing, with none of the report chrome', async () => {
+    getFlyerReading.mockResolvedValue(PROCESSING_READING);
+
+    renderScreen();
+
+    expect(await screen.findByTestId('dk-fr-review-processing')).toBeInTheDocument();
+    // The report, seed panel and promotion picker are all questions about a
+    // report that has not been computed yet - none of them appear.
+    expect(screen.queryByTestId('dk-fr-seed-panel')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-dk-fr-section]')).toBeNull();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('dk-fr-recomputing')).not.toBeInTheDocument();
+  });
+
+  it('shows the failure reason and a way back when the reading failed', async () => {
+    getFlyerReading.mockResolvedValue(FAILED_READING);
+
+    renderScreen();
+
+    const failed = await screen.findByTestId('dk-fr-review-failed');
+    expect(failed).toHaveTextContent(/is not a pdf/i);
+
+    const link = screen.getByRole('link', { name: /read another flyer/i });
+    expect(link).toHaveAttribute('href', '/dealer-kit/flyer-readings');
+
+    // Same as the processing state: nothing about a report that never ran.
+    expect(screen.queryByTestId('dk-fr-seed-panel')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-dk-fr-section]')).toBeNull();
+  });
+
+  it('still renders the report sections and the seed panel once the reading is done', async () => {
+    getFlyerReading.mockResolvedValue(READING);
+
+    renderScreen();
+
+    await screen.findByTestId('dk-fr-filename');
+    expect(document.querySelector('[data-dk-fr-section="unmatched"]')).not.toBeNull();
+    expect(screen.getByTestId('dk-fr-seed-panel')).toBeInTheDocument();
+    expect(screen.queryByTestId('dk-fr-review-processing')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('dk-fr-review-failed')).not.toBeInTheDocument();
   });
 });

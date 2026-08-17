@@ -349,7 +349,12 @@ def test_every_company_id_table_is_registered():
     # contact -> customer link are each a fact about ONE company's catalogue.
     # `selection_line` is deliberately NOT owned: it hangs off a scoped parent, so
     # scoping it too would filter it twice and add nothing.
-    assert len(owned) == 63, f"expected 63 owned tables, found {len(owned)}: {sorted(owned)}"
+    # `promotion_types` is owned but SHARED (`__company_shared__`, like attachments):
+    # the five kinds the migration seeds carry no company and have to stay visible
+    # under every scope, while a company that adds a type of its own keeps it. Owned
+    # without the shared flag would have hidden the seeds from every logged-in user
+    # while an API-key caller still saw them.
+    assert len(owned) == 64, f"expected 64 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

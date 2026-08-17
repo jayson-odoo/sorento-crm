@@ -95,6 +95,10 @@ _PASSTHROUGH_KEYS = (
     "fallback_used",
     "alternatives",
     "relaxed_axis",
+    # Every company the backend actually searched, present only when the lookup
+    # spanned more than one (see `stamp_lookup_companies` backend-side). A
+    # single-company reply never carries it, so it stays byte-identical.
+    "lookup_companies",
     # Which fields were withheld from this caller and why. Without it, `render`
     # drops a denied field silently and the agent cannot tell "you may not see
     # this" from "it has not happened yet" - so it guesses, and it guesses the
@@ -301,6 +305,7 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
         b.item(
             o.get("order_number"),
             [
+                ("company_name", "Company", o.get("company_name")),
                 ("Order Number", o.get("order_number")),
                 ("Customer", o.get("debtor_name")),
                 ("Order Date", o.get("order_date")),
@@ -326,6 +331,7 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
         b.item(
             o.get("order_number"),
             [
+                ("company_name", "Company", o.get("company_name")),
                 ("Order Number", o.get("order_number")),
                 ("Customer", o.get("debtor_name")),
                 ("Order Date", o.get("order_date")),
@@ -377,6 +383,7 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
             b.item(
                 l.get("product_code"),
                 [
+                    ("company_name", "Company", s.get("company_name")),
                     ("product_code", "Product Code", l.get("product_code")),
                     (
                         "product_name",
@@ -413,6 +420,7 @@ def _incoming_by_product(rows: list[dict], b: _Builder) -> None:
             b.item(
                 p.get("product_code"),
                 [
+                    ("company_name", "Company", p.get("company_name")),
                     ("product_code", "Product Code", p.get("product_code")),
                     (
                         "product_name",
@@ -454,6 +462,7 @@ def _incoming_shipments(rows: list[dict], b: _Builder) -> None:
         b.item(
             s.get("shipment_number"),
             [
+                ("company_name", "Company", s.get("company_name")),
                 ("Shipment", s.get("shipment_number")),
                 ("Container", s.get("shipping_container_number")),
                 ("Estimated Arrival Date", s.get("estimated_arrival_date")),
@@ -481,6 +490,7 @@ def _promotions(rows: list[dict], b: _Builder) -> None:
         b.item(
             name,
             [
+                ("company_name", "Company", promo.get("company_name")),
                 ("Promotion", name),
                 ("Start Date", promo.get("start_date")),
                 ("End Date", promo.get("end_date")),
@@ -498,6 +508,7 @@ def _promotion_products(rows: list[dict], b: _Builder) -> None:
         b.item(
             prod.get("product_code"),
             [
+                ("company_name", "Company", pp.get("company_name")),
                 ("Product Code", prod.get("product_code")),
                 ("Product Name", _distinct_name(prod.get("product_code"), prod.get("product_name"))),
                 ("Promotion", promo.get("description")),
@@ -518,6 +529,7 @@ def _products(rows: list[dict], b: _Builder) -> None:
         b.item(
             p.get("product_code"),
             [
+                ("company_name", "Company", p.get("company_name")),
                 ("Product Code", p.get("product_code")),
                 ("Product Name", _distinct_name(p.get("product_code"), p.get("product_name"))),
                 ("Description", desc if _filled(desc) and desc != p.get("product_name") else None),
@@ -547,6 +559,7 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
         b.item(
             prod.get("product_code"),
             [
+                ("company_name", "Company", r.get("company_name")),
                 ("Product Code", prod.get("product_code")),
                 ("Product Name", _distinct_name(prod.get("product_code"), prod.get("product_name"))),
                 ("Description", prod.get("description")),
@@ -639,6 +652,7 @@ def _certificates(rows: list[dict], b: _Builder) -> None:
         b.item(
             title,
             [
+                ("company_name", "Company", c.get("company_name")),
                 ("Scheme", scheme),
                 ("Certificate Number", number),
                 ("Certifying Body", c.get("certifying_body")),
@@ -795,6 +809,7 @@ def _stock(rows: list[dict], b: _Builder) -> None:
         b.item(
             product_code,
             [
+                ("company_name", "Company", s.get("company_name")),
                 ("product_code", "Product Code", product_code),
                 ("product_name", "Product Name", _distinct_name(product_code, product_name)),
                 ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "—"),
@@ -877,6 +892,28 @@ def _latest_updated(node: Any, depth: int = 0) -> str | None:
     return best
 
 
+def _company_names(lookup_companies: Any) -> str | None:
+    """Join the backend's `lookup_companies` names: Mocha or Sorento; A, B or C.
+
+    Order is the backend's (already sorted by name); this only joins.
+
+    Returns None unless EVERY entry has a name. Naming only the companies we
+    happen to have a name for would turn "I checked your two companies" into a
+    confident, wrong "I checked Sorento" - so an entry with a missing name
+    drops the whole clause and the reply falls back to the plain intro.
+    """
+    if not isinstance(lookup_companies, list) or not lookup_companies:
+        return None
+    if not all(
+        isinstance(c, dict) and _filled(c.get("name")) for c in lookup_companies
+    ):
+        return None
+    names = [str(c.get("name")).strip() for c in lookup_companies]
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " or " + names[-1]
+
+
 # --------------------------------------------------------------------------
 # dispatcher
 # --------------------------------------------------------------------------
@@ -923,7 +960,15 @@ def present_response(tool_name: str, raw: str) -> str:
     if attachments:
         intro = "I have attached the file(s) below."
     elif not has_result:
-        intro = "No matching results found."
+        # An empty answer over more than one company has to name the companies it
+        # searched, or the reader cannot tell "not stocked anywhere" from "I only
+        # looked at one of your two companies".
+        searched = _company_names(data.get("lookup_companies"))
+        intro = (
+            f"No matching results found for {searched}."
+            if searched
+            else "No matching results found."
+        )
     else:
         intro = _DEFAULT_INTRO.get(tool_name, "Here are the results I found.")
 

@@ -73,19 +73,16 @@ import { UploadFlyerDialog } from './UploadFlyerDialog';
 const mockUpload = vi.mocked(uploadFlyerReading);
 const mockFromAttachment = vi.mocked(createFlyerReadingFromAttachment);
 
-const READING_BASE = {
+// What a POST answers with: the row, in processing. No report - the read has
+// not started when this dialog closes.
+const ACCEPTED_BASE = {
   byteSize: 1000,
-  codeCount: 5,
+  pageCount: 0,
+  codeCount: 0,
   uploadedAt: '2026-08-01T00:00:00',
-  headings: [],
-  report: {
-    matched: [],
-    unmatched: [],
-    notPromoted: [],
-    dimensionCandidates: [],
-    duplicates: {},
-    promotionId: null,
-  },
+  status: 'processing' as const,
+  errorMessage: null,
+  finishedAt: null,
 };
 
 function freshClient() {
@@ -151,13 +148,12 @@ describe('the two sources', () => {
     expect(screen.getByTestId('dk-fr-library-selection')).toHaveTextContent('No file chosen');
   });
 
-  it('preserves both selections across tab switches, submits each to its own mutation, and both land on the review screen', async () => {
-    mockUpload.mockResolvedValue({ id: 'r-upload', filename: 'agency-flyer.pdf', pageCount: 3, ...READING_BASE });
+  it('preserves both selections across tab switches, submits each to its own mutation, and closes on each', async () => {
+    mockUpload.mockResolvedValue({ id: 'r-upload', filename: 'agency-flyer.pdf', ...ACCEPTED_BASE });
     mockFromAttachment.mockResolvedValue({
       id: 'r-lib',
       filename: 'library-flyer.pdf',
-      pageCount: 3,
-      ...READING_BASE,
+      ...ACCEPTED_BASE,
     });
 
     const { onOpenChange } = renderDialog();
@@ -184,8 +180,10 @@ describe('the two sources', () => {
 
     await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(1));
     expect(mockFromAttachment).not.toHaveBeenCalled();
-    await waitFor(() => expect(push).toHaveBeenCalledWith('/dealer-kit/flyer-readings/r-upload'));
-    expect(onOpenChange).toHaveBeenCalledWith(false);
+    // The dialog gets out of the way at once and sends nobody anywhere: the
+    // read has not happened yet, so a review screen would have nothing on it.
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(push).not.toHaveBeenCalled();
 
     // ---- the Library selection survived the round trip -------------------
     selectTab('dk-fr-source-library');
@@ -196,7 +194,8 @@ describe('the two sources', () => {
 
     await waitFor(() => expect(mockFromAttachment).toHaveBeenCalledTimes(1));
     expect(mockFromAttachment).toHaveBeenCalledWith('att-1', undefined);
-    await waitFor(() => expect(push).toHaveBeenCalledWith('/dealer-kit/flyer-readings/r-lib'));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledTimes(2));
+    expect(push).not.toHaveBeenCalled();
   });
 });
 
@@ -239,5 +238,62 @@ describe('errors from either source', () => {
 
     selectTab('dk-fr-source-library');
     expect(screen.queryByTestId('dk-fr-upload-error')).not.toBeInTheDocument();
+  });
+});
+
+describe('the closes-at-once contract (AC-FE.1)', () => {
+  it('has no waiting copy in the description - the read is a queued job now', () => {
+    renderDialog();
+
+    const description = screen.getByText(/report of what was found/i);
+    expect(description).not.toHaveTextContent(/read straight away/i);
+    expect(description).not.toHaveTextContent(/up to a minute/i);
+  });
+
+  it('closes on a 202 from the Upload tab and never navigates', async () => {
+    mockUpload.mockResolvedValue({ id: 'r-1', filename: 'agency-flyer.pdf', ...ACCEPTED_BASE });
+    const { onOpenChange } = renderDialog();
+
+    const fileInput = document.querySelector('#dk-fr-file') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [pdfFile()] } });
+    fireEvent.click(screen.getByTestId('dk-fr-upload-submit'));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(onOpenChange).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('closes on a 202 from the Library tab and never navigates', async () => {
+    mockFromAttachment.mockResolvedValue({
+      id: 'r-lib',
+      filename: 'library-flyer.pdf',
+      ...ACCEPTED_BASE,
+    });
+    const { onOpenChange } = renderDialog();
+
+    selectTab('dk-fr-source-library');
+    fireEvent.click(screen.getByTestId('dk-fr-library-browse'));
+    fireEvent.click(screen.getByTestId('mock-picker-confirm'));
+    fireEvent.click(screen.getByTestId('dk-fr-upload-submit'));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(onOpenChange).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('keeps the dialog open with the message when the read is refused', async () => {
+    mockUpload.mockRejectedValue(
+      new Error('That file is not a PDF. Export the flyer as a PDF and upload it again.'),
+    );
+    const { onOpenChange } = renderDialog();
+
+    const fileInput = document.querySelector('#dk-fr-file') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [pdfFile()] } });
+    fireEvent.click(screen.getByTestId('dk-fr-upload-submit'));
+
+    expect(await screen.findByTestId('dk-fr-upload-error')).toHaveTextContent(/is not a pdf/i);
+    // The dialog stays put - the file the designer picked is what needs
+    // changing, so onOpenChange is never told to close it.
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 });
