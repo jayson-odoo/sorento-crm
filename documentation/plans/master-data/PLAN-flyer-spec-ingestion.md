@@ -455,3 +455,11 @@ by apply time, which is precisely the live-re-classification safety net AC-C.2 e
 demonstrate rather than a failure of the walk. AC-E.3 (bundle-card limitation) and AC-E.4 (PR 3
 verification-reset follow-up) remain accepted-limitation / backlog items per the UAC, not exercised
 here.
+
+### 7b. Second hands-on amendment (same session): add, dismiss, search
+
+Captain: the review page should be the whole act - add a spec the flyer missed, dismiss a wrong
+read, search, never visit the product page. UAC section G. Design: POST rows / DELETE row on the
+batch (manual rows carry origin='manual', apply as source='human'); client-side search over
+product groups; reuse the registry key picker rules from the product tab (applicable keys only).
+NOT the spec verification list (PR 3) - separate surface, shared write choke point.

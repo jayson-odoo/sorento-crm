@@ -292,6 +292,31 @@ tombstoned, and which keys apply to the product's class. None of it is asked for
   row carries `allowed_values` (merged registry vocabulary) so the edit widget needs no second
   call.
 
+### G - Review page is the whole act: add, dismiss, search (captain amendment 2026-08-17b)
+
+- **AC-G.1** `[BE]` GIVEN `POST /dealer-kit/flyer-readings/{id}/spec-proposals/rows` with
+  `{product_id, spec_key, value}` WHEN the batch is `proposed`, the product is in the batch, the
+  key is in the registry and applicable to the product's class, and no row for
+  (product, spec_key) exists in the batch THEN a proposal row is created with `kind` computed
+  live, `origin='manual'`, `edited_by` stamped, value validated via `value_for_registry`;
+  counts refresh. Refusals: 409 not proposed, 404 unknown key / product not in batch,
+  400 bad value, 409 duplicate row ("the flyer already proposed this - edit that row").
+- **AC-G.2** `[BE]` GIVEN apply THEN a `manual` row writes with **`source='human'`** and
+  evidence `"set during flyer review"` (a person typed it; a machine read stays `flyer`).
+  All other apply mechanics identical.
+- **AC-G.3** `[BE]` GIVEN `DELETE /dealer-kit/flyer-readings/{id}/spec-proposals/{proposal_id}`
+  WHEN the row is not `applied` and the batch is `proposed` THEN the row is hard-deleted and
+  counts refresh; 409 otherwise. Same permission pair.
+- **AC-G.4** `[FE]` GIVEN each product group WHEN it renders pending rows THEN it offers "Add
+  specification" (key picker limited to applicable registry keys not already in the group,
+  then the registry-typed value input) and per-row "Dismiss" behind a confirm dialog
+  ("Dismiss this proposal? It will not be applied."). Applied rows offer neither.
+- **AC-G.5** `[FE]` GIVEN the review page WHEN it holds more than one product THEN a search
+  input filters product groups by code/name and by spec key label, client-side, keeping
+  selection state for hidden rows intact.
+- **AC-G.6** `[T]` The verification list (spec PR 3) is a DIFFERENT surface and stays out of
+  scope; recorded so the question is answered in the contract.
+
 ## Test seams (agree before Phase 2 code)
 
 - **pytest:** classifier lift (AC-A.3, byte-identical `extract_spec_proposals`); job happy path +
