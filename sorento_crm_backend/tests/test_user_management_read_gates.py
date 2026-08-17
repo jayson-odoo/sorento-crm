@@ -631,13 +631,15 @@ class TestStructuralCoverage:
         gated before any of it, and the 4 onboarding reads (the review queue, its
         neighbours, one request, and the access templates). Those 12 are new to
         this assertion only because the sweep now covers the whole package;
-        nothing about them changed.
+        nothing about them changed. The forty-third is the member-brands read
+        added by brand-aware routing, gated on `user_management.teams.view` like
+        its market-segment sibling.
 
         Adding a gated GET to the package is expected to fail here once: name it
         below so the gate is stated rather than counted.
         """
         gated_paths = {r.path for r in _mounted_get_routes() if _is_gated(r)}
-        assert len(gated_paths) == 42
+        assert len(gated_paths) == 43
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",

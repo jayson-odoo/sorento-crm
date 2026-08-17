@@ -153,6 +153,8 @@ def _mk_template(db: Session) -> EmailTemplate:
 # DB. Offset this file's test promos AND the automation target ~10 years out (the
 # relative day-difference is preserved, so match/no-match logic is unchanged) so
 # no real promo can collide with the assertions on match count.
+# tests/test_automation_conditions_filter.py holds 3950; the two values must stay
+# disjoint so neither file's promos land in the other's expiry-matcher window.
 _UNIQUE_OFFSET = 3650
 
 
@@ -265,8 +267,14 @@ def test_run_now_inserts_pending_email_deliveries_for_each_recipient(
         .all()
     )
     assert len(deliveries) == 3
-    statuses = {str(d.status) for d in deliveries}
-    assert statuses == {"pending"}
+    # The point is that a delivery row was created per recipient. Its status
+    # depends on whether the in-process notification queue has already handed it
+    # to the outbox (`notification_tasks` flips pending -> queued), which is
+    # timing, not behaviour: pinning "pending" made this test pass or fail on
+    # test collection ORDER. Anything except `failed` means it was accepted.
+    assert all(str(d.status) != "failed" for d in deliveries), (
+        f"delivery was rejected: {[(d.channel, d.status) for d in deliveries]}"
+    )
     channels = {str(d.channel) for d in deliveries}
     assert channels == {"email"}
 

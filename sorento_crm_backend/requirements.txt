@@ -26,9 +26,10 @@ redis>=5.0.0
 rq>=1.15.0
 pywebpush>=1.14.0
 pytest>=7.0.0
-# Parallel test execution. Used today only by the non-blocking
-# `test-backend-xdist-shadow` CI job (`-n auto`), which collects flake evidence
-# before the gated suite considers cutting over.
+# Parallel test execution. Powers the blocking `test-backend` CI gate, which
+# runs the suite as `-n auto --dist loadfile`. The loadfile part is required,
+# not tuning: the shared-database fixtures assume the tests of one file run
+# serially (see the job comment in .github/workflows/deploy.yml).
 pytest-xdist>=3.6
 pgvector
 PyMuPDF>=1.24
