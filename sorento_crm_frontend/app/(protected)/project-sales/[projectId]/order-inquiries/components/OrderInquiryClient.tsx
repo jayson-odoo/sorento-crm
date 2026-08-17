@@ -433,12 +433,12 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
               {filtered
                 ? 'Clear the filters to see everything raised on this project.'
-                : 'Publishing a sales order raises the rows purchasing acts on.'}
+                : 'Confirming a Project SO in Fulfilment Planning raises the rows purchasing acts on.'}
             </p>
             {!filtered && (
               <Button asChild variant="outline" className="mt-4">
-                <Link href={`/project-sales/${projectId}?tab=sales-orders`}>
-                  Go to the sales orders
+                <Link href="/project-sales/fulfilment-planning">
+                  Open Fulfilment Planning
                 </Link>
               </Button>
             )}
