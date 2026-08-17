@@ -7,7 +7,14 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor, fireEvent, within } from '@testing-library/react';
+import {
+  render,
+  screen,
+  cleanup,
+  waitFor,
+  fireEvent,
+  within,
+} from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('sonner', () => ({
@@ -15,7 +22,10 @@ vi.mock('sonner', () => ({
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: async () => {},
+    isLoading: false,
+  }),
 }));
 
 const usePermissions = vi.fn();
@@ -39,13 +49,17 @@ const verifySpecBulk = vi.fn();
 const unverifySpecBulk = vi.fn();
 
 vi.mock('../services/specVerificationService', () => ({
-  getSpecVerificationWorklist: (...a: unknown[]) => getSpecVerificationWorklist(...a),
+  getSpecVerificationWorklist: (...a: unknown[]) =>
+    getSpecVerificationWorklist(...a),
   verifySpecBulk: (...a: unknown[]) => verifySpecBulk(...a),
   unverifySpecBulk: (...a: unknown[]) => unverifySpecBulk(...a),
 }));
 
 import SpecVerificationList from './SpecVerificationList';
-import type { SpecVerificationRow, VerificationState } from '../types/specVerification.types';
+import type {
+  SpecVerificationRow,
+  VerificationState,
+} from '../types/specVerification.types';
 
 function row(
   code: string,
@@ -76,7 +90,9 @@ function row(
 }
 
 function renderList() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <SpecVerificationList />
@@ -87,7 +103,9 @@ function renderList() {
 beforeEach(() => {
   vi.clearAllMocks();
   nav.params = new URLSearchParams();
-  usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.edit']) });
+  usePermissions.mockReturnValue({
+    permissionSet: new Set(['master_data.products.edit']),
+  });
 });
 
 afterEach(() => cleanup());
@@ -97,20 +115,24 @@ describe('loading state', () => {
     getSpecVerificationWorklist.mockReturnValue(new Promise(() => {})); // never resolves
     renderList();
 
-    expect(screen.queryByTestId('verification-progress')?.textContent ?? '').not.toContain(
-      'Verified',
-    );
+    expect(
+      screen.queryByTestId('verification-progress')?.textContent ?? '',
+    ).not.toContain('Verified');
     expect(screen.getByPlaceholderText('Search code or name')).toBeDisabled();
   });
 });
 
 describe('error state', () => {
   it('renders the failure message with a Retry action', async () => {
-    getSpecVerificationWorklist.mockRejectedValue(new Error('Failed to load the verification worklist'));
+    getSpecVerificationWorklist.mockRejectedValue(
+      new Error('Failed to load the verification worklist'),
+    );
     renderList();
 
     await waitFor(() =>
-      expect(screen.getByText('Failed to load the verification worklist.')).toBeInTheDocument(),
+      expect(
+        screen.getByText('Failed to load the verification worklist.'),
+      ).toBeInTheDocument(),
     );
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
@@ -126,11 +148,15 @@ describe('empty state', () => {
     });
     renderList();
 
-    await waitFor(() => expect(screen.getByText('Nothing to review here.')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('Nothing to review here.')).toBeInTheDocument(),
+    );
     expect(
       screen.getByText('No product code is waiting for verification.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to products' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'Go to products' }),
+    ).toBeInTheDocument();
   });
 
   it('offers "Clear filters" instead when a filter is active from the URL', async () => {
@@ -144,9 +170,13 @@ describe('empty state', () => {
     renderList();
 
     await waitFor(() =>
-      expect(screen.getByText('No product code matches these filters.')).toBeInTheDocument(),
+      expect(
+        screen.getByText('No product code matches these filters.'),
+      ).toBeInTheDocument(),
     );
-    expect(screen.getByRole('button', { name: 'Clear filters' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Clear filters' }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -161,7 +191,12 @@ describe('data state', () => {
     getSpecVerificationWorklist.mockResolvedValue({
       data,
       pagination: { total, page: 1, limit: 25 },
-      summary: { total: 4812, verified: 3000, needs_reverify: 1000, unverified: 812 },
+      summary: {
+        total: 4812,
+        verified: 3000,
+        needs_reverify: 1000,
+        unverified: 812,
+      },
       classes: ['Bath Basin', 'Kitchen Sink'],
     });
   }
@@ -193,8 +228,16 @@ describe('data state', () => {
           invalidated_by_name: null,
           invalidated_diff: {
             changed: [
-              { spec_key: 'material', was: { value: 'glass' }, now: { value: 'ceramic' } },
-              { spec_key: 'dim_height', was: { value: 770, unit: 'mm' }, now: null },
+              {
+                spec_key: 'material',
+                was: { value: 'glass' },
+                now: { value: 'ceramic' },
+              },
+              {
+                spec_key: 'dim_height',
+                was: { value: 770, unit: 'mm' },
+                now: null,
+              },
             ],
           },
         },
@@ -203,7 +246,8 @@ describe('data state', () => {
     renderList();
     await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
 
-    const title = screen.getByText('Needs re-verify').getAttribute('title') ?? '';
+    const title =
+      screen.getByText('Needs re-verify').getAttribute('title') ?? '';
     expect(title).not.toContain('[object Object]');
     expect(title).toContain('2 changed');
     expect(title).toContain('Material: Glass to Ceramic');
@@ -219,27 +263,45 @@ describe('data state', () => {
     const rowWC200 = screen.getByText('WC200').closest('tr') as HTMLElement;
     const rowWC300 = screen.getByText('WC300').closest('tr') as HTMLElement;
 
-    expect(within(rowWC100).getByRole('button', { name: 'Verify' })).toBeInTheDocument();
-    expect(within(rowWC200).getByRole('button', { name: 'Verify' })).toBeInTheDocument();
-    expect(within(rowWC300).getByRole('button', { name: 'Unverify' })).toBeInTheDocument();
+    expect(
+      within(rowWC100).getByRole('button', { name: 'Verify' }),
+    ).toBeInTheDocument();
+    expect(
+      within(rowWC200).getByRole('button', { name: 'Verify' }),
+    ).toBeInTheDocument();
+    expect(
+      within(rowWC300).getByRole('button', { name: 'Unverify' }),
+    ).toBeInTheDocument();
   });
 
   it('offers no Verify or Unverify to a user without master_data.products.edit', async () => {
     // The server refuses them anyway; showing the button would mean a 403 is the first
     // thing a reader learns. Same slug the Specifications tab gates its editors on.
-    usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.view']) });
+    usePermissions.mockReturnValue({
+      permissionSet: new Set(['master_data.products.view']),
+    });
     mockWorklist();
     renderList();
     await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
 
-    expect(screen.queryByRole('button', { name: 'Verify' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Unverify' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Verify' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Unverify' }),
+    ).not.toBeInTheDocument();
 
     // ... and neither does the bulk bar, once rows are selected.
     fireEvent.click(screen.getAllByRole('checkbox')[1]);
-    await waitFor(() => expect(screen.getByText('1 selected')).toBeInTheDocument());
-    expect(screen.queryByRole('button', { name: 'Verify selected' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Unverify selected' })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText('1 selected')).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Verify selected' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Unverify selected' }),
+    ).not.toBeInTheDocument();
   });
 
   it('clicking a row navigates to the product Specifications tab, not a new detail route', async () => {
@@ -259,7 +321,14 @@ describe('data state', () => {
     renderList();
     await waitFor(() => expect(screen.getByText('WC200')).toBeInTheDocument());
     verifySpecBulk.mockResolvedValue({
-      results: [{ product_code: 'WC200', outcome: 'verified', verification: row('WC200', 'verified').verification, values_hash: 'hash-WC200-v2' }],
+      results: [
+        {
+          product_code: 'WC200',
+          outcome: 'verified',
+          verification: row('WC200', 'verified').verification,
+          values_hash: 'hash-WC200-v2',
+        },
+      ],
       counts: { verified: 1, skipped: 0 },
     });
 
@@ -275,7 +344,14 @@ describe('data state', () => {
     renderList();
     await waitFor(() => expect(screen.getByText('WC200')).toBeInTheDocument());
     verifySpecBulk.mockResolvedValue({
-      results: [{ product_code: 'WC200', outcome: 'verified', verification: row('WC200', 'verified').verification, values_hash: 'hash-WC200-v2' }],
+      results: [
+        {
+          product_code: 'WC200',
+          outcome: 'verified',
+          verification: row('WC200', 'verified').verification,
+          values_hash: 'hash-WC200-v2',
+        },
+      ],
       counts: { verified: 1, skipped: 0 },
     });
 
@@ -283,7 +359,9 @@ describe('data state', () => {
     fireEvent.click(within(rowWC200).getByRole('button', { name: 'Verify' }));
 
     await waitFor(() =>
-      expect(verifySpecBulk).toHaveBeenCalledWith([{ product_code: 'WC200', values_hash: 'hash-WC200' }]),
+      expect(verifySpecBulk).toHaveBeenCalledWith([
+        { product_code: 'WC200', values_hash: 'hash-WC200' },
+      ]),
     );
     // No confirmation dialog for the per-row action.
     expect(screen.queryByText('Confirm verify')).not.toBeInTheDocument();
@@ -298,7 +376,9 @@ describe('data state', () => {
     try {
       mockWorklist();
       renderList();
-      await waitFor(() => expect(screen.getByText('WC200')).toBeInTheDocument());
+      await waitFor(() =>
+        expect(screen.getByText('WC200')).toBeInTheDocument(),
+      );
       verifySpecBulk.mockRejectedValue(new Error('Failed to verify'));
 
       const rowWC200 = screen.getByText('WC200').closest('tr') as HTMLElement;
@@ -306,13 +386,17 @@ describe('data state', () => {
 
       await waitFor(() => expect(verifySpecBulk).toHaveBeenCalled());
       const { toast } = await import('sonner');
-      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to verify'));
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith('Failed to verify'),
+      );
       // Flush any rejection that escaped the handler.
       await new Promise((resolve) => setImmediate(resolve));
 
       expect(unhandled).toEqual([]);
       // The row was not patched: it still offers Verify.
-      expect(within(rowWC200).getByRole('button', { name: 'Verify' })).toBeInTheDocument();
+      expect(
+        within(rowWC200).getByRole('button', { name: 'Verify' }),
+      ).toBeInTheDocument();
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
@@ -338,14 +422,20 @@ describe('data state', () => {
     const rowWC300 = screen.getByText('WC300').closest('tr') as HTMLElement;
     fireEvent.click(within(rowWC300).getByRole('button', { name: 'Unverify' }));
 
-    await waitFor(() => expect(screen.getByText('Confirm unverify')).toBeInTheDocument());
-    expect(screen.getByText(/Withdraw the verification on 1 product code\?/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText('Confirm unverify')).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText(/Withdraw the verification on 1 product code\?/),
+    ).toBeInTheDocument();
     expect(unverifySpecBulk).not.toHaveBeenCalled();
 
     const dialog = screen.getByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Unverify' }));
 
-    await waitFor(() => expect(unverifySpecBulk).toHaveBeenCalledWith(['WC300']));
+    await waitFor(() =>
+      expect(unverifySpecBulk).toHaveBeenCalledWith(['WC300']),
+    );
   });
 
   it('cancelling the row-level Unverify confirmation sends nothing', async () => {
@@ -355,10 +445,14 @@ describe('data state', () => {
 
     const rowWC300 = screen.getByText('WC300').closest('tr') as HTMLElement;
     fireEvent.click(within(rowWC300).getByRole('button', { name: 'Unverify' }));
-    await waitFor(() => expect(screen.getByText('Confirm unverify')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('Confirm unverify')).toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    await waitFor(() => expect(screen.queryByText('Confirm unverify')).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByText('Confirm unverify')).not.toBeInTheDocument(),
+    );
     expect(unverifySpecBulk).not.toHaveBeenCalled();
   });
 
@@ -369,13 +463,19 @@ describe('data state', () => {
     renderList();
     await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+    );
     expect(screen.getByText('3 selected')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Go to next page' }));
 
-    await waitFor(() => expect(screen.queryByText('3 selected')).not.toBeInTheDocument());
-    expect(screen.queryByRole('button', { name: /Verify selected/ })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText('3 selected')).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole('button', { name: /Verify selected/ }),
+    ).not.toBeInTheDocument();
   });
 
   it('after a page change the bulk verify sends only the code selected on the new page', async () => {
@@ -394,16 +494,24 @@ describe('data state', () => {
       counts: { verified: 1, skipped: 0 },
     });
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Go to next page' }));
-    await waitFor(() => expect(screen.queryByText('3 selected')).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByText('3 selected')).not.toBeInTheDocument(),
+    );
     // Page 2 is its own query, so the rows re-render once it resolves.
     await waitFor(() => expect(screen.getByText('WC200')).toBeInTheDocument());
 
     const rowWC200 = screen.getByText('WC200').closest('tr') as HTMLElement;
-    fireEvent.click(within(rowWC200).getByRole('checkbox', { name: 'Select row' }));
+    fireEvent.click(
+      within(rowWC200).getByRole('checkbox', { name: 'Select row' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: /Verify selected/ }));
-    await waitFor(() => expect(screen.getByText(/Verify 1 product code\?/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/Verify 1 product code\?/)).toBeInTheDocument(),
+    );
     const dialog = screen.getByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
 
@@ -419,10 +527,14 @@ describe('data state', () => {
     renderList();
     await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+    );
 
     expect(screen.getByText('3 selected')).toBeInTheDocument();
-    expect(screen.queryByText(/select all .* records/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/select all .* records/i),
+    ).not.toBeInTheDocument();
   });
 
   it('selecting rows shows both bulk actions in the strip', async () => {
@@ -431,10 +543,16 @@ describe('data state', () => {
     await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
 
     const rowWC100 = screen.getByText('WC100').closest('tr') as HTMLElement;
-    fireEvent.click(within(rowWC100).getByRole('checkbox', { name: 'Select row' }));
+    fireEvent.click(
+      within(rowWC100).getByRole('checkbox', { name: 'Select row' }),
+    );
 
-    expect(screen.getByRole('button', { name: /Verify selected/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Unverify selected/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Verify selected/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Unverify selected/ }),
+    ).toBeInTheDocument();
   });
 
   it('confirmation copy states the selected count', async () => {
@@ -442,10 +560,14 @@ describe('data state', () => {
     renderList();
     await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: /Verify selected/ }));
 
-    await waitFor(() => expect(screen.getByText('Confirm verify')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('Confirm verify')).toBeInTheDocument(),
+    );
     expect(screen.getByText(/Verify 3 product codes\?/)).toBeInTheDocument();
   });
 
@@ -455,10 +577,14 @@ describe('data state', () => {
     await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
 
     const rowWC100 = screen.getByText('WC100').closest('tr') as HTMLElement;
-    fireEvent.click(within(rowWC100).getByRole('checkbox', { name: 'Select row' }));
+    fireEvent.click(
+      within(rowWC100).getByRole('checkbox', { name: 'Select row' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: /Verify selected/ }));
 
-    await waitFor(() => expect(screen.getByText(/Verify 1 product code\?/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/Verify 1 product code\?/)).toBeInTheDocument(),
+    );
   });
 
   it('a mixed bulk verify: acted row flips pill in place, skipped row (open exceptions) stays selected', async () => {
@@ -483,9 +609,13 @@ describe('data state', () => {
       counts: { verified: 1, skipped: 1 },
     });
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: /Verify selected/ }));
-    await waitFor(() => expect(screen.getByText('Confirm verify')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('Confirm verify')).toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
 
     await waitFor(() => expect(verifySpecBulk).toHaveBeenCalled());
@@ -498,16 +628,24 @@ describe('data state', () => {
     const rowWC200 = screen.getByText('WC200').closest('tr') as HTMLElement;
     const rowWC400 = screen.getByText('WC400').closest('tr') as HTMLElement;
     await waitFor(() =>
-      expect(within(rowWC200).getByRole('button', { name: 'Unverify' })).toBeInTheDocument(),
+      expect(
+        within(rowWC200).getByRole('button', { name: 'Unverify' }),
+      ).toBeInTheDocument(),
     );
 
     // Row order in the DOM is unchanged: WC200 still precedes WC400.
-    const allRows = screen.getAllByText(/^WC(200|400)$/).map((el) => el.textContent);
+    const allRows = screen
+      .getAllByText(/^WC(200|400)$/)
+      .map((el) => el.textContent);
     expect(allRows).toEqual(['WC200', 'WC400']);
 
     // The skipped row's own checkbox is still checked.
-    expect(within(rowWC400).getByRole('checkbox', { name: 'Select row' })).toBeChecked();
+    expect(
+      within(rowWC400).getByRole('checkbox', { name: 'Select row' }),
+    ).toBeChecked();
     // The acted row's checkbox was released.
-    expect(within(rowWC200).getByRole('checkbox', { name: 'Select row' })).not.toBeChecked();
+    expect(
+      within(rowWC200).getByRole('checkbox', { name: 'Select row' }),
+    ).not.toBeChecked();
   });
 });

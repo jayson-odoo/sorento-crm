@@ -21,7 +21,9 @@ import type {
 
 export const WORKLIST_KEY = 'spec-verification-worklist';
 
-export function useSpecVerificationWorklist(params: SpecVerificationWorklistParams) {
+export function useSpecVerificationWorklist(
+  params: SpecVerificationWorklistParams,
+) {
   return useQuery({
     queryKey: [
       WORKLIST_KEY,
@@ -52,7 +54,9 @@ const VERIFY_SKIP_LABEL: Record<string, string> = {
 
 /** "42 verified, 3 skipped - exceptions open, 1 skipped - changed while you were reviewing". */
 export function summariseVerify(results: VerifyBulkResult[]): string {
-  const acted = results.filter((r) => ACTED_VERIFY_OUTCOMES.has(r.outcome)).length;
+  const acted = results.filter((r) =>
+    ACTED_VERIFY_OUTCOMES.has(r.outcome),
+  ).length;
   const parts = acted > 0 ? [`${acted} verified`] : [];
   for (const [outcome, label] of Object.entries(VERIFY_SKIP_LABEL)) {
     const n = results.filter((r) => r.outcome === outcome).length;
@@ -72,11 +76,15 @@ export function summariseUnverify(results: UnverifyBulkResult[]): string {
 
 /** Codes the batch could not act on. They stay selected so they can be dealt with. */
 export function skippedVerifyCodes(results: VerifyBulkResult[]): string[] {
-  return results.filter((r) => !ACTED_VERIFY_OUTCOMES.has(r.outcome)).map((r) => r.product_code);
+  return results
+    .filter((r) => !ACTED_VERIFY_OUTCOMES.has(r.outcome))
+    .map((r) => r.product_code);
 }
 
 export function skippedUnverifyCodes(results: UnverifyBulkResult[]): string[] {
-  return results.filter((r) => r.outcome !== 'unverified').map((r) => r.product_code);
+  return results
+    .filter((r) => r.outcome !== 'unverified')
+    .map((r) => r.product_code);
 }
 
 function nextSummary(
@@ -118,7 +126,9 @@ function patchRows(
       ...row,
       verification: result.verification,
       values_hash:
-        'values_hash' in result && result.values_hash ? result.values_hash : row.values_hash,
+        'values_hash' in result && result.values_hash
+          ? result.values_hash
+          : row.values_hash,
     };
   });
   return { ...old, data, summary: nextSummary(old.summary, deltas) };
@@ -156,7 +166,9 @@ export function useSpecVerificationMutations() {
       else toast.warning(message);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to unverify');
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to unverify',
+      );
     },
   });
 

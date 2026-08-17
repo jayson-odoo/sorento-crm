@@ -53,7 +53,9 @@ describe('getSpecVerificationWorklist - query-string assembly', () => {
     });
 
     const [url] = mockedFetch.mock.calls[0];
-    expect(url).toContain('/api/v1/master-data/product-specifications/verification/worklist?');
+    expect(url).toContain(
+      '/api/v1/master-data/product-specifications/verification/worklist?',
+    );
     const qs = new URLSearchParams(String(url).split('?')[1]);
     expect(qs.has('state')).toBe(false);
     expect(qs.has('class_label')).toBe(false);
@@ -142,7 +144,9 @@ describe('write bodies', () => {
     await verifySpecBulk([{ product_code: 'WC100', values_hash: 'h1' }]);
 
     const [url, init] = mockedFetch.mock.calls[0];
-    expect(url).toBe('/api/v1/master-data/product-specifications/verification/verify-bulk');
+    expect(url).toBe(
+      '/api/v1/master-data/product-specifications/verification/verify-bulk',
+    );
     expect(init?.method).toBe('POST');
     expect(JSON.parse(String(init?.body))).toEqual({
       items: [{ product_code: 'WC100', values_hash: 'h1' }],
@@ -157,9 +161,13 @@ describe('write bodies', () => {
     await unverifySpecBulk(['WC100', 'WC200']);
 
     const [url, init] = mockedFetch.mock.calls[0];
-    expect(url).toBe('/api/v1/master-data/product-specifications/verification/unverify-bulk');
+    expect(url).toBe(
+      '/api/v1/master-data/product-specifications/verification/unverify-bulk',
+    );
     expect(init?.method).toBe('POST');
-    expect(JSON.parse(String(init?.body))).toEqual({ product_codes: ['WC100', 'WC200'] });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      product_codes: ['WC100', 'WC200'],
+    });
   });
 
   it('verifySpec posts { product_code, values_hash } to the single route', async () => {
@@ -175,19 +183,30 @@ describe('write bodies', () => {
     await verifySpec({ product_code: 'WC100', values_hash: 'h1' });
 
     const [url, init] = mockedFetch.mock.calls[0];
-    expect(url).toBe('/api/v1/master-data/product-specifications/verification/verify');
-    expect(JSON.parse(String(init?.body))).toEqual({ product_code: 'WC100', values_hash: 'h1' });
+    expect(url).toBe(
+      '/api/v1/master-data/product-specifications/verification/verify',
+    );
+    expect(JSON.parse(String(init?.body))).toEqual({
+      product_code: 'WC100',
+      values_hash: 'h1',
+    });
   });
 
   it('unverifySpec posts { product_code } to the single route', async () => {
     mockedFetch.mockResolvedValue(
-      jsonResponse({ product_code: 'WC100', outcome: 'unverified', verification: {} }),
+      jsonResponse({
+        product_code: 'WC100',
+        outcome: 'unverified',
+        verification: {},
+      }),
     );
 
     await unverifySpec({ product_code: 'WC100' });
 
     const [url, init] = mockedFetch.mock.calls[0];
-    expect(url).toBe('/api/v1/master-data/product-specifications/verification/unverify');
+    expect(url).toBe(
+      '/api/v1/master-data/product-specifications/verification/unverify',
+    );
     expect(JSON.parse(String(init?.body))).toEqual({ product_code: 'WC100' });
   });
 });
@@ -196,14 +215,19 @@ describe('SpecVerifyConflictError - both 409 serialisations', () => {
   it('parses a top-level { error, ... } body', async () => {
     mockedFetch.mockResolvedValue(
       jsonResponse(
-        { error: 'values_changed', values_hash: 'h2', verification: { state: 'unverified' } },
+        {
+          error: 'values_changed',
+          values_hash: 'h2',
+          verification: { state: 'unverified' },
+        },
         409,
       ),
     );
 
-    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
-      (e) => e,
-    )) as Error;
+    const thrown = (await verifySpec({
+      product_code: 'WC100',
+      values_hash: 'h1',
+    }).catch((e) => e)) as Error;
 
     expect(thrown).toBeInstanceOf(SpecVerifyConflictError);
     const conflict = thrown as SpecVerifyConflictError;
@@ -225,14 +249,17 @@ describe('SpecVerifyConflictError - both 409 serialisations', () => {
       ),
     );
 
-    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
-      (e) => e,
-    )) as Error;
+    const thrown = (await verifySpec({
+      product_code: 'WC100',
+      values_hash: 'h1',
+    }).catch((e) => e)) as Error;
 
     expect(thrown).toBeInstanceOf(SpecVerifyConflictError);
     const conflict = thrown as SpecVerifyConflictError;
     expect(conflict.reason).toBe('exceptions_open');
-    expect(conflict.exceptions).toEqual([{ spec_key: 'shape', reason: 'shape_mismatch' }]);
+    expect(conflict.exceptions).toEqual([
+      { spec_key: 'shape', reason: 'shape_mismatch' },
+    ]);
   });
 
   it("carries the server's own message when it sent one, not the local fallback", async () => {
@@ -240,16 +267,18 @@ describe('SpecVerifyConflictError - both 409 serialisations', () => {
       jsonResponse(
         {
           error: 'exceptions_open',
-          message: 'Answer the open specification questions before confirming this product.',
+          message:
+            'Answer the open specification questions before confirming this product.',
           exceptions: [{ spec_key: 'shape' }],
         },
         409,
       ),
     );
 
-    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
-      (e) => e,
-    )) as Error;
+    const thrown = (await verifySpec({
+      product_code: 'WC100',
+      values_hash: 'h1',
+    }).catch((e) => e)) as Error;
 
     expect(thrown.message).toBe(
       'Answer the open specification questions before confirming this product.',
@@ -257,32 +286,41 @@ describe('SpecVerifyConflictError - both 409 serialisations', () => {
   });
 
   it('falls back to the local message when the 409 body carries none', async () => {
-    mockedFetch.mockResolvedValue(jsonResponse({ error: 'values_changed' }, 409));
+    mockedFetch.mockResolvedValue(
+      jsonResponse({ error: 'values_changed' }, 409),
+    );
 
-    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
-      (e) => e,
-    )) as Error;
+    const thrown = (await verifySpec({
+      product_code: 'WC100',
+      values_hash: 'h1',
+    }).catch((e) => e)) as Error;
 
     expect(thrown.message).toBe('Could not verify this product');
   });
 
   it('a non-409 error falls through to extractApiError, never SpecVerifyConflictError', async () => {
-    mockedFetch.mockResolvedValue(jsonResponse({ detail: 'Not permitted' }, 403));
+    mockedFetch.mockResolvedValue(
+      jsonResponse({ detail: 'Not permitted' }, 403),
+    );
 
-    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
-      (e) => e,
-    )) as Error;
+    const thrown = (await verifySpec({
+      product_code: 'WC100',
+      values_hash: 'h1',
+    }).catch((e) => e)) as Error;
 
     expect(thrown).not.toBeInstanceOf(SpecVerifyConflictError);
     expect(thrown.message).toBe('Not permitted');
   });
 
   it('a 409 whose body carries neither known error code falls through as a plain error', async () => {
-    mockedFetch.mockResolvedValue(jsonResponse({ error: 'something_else' }, 409));
+    mockedFetch.mockResolvedValue(
+      jsonResponse({ error: 'something_else' }, 409),
+    );
 
-    const thrown = (await verifySpec({ product_code: 'WC100', values_hash: 'h1' }).catch(
-      (e) => e,
-    )) as Error;
+    const thrown = (await verifySpec({
+      product_code: 'WC100',
+      values_hash: 'h1',
+    }).catch((e) => e)) as Error;
 
     expect(thrown).not.toBeInstanceOf(SpecVerifyConflictError);
   });

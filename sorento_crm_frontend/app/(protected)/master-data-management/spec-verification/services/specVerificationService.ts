@@ -119,12 +119,19 @@ export async function getSpecVerificationWorklist(
   });
   const response = await apiFetch(`${BASE}/worklist?${search.toString()}`);
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load the verification worklist'));
+    throw new Error(
+      await extractApiError(
+        response,
+        'Failed to load the verification worklist',
+      ),
+    );
   }
   return response.json();
 }
 
-export async function verifySpecBulk(items: VerifyItem[]): Promise<VerifyBulkResponse> {
+export async function verifySpecBulk(
+  items: VerifyItem[],
+): Promise<VerifyBulkResponse> {
   const response = await apiFetch(`${BASE}/verify-bulk`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -136,7 +143,9 @@ export async function verifySpecBulk(items: VerifyItem[]): Promise<VerifyBulkRes
   return response.json();
 }
 
-export async function unverifySpecBulk(productCodes: string[]): Promise<UnverifyBulkResponse> {
+export async function unverifySpecBulk(
+  productCodes: string[],
+): Promise<UnverifyBulkResponse> {
   const response = await apiFetch(`${BASE}/unverify-bulk`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -193,7 +202,10 @@ interface ConflictBody {
   detail?: ConflictBody | string | null;
 }
 
-async function throwVerifyError(response: Response, fallback: string): Promise<never> {
+async function throwVerifyError(
+  response: Response,
+  fallback: string,
+): Promise<never> {
   if (response.status === 409) {
     let body: ConflictBody | null = null;
     try {
@@ -207,14 +219,21 @@ async function throwVerifyError(response: Response, fallback: string): Promise<n
         : body?.detail && typeof body.detail === 'object'
           ? body.detail
           : null;
-    if (carrier?.error === 'values_changed' || carrier?.error === 'exceptions_open') {
+    if (
+      carrier?.error === 'values_changed' ||
+      carrier?.error === 'exceptions_open'
+    ) {
       // The server words the two refusals differently on purpose, so its own sentence
       // beats the generic one this call site would otherwise show.
-      throw new SpecVerifyConflictError(carrier.error, carrier.message || fallback, {
-        valuesHash: carrier.values_hash,
-        verification: carrier.verification,
-        exceptions: carrier.exceptions,
-      });
+      throw new SpecVerifyConflictError(
+        carrier.error,
+        carrier.message || fallback,
+        {
+          valuesHash: carrier.values_hash,
+          verification: carrier.verification,
+          exceptions: carrier.exceptions,
+        },
+      );
     }
   }
   throw new Error(await extractApiError(response, fallback));
@@ -238,14 +257,18 @@ export async function verifySpec(body: VerifyItem): Promise<VerifyResponse> {
   return response.json();
 }
 
-export async function unverifySpec(body: { product_code: string }): Promise<UnverifyResponse> {
+export async function unverifySpec(body: {
+  product_code: string;
+}): Promise<UnverifyResponse> {
   const response = await apiFetch(`${BASE}/unverify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Could not unverify this product'));
+    throw new Error(
+      await extractApiError(response, 'Could not unverify this product'),
+    );
   }
   return response.json();
 }

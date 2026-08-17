@@ -24,7 +24,9 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-const capturedSpecTableProps = vi.hoisted(() => ({ openEditorFor: undefined as string | null | undefined }));
+const capturedSpecTableProps = vi.hoisted(() => ({
+  openEditorFor: undefined as string | null | undefined,
+}));
 
 vi.mock('@/components/spec-table', () => ({
   SpecTable: (props: { openEditorFor?: string | null }) => {
@@ -56,10 +58,17 @@ function baseDetail(verification: VerificationBlock): ProductSpecDetail {
     product_code: 'WC100',
     category_code: 'BR-KS',
     searchable: true,
-    diagnosis: { reason: 'eligible', class_label: 'Kitchen Sink', brand_hint: 'Sorento', suffix: null },
+    diagnosis: {
+      reason: 'eligible',
+      class_label: 'Kitchen Sink',
+      brand_hint: 'Sorento',
+      suffix: null,
+    },
     spec: {
       values: { shape: { value: 'round' } },
-      provenance: { shape: { source: 'human', confidence: 1, evidence: 'manual' } },
+      provenance: {
+        shape: { source: 'human', confidence: 1, evidence: 'manual' },
+      },
       rendered_text: 'A round kitchen sink',
       status: 'authored',
       derived_at: '2026-08-01T09:00:00',
@@ -71,14 +80,38 @@ function baseDetail(verification: VerificationBlock): ProductSpecDetail {
   } as ProductSpecDetail;
 }
 
-function mockHook(detail: ProductSpecDetail, overrides: Partial<ReturnType<typeof useProductSpecTable>> = {}) {
+function mockHook(
+  detail: ProductSpecDetail,
+  overrides: Partial<ReturnType<typeof useProductSpecTable>> = {},
+) {
   useProductSpecTable.mockReturnValue({
     detail,
     rows: [],
     registry: [
-      { spec_key: 'shape', label: 'Shape', data_type: 'enum', unit: null, allowed_values: [], synonyms: {} },
-      { spec_key: 'dim_height', label: 'Height', data_type: 'numeric', unit: 'mm', allowed_values: [], synonyms: {} },
-      { spec_key: 'finish', label: 'Finish or colour', data_type: 'enum', unit: null, allowed_values: [], synonyms: {} },
+      {
+        spec_key: 'shape',
+        label: 'Shape',
+        data_type: 'enum',
+        unit: null,
+        allowed_values: [],
+        synonyms: {},
+      },
+      {
+        spec_key: 'dim_height',
+        label: 'Height',
+        data_type: 'numeric',
+        unit: 'mm',
+        allowed_values: [],
+        synonyms: {},
+      },
+      {
+        spec_key: 'finish',
+        label: 'Finish or colour',
+        data_type: 'enum',
+        unit: null,
+        allowed_values: [],
+        synonyms: {},
+      },
     ],
     applicableKeys: [],
     otherKeys: [],
@@ -155,7 +188,9 @@ const MANUAL_UNVERIFY: VerificationBlock = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.edit']) });
+  usePermissions.mockReturnValue({
+    permissionSet: new Set(['master_data.products.edit']),
+  });
   capturedSpecTableProps.openEditorFor = undefined;
 });
 
@@ -169,7 +204,9 @@ describe('VerificationStrip - renders in every state', () => {
     expect(screen.getByText('Unverified')).toBeInTheDocument();
     expect(screen.queryByText(/^by /)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Verify' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Unverify' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Unverify' }),
+    ).not.toBeInTheDocument();
   });
 
   it('verified: pill reads Verified, who+when stamp line, Unverify button offered', () => {
@@ -178,8 +215,12 @@ describe('VerificationStrip - renders in every state', () => {
 
     expect(screen.getByText('Verified')).toBeInTheDocument();
     expect(screen.getByText(/by Jay Odoo, /)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Unverify' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Verify' })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Unverify' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Verify' }),
+    ).not.toBeInTheDocument();
   });
 
   it('needs_reverify: pill reads Needs re-verify, was/now diff rows render, Verify offered', () => {
@@ -188,7 +229,9 @@ describe('VerificationStrip - renders in every state', () => {
 
     expect(screen.getByText('Needs re-verify')).toBeInTheDocument();
     expect(screen.getByText(/by Jay Odoo, /)).toBeInTheDocument();
-    expect(screen.getByText('What moved since it was verified')).toBeInTheDocument();
+    expect(
+      screen.getByText('What moved since it was verified'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Shape')).toBeInTheDocument();
     expect(screen.getByText('Round')).toBeInTheDocument();
     expect(screen.getByText('Square')).toBeInTheDocument();
@@ -208,7 +251,9 @@ describe('VerificationStrip - renders in every state', () => {
     expect(screen.getByText('nothing')).toBeInTheDocument();
     expect(screen.getByText('Matte black')).toBeInTheDocument();
 
-    const strip = container.querySelector('[data-spec-verification]') as HTMLElement;
+    const strip = container.querySelector(
+      '[data-spec-verification]',
+    ) as HTMLElement;
     expect(strip.textContent).not.toContain('[object Object]');
   });
 
@@ -224,13 +269,19 @@ describe('VerificationStrip - renders in every state', () => {
 
 describe('Verify / Unverify visibility gated on master_data.products.edit', () => {
   it('hides both actions without the edit grant, even though the pill still renders', () => {
-    usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.view']) });
+    usePermissions.mockReturnValue({
+      permissionSet: new Set(['master_data.products.view']),
+    });
     mockHook(baseDetail(VERIFIED));
     render(<ProductSpecificationsTab productId="p-1" />);
 
     expect(screen.getByText('Verified')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Verify' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Unverify' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Verify' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Unverify' }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -242,7 +293,9 @@ describe('Unverify confirmation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Unverify' }));
 
     expect(screen.getByText('Confirm unverify')).toBeInTheDocument();
-    expect(screen.getByText(/This withdraws the verification for WC100\./)).toBeInTheDocument();
+    expect(
+      screen.getByText(/This withdraws the verification for WC100\./),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Unverify' }));
     expect(unverify).toHaveBeenCalledTimes(1);

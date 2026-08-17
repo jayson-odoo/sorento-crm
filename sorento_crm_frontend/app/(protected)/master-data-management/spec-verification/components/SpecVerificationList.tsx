@@ -14,7 +14,14 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { BadgeCheck, BadgeX, ChevronRight, LoaderCircleIcon, Search, X } from 'lucide-react';
+import {
+  BadgeCheck,
+  BadgeX,
+  ChevronRight,
+  LoaderCircleIcon,
+  Search,
+  X,
+} from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,7 +37,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
+import {
+  DataGridListToolbar,
+  type ToolbarAction,
+} from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -97,12 +107,18 @@ function verificationTitle(block: VerificationBlock): string {
       )
       .join('; ');
     const head = stamp ? `Was verified by ${stamp}.` : 'Was verified.';
-    return changed.length ? `${head} ${changed.length} changed - ${diff}` : head;
+    return changed.length
+      ? `${head} ${changed.length} changed - ${diff}`
+      : head;
   }
   if (block.invalidated_reason === 'manual_unverify') {
     const who = block.invalidated_by_name ?? 'someone';
-    const when = block.invalidated_at ? formatDateTimeInMalaysia(block.invalidated_at) : '';
-    const withdrawn = when ? `Withdrawn by ${who} on ${when}.` : `Withdrawn by ${who}.`;
+    const when = block.invalidated_at
+      ? formatDateTimeInMalaysia(block.invalidated_at)
+      : '';
+    const withdrawn = when
+      ? `Withdrawn by ${who} on ${when}.`
+      : `Withdrawn by ${who}.`;
     return stamp ? `${withdrawn} Originally verified by ${stamp}` : withdrawn;
   }
   return 'Not verified yet';
@@ -117,10 +133,16 @@ export default function SpecVerificationList() {
   // resumes in place (AC-D.17b). Seeded once, written back on every change.
   const [pagination, setPagination] = useState<PaginationState>(() => {
     const page = parseInt(searchParams.get('page') ?? '1', 10);
-    const limit = parseInt(searchParams.get('limit') ?? String(DEFAULT_PAGE_SIZE), 10);
+    const limit = parseInt(
+      searchParams.get('limit') ?? String(DEFAULT_PAGE_SIZE),
+      10,
+    );
     return {
       pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page - 1),
-      pageSize: Number.isNaN(limit) || limit < 1 ? DEFAULT_PAGE_SIZE : Math.min(limit, 100),
+      pageSize:
+        Number.isNaN(limit) || limit < 1
+          ? DEFAULT_PAGE_SIZE
+          : Math.min(limit, 100),
     };
   });
   const [sorting, setSorting] = useState<SortingState>(() => {
@@ -129,10 +151,18 @@ export default function SpecVerificationList() {
       ? [{ id: sort, desc: searchParams.get('dir') === 'desc' }]
       : [];
   });
-  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('query') ?? '');
-  const [searchInput, setSearchInput] = useState(() => searchParams.get('query') ?? '');
-  const [stateFilter, setStateFilter] = useState(() => searchParams.get('state') ?? '');
-  const [classFilter, setClassFilter] = useState(() => searchParams.get('class_label') ?? '');
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get('query') ?? '',
+  );
+  const [searchInput, setSearchInput] = useState(
+    () => searchParams.get('query') ?? '',
+  );
+  const [stateFilter, setStateFilter] = useState(
+    () => searchParams.get('state') ?? '',
+  );
+  const [classFilter, setClassFilter] = useState(
+    () => searchParams.get('class_label') ?? '',
+  );
   const [includeDiscontinued, setIncludeDiscontinued] = useState(
     () => searchParams.get('include_discontinued') === 'true',
   );
@@ -165,7 +195,8 @@ export default function SpecVerificationList() {
     if (pageSize !== DEFAULT_PAGE_SIZE) next.set('limit', String(pageSize));
     const qs = next.toString();
     const target = qs ? `${pathname}?${qs}` : pathname;
-    if (`${window.location.pathname}${window.location.search}` === target) return;
+    if (`${window.location.pathname}${window.location.search}` === target)
+      return;
     router.replace(target, { scroll: false });
   }, [
     router,
@@ -180,15 +211,16 @@ export default function SpecVerificationList() {
     pageSize,
   ]);
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useSpecVerificationWorklist({
-    pageIndex: pagination.pageIndex,
-    pageSize: pagination.pageSize,
-    sorting,
-    searchQuery,
-    state: (stateFilter || '') as VerificationState | '',
-    class_label: classFilter,
-    include_discontinued: includeDiscontinued,
-  });
+  const { data, isLoading, isError, error, refetch, isFetching } =
+    useSpecVerificationWorklist({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+      state: (stateFilter || '') as VerificationState | '',
+      class_label: classFilter,
+      include_discontinued: includeDiscontinued,
+    });
   const { verify, unverify } = useSpecVerificationMutations();
   const pending = verify.isPending || unverify.isPending;
   // The server is the guard; this only decides what to SHOW - the same slug and the
@@ -205,7 +237,9 @@ export default function SpecVerificationList() {
   const classOptionsRef = useRef<string[]>([]);
   if (data?.classes?.length) classOptionsRef.current = data.classes;
   const classOptions = classOptionsRef.current;
-  const filtersActive = Boolean(searchQuery || stateFilter || classFilter || includeDiscontinued);
+  const filtersActive = Boolean(
+    searchQuery || stateFilter || classFilter || includeDiscontinued,
+  );
 
   const clearFilters = () => {
     setSearchQuery('');
@@ -235,7 +269,10 @@ export default function SpecVerificationList() {
   const runVerify = async (codes: string[]) => {
     const items = rows
       .filter((row) => codes.includes(row.product_code))
-      .map((row) => ({ product_code: row.product_code, values_hash: row.values_hash }));
+      .map((row) => ({
+        product_code: row.product_code,
+        values_hash: row.values_hash,
+      }));
     if (!items.length) return;
     let response;
     try {
@@ -263,34 +300,52 @@ export default function SpecVerificationList() {
       {
         accessorKey: 'product_code',
         id: 'code',
-        header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Code" column={column} />
+        ),
         cell: ({ row }) => (
-          <span className="font-medium text-sm truncate block" title={row.original.product_code}>
+          <span
+            className="font-medium text-sm truncate block"
+            title={row.original.product_code}
+          >
             {row.original.product_code}
           </span>
         ),
         size: 120,
-        meta: { headerTitle: 'Code', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: {
+          headerTitle: 'Code',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
         enableSorting: true,
         enableHiding: false,
       },
       {
         accessorKey: 'product_name',
         id: 'name',
-        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Name" column={column} />
+        ),
         cell: ({ row }) => (
-          <span className="text-sm truncate block" title={row.original.product_name}>
+          <span
+            className="text-sm truncate block"
+            title={row.original.product_name}
+          >
             {row.original.product_name}
           </span>
         ),
         size: 165,
-        meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-48" /> },
+        meta: {
+          headerTitle: 'Name',
+          skeleton: <Skeleton className="h-4 w-48" />,
+        },
         enableSorting: false,
       },
       {
         accessorKey: 'class_label',
         id: 'class',
-        header: ({ column }) => <DataGridColumnHeader title="Class" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Class" column={column} />
+        ),
         cell: ({ row }) => (
           <span
             className="text-sm truncate block"
@@ -300,26 +355,39 @@ export default function SpecVerificationList() {
           </span>
         ),
         size: 95,
-        meta: { headerTitle: 'Class', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: {
+          headerTitle: 'Class',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
         enableSorting: false,
       },
       {
         accessorKey: 'brand_name',
         id: 'brand',
-        header: ({ column }) => <DataGridColumnHeader title="Brand" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Brand" column={column} />
+        ),
         cell: ({ row }) => (
-          <span className="text-sm truncate block" title={row.original.brand_name ?? '-'}>
+          <span
+            className="text-sm truncate block"
+            title={row.original.brand_name ?? '-'}
+          >
             {row.original.brand_name ?? '-'}
           </span>
         ),
         size: 90,
-        meta: { headerTitle: 'Brand', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: {
+          headerTitle: 'Brand',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
         enableSorting: false,
       },
       {
         accessorKey: 'coverage',
         id: 'coverage',
-        header: ({ column }) => <DataGridColumnHeader title="Coverage" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Coverage" column={column} />
+        ),
         cell: ({ row }) => {
           const { have, applicable } = row.original.coverage;
           return (
@@ -332,30 +400,45 @@ export default function SpecVerificationList() {
           );
         },
         size: 90,
-        meta: { headerTitle: 'Coverage', skeleton: <Skeleton className="h-4 w-12" /> },
+        meta: {
+          headerTitle: 'Coverage',
+          skeleton: <Skeleton className="h-4 w-12" />,
+        },
         enableSorting: true,
       },
       {
         accessorKey: 'open_exceptions',
         id: 'open_exceptions',
-        header: ({ column }) => <DataGridColumnHeader title="Exceptions" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Exceptions" column={column} />
+        ),
         cell: ({ row }) => {
           const count = row.original.open_exceptions;
-          if (!count) return <span className="text-sm text-muted-foreground">0</span>;
+          if (!count)
+            return <span className="text-sm text-muted-foreground">0</span>;
           return (
-            <Badge variant="warning" appearance="light" title="Verify is refused while open">
+            <Badge
+              variant="warning"
+              appearance="light"
+              title="Verify is refused while open"
+            >
               {count}
             </Badge>
           );
         },
         size: 100,
-        meta: { headerTitle: 'Exceptions', skeleton: <Skeleton className="h-4 w-8" /> },
+        meta: {
+          headerTitle: 'Exceptions',
+          skeleton: <Skeleton className="h-4 w-8" />,
+        },
         enableSorting: false,
       },
       {
         accessorKey: 'verification',
         id: 'verification',
-        header: ({ column }) => <DataGridColumnHeader title="Verification" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Verification" column={column} />
+        ),
         cell: ({ row }) => {
           const block = row.original.verification;
           return (
@@ -368,7 +451,10 @@ export default function SpecVerificationList() {
           );
         },
         size: 125,
-        meta: { headerTitle: 'Verification', skeleton: <Skeleton className="h-5 w-20" /> },
+        meta: {
+          headerTitle: 'Verification',
+          skeleton: <Skeleton className="h-5 w-20" />,
+        },
         enableSorting: false,
       },
       {
@@ -388,7 +474,10 @@ export default function SpecVerificationList() {
                   variant="outline"
                   disabled={pending}
                   onClick={() =>
-                    setConfirmTarget({ action: 'unverify', codes: [item.product_code] })
+                    setConfirmTarget({
+                      action: 'unverify',
+                      codes: [item.product_code],
+                    })
                   }
                 >
                   Unverify
@@ -408,7 +497,10 @@ export default function SpecVerificationList() {
           );
         },
         size: 130,
-        meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-7 w-20" /> },
+        meta: {
+          headerTitle: 'Actions',
+          skeleton: <Skeleton className="h-7 w-20" />,
+        },
         enableSorting: false,
         enableHiding: false,
         enableResizing: false,
@@ -426,7 +518,9 @@ export default function SpecVerificationList() {
     setSorting(updater);
     // Page 4 of the old order is a different set of rows in the new one; the filters
     // already go back to the first page for the same reason.
-    setPagination((prev) => (prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }));
+    setPagination((prev) =>
+      prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 },
+    );
   };
 
   const table = useReactTable({
@@ -481,14 +575,16 @@ export default function SpecVerificationList() {
           label: 'Verify selected',
           icon: BadgeCheck,
           disabled: pending,
-          onClick: () => setConfirmTarget({ action: 'verify', codes: selectedCodes }),
+          onClick: () =>
+            setConfirmTarget({ action: 'verify', codes: selectedCodes }),
         },
         {
           key: 'unverify',
           label: 'Unverify selected',
           icon: BadgeX,
           disabled: pending,
-          onClick: () => setConfirmTarget({ action: 'unverify', codes: selectedCodes }),
+          onClick: () =>
+            setConfirmTarget({ action: 'unverify', codes: selectedCodes }),
         },
       ]
     : [];
@@ -503,11 +599,18 @@ export default function SpecVerificationList() {
       <Card>
         <CardTable>
           <div className="p-8 text-center text-muted-foreground">
-            <p className="font-medium text-destructive">Failed to load the verification worklist.</p>
+            <p className="font-medium text-destructive">
+              Failed to load the verification worklist.
+            </p>
             <p className="text-sm mt-1">
               {error instanceof Error ? error.message : 'Please try again.'}
             </p>
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => void refetch()}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={() => void refetch()}
+            >
               Retry
             </Button>
           </div>
@@ -544,7 +647,11 @@ export default function SpecVerificationList() {
           )
         }
         listingKey="master_data.products.view::spec-verification"
-        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+        tableLayout={{
+          width: 'fixed',
+          columnsResizable: true,
+          columnsVisibility: true,
+        }}
         tableClassNames={{ edgeCell: 'px-5' }}
         emptyMessage={
           <div className="py-6 text-center">
@@ -555,12 +662,19 @@ export default function SpecVerificationList() {
                 : 'No product code is waiting for verification.'}
             </p>
             {filtersActive ? (
-              <Button variant="outline" size="sm" className="mt-4" onClick={clearFilters}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={clearFilters}
+              >
                 Clear filters
               </Button>
             ) : (
               <Button variant="outline" size="sm" className="mt-4" asChild>
-                <Link href="/master-data-management/products">Go to products</Link>
+                <Link href="/master-data-management/products">
+                  Go to products
+                </Link>
               </Button>
             )}
           </div>
@@ -568,11 +682,15 @@ export default function SpecVerificationList() {
       >
         <Card>
           <CardHeader className="block space-y-3">
-            <div className="text-sm text-muted-foreground" data-testid="verification-progress">
+            <div
+              className="text-sm text-muted-foreground"
+              data-testid="verification-progress"
+            >
               {summary ? (
                 <>
                   Verified {summary.verified.toLocaleString()} of{' '}
-                  {summary.total.toLocaleString()} {includeDiscontinued ? 'codes' : 'live codes'}
+                  {summary.total.toLocaleString()}{' '}
+                  {includeDiscontinued ? 'codes' : 'live codes'}
                 </>
               ) : (
                 <Skeleton className="h-4 w-56" />
@@ -609,13 +727,19 @@ export default function SpecVerificationList() {
               }
               filters={{
                 kind: 'custom',
-                active: Boolean(stateFilter || classFilter || includeDiscontinued),
+                active: Boolean(
+                  stateFilter || classFilter || includeDiscontinued,
+                ),
                 activeCount:
-                  (stateFilter ? 1 : 0) + (classFilter ? 1 : 0) + (includeDiscontinued ? 1 : 0),
+                  (stateFilter ? 1 : 0) +
+                  (classFilter ? 1 : 0) +
+                  (includeDiscontinued ? 1 : 0),
                 content: (
                   <div className="space-y-3">
                     <div className="space-y-1.5">
-                      <Label htmlFor="spec-verification-state">Verification</Label>
+                      <Label htmlFor="spec-verification-state">
+                        Verification
+                      </Label>
                       <SearchableSelect
                         id="spec-verification-state"
                         value={stateFilter}
@@ -646,7 +770,9 @@ export default function SpecVerificationList() {
                       />
                     </div>
                     <div className="flex items-center justify-between gap-3">
-                      <Label htmlFor="spec-verification-discontinued">Include discontinued</Label>
+                      <Label htmlFor="spec-verification-discontinued">
+                        Include discontinued
+                      </Label>
                       <Switch
                         id="spec-verification-discontinued"
                         checked={includeDiscontinued}
@@ -694,7 +820,9 @@ export default function SpecVerificationList() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{confirmCopy.title}</AlertDialogTitle>
-            <AlertDialogDescription>{confirmCopy.description}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {confirmCopy.description}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>

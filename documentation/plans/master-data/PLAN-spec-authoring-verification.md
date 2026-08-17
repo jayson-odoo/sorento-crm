@@ -13,7 +13,12 @@ half of AC-D.17; backend only, Phase 1 exception per the PR-map note). PR 2 (Edi
 pills) implemented on `fm/spec-pr2-editable-table`, 2026-08-15: AC-A.1 to AC-A.15 and AC-C.1 to
 AC-C.4, Phase 1 then Phase 2, with **AC-A.16 (the Playwright e2e spec) outstanding** - browser
 verification moved to `agent-browser` by captain ruling mid-slice and the ruling on committed
-`e2e/` specs is pending, so no new Playwright spec was written. PR 3 in flight in a parallel lane. PR 4 IN PROGRESS on
+`e2e/` specs is pending, so no new Playwright spec was written. PR 3 (Verification model +
+worklist, group D plus the PR-3 half of AC-D.17) implemented on
+`fm/spec-pr3-verification-list`, 2026-08-17: migration `369_product_spec_verifications`
+(renumbered from 367 because sibling branches took 367/368; chained on PR 4's
+`367_promote_flyer_provenance`), evidence run recorded in
+`spec-authoring-verification-evidence-pr3.md`, missing regression guard logged as BL-013. PR 4 IN PROGRESS on
 `fm/spec-pr4-extraction-prompt` (2026-08-16), contract below; its deploy runbook exists at
 `documentation/plans/master-data/RUNBOOK-flyer-promote.md` (steps 1-6 with the exact pre-flight,
 checksum and post-run SQL, re-measured 2026-08-16).

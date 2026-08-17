@@ -30,14 +30,20 @@ describe('summariseVerify', () => {
 
   it('names each skip reason with its own count, in the mix the AC quotes', () => {
     const results: VerifyBulkResult[] = [
-      ...Array.from({ length: 42 }, (_, i): VerifyBulkResult => ({
-        product_code: `V${i}`,
-        outcome: 'verified',
-      })),
-      ...Array.from({ length: 3 }, (_, i): VerifyBulkResult => ({
-        product_code: `E${i}`,
-        outcome: 'exceptions_open',
-      })),
+      ...Array.from(
+        { length: 42 },
+        (_, i): VerifyBulkResult => ({
+          product_code: `V${i}`,
+          outcome: 'verified',
+        }),
+      ),
+      ...Array.from(
+        { length: 3 },
+        (_, i): VerifyBulkResult => ({
+          product_code: `E${i}`,
+          outcome: 'exceptions_open',
+        }),
+      ),
       { product_code: 'C1', outcome: 'values_changed' },
     ];
 
@@ -68,7 +74,9 @@ describe('summariseUnverify', () => {
   });
 
   it('an all-no_change batch carries no "unverified" clause', () => {
-    const results: UnverifyBulkResult[] = [{ product_code: 'A', outcome: 'no_change' }];
+    const results: UnverifyBulkResult[] = [
+      { product_code: 'A', outcome: 'no_change' },
+    ];
     expect(summariseUnverify(results)).toBe('1 unchanged');
   });
 });
@@ -102,7 +110,9 @@ import { vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
 import React from 'react';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+}));
 vi.mock('../services/specVerificationService', () => ({
   getSpecVerificationWorklist: vi.fn(),
   verifySpecBulk: vi.fn(),
@@ -110,12 +120,18 @@ vi.mock('../services/specVerificationService', () => ({
 }));
 
 import { verifySpecBulk } from '../services/specVerificationService';
-import { useSpecVerificationMutations, WORKLIST_KEY } from './useSpecVerification';
+import {
+  useSpecVerificationMutations,
+  WORKLIST_KEY,
+} from './useSpecVerification';
 import type { SpecVerificationWorklistResponse } from '../types/specVerification.types';
 
 const mockVerifyBulk = vi.mocked(verifySpecBulk);
 
-function baseRow(code: string, state: 'unverified' | 'verified' | 'needs_reverify'): SpecVerificationRow {
+function baseRow(
+  code: string,
+  state: 'unverified' | 'verified' | 'needs_reverify',
+): SpecVerificationRow {
   return {
     product_id: `id-${code}`,
     product_code: code,
@@ -148,9 +164,15 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('patchRows via useSpecVerificationMutations().verify', () => {
   it('patches only the acted row in place, keeps order, and refreshes values_hash', async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     const initial: SpecVerificationWorklistResponse = {
-      data: [baseRow('A', 'needs_reverify'), baseRow('B', 'unverified'), baseRow('C', 'unverified')],
+      data: [
+        baseRow('A', 'needs_reverify'),
+        baseRow('B', 'unverified'),
+        baseRow('C', 'unverified'),
+      ],
       pagination: { total: 3, page: 1, limit: 25 },
       summary: { total: 3, verified: 0, needs_reverify: 1, unverified: 2 },
       classes: ['Kitchen Sink'],
@@ -181,7 +203,9 @@ describe('patchRows via useSpecVerificationMutations().verify', () => {
       wrapper: wrapper(client),
     });
 
-    await result.current.verify.mutateAsync([{ product_code: 'B', values_hash: 'hash-B' }]);
+    await result.current.verify.mutateAsync([
+      { product_code: 'B', values_hash: 'hash-B' },
+    ]);
 
     await waitFor(() => {
       const cached = client.getQueryData<SpecVerificationWorklistResponse>([
