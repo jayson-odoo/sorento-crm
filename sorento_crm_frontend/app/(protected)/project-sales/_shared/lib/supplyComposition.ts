@@ -1,0 +1,215 @@
+/**
+ * The line balance CS is editing against, and everything that stops a Confirm.
+ *
+ * Pure on purpose: the sheet reads these on every keystroke, and the same rules are
+ * rechecked by the server against authoritative facts at confirmation (plan 3.1 step 5).
+ * The browser copy exists to say WHICH line is wrong before the round trip, never to be
+ * the authority - a line that passes here can still fail there, and the failure names the
+ * line by number and item code.
+ *
+ * Quantities travel as decimal strings (a float round trip loses the tail of a quantity
+ * the customer signed for). Comparison is done in minor units at four decimal places,
+ * which is the widest UOM precision the plan allows, so `10.1 + 20.2 === 30.3` reads as
+ * balanced rather than as 0.0000000000000004 over.
+ */
+import type {
+  BorrowSource,
+  ConfirmLine,
+  SupplyLine,
+  BorrowDonorImpact,
+} from '../types/fulfilmentPlanning.types';
+
+const SCALE = 10_000;
+
+/** A quantity that is not a number at all counts as 0, so a half-typed input never NaNs. */
+export function toMinor(qty: string | number | null | undefined): number {
+  const value = typeof qty === 'number' ? qty : Number.parseFloat(String(qty ?? '').trim());
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * SCALE);
+}
+
+export function fromMinor(minor: number): string {
+  const value = minor / SCALE;
+  // Trailing zeroes off: "40" reads as a quantity, "40.0000" reads as a machine.
+  return String(Number(value.toFixed(4)));
+}
+
+/** What CS is holding for one line before it is sent. Quantities stay as typed. */
+export interface DraftBorrow {
+  /** Local key so two borrows from the same warehouse can both exist while being typed. */
+  key: string;
+  source: BorrowSource;
+  warehouse_code: string;
+  warehouse_id: string;
+  donor_project_ref?: string | null;
+  donor_project_id?: string | null;
+  qty: string;
+  reason: string;
+  donor_impact: BorrowDonorImpact;
+}
+
+export interface DraftReserve {
+  key: string;
+  /** Warehouse code, shown. */
+  location?: string | null;
+  warehouse_id: string;
+  qty: string;
+  reason: string;
+}
+
+export interface DraftLine {
+  project_line_id: string;
+  line_no: number;
+  item_code?: string | null;
+  open_qty: string;
+  timely_spo_qty: string;
+  reserve: DraftReserve[];
+  borrow: DraftBorrow[];
+  buy_qty: string;
+  buy_reason: string;
+  is_discontinued: boolean;
+}
+
+/** The proposal as CS first sees it: the engine's components, unedited. */
+export function draftFromLine(line: SupplyLine): DraftLine {
+  const timely = line.components
+    .filter((component) => component.kind === 'timely_spo')
+    .reduce((total, component) => total + toMinor(component.qty), 0);
+  const buy = line.components.find((component) => component.kind === 'buy');
+  return {
+    project_line_id: line.project_line_id,
+    line_no: line.line_no,
+    item_code: line.item_code,
+    open_qty: line.open_qty,
+    timely_spo_qty: fromMinor(timely),
+    reserve: line.components
+      .filter((component) => component.kind === 'reserve')
+      .map((component, index) => ({
+        key: `reserve-${line.project_line_id}-${index}`,
+        location: component.source_location,
+        warehouse_id: component.source_warehouse_id ?? '',
+        qty: component.qty,
+        reason: component.reason,
+      })),
+    borrow: line.components
+      .filter((component) => component.kind === 'borrow')
+      .map((component, index) => ({
+        key: `borrow-${line.project_line_id}-${index}`,
+        source: component.donor_project_ref ? 'other_project' : 'other_location',
+        warehouse_code: component.source_location ?? '',
+        warehouse_id: component.source_warehouse_id ?? '',
+        donor_project_ref: component.donor_project_ref,
+        donor_project_id: component.donor_project_id,
+        qty: component.qty,
+        reason: component.cs_reason ?? '',
+        donor_impact: {
+          free_before: '0',
+          free_after_full_borrow: '0',
+          committed_qty: '0',
+        },
+      })),
+    buy_qty: buy?.qty ?? '0',
+    buy_reason: buy?.cs_reason ?? '',
+    is_discontinued: line.is_discontinued,
+  };
+}
+
+export interface LineBalance {
+  openMinor: number;
+  totalMinor: number;
+  /** Composed minus open. Positive is over the need, negative is short of it. */
+  differenceMinor: number;
+  balanced: boolean;
+  reserveMinor: number;
+  borrowMinor: number;
+  buyMinor: number;
+  timelyMinor: number;
+}
+
+export function lineBalance(draft: DraftLine): LineBalance {
+  const timelyMinor = toMinor(draft.timely_spo_qty);
+  const reserveMinor = draft.reserve.reduce((total, row) => total + toMinor(row.qty), 0);
+  const borrowMinor = draft.borrow.reduce((total, row) => total + toMinor(row.qty), 0);
+  const buyMinor = toMinor(draft.buy_qty);
+  const totalMinor = timelyMinor + reserveMinor + borrowMinor + buyMinor;
+  const openMinor = toMinor(draft.open_qty);
+  return {
+    openMinor,
+    totalMinor,
+    differenceMinor: totalMinor - openMinor,
+    balanced: totalMinor === openMinor,
+    reserveMinor,
+    borrowMinor,
+    buyMinor,
+    timelyMinor,
+  };
+}
+
+/**
+ * Everything that stops this line being confirmed, in the order CS can act on it. One
+ * sentence each, naming the line, because the Confirm button is at the foot of a sheet
+ * that may hold ten lines and "something is wrong" is not an instruction.
+ */
+export function lineBlockers(draft: DraftLine): string[] {
+  const blockers: string[] = [];
+  const subject = `Line ${draft.line_no}${draft.item_code ? `, ${draft.item_code}` : ''}`;
+  const balance = lineBalance(draft);
+
+  if (
+    balance.reserveMinor < 0 ||
+    balance.borrowMinor < 0 ||
+    balance.buyMinor < 0 ||
+    draft.reserve.some((row) => toMinor(row.qty) < 0) ||
+    draft.borrow.some((row) => toMinor(row.qty) < 0)
+  ) {
+    blockers.push(`${subject}: a quantity is below zero.`);
+  }
+
+  if (!balance.balanced) {
+    const over = balance.differenceMinor > 0;
+    blockers.push(
+      `${subject}: the components are ${over ? 'over' : 'short of'} the open quantity by ${fromMinor(
+        Math.abs(balance.differenceMinor),
+      )}.`,
+    );
+  }
+
+  for (const row of draft.borrow) {
+    if (toMinor(row.qty) > 0 && !row.reason.trim()) {
+      const donor = row.donor_project_ref || row.warehouse_code || 'the donor';
+      blockers.push(`${subject}: the borrow from ${donor} needs a reason.`);
+    }
+  }
+
+  if (draft.is_discontinued && balance.buyMinor > 0 && !draft.buy_reason.trim()) {
+    blockers.push(`${subject}: buying a discontinued product needs a reason.`);
+  }
+
+  return blockers;
+}
+
+export function draftBlockers(drafts: DraftLine[]): string[] {
+  return drafts.flatMap((draft) => lineBlockers(draft));
+}
+
+/** The confirm payload. Zero-quantity components are dropped: they decide nothing. */
+export function confirmLineFromDraft(draft: DraftLine): ConfirmLine {
+  return {
+    project_line_id: draft.project_line_id,
+    timely_spo_qty: fromMinor(toMinor(draft.timely_spo_qty)),
+    reserve: draft.reserve
+      .filter((row) => toMinor(row.qty) > 0)
+      .map((row) => ({ warehouse_id: row.warehouse_id, qty: fromMinor(toMinor(row.qty)) })),
+    borrow: draft.borrow
+      .filter((row) => toMinor(row.qty) > 0)
+      .map((row) => ({
+        source: row.source,
+        warehouse_id: row.warehouse_id,
+        donor_project_id: row.donor_project_id ?? null,
+        qty: fromMinor(toMinor(row.qty)),
+        reason: row.reason.trim(),
+      })),
+    buy_qty: fromMinor(toMinor(draft.buy_qty)),
+    buy_reason: draft.buy_reason.trim() ? draft.buy_reason.trim() : null,
+  };
+}

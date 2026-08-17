@@ -274,13 +274,15 @@ SupplyProposal {
     is_dealer_hot_selling, classification_unavailable, is_discontinued,
     pool_location?, pool_cap?, pool_reorder_level?,
     components: [{ kind: 'timely_spo'|'reserve'|'borrow'|'buy', qty, reason,
-                   source_location? }],
+                   source_location?, source_warehouse_id?, donor_project_ref?,
+                   donor_project_id?, cs_reason? }],
     timely_spo: [{ spo_number, arrival_date, qty }],
     advisory_spo: [{ spo_number, arrival_date, qty }],
     borrow_candidates: [{ source: 'other_location'|'other_project', warehouse_code,
-                          donor_project_ref?, free_qty, donor_impact: { free_before,
-                          free_after_full_borrow, committed_qty } }],
-    frozen?: { ...snapshot components when review_state = 'confirmed' }
+                          warehouse_id, donor_project_ref?, donor_project_id?, free_qty,
+                          donor_impact: { free_before, free_after_full_borrow,
+                          committed_qty } }],
+    frozen?: { open_qty, components: [...] }            // when review_state = 'confirmed'
   }],
   failing_lines?: [{ line_no, item_code, reason }]      // 422 body when not confirmable
 }
@@ -296,6 +298,21 @@ ConfirmResult { revision_no, confirmed_at, review_state: 'confirmed',
 
 `GET /project-sales/fulfilment-planning` `review_state` Literal gains `confirmed`.
 Order-inquiry list rows gain `line_no`, `decision_revision`, `project_so_ref`.
+
+Added during Phase 1, because the confirm payload names warehouses and donor projects by
+id while the screen names them by code and reference, and the read had no way to carry the
+pair: `source_warehouse_id` / `donor_project_id` on a component, `warehouse_id` /
+`donor_project_id` on a borrow candidate, `project_id` on the proposal itself (the link to
+the project's Order Inquiry). They are addressing only and are never rendered, exactly like
+`ReconciliationLine.id`. Two more, for the same "the screen must show what was frozen"
+reason: `cs_reason` on a component (the borrow reason and the discontinued-buy reason CS
+typed, which the snapshot already freezes) and `frozen.open_qty` beside `frozen.components`,
+so a confirmed line states the quantity the revision was balanced against rather than the
+live one.
+
+A refused confirmation is read by the frontend from the response body directly
+(`failing_lines`), not through `extractApiError`, which answers with a string: the shared
+extractor supplies the message and the list is read from a clone of the same response.
 
 ## 7. Frontend
 

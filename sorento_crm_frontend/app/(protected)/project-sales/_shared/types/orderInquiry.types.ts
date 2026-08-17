@@ -29,6 +29,15 @@ export interface OrderInquiryRow {
   project_sales_order_id?: string | null;
   /** The AutoCount document number when it has been adopted, else our own reference. */
   sales_order_ref?: string | null;
+  /**
+   * The trace back to the decision that raised the row (AC-D06), added by Stage 1C: the
+   * sales order LINE number, the Project SO's own reference, and which confirmed revision
+   * decided the quantity. Human identifiers only - a buyer expanding a Project
+   * contribution reads the same words CS confirmed it with, never an id.
+   */
+  line_no?: number | null;
+  project_so_ref?: string | null;
+  decision_revision?: number | null;
   so_date?: string | null;
   project_customer?: string | null;
   is_amendment?: boolean;
