@@ -368,6 +368,123 @@ def test_get_proposals_403_without_either_permission(api, db):
 
 
 # --------------------------------------------------------------------------- #
+# The permission pair on the OTHER three routes - the read, the list and the
+# apply. `apply` is the one route that writes `product_specifications`, so it is
+# the one where "no API-key variant" matters most: the fixture resolves both
+# principals to the same user, so only a real 401 through `get_current_user`
+# (which `_with_api_key` would bypass) and the two 403s in order pin it.
+# --------------------------------------------------------------------------- #
+def _deny_principal():
+    from fastapi import HTTPException
+
+    raise HTTPException(status_code=401, detail="Not authenticated")
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda client, reading: client.get(_GET_PROPOSALS.format(reading.id)), id="get"),
+        pytest.param(lambda client, reading: client.get(_LIST_BATCHES), id="list"),
+        pytest.param(
+            lambda client, reading: client.post(
+                _APPLY.format(reading.id), json={"proposal_ids": [str(uuid.uuid4())]}
+            ),
+            id="apply",
+        ),
+    ],
+)
+def test_read_list_and_apply_401_without_a_principal(api, db, call):
+    from app.dependencies import get_current_user
+    from app.main import app
+
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    reading = _reading(db)
+    db.commit()
+
+    app.dependency_overrides[get_current_user] = _deny_principal
+    try:
+        response = call(client, reading)
+    finally:
+        app.dependency_overrides[get_current_user] = lambda: _USER
+
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda client, reading: client.get(_GET_PROPOSALS.format(reading.id)), id="get"),
+        pytest.param(lambda client, reading: client.get(_LIST_BATCHES), id="list"),
+        pytest.param(
+            lambda client, reading: client.post(
+                _APPLY.format(reading.id), json={"proposal_ids": [str(uuid.uuid4())]}
+            ),
+            id="apply",
+        ),
+    ],
+)
+def test_read_list_and_apply_403_name_page_view_when_it_is_the_missing_permission(api, db, call):
+    client, allow = api
+    allow.add(_EDIT)  # products.edit present, page.view missing
+    reading = _reading(db)
+    db.commit()
+
+    response = call(client, reading)
+
+    assert response.status_code == 403, response.text
+    assert _VIEW in response.text
+    assert _EDIT not in response.text, "must name the FIRST missing permission, not both"
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda client, reading: client.get(_GET_PROPOSALS.format(reading.id)), id="get"),
+        pytest.param(lambda client, reading: client.get(_LIST_BATCHES), id="list"),
+        pytest.param(
+            lambda client, reading: client.post(
+                _APPLY.format(reading.id), json={"proposal_ids": [str(uuid.uuid4())]}
+            ),
+            id="apply",
+        ),
+    ],
+)
+def test_read_list_and_apply_403_name_products_edit_when_it_is_the_missing_permission(api, db, call):
+    client, allow = api
+    allow.add(_VIEW)  # page.view present, products.edit missing
+    reading = _reading(db)
+    db.commit()
+
+    response = call(client, reading)
+
+    assert response.status_code == 403, response.text
+    assert _EDIT in response.text
+
+
+def test_apply_403_without_products_edit_writes_nothing(api, db):
+    """The refusal happens before the body is read: a well-formed apply naming a
+    real `new` row, from somebody holding only the dealer-kit slug, leaves the
+    product master untouched and the row unstamped."""
+    client, allow = api
+    allow.add(_VIEW)
+    product = _product(db, "ZZT-FLYRT-AUTHW", "SORENTO ONE PIECE WC ZZT-FLYRT-AUTHW")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-AUTHW", commit=True)
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-AUTHW", "Washdown. S-Trap outlet 250mm")])
+    batch = _batch(db, reading)
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(_APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]})
+
+    assert response.status_code == 403, response.text
+    assert "trap_type" not in (_spec_of(db, product.id).values or {})
+    db.expire_all()
+    assert db.query(ProductSpecFlyerProposal).filter_by(id=proposal.id).one().outcome is None
+
+
+# --------------------------------------------------------------------------- #
 # AC-B.1 - GET the batch: status none, and the grouped shape once proposed
 # --------------------------------------------------------------------------- #
 def test_get_proposals_returns_status_none_without_a_batch(api, db):
@@ -621,6 +738,55 @@ def test_apply_writes_a_new_row(api, db):
     assert body["refused"] == []
     assert body["applied"][0]["spec_key"] == "trap_type"
     assert _spec_of(db, product.id).values["trap_type"]["value"] == "s_trap"
+
+
+def test_apply_writes_a_row_that_is_still_a_change_at_apply_time(api, db):
+    """The `change` kind LIVE: the master holds a DERIVED value (nobody authored
+    it, the key is not description-first) and the flyer says something else. It
+    is neither `already_matches` nor a tombstone, so it is written and badged
+    `flyer`. The two other `change` fixtures in this file are re-classified to
+    `unchanged` / `conflict` before their apply, so without this one a change
+    that folded `change` into the refusals would go unnoticed."""
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(
+        db, "ZZT-FLYRT-CHG", "SORENTO CERAMIC ART BASIN ONLY BLACK ZZT-FLYRT-CHG"
+    )
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-CHG", commit=True)
+    derived = _spec_of(db, product.id)
+    assert derived.values["finish"]["value"] == "black", "fixture assumption"
+    assert derived.provenance["finish"]["source"] == "derived", "nobody authored it"
+
+    reading = _reading(db, filename="ZZT-CHG-Flyer.pdf", cards=[_card("ZZT-FLYRT-CHG", "Chrome finish")])
+    batch = _batch(db, reading)
+    proposal = _proposal(
+        db,
+        batch,
+        product,
+        spec_key="finish",
+        value="chrome",
+        kind="change",
+        evidence="Chrome finish",
+        stored_value="black",
+        stored_source="derived",
+    )
+    db.commit()
+
+    response = client.post(_APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["refused"] == []
+    assert body["applied"][0]["spec_key"] == "finish"
+    assert body["applied"][0]["value"] == "chrome"
+
+    stored = _spec_of(db, product.id)
+    assert stored.values["finish"]["value"] == "chrome"
+    assert stored.provenance["finish"]["source"] == "flyer"
+    assert "Chrome finish" in stored.provenance["finish"].get("evidence", "")
+    db.expire_all()
+    assert db.query(ProductSpecFlyerProposal).filter_by(id=proposal.id).one().outcome == "applied"
 
 
 # --------------------------------------------------------------------------- #
@@ -1020,6 +1186,99 @@ def test_patch_edits_the_value_recomputes_kind_and_refreshes_batch_counts(api, d
     apply_body = apply_response.json()
     assert apply_body["applied"] == []
     assert apply_body["refused"][0]["reason"] == "already_matches"
+
+
+def test_patch_keeps_a_two_tone_finish_as_a_list_and_apply_writes_both(api, db):
+    """A multi-value row (finish is the one key that may hold two values at once,
+    "Rose Gold + Matt Black" on 23 cards). PATCHing a list stores the list, the
+    row is classified against the live master as a list, and apply writes BOTH
+    tones - not the first one alone, which is what a `value_for_registry` that
+    collapsed every list would silently do."""
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-MV1", "SORENTO ONE PIECE WC ZZT-FLYRT-MV1")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-MV1", commit=True)
+    assert "finish" not in (_spec_of(db, product.id).values or {}), "fixture assumption"
+
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-MV1", "Rose Gold + Matt Black")])
+    batch = _batch(db, reading, status="proposed", proposal_count=1, product_count=1, new_count=1)
+    proposal = _proposal(
+        db, batch, product, spec_key="finish", value=["rose_gold", "chrome"], kind="new"
+    )
+    db.commit()
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, proposal.id), json={"value": ["rose_gold", "black"]}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["value"] == ["rose_gold", "black"]
+    assert body["kind"] == "new"
+
+    db.expire_all()
+    stored = db.query(ProductSpecFlyerProposal).filter_by(id=proposal.id).one()
+    assert stored.value == ["rose_gold", "black"]
+
+    apply_response = client.post(
+        _APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]}
+    )
+    assert apply_response.status_code == 200, apply_response.text
+    apply_body = apply_response.json()
+    assert apply_body["refused"] == []
+    assert sorted(apply_body["applied"][0]["value"]) == ["black", "rose_gold"]
+    written = _spec_of(db, product.id).values["finish"]["value"]
+    assert sorted(written) == ["black", "rose_gold"]
+
+
+def test_patch_refuses_a_list_on_a_single_value_key_and_a_bad_tone_in_a_list(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-MV2", "SORENTO ONE PIECE WC ZZT-FLYRT-MV2")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-MV2", commit=True)
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-MV2", "Washdown")])
+    batch = _batch(db, reading, status="proposed", proposal_count=2, product_count=1, new_count=2)
+    single = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    multi = _proposal(db, batch, product, spec_key="finish", value=["rose_gold"], kind="new")
+    db.commit()
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, single.id), json={"value": ["s_trap", "p_trap"]}
+    )
+    assert response.status_code == 400, response.text
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, multi.id), json={"value": ["rose_gold", "purple"]}
+    )
+    assert response.status_code == 400, response.text
+    assert "purple" in response.text
+
+    db.expire_all()
+    assert db.query(ProductSpecFlyerProposal).filter_by(id=single.id).one().value == "s_trap"
+    assert db.query(ProductSpecFlyerProposal).filter_by(id=multi.id).one().value == ["rose_gold"]
+
+
+def test_apply_writes_a_one_tone_list_as_the_tone_itself(api, db):
+    """`value_for_registry` stores a one-element list as the value: a re-derivation
+    of the same words produces the scalar, and the two must not be different
+    answers to "is this unchanged"."""
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-MV3", "SORENTO ONE PIECE WC ZZT-FLYRT-MV3")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-MV3", commit=True)
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-MV3", "Rose Gold")])
+    batch = _batch(db, reading)
+    proposal = _proposal(db, batch, product, spec_key="finish", value=["rose_gold"], kind="new")
+    db.commit()
+
+    response = client.post(_APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["refused"] == []
+    assert _spec_of(db, product.id).values["finish"]["value"] == "rose_gold"
 
 
 def test_patch_refuses_400_for_a_value_outside_the_closed_vocabulary(api, db):

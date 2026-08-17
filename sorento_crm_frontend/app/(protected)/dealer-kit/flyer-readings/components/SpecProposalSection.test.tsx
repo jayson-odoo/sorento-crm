@@ -9,7 +9,7 @@
  * hooks return, without a network layer in the loop.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 const { useFlyerSpecProposalsQuery, useProposeFlyerSpecs, hasPermission } = vi.hoisted(() => ({
   useFlyerSpecProposalsQuery: vi.fn(),
@@ -61,8 +61,20 @@ function batch(overrides: Partial<FlyerSpecBatch> = {}): FlyerSpecBatch {
 
 const propose = { mutate: vi.fn(), isPending: false };
 
-function setQuery(data: FlyerSpecBatch | undefined, isLoading = false) {
-  useFlyerSpecProposalsQuery.mockReturnValue({ data, isLoading });
+const refetch = vi.fn();
+
+function setQuery(
+  data: FlyerSpecBatch | undefined,
+  isLoading = false,
+  error: Error | null = null,
+) {
+  useFlyerSpecProposalsQuery.mockReturnValue({
+    data,
+    isLoading,
+    isError: error !== null,
+    error,
+    refetch,
+  });
 }
 
 function renderSection(readingStatus: 'processing' | 'done' | 'failed' = 'done') {
@@ -75,6 +87,45 @@ beforeEach(() => {
   propose.mutate = vi.fn();
   propose.isPending = false;
   useProposeFlyerSpecs.mockReturnValue(propose);
+});
+
+describe('SpecProposalSection, before the batch answers and when it refuses (AC-D.1)', () => {
+  it('shows a checking line and a disabled button while the batch is loading, not the not-read copy', () => {
+    setQuery(undefined, true);
+
+    renderSection('done');
+
+    expect(screen.getByTestId('dk-fr-spec-loading')).toBeInTheDocument();
+    expect(
+      screen.queryByText('This flyer has not been read for specifications'),
+    ).toBeNull();
+    expect(screen.getByTestId('dk-fr-spec-propose')).toBeDisabled();
+  });
+
+  it('shows the refusal with a retry, and does not offer to propose over it', () => {
+    setQuery(undefined, false, new Error('Permission required: dealer_kit.page.view'));
+
+    renderSection('done');
+
+    const failure = screen.getByTestId('dk-fr-spec-error');
+    expect(failure).toHaveTextContent('Permission required: dealer_kit.page.view');
+    expect(
+      screen.queryByText('This flyer has not been read for specifications'),
+    ).toBeNull();
+    expect(screen.getByTestId('dk-fr-spec-propose')).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId('dk-fr-spec-error-retry'));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the refusal, not a stale proposing spinner, when a poll fails with data still cached', () => {
+    setQuery(batch({ status: 'proposing', id: 'batch-1' }), false, new Error('boom'));
+
+    renderSection('done');
+
+    expect(screen.getByTestId('dk-fr-spec-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('dk-fr-spec-proposing')).toBeNull();
+  });
 });
 
 describe('SpecProposalSection, status none (AC-D.1)', () => {

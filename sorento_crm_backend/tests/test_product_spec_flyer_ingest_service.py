@@ -586,13 +586,33 @@ def test_start_batch_answers_409_when_a_concurrent_press_won_the_insert(db, monk
 
     _product(db, "ZZT-FLYJOB-RACE", "SORENTO ONE PIECE WC ZZT-FLYJOB-RACE")
     reading = _reading(db, cards=[_card("ZZT-FLYJOB-RACE", "Washdown")])
-    _batch_row(db, reading, status="proposing")
+    winner = _batch_row(db, reading, status="proposing")
     db.commit()
 
-    monkeypatch.setattr(ingest, "batch_for", lambda *args, **kwargs: None)
+    blinded: list[dict] = []
+    monkeypatch.setattr(
+        ingest, "batch_for", lambda *args, **kwargs: blinded.append(kwargs) or None
+    )
+    enqueued: list[str] = []
+    monkeypatch.setattr(ingest, "_enqueue", lambda batch: enqueued.append(str(batch.id)) or "zzt-job-race")
 
     with pytest.raises(AppException) as excinfo:
         ingest.start_batch(db, reading, user_id=_USER["id"])
 
     assert excinfo.value.status_code == 409
     assert excinfo.value.detail["code"] == "FLYER_SPEC_PROPOSING"
+    # The blinding took: this caller read nothing, went to the INSERT, and lost
+    # there. If the read moved off `batch_for` the patch would be a no-op and the
+    # 409 above would be the ordinary "already proposing" answer, proving nothing
+    # about the race.
+    assert blinded == [{"for_update": True}]
+    assert enqueued == [], "the loser queues nothing"
+
+    db.expire_all()
+    rows = (
+        db.query(ProductSpecFlyerBatch)
+        .filter(ProductSpecFlyerBatch.flyer_reading_id == reading.id)
+        .all()
+    )
+    assert [str(row.id) for row in rows] == [str(winner.id)], "one batch per reading, the winner's"
+    assert rows[0].status == "proposing"

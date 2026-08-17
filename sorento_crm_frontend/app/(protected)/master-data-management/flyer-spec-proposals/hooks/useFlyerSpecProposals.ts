@@ -201,8 +201,17 @@ export function useEditFlyerSpecProposal(readingId: string) {
   });
 }
 
-/** Add a specification the flyer stated in a way no rule caught (AC-G.1). */
+/**
+ * Add a specification the flyer stated in a way no rule caught (AC-G.1).
+ *
+ * The returned row is written into the cached batch BEFORE the refetch is asked
+ * for. The screen ticks the new row the moment the call answers and counts its
+ * replacements off the cached batch, so a row that only reached the cache a
+ * round trip later would be a ticked `conflict` the confirm dialog did not
+ * know about, and Apply would overwrite a value a person set without naming it.
+ */
 export function useAddFlyerSpecProposalRow(readingId: string) {
+  const queryClient = useQueryClient();
   const invalidate = useRowMutationInvalidation(readingId);
 
   return useMutation<
@@ -211,7 +220,12 @@ export function useAddFlyerSpecProposalRow(readingId: string) {
     { product_id: string; spec_key: string; value: SpecProposal['value'] }
   >({
     mutationFn: (input) => addFlyerSpecProposalRow(readingId, input),
-    onSuccess: (row) => {
+    onSuccess: (row, input) => {
+      queryClient.setQueryData<FlyerSpecProposals>(
+        [FLYER_SPEC_PROPOSALS_QUERY_KEY, readingId],
+        (current) =>
+          current ? seedProposalRow(current, input.product_id, row) : current,
+      );
       invalidate();
       toast.success(`${row.label} added to this flyer's proposals`);
     },
@@ -219,6 +233,22 @@ export function useAddFlyerSpecProposalRow(readingId: string) {
       toast.error(error.message || 'Could not add that specification');
     },
   });
+}
+
+/** The cached batch with `row` placed in `productId`'s group, replacing any row of the same id. */
+export function seedProposalRow(
+  batch: FlyerSpecProposals,
+  productId: string,
+  row: FlyerSpecProposal,
+): FlyerSpecProposals {
+  return {
+    ...batch,
+    groups: batch.groups.map((group) => {
+      if (group.product_id !== productId) return group;
+      const others = group.proposals.filter((existing) => existing.id !== row.id);
+      return { ...group, proposals: [...others, row] };
+    }),
+  };
 }
 
 /** Take a proposal off the batch for good (AC-G.3). */

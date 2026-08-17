@@ -532,14 +532,76 @@ describe('FlyerSpecReviewScreen, "Show more" keeps selection (AC-D.8)', () => {
 });
 
 describe('FlyerSpecReviewScreen, without master_data.products.edit (AC-D.2)', () => {
-  it('shows the rows read-only and offers no Apply control', () => {
+  it('does not ask for the batch, says the permission is missing, and offers no Apply control', () => {
+    // The route refuses without the product-master permission, so the query
+    // is withheld and the screen says why - it does not fire a request that can
+    // only come back 403 and then show the server's refusal.
     hasPermission.mockReturnValue(false);
+    setQuery({});
+
+    renderScreen();
+
+    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', { enabled: false });
+    expect(screen.getByTestId('fsp-readonly')).toBeInTheDocument();
+    expect(screen.queryByTestId('fsp-loading')).toBeNull();
+    expect(screen.queryByTestId('fsp-apply')).toBeNull();
+    expect(screen.getByRole('link', { name: 'All flyer proposals' })).toHaveAttribute(
+      'href',
+      '/master-data-management/flyer-spec-proposals',
+    );
+  });
+
+  it('asks for the batch for somebody who holds it', () => {
     setQuery({ data: countedBatch([MIXED_GROUP]) });
 
     renderScreen();
 
-    expect(screen.getByTestId('fsp-readonly')).toBeInTheDocument();
-    expect(screen.queryByTestId('fsp-apply')).toBeNull();
+    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', { enabled: true });
+  });
+});
+
+describe('FlyerSpecReviewScreen, a tick on a row the batch no longer lets anybody tick', () => {
+  it('drops a ticked change row from the selection once an edit turns it unchanged', () => {
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    const { rerender } = renderScreen();
+
+    const changeRow = screen.getByText('Changes 750 mm to 770 mm').closest('tr') as HTMLElement;
+    fireEvent.click(within(changeRow).getByLabelText('Select row'));
+    expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent(
+      '2 ticked, 1 replacing a value the master holds',
+    );
+
+    // The refetch after a PATCH: the same batch, the row now `unchanged`.
+    const edited: FlyerSpecProductGroup = {
+      ...MIXED_GROUP,
+      proposals: MIXED_GROUP.proposals.map((row) =>
+        row.id === 'p-change'
+          ? { ...row, kind: 'unchanged' as const, value: 750, edited: true }
+          : row,
+      ),
+    };
+    setQuery({ data: countedBatch([edited]) });
+    rerender(<FlyerSpecReviewScreen readingId="r-1" />);
+
+    expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent('1 ticked');
+    expect(screen.getByTestId('fsp-selection-count')).not.toHaveTextContent('replacing');
+
+    fireEvent.click(screen.getByTestId('fsp-apply'));
+    expect(apply.mutate).toHaveBeenCalledWith(['p-new'], expect.anything());
+  });
+
+  it('drops a ticked row the batch no longer holds', () => {
+    setQuery({ data: countedBatch([MIXED_GROUP, SECOND_GROUP]) });
+
+    const { rerender } = renderScreen();
+
+    expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent('2 ticked');
+
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+    rerender(<FlyerSpecReviewScreen readingId="r-1" />);
+
+    expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent('1 ticked');
   });
 });
 
@@ -675,6 +737,25 @@ describe('FlyerSpecReviewScreen, the search box (AC-G.5)', () => {
     expect(screen.getByTestId('fsp-search-empty')).toHaveTextContent(
       'Ticked rows are still ticked',
     );
+  });
+
+  it('forgets the search once the batch is down to one product, so the last product is not hidden behind a box that is gone', () => {
+    setQuery({ data: countedBatch([MIXED_GROUP, SECOND_GROUP]) });
+
+    const { rerender } = renderScreen();
+
+    fireEvent.change(screen.getByTestId('fsp-search'), {
+      target: { value: 'zzz-nothing' },
+    });
+    expect(screen.getByTestId('fsp-search-empty')).toBeInTheDocument();
+
+    // Every row of the second product dismissed: the refetch answers one group.
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+    rerender(<FlyerSpecReviewScreen readingId="r-1" />);
+
+    expect(screen.queryByTestId('fsp-search')).toBeNull();
+    expect(screen.queryByTestId('fsp-search-empty')).toBeNull();
+    expect(screen.getByText('SRTWC8066')).toBeInTheDocument();
   });
 });
 
@@ -892,6 +973,77 @@ describe('FlyerSpecReviewScreen, the row acts reach the hooks (AC-F.3, AC-G.4)',
       expect.arrayContaining(['p-new', 'p-added']),
       expect.anything(),
     );
+  });
+
+  it('counts a just-added conflict row as a replacement, so Apply asks before overwriting a person', async () => {
+    useApplicableSpecKeysQuery.mockReturnValue({
+      data: {
+        code: 'SRTWC8066',
+        keys: [
+          {
+            spec_key: 'seat_material_2',
+            label: 'Seat ring material',
+            data_type: 'text',
+            unit: null,
+            allowed_values: [],
+            synonyms: {},
+            applicable: true,
+            held: true,
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    const addedConflict = proposalRow({
+      id: 'p-added-conflict',
+      spec_key: 'seat_material_2',
+      label: 'Seat ring material',
+      kind: 'conflict',
+      value: 'pp',
+      stored_value: 'uf',
+      stored_source: 'human',
+      origin: 'manual',
+      edited: true,
+    });
+    // The real hook writes the returned row into the cached batch before the
+    // call resolves (useAddFlyerSpecProposalRow); the mock does the same by
+    // handing the screen the batch with the row in it on its next render.
+    addRow.mutateAsync = vi.fn().mockImplementation(async () => {
+      setQuery({
+        data: countedBatch([
+          { ...MIXED_GROUP, proposals: [...MIXED_GROUP.proposals, addedConflict] },
+        ]),
+      });
+      return addedConflict;
+    });
+    useAddFlyerSpecProposalRow.mockReturnValue(addRow);
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    renderScreen();
+
+    fireEvent.click(screen.getByText('Add specification'));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(
+      within(dialog).getByRole('combobox', { name: /specification/i }),
+    );
+    fireEvent.click(screen.getByText('Seat ring material'));
+    fireEvent.change(within(dialog).getByLabelText('Seat ring material'), {
+      target: { value: 'pp' },
+    });
+    fireEvent.click(screen.getByTestId('fsp-add-row-submit'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent(
+        '2 ticked, 1 replacing a value the master holds',
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId('fsp-apply'));
+
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(
+      'Replace 1 master value, 1 of them set by a person?',
+    );
+    expect(apply.mutate).not.toHaveBeenCalled();
   });
 
   it('offers neither act to a reader who may not write the master', () => {

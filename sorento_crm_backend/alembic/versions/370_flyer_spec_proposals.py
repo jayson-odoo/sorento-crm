@@ -59,14 +59,18 @@ def _add_constraint(table: str, name: str, clause: str) -> None:
     """ADD CONSTRAINT, skipped when it is already there.
 
     Postgres has no `ADD CONSTRAINT IF NOT EXISTS`, so the catalog is probed - the
-    same shape migration 316 uses for this module's other cross-schema keys.
+    same shape migration 316 uses for this module's other cross-schema keys, scoped
+    to THIS table: `pg_constraint` is cluster-wide, and a same-named constraint on
+    the same table in another schema (a scratch copy of the database, say) must not
+    count as this one being present.
     """
     op.execute(
         f"""
         DO $$
         BEGIN
             IF NOT EXISTS (
-                SELECT 1 FROM pg_constraint WHERE conname = '{name}'
+                SELECT 1 FROM pg_constraint
+                WHERE conname = '{name}' AND conrelid = '{table}'::regclass
             ) THEN
                 ALTER TABLE {table} ADD CONSTRAINT {name} {clause};
             END IF;

@@ -23,20 +23,26 @@ vi.mock('../services/flyerSpecProposalService', () => ({
   getFlyerSpecProposals: vi.fn(),
   proposeFlyerSpecs: vi.fn(),
   applyFlyerSpecProposals: vi.fn(),
+  addFlyerSpecProposalRow: vi.fn(),
+  editFlyerSpecProposal: vi.fn(),
+  dismissFlyerSpecProposal: vi.fn(),
 }));
 
 import { toast } from 'sonner';
 import {
+  addFlyerSpecProposalRow,
   applyFlyerSpecProposals,
   getFlyerSpecProposals,
   listFlyerSpecBatches,
   proposeFlyerSpecs,
   type FlyerSpecBatch,
+  type FlyerSpecProposal,
   type FlyerSpecProposals,
 } from '../services/flyerSpecProposalService';
 import {
   FLYER_SPEC_BATCHES_QUERY_KEY,
   FLYER_SPEC_PROPOSALS_QUERY_KEY,
+  useAddFlyerSpecProposalRow,
   useApplyFlyerSpecProposals,
   useFlyerSpecBatchesQuery,
   useFlyerSpecProposalsQuery,
@@ -47,6 +53,7 @@ const mockList = vi.mocked(listFlyerSpecBatches);
 const mockGet = vi.mocked(getFlyerSpecProposals);
 const mockPropose = vi.mocked(proposeFlyerSpecs);
 const mockApply = vi.mocked(applyFlyerSpecProposals);
+const mockAddRow = vi.mocked(addFlyerSpecProposalRow);
 
 function wrapperWith(client: QueryClient) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
@@ -296,5 +303,82 @@ describe('useApplyFlyerSpecProposals', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockApply).toHaveBeenCalledWith('r-1', ['p-1', 'p-2']);
+  });
+});
+
+describe('useAddFlyerSpecProposalRow, the cached batch (AC-G.1, AC-F.4)', () => {
+  const added: FlyerSpecProposal = {
+    id: 'p-added',
+    spec_key: 'seat_material',
+    label: 'Seat cover material',
+    data_type: 'text',
+    value: 'pp',
+    unit: null,
+    evidence: 'set during flyer review',
+    kind: 'conflict',
+    stored_value: 'uf',
+    stored_unit: null,
+    stored_source: 'human',
+    allowed_values: null,
+    origin: 'manual',
+    edited: true,
+    outcome: null,
+    applied_at: null,
+  };
+
+  it('puts the returned row into the cached batch under its product before the refetch answers', async () => {
+    mockAddRow.mockResolvedValue(added);
+    const client = freshClient();
+    client.setQueryData<FlyerSpecProposals>(
+      [FLYER_SPEC_PROPOSALS_QUERY_KEY, 'r-1'],
+      proposals({
+        groups: [
+          {
+            product_id: 'prod-1',
+            product_code: 'SRTWC8066',
+            product_name: 'WC',
+            pages: [1],
+            proposals: [],
+          },
+          {
+            product_id: 'prod-2',
+            product_code: 'SRTWC8067',
+            product_name: 'WC 2',
+            pages: [1],
+            proposals: [],
+          },
+        ],
+      }),
+    );
+    // Never answers, so what the cache holds after the mutation is what the
+    // hook itself put there and not a refetch's doing.
+    mockGet.mockReturnValue(new Promise(() => {}));
+
+    const { result } = renderHook(() => useAddFlyerSpecProposalRow('r-1'), {
+      wrapper: wrapperWith(client),
+    });
+
+    await result.current.mutateAsync({ product_id: 'prod-2', spec_key: 'seat_material', value: 'pp' });
+
+    const cached = client.getQueryData<FlyerSpecProposals>([FLYER_SPEC_PROPOSALS_QUERY_KEY, 'r-1']);
+    expect(cached?.groups[0].proposals).toEqual([]);
+    expect(cached?.groups[1].proposals).toEqual([added]);
+  });
+
+  it('still asks for the batch again, so the server-computed counts follow', async () => {
+    mockAddRow.mockResolvedValue(added);
+    const client = freshClient();
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    const { result } = renderHook(() => useAddFlyerSpecProposalRow('r-1'), {
+      wrapper: wrapperWith(client),
+    });
+
+    await result.current.mutateAsync({ product_id: 'prod-2', spec_key: 'seat_material', value: 'pp' });
+
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: [FLYER_SPEC_PROPOSALS_QUERY_KEY, 'r-1'],
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: [FLYER_SPEC_BATCHES_QUERY_KEY] });
   });
 });

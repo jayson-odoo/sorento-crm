@@ -47,20 +47,27 @@ export function SpecProposalSection({
   const canWriteMaster = useHasPermission(MASTER_DATA_EDIT);
   // The route wants the product-master permission too, so without it the request
   // can only come back 403. The section still renders, saying what it is.
-  const { data, isLoading } = useFlyerSpecProposalsQuery(readingId, {
-    enabled: canWriteMaster,
-  });
+  const { data, isLoading, isError, error, refetch } =
+    useFlyerSpecProposalsQuery(readingId, {
+      enabled: canWriteMaster,
+    });
   const propose = useProposeFlyerSpecs(readingId);
 
   const isRead = readingStatus === 'done';
-  const status = data?.status ?? 'none';
+  // `none` only once the server has SAID none. Before it answers, and when it
+  // refuses, the section must not read as "nobody has proposed from this
+  // flyer" with a live Propose button over it: the first is a flash of a
+  // claim nobody made, the second is an invitation to press a button that can
+  // only fail the same way.
+  const status = data?.status;
+  const settled = !isLoading && !isError && data !== undefined;
   const busy = propose.isPending || status === 'proposing';
 
   const action = canWriteMaster ? (
     <Button
       size="sm"
       variant={status === 'none' ? 'primary' : 'outline'}
-      disabled={!isRead || busy || isLoading}
+      disabled={!isRead || busy || !settled}
       title={isRead ? undefined : 'Read the flyer first'}
       onClick={() => propose.mutate()}
       data-testid="dk-fr-spec-propose"
@@ -89,7 +96,43 @@ export function SpecProposalSection({
         </Empty>
       )}
 
-      {canWriteMaster && status === 'none' && (
+      {canWriteMaster && isLoading && (
+        <div
+          className="flex items-center gap-3 rounded-lg border border-dashed px-4 py-6"
+          data-testid="dk-fr-spec-loading"
+        >
+          <Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            Checking whether this flyer has been read for specifications.
+          </p>
+        </div>
+      )}
+
+      {canWriteMaster && isError && (
+        <div
+          className="flex flex-col items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-3 text-sm text-destructive"
+          data-testid="dk-fr-spec-error"
+        >
+          <p className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <span>
+              {error instanceof Error && error.message
+                ? error.message
+                : 'Could not check whether this flyer has been read for specifications.'}
+            </span>
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            data-testid="dk-fr-spec-error-retry"
+          >
+            Try again
+          </Button>
+        </div>
+      )}
+
+      {canWriteMaster && settled && status === 'none' && (
         <Empty
           tone="neutral"
           title="This flyer has not been read for specifications"
@@ -99,7 +142,7 @@ export function SpecProposalSection({
         </Empty>
       )}
 
-      {canWriteMaster && status === 'proposing' && (
+      {canWriteMaster && !isError && status === 'proposing' && (
         <div
           className="flex items-center gap-3 rounded-lg border border-dashed px-4 py-6"
           data-testid="dk-fr-spec-proposing"
@@ -112,7 +155,7 @@ export function SpecProposalSection({
         </div>
       )}
 
-      {canWriteMaster && status === 'failed' && data && (
+      {canWriteMaster && !isError && status === 'failed' && data && (
         <div
           className="flex flex-col items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-3 text-sm text-destructive"
           data-testid="dk-fr-spec-failed"
@@ -136,7 +179,7 @@ export function SpecProposalSection({
         </div>
       )}
 
-      {canWriteMaster && status === 'proposed' && data && (
+      {canWriteMaster && !isError && status === 'proposed' && data && (
         <div
           className="flex flex-col gap-3 rounded-lg border border-border px-3 py-3"
           data-testid="dk-fr-spec-proposed"

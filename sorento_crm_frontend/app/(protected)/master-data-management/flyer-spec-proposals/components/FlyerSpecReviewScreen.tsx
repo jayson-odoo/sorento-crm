@@ -96,8 +96,13 @@ function pendingRows(batch: FlyerSpecProposals): FlyerSpecProposal[] {
 
 export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
   const canWriteMaster = useHasPermission(MASTER_DATA_EDIT);
-  const { data, isLoading, isError, error } =
-    useFlyerSpecProposalsQuery(readingId);
+  // The route wants the product-master permission as well as the dealer-kit
+  // slug, so without it the request can only come back 403: not fired, and the
+  // screen says why instead of showing the error the server would have sent.
+  const { data, isLoading, isError, error } = useFlyerSpecProposalsQuery(
+    readingId,
+    { enabled: canWriteMaster },
+  );
   const propose = useProposeFlyerSpecs(readingId);
   const apply = useApplyFlyerSpecProposals(readingId);
   const editValue = useEditFlyerSpecProposal(readingId);
@@ -144,6 +149,37 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
     }
     return index;
   }, [data]);
+
+  // A tick outlives the row it was put on. An in-place edit that turns a
+  // `change` into `unchanged`, a dismissal, an apply from another tab: each of
+  // them leaves the batch holding a row that is no longer tickable, or no row
+  // at all, under an id the selection still names. Left alone, the sticky bar
+  // counts it, Apply sends it and the server refuses it, and the box renders
+  // checked-and-disabled with nothing on it that unticks. So the selection is
+  // brought back to what the batch as it stands would let anybody tick.
+  useEffect(() => {
+    setSelected((previous) => {
+      const next = new Set(
+        [...previous].filter((id) => {
+          const row = rowsById.get(id);
+          return (
+            row !== undefined &&
+            row.outcome === null &&
+            BULK_SELECTABLE_KINDS.includes(row.kind)
+          );
+        }),
+      );
+      return next.size === previous.size ? previous : next;
+    });
+  }, [rowsById]);
+
+  const groupCount = data?.groups.length ?? 0;
+  // The search box only renders over more than one product. A filter typed
+  // while there were several, still applied once dismissals leave one, would
+  // hide that one behind a "nothing matches" line with no box to clear.
+  useEffect(() => {
+    if (groupCount <= 1) setSearch('');
+  }, [groupCount]);
 
   const selectedIds = useMemo(() => [...selected], [selected]);
   const replacing = selectedIds
@@ -217,6 +253,32 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
       },
     });
   };
+
+  if (!canWriteMaster) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Button variant="ghost" size="sm" className="-ms-2 w-fit" asChild>
+          <Link href="/master-data-management/flyer-spec-proposals">
+            <ArrowLeft className="size-4" />
+            All flyer proposals
+          </Link>
+        </Button>
+        <div
+          className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-10 text-center"
+          data-testid="fsp-readonly"
+        >
+          <ScanLine className="size-6 text-muted-foreground" />
+          <p className="text-sm font-medium text-foreground">
+            Reported only
+          </p>
+          <p className="max-w-md text-sm text-muted-foreground">
+            Reviewing what a flyer states needs the product master permission,
+            which your role does not have.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (isError) {
     return (
