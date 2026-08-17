@@ -75,8 +75,13 @@ import type {
   UnclassifiedDemandLine,
 } from '../types/summaryOrder.types';
 
-/** Phase-1 flag. Phase 2 sets this false and deletes the file. */
-export const USE_SUMMARY_ORDER_MOCKS = true;
+/**
+ * Phase-2: OFF. Every function below is unreachable from a screen; the service
+ * calls the real `/api/v1/scm/order-summary` routes instead. The fixtures stay
+ * because the vitest specs for the report, the drill, the decision sheet and the
+ * service's own mock branch are written against them.
+ */
+export const USE_SUMMARY_ORDER_MOCKS = false;
 
 /** How long the mock takes to "fetch", so the loading skeleton is actually visible. */
 const MOCK_LATENCY_MS = 400;

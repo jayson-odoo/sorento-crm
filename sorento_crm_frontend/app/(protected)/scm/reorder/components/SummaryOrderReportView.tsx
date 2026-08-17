@@ -673,6 +673,9 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
                 chosen_qty: input.chosen_qty,
                 supplier_code: input.supplier_code,
               },
+              // The row's FROZEN precision, so the confirmation states the same
+              // quantity that was accepted (AC-F12).
+              decimalPlaces: deciding.uom_decimal_places,
             },
             {
               // The sheet STAYS OPEN on both outcomes: a refusal has to be readable

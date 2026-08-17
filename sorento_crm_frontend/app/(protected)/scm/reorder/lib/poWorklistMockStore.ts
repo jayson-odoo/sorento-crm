@@ -39,8 +39,11 @@ import type {
   PoWorklistRow,
 } from '../types/poWorklist.types';
 
-/** Flip to false in Phase 2. The real branch in the service is already written. */
-export const USE_PO_WORKLIST_MOCKS = true;
+/**
+ * Phase-2: OFF. The service reads the real `/api/v1/scm/po-worklist` routes; the
+ * fixtures below stay as the data the vitest specs are written against.
+ */
+export const USE_PO_WORKLIST_MOCKS = false;
 
 /** How long the mock takes to "fetch", so the loading skeleton is actually visible. */
 const MOCK_LATENCY_MS = 400;

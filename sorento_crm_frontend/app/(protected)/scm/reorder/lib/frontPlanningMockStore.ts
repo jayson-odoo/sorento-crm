@@ -44,8 +44,15 @@
 import type { PlanGrain } from './planGrain';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
-/** Phase-1 flag. Phase 2 sets this false and deletes the file. */
-export const USE_FRONT_PLANNING_MOCKS = true;
+/**
+ * Phase-2: OFF. The run payload carries its own `decision_grain` /
+ * `front_planning_contract_version` and the recommendation rows their own
+ * `project_need` / `retail_need` / `unclassified_need` / `decisions_read_only`,
+ * so both decorators below are pass-throughs and the scenario switch no longer
+ * reaches a screen. The file survives because its fixtures are what the vitest
+ * specs assert against.
+ */
+export const USE_FRONT_PLANNING_MOCKS = false;
 
 export type FrontPlanningScenario =
   | 'product'

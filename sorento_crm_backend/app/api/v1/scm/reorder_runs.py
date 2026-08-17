@@ -18,7 +18,7 @@ from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment
-from app.models.scm import ReorderRecommendation
+from app.models.scm import ReorderRecommendation, ReorderRun
 from app.schemas.scm_reorder import (
     CreateReorderRunRequest,
     ReorderRunAccepted,
@@ -31,6 +31,7 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.dealer_kit import product_images
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.scm import cover_service
+from app.services.scm import plan_grain
 from app.services.scm import price_history_service
 from app.services.scm import (
     level_suggestion_service,
@@ -743,7 +744,14 @@ def list_recommendations(
     if budget is not None:
         funding_by_id = svc.allocate_run_budget(db, run_id, budget).status_by_id
 
-    data = [_row(r, funding_by_id) for r in rows]
+    # Whose decision this run's locations are (front planning 5.4). Under `product` the
+    # per-location view stays a read and drill view, and under a legacy run nothing is
+    # actionable at all - resolved ONCE for the page rather than per row, and sent so the
+    # screen can disable the control instead of letting the write fail with a 409.
+    run = db.get(ReorderRun, run_id)
+    read_only = (plan_grain.is_legacy_run(run)
+                 or plan_grain.decision_grain_of(run) != plan_grain.LOCATION_GRAIN)
+    data = [_row(r, funding_by_id, decisions_read_only=read_only) for r in rows]
     total_pages = max(1, (int(total) + limit - 1) // limit)
     return {"data": data,
             "pagination": {"page": page, "limit": limit, "total": int(total),
@@ -787,7 +795,8 @@ def explain_recommendation_net(
     return svc.explain_net(db, rec_id)
 
 
-def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
+def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
+         decisions_read_only: bool = False) -> dict:
     """Build a read-only recommendation row from stored columns + frozen ``inputs``.
 
     ``funding_by_id`` (M4) carries the live budget allocation → a buy row's
@@ -885,6 +894,16 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "incoming_spo": inp.get("on_order"),
         "outstanding_po": inp.get("po_ordered"),
         "outstanding_sales": inp.get("committed"),
+        # Front planning 5.3 / AC-F05: this location's demand, split by channel, beside
+        # the shared supply above - which stays single-valued and carries no channel.
+        # NULL on a run whose recommendations predate the contract; unclassified is shown
+        # and never sized into the order (AC-E06).
+        "project_need": inp.get("project_need"),
+        "retail_need": inp.get("retail_need"),
+        "unclassified_need": inp.get("unclassified_need"),
+        # True when the run is decided at Product grain, or is legacy. The row is still a
+        # read and drill row; only its decision controls are closed (AC-F02, AC-F09).
+        "decisions_read_only": decisions_read_only,
         # What master data says, beside what the plan computed. The buyer asked to see both:
         # where they disagree is where the master record needs updating.
         "master_reorder_level": inp.get("master_reorder_level"),

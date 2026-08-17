@@ -641,8 +641,39 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
 
     project_demand_line_count = Column(Integer, nullable=False, default=0)
     dealer_outstanding_line_count = Column(Integer, nullable=False, default=0)
+    # How many open SO lines carry no persisted demand class, so the exception can be
+    # opened rather than only counted. Sits beside its two siblings rather than inside
+    # `channel_calculation_basis`: it is a diagnostic of the open order book, computed on
+    # every run including a legacy one, not part of the channel arithmetic that a legacy
+    # run has none of.
+    unclassified_line_count = Column(Integer, nullable=False, default=0,
+                                     server_default=text("0"))
     # NULL when nothing is outstanding, which is not the same as 0 days outstanding.
     max_days_outstanding = Column(Integer, nullable=True)
+
+    # --- front planning: the channel breakdown of ONE product row (plan 5.3 / 6.4) ---
+    # Channel is analysis INSIDE the row, never row identity: the key stays
+    # (run_id, product_id) and stock / SPO / PO / reorder level remain single shared
+    # facts. All six are nullable because a run created before the contract has no
+    # breakdown at all, and a legacy NULL is a durable marker rather than a gap waiting
+    # to be backfilled (AC-F10).
+    #: Confirmed unplaced Buy on Project-class lines, summed across locations (AC-E04).
+    #: FIRM: Retail free-supply netting never reduces it.
+    project_buy_qty = Column(Numeric, nullable=True)
+    #: Normally netted Retail replenishment, summed across locations.
+    retail_replenishment_qty = Column(Numeric, nullable=True)
+    #: Demand whose SO carries no persisted class. Visible, and excluded from the
+    #: actionable suggestion until somebody classifies it (AC-E06).
+    unclassified_demand_qty = Column(Numeric, nullable=True)
+    #: Required only when `project_buy_qty > 0`; NULL says there is no firm Buy to date.
+    earliest_project_need_date = Column(Date, nullable=True)
+    #: The frozen arithmetic behind `suggested_qty`, plus the per-location facts it was
+    #: summed from, so the Locations drill reconciles without re-deriving anything.
+    channel_calculation_basis = Column(JSONB, nullable=True)
+    #: The product's base-UOM divisibility AS IT WAS when the run was calculated.
+    #: Chosen-quantity validation and the allocator rerun read THIS, never live UOM
+    #: master data, so a later UOM edit cannot change a frozen run (AC-F12).
+    uom_decimal_places = Column(SmallInteger, nullable=True)
 
     chosen_qty = Column(Numeric, nullable=True)
     chosen_supplier_id = Column(
@@ -679,6 +710,58 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
         CheckConstraint(
             "keyed_status IN ('not_keyed', 'keying', 'keyed')",
             name="ck_scm_order_summary_row_keyed_status",
+        ),
+        {"schema": "scm"},
+    )
+
+
+class OrderSummaryLocationAllocation(Base, CompanyScopedMixin):
+    """One location's share of a Product-grain chosen quantity (plan 5.4 / 6.4).
+
+    A product-grain decision is ONE quantity for the company, and a purchase order still
+    has to say where the stock lands. So the accepted quantity is replayed through the
+    existing `reorder_engine.allocate` against the run's frozen location inputs, in the
+    row's frozen UOM minor units, and the resulting decimal quantities are persisted here.
+
+    Narrow on purpose: this is persistence for the PO worklist, not a second allocator.
+    The children sum EXACTLY to the parent's `chosen_qty` because the allocator apportions
+    integer minor units - no rescaling formula is applied, and a re-decision REPLACES the
+    split rather than scaling the old one.
+
+    `reorder_recommendation_id` is nullable: a product-grain split has no single owning
+    recommendation row, and naming one would imply a location decision that was never made.
+    """
+
+    __tablename__ = "order_summary_location_allocation"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str,
+                server_default=text("gen_random_uuid()"))
+    order_summary_row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.order_summary_row.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    reorder_recommendation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.reorder_recommendation.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="CASCADE"), nullable=False
+    )
+    allocated_qty = Column(Numeric, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "uq_scm_order_summary_location_alloc",
+            "order_summary_row_id",
+            "warehouse_id",
+            unique=True,
+        ),
+        CheckConstraint(
+            "allocated_qty >= 0",
+            name="ck_scm_order_summary_location_alloc_qty",
         ),
         {"schema": "scm"},
     )

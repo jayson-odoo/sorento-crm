@@ -135,6 +135,18 @@ def _line(db, world, *, warehouse=None, qty=10, delivered=0, demand_class=None,
     )
 
 
+#: A (product, warehouse) with nothing counted has NO row, and must not grow one.
+#: `scm.committed_v` is a GROUP BY over the lines that count, so a set-aside project
+#: order, a superseded decision or a location the product was never ordered at simply
+#: produces no group - which is today's behaviour and exactly what AC-F07 pins when it
+#: says the view's "cardinality and join keys remain unchanged". Emitting a zero row per
+#: (product, warehouse) instead would add keys to `scm.net_position_v`, and every one of
+#: them would enter planning as a SKU with net 0. So absence READS as zero here rather
+#: than being asserted into existence; `.one()` would have tested the opposite rule.
+_EMPTY = {"committed": 0, "project_committed": 0, "retail_committed": 0,
+          "unclassified_committed": 0}
+
+
 def _row(db, world, warehouse=None) -> dict:
     wh = warehouse or world["own"]
     row = db.execute(
@@ -144,8 +156,8 @@ def _row(db, world, warehouse=None) -> dict:
             f"WHERE product_id = :p AND warehouse_id = :w"
         ),
         {"p": str(world["product"].id), "w": str(wh.id)},
-    ).mappings().one()
-    return dict(row)
+    ).mappings().one_or_none()
+    return dict(row) if row is not None else dict(_EMPTY)
 
 
 # --------------------------------------------------------------------------- #

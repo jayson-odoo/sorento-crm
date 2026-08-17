@@ -37,6 +37,7 @@ from app.schemas.scm_order_summary import (
     OrderSummaryDecisionIn,
     OrderSummaryDecisionOut,
     OrderSummaryDemandDrillOut,
+    OrderSummaryLocationsOut,
     OrderSummaryReportOut,
     OrderSummarySuppliersOut,
     PoWorklistOut,
@@ -87,7 +88,13 @@ def get_order_summary(
 )
 def get_order_summary_demand(
     product_code: str,
-    kind: str = Query(..., description="project or dealer"),
+    kind: str = Query(
+        ...,
+        description=(
+            "project, retail or unclassified. `dealer` is accepted as the legacy name of "
+            "retail."
+        ),
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -99,6 +106,31 @@ def get_order_summary_demand(
     computed.
     """
     return svc.demand_drill(db, product_code, kind=kind)
+
+
+@router.get(
+    "/order-summary/{product_code}/locations", response_model=OrderSummaryLocationsOut
+)
+def get_order_summary_locations(
+    product_code: str,
+    run_id: Optional[str] = Query(
+        None,
+        description=(
+            "Which plan's frozen locations to read. Omitted means the newest completed "
+            "plan. Opaque, and never rendered."
+        ),
+    ),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The member locations behind one product row (AC-F08).
+
+    Everything comes off the row's FROZEN basis, so the drill can only ever reconcile with
+    the figure it opened. Demand is split by channel; stock, incoming SPO, the PO book and
+    the reorder level are single shared facts of the product-location and appear once
+    (AC-F07). The chosen quantity's split back to locations sums exactly to it (AC-F12).
+    """
+    return svc.locations(db, product_code, run_id=run_id)
 
 
 @router.get(
@@ -131,6 +163,12 @@ def post_order_summary_decision(
     A quantity above the shortfall is valid and is not a warning state (AC-C2.7); the engine's
     figure stays beside it with the actor and the time, so a larger number is a decision on the
     record rather than an untraceable override (AC-C2.8).
+
+    Two refusals, and they are different statuses because they are fixed in different
+    places: 422 `chosen_qty_precision` when the quantity carries more fractional digits
+    than the row's frozen `uom_decimal_places` allows (retype it coarser), and 409 when the
+    run is decided at the other grain or predates the contract (decide where the run says,
+    or create a new plan).
     """
     return svc.record_decision(
         db,

@@ -381,10 +381,17 @@ def test_every_company_id_table_is_registered():
     # `_assert_reviewer_writable`), and the mixin cannot catch a SAME-company write
     # aimed at another request's person, which is exactly what those ownership checks
     # are for. Both are load-bearing; removing either is a real hole.
+    # Front planning Stage 2 adds 2 owned tables. `so_supply_decisions` is a fact about
+    # ONE company's project pipeline (the revision CS confirmed against a Project SO), and
+    # `order_summary_location_allocation` is a planning artefact for the same reason
+    # `reorder_recommendation` and `recommendation_override` beside it are: it is that
+    # company's decision, read by the PO worklist, and the mixin stamps the company at
+    # insert so a split written under one scope can never be read under another.
     #
     # The number is the union of both lineages at this merge: main's 67 plus the 41 the
-    # project-sales branch brought (which were audited table by table on that branch).
-    expected_owned = 108
+    # project-sales branch brought (which were audited table by table on that branch),
+    # plus the 2 front-planning Stage 2 tables above.
+    expected_owned = 110
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

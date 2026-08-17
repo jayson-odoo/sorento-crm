@@ -23,21 +23,55 @@ this repo has already shipped once.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 
+class OrderSummaryLocationAllocationOut(BaseModel):
+    """One location's share of a Product-grain chosen quantity (AC-F08).
+
+    The shares sum EXACTLY to `chosen_qty`: the allocator apportions integer minor units of
+    the row's frozen UOM precision, so there is no rescaling residue to explain away.
+    """
+
+    warehouse_code: Optional[str] = None
+    warehouse_name: Optional[str] = None
+    allocated_qty: float = 0.0
+
+
 class OrderSummaryRowOut(BaseModel):
-    """One product, network wide (AC-C2.1)."""
+    """One product, network wide (AC-C2.1).
+
+    Channel is analysis INSIDE this row (front planning 5.3): Project, Retail and
+    unclassified are separate demand readings, while stock, incoming, the PO book and the
+    reorder level stay single shared facts. Nothing here keys on channel.
+    """
 
     product_code: str
     product_name: Optional[str] = None
     uom: Optional[str] = None
 
+    # The run's stamp, repeated per row so a row is self-describing. NULL grain +
+    # `is_legacy` true is a run created before the front-planning contract: its channel
+    # fields below are NULL and are never inferred (AC-F10).
+    decision_grain: Optional[str] = None
+    is_legacy: bool = False
+
     on_hand: float = 0.0
     project_demand: float = 0.0
     dealer_outstanding: float = 0.0
+    # The same stored column under the name every screen uses (AC-E03).
+    retail_outstanding: float = 0.0
+
+    # Front planning. Every one of these is NULL on a legacy run.
+    project_buy_qty: Optional[float] = None
+    retail_replenishment_qty: Optional[float] = None
+    unclassified_demand_qty: Optional[float] = None
+    earliest_project_need_date: Optional[str] = None
+    uom_decimal_places: Optional[int] = None
+    channel_calculation_basis: Optional[Dict[str, Any]] = None
+    location_allocations: Optional[List[OrderSummaryLocationAllocationOut]] = None
     # Separate columns (AC-C2.2): only the on-order half can still be re-dated or cancelled.
     qty_on_order: float = 0.0
     qty_in_transit: float = 0.0
@@ -60,6 +94,10 @@ class OrderSummaryRowOut(BaseModel):
 
     project_demand_line_count: int = 0
     dealer_outstanding_line_count: int = 0
+    retail_outstanding_line_count: int = 0
+    # How many open SO lines carry no persisted demand class, so the exception can be
+    # opened rather than only counted (AC-E02).
+    unclassified_line_count: int = 0
     # NULL when nothing is outstanding, which is not the same fact as 0 days outstanding.
     max_days_outstanding: Optional[int] = None
 
@@ -68,6 +106,9 @@ class OrderSummaryReportOut(BaseModel):
     """The whole frozen report for one run (AC-C2.9)."""
 
     run_id: str
+    # The grain STAMPED on the run at creation, never the live policy setting (AC-F01).
+    decision_grain: Optional[str] = None
+    is_legacy: bool = False
     # Both are NULL for a run that froze no rows: inventing today's date would label a book
     # that was never built.
     as_of: Optional[str] = None
@@ -76,12 +117,19 @@ class OrderSummaryReportOut(BaseModel):
 
 
 class ProjectDemandLineOut(BaseModel):
-    """One contributing project line (AC-C2.3)."""
+    """One contributing project line (AC-C2.3 / AC-E07)."""
 
     project_name: str
     so_number: str
     qty: float
     required_date: Optional[str] = None
+    # The human line number and the decision this Buy came from, so Purchasing can trace
+    # it without a UUID crossing the wire. Both NULL on a line the AutoCount upload has
+    # not reconciled to a project line, and `decision_ref` NULL on one whose SO has no
+    # confirmed decision - it is counted through the sheet leg instead.
+    line_no: Optional[int] = None
+    warehouse_code: Optional[str] = None
+    decision_ref: Optional[str] = None
 
 
 class DealerDemandLineOut(BaseModel):
@@ -96,6 +144,19 @@ class DealerDemandLineOut(BaseModel):
     ordered_date: Optional[str] = None
 
 
+class UnclassifiedDemandLineOut(BaseModel):
+    """One SO line whose demand class is missing, shown as an exception (AC-E02)."""
+
+    customer_name: str
+    so_number: str
+    line_no: Optional[int] = None
+    qty: float
+    ordered_date: Optional[str] = None
+    # In the words the exception is recorded with, so the screen states the data-quality
+    # job rather than inventing a third channel.
+    exception: str
+
+
 class OrderSummaryDemandDrillOut(BaseModel):
     """What one aggregate opens to. SERVER-sorted, so the client never re-sorts."""
 
@@ -103,7 +164,11 @@ class OrderSummaryDemandDrillOut(BaseModel):
     kind: str
     total_qty: float
     project_lines: List[ProjectDemandLineOut] = Field(default_factory=list)
+    retail_lines: List[DealerDemandLineOut] = Field(default_factory=list)
+    # The same lines under the legacy name, so a caller written against the older payload
+    # keeps rendering.
     dealer_lines: List[DealerDemandLineOut] = Field(default_factory=list)
+    unclassified_lines: List[UnclassifiedDemandLineOut] = Field(default_factory=list)
 
 
 class SupplierCandidateOut(BaseModel):
@@ -151,6 +216,9 @@ class OrderSummaryDecisionIn(BaseModel):
     """
 
     run_id: str
+    # At most the row's FROZEN `uom_decimal_places` fractional digits (AC-F12). Finer is
+    # refused with 422 `chosen_qty_precision`; a write against the other grain or a legacy
+    # run is refused with 409.
     chosen_qty: float
     supplier_code: str
 
@@ -164,6 +232,45 @@ class OrderSummaryDecisionOut(BaseModel):
     chosen_supplier_name: str
     decided_by: str
     decided_at: str
+    # The allocator rerun's split of the accepted quantity back to the frozen location
+    # inputs, summing exactly to `chosen_qty` (AC-F12). Empty on a use-pool decision of 0.
+    location_allocations: List[OrderSummaryLocationAllocationOut] = Field(
+        default_factory=list)
+
+
+class OrderSummaryLocationRowOut(BaseModel):
+    """One member location behind a product row (AC-F08).
+
+    Demand is split by channel; supply is NOT. Stock, incoming SPO, the PO book and the
+    reorder level are single shared facts of the product-location, counted once (AC-F07).
+    A NULL `reorder_level` means nobody has set one, which is not a level of zero.
+    """
+
+    warehouse_code: Optional[str] = None
+    warehouse_name: Optional[str] = None
+    project_need: Optional[float] = None
+    retail_need: Optional[float] = None
+    unclassified_need: Optional[float] = None
+    on_hand: float = 0.0
+    incoming_spo: float = 0.0
+    on_order_po: float = 0.0
+    reorder_level: Optional[float] = None
+    avg_daily_demand: Optional[float] = None
+    allocated_qty: Optional[float] = None
+
+
+class OrderSummaryLocationsOut(BaseModel):
+    """What a product row's Locations drill opens to."""
+
+    product_code: str
+    decision_grain: Optional[str] = None
+    is_legacy: bool = False
+    uom: Optional[str] = None
+    uom_decimal_places: Optional[int] = None
+    # Repeated from the row so the drill reconciles against the figure it opened.
+    suggested_qty: float = 0.0
+    chosen_qty: Optional[float] = None
+    locations: List[OrderSummaryLocationRowOut] = Field(default_factory=list)
 
 
 # =========================================================================== #
@@ -183,6 +290,17 @@ class PoWorklistRowOut(BaseModel):
     product_code: str
     product_name: Optional[str] = None
     uom: Optional[str] = None
+    # The run's grain, on the row as well as the response: which shape this row is
+    # (product + split, or location) is not something to infer from which fields are null.
+    decision_grain: Optional[str] = None
+    # The precision the quantity was DECIDED at, so it is keyed at that precision.
+    uom_decimal_places: Optional[int] = None
+    # A LOCATION-grain row names its location; a PRODUCT-grain row names none and carries
+    # its split instead. Never both: a row with both would invite keying the same units
+    # twice (AC-F09).
+    warehouse_code: Optional[str] = None
+    warehouse_name: Optional[str] = None
+    location_allocations: Optional[List[OrderSummaryLocationAllocationOut]] = None
 
     # Zero is the use-pool decision: no purchase order is needed (AC-E2.5).
     chosen_qty: float
@@ -209,6 +327,9 @@ class PoWorklistRowOut(BaseModel):
 class PoWorklistOut(BaseModel):
     run_id: str
     as_of: Optional[str] = None
+    # The worklist reads ONE grain, the run's own (AC-F09). NULL on a legacy run, which
+    # has no actionable grain and therefore no rows.
+    decision_grain: Optional[str] = None
     rows: List[PoWorklistRowOut] = Field(default_factory=list)
 
 

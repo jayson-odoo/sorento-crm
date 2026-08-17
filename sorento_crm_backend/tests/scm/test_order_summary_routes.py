@@ -32,6 +32,8 @@ from app.models.user import (
     UserRolePermission,
 )
 from app.services.scm import summary_order_service as svc
+from app.services.scm.demand import ORDER_INQUIRY_ORIGIN
+from app.services.scm.demand_class import class_of
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 from tests.scm.conftest import requires_pg, scm_app  # noqa: F401  (fixture)
 
@@ -177,7 +179,15 @@ def chain(scm_app):  # noqa: F811
     db.flush()
     so = SalesOrder(
         id=_u(), so_number=_code("SO")[:50], customer_id=cust.id, status="open",
-        order_type="project", order_date=_today() - timedelta(days=3),
+        # Classified the way every stamp point classifies one (front planning 5.2): the
+        # persisted `demand_class` is what the split and the demand drill read, and a
+        # fixture that set only the source order type would be testing a row the importer
+        # cannot produce. Inquiry-created because project demand reaches the plan ONLY
+        # through the Order Inquiry (S13b) - without the origin this line would be set
+        # aside and the dated shortfall below would not exist.
+        order_type="project", demand_class=class_of("project"),
+        demand_origin=ORDER_INQUIRY_ORIGIN,
+        order_date=_today() - timedelta(days=3),
     )
     db.add(so)
     db.flush()

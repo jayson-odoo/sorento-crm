@@ -283,3 +283,80 @@ passed for `units-of-measure` + `user-management/settings`.
 
 FE mocks swapped off and deleted: `uomDecimalPlacesMockStore.ts`, `planGrainMockStore.ts`.
 The SCM plan mocks (`USE_FRONT_PLANNING_MOCKS`, summary / PO worklist) stay ON for BE-3/BE-4.
+
+### 4.3 S2-BE-3 (channel read model) and S2-BE-4 (product grain) - Phase 2 green, 2026-08-17
+
+Migration `376_scm_channel_read_model` chained from `373_merge_scm_stage0_1a`;
+`alembic heads` reports exactly one head, `376_scm_channel_read_model`.
+
+**Test counts (Postgres, prod-copy database).** `test_summary_order_service` 52 passed,
+`test_order_summary_routes` 17 passed, `test_product_grain_summary` 31 passed,
+`test_channel_read_model` 12 passed; the whole neighbour set
+(`+ test_plan_grain_policy test_m4_decisions test_m3_engine
+test_committed_v_migration_chain test_m0_view_correctness test_demand_reads_the_decision
+test_demand_source_split`) 192 passed, 1 xfailed. Tripwires
+`test_company_scope test_schema_uuid_id_principle test_alembic_revision_ids` 38 passed.
+
+**Why five worklist tests went red, and what the fix was.** Not the worklist. `_so` in
+`test_summary_order_service` now stamps `demand_class` the way the import does, and S13b
+(`demand.is_plan_demand_order`, unchanged here) counts project-class demand ONLY where the
+Order Inquiry created the order. So a `demand_class='project'` fixture with no
+`demand_origin` is set aside from the coverage timeline, the frozen `shortfall` /
+`shortfall_at` became 0 / NULL, and every assertion that depended on a DATED shortfall
+(need-by, place-by, late, late-first ordering, the frozen dated position) lost its input.
+The five tests now pass `from_inquiry=True`, which is what a project order that reaches the
+plan actually looks like; the report's own split is unaffected either way because the
+aggregates read the class, not the origin. Same fix in the `test_order_summary_routes`
+chain fixture, which additionally needed the class stamped so the re-based demand drill
+(`demand_class`, not `order_type`) returns the project line again. No implementation was
+weakened back to `order_type`.
+
+**Owned-table count bumped 108 -> 110** in `tests/test_company_scope.py`, deliberately, for
+`projects.so_supply_decisions` and `scm.order_summary_location_allocation`. Both carry
+`CompanyScopedMixin` (owned, not shared): a decision is one company's project pipeline, and
+a location split is a planning artefact of the same kind as the `reorder_recommendation` /
+`recommendation_override` rows beside it, loaded by the PO worklist.
+
+**FE swap done.** `USE_FRONT_PLANNING_MOCKS`, `USE_SUMMARY_ORDER_MOCKS` and
+`USE_PO_WORKLIST_MOCKS` are all false, so every Stage-2 surface reads the real routes and
+`withRunGrain` / `withChannelNeeds` are pass-throughs. **The three mock stores are KEPT, not
+deleted** (a deliberate departure from their own "Phase 2 deletes this file" header): their
+fixtures are what five vitest specs assert against - `SummaryOrderReportView`,
+`DemandDrillPopover`, `OrderDecisionSheet`, `orderImpact` and `summaryOrderService`'s own
+mock-branch spec - which is the "unless they are reused by tests" case in CLAUDE.md. The
+`?plan_mock=` scenario switch no longer reaches a screen.
+
+The AC-F12 toast nit from 4.1 is fixed: `useRecordOrderDecision` renders the quantity with
+`fmtQty` at the row's frozen `uom_decimal_places`, passed as a mutation variable
+(`decimalPlaces`) because the decision response carries no precision of its own. An accepted
+`2.75 kg` previously toasted as "3".
+
+FE checks: `tsc --noEmit` 28 errors, all in pre-existing `.test.ts(x)` files (unchanged
+baseline, none in `scm/reorder`); `vitest run "app/(protected)/scm/reorder"` 70 files /
+1030 tests passed; `eslint app/(protected)/scm/reorder` 3 errors, all in files this branch
+does not touch.
+
+**Two neighbour regressions LEFT OPEN, for a plan decision (not fixed here).** Measured by
+running the whole `tests/scm` directory on this tree and on `HEAD` in a throwaway worktree:
+base 94 failed / 1540 passed, branch 57 failed / 1578 passed, and exactly two failures are
+new -
+
+* `test_pool_netting_parity.py::test_a_shared_pool_covers_its_bins_so_nothing_is_bought`
+* `test_demand_breakdown.py::test_a_pooled_covered_row_lists_the_pool_its_own_figure_came_from`
+
+Both are one cause. `_compute_cell` takes `project_need = row["project_committed"]` and adds
+it to the order AFTER netting, bypassing the trigger (AC-E05). But `committed_v`'s
+`project_committed` is the SUM of both project legs, so the SHEET leg - a
+`demand_origin = 'scm_order_inquiry'` order with no active decision - is now treated as firm
+Buy as well. The result is a purchase for a SKU whose shared pool already covers the demand
+(`project buy: 67 confirmed unplaced Buy in this pool`, 4,397 in the pool), and a `covered`
+row that now reads `buy`. AC-E04 defines Project need as **confirmed** unplaced Buy read
+through `projects.order_inquiry_rows`, and AC-E05's bypass is worded for "confirmed unplaced
+Project Buy" - the sheet leg is a project-class demand READING, which ordinary netting is
+supposed to see. Resolving it means separating the legs in the read model (a fifth
+`committed_v` column, or `project_confirmed` + `project_sheet` in place of one column) and
+feeding only the confirmed leg past the trigger, which changes what `test_channel_read_model`
+pins and is a contract call rather than a fixture fix. Everything else in the 57 fails
+identically at `HEAD` (six `test_policy_config` and one `test_po_history_import` failure are
+prod-copy data - a `reorder_policies.policy_type = 'reorder_level'` row outside the response
+literal; the `test_m8_slice_e` and remaining parity failures likewise pre-date the branch).

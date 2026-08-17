@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { fmtInt } from '../../lib/format';
+import { fmtQty } from '../lib/qtyPrecision';
 import {
   getOrderSummary,
   getOrderSummaryDemand,
@@ -99,6 +99,12 @@ export function useOrderSummarySuppliers(productCode: string | null, enabled: bo
  *
  * A quantity above the shortfall is a normal decision, so the success toast
  * states what was recorded and never cautions about the size of it.
+ *
+ * The toast renders the quantity at the ROW'S frozen `uom_decimal_places`
+ * (AC-F12), which is why the caller passes it: an integer format read back an
+ * accepted `2.75 kg` as "3", so the confirmation disagreed with the decision it
+ * was confirming. The response carries no precision of its own - the frozen one
+ * belongs to the row the sheet was opened on.
  */
 export function useRecordOrderDecision(q: OrderSummaryQuery = {}) {
   const qc = useQueryClient();
@@ -109,14 +115,18 @@ export function useRecordOrderDecision(q: OrderSummaryQuery = {}) {
     }: {
       productCode: string;
       input: OrderSummaryDecisionInput;
+      decimalPlaces?: number | null;
     }) => recordOrderDecision(productCode, input),
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
       void qc.invalidateQueries({ queryKey: orderSummaryKey(q) });
       // The chosen quantity re-splits across locations, so the drill that shows the
       // split has to be re-read or it keeps describing the previous decision.
       void qc.invalidateQueries({ queryKey: ['scm', 'reorder', 'order-summary-locations'] });
       toast.success(
-        `${result.product_code} - ordering ${fmtInt(result.chosen_qty)} from ${result.chosen_supplier_name}`,
+        `${result.product_code} - ordering ${fmtQty(
+          result.chosen_qty,
+          variables.decimalPlaces ?? 0,
+        )} from ${result.chosen_supplier_name}`,
       );
     },
     onError: (e: Error) => toast.error(e.message),

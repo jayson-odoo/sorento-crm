@@ -45,8 +45,9 @@ def _normalize(sql: str) -> str:
 
 @requires_pg
 def test_migration_bodies_are_frozen_not_imported():
-    """Neither view migration may import the live SQL - that import IS the outage."""
-    for name in ("340_scm_committed_reads_the_decision", "346_scm_demand_origin_split"):
+    """No view migration may import the live SQL - that import IS the outage."""
+    for name in ("340_scm_committed_reads_the_decision", "346_scm_demand_origin_split",
+                 "376_scm_channel_read_model"):
         source = (_VERSIONS / f"{name}.py").read_text()
         assert "from app.services" not in source, (
             f"{name} imports live application code; freeze the SQL in the migration "
@@ -57,12 +58,25 @@ def test_migration_bodies_are_frozen_not_imported():
 @requires_pg
 def test_newest_view_migration_matches_the_live_body():
     """Edit COMMITTED_V_SQL -> this goes red -> write a NEW migration with the new body."""
-    m346 = _load("346_scm_demand_origin_split")
-    assert _normalize(m346._AS_OF_346) == _normalize(COMMITTED_V_SQL), (
-        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 346; "
-        "add a new migration that freezes the new body (346's pattern), so a from-zero "
+    m376 = _load("376_scm_channel_read_model")
+    assert _normalize(m376._AS_OF_376) == _normalize(COMMITTED_V_SQL), (
+        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 376; "
+        "add a new migration that freezes the new body (376's pattern), so a from-zero "
         "replay stays true to history."
     )
+
+
+@requires_pg
+def test_346_still_freezes_the_body_it_shipped_with():
+    """A superseded freeze is history and must stay verbatim.
+
+    346's body is what a database at that revision holds; editing it to match today's rule
+    would change the replay without changing any existing database, which is the same
+    mistake in the other direction from importing live code.
+    """
+    m346 = _load("346_scm_demand_origin_split")
+    assert "demand_origin = 'scm_order_inquiry'" in m346._AS_OF_346
+    assert "project_committed" not in m346._AS_OF_346
 
 
 @requires_pg
@@ -73,6 +87,11 @@ def test_replaying_340_then_346_on_a_339_shaped_schema():
         # blank_session built today's model schema; put it back to the world as
         # migration 339 left it: the column 346 adds must not exist yet.
         db.execute(text("ALTER TABLE sales_orders DROP COLUMN IF EXISTS demand_origin"))
+        # `scm` is schema-qualified in the view DDL, so the replay lands on the REAL view
+        # (inside this rolled-back transaction). It has since grown the channel columns,
+        # and Postgres refuses a CREATE OR REPLACE that DROPS columns - so the world 339
+        # left needs the view genuinely absent, not merely out of date.
+        db.execute(text("DROP VIEW IF EXISTS scm.committed_v CASCADE"))
 
         conn = db.connection()
         ops = Operations(MigrationContext.configure(conn))

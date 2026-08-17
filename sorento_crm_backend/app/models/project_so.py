@@ -30,6 +30,7 @@ import uuid
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -635,6 +636,86 @@ class SOAmendment(Base, CompanyScopedMixin):
     )
 
 
+# ------------------------------------------------------------- atomic supply decision
+
+DECISION_ACTIVE = "active"
+DECISION_SUPERSEDED = "superseded"
+DECISION_CHALLENGED = "challenged"
+
+
+class SOSupplyDecision(Base, CompanyScopedMixin):
+    """One atomic CS supply decision for a whole Project SO (front planning 6.2).
+
+    Confirmation is at SO level, never per line (plan 3.1), so this row IS the decision:
+    every line's Reserve / Borrow / timely SPO cover / Buy composition is frozen in
+    ``line_snapshots``, the normalized components stay on ``so_line_allocations``, and the
+    Buy residual reaches purchasing as ``order_inquiry_rows`` carrying this row's id.
+
+    Exactly one revision is ``active`` per Project SO, enforced by a partial unique index
+    rather than by remembering to check: SCM reads "is this SO decided" as the existence of
+    that row, and two active revisions would count one requirement twice.
+
+    Stage 2 creates the table and READS it (`scm.committed_v`); Stage 1C owns the atomic
+    confirmation that writes it. Nothing in SCM writes it.
+    """
+
+    __tablename__ = "so_supply_decisions"
+    __audit_entity_type__ = "project_so_supply_decisions"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str,
+                server_default=text("gen_random_uuid()"))
+    project_sales_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.sales_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: 1-based per Project SO. The human reference on a Buy row ("Rev 2").
+    revision_no = Column(Integer, nullable=False)
+    state = Column(String(16), nullable=False, server_default=DECISION_ACTIVE)
+    #: The source document/version the decision was taken against.
+    source_revision = Column(String(64), nullable=True)
+    #: One small object per included line (plan 6.2): line number, product, location,
+    #: required date, open qty, timely SPO cover and its references, Reserve, Borrow, Buy,
+    #: each component's deterministic reason string, lifecycle warning and required reason.
+    line_snapshots = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"),
+                            default=list)
+    confirmed_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"),
+                          nullable=True)
+    confirmed_at = Column(DateTime(timezone=False), server_default=func.now(),
+                          nullable=False)
+    supersedes_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.so_supply_decisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    superseded_at = Column(DateTime(timezone=False), nullable=True)
+    superseded_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("project_sales_order_id", "revision_no",
+                         name="uq_projects_so_supply_decision_rev"),
+        CheckConstraint(
+            "state IN ('active', 'superseded', 'challenged')",
+            name="ck_projects_so_supply_decision_state",
+        ),
+        # The whole read model turns on "this SO has an active decision". Two of them
+        # would count one requirement twice, so the database refuses rather than the
+        # service remembering to.
+        Index(
+            "uq_projects_so_supply_decision_active",
+            "project_sales_order_id",
+            unique=True,
+            postgresql_where=text("state = 'active'"),
+        ),
+        Index("ix_projects_so_supply_decisions_company_state", "company_id", "state"),
+        {"schema": "projects"},
+    )
+
+
 # --------------------------------------------------------------------- order inquiry
 
 INQUIRY_RAISED = "raised"
@@ -727,6 +808,15 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     covered_by = Column(Text, nullable=True)
     note = Column(Text, nullable=True)
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
+    # Which confirmed CS decision this Buy residual came from (front planning 6.3).
+    # SCM counts Project demand as the qty on rows pointing at an ACTIVE decision, which
+    # is what stops a superseded revision's Buy being bought again. NULL on every row
+    # written before the atomic confirmation exists (Stage 1C) and on amendment verbs.
+    supply_decision_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.so_supply_decisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     # "Did purchasing act on this" (AC-I7) is only half answered by a state. A state
     # with nobody's name and no time on it cannot say when, or who to ask.
     actioned_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -736,6 +826,7 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_order_inquiry_rows_inquiry", "order_inquiry_id"),
         Index("ix_project_order_inquiry_rows_state", "state"),
+        Index("ix_project_order_inquiry_rows_supply_decision", "supply_decision_id"),
         {"schema": "projects"},
     )
 
