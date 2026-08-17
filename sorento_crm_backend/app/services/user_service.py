@@ -1601,6 +1601,11 @@ class AccessAgentService:
         members tagged with that brand plus members tagged with none of them. The
         returned dict carries ``brand_matched``, true only when a TAGGED member is in
         the pool, so n8n can tell a real brand routing from the serve-all fallback.
+
+        The two filters fall back ONE AXIS AT A TIME: a brand nobody serves drops the
+        brand and keeps whatever the segment left, and only a segment nobody serves
+        goes back to the whole team. Dropping straight to the team would hand a retail
+        conversation to a project-only member because of an unrelated brand.
         """
         from sqlalchemy import and_
         from sqlalchemy.orm import selectinload
@@ -1648,38 +1653,43 @@ class AccessAgentService:
         brands_by_member = (
             self._brand_codes_by_member([m.id for m in members]) if wanted_brand else {}
         )
-        # Opt-in scoping on both axes, ANDed. Neither filter can widen the pool, and
-        # an empty pool falls back to the full team on the legacy '' cursor - the
-        # rule market segments already established, applied to the brand as well.
+        # Opt-in scoping on both axes, ANDed, each dropped on its own when it empties
+        # the pool - the rule market segments already established, applied to the brand
+        # as well and composed rather than collapsed.
         segment_key = ""
         brand_matched = False
         pool = members
         if contact_segments:
-            pool = [
+            segment_pool = [
                 m
                 for m in pool
                 if not m.market_segments
                 or {str(s.code) for s in m.market_segments} & contact_segments
             ]
+            # Nobody serves this segment -> the whole team on the legacy '' cursor.
+            if segment_pool:
+                pool = segment_pool
+                segment_key = segment_key_for(contact_segments)
         if wanted_brand:
-            pool = [
+            brand_pool = [
                 m
                 for m in pool
                 if member_serves_brand(brands_by_member.get(str(m.id)), wanted_brand)
             ]
-            # A tagged member in the pool is what makes this a BRAND routing; a pool of
-            # untagged members is the serve-all fallback and rotates on the same cursor
-            # it always did, so switching n8n on cannot split an untagged team's
-            # rotation into one queue per brand.
-            brand_matched = any(brands_by_member.get(str(m.id)) for m in pool)
-        if pool and (contact_segments or wanted_brand):
-            members = pool
-            if contact_segments:
-                segment_key = segment_key_for(contact_segments)
-            if brand_matched:
-                segment_key = f"{segment_key}{brand_pool_key(wanted_brand)}"
-        else:
-            brand_matched = False
+            if brand_pool:
+                # The cursor splits whenever the brand actually NARROWED the pool, match
+                # or no match: a brand nobody carries still rotates over the untagged
+                # members alone, and writing that draw onto the shared cursor would park
+                # the unfiltered rotation on them and starve everybody else. A brand that
+                # excluded nobody keeps the cursor it always had.
+                if len(brand_pool) != len(pool):
+                    segment_key = f"{segment_key}{brand_pool_key(wanted_brand)}"
+                pool = brand_pool
+                # A tagged member in the pool is what makes this a BRAND routing; a pool
+                # of untagged members is the serve-all fallback, which n8n must be able
+                # to tell apart from the specialist actually taking it.
+                brand_matched = any(brands_by_member.get(str(m.id)) for m in pool)
+        members = pool
         user_ids = [_rr_user_id_key(m.user_id) for m in members]
         # Get or create cursor and lock it (scoped by segment_key)
         cursor = (
@@ -1774,24 +1784,28 @@ class AccessAgentService:
         brands_by_member = (
             self._brand_codes_by_member([m.id for m, _u in rows]) if wanted_brand else {}
         )
-        if contact_segments or wanted_brand:
-            filtered = [
+        # One axis at a time, exactly as get_next_assignee narrows the pool: an empty
+        # brand match drops the brand and keeps the segment rows, and only an empty
+        # segment match goes back to the full roster (never return nobody).
+        if contact_segments:
+            segment_rows = [
                 (member, user)
                 for member, user in rows
-                if (
-                    not contact_segments
-                    or not member.market_segments
-                    or {str(s.code) for s in member.market_segments} & contact_segments
-                )
-                and (
-                    not wanted_brand
-                    or member_serves_brand(
-                        brands_by_member.get(str(member.id)), wanted_brand
-                    )
+                if not member.market_segments
+                or {str(s.code) for s in member.market_segments} & contact_segments
+            ]
+            if segment_rows:
+                rows = segment_rows
+        if wanted_brand:
+            brand_rows = [
+                (member, user)
+                for member, user in rows
+                if member_serves_brand(
+                    brands_by_member.get(str(member.id)), wanted_brand
                 )
             ]
-            if filtered:  # empty -> fall back to the full roster (never return nobody)
-                rows = filtered
+            if brand_rows:
+                rows = brand_rows
         return [
             {
                 "user_id": user.id,

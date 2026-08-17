@@ -386,6 +386,48 @@ def test_an_untagged_member_passes_both_filters(svc, db):
     assert assignee["id"] == generalist
 
 
+@pytest.fixture
+def retail_cabana(db):
+    """A retail member tagged cabana, and a project member nobody would want."""
+    agent_id = _agent(db)
+    team_id = _team(db, "CS")
+    _link(db, agent_id, team_id, 1)
+    retail = _user(db, "Retail Cabana")
+    project = _user(db, "Project")
+    _member(db, team_id, retail, brands=["cabana"], segments=["zzt_retail"], sort_order=1)
+    _member(db, team_id, project, segments=["zzt_project"], sort_order=2)
+    return {"agent_id": agent_id, "team_id": team_id, "retail": retail, "project": project}
+
+
+def test_an_empty_brand_pool_falls_back_to_the_segment_pool_not_the_team(
+    svc, retail_cabana
+):
+    """One axis at a time: the brand is dropped, the segment is not.
+
+    A retail contact asking for a brand nobody carries must still stay inside the
+    retail pool - falling all the way back to the whole team hands a retail
+    conversation to a project-only member, which the segment filter exists to stop.
+    """
+    for _ in range(3):
+        assignee = svc.get_next_assignee(
+            retail_cabana["agent_id"],
+            retail_cabana["team_id"],
+            {"zzt_retail"},
+            brand_code="mocha",
+        )
+        assert assignee["id"] == retail_cabana["retail"]
+        assert assignee["brand_matched"] is False
+
+
+def test_the_roster_drops_the_same_one_axis(svc, retail_cabana):
+    """AC2-X1 - the roster is the pool, so it degrades the same way."""
+    rows = svc.list_active_team_members_detail(
+        retail_cabana["team_id"], {"zzt_retail"}, brand_code="mocha"
+    )
+
+    assert [r["user_id"] for r in rows] == [retail_cabana["retail"]]
+
+
 # ---------------------------------------------------------- cursor scoping
 
 
@@ -413,6 +455,7 @@ def test_each_brand_pool_rotates_on_its_own_cursor(svc, promo_team, db):
 
 
 def test_the_segment_and_brand_cursor_keys_compose(svc, db):
+    """Both axes narrowed, so both are in the key and the pool rotates on its own."""
     agent_id = _agent(db)
     team_id = _team(db, "CS")
     _link(db, agent_id, team_id, 1)
@@ -424,6 +467,15 @@ def test_the_segment_and_brand_cursor_keys_compose(svc, db):
         segments=["zzt_retail"],
         sort_order=1,
     )
+    _member(
+        db,
+        team_id,
+        _user(db, "Cabana Retail"),
+        brands=["cabana"],
+        segments=["zzt_retail"],
+        sort_order=2,
+    )
+    _member(db, team_id, _user(db, "Project"), segments=["zzt_project"], sort_order=3)
 
     svc.get_next_assignee(agent_id, team_id, {"zzt_retail"}, brand_code="mocha")
 
@@ -434,6 +486,34 @@ def test_the_segment_and_brand_cursor_keys_compose(svc, db):
         .all()
     ]
     assert keys == ["zzt_retail~b:mocha"]
+
+
+def test_a_brand_nobody_matches_still_gets_its_own_cursor(svc, promo_team, db):
+    """A pool the brand NARROWED rotates on its own cursor, matched or not.
+
+    'sorento' is tagged on nobody, so the pool is the untagged member alone - a real
+    narrowing. Writing that draw onto the legacy '' cursor parks the unbranded
+    rotation on Am every time, and Aqi is never drawn again.
+    """
+    people = promo_team["people"]
+    agent_id, team_id = promo_team["agent_id"], promo_team["team_id"]
+
+    unbranded = []
+    for _ in range(3):
+        unbranded.append(svc.get_next_assignee(agent_id, team_id)["id"])
+        assert (
+            svc.get_next_assignee(agent_id, team_id, brand_code="sorento")["id"]
+            == people["Am"]
+        )
+
+    assert unbranded == [people["Am"], people["Kia Yee"], people["Aqi"]]
+    keys = sorted(
+        c.segment_key
+        for c in db.query(AgentTeamRoundRobinCursor)
+        .filter(AgentTeamRoundRobinCursor.team_id == team_id)
+        .all()
+    )
+    assert keys == ["", "~b:sorento"]
 
 
 def test_a_team_nobody_tagged_keeps_the_legacy_cursor(svc, db):

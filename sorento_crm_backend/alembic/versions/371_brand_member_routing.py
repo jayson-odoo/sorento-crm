@@ -41,6 +41,9 @@ What this deliberately does NOT do:
   other set come out byte-identical.
 * delete the emptied teams. An admin may still be using them for something else, and
   an empty team is harmless once no ``agent_teams`` row points at it.
+* empty a team ANOTHER routing row still points at. Its members stay where they are
+  (with a warning naming the team): moving them would strip that other set's
+  round-robin pool to nobody, which is a bigger change than this collapse.
 * reverse the collapse, or the membership moves, on downgrade. Which brand a person
   came from is recoverable from ``team_member_brands``, but which TEAM they sat in
   is not, and the deleted suffixed rows are not reconstructible from the survivors.
@@ -78,6 +81,22 @@ LEGACY_CODES = {
 BRAND_PRIORITY = ["sorento", "mocha", "cabana"]
 
 
+def _normalised_code(code) -> str:
+    """``agent_teams.code`` is free text an admin typed, so every match on it is
+    case-insensitive: a row left behind as ``Marketing_Promotion_Mocha`` would keep
+    routing to a set the resolver no longer knows about."""
+    return str(code or "").strip().lower()
+
+
+def _brand_for_code(code):
+    """The brand a set code encodes, or None when it encodes none."""
+    return LEGACY_CODES.get(_normalised_code(code))
+
+
+def _is_base_code(code) -> bool:
+    return _normalised_code(code) == BASE_CODE
+
+
 def _create_team_member_brands() -> None:
     """The join table, in the shape ``team_member_market_segments`` already has."""
     op.execute(
@@ -111,23 +130,72 @@ def _tag(bind, member_id, brand: str) -> None:
     )
 
 
-def _move_members(bind, from_team_id, to_team_id, brand: str) -> None:
+def _number_unordered_members(bind, team_id) -> int:
+    """Give the target team's members a real ``sort_order``, and return the last one.
+
+    Production leaves ``sort_order`` NULL on most memberships, and the resolver orders
+    ``NULLS LAST`` - so a NULL incumbent is already at the BACK of the rotation. Taking
+    ``coalesce(max(sort_order), 0)`` as the append base would then be 0 and hand every
+    moved member a lower number than the people who were there, i.e. the front of the
+    queue and the next conversation. Numbering the NULLs first (in the order the
+    resolver already reads them, after any explicitly ordered member) keeps the
+    rotation as it is and leaves a base that really is the back.
+    """
+    highest = bind.execute(
+        sa_text(
+            "SELECT coalesce(max(sort_order), 0) FROM team_members WHERE team_id = :t"
+        ),
+        {"t": team_id},
+    ).scalar() or 0
+    unordered = bind.execute(
+        sa_text(
+            "SELECT id FROM team_members WHERE team_id = :t AND sort_order IS NULL "
+            "ORDER BY user_id"
+        ),
+        {"t": team_id},
+    ).all()
+    for offset, (member_id,) in enumerate(unordered, start=1):
+        bind.execute(
+            sa_text("UPDATE team_members SET sort_order = :s WHERE id = :i"),
+            {"s": highest + offset, "i": member_id},
+        )
+    return highest + len(unordered)
+
+
+def _move_members(bind, from_team_id, to_team_id, brand: str, row_id) -> None:
     """Move a suffixed tier's people into the surviving team, tagged with its brand.
 
     Appended to the BACK of the round-robin queue (``sort_order`` continues past the
     highest one already there), because joining a rotation should not hand the newcomer
     the next conversation. ``include_in_round_robin`` travels with them: somebody
     excluded in the Mocha team is excluded here too.
+
+    ``row_id`` is the ``agent_teams`` row being collapsed. If any OTHER routing row
+    still points at the same team, its people stay: emptying that team would silently
+    strip the other set's round-robin pool to nobody, which is a far bigger change than
+    the one this migration is making.
     """
     if str(from_team_id) == str(to_team_id):
         return
 
-    base = bind.execute(
+    shared_with = bind.execute(
         sa_text(
-            "SELECT coalesce(max(sort_order), 0) FROM team_members WHERE team_id = :t"
+            "SELECT count(*) FROM agent_teams WHERE team_id = :t AND id <> :i"
         ),
-        {"t": to_team_id},
+        {"t": from_team_id, "i": row_id},
     ).scalar() or 0
+    if shared_with:
+        logger.warning(
+            "brand-member routing: team %s is still used by another routing row, so "
+            "its members were left in place and NOT moved into team %s or tagged %r. "
+            "Move them by hand if they should serve that brand in the collapsed set.",
+            from_team_id,
+            to_team_id,
+            brand,
+        )
+        return
+
+    base = _number_unordered_members(bind, to_team_id)
 
     rows = bind.execute(
         sa_text(
@@ -193,7 +261,7 @@ def _collapse_promotion_sets(bind) -> None:
         sa_text(
             """
             SELECT DISTINCT agent_id, company_id FROM agent_teams
-            WHERE code = ANY(:codes)
+            WHERE lower(code) = ANY(:codes)
             """
         ),
         {"codes": list(LEGACY_CODES)},
@@ -205,7 +273,7 @@ def _collapse_promotion_sets(bind) -> None:
                 """
                 SELECT id, code, tier, team_id, policy_id
                 FROM agent_teams
-                WHERE agent_id = :a AND company_id = :c AND code = ANY(:codes)
+                WHERE agent_id = :a AND company_id = :c AND lower(code) = ANY(:codes)
                 """
             ),
             {
@@ -215,8 +283,8 @@ def _collapse_promotion_sets(bind) -> None:
             },
         ).mappings().all()
 
-        suffixed = [r for r in rows if r["code"] in LEGACY_CODES]
-        base_rows = [r for r in rows if r["code"] == BASE_CODE]
+        suffixed = [r for r in rows if _brand_for_code(r["code"])]
+        base_rows = [r for r in rows if _is_base_code(r["code"])]
 
         # One policy per code is an invariant (resolve_policy_id_for 409s otherwise),
         # so the collapsed set gets ONE: the _sorento set's, else the first non-null
@@ -237,7 +305,7 @@ def _collapse_promotion_sets(bind) -> None:
             bind.execute(
                 sa_text(
                     "UPDATE agent_teams SET policy_id = :p "
-                    "WHERE agent_id = :a AND company_id = :c AND code = :code "
+                    "WHERE agent_id = :a AND company_id = :c AND lower(code) = :code "
                     "AND policy_id IS DISTINCT FROM :p"
                 ),
                 {"p": policy_id, "a": agent_id, "c": company_id, "code": BASE_CODE},
@@ -247,7 +315,7 @@ def _collapse_promotion_sets(bind) -> None:
 def _pick_policy(suffixed, base_rows):
     for brand in BRAND_PRIORITY:
         for row in suffixed:
-            if LEGACY_CODES[row["code"]] == brand and row["policy_id"] is not None:
+            if _brand_for_code(row["code"]) == brand and row["policy_id"] is not None:
                 return row["policy_id"]
     for row in base_rows:
         if row["policy_id"] is not None:
@@ -263,7 +331,7 @@ def _first_by_brand_priority(rows):
     """
     for brand in BRAND_PRIORITY:
         for row in rows:
-            if LEGACY_CODES[row["code"]] == brand:
+            if _brand_for_code(row["code"]) == brand:
                 return row
     return None
 
@@ -282,7 +350,8 @@ def _collapse_tier(bind, agent_id, company_id, tier, tier_suffixed, tier_base) -
         winner = _first_by_brand_priority(tier_suffixed)
         if winner is None:
             return
-        winner_brand = LEGACY_CODES[winner["code"]]
+        # Every row here is a suffixed one, so the lookup is total.
+        winner_brand = LEGACY_CODES[_normalised_code(winner["code"])]
         bind.execute(
             sa_text("UPDATE agent_teams SET code = :code WHERE id = :i"),
             {"code": BASE_CODE, "i": winner["id"]},
@@ -308,7 +377,13 @@ def _collapse_tier(bind, agent_id, company_id, tier, tier_suffixed, tier_base) -
             _tag_existing_members(bind, survivor_team_id, winner_brand)
 
     for row in remaining:
-        _move_members(bind, row["team_id"], survivor_team_id, LEGACY_CODES[row["code"]])
+        _move_members(
+            bind,
+            row["team_id"],
+            survivor_team_id,
+            LEGACY_CODES[_normalised_code(row["code"])],
+            row["id"],
+        )
         bind.execute(sa_text("DELETE FROM agent_teams WHERE id = :i"), {"i": row["id"]})
 
 
@@ -324,7 +399,7 @@ def _rewrite_trackers(bind) -> None:
             sa_text(
                 "UPDATE conversation_sla_tracking "
                 "SET team_set_code = :base, brand_code = :b "
-                "WHERE team_set_code = :legacy"
+                "WHERE lower(team_set_code) = :legacy"
             ),
             {"base": BASE_CODE, "b": brand, "legacy": legacy_code},
         )
@@ -373,6 +448,22 @@ def downgrade():
     # each person sat in before is not recorded anywhere, and the deleted suffixed
     # rows cannot be rebuilt from the survivors. Going back means re-creating the
     # three sets by hand first.
+    bind = op.get_bind()
+    if bind.execute(sa_text("SELECT to_regclass('team_member_brands')")).scalar():
+        dropped = bind.execute(
+            sa_text("SELECT count(*) FROM team_member_brands")
+        ).scalar() or 0
+        if dropped:
+            # The tags are the ONLY record of who serves which brand, and re-running
+            # the upgrade will not bring them back: the collapse it derives them from
+            # has already happened. Name the size of the loss while it still exists.
+            logger.warning(
+                "brand-member routing downgrade: dropping %s member brand tag(s). "
+                "Who serves which brand is not recorded anywhere else and the upgrade "
+                "will not re-create them - export team_member_brands first if the "
+                "downgrade is not a mistake.",
+                dropped,
+            )
     op.execute("DROP TABLE IF EXISTS team_member_brands")
     op.execute(
         "ALTER TABLE conversation_sla_tracking DROP COLUMN IF EXISTS brand_code"

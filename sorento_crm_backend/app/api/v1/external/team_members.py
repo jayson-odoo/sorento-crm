@@ -106,19 +106,24 @@ async def get_team_members(
         "team_code": team_code,
         "tier": tier,
     }
-    resolved_team_id = _resolve_round_robin_team_id(
+    resolved = _resolve_round_robin_team_id(
         service,
         str(resolved_agent_id).strip() if resolved_agent_id else "",
         body,
         company_id=routing_company.company_id,
-    ).team_id
+    )
 
     # Market-segment filter. Unknown / untagged contact -> empty set -> no filter.
     contact_segments = MarketSegmentService(db).resolve_contact_segments(
         respond_io_id=contact_id, space_id=space_id, phone=contact_phone_number
     )
     # Brand narrows the same roster by the same rule next-assignee applies to the
-    # round-robin pool: tagged with it, or tagged with nothing.
+    # round-robin pool: tagged with it, or tagged with nothing. The explicit param
+    # wins, falling back to the brand a legacy suffixed team_code encodes - without
+    # that fallback an un-updated n8n gets the whole team here and the brand pool
+    # there, and the preferred_assignee_id it picks is one next-assignee never had.
     return service.list_active_team_members_detail(
-        resolved_team_id, contact_segments or None, brand_code=brand_code
+        resolved.team_id,
+        contact_segments or None,
+        brand_code=brand_code or resolved.brand_code,
     )

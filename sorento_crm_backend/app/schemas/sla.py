@@ -144,7 +144,7 @@ class ConversationSLATrackingCreate(BaseModel):
     agent_code: str  # resolved → agent_id FK in service
     team_set_code: str  # team set; (agent_code, team_set_code) → SLA policy
     # Optional routing inputs from n8n, both already resolved on its side. Blank /
-    # absent brand = unknown, which routes to the set's "all brands" row. A
+    # absent brand = unknown, which narrows nothing: the whole team round-robins. A
     # company_id that does not exist is ignored and the contact decides, because
     # routing must never break on a bad field.
     brand_code: Optional[str] = None

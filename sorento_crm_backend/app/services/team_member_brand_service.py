@@ -13,7 +13,6 @@ There is no catalog half here - brands are master data (``brands``), owned by
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -108,27 +107,6 @@ class TeamMemberBrandService:
         self.db.commit()
         return self._codes_for_member(member_id)
 
-    # ------------------------------------------------------------- reporting
-
-    def brand_codes_for_members(self, member_ids) -> dict[str, list[str]]:
-        """``{team_member_id: [codes]}`` for a whole roster, in one query.
-
-        Used by the access-agent detail listing, which renders a chip row per member
-        and would otherwise issue one query per person.
-        """
-        ids = [str(m) for m in (member_ids or [])]
-        if not ids:
-            return {}
-        rows = (
-            self.db.query(
-                team_member_brands.c.team_member_id, team_member_brands.c.brand_code
-            )
-            .filter(team_member_brands.c.team_member_id.in_(ids))
-            .all()
-        )
-        out: dict[str, set[str]] = {}
-        for member_id, code in rows:
-            normalised: Optional[str] = normalise_brand_code(code)
-            if normalised:
-                out.setdefault(str(member_id), set()).add(normalised)
-        return {k: sorted(v) for k, v in out.items()}
+    # The roster-wide read (``{member_id: {codes}}`` in one query) lives on
+    # ``AccessAgentService._brand_codes_by_member``, next to the round-robin pool it
+    # feeds. One copy: a second one here would be the version that goes stale.

@@ -209,7 +209,7 @@ async def set_team_member_market_segments(
     team_id: str,
     user_id: str,
     payload: MarketSegmentCodesUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.teams.edit")),
     db=Depends(get_db),
 ):
     """Replace the segments this member serves (empty = clear → serves all)."""
@@ -256,7 +256,7 @@ async def set_team_member_brands(
     team_id: str,
     user_id: str,
     payload: BrandCodesUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.teams.edit")),
     db=Depends(get_db),
 ):
     """Replace the brands this member serves (empty = clear → serves all)."""

@@ -430,6 +430,59 @@ def test_moved_members_land_after_the_existing_ones(db, todays_config):
     ) == [2, 3]
 
 
+def test_moved_members_land_behind_incumbents_with_no_sort_order(db):
+    """Production shape: nobody in the surviving team has a sort_order at all.
+
+    The resolver orders ``sort_order NULLS LAST``, so a NULL incumbent is ALREADY at
+    the back; appending past ``max(sort_order)`` = 0 would hand the newcomer 1 and put
+    them in FRONT of everybody, i.e. next in the rotation.
+    """
+    agent_id = _agent(db)
+    sorento_t1, mocha_t1 = _team(db, "S1"), _team(db, "M1")
+    am = _person(db, sorento_t1, "Am", sort_order=None)
+    zhi_yang = _person(db, sorento_t1, "Zhi Yang", sort_order=None)
+    kia_yee = _person(db, mocha_t1, "Kia Yee", sort_order=None)
+    _link(db, agent_id, f"{BASE}_sorento", sorento_t1, 1)
+    _link(db, agent_id, f"{BASE}_mocha", mocha_t1, 1)
+    db.flush()
+
+    _run_upgrade(db)
+
+    roster = _roster(db, sorento_t1)
+    incumbents = sorted([roster[am]["sort_order"], roster[zhi_yang]["sort_order"]])
+    assert incumbents == [1, 2]
+    assert roster[kia_yee]["sort_order"] > incumbents[-1]
+
+
+def test_a_team_another_routing_row_still_points_at_is_not_emptied(db, caplog):
+    """Moving those people would strip the OTHER set's pool to nobody.
+
+    The mocha tier-1 team is also the team of a completely different agent_teams row,
+    so its members stay where they are and the collapse says so.
+    """
+    agent_id = _agent(db)
+    sorento_t1, mocha_t1 = _team(db, "S1"), _team(db, "M1")
+    _person(db, sorento_t1, "Am", sort_order=1)
+    kia_yee = _person(db, mocha_t1, "Kia Yee", sort_order=1)
+    _link(db, agent_id, f"{BASE}_sorento", sorento_t1, 1)
+    _link(db, agent_id, f"{BASE}_mocha", mocha_t1, 1)
+    # The same team, used by another function entirely.
+    _link(db, agent_id, "marketing_product", mocha_t1, 1)
+    db.flush()
+
+    with caplog.at_level(logging.WARNING, logger="alembic.runtime.migration"):
+        _run_upgrade(db)
+
+    assert list(_roster(db, mocha_t1)) == [kia_yee]
+    assert _roster(db, mocha_t1)[kia_yee]["brands"] == []
+    assert kia_yee not in _roster(db, sorento_t1)
+    # The suffixed row still goes: the collapse is what it is, the people are not moved.
+    assert [r["code"] for r in _promotion_rows(db, agent_id)] == [BASE]
+    assert any(
+        "another routing row" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
 def test_the_round_robin_opt_out_survives_the_move(db):
     agent_id = _agent(db)
     sorento_t1, mocha_t1 = _team(db, "S1"), _team(db, "M1")
@@ -747,6 +800,43 @@ def test_open_trackers_are_rewritten_to_base_plus_brand(db, todays_config):
 # ------------------------------------------------------ re-runnable, downgrade
 
 
+def test_a_legacy_code_stored_in_another_case_is_still_collapsed(db):
+    """``code`` is free text an admin typed; the collapse must not miss a capital.
+
+    A row left behind under ``Marketing_Promotion_Mocha`` would keep routing to a set
+    the resolver no longer knows about, silently.
+    """
+    agent_id = _agent(db)
+    sorento_t1, mocha_t1 = _team(db, "S1"), _team(db, "M1")
+    _person(db, sorento_t1, "Am", sort_order=1)
+    kia_yee = _person(db, mocha_t1, "Kia Yee", sort_order=1)
+    _link(db, agent_id, f"{BASE}_sorento", sorento_t1, 1)
+    _link(db, agent_id, "Marketing_Promotion_MOCHA", mocha_t1, 1)
+    db.flush()
+
+    _run_upgrade(db)
+
+    rows = _promotion_rows(db, agent_id)
+    assert [r["code"] for r in rows] == [BASE]
+    assert str(rows[0]["team_id"]) == sorento_t1
+    assert _roster(db, sorento_t1)[kia_yee]["brands"] == ["mocha"]
+
+
+def test_a_tracker_carrying_a_legacy_code_in_another_case_is_rewritten(db, todays_config):
+    tracker = _tracker(db, "Marketing_Promotion_Cabana", todays_config["policy"])
+    db.flush()
+
+    _run_upgrade(db)
+
+    assert db.execute(
+        text(
+            "SELECT team_set_code, brand_code FROM conversation_sla_tracking "
+            "WHERE id = :i"
+        ),
+        {"i": tracker},
+    ).first() == (BASE, "cabana")
+
+
 def test_revision_id_fits_alembic_version_num(db):
     """``alembic_version.version_num`` is varchar(32)."""
     module = _load_migration()
@@ -763,6 +853,19 @@ def test_migration_is_rerunnable(db, todays_config):
 
     assert _promotion_rows(db, todays_config["agent_id"]) == rows
     assert _roster(db, todays_config["teams"]["sorento_t1"]) == roster
+
+
+def test_downgrade_names_how_many_tags_it_drops(db, todays_config, caplog):
+    """The tags are the only record of who serves which brand - say what is lost."""
+    _run_upgrade(db)
+
+    with caplog.at_level(logging.WARNING, logger="alembic.runtime.migration"):
+        _run_downgrade(db)
+
+    # Kia Yee (mocha) and Aqi (cabana) were tagged by the collapse.
+    assert any(
+        "2" in r.getMessage() and "tag" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
 
 
 def test_downgrade_drops_the_table_and_the_tracker_column(db, todays_config):

@@ -524,6 +524,72 @@ def test_team_members_without_a_brand_returns_everybody(seeded):
     )
 
 
+def test_team_members_reads_the_brand_off_a_legacy_suffixed_code(seeded):
+    """AC2-X1 / AC2-X3 - the old key narrows the roster exactly as it narrows the pool.
+
+    Without the suffix-derived brand the roster answers with everybody, and n8n then
+    offers a preferred_assignee_id that next-assignee (which DOES read the suffix)
+    would never have drawn.
+    """
+    db = seeded["db"]
+    hasni_id = str(uuid.uuid4())
+    db.add(
+        User(
+            id=hasni_id,
+            email=f"{unique_code('u').lower()}@zzt.test",
+            name="ZZT Hasni",
+            status="ACTIVE",
+        )
+    )
+    db.flush()
+    member_id = str(uuid.uuid4())
+    db.add(
+        TeamMember(
+            id=member_id,
+            team_id=seeded["teams"]["promotion"],
+            user_id=hasni_id,
+            sort_order=3,
+        )
+    )
+    db.flush()
+    db.execute(
+        team_member_brands.insert().values(team_member_id=member_id, brand_code="mocha")
+    )
+    db.flush()
+
+    r = seeded["client"].get(
+        "/api/v1/external/team-members",
+        params={
+            "agent_code": seeded["agent_code"],
+            "team_code": "marketing_promotion_cabana",
+            "tier": 1,
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    # Am (untagged, serves all) and Aqi (cabana) - never the mocha specialist.
+    assert sorted(m["user_id"] for m in r.json()) == sorted(
+        [seeded["people"]["Am"], seeded["people"]["Aqi"]]
+    )
+
+
+def test_team_members_lets_an_explicit_brand_beat_the_suffix(seeded):
+    """AC2-X3 - the explicit param wins here too, or the two endpoints disagree."""
+    r = seeded["client"].get(
+        "/api/v1/external/team-members",
+        params={
+            "agent_code": seeded["agent_code"],
+            "team_code": "marketing_promotion_cabana",
+            "tier": 1,
+            "brand_code": "mocha",
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    # Mocha, not cabana: only the untagged member serves it, so Aqi is out.
+    assert [m["user_id"] for m in r.json()] == [seeded["people"]["Am"]]
+
+
 def test_team_members_honours_the_company_override(seeded):
     """AC2-X1 - same company resolution as next-assignee, or the ids disagree."""
     r = seeded["client"].get(

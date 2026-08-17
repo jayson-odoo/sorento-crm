@@ -213,8 +213,11 @@ the brand, escalation still climbs the same set.
   market-segment filter (AND). Cursor is scoped per (segments, brand) so pools rotate
   independently; the legacy `''` cursor is untouched when no brand and no segments.
 - **AC2-R2** [BE][T] `get_escalation_assignee_for_tier(..., brand_code)` applies the same pool
-  rule at the target tier; called with the tracker's stored brand by both escalation routes, the
-  RR create branch and extension-notify (unchanged call sites from revision 1).
+  rule at the target tier; called with the tracker's stored brand by both escalation routes and
+  the RR create branch (unchanged call sites from revision 1). Extension-notify is deliberately
+  NOT brand-aware: it PEEKS each higher tier's next assignee without advancing the cursor and
+  narrows by neither brand nor market segment, so the tier above is told the deadline moved
+  whoever ends up taking it.
 - **AC2-R3** [BE][T] Headline cases hold: mocha -> Kia Yee (tagged member), sorento/unknown ->
   untagged members (Am / whole-team fallback), cabana -> Aqi.
 - **AC2-X1** [BE][T] External contract unchanged: next-assignee / team-members accept
