@@ -1717,6 +1717,13 @@ def test_delete_proposal_hard_deletes_a_pending_row_and_refreshes_counts(api, db
 
     assert response.status_code == 200, response.text
 
+    body = response.json()
+    assert body["id"] == str(batch.id)
+    assert body["reading_id"] == str(reading.id)
+    assert body["status"] == "proposed"
+    assert body["proposal_count"] == 1
+    assert body["new_count"] == 1
+
     db.expire_all()
     assert (
         db.query(ProductSpecFlyerProposal).filter_by(id=doomed.id).first() is None

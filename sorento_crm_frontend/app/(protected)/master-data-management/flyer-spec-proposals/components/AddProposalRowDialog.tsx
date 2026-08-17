@@ -67,7 +67,10 @@ export function AddProposalRowDialog({
   saving = false,
   onAdd,
 }: AddProposalRowDialogProps) {
-  const { data, isLoading } = useApplicableSpecKeysQuery(productCode, open);
+  const { data, isLoading, isError, refetch } = useApplicableSpecKeysQuery(
+    productCode,
+    open,
+  );
   const [picked, setPicked] = useState('');
   const [draft, setDraft] = useState('');
 
@@ -104,30 +107,50 @@ export function AddProposalRowDialog({
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="fsp-add-key">Specification</Label>
-            <SearchableSelect
-              id="fsp-add-key"
-              value={picked}
-              onChange={(next) => {
-                setPicked(next);
-                setDraft('');
-              }}
-              options={offered.map((entry) => ({
-                value: entry.spec_key,
-                label: entry.label || readable(entry.spec_key),
-              }))}
-              placeholder={
-                isLoading
-                  ? 'Loading specifications'
-                  : 'Search specifications'
-              }
-              emptyMessage={
-                isLoading
-                  ? 'Loading'
-                  : 'Every specification this product can carry is already in this batch.'
-              }
-              disabled={saving}
-              clearable
-            />
+            {isError ? (
+              <div
+                className="flex flex-col items-start gap-2 rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive"
+                data-testid="fsp-add-key-error"
+              >
+                <span>
+                  The specifications this product can carry could not be
+                  loaded.
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => refetch()}
+                  disabled={saving}
+                >
+                  Try again
+                </Button>
+              </div>
+            ) : (
+              <SearchableSelect
+                id="fsp-add-key"
+                value={picked}
+                onChange={(next) => {
+                  setPicked(next);
+                  setDraft('');
+                }}
+                options={offered.map((entry) => ({
+                  value: entry.spec_key,
+                  label: entry.label || readable(entry.spec_key),
+                }))}
+                placeholder={
+                  isLoading
+                    ? 'Loading specifications'
+                    : 'Search specifications'
+                }
+                emptyMessage={
+                  isLoading
+                    ? 'Loading'
+                    : 'Every specification this product can carry is already in this batch.'
+                }
+                disabled={saving}
+                clearable
+              />
+            )}
           </div>
 
           {key && (

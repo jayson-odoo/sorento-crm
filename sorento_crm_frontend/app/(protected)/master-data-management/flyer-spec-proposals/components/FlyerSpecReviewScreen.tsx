@@ -404,12 +404,7 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
             Reading it proposes values for the products it names. Nothing is
             written until you tick rows and apply them.
           </p>
-          {proposeButton ?? (
-            <p className="text-sm text-muted-foreground">
-              Proposing needs the product master permission, which your role
-              does not have.
-            </p>
-          )}
+          {proposeButton}
         </div>
       )}
 
@@ -471,16 +466,6 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
 
       {data.status === 'proposed' && data.groups.length > 0 && (
         <>
-          {!canWriteMaster && (
-            <p
-              className="rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground"
-              data-testid="fsp-readonly"
-            >
-              Reported only. Writing a specification to the product master needs
-              the product master permission, which your role does not have.
-            </p>
-          )}
-
           {data.groups.length > 1 && (
             <div className="relative w-full sm:max-w-sm">
               <Search className="pointer-events-none absolute inset-y-0 start-3 my-auto size-4 text-muted-foreground" />
