@@ -489,6 +489,32 @@ def test_promotion_brand_and_untagged_fallback(seeded):
         assert mocha["brand_matched"] is False
 
 
+def test_preferred_assignee_reports_brand_matched_per_member(seeded):
+    """The preferred-assignee override follows the same per-assignee rule: a mocha
+    request naming the mocha-tagged member is a match, one naming the untagged
+    member is not, and no brand at all is never a match."""
+    people = seeded["people"]
+
+    r = _post(seeded, brand_code="mocha", preferred_assignee_id=people["Kia Yee"])
+    assert r.status_code == 200, r.text
+    assert r.json()["assignee_id"] == people["Kia Yee"]
+    assert r.json()["brand_matched"] is True
+
+    r = _post(
+        seeded,
+        team_code="marketing_promotion",
+        brand_code="mocha",
+        preferred_assignee_id=people["Am"],
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["assignee_id"] == people["Am"]
+    assert r.json()["brand_matched"] is False
+
+    r = _post(seeded, preferred_assignee_id=people["Kia Yee"])
+    assert r.status_code == 200, r.text
+    assert r.json()["brand_matched"] is False
+
+
 def test_legacy_suffixed_promotion_key_still_routes(seeded):
     """AC2-X1 end-to-end: the old key resolves against the collapsed set."""
     r = _post(seeded, team_code="marketing_promotion_cabana")

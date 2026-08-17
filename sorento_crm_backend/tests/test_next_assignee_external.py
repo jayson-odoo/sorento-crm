@@ -354,7 +354,9 @@ def test_preferred_assignee_skips_round_robin(mock_cal, mock_sla, mock_access, c
     data = r.json()
     assert data["assignee_id"] == "user-2"
     assert data["assignee_respond_user_id"] == "555"
-    mock_access.return_value.get_member_assignee.assert_called_once_with("team-1", "user-2")
+    mock_access.return_value.get_member_assignee.assert_called_once_with(
+        "team-1", "user-2", brand_code=None
+    )
     mock_access.return_value.get_next_assignee.assert_not_called()
 
 

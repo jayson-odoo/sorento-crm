@@ -1821,11 +1821,16 @@ class AccessAgentService:
             for member, user in rows
         ]
 
-    def get_member_assignee(self, team_id: str, user_id: str) -> Optional[dict]:
+    def get_member_assignee(
+        self, team_id: str, user_id: str, *, brand_code: Optional[str] = None
+    ) -> Optional[dict]:
         """
         Return a specific team member as an assignee dict (same shape as get_next_assignee),
         WITHOUT advancing the round-robin cursor. None if the user is not a member of the team.
         Used by the preferred_assignee_id override path.
+
+        ``brand_matched`` follows the same per-assignee rule as the round-robin draw:
+        true only when a brand was requested and this member is tagged with it.
         """
         member = (
             self.db.query(TeamMember)
@@ -1834,14 +1839,26 @@ class AccessAgentService:
         )
         if not member:
             return None
+        wanted_brand = normalise_brand_code(brand_code)
+        brand_matched = False
+        if wanted_brand:
+            tags = self._brand_codes_by_member([member.id]).get(str(member.id)) or set()
+            brand_matched = wanted_brand in tags
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
-            return {"id": user_id, "email": None, "name": None, "respond_user_id": None}
+            return {
+                "id": user_id,
+                "email": None,
+                "name": None,
+                "respond_user_id": None,
+                "brand_matched": brand_matched,
+            }
         return {
             "id": user.id,
             "email": user.email,
             "name": user.name or user.email,
             "respond_user_id": user.respond_user_id,
+            "brand_matched": brand_matched,
         }
 
     def get_next_assignee_after(

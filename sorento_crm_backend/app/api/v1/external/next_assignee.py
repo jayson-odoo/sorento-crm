@@ -446,7 +446,9 @@ async def post_next_assignee(
     preferred_id = body.get("preferred_assignee_id")
     if preferred_id is not None and str(preferred_id).strip():
         preferred_id = str(preferred_id).strip()
-        result = service.get_member_assignee(team_id, preferred_id)
+        result = service.get_member_assignee(
+            team_id, preferred_id, brand_code=resolved_team.brand_code
+        )
         if result is None:
             # The team was resolved inside the routing company, so "not a member"
             # also covers "is a member of the OTHER company's team" (AC-D3). Naming
