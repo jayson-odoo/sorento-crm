@@ -75,3 +75,27 @@ export function readableValue(value: unknown, unit?: string): string {
   const pretty = words.charAt(0).toUpperCase() + words.slice(1);
   return unit ? `${pretty} ${unit}` : pretty;
 }
+
+/**
+ * A stored spec ENTRY as a person reads it: `{ value: 'glass' }` -> "Glass",
+ * `{ value: 770, unit: 'mm' }` -> "770 mm".
+ *
+ * `spec.values` stores an entry per key, never a bare scalar, and anything carrying a
+ * slice of that JSON straight to the screen carries entries with it - the verification
+ * diff (`invalidated_diff.changed[].was/now`) is one such slice. Handing an entry to
+ * `readableValue` renders the literal `[object Object]`, which is exactly what the
+ * needs-re-verify block did. A bare scalar is still accepted, because a hand-written
+ * fixture or an older row is not worth a crash.
+ *
+ * Returns the empty string for "there was nothing here", so the caller picks its own
+ * word for absence ("nothing", a dash) rather than having one imposed.
+ */
+export function readableEntry(entry: unknown): string {
+  if (entry === null || entry === undefined) return '';
+  if (typeof entry === 'object') {
+    const { value, unit } = entry as { value?: unknown; unit?: unknown };
+    if (value === null || value === undefined) return '';
+    return readableValue(value, typeof unit === 'string' && unit ? unit : undefined);
+  }
+  return readableValue(entry);
+}

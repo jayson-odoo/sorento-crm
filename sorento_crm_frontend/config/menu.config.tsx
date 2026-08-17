@@ -4,7 +4,6 @@ import {
   Badge,
   Bell,
   Bitcoin,
-  Bolt,
   Book,
   BookOpen,
   Briefcase,
@@ -15,7 +14,6 @@ import {
   CheckCircle,
   Clock,
   Code,
-  Codepen,
   Coffee,
   File as DocumentIcon,
   Euro,
@@ -44,7 +42,6 @@ import {
   Package,
   Users as PeopleIcon,
   Plug,
-  ScrollText,
   Settings,
   Share2,
   Shield,
@@ -53,9 +50,7 @@ import {
   ShoppingCart,
   SquareMousePointer,
   Star,
-  Theater,
   TrendingUp,
-  Truck,
   UserCheck,
   UserCircle,
   Users,
@@ -591,6 +586,11 @@ export const MENU_SIDEBAR: MenuConfig = [
     {
       title: 'Product Specifications',
       path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Spec Verification',
+      path: '/master-data-management/spec-verification',
       permission: 'master_data.products.view',
     },
     {
@@ -1485,6 +1485,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     {
       title: 'Product Specifications',
       path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Spec Verification',
+      path: '/master-data-management/spec-verification',
       permission: 'master_data.products.view',
     },
     {
