@@ -406,3 +406,37 @@ def test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average()
         # (40 x 10 + 60 x 13.5) / 100
         assert float(line.unit_cost) == pytest.approx(12.1)
         assert line.currency == "CNY"
+
+
+def test_a_supplier_id_that_is_not_an_id_is_a_422_not_a_500():
+    """The packing-list channel takes the supplier on the form, and the currency resolution it
+    now runs consults that supplier's price list - a UUID column comparison. A typed value that
+    is not an id reached it raw and came back as a 500 with the session aborted, while the same
+    value on the proforma channel was a 422 naming the field. Both channels answer the same way
+    now, on all three entry points, because the guard is one function.
+    """
+    with pg_session() as db:
+        w = World(db)
+        data = _file(w, [(f"{MARKER}U9", [("A", 4)])])
+
+        for call in (
+            lambda: svc.preview(db, data, supplier_id="not-a-uuid"),
+            lambda: svc.validate(db, data, supplier_id="not-a-uuid"),
+            lambda: svc.apply(db, data, supplier_id="not-a-uuid"),
+        ):
+            with pytest.raises(AppException) as exc:
+                call()
+            assert exc.value.status_code == 422
+            assert exc.value.detail["detail"] == "supplier_id"
+
+
+def test_a_supplier_we_do_not_hold_is_refused_before_anything_is_read():
+    with pg_session() as db:
+        w = World(db)
+        data = _file(w, [(f"{MARKER}UA", [("A", 4)])])
+
+        with pytest.raises(AppException) as exc:
+            svc.apply(db, data, supplier_id=str(uuid.uuid4()))
+
+        assert exc.value.status_code == 422
+        assert not _shipments(db, w)

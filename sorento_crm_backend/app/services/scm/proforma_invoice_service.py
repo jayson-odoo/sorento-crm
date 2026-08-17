@@ -34,6 +34,11 @@ from app.services.scm.proforma_invoice_reader import (
     ProformaReadResult,
     read_workbook,
 )
+from app.services.scm.supplier_scope import (  # noqa: F401  (assert_supplier is re-exported)
+    assert_supplier,
+    is_uuid as _is_uuid,
+    supplier_label as _supplier_label,
+)
 from app.services.scm.upload_validation import envelope, named
 
 SOURCE_SYSTEM = "scm_proforma_invoice"
@@ -99,51 +104,6 @@ def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
         {"codes": [c.upper() for c in codes], **params},
     ).mappings().all()
     return {str(r["product_code"]).upper(): dict(r) for r in rows}
-
-
-def _is_uuid(value: Any) -> bool:
-    try:
-        uuid.UUID(str(value))
-    except (ValueError, AttributeError, TypeError):
-        return False
-    return True
-
-
-def _supplier_row(db: Session, supplier_id: Optional[str]) -> Optional[Any]:
-    """One supplier, scoped to the caller's company.
-
-    Raw SQL bypasses the ORM company filter (`suppliers` is an owned table), so the scope is
-    reproduced by hand exactly as `_products_by_code` does it. Unscoped, an upload could be
-    filed against another company's supplier and their name would be shown back as
-    confirmation that it was the right one.
-    """
-    if not supplier_id or not _is_uuid(supplier_id):
-        return None
-    predicate, params = company_sql_predicate(db, "s.company_id", param_prefix="c")
-    return db.execute(
-        text(
-            "SELECT s.supplier_code, s.supplier_name FROM suppliers s "
-            " WHERE s.id = :i "
-            f"   AND {predicate or 'true'}"
-        ),
-        {"i": str(supplier_id), **params},
-    ).first()
-
-
-def _supplier_label(db: Session, supplier_id: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    row = _supplier_row(db, supplier_id)
-    return (row[0], row[1]) if row else (None, None)
-
-
-def assert_supplier(db: Session, supplier_id: str) -> None:
-    """A file uploaded against a supplier we do not hold is a form mistake, not a 500.
-
-    Without this the insert dies on the foreign key (or on `invalid input syntax for type
-    uuid` when the field is not an id at all) and the operator is told the server broke.
-    Company-scoped, so another company's supplier is "does not exist" here too.
-    """
-    if _supplier_row(db, supplier_id) is None:
-        raise AppException(422, "That supplier does not exist.", detail="supplier_id")
 
 
 def _currencies(
@@ -473,6 +433,12 @@ def list_for_supplier(
     than how many came back: `len(rows)` after a `LIMIT` can never exceed the page size, and a
     supplier with more invoices than one page would have read as having exactly a page of them.
     `offset` is what makes the rest of them reachable.
+
+    The id breaks ties in the sort, and the ties are guaranteed rather than unlikely:
+    `created_at` defaults to `now()`, which is the TRANSACTION timestamp, so all five invoices
+    of one stacked pre-loading list share it to the microsecond. Postgres promises no order
+    among equal keys, so without the tiebreaker a caller walking offset=0 then offset=25 can
+    be handed one invoice twice and never shown another.
     """
     if supplier_id and not _is_uuid(supplier_id):
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
@@ -482,7 +448,10 @@ def list_for_supplier(
         q = q.filter(ProformaInvoice.supplier_id == str(supplier_id))
     total = q.count()
     rows = (
-        q.order_by(ProformaInvoice.created_at.desc()).offset(max(offset, 0)).limit(limit).all()
+        q.order_by(ProformaInvoice.created_at.desc(), ProformaInvoice.id.desc())
+        .offset(max(offset, 0))
+        .limit(limit)
+        .all()
     )
     return {
         "data": [serialize(db, r, with_lines=False) for r in rows],

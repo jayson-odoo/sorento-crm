@@ -162,6 +162,19 @@ nothing resolved, it says so before Confirm is pressed.
   document. If a supplier ever stacks a repeated number, the honest outcomes are to merge the
   blocks or to refuse the file naming the duplicate, and that is the change to make then.
 
+- **Editing a shipment through the ordinary Packing Lists form drops the captured price.**
+  `procurement_service.update_shipment` replaces every line from the payload it is given, and
+  the FE form's line schema carries only `product_id` and `quantity_shipped`, so saving an edit
+  (a note, a date, anything) reinserts the lines with `unit_cost` and `currency` NULL. That
+  supplier then reads as "never received" on the Order Decision sheet again, and the PI-vs-PO
+  check loses its incoming side. The mechanism pre-dates this slice (SPO allocation already
+  stamped cost and currency onto these lines); what changed is that the ingest now fills the
+  column, so the wipe went from theoretical to the normal outcome of a routine edit. Accepted
+  here rather than fixed, because the fix touches `update_shipment` and the packing-list form,
+  a surface a concurrent worker owns: it is a named follow-up for the packing-list task, whose
+  options are to preserve both fields from the replaced line matched on `product_id` when the
+  payload states neither, or to carry them through the form's line schema.
+
 ## Out of scope (owned elsewhere)
 
 - PI-to-PO matching, variance, overcharge detection (next task).

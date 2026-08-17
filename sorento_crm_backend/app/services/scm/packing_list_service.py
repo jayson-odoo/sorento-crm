@@ -34,6 +34,7 @@ from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCr
 from app.services.error_handler import AppException
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.packing_list_reader import PackingBlock, PackingReadResult, read_workbook
+from app.services.scm.supplier_scope import assert_supplier
 from app.services.scm.upload_validation import envelope, named
 
 #: What a block is called when it has no container number of its own. Positional, so the same
@@ -54,6 +55,19 @@ def _priced(parsed: PackingReadResult) -> int:
 
 def _parse(db: Session, data: bytes) -> PackingReadResult:
     return read_workbook(data, db=db)
+
+
+def _check_supplier(db: Session, supplier_id: Optional[str]) -> None:
+    """A STATED supplier has to be one we hold, same rule as the proforma channel.
+
+    The supplier is optional here (a pre-load list can arrive before anyone knows), so only a
+    stated one is checked. It has to be checked before the currency resolution below it: the
+    supplier price list is one of the currency sources, and a value that is not an id reached
+    a UUID column there, which is a 500 with the session aborted rather than the 422 the
+    operator can act on.
+    """
+    if supplier_id:
+        assert_supplier(db, supplier_id)
 
 
 def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
@@ -141,6 +155,7 @@ def preview(
     and a preview that cannot say the file is priced in nothing would let them press it and
     only then be told (AC-P3.1).
     """
+    _check_supplier(db, supplier_id)
     parsed = _parse(db, data)
     out = _summarise(db, parsed, source_ref=source_ref)
     code, source = resolve_currency(
@@ -164,6 +179,7 @@ def validate(
     currency: Optional[str] = None,
 ) -> dict:
     """The `{valid, errors, warnings, summary}` verdict a Test means everywhere here."""
+    _check_supplier(db, supplier_id)
     parsed = _parse(db, data)
     summary = _summarise(db, parsed, source_ref=source_ref)
     code, source = resolve_currency(
@@ -224,6 +240,7 @@ def apply(
     same file uploaded twice resolves to the same shipments and updates them in place, which is
     AC-G3 and is also what stops a nervous second click doubling a container.
     """
+    _check_supplier(db, supplier_id)
     parsed = _parse(db, data)
     if not parsed.ok:
         raise AppException(

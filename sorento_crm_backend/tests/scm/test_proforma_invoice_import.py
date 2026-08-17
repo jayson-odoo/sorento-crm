@@ -463,6 +463,35 @@ def test_a_very_long_filename_still_gives_five_distinct_invoice_numbers():
 
 
 # --------------------------------------------------------------------------------- #
+# Paging over the list has to be walkable, and every row of one upload ties on created_at
+# --------------------------------------------------------------------------------- #
+
+
+def test_walking_the_list_a_page_at_a_time_shows_each_invoice_exactly_once():
+    """All five invoices of one stacked file share `created_at` to the microsecond, because it
+    defaults to `now()` and that is the TRANSACTION timestamp. Ordering on it alone leaves the
+    page boundary undefined, and a caller walking the offsets can be handed one invoice twice
+    and never shown another."""
+    with pg_session() as db:
+        w = World(db)
+        data = preloading_list_workbook(
+            {"SRTWC287A-RL-250": w.code("A"), "CWB242": w.code("B")}
+        )
+        svc.apply(db, data, supplier_id=str(w.supplier.id))
+        stamps = {inv.created_at for inv in _invoices(db, w)}
+        assert len(stamps) == 1, "the tie this test exists for is not present"
+
+        first = svc.list_for_supplier(db, supplier_id=str(w.supplier.id), limit=2, offset=0)
+        second = svc.list_for_supplier(db, supplier_id=str(w.supplier.id), limit=2, offset=2)
+        third = svc.list_for_supplier(db, supplier_id=str(w.supplier.id), limit=2, offset=4)
+
+        assert first["total"] == 5
+        walked = [r["id"] for r in first["data"] + second["data"] + third["data"]]
+        assert len(walked) == 5
+        assert len(set(walked)) == 5
+
+
+# --------------------------------------------------------------------------------- #
 # Company isolation - the supplier lookup is raw SQL and has to scope itself
 # --------------------------------------------------------------------------------- #
 

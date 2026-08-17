@@ -164,7 +164,16 @@ same as an error. Each `InboundShipmentLineCreate` gets `unit_cost=ln.unit_price
 untouched (another worker owns the container-replace behaviour and `supplier_id` on lines).
 
 `preview` takes the same `supplier_id` / `currency` and reports `currency` + `currency_source`,
-so the operator reads which money the file is in BEFORE pressing Confirm rather than after.
+so the operator reads which money the file is in BEFORE pressing Confirm rather than after. A
+STATED supplier is checked against the ones we hold first (shared `supplier_scope.assert_supplier`,
+the guard the proforma channel already used), because the supplier price list is one of the
+currency sources and a value that is not an id reached a UUID column there as a 500.
+
+Known limit, accepted and NOT fixed in this branch: editing a shipment through the ordinary
+Packing Lists form recreates its lines from a `product_id` + `quantity_shipped` payload and so
+drops the captured `unit_cost` / `currency`. The mechanism pre-dates this slice; the ingest
+filling the column is what makes it bite. It is a named follow-up for the packing-list task,
+which owns `update_shipment` and that form. Full note in the UAC's `Known limits`.
 
 FE (the one screen this slice touches): `PackingListUploadDialog` gains an optional three-letter
 `Currency` input, passed through `fulfilmentService.previewPackingList` / `applyPackingList` and
