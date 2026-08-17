@@ -187,11 +187,9 @@ export function SupplyCompositionSection({
             <AlertTitle>Nothing was written</AlertTitle>
             <AlertDescription asChild>
               <ul className="space-y-1">
-                {failingLines.map((failing) => (
-                  <li key={`${failing.line_no}-${failing.item_code ?? ''}`}>
-                    <span className="font-medium">
-                      {`Line ${failing.line_no}${failing.item_code ? `, ${failing.item_code}` : ''}: `}
-                    </span>
+                {failingLines.map((failing, index) => (
+                  <li key={`${failing.line_no ?? ''}-${failing.item_code ?? ''}-${index}`}>
+                    <span className="font-medium">{`${failingSubject(failing)}: `}</span>
                     {failing.reason}
                   </li>
                 ))}
@@ -298,6 +296,17 @@ export function SupplyCompositionSection({
       )}
     </section>
   );
+}
+
+/**
+ * How a refused line is named. A refusal about the whole sales order carries no line
+ * number, so it says so rather than printing "Line undefined".
+ */
+function failingSubject(failing: SupplyFailingLine): string {
+  if (failing.line_no != null) {
+    return `Line ${failing.line_no}${failing.item_code ? `, ${failing.item_code}` : ''}`;
+  }
+  return failing.item_code || 'This sales order';
 }
 
 function SectionTitle() {

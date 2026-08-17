@@ -1,7 +1,5 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
-import { MOCK_ORDER_INQUIRY_ROWS } from './fulfilmentPlanningMocks';
-import { PROJECT_SO_MOCK } from './projectSalesOrderService';
 import type {
   OrderInquiryDetail,
   OrderInquiryListEnvelope,
@@ -15,8 +13,9 @@ const BASE = '/api/v1/project-sales';
 /**
  * Order inquiry rows (P10, contract section 7).
  *
- * Rows are never created from the browser. They are DERIVED when a sales order or an
- * amendment publishes, which is the only moment the instruction is true. What this
+ * Rows are never created from the browser. They are DERIVED when CS confirms a Project SO
+ * in Fulfilment Planning (the Buy residual of the confirmed revision, Stage 1C) or when an
+ * amendment publishes, which are the only moments the instruction is true. What this
  * service does is read them, export them and record what purchasing did about them.
  */
 
@@ -55,14 +54,6 @@ export async function listOrderInquiryRows(
   params: OrderInquiryListParams = {},
 ): Promise<OrderInquiryListEnvelope> {
   const limit = params.limit ?? 25;
-  if (PROJECT_SO_MOCK) {
-    // Phase 1 only, deleted with the rest of the fixtures: the Buy-only handoff of the
-    // confirmed fixture decision, so the trace columns have something to trace.
-    const rows = MOCK_ORDER_INQUIRY_ROWS(projectId).filter(
-      (row) => !params.state || row.state === params.state,
-    );
-    return { data: rows, total: rows.length, page: 1, limit };
-  }
   const search = searchParams(params, limit);
   const response = await apiFetch(
     `${BASE}/projects/${projectId}/order-inquiry-rows?${search.toString()}`,
@@ -75,15 +66,6 @@ export async function listOrderInquiryRows(
 export async function getOrderInquirySummary(
   projectId: string,
 ): Promise<OrderInquirySummary> {
-  if (PROJECT_SO_MOCK) {
-    const rows = MOCK_ORDER_INQUIRY_ROWS(projectId);
-    return {
-      total: rows.length,
-      raised: rows.filter((row) => row.state === 'raised').length,
-      actioned: rows.filter((row) => row.state === 'actioned').length,
-      cancelled: rows.filter((row) => row.state === 'cancelled').length,
-    };
-  }
   const response = await apiFetch(`${BASE}/projects/${projectId}/order-inquiry-summary`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the order inquiry totals'));

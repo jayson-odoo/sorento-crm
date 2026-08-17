@@ -244,9 +244,16 @@ export interface SupplyDecision {
   challenged_reason?: string | null;
 }
 
-/** A line the server will not confirm, named the only way it may be (AC-C02). */
+/**
+ * A line the server will not confirm, named the only way it may be (AC-C02).
+ *
+ * `line_no` is optional because a refusal can be about the sales order rather than about
+ * one of its lines (nothing is mapped yet, the order moved on underneath the sheet), and
+ * the screen then names the order instead - the same rule `ReconciliationException`
+ * follows for a surplus core line.
+ */
 export interface SupplyFailingLine {
-  line_no: number;
+  line_no?: number | null;
   item_code?: string | null;
   reason: string;
 }
@@ -295,7 +302,7 @@ export interface ConfirmSupplyBody {
 }
 
 export interface ConfirmException {
-  line_no: number;
+  line_no?: number | null;
   item_code?: string | null;
   message: string;
 }
@@ -303,8 +310,8 @@ export interface ConfirmException {
 /** `POST /project-sales/sales-orders/{pso_id}/confirm`. */
 export interface ConfirmResult {
   revision_no: number;
-  confirmed_at: string;
-  review_state: 'confirmed';
+  confirmed_at?: string | null;
+  review_state: string;
   inquiry_rows_created: number;
   exceptions: ConfirmException[];
 }

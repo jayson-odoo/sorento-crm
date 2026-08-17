@@ -1,6 +1,5 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
-import { PROJECT_SO_MOCK } from './projectSalesOrderService';
 import type {
   ConfirmResult,
   ConfirmSupplyBody,
@@ -11,12 +10,6 @@ import type {
   SupplyFailingLine,
   SupplyProposal,
 } from '../types/fulfilmentPlanning.types';
-import {
-  MOCK_PLANNING_ROWS,
-  mockConfirmSupply,
-  mockReconciliation,
-  mockSupply,
-} from './fulfilmentPlanningMocks';
 
 /**
  * Fulfilment Planning: the AutoCount reconciliation of a published Project SO (Stage 1B),
@@ -37,8 +30,9 @@ import {
  *
  *   GET  /project-sales/sales-orders/{pso_id}/supply  -> SupplyProposal
  *   POST /project-sales/sales-orders/{pso_id}/confirm -> ConfirmResult
- *        body ConfirmSupplyBody; 409/422 -> { error, failing_lines: [{line_no, item_code,
- *        reason}] }, nothing written (AC-C02)
+ *        body ConfirmSupplyBody; 409/422 -> the shared AppException envelope plus the
+ *        list: { message, detail, code, failing_lines: [{line_no, item_code, reason}] },
+ *        nothing written (AC-C02)
  *
  * An exception's `message` carries the REASON only. The screen prints the subject itself
  * from `line_no` and `item_code` ("Line 2, SRT501-CP"), so a message that repeats it reads
@@ -46,14 +40,6 @@ import {
  *
  * The reconcile POST is idempotent. The confirm POST is not a retry of a partial write:
  * it either commits every line or writes nothing at all.
- *
- * `NEXT_PUBLIC_PROJECT_SO_MOCK=1` serves `fulfilmentPlanningMocks` instead of calling any
- * of it, which is how the composition cases (reserve + buy, the hot-selling BRW cap, a
- * borrow candidate and its reason, a discontinued buy, advisory incoming, an unavailable
- * classification, an unbalanced line, a refused confirmation, the confirmed frozen view
- * and a challenged decision) are reachable while the backend for the same contract is
- * being written. The switch is the one `projectSalesOrderService` already owns, so a
- * session is either all mock or all live. Deleted when Phase 2 lands.
  */
 
 const BASE = '/api/v1/project-sales';
@@ -88,25 +74,6 @@ export async function listFulfilmentPlanning(
   params: FulfilmentPlanningListParams = {},
 ): Promise<FulfilmentPlanningListEnvelope> {
   const limit = params.limit ?? 25;
-  if (PROJECT_SO_MOCK) {
-    const needle = (params.query ?? '').trim().toLowerCase();
-    const rows = MOCK_PLANNING_ROWS().filter((row) => {
-      if (params.review_state && row.review_state !== params.review_state) return false;
-      if (!needle) return true;
-      return [
-        row.provisional_ref,
-        row.autocount_doc_no,
-        row.project_name,
-        row.project_code,
-        row.customer_name,
-        row.po_number,
-        row.area_group,
-      ]
-        .filter(Boolean)
-        .some((field) => (field as string).toLowerCase().includes(needle));
-    });
-    return { data: rows, total: rows.length, page: 1, limit };
-  }
   const search = buildDataGridParams(
     {
       pageIndex: (params.page ?? 1) - 1,
@@ -127,7 +94,6 @@ export async function listFulfilmentPlanning(
 
 /** What reconciliation currently makes of one order. A pure read: it writes nothing. */
 export async function getReconciliation(psoId: string): Promise<ReconciliationSummary> {
-  if (PROJECT_SO_MOCK) return mockReconciliation(psoId);
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/reconciliation`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the reconciliation'));
@@ -140,7 +106,6 @@ export async function getReconciliation(psoId: string): Promise<ReconciliationSu
  * number). Idempotent, so the button is safe to press on an order that is already clean.
  */
 export async function rerunReconciliation(psoId: string): Promise<ReconciliationSummary> {
-  if (PROJECT_SO_MOCK) return mockReconciliation(psoId);
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/reconcile`, {
     method: 'POST',
   });
@@ -154,7 +119,6 @@ export async function rerunReconciliation(psoId: string): Promise<Reconciliation
  * decision when one exists. A pure read: opening the sheet claims no stock.
  */
 export async function getSupply(psoId: string): Promise<SupplyProposal> {
-  if (PROJECT_SO_MOCK) return mockSupply(psoId);
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/supply`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the supply composition'));
@@ -186,7 +150,6 @@ export async function confirmSupply(
   psoId: string,
   body: ConfirmSupplyBody,
 ): Promise<ConfirmResult> {
-  if (PROJECT_SO_MOCK) return mockConfirmSupply(psoId, body);
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/confirm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
