@@ -35,9 +35,16 @@ function renderWithClient(ui: React.ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const result = render(
     <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
   );
+  return {
+    ...result,
+    rerender: (next: React.ReactElement) =>
+      result.rerender(
+        <QueryClientProvider client={client}>{next}</QueryClientProvider>,
+      ),
+  };
 }
 
 /** Opens the editor dialog, then the multiselect menu inside it. */
@@ -125,6 +132,35 @@ describe('MemberBrandEditor', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Mocha' }));
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
     expect(setMutate.mock.calls[0][0]).toEqual([]);
+  });
+
+  it('opens without looping when the query has not answered yet', () => {
+    // Both queries undefined: the old inline `= []` defaults handed the
+    // draft-reset effect a fresh array every render, so opening the dialog
+    // re-entered setDraft until React threw "Maximum update depth exceeded".
+    useMemberBrands.mockReturnValue({ data: undefined, isLoading: false });
+    useBrandSelectQuery.mockReturnValue({ data: undefined, isLoading: false });
+    renderWithClient(<MemberBrandEditor teamId="t1" userId="u1" />);
+    expect(() =>
+      fireEvent.click(screen.getByLabelText(/edit brands/i)),
+    ).not.toThrow();
+    expect(screen.getByText('Brands served')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(setMutate.mock.calls[0][0]).toEqual([]);
+  });
+
+  it('keeps the draft when a background refetch lands while the dialog is open', () => {
+    useMemberBrands.mockReturnValue({ data: ['mocha'], isLoading: false });
+    const { rerender } = renderWithClient(
+      <MemberBrandEditor teamId="t1" userId="u1" />,
+    );
+    openPicker();
+    fireEvent.click(screen.getByRole('option', { name: 'Cabana' }));
+    // A refetch resolves to a new array while the user is mid-edit.
+    useMemberBrands.mockReturnValue({ data: ['mocha'], isLoading: false });
+    rerender(<MemberBrandEditor teamId="t1" userId="u1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(setMutate.mock.calls[0][0]).toEqual(['mocha', 'cabana']);
   });
 
   it('still lets a stale tag be cleared when the catalogue is empty', () => {

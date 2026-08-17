@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +22,12 @@ import {
   useSetMemberMarketSegments,
 } from '@/app/(protected)/user-management/market-segments/hooks/useMarketSegments';
 
+// Module-level so an undefined query result yields the SAME array on every
+// render. An inline `= []` default is a fresh array each time, which makes every
+// downstream memo (and, worse, the draft-reset effect) fire forever.
+const EMPTY: string[] = [];
+const EMPTY_CATALOG: never[] = [];
+
 /**
  * Per-member market-segment multiselect within a CS team roster. A member's
  * segments (retail / project) restrict which contacts route to them; both =
@@ -40,16 +46,23 @@ export default function MemberMarketSegmentEditor({
   teamId: string;
   userId: string;
 }) {
-  const { data: assigned = [], isLoading } = useMemberMarketSegments(teamId, userId);
-  const { data: catalog = [] } = useMarketSegments(true);
+  const { data: assigned = EMPTY, isLoading } = useMemberMarketSegments(teamId, userId);
+  const { data: catalog = EMPTY_CATALOG } = useMarketSegments(true);
   const setSegments = useSetMemberMarketSegments(teamId, userId);
 
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<string[]>([]);
+  const [draft, setDraft] = useState<string[]>(EMPTY);
+
+  // The server value is read ONLY at the moment the dialog opens: a background
+  // refetch while it is open would otherwise wipe whatever the user has picked.
+  const assignedRef = useRef(assigned);
+  useEffect(() => {
+    assignedRef.current = assigned;
+  }, [assigned]);
 
   useEffect(() => {
-    if (open) setDraft(assigned);
-  }, [open, assigned]);
+    if (open) setDraft(assignedRef.current);
+  }, [open]);
 
   const options: SearchableMultiSelectOption[] = useMemo(() => {
     const byCode = new Map<string, SearchableMultiSelectOption>();

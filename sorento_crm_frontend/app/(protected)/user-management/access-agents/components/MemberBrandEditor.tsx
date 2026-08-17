@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bookmark } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +18,12 @@ import {
 } from '@/components/common/SearchableMultiSelect';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import { useMemberBrands, useSetMemberBrands } from '../hooks/useMemberBrands';
+
+// Module-level so an undefined query result yields the SAME array on every
+// render. An inline `= []` default is a fresh array each time, which makes every
+// downstream memo (and, worse, the draft-reset effect) fire forever.
+const EMPTY: string[] = [];
+const EMPTY_CATALOG: never[] = [];
 
 /**
  * Per-member brand multiselect within a team roster. A member's brands restrict
@@ -38,16 +44,23 @@ export default function MemberBrandEditor({
   teamId: string;
   userId: string;
 }) {
-  const { data: assigned = [], isLoading } = useMemberBrands(teamId, userId);
-  const { data: catalog = [] } = useBrandSelectQuery();
+  const { data: assigned = EMPTY, isLoading } = useMemberBrands(teamId, userId);
+  const { data: catalog = EMPTY_CATALOG } = useBrandSelectQuery();
   const setBrands = useSetMemberBrands(teamId, userId);
 
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<string[]>([]);
+  const [draft, setDraft] = useState<string[]>(EMPTY);
+
+  // The server value is read ONLY at the moment the dialog opens: a background
+  // refetch while it is open would otherwise wipe whatever the user has picked.
+  const assignedRef = useRef(assigned);
+  useEffect(() => {
+    assignedRef.current = assigned;
+  }, [assigned]);
 
   useEffect(() => {
-    if (open) setDraft(assigned);
-  }, [open, assigned]);
+    if (open) setDraft(assignedRef.current);
+  }, [open]);
 
   // Deduped by code (the same brand exists per company) and sorted by name, so the
   // list reads A to Z whatever order the API happened to return.
