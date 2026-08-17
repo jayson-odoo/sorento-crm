@@ -407,3 +407,21 @@ it. Steps 2-8 of the original brief (upload/reuse the `flyer_sample.pdf` reading
 review, untick a `new` row / tick a `change` row if present, apply + confirm, verify the product's
 Specifications tab badges `Flyer`, re-propose + re-apply for `already_matches`, the Master Data
 list page, viewport checks at 375/1280) were never reached and still need to be walked.
+
+## 7. Captain amendment 2026-08-17 (hands-on): conflicts apply, values edit in place
+
+Captain, testing on the live stack: "conflicts and change xx should be able to click and apply,
+and I should be able to edit on this page (depending on whether the spec is dropdown, yes/no,
+numeric)". Supersedes L6/L7's conflict handling; UAC section F is the contract.
+
+Design (smallest that works, ids-only apply preserved):
+- `apply_batch`: ticked `conflict` rows write like `change`; only `unchanged` and `suppressed`
+  refuse. No new flag - the tick is the confirmation, the dialog names the counts.
+- New route `PATCH .../spec-proposals/{proposal_id}` `{value}` -> validate via
+  `value_for_registry`, stamp `edited_at`/`edited_by` (new nullable columns on
+  `product_spec_flyer_proposals`, migration folds into 370 since unmerged), recompute `kind`
+  and batch counts. The apply request STILL carries ids only.
+- GET rows gain `allowed_values` for closed-vocabulary keys and `edited` flag.
+- FE: per-row edit affordance swaps the Value cell to the registry-typed input; save PATCHes,
+  invalidates the proposals query. Select-all covers new+change+conflict. Dialog copy names
+  changes and conflicts separately.

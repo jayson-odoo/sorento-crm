@@ -52,6 +52,16 @@ is not on main yet - see AC-E.4); re-deriving anything from `ProductFlyerText` (
 | L10 | **`unchanged` is never written**: re-applying the same flyer produces zero writes, zero fan-outs and zero verification resets (report §5.6.3, §5.7). |
 | L11 | Simplest thing that works: two tables (batch, proposal), one RQ task on the existing `flyer_read` queue, four routes, one review page, one list page, one section on the reading page. No new queue, service class, config knob or permission. |
 
+**Amended 2026-08-17 (captain, hands-on on the review page - supersedes L6/L7 in part):**
+`conflict` rows (an authored value or a description-first key disagrees) are **tickable in
+bulk**, unticked by default, exactly like `change`; the tick plus the confirm dialog naming the
+overwrite count IS the confirmation, and apply writes them. Only `unchanged` ("Already stored")
+and `suppressed` (tombstoned) rows stay un-tickable. And a proposal's **value is editable in
+place** on the review page before applying - the widget follows the key's registry type
+(dropdown for a closed vocabulary, yes/no for boolean, number for numeric, text otherwise); the
+edit is stored on the proposal row server-side and validated against the registry, so the apply
+request still names ids only (L8 stands).
+
 ## Journey
 
 **Actor:** a merchandiser holding `master_data.products.edit` (and `dealer_kit.page.view`, which
@@ -153,8 +163,8 @@ tombstoned, and which keys apply to the product's class. None of it is asked for
   spec_key, value}]` and `refused: [{proposal_id, product_code, spec_key, reason, message}]`.
 - **AC-C.2** `[BE]` GIVEN a selected proposal WHEN it is applied THEN it is re-classified against
   the LIVE spec row first (AC-A.3's function): `unchanged` -> refused `already_matches`, no write;
-  `conflict` or `suppressed` -> refused `conflict_not_confirmed`, no write; `new` / `change` ->
-  written. Kinds are re-checked at apply time because the master may have moved since propose.
+  `suppressed` -> refused `conflict_not_confirmed`, no write; `new` / `change` / `conflict` ->
+  written (conflict per AC-F.1, captain amendment 2026-08-17). Kinds are re-checked at apply time because the master may have moved since propose.
 - **AC-C.3** `[BE]` GIVEN the rows to write for one product WHEN they are written THEN it is ONE
   `apply_spec_values(db, product_code, entries, actor=user, commit=False)` call per product (parent
   AC-B.9), each entry `{"spec_key", "op": "set", "value": _value_for_registry(row, value),
@@ -255,6 +265,32 @@ tombstoned, and which keys apply to the product's class. None of it is asked for
   this slice; the "applying N will reset verification on M products" preview (report §5.6.2) is
   logged in `documentation/backlogs/backlog.md` as a follow-up gated on PR 3, and the plan says
   so. AC-C.6's zero-write re-apply is what guarantees zero resets on re-ingest today.
+
+### F - Conflict apply and inline edit (captain amendment 2026-08-17)
+
+- **AC-F.1** `[BE]` GIVEN a ticked `conflict` or `change` proposal WHEN apply runs THEN it is
+  WRITTEN (source `flyer`, same evidence rules); only `unchanged` (`already_matches`) and
+  `suppressed` (`conflict_not_confirmed`) refuse. Live re-classification still runs: a row that
+  became `unchanged` since propose still refuses with no write (AC-C.6 idempotency holds).
+- **AC-F.2** `[BE]` GIVEN `PATCH /dealer-kit/flyer-readings/{id}/spec-proposals/{proposal_id}`
+  with `{value}` WHEN called by a holder of both permissions THEN the value is validated via
+  `value_for_registry`, stored on the proposal row with `edited_at` / `edited_by`, the row's
+  `kind` recomputed against the live spec row, and the batch's per-kind counts refreshed.
+  Refused: 409 when the batch is not `proposed`, 409 when the row is already `applied`,
+  400 with the registry's own words for a bad value. The GET returns the edited value and an
+  `edited` marker so the screen can show it.
+- **AC-F.3** `[FE]` GIVEN a pending proposal row WHEN the user activates its edit affordance
+  THEN the Value cell swaps in place to the registry-typed input (closed vocabulary -> select of
+  allowed values; boolean -> yes/no select; numeric -> number input; else text), save PATCHes and
+  the row re-renders with the new value, kind pill and an "edited" mark; cancel restores. Applied
+  and unchanged/suppressed rows offer no edit.
+- **AC-F.4** `[FE]` GIVEN the selection rules WHEN the page loads THEN `new` rows are ticked;
+  `change` AND `conflict` are tickable (unticked); per-product select-all ticks every tickable
+  row of that product; the confirm dialog copy names both counts ("Replace K master values, D of
+  them set by a person?") whenever any change/conflict is ticked.
+- **AC-F.5** `[BE]` GIVEN the GET payload WHEN a key has a closed vocabulary THEN each proposal
+  row carries `allowed_values` (merged registry vocabulary) so the edit widget needs no second
+  call.
 
 ## Test seams (agree before Phase 2 code)
 
