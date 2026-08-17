@@ -182,6 +182,44 @@ class _LineFacts:
         return max(self.pool_free - self.pool_reorder_level, _ZERO)
 
 
+class _BorrowLedger:
+    """What is still borrowable as one confirmation's lines are checked in turn.
+
+    Two lines of the same Project SO can both name the same donor location, and each of
+    them is checked against live figures - so without a running ledger both would pass and
+    the same units would be promised twice inside one transaction. Seeded lazily from the
+    live readers so nothing is queried for a location nobody borrows from.
+    """
+
+    def __init__(self) -> None:
+        self._free: Dict[Tuple[str, str], Decimal] = {}
+        self._held: Dict[Tuple[str, str, str], Decimal] = {}
+
+    def free(self, product_id: Optional[str], warehouse_id: str, read) -> Decimal:
+        key = (product_id or "", warehouse_id)
+        if key not in self._free:
+            self._free[key] = read(product_id, warehouse_id)
+        return self._free[key]
+
+    def take_free(self, product_id: Optional[str], warehouse_id: str, qty: Decimal) -> None:
+        key = (product_id or "", warehouse_id)
+        self._free[key] = max(self._free.get(key, _ZERO) - qty, _ZERO)
+
+    def held(
+        self, product_id: Optional[str], warehouse_id: str, donor_id: str, read
+    ) -> Decimal:
+        key = (product_id or "", warehouse_id, donor_id)
+        if key not in self._held:
+            self._held[key] = read(product_id, warehouse_id, donor_id)
+        return self._held[key]
+
+    def take_held(
+        self, product_id: Optional[str], warehouse_id: str, donor_id: str, qty: Decimal
+    ) -> None:
+        key = (product_id or "", warehouse_id, donor_id)
+        self._held[key] = max(self._held.get(key, _ZERO) - qty, _ZERO)
+
+
 class ProjectSupplyService:
     """The supply sheet (`proposal_for`) and the atomic commit (`confirm`)."""
 
@@ -578,7 +616,11 @@ class ProjectSupplyService:
         invalid: List[Dict[str, Any]] = []
         seen: set = set()
         checked: List[Tuple[ProjectSalesOrderLine, Any, _LineFacts]] = []
+        # What is still available as the payload is walked, so two lines of the SAME
+        # confirmation cannot each be sold the whole pile. The per-line facts say what was
+        # free when the sheet was read; these say what is left after the lines before it.
         pool_left: Dict[str, Decimal] = {}
+        borrow_left: _BorrowLedger = _BorrowLedger()
 
         for entry in payload_lines:
             line = by_id.get(str(entry.project_line_id))
@@ -594,7 +636,7 @@ class ProjectSupplyService:
             seen.add(str(line.id))
             fact = facts[str(line.id)]
             checked.append((line, entry, fact))
-            self._check_line(entry, fact, pool_left, stale, invalid)
+            self._check_line(entry, fact, pool_left, borrow_left, stale, invalid)
 
         for line in lines:
             if str(line.id) not in seen:
@@ -656,6 +698,7 @@ class ProjectSupplyService:
         entry: Any,
         fact: _LineFacts,
         pool_left: Dict[str, Decimal],
+        borrow_left: "_BorrowLedger",
         stale: List[Dict[str, Any]],
         invalid: List[Dict[str, Any]],
     ) -> None:
@@ -725,7 +768,7 @@ class ProjectSupplyService:
                 )
 
         for item in entry.borrow or []:
-            self._check_borrow(item, fact, refuse, stale, invalid)
+            self._check_borrow(item, fact, borrow_left, refuse, stale, invalid)
 
         if fact.is_discontinued and buy > _ZERO and not (entry.buy_reason or "").strip():
             refuse(
@@ -763,6 +806,7 @@ class ProjectSupplyService:
         self,
         item: Any,
         fact: _LineFacts,
+        borrow_left: "_BorrowLedger",
         refuse,
         stale: List[Dict[str, Any]],
         invalid: List[Dict[str, Any]],
@@ -787,13 +831,17 @@ class ProjectSupplyService:
                     "Reserve it rather than borrowing it.",
                 )
                 return
-            available = self._free_at(fact.product_id, str(warehouse.id))
+            available = borrow_left.free(
+                fact.product_id, str(warehouse.id), self._free_at
+            )
             if qty > available:
                 refuse(
                     stale,
                     f"{warehouse.warehouse_code} has {qty_text(available)} free, and "
                     f"{qty_text(qty)} was asked for.",
                 )
+                return
+            borrow_left.take_free(fact.product_id, str(warehouse.id), qty)
             return
 
         if not item.donor_project_id:
@@ -805,15 +853,22 @@ class ProjectSupplyService:
         if donor is None:
             refuse(invalid, "The project holding that stock no longer exists.")
             return
-        available = self._free_at(fact.product_id, str(warehouse.id)) + self._held_at(
-            fact.product_id, str(warehouse.id), str(donor.id)
+        # The donor's own hold first, then whatever is free at that location: both are
+        # stock that exists, and neither may be handed to two lines of one confirmation.
+        held = borrow_left.held(
+            fact.product_id, str(warehouse.id), str(donor.id), self._held_at
         )
-        if qty > available:
+        free = borrow_left.free(fact.product_id, str(warehouse.id), self._free_at)
+        if qty > held + free:
             refuse(
                 stale,
-                f"{donor.project_code} has {qty_text(available)} at "
+                f"{donor.project_code} has {qty_text(held + free)} at "
                 f"{warehouse.warehouse_code}, and {qty_text(qty)} was asked for.",
             )
+            return
+        from_hold = min(qty, held)
+        borrow_left.take_held(fact.product_id, str(warehouse.id), str(donor.id), from_hold)
+        borrow_left.take_free(fact.product_id, str(warehouse.id), qty - from_hold)
 
     # ------------------------------------------------------------------- writing
 
