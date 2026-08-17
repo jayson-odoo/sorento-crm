@@ -851,3 +851,154 @@ apply) is the captain's call. Nothing here suppresses it; logged as **BL-016**.
 (`test_dealer_kit_flyer_spec_proposal_routes` 57, `test_product_spec_flyer_ingest_service` 19,
 and 94 across the other five); vitest 219 green over the same 13 files. No migration, so
 `alembic heads` is unchanged at the single head `370_flyer_spec_proposals`.
+
+## 6c. Re-walk after the fixes (S7, `dfc6a1bb`)
+
+**Completed 2026-08-17, own agent stack** (BE `:8040`, worker on `WORKER_QUEUES=flyer_read`
+against `REDIS_URL=redis://localhost:6379/5`, FE `npm run dev` on `:3040` with
+`NEXT_PUBLIC_API_URL=http://localhost:8040`; `:3000`/`:8000` untouched, belong to other lanes),
+against the shared dev Postgres, via `npx -y agent-browser@0.27.0 --session spec-flyer-rewalk`.
+Scope: the five findings fixed in `dfc6a1bb` (search-clear, dismiss-prunes-tick,
+add-ticks-unless-already-stored, multi-value pencil disabled) plus a clean 375x812 pass. Login
+used `E2E_EMAIL`/`E2E_PASSWORD` from `sorento_crm_frontend/.env.local` (values never echoed).
+`get url` was checked before trusting reads. Navigation started from `/` via the sidebar, per
+policy - the Product Management accordion needed a JS `.click()` dispatch via `eval` rather than
+a ref-based `click` (same tooling friction section 6b already documented; the accordion and its
+links work correctly once actually triggered). All PIDs started here (backend, worker, frontend)
+were killed at the end; the browser session was closed with a plain `close`, never `close --all`.
+
+### Walk
+
+1. **Search.** Opened `flyer_sample.pdf`'s review page (list showed `0 new, 14 change, 16
+   conflict` - `Propose again` was not needed, plenty of pending rows). Baseline: 25 of 34
+   product groups, `Show more products (9 left)`. Screenshot: `rw-01-review-page-baseline.png`.
+   - Typed `SRTJC80` -> filtered to exactly the 6 matching groups
+     (`SRTJC8018`/`8028`/`8030`/`8037`/`8041`/`8066`), no `Show more` (all fit). Screenshot:
+     `rw-02-review-page-search-filtered.png`. Cleared via the new **x** ("Clear the search")
+     button -> back to the full 25-group first page **and** `Show more products (9 left)`
+     restored. Screenshot: `rw-03-review-page-search-cleared-x-button.png`. This is the exact
+     bug (`shown` depth carried across a list change) - confirmed fixed.
+   - Typed `SRT` (33 of 34 groups match) -> 25 shown, `Show more products (8 left)`. Clicked
+     `Show more` -> all 33 SRT-matching groups rendered, `Show more` gone. Screenshot:
+     `rw-04-review-page-search-showmore-expanded.png`. Cleared via the **x** button -> back to
+     25 groups + `Show more products (9 left)` for the FULL unfiltered 34, not the 33-match
+     count - confirms paging restarts from the top on every search change rather than being
+     stranded inside the old filtered depth. Screenshot:
+     `rw-05-review-page-search-cleared-after-showmore.png`.
+   - Typed `SRTJC80` again (6 matches), then cleared via keyboard select-all (`End`,
+     `Shift+Home`) + `Delete` inside the input instead of the x button -> same correct outcome:
+     25 groups, `Show more products (9 left)`, input empty. Screenshot:
+     `rw-06-review-page-search-cleared-select-all-delete.png`. Console/errors clean throughout.
+2. **Dismiss a ticked row.** Ticked `SRTJC8037`'s `Height` (`conflict`, `600 mm` vs stored
+   `590 mm`) -> footer `Apply 1 selected`. Screenshot: `rw-07-review-page-one-row-ticked.png`.
+   Clicked `Dismiss Height` -> `AlertDialog` **"Dismiss this proposal? It will not be applied.
+   This action cannot be undone."** naming the row (`Height 600 mm`). Screenshot:
+   `rw-08-dismiss-confirm-dialog.png`. Confirmed -> `DELETE
+   .../spec-proposals/{proposal_id}` **200**, followed by a `GET .../spec-proposals` refresh.
+   Sticky bar dropped to **`Apply 0 selected`** and the row was gone from the DOM - confirms the
+   tick was pruned, not just the row. Ticked two remaining rows (`SRTWC287-RL` `Trap`
+   change, `SRTWC7614-RL` `Length` conflict) -> `Apply 2 selected`, clicked Apply -> confirm
+   dialog **"Replace 2 master values, 1 of them set by a person?"** (no mention of the dismissed
+   row), confirmed -> `POST .../spec-proposals/apply` **200**, result text contained no
+   `not_in_batch` anywhere on the page (checked via `document.body.innerText.includes(...)`) and
+   did show the success sentence ("... written to the product master"). Screenshot:
+   `rw-09-apply-after-dismiss-no-not-in-batch.png`. Console/errors clean.
+3. **Add specification.** `FG-CW13` -> `Add specification` -> key picker excluded
+   `Capacity (oz)`/`Type` (already on the product); picked `Finish or colour` -> closed
+   vocabulary value picker; picked **`Black`**, the value already stored on this product from an
+   earlier evidence run. Screenshot: `rw-10-add-specification-value-picked.png`. `Add` ->
+   `POST .../spec-proposals/rows` **201**. New row: `Finish or colour Black edited Already
+   stored`, checkbox `checked=false` **and disabled** - arrives unticked, per the fix (a value
+   equal to what the product already holds is never selectable). Screenshot:
+   `rw-11-add-specification-equal-to-stored-unticked.png`. Second case for contrast:
+   `SRTMRL707` -> `Add specification` -> `Material` -> `Nanograin` (not previously stored) ->
+   `POST .../rows` **201** -> row `Material Nanograin edited New`, checkbox `checked=true`, not
+   disabled - a genuinely new row arrives ticked. Screenshot:
+   `rw-12-add-specification-new-value-ticked.png`. Console/errors clean both times.
+4. **Multi-value row, pencil disabled.** `flyer_sample.pdf` carries no proposal whose own
+   `value` is a multi-item array at the time of this walk (its one multi-value-looking row,
+   `FG-CW13`... `SRTWC8066-S-MBL Finish or colour "Matte black, Black"`, has that shape on the
+   STORED side only, and is `kind=unchanged` with no edit action at all - not the case this fix
+   targets). Cross-checked via `psql` against `product_spec_flyer_proposals` for a
+   `jsonb_array_length(value) > 1` row with `kind IN ('new','change','conflict')`, which surfaced
+   several in the *other* batch (`_SORENTO A3 FLYER 2025-2026_compressed.pdf`,
+   `0c32665c-e3e4-45d8-bc93-0536bcaca773`). Navigated to it via the list page (click through, not
+   a deep URL) and searched `SRTWB1413-BL`: **`Finish or colour` `Rose gold, Black` `Conflicts
+   with your value Black`** - a `conflict` row whose own proposed value is the 2-item array
+   `["rose_gold", "black"]`. Its `Edit Finish or colour` button has `disabled=true`; the hover
+   hint is a native `title="Multi-value specifications are edited on the product page"` on the
+   wrapping `<span>` (not the button itself - a disabled button blocks pointer events, so a
+   tooltip anchored on it would never open, which the diff's own comment calls out). The row's
+   **checkbox stayed enabled** (`disabled=false`) - applying the row untouched still writes both
+   values, only the in-place edit is blocked. Screenshot: `rw-13-multivalue-pencil-disabled.png`.
+   Console/errors clean. **Deviation from the brief, recorded honestly:** the walk needed to
+   leave the named `flyer_sample.pdf` batch to find a live example, because that batch does not
+   currently carry one; the fix itself was exercised against a real multi-value row from the
+   other batch rather than skipped.
+5. **375x812 screenshot.** Returned to `flyer_sample.pdf`'s review page (list page click, not a
+   deep URL), `set viewport 375 812`. Renders cleanly - header, counts sentence, search box, the
+   `FG-CW13` group with its one remaining row, sticky `Apply 1 selected` bar all visible with no
+   horizontal overflow (the `1 ticked` reflects the `Material`/`Nanograin` row added to this same
+   batch in step 3, still ticked). Screenshot: `rw-14-review-page-375x812.png`. Console/errors
+   clean.
+
+### Network calls asserted
+
+`network requests --filter /api/v1/dealer-kit` and `--filter /spec-proposals` checked after
+every state-changing step:
+
+- `DELETE /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals/{proposal_id}` -> **200**
+  (step 2 dismiss), followed by a `GET .../spec-proposals` refresh
+- `POST /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals/apply` -> **200** (step 2 apply of
+  the two remaining ticked rows)
+- `POST /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals/rows` -> **201** (step 3, x2: the
+  already-stored `Black` add and the new `Nanograin` add)
+- `GET /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals` -> **200** (repeated - every
+  search/dismiss/add/apply refresh and every page load)
+
+### Console / errors
+
+Checked via `console` and `errors` after every state-changing step across all five points
+(search x-clear, search-showmore-then-clear, keyboard-clear, tick, dismiss-confirm,
+dismiss-result, apply-result, add-equal-to-stored, add-new-value, the cross-batch multi-value
+lookup, the 375x812 pass). Clean throughout - no warnings or uncaught errors surfaced anywhere in
+this run.
+
+### Evidence files
+
+`documentation/plans/master-data/evidence/flyer-spec-ingestion/`, all prefixed `rw-`:
+
+`rw-01-review-page-baseline.png`, `rw-02-review-page-search-filtered.png`,
+`rw-03-review-page-search-cleared-x-button.png`,
+`rw-04-review-page-search-showmore-expanded.png`,
+`rw-05-review-page-search-cleared-after-showmore.png`,
+`rw-06-review-page-search-cleared-select-all-delete.png`,
+`rw-07-review-page-one-row-ticked.png`, `rw-08-dismiss-confirm-dialog.png`,
+`rw-09-apply-after-dismiss-no-not-in-batch.png`,
+`rw-10-add-specification-value-picked.png`,
+`rw-11-add-specification-equal-to-stored-unticked.png`,
+`rw-12-add-specification-new-value-ticked.png`, `rw-13-multivalue-pencil-disabled.png`,
+`rw-14-review-page-375x812.png`.
+
+### Outcome
+
+**All five re-walk points pass.**
+
+1. **Search clear restores the list** (both via the new x button and via keyboard
+   select-all+delete), in both the no-show-more and the show-more-then-clear cases. This was the
+   one defect the F+G run found and left open; confirmed fixed.
+2. **Dismissing a ticked row drops the sticky count and prunes the tick** - the subsequent Apply
+   of the remaining ticked rows returned no `not_in_batch` refusal anywhere in the rendered
+   result.
+3. **Add specification: a new value arrives ticked; a value equal to the stored one arrives
+   "Already stored" and unticked** (checkbox disabled) - both halves demonstrated on two
+   different products in the same batch.
+4. **Multi-value proposals disable the pencil with the exact hover hint**
+   (`"Multi-value specifications are edited on the product page"`) while leaving the row's
+   checkbox tickable; no live example existed in the `flyer_sample.pdf` batch itself, so this
+   point was verified against a genuine multi-value row in the other flyer batch instead of being
+   skipped - recorded as a deviation from the brief, not a gap in verification.
+5. **Console and `errors` were clean at every step**, including the 375x812 viewport pass with no
+   horizontal overflow.
+
+No new defects found. No backlog entries added.
