@@ -128,6 +128,15 @@ ACTIVE_DECISION_STATE = "active"
 #: A project-class order with neither (the normal book, no decision) is still set aside -
 #: unchanged behaviour, now provably absent from all four columns rather than just from the
 #: old one.
+#:
+#: Only ONE of those legs is FIRM, which is why there is a fifth column. Plan 5.3 defines
+#: `project_need` as "confirmed unplaced Buy" and AC-E05 bypasses the reorder trigger for
+#: "confirmed unplaced Project Buy": that is the CONFIRMED leg alone, so it gets its own
+#: `project_confirmed_committed` for the engine to read. The sheet leg stays inside
+#: `project_committed` (plan 6.4: the Project column reads both legs, and the display column
+#: must not lose it) but is netted like any other commitment, exactly as it was before this
+#: split existed - S13b's "the book supplies the rest". Passing the whole of
+#: `project_committed` past the trigger bought stock a shared pool already held.
 COMMITTED_V_SQL = """
 CREATE OR REPLACE VIEW scm.committed_v AS
 WITH decided AS (
@@ -145,6 +154,9 @@ legs AS (
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                               - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS project_qty,
+           -- The sheet leg is project-class demand, never firm Buy: no CS decision points
+           -- at it, so it is netted like any other commitment (S13b).
+           0 AS project_confirmed_qty,
            CASE WHEN so.demand_class IS NOT NULL AND so.demand_class <> 'project'
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                               - COALESCE(sol.qty_delivered, 0), 0)
@@ -174,6 +186,7 @@ legs AS (
     SELECT sol.product_id,
            sol.warehouse_id,
            oir.qty AS project_qty,
+           oir.qty AS project_confirmed_qty,
            0 AS retail_qty,
            0 AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -191,7 +204,12 @@ SELECT product_id,
        SUM(project_qty + retail_qty + unclassified_qty) AS committed,
        SUM(project_qty) AS project_committed,
        SUM(retail_qty) AS retail_committed,
-       SUM(unclassified_qty) AS unclassified_committed
+       SUM(unclassified_qty) AS unclassified_committed,
+       -- LAST on purpose: appended, so a CREATE OR REPLACE of this body over a database
+       -- already carrying the four-column view is legal (Postgres lets a replacement add
+       -- columns at the end and nowhere else). A SUBSET of `project_committed`, never a
+       -- fourth addend of `committed` - adding it there would count confirmed Buy twice.
+       SUM(project_confirmed_qty) AS project_confirmed_committed
 FROM legs
 GROUP BY product_id, warehouse_id;
 """

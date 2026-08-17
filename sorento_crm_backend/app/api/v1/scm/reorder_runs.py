@@ -900,6 +900,9 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         # and never sized into the order (AC-E06).
         "project_need": inp.get("project_need"),
         "retail_need": inp.get("retail_need"),
+        # Confirmed Buy bypasses the netting; this unconfirmed sheet leg went THROUGH it,
+        # so it is inside `retail_need` and is shown as evidence, not as an extra addend.
+        "project_sheet_need": inp.get("project_sheet_need"),
         "unclassified_need": inp.get("unclassified_need"),
         # True when the run is decided at Product grain, or is legacy. The row is still a
         # read and drill row; only its decision controls are closed (AC-F02, AC-F09).

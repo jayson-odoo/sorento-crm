@@ -49,6 +49,10 @@
  *
  *    Each recommendation row carries its frozen demand-channel split:
  *      project_need, retail_need, unclassified_need: number | null   (NULL on legacy)
+ *          project_need is CONFIRMED unplaced Buy only - the leg that bypasses the
+ *          reorder trigger. project_sheet_need: number | null carries the unconfirmed
+ *          sheet-origin project leg, which was netted like any other commitment and is
+ *          therefore already inside retail_need, never added to it.
  *      decisions_read_only: boolean                  true when the run is decided at
  *                                                    the other grain, so the location
  *                                                    row is a read and drill row

@@ -7,10 +7,13 @@ Four things, one contract (PLAN-scm-front-planning.md sections 4, 5.3, 5.4, 6.2,
    decision", so the predicate needs a real table to be a real predicate. Stage 2 only
    READS these; Stage 1C owns the atomic confirmation that writes them.
 
-2. `scm.committed_v` gains `project_committed`, `retail_committed` and
-   `unclassified_committed` on the SAME (product_id, warehouse_id) row. `committed` stays
-   their sum, and `scm.net_position_v` keeps its keys, its cardinality and its columns, so
-   every existing consumer is untouched.
+2. `scm.committed_v` gains `project_committed`, `retail_committed`,
+   `unclassified_committed` and `project_confirmed_committed` on the SAME
+   (product_id, warehouse_id) row. `committed` stays the sum of the first three, and
+   `scm.net_position_v` keeps its keys, its cardinality and its columns, so every existing
+   consumer is untouched. `project_confirmed_committed` is a SUBSET of `project_committed`:
+   the confirmed-decision leg alone, which is the only leg the engine treats as firm Buy
+   (plan 5.3, AC-E04, AC-E05). The sheet leg stays in the display column and is netted.
 
 3. `scm.order_summary_row` gains the six front-planning columns, all nullable: a run
    created before the contract has no breakdown, and that NULL is a durable legacy marker
@@ -63,6 +66,9 @@ legs AS (
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                               - COALESCE(sol.qty_delivered, 0), 0)
                 ELSE 0 END AS project_qty,
+           -- The sheet leg is project-class demand, never firm Buy: no CS decision points
+           -- at it, so it is netted like any other commitment (S13b).
+           0 AS project_confirmed_qty,
            CASE WHEN so.demand_class IS NOT NULL AND so.demand_class <> 'project'
                 THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                               - COALESCE(sol.qty_delivered, 0), 0)
@@ -92,6 +98,7 @@ legs AS (
     SELECT sol.product_id,
            sol.warehouse_id,
            oir.qty AS project_qty,
+           oir.qty AS project_confirmed_qty,
            0 AS retail_qty,
            0 AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -109,7 +116,12 @@ SELECT product_id,
        SUM(project_qty + retail_qty + unclassified_qty) AS committed,
        SUM(project_qty) AS project_committed,
        SUM(retail_qty) AS retail_committed,
-       SUM(unclassified_qty) AS unclassified_committed
+       SUM(unclassified_qty) AS unclassified_committed,
+       -- LAST on purpose: appended, so a CREATE OR REPLACE of this body over a database
+       -- already carrying the four-column view is legal (Postgres lets a replacement add
+       -- columns at the end and nowhere else). A SUBSET of `project_committed`, never a
+       -- fourth addend of `committed` - adding it there would count confirmed Buy twice.
+       SUM(project_confirmed_qty) AS project_confirmed_committed
 FROM legs
 GROUP BY product_id, warehouse_id;
 """

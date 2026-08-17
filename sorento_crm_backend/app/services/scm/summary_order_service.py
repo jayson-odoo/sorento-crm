@@ -289,11 +289,21 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
     Sums the SAME per-location `project_need` / `retail_need` / `unclassified_need` the
     engine froze on each recommendation, so the Product and Location views cannot disagree
     about a number (AC-F03): there is one calculation and two presentations of it.
+
+    `project_buy_qty` is CONFIRMED unplaced Buy only, which is what plan 5.3 and AC-E04
+    define it as. The unconfirmed sheet leg was netted by the engine alongside Retail, so
+    it is answered inside `retail_replenishment_qty` and cannot be a fourth quantity here
+    (the row carries exactly three, per plan 6.4). It is still named - `project_sheet_netted`
+    in the basis, and per location below - so the drill can say where it went rather than
+    leave a reader to notice a project-class quantity missing from both columns. The open
+    project-class order book is separately visible as `project_demand` on the same row.
     """
     project = sum(float((r.inputs or {}).get("project_need") or 0.0) for r in recs)
     retail = sum(float((r.inputs or {}).get("retail_need") or 0.0) for r in recs)
     unclassified = sum(
         float((r.inputs or {}).get("unclassified_need") or 0.0) for r in recs)
+    project_sheet = sum(
+        float((r.inputs or {}).get("project_sheet_need") or 0.0) for r in recs)
     raw_need = project + retail
     moq = constraints.get("moq")
     multiple = constraints.get("order_multiple")
@@ -313,6 +323,10 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
             "warehouse_name": name,
             "project_need": _f(inp.get("project_need")) or 0.0,
             "retail_need": _f(inp.get("retail_need")) or 0.0,
+            # Netted inside `retail_need` above, never added to it: an unconfirmed
+            # sheet-origin project quantity is demand the engine put through ordinary
+            # netting, so it is stated for the reader and summed nowhere.
+            "project_sheet_need": _f(inp.get("project_sheet_need")) or 0.0,
             "unclassified_need": _f(inp.get("unclassified_need")) or 0.0,
             # Shared facts of the product-location, counted ONCE and carrying no channel
             # dimension (AC-F07).
@@ -339,6 +353,10 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
             # Named rather than merely absent, so the drill can say WHY it is not in the
             # actionable total instead of leaving a reader to notice the gap.
             "unclassified_excluded": unclassified,
+            # Inside `retail_replenishment_qty`, not beside it. Named so the drill can
+            # explain a project-class quantity that is not in `project_buy_qty` because
+            # nobody has confirmed a decision for it yet (plan 4).
+            "project_sheet_netted": project_sheet,
             "locations": locations,
         },
     }
@@ -913,6 +931,9 @@ def locations(db: Session, product_code: str, *, run_id: Optional[str] = None) -
             "warehouse_name": loc.get("warehouse_name"),
             "project_need": loc.get("project_need"),
             "retail_need": loc.get("retail_need"),
+            # Absent on a run frozen before the confirmed/sheet split, and NULL there
+            # rather than 0: the run never stated it.
+            "project_sheet_need": loc.get("project_sheet_need"),
             "unclassified_need": loc.get("unclassified_need"),
             "on_hand": loc.get("on_hand") or 0.0,
             "incoming_spo": loc.get("incoming_spo") or 0.0,

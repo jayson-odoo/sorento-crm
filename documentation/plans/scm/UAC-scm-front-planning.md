@@ -306,7 +306,9 @@ locations, read from `projects.order_inquiry_rows` joined to core SO lines throu
 `core_sales_order_line_id`; it is not netted again against stock, SPO incoming, or PO supply, and
 unconfirmed, Reserve, Borrow, covered incoming, and already placed quantity are excluded. A
 sheet-named SO with `demand_origin = 'scm_order_inquiry'` counts through the sheet leg only while
-it has no confirmed decision, so it is never counted twice.
+it has no confirmed decision, so it is never counted twice. That sheet leg is a
+project-class demand READING and is netted like any other commitment; only the confirmed leg
+is firm and only it bypasses the reorder trigger (AC-E05).
 
 ### AC-E05 [BE][J07] Firm Project Buy bypasses reorder suppression
 

@@ -354,8 +354,15 @@ export interface ReorderRecommendation {
   // once per channel would double the supply the plan believes it has.
   /** Confirmed unplaced Project Buy at this location. Firm: never netted again. */
   project_need?: number | null;
-  /** Retail-class need after normal netting. */
+  /** Retail-class need after normal netting. Answers the sheet leg below as well. */
   retail_need?: number | null;
+  /**
+   * The unconfirmed sheet-origin Project leg (`demand_origin = 'scm_order_inquiry'` with
+   * no confirmed CS decision). Project-class in the reading, but NOT firm: the engine put
+   * it through ordinary netting, so it is already inside `retail_need` and must never be
+   * added to it. Shown as evidence for where a project-class quantity went (plan 4 / 5.3).
+   */
+  project_sheet_need?: number | null;
   /**
    * Demand whose SO carries no persisted class. Visible, and EXCLUDED from the
    * actionable need in both grains until it is classified (AC-F05 / AC-E06).

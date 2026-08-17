@@ -250,6 +250,10 @@ class OrderSummaryLocationRowOut(BaseModel):
     warehouse_name: Optional[str] = None
     project_need: Optional[float] = None
     retail_need: Optional[float] = None
+    # The unconfirmed sheet-origin project leg. Already NETTED inside `retail_need`, so it
+    # is a reading and never an addend: `project_need` (confirmed Buy) plus `retail_need`
+    # is still the whole actionable need. NULL on a run frozen before the split.
+    project_sheet_need: Optional[float] = None
     unclassified_need: Optional[float] = None
     on_hand: float = 0.0
     incoming_spo: float = 0.0

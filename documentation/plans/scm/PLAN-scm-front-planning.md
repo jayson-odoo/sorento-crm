@@ -544,9 +544,15 @@ precedence over the legacy sheet leg.
 - Keep `scm.committed_v` and its consumer `scm.net_position_v` at exactly one aggregate row per
   `(product_id, warehouse_id)`. Add Project, Retail, and unclassified demand columns to that same
   row while retaining the existing aggregate committed column and join keys for current consumers.
-  The Project column reads only current confirmed, unplaced Order Inquiry Buy through the
-  section 4 join path and passes it through as firm need; the `demand_origin = 'scm_order_inquiry'`
-  leg contributes only for SOs without a confirmed decision under the section 4 predicate. The
+  The Project column reads current confirmed, unplaced Order Inquiry Buy through the
+  section 4 join path, plus the `demand_origin = 'scm_order_inquiry'` leg for SOs without a
+  confirmed decision under the section 4 predicate. Only the confirmed leg is FIRM: it is
+  carried in its own `project_confirmed_committed` column (a subset of `project_committed`,
+  never a fourth addend of `committed`) and that is the single figure section 5.3 passes
+  through as `project_need`. The unconfirmed sheet leg stays inside the Project column as a
+  reading, and is netted exactly as it was before this contract, because nobody has promised
+  it (S13b, "the book supplies the rest"). Passing the whole Project column past the reorder
+  trigger bought a SKU whose shared pool already held its demand. The
   Retail column keeps the existing
   open-SO basis for normal netting. Front planning reads the split columns; shared stock, SPO, PO,
   and reorder facts remain single product-location values and never gain a demand-class row

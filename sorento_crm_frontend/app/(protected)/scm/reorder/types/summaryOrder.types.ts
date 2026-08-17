@@ -201,6 +201,12 @@ export interface OrderSummaryLocationRow {
   project_need: number | null;
   retail_need: number | null;
   unclassified_need: number | null;
+  /**
+   * The unconfirmed sheet-origin Project leg, already netted inside `retail_need` and
+   * never an addend of it. Optional because a run frozen before the confirmed/sheet split
+   * never stated it.
+   */
+  project_sheet_need?: number | null;
   /** Shared supply, counted once. */
   on_hand: number;
   incoming_spo: number;

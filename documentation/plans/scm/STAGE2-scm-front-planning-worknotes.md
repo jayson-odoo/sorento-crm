@@ -336,7 +336,7 @@ baseline, none in `scm/reorder`); `vitest run "app/(protected)/scm/reorder"` 70 
 1030 tests passed; `eslint app/(protected)/scm/reorder` 3 errors, all in files this branch
 does not touch.
 
-**Two neighbour regressions LEFT OPEN, for a plan decision (not fixed here).** Measured by
+**Two neighbour regressions, since RESOLVED (see "The firm leg is the confirmed leg" below).** Measured by
 running the whole `tests/scm` directory on this tree and on `HEAD` in a throwaway worktree:
 base 94 failed / 1540 passed, branch 57 failed / 1578 passed, and exactly two failures are
 new -
@@ -360,3 +360,47 @@ pins and is a contract call rather than a fixture fix. Everything else in the 57
 identically at `HEAD` (six `test_policy_config` and one `test_po_history_import` failure are
 prod-copy data - a `reorder_policies.policy_type = 'reorder_level'` row outside the response
 literal; the `test_m8_slice_e` and remaining parity failures likewise pre-date the branch).
+
+## The firm leg is the confirmed leg (BE-5)
+
+The plan decision the two regressions above were waiting on, taken as the planner ruled it:
+**only the confirmed leg is firm.** Plan 5.3 defines `project_need` as "confirmed unplaced Buy",
+AC-E04 and AC-E05 both say "confirmed", and S13b says the book supplies the rest. So:
+
+* `scm.committed_v` gains a FIFTH column, `project_confirmed_committed`, appended last (a
+  `CREATE OR REPLACE` may only add columns at the end, which is how the shared local database
+  took it without a drop). It is the confirmed leg alone, a SUBSET of `project_committed` and
+  never a fourth addend of `committed`, so `net_position_v` and every existing consumer are
+  untouched. `project_committed` still sums both legs, because plan 6.4 makes the Project
+  COLUMN the display of both.
+* `_compute_cell` reads its firm figure off the new column. The sheet remainder
+  (`project_committed` less the confirmed leg) stays inside the netted basis alongside Retail,
+  which is exactly where pre-Stage-2 `committed` had it, so a shared pool that covers it buys
+  nothing again. Unclassified demand is still excluded from actionable need (AC-F05, AC-E06).
+* The remainder is stated rather than folded away: `project_sheet_need` on the frozen
+  recommendation `inputs`, in the recommendations response, in the per-location basis, in
+  `OrderSummaryLocationRowOut`, and on both FE types. It is NOT summed into a product-row
+  quantity: the row carries exactly the three the plan pins, and the sheet leg is answered
+  inside `retail_replenishment_qty` (with `channel_calculation_basis.project_sheet_netted`
+  naming the total). `project_buy_qty` is therefore now confirmed Buy only, which is what it
+  was defined as and what `earliest_project_need_date` already read.
+* Migration 376 is amended in place, not superseded: it has never left this branch, and the
+  `test_committed_v_migration_chain` drift guard compares its frozen body to the live SQL.
+  `alembic heads` stays the single `376_scm_channel_read_model`.
+
+Counts after: `tests/scm` 55 failed / 1582 passed (from 57 / 1578 - the two regressions gone,
+two new tests green). `test_channel_read_model` 14 passed, `test_product_grain_summary` 31,
+`test_summary_order_service` 52, `test_order_summary_routes` 17, `test_demand_breakdown` 14,
+`test_committed_v_migration_chain` 4, `test_plan_grain_policy` 20, `test_m4_decisions` 16,
+`test_demand_reads_the_decision` 7, `test_demand_source_split` 8, `test_m0_view_correctness` 2,
+`test_alembic_revision_ids` 3. `vitest run "app/(protected)/scm/reorder"` 71 files / 1033
+tests passed; `tsc --noEmit` still 28 errors, all in pre-existing `.test.ts(x)` files.
+
+Two `test_pool_netting_parity` failures remain and are LOCAL DATA, not this branch:
+`test_singleton_pool_planning_is_byte_identical_to_the_snapshot` and
+`test_a_partly_covering_pool_sizes_ONE_buy_on_the_pool_shortfall` both fail at `HEAD` too,
+because the prod-copy database holds a `scm.reorder_policy` row with
+`policy_type = 'reorder_level'` and no levels, so the planner emits `needs_level` where the
+golden file expects a forecast buy. Re-run with `policy_type` forced to `reorder_point` (the
+shape CI's empty database has) and both pin exactly: PARTIAL buys 340.0 across POOL 71 /
+POOL-A 161 / POOL-B 108, POOLED buys nothing and reads `covered`.

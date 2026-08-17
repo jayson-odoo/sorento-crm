@@ -526,6 +526,11 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                COALESCE(cv.project_committed, 0) AS project_committed,
                COALESCE(cv.retail_committed, 0) AS retail_committed,
                COALESCE(cv.unclassified_committed, 0) AS unclassified_committed,
+               -- The FIRM half of the Project column: confirmed unplaced Buy pointing at
+               -- an active CS decision, and a SUBSET of `project_committed`. The engine
+               -- bypasses the reorder trigger for this figure only (AC-E04, AC-E05); the
+               -- sheet remainder is project-class demand that ordinary netting sees.
+               COALESCE(cv.project_confirmed_committed, 0) AS project_confirmed_committed,
                -- S10 - the buyer checks outstanding PO and incoming SPO by hand every week.
                -- `np.on_order` is SPO (supplier POs on the water); `po_ordered_v` is the
                -- ordered-not-received PO book. Two different questions, two columns.
@@ -1099,7 +1104,8 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                 # follow. Sizing stays the pool's; every figure that describes this bin
                 # comes from this bin.
                 for k in ("net", "rop", "demand_rate", "doc",
-                          "project_need", "retail_need", "unclassified_need",
+                          "project_need", "retail_need", "project_sheet_need",
+                          "unclassified_need",
                           "project_supply_reduction", "retail_net",
                           "ss", "ss_used", "ss_fallback",
                           "demand_window_days",
@@ -1221,17 +1227,32 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
 
     # --- the channel split of this location's need (front planning 5.3, AC-F07) -------
     #
-    # Project need is FIRM: it is what CS has already confirmed must be bought, so it is
-    # added to the order AFTER the netting rather than being fed through it (AC-E05).
-    # Retail need is the ordinary calculation, run against a net position with the other
-    # two channels taken back out of it and confirmed Project claims on stock removed -
-    # otherwise Retail either nets its own demand against stock a project has been
-    # promised, or sizes an order for demand nobody has classified. Unclassified need is
-    # carried, and visible, and never sized (AC-E06).
+    # Project need is FIRM, and firm means CONFIRMED: plan 5.3 defines it as "confirmed
+    # unplaced Buy for Project-class lines fulfilled from w" and AC-E05 bypasses the
+    # reorder trigger for "confirmed unplaced Project Buy". So the figure that skips the
+    # netting is `project_confirmed_committed` - the leg pointing at an active CS decision
+    # - and nothing else.
+    #
+    # The SHEET remainder (`project_committed` less that leg) is a `demand_origin =
+    # 'scm_order_inquiry'` order nobody has confirmed a decision for. It is project-class
+    # in the READING (plan 6.4: the Project column carries both legs) but it is not a
+    # promise, so it stays where it has always been: inside the netted basis, alongside
+    # Retail, netted against the same stock and the same incoming. Treating the whole
+    # Project column as firm bought a SKU whose shared pool already held 4,397 units.
+    #
+    # Retail need is therefore the ordinary calculation against a net position with the
+    # firm and unclassified channels taken back out of it and confirmed Project claims on
+    # stock removed - otherwise Retail either nets its own demand against stock a project
+    # has been promised, or sizes an order for demand nobody has classified. Unclassified
+    # need is carried, and visible, and never sized (AC-E06).
     #
     # With no project claim and no unclassified demand `retail_net` IS `net`, so a
     # location with only Retail demand plans byte for byte as it did before.
-    project_need = float(row.get("project_committed") or 0.0)
+    project_committed = float(row.get("project_committed") or 0.0)
+    project_need = float(row.get("project_confirmed_committed") or 0.0)
+    # Never negative, even if the two columns ever disagreed: the confirmed leg is a
+    # subset of the display column by construction, and a negative here would ADD cover.
+    project_sheet_need = max(project_committed - project_need, 0.0)
     unclassified_need = float(row.get("unclassified_committed") or 0.0)
     project_supply_reduction = float(row.get("project_supply_reduction") or 0.0)
     retail_net = net + project_need + unclassified_need - project_supply_reduction
@@ -1295,6 +1316,11 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         # the product row can sum it and the drill can explain it (AC-F05, AC-F07).
         "project_need": project_need,
         "retail_need": retail_need,
+        # The unconfirmed sheet leg, stated rather than folded away. It is NOT added to
+        # the order on its own: it is already inside `retail_net`, so `retail_need` is the
+        # sized answer for it and for Retail together. Named so a reader can see where a
+        # project-class quantity went instead of finding it missing from both columns.
+        "project_sheet_need": project_sheet_need,
         "unclassified_need": unclassified_need,
         "project_supply_reduction": project_supply_reduction,
         "retail_net": retail_net,
@@ -1564,6 +1590,8 @@ def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
         # never a second supply row, so the shared facts above are still counted once.
         "project_need": sum(float(c.get("project_need") or 0.0) for c in (cells or [])),
         "retail_need": sum(float(c.get("retail_need") or 0.0) for c in (cells or [])),
+        "project_sheet_need": sum(
+            float(c.get("project_sheet_need") or 0.0) for c in (cells or [])),
         "unclassified_need": sum(
             float(c.get("unclassified_need") or 0.0) for c in (cells or [])),
         "project_supply_reduction": sum(
@@ -1664,9 +1692,12 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         # proposes is `project_need + retail_need` rounded once at the supplier's terms;
         # `retail_net` is the position the Retail half was netted against, so the whole
         # derivation is reproducible from the snapshot (AC-M3.11) rather than only the
-        # half of it that predates channels.
+        # half of it that predates channels. `project_need` is CONFIRMED Buy only;
+        # `project_sheet_need` is the unconfirmed sheet leg, already netted inside
+        # `retail_net` and answered by `retail_need`.
         "project_need": _r(c.get("project_need")),
         "retail_need": _r(c.get("retail_need")),
+        "project_sheet_need": _r(c.get("project_sheet_need")),
         "unclassified_need": _r(c.get("unclassified_need")),
         "project_supply_reduction": _r(c.get("project_supply_reduction")),
         "retail_net": _r(c.get("retail_net")),
