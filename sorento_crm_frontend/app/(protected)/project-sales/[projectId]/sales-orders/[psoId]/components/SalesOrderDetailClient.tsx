@@ -9,6 +9,7 @@ import {
   GitCompareArrows,
   Send,
   Shuffle,
+  Table2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -137,6 +138,12 @@ export function SalesOrderDetailClient({
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/worksheet`}>
+              <Table2 className="size-4" aria-hidden />
+              Worksheet
+            </Link>
+          </Button>
           {/* Disabled rather than hidden while a difference is open: the reviewer has to
               learn WHY they cannot amend, and a button that vanished teaches nothing.
               The server refuses it too (AC-N5) - this only saves the round trip. */}

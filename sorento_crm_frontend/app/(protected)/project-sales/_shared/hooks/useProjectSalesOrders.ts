@@ -8,6 +8,7 @@ import {
   createAmendment,
   getAmendment,
   getProjectSalesOrder,
+  getSalesOrderWorksheet,
   listPoVersions,
   listProjectSalesOrders,
   listScheduleVersions,
@@ -27,6 +28,7 @@ import type {
 
 export const SALES_ORDERS_KEY = 'project-sales-orders';
 export const SALES_ORDER_KEY = 'project-sales-order';
+export const SALES_ORDER_WORKSHEET_KEY = 'project-sales-order-worksheet';
 export const SCHEDULE_VERSIONS_KEY = 'project-schedule-versions';
 export const PO_VERSIONS_KEY = 'project-po-versions';
 export const AMENDMENT_KEY = 'project-so-amendment';
@@ -53,6 +55,19 @@ export function useProjectSalesOrder(psoId: string | undefined) {
   return useQuery({
     queryKey: salesOrderKey(psoId ?? ''),
     queryFn: () => getProjectSalesOrder(psoId as string),
+    enabled: Boolean(psoId),
+  });
+}
+
+/**
+ * The AutoCount worksheet for one order. Separate from the draft query rather than a field
+ * on it: the worksheet is the document as AutoCount will read it, and it is only ever
+ * wanted on its own screen.
+ */
+export function useSalesOrderWorksheet(psoId: string | undefined) {
+  return useQuery({
+    queryKey: [SALES_ORDER_WORKSHEET_KEY, psoId ?? ''],
+    queryFn: () => getSalesOrderWorksheet(psoId as string),
     enabled: Boolean(psoId),
   });
 }
