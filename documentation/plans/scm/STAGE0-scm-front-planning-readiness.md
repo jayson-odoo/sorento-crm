@@ -1,6 +1,7 @@
 # Stage 0 readiness: SCM front planning
 
-**Status:** DONE for Stage 0 and Stage 1A, 17 August 2026. Branch `fm/scm-front-stage0-1a`.
+**Status:** DONE for Stage 0 and Stage 1A, 17 August 2026. Work branch `fm/scm-front-stage0-1a`;
+landing branch `fm/scm-stage0-1a-land`, created from that ref and the one that carries the PR.
 
 **Plan:** `PLAN-scm-front-planning.md`. **UAC:** `UAC-scm-front-planning.md`.
 
@@ -19,6 +20,8 @@ golden fixtures written before any calculation code exists.
 | Merge commit bringing the baseline onto this branch | `90bde5eb` (655 files, 12 hand-resolved conflicts) |
 | Alembic join of the two chains | `2c859e3161da` (empty merge of `354_projects_schema_move` and `366_merge_363_365`) |
 | First Stage 0 migration | `372_project_so_line_core_link` (368 to 371 are held by sibling branches) |
+| Merge of `origin/main` onto the landing branch | `38862e72d` (7 hand-resolved conflicts, all union-preserving except the two select components) |
+| Alembic join of the two 372s | `1925dbc3f`, revision `373_merge_scm_stage0_1a` (empty merge of `372_merge_three_heads` and `372_project_so_line_core_link`) |
 
 The projects schema move (migration 354, ADR-0011) is preserved exactly as the baseline has it:
 47 tables under `projects`, models pin `__table_args__ schema="projects"`, core FKs stay bare.
@@ -29,10 +32,24 @@ schema-qualified table name, `product_service.py` and `ProductAttachmentsTab.tsx
 had fixed the same brochure-image bug; main's funnel kept), `project_order_inquiry_import_service.py`
 (branch ownership move plus main's outcome codes), `status_engine/registry.py` (both bootstrap
 paths run), `bootstrap_env.py`, `_pg_fixture.py` (`scm`, `dealer_kit`, `projects` schemas),
-`conftest.py` (advisory lock outside, prefix sweep inside), `test_company_scope.py` (105 mappers,
-measured), `worker.py` (queue union including `project_docs`). Two clean auto-merges were broken and
-repaired: `app/tasks/import_tasks.py` imported the moved `scm.order_inquiry_service`, and the
-branch's photo test pinned a control main had replaced.
+`conftest.py` (advisory lock outside, prefix sweep inside), `test_company_scope.py` (105 mappers
+then, 108 after the `origin/main` merge below, both measured), `worker.py` (queue union including
+`project_docs`). Two clean auto-merges were broken and repaired: `app/tasks/import_tasks.py`
+imported the moved `scm.order_inquiry_service`, and the branch's photo test pinned a control main
+had replaced.
+
+The second merge (`38862e72d`) brought `origin/main` forward onto the landing branch and conflicted
+in seven files. Six are unions of intent with nothing dropped: `public/__init__.py` router mounts
+again (this branch's `geo` and `quotation_sign` beside main's `onboarding`), `models/access.py`
+(`RespondContact` keeps both new columns, `requires_registered_project` and `outbound_enabled`),
+`test_company_scope.py` (the owned-table tripwire is main's 67 plus this branch's 41, and 108 is
+what the mappers measure), `test_schema_uuid_id_principle.py` (main's `team_member_brands` beside
+this branch's schema-qualified `projects.*` junctions), and `sorento_crm_mcp/server.py` twice, where
+the project-sales slimming and main's `company_id` strip are disjoint additions that only collided
+by landing at the same offset. The seventh is the one genuine rewrite: `SearchableSelect.tsx` and
+`SearchableMultiSelect.tsx` both took main's newer `wrapOptions` branching shape, with this branch's
+16rem menu floor folded into the non-wrap arm so neither intent is lost. Main's three new owned
+tables are what moves the mapper count from 105 to 108.
 
 Merged-tree smoke: every Project Sales suite green (108 tests), migration 354 suite green,
 `tests/scm` 1502 passed with 55 failures all classified as pre-existing shared-DB drift or the two
@@ -173,11 +190,14 @@ row PSO-000002, Worksheet button. `get url` confirmed at every hop.
   row's 36 blocking; the copy now reads "36 findings stop the export" after the review), both
   export actions disabled with title "Publish first".
 - Viewports 1280x800 and 375x812 both rendered without overflow.
-- Backend tests: `tests/test_project_so_worksheet.py` (12) and
-  `tests/test_project_so_draft.py::test_rebuilding_from_the_same_inputs_is_a_no_op` cover the
+- Backend tests: `tests/test_project_so_worksheet.py` (16), `tests/test_project_so_line_core_link.py`
+  (3) and `tests/test_project_so_draft.py::test_rebuilding_from_the_same_inputs_is_a_no_op` cover the
   published-clean, published-with-hard-finding, 404, auth-denial, CSV parity and no-op rebuild
   cases the local data cannot show (every local project SO is blocked).
-- Frontend: `SalesOrderWorksheetClient.test.tsx` (15), `useSalesOrderWorksheet.test.tsx` (3).
+- Frontend: 49 across the four suites the worksheet touches, measured together:
+  `SalesOrderWorksheetClient.test.tsx`, `useSalesOrderWorksheet.test.tsx`,
+  `SalesOrderDetailClient.test.tsx` and `projectSalesOrderService.test.ts` (the last two carry the
+  download repair below).
 
 Regression guard for the flow is this recorded run, not a new Playwright spec, per the standing
 order in CLAUDE.md.
