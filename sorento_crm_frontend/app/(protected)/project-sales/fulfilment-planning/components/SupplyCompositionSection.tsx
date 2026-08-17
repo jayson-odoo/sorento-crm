@@ -65,6 +65,7 @@ export function SupplyCompositionSection({
   // not wipe quantities and reasons CS is mid-way through typing. Facts that moved under
   // an unchanged decision are the server's to catch: confirmation rechecks everything.
   const proposalLines = proposal?.lines;
+  const proposalLoaded = proposalLines !== undefined;
   React.useEffect(() => {
     setDrafts((proposalLines ?? []).map(draftFromLine));
     setComposingAgain(false);
@@ -75,7 +76,7 @@ export function SupplyCompositionSection({
     decision?.revision_no,
     decision?.state,
     proposal?.review_state,
-    proposalLines === undefined,
+    proposalLoaded,
   ]);
 
   const frozen = isConfirmed && !composingAgain;
