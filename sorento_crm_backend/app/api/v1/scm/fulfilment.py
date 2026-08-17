@@ -16,6 +16,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -516,12 +517,61 @@ def list_inbound_shipments(
     The screen had only what the last upload returned, so a refresh emptied it and the work
     looked lost. A container is read once and decided later, often not in the same sitting.
     """
-    from app.models.procurement import InboundShipment, InboundShipmentLine
+    from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 
     q = db.query(InboundShipment)
     if supplier_id:
-        q = q.filter(InboundShipment.supplier_id == supplier_id)
+        # Header OR any line: a container that carries two factories has a NULL header
+        # supplier, so filtering on the header alone hid the mixed containers from both
+        # of the suppliers actually on them.
+        q = q.filter(
+            or_(
+                InboundShipment.supplier_id == supplier_id,
+                db.query(InboundShipmentLine)
+                .filter(
+                    InboundShipmentLine.shipment_id == InboundShipment.id,
+                    InboundShipmentLine.supplier_id == supplier_id,
+                )
+                .exists(),
+            )
+        )
     rows = q.order_by(InboundShipment.created_at.desc()).limit(limit).all()
+
+    shipment_ids = [r.id for r in rows]
+    # Who is ON each container, in one query rather than one per row.
+    suppliers_by_shipment: dict[str, list[dict]] = {}
+    if shipment_ids:
+        pairs = (
+            db.query(
+                InboundShipmentLine.shipment_id,
+                Supplier.id,
+                Supplier.supplier_code,
+                Supplier.supplier_name,
+            )
+            .join(Supplier, Supplier.id == InboundShipmentLine.supplier_id)
+            .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
+            .distinct()
+            .order_by(Supplier.supplier_name)
+            .all()
+        )
+        for ship_id, sup_id, code, name in pairs:
+            suppliers_by_shipment.setdefault(str(ship_id), []).append(
+                {
+                    "supplier_id": str(sup_id),
+                    "supplier_code": code,
+                    "supplier_name": name,
+                }
+            )
+    line_counts: dict[str, int] = {}
+    if shipment_ids:
+        for ship_id, count in (
+            db.query(InboundShipmentLine.shipment_id, func.count(InboundShipmentLine.id))
+            .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
+            .group_by(InboundShipmentLine.shipment_id)
+            .all()
+        ):
+            line_counts[str(ship_id)] = int(count)
+
     return {
         "data": [
             {
@@ -530,9 +580,8 @@ def list_inbound_shipments(
                 "container_no": r.shipping_container_number,
                 "bl_no": r.bill_of_lading_number,
                 "status": r.shipment_status,
-                "lines": db.query(InboundShipmentLine)
-                .filter(InboundShipmentLine.shipment_id == r.id)
-                .count(),
+                "lines": line_counts.get(str(r.id), 0),
+                "suppliers": suppliers_by_shipment.get(str(r.id), []),
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in rows

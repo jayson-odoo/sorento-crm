@@ -25,6 +25,7 @@ a Test means everywhere else in this system.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -32,12 +33,34 @@ from sqlalchemy.orm import Session
 
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
 from app.services.error_handler import AppException
-from app.services.scm.packing_list_reader import PackingBlock, PackingReadResult, read_workbook
+from app.services.scm.packing_list_reader import (
+    PackingBlock,
+    PackingLine,
+    PackingReadResult,
+    read_workbook,
+)
 from app.services.scm.upload_validation import envelope, named
 
 #: What a block is called when it has no container number of its own. Positional, so the same
 #: file re-uploaded produces the same names and the duplicate resolver recognises them.
 _PRELOAD_PREFIX = "PRELOAD"
+
+
+def _line_cbm(ln: PackingLine) -> Optional[Decimal]:
+    """The volume of one line, in the unit the file states it in.
+
+    The stated total when there is one, otherwise the per-unit figure times the quantity.
+    `None` when the file measured neither: an unmeasured line must not be stored as 0, or a
+    subtotal reads as complete when it is not.
+
+    Through `str` rather than `Decimal(float)`, so 0.21 stays 0.21 instead of arriving as
+    its binary approximation in a Numeric(12,4) column.
+    """
+    if ln.cbm_total is not None:
+        return Decimal(str(ln.cbm_total))
+    if ln.cbm_per_unit is not None and ln.qty:
+        return Decimal(str(round(ln.cbm_per_unit * ln.qty, 6)))
+    return None
 
 
 def _parse(db: Session, data: bytes) -> PackingReadResult:
@@ -203,9 +226,19 @@ def apply(
             lines.append(
                 InboundShipmentLineCreate(
                     product_id=str(product["id"]),
+                    # Whose line this is, stated on the LINE and not only on the header:
+                    # one container carries several factories, and a line that does not
+                    # say which one is a line the next factory's upload would replace.
+                    supplier_id=supplier_id,
                     quantity_shipped=int(ln.qty),
                     uom_id=str(product["base_uom_id"]) if product.get("base_uom_id") else None,
                     cartons_count=int(ln.cartons) if ln.cartons else 1,
+                    # The reader has always parsed volume and the supplier's remark and
+                    # thrown both away. The total when the file states it, otherwise the
+                    # per-unit figure times the quantity; never zero for an unmeasured
+                    # item, because zero reads as "takes no space".
+                    cbm=_line_cbm(ln),
+                    remarks=ln.remark,
                 )
             )
 

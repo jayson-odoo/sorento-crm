@@ -389,6 +389,36 @@ def compute_inbound_shipment_line_status(
     return "in_transit"
 
 
+def _effective_line_supplier(line_dict: dict, header_supplier_id: Optional[str]) -> Optional[str]:
+    """Whose line this is: what the line says, else what the header says.
+
+    A packing list is sent per factory, so the upload states the supplier once on the
+    header and every line on it belongs to that factory. A caller that knows better says
+    so on the line and wins.
+    """
+    return line_dict.get("supplier_id") or header_supplier_id or None
+
+
+def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list[dict]:
+    """One dict per (product, supplier) in this payload, quantities summed.
+
+    The merge key gained the supplier because a container legitimately carries the same
+    product from two factories; merging those two rows into one would lose which factory
+    packed what, which is the whole point of the per-supplier line.
+    """
+    merged: dict[tuple[str, Optional[str]], dict] = {}
+    for line_data in lines_data or []:
+        d = line_data.model_dump()
+        d["supplier_id"] = _effective_line_supplier(d, header_supplier_id)
+        key = (d["product_id"], d["supplier_id"])
+        if key in merged:
+            merged[key]["quantity_shipped"] += d.get("quantity_shipped", 0)
+            merged[key]["cartons_count"] += d.get("cartons_count", 1)
+        else:
+            merged[key] = dict(d)
+    return list(merged.values())
+
+
 class SupplierService:
     """Service for supplier operations."""
     
@@ -905,7 +935,27 @@ class InboundShipmentService:
             elif (shipment.shipment_status or "").strip().lower() in ("received", "fully_received"):
                 shipment.shipment_status = "in_transit"
         self.db.commit()
-    
+
+    def _derive_header_supplier(self, shipment: InboundShipment) -> None:
+        """The header's supplier is whatever its lines agree on, and nothing when they do not.
+
+        Derived rather than stated, so it never lies: one distinct supplier across the
+        lines is the container's supplier, two or more is a mixed container which has no
+        single one, and no supplier at all leaves the header as the caller set it (the
+        n8n PDF path names none and has nothing to derive from).
+        """
+        suppliers = {
+            str(line.supplier_id)
+            for line in self.db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == shipment.id)
+            .all()
+            if line.supplier_id
+        }
+        if len(suppliers) == 1:
+            shipment.supplier_id = next(iter(suppliers))
+        elif len(suppliers) > 1:
+            shipment.supplier_id = None
+
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
         """Create or update-in-place an inbound shipment with lines.
 
@@ -976,23 +1026,32 @@ class InboundShipmentService:
             for k, v in shipment_dict.items():
                 if v is not None:
                     setattr(existing, k, v)
-            # Replace lines
+            # Replace lines, but only the ones this upload speaks for. One container
+            # carries several factories and each sends its own packing list, so replacing
+            # every line on a supplier-stated upload deleted the other factories' lines -
+            # the data-loss this rule exists to end. An upload that names NO supplier
+            # (the n8n PDF path, legacy callers) still speaks for the whole container, as
+            # it always did.
+            merged_lines = _merge_shipment_lines(
+                shipment_data.shipment_lines, shipment_data.supplier_id
+            )
+            incoming_suppliers = {d["supplier_id"] for d in merged_lines}
+            if not merged_lines and shipment_data.supplier_id:
+                # No lines at all: the upload clears what that supplier had on the container.
+                incoming_suppliers = {shipment_data.supplier_id}
+            states_supplier = bool(shipment_data.supplier_id) or any(
+                (line.supplier_id or None) for line in (shipment_data.shipment_lines or [])
+            )
             for line in existing.shipment_lines[:]:
+                if states_supplier and (line.supplier_id or None) not in incoming_suppliers:
+                    continue
                 self.db.delete(line)
             self.db.flush()
-            if shipment_data.shipment_lines:
-                merged: dict[str, dict] = {}
-                for line_data in shipment_data.shipment_lines:
-                    d = line_data.model_dump()
-                    pid = d["product_id"]
-                    if pid in merged:
-                        merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
-                        merged[pid]["cartons_count"] += d.get("cartons_count", 1)
-                    else:
-                        merged[pid] = dict(d)
-                for d in merged.values():
-                    line = InboundShipmentLine(**d, shipment_id=existing.id)
-                    self.db.add(line)
+            for d in merged_lines:
+                line = InboundShipmentLine(**d, shipment_id=existing.id)
+                self.db.add(line)
+            self.db.flush()
+            self._derive_header_supplier(existing)
             self.db.commit()
             self.db.refresh(existing)
             self.refresh_shipment_line_statuses(existing.id)
@@ -1009,21 +1068,17 @@ class InboundShipmentService:
         self.db.add(shipment)
         self.db.flush()  # Get the ID
         
-        # Create lines if provided (one row per product per shipment; merge duplicates by product_id)
+        # Create lines if provided (one row per product PER SUPPLIER on this shipment;
+        # duplicates within the payload are merged on that same pair)
         if shipment_data.shipment_lines:
-            merged: dict[str, dict] = {}  # product_id -> merged line dict
-            for line_data in shipment_data.shipment_lines:
-                d = line_data.model_dump()
-                pid = d["product_id"]
-                if pid in merged:
-                    merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
-                    merged[pid]["cartons_count"] += d.get("cartons_count", 1)
-                else:
-                    merged[pid] = dict(d)
-            for d in merged.values():
+            for d in _merge_shipment_lines(
+                shipment_data.shipment_lines, shipment_data.supplier_id
+            ):
                 line = InboundShipmentLine(**d, shipment_id=shipment.id)
                 self.db.add(line)
-        
+            self.db.flush()
+            self._derive_header_supplier(shipment)
+
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment.id)
@@ -1042,25 +1097,19 @@ class InboundShipmentService:
             setattr(shipment, key, value)
         
         if "shipment_lines" in shipment_data.model_dump(exclude_unset=True):
-            # Replace lines: delete existing, add new (grouped by product)
+            # Replace lines: delete existing, add new (grouped by product AND supplier -
+            # the same key `create_shipment` merges on, because the same product from two
+            # factories is two rows). An explicit update states the whole line set, so it
+            # replaces all of them rather than only one supplier's.
             for line in shipment.shipment_lines[:]:
                 self.db.delete(line)
             self.db.flush()
-            lines_data = shipment_data.shipment_lines or []
-            if lines_data:
-                merged: dict[str, dict] = {}
-                for line_data in lines_data:
-                    d = line_data.model_dump()
-                    pid = d["product_id"]
-                    if pid in merged:
-                        merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
-                        merged[pid]["cartons_count"] += d.get("cartons_count", 1)
-                    else:
-                        merged[pid] = dict(d)
-                for d in merged.values():
-                    line = InboundShipmentLine(**d, shipment_id=shipment.id)
-                    self.db.add(line)
-        
+            for d in _merge_shipment_lines(
+                shipment_data.shipment_lines, getattr(shipment, "supplier_id", None)
+            ):
+                line = InboundShipmentLine(**d, shipment_id=shipment.id)
+                self.db.add(line)
+
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment_id)

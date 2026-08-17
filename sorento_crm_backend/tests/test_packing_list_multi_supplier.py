@@ -1,0 +1,324 @@
+"""One container, several factories: the second packing list must not erase the first.
+
+This is the data-loss test. `uk_inbound_shipment_lines_shipment_product` said one row per
+product per shipment and `create_shipment` replaced every line on an update, so uploading
+Caizhou's list for a container that already held Kailu's lines left the container holding
+Caizhou's alone. Nobody was told; the quantities simply went.
+
+The rule under test:
+
+  * a line belongs to a supplier (its own, else the header's);
+  * an upload that NAMES a supplier replaces only that supplier's lines;
+  * an upload that names none replaces everything, exactly as it always did (the n8n PDF
+    path knows no supplier and speaks for the whole container);
+  * the header supplier is derived - one supplier across the lines, or NULL when mixed.
+
+Postgres only, on a blank schema, seeding every FK target itself: the CI database is empty,
+so a test that borrows an existing category or supplier passes here and fails there.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import date
+from io import BytesIO
+
+import pytest
+
+from app.models.import_alias import ImportFieldAlias
+from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
+from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
+from app.services.procurement_service import InboundShipmentService
+from app.services.scm import packing_list_service
+from tests._pg_fixture import blank_session
+
+MARKER = "ZZMS"
+
+#: The headers migration 311 seeds for doc type `packing_list`. Seeded by the test rather
+#: than borrowed from the database, because CI's is empty.
+_ALIASES = [
+    ("item_code", "产品型号"),
+    ("product_name", "品名"),
+    ("qty", "数量"),
+    ("cartons", "箱数"),
+    ("cbm_per_unit", "体积(cbm)"),
+    ("cbm_total", "总体积(cbm)"),
+    ("container_no", "货柜号"),
+    ("remark", "备注"),
+]
+
+
+@pytest.fixture
+def db():
+    with blank_session() as session:
+        yield session
+
+
+def _uom(db) -> str:
+    uid = str(uuid.uuid4())
+    db.add(UnitOfMeasure(id=uid, uom_code=f"{MARKER}{uuid.uuid4().hex[:6]}"[:20], uom_name="pcs"))
+    db.flush()
+    return uid
+
+
+def _category(db) -> str:
+    cid = str(uuid.uuid4())
+    db.add(
+        ProductCategory(
+            id=cid,
+            category_code=f"{MARKER}-CAT-{uuid.uuid4().hex[:6]}",
+            category_name=f"{MARKER} category",
+        )
+    )
+    db.flush()
+    return cid
+
+
+def _product(db, code: str, *, category_id: str, uom_id: str) -> Product:
+    p = Product(
+        id=str(uuid.uuid4()),
+        product_code=f"{MARKER}-{code}-{uuid.uuid4().hex[:6]}",
+        product_name=code,
+        category_id=category_id,
+        base_uom_id=uom_id,
+        list_price=0,
+        is_active=True,
+    )
+    db.add(p)
+    db.flush()
+    return p
+
+
+def _supplier(db, name: str) -> Supplier:
+    s = Supplier(
+        id=str(uuid.uuid4()),
+        supplier_code=f"{MARKER}-{name}-{uuid.uuid4().hex[:6]}",
+        supplier_name=f"{MARKER} {name}",
+        is_active=True,
+    )
+    db.add(s)
+    db.flush()
+    return s
+
+
+class World:
+    """Two factories, two products, one container."""
+
+    def __init__(self, db):
+        self.db = db
+        category = _category(db)
+        uom = _uom(db)
+        self.uom_id = uom
+        self.kailu = _supplier(db, "KAILU")
+        self.caizhou = _supplier(db, "CAIZHOU")
+        self.tap = _product(db, "TAP", category_id=category, uom_id=uom)
+        self.sink = _product(db, "SINK", category_id=category, uom_id=uom)
+        self.container = f"{MARKER}U{uuid.uuid4().hex[:7].upper()}"
+        db.flush()
+
+    def upload(self, *, supplier_id, lines, container=None):
+        """One packing list for this container, as `create_shipment` receives it."""
+        payload = InboundShipmentCreate(
+            shipment_number=container or self.container,
+            supplier_id=supplier_id,
+            shipment_date=date(2026, 1, 1),
+            shipping_container_number=container or self.container,
+            shipment_lines=[
+                InboundShipmentLineCreate(
+                    product_id=str(product.id),
+                    quantity_shipped=qty,
+                    supplier_id=line_supplier,
+                )
+                for product, qty, line_supplier in lines
+            ],
+        )
+        return InboundShipmentService(self.db).create_shipment(payload)
+
+    def lines(self, shipment_id) -> list[InboundShipmentLine]:
+        return (
+            self.db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == shipment_id)
+            .all()
+        )
+
+
+def _by_product(lines) -> dict[str, InboundShipmentLine]:
+    return {str(ln.product_id): ln for ln in lines}
+
+
+# --------------------------------------------------------------------------- #
+# create_shipment                                                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_second_factorys_packing_list_does_not_erase_the_first(db):
+    """THE test. Kailu, then Caizhou, on one container: both survive."""
+    w = World(db)
+
+    first = w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None)])
+    db.commit()
+    second = w.upload(supplier_id=str(w.caizhou.id), lines=[(w.sink, 5, None)])
+    db.commit()
+
+    # One container is one shipment, updated in place.
+    assert second.id == first.id
+    assert getattr(second, "_already_existed", False) is True
+
+    lines = _by_product(w.lines(first.id))
+    assert len(lines) == 2
+    assert lines[str(w.tap.id)].quantity_shipped == 10
+    assert str(lines[str(w.tap.id)].supplier_id) == str(w.kailu.id)
+    assert lines[str(w.sink.id)].quantity_shipped == 5
+    assert str(lines[str(w.sink.id)].supplier_id) == str(w.caizhou.id)
+
+    # A mixed container has no single supplier, so the header states none rather than
+    # naming whichever uploaded last.
+    db.refresh(second)
+    assert second.supplier_id is None
+
+
+def test_a_corrected_list_replaces_only_that_suppliers_lines(db):
+    w = World(db)
+    w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None)])
+    db.commit()
+    shipment = w.upload(supplier_id=str(w.caizhou.id), lines=[(w.sink, 5, None)])
+    db.commit()
+
+    corrected = w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 42, None)])
+    db.commit()
+
+    assert corrected.id == shipment.id
+    lines = _by_product(w.lines(shipment.id))
+    assert len(lines) == 2
+    assert lines[str(w.tap.id)].quantity_shipped == 42  # Kailu's, corrected
+    assert lines[str(w.sink.id)].quantity_shipped == 5  # Caizhou's, untouched
+
+
+def test_an_upload_that_names_no_supplier_still_replaces_everything(db):
+    """The n8n PDF path is unchanged: no supplier stated means the whole container."""
+    w = World(db)
+    w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None)])
+    db.commit()
+    shipment = w.upload(supplier_id=str(w.caizhou.id), lines=[(w.sink, 5, None)])
+    db.commit()
+
+    legacy = w.upload(supplier_id=None, lines=[(w.tap, 7, None)])
+    db.commit()
+
+    assert legacy.id == shipment.id
+    lines = w.lines(shipment.id)
+    assert len(lines) == 1
+    assert str(lines[0].product_id) == str(w.tap.id)
+    assert lines[0].quantity_shipped == 7
+    assert lines[0].supplier_id is None
+    # Nothing to derive from, so the header keeps what it had.
+    db.refresh(legacy)
+    assert legacy.supplier_id is None
+
+
+def test_one_product_from_two_factories_in_one_payload_is_two_lines(db):
+    """The merge key is (product, supplier). Merging on product alone would lose the split."""
+    w = World(db)
+    shipment = w.upload(
+        supplier_id=None,
+        lines=[
+            (w.tap, 10, str(w.kailu.id)),
+            (w.tap, 4, str(w.caizhou.id)),
+            (w.tap, 6, str(w.kailu.id)),  # same pair twice -> summed
+        ],
+    )
+    db.commit()
+
+    lines = w.lines(shipment.id)
+    assert len(lines) == 2
+    by_supplier = {str(ln.supplier_id): ln.quantity_shipped for ln in lines}
+    assert by_supplier[str(w.kailu.id)] == 16
+    assert by_supplier[str(w.caizhou.id)] == 4
+    # Two suppliers on the lines -> the header names none.
+    db.refresh(shipment)
+    assert shipment.supplier_id is None
+
+
+def test_a_single_supplier_container_still_names_it_on_the_header(db):
+    w = World(db)
+    shipment = w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None), (w.sink, 3, None)])
+    db.commit()
+
+    db.refresh(shipment)
+    assert str(shipment.supplier_id) == str(w.kailu.id)
+    assert {str(ln.supplier_id) for ln in w.lines(shipment.id)} == {str(w.kailu.id)}
+
+
+# --------------------------------------------------------------------------- #
+# packing_list_service.apply - the same story through a workbook                #
+# --------------------------------------------------------------------------- #
+
+
+def _seed_aliases(db) -> None:
+    for field, alias in _ALIASES:
+        db.add(
+            ImportFieldAlias(
+                id=str(uuid.uuid4()), doc_type="packing_list", field=field, alias=alias, locale="zh"
+            )
+        )
+    db.flush()
+
+
+def _workbook(container: str, rows: list[tuple[str, float, float, float, str]]) -> bytes:
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append([f"货柜号：{container}"])
+    ws.append(["产品型号", "品名", "数量", "箱数", "体积(cbm)", "备注"])
+    for code, qty, cartons, cbm, remark in rows:
+        ws.append([code, "座厕", qty, cartons, cbm, remark])
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_two_workbooks_for_one_container_keep_both_factories(db):
+    w = World(db)
+    _seed_aliases(db)
+    db.commit()
+
+    packing_list_service.apply(
+        db,
+        _workbook(w.container, [(w.tap.product_code, 10, 2, 0.21, "loaded first")]),
+        supplier_id=str(w.kailu.id),
+    )
+    db.commit()
+    out = packing_list_service.apply(
+        db,
+        _workbook(w.container, [(w.sink.product_code, 5, 1, 0.5, "")]),
+        supplier_id=str(w.caizhou.id),
+    )
+    db.commit()
+
+    assert out["shipments_created"] == 0
+    assert out["shipments_updated"] == 1
+
+    shipments = (
+        db.query(InboundShipment)
+        .filter(InboundShipment.shipping_container_number == w.container)
+        .all()
+    )
+    assert len(shipments) == 1
+    lines = _by_product(w.lines(shipments[0].id))
+    assert len(lines) == 2
+
+    tap = lines[str(w.tap.id)]
+    assert str(tap.supplier_id) == str(w.kailu.id)
+    assert tap.quantity_shipped == 10
+    # cbm and the supplier's own remark are carried, not thrown away: 0.21 per unit x 10.
+    assert float(tap.cbm) == pytest.approx(2.1)
+    assert tap.remarks == "loaded first"
+
+    sink = lines[str(w.sink.id)]
+    assert str(sink.supplier_id) == str(w.caizhou.id)
+    assert sink.quantity_shipped == 5
+    assert float(sink.cbm) == pytest.approx(2.5)
+    assert sink.remarks is None
+
+    assert shipments[0].supplier_id is None  # mixed container
