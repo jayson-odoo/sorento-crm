@@ -1,20 +1,21 @@
-"""The golden set, asserted against an engine that does not exist yet (Stage 1C).
+"""The golden set, asserted against the Stage 1C front-planning engine.
 
 PRINCIPLES.md phase 2: for a deterministic engine "the golden-set expected numbers are
-written as failing tests first, and the code is built to satisfy them". So these run RED
-today, on purpose, and they say so: every one is `xfail(strict=True)`, which means the day
-`app.services.scm.front_planning_engine` lands and satisfies a case, that case turns into an
-XPASS and FAILS the suite until the marker comes off. A silent pass is the one outcome this
-file must not allow.
+written as failing tests first, and the code is built to satisfy them". These were written
+RED, every one `xfail(strict=True)`, so that the day
+`app.services.scm.front_planning_engine` landed and satisfied a case it turned into an
+XPASS and failed the suite until the marker came off. The engine now exists, the markers
+are gone, and these are ordinary passing tests: a silent pass is the one outcome this file
+was never allowed to have.
 
 The import is inside each test body rather than at module level for the same reason a
 collection error is worse than a failure: a missing module at import time takes the whole
 file out of the run, and a file nobody collects proves nothing.
 
 The numbers themselves live in `front_planning_golden.py` and are not repeated here. The
-last test in the file is NOT xfail: it checks the golden data against itself, because a
-golden set whose components do not add up to the open quantity would have every engine test
-chasing an impossible target.
+last test in the file checks the golden data against itself, because a golden set whose
+components do not add up to the open quantity would have every engine test chasing an
+impossible target.
 """
 from __future__ import annotations
 
@@ -35,11 +36,6 @@ from tests.scm.front_planning_golden import (
     PROPOSAL_CASES,
     RESERVE,
     TWO_LINE_ATTRIBUTION_CASE,
-)
-
-STAGE_1C = (
-    "Stage 1C: front planning engine not implemented yet "
-    "(PLAN-scm-front-planning.md 3.2/3.3/3.5)"
 )
 
 
@@ -65,7 +61,6 @@ def _as_tuple(component):
 # ------------------------------------------------------------------- AC-B08
 
 
-@pytest.mark.xfail(strict=True, reason=STAGE_1C)
 def test_the_hot_selling_worked_case_reserves_only_above_the_brw_floor():
     """AC-B08 and PLAN section 3.3's own worked example, to the unit."""
     from app.services.scm.front_planning_engine import propose_line
@@ -78,7 +73,6 @@ def test_the_hot_selling_worked_case_reserves_only_above_the_brw_floor():
     )
 
 
-@pytest.mark.xfail(strict=True, reason=STAGE_1C)
 def test_a_hot_selling_product_reserves_no_dealer_facing_stock():
     """AC-B06. The 50 dealer units are visible and untouchable, not merely unpreferred."""
     from app.services.scm.front_planning_engine import propose_line
@@ -101,7 +95,6 @@ def test_a_hot_selling_product_reserves_no_dealer_facing_stock():
 # ------------------------------------------------------------------- AC-B12
 
 
-@pytest.mark.xfail(strict=True, reason=STAGE_1C)
 def test_every_proposed_component_states_its_reason_beside_its_quantity():
     """AC-B14, in the exact words the criterion prints."""
     from app.services.scm.front_planning_engine import propose_line
@@ -111,7 +104,6 @@ def test_every_proposed_component_states_its_reason_beside_its_quantity():
     assert tuple(c.stated for c in proposed) == BALANCE_INVARIANT_STATED
 
 
-@pytest.mark.xfail(strict=True, reason=STAGE_1C)
 @pytest.mark.parametrize("case", PROPOSAL_CASES, ids=lambda c: c.ac)
 def test_a_proposed_line_balances(case):
     """AC-B12: open = timely SPO + Reserve + Borrow + Buy, all terms non-negative."""
@@ -127,7 +119,6 @@ def test_a_proposed_line_balances(case):
 # ------------------------------------------------------------------- AC-B02
 
 
-@pytest.mark.xfail(strict=True, reason=STAGE_1C)
 def test_opening_stock_goes_to_the_first_line_and_the_same_day_spo_to_the_second():
     """AC-B02's worked attribution: stock before SPO, lines in line-number order."""
     from app.services.scm.front_planning_engine import attribute_sources
@@ -141,7 +132,6 @@ def test_opening_stock_goes_to_the_first_line_and_the_same_day_spo_to_the_second
         )
 
 
-@pytest.mark.xfail(strict=True, reason=STAGE_1C)
 def test_reversing_the_database_row_order_changes_nothing():
     """AC-B02 and AC-B04: "database return order never participates"."""
     from app.services.scm.front_planning_engine import attribute_sources
@@ -159,7 +149,6 @@ def test_reversing_the_database_row_order_changes_nothing():
 # ------------------------------------------------------------------- AC-B13
 
 
-@pytest.mark.xfail(strict=True, reason=STAGE_1C)
 def test_cover_promised_to_a_confirmed_line_is_not_offered_to_the_next_one():
     """AC-B13: project open 10 covered by SPO 10, retail outstanding 10, stock 0.
 
@@ -186,7 +175,7 @@ def test_cover_promised_to_a_confirmed_line_is_not_offered_to_the_next_one():
 
 
 def test_every_golden_case_is_internally_consistent():
-    """Not xfail: this one proves the TARGET is reachable, not that the engine reaches it.
+    """This one proves the TARGET is reachable, not that the engine reaches it.
 
     A case whose components do not add up to its open quantity would make the balance
     invariant unsatisfiable, and Stage 1C would spend its time arguing with the fixture
