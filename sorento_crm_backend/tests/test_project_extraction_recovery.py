@@ -554,7 +554,14 @@ def test_no_request_path_ever_calls_the_reader():
         if "run_extraction(" not in path.read_text():
             continue
         # The definitions themselves, and the docstrings that name the caller.
-        if path.name in {"project_po_extraction_service.py", "project_schedule_service.py"}:
+        # `project_po_intake_lifecycle.py` is one of the mixins `ProjectPOExtractionService`
+        # is assembled from (2026-08-12 audit split), so it HOLDS the definition rather
+        # than calling it: no request path gained a caller.
+        if path.name in {
+            "project_po_extraction_service.py",
+            "project_po_intake_lifecycle.py",
+            "project_schedule_service.py",
+        }:
             continue
         callers.append(str(path.relative_to(root)))
 
