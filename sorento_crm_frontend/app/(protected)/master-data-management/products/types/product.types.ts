@@ -18,6 +18,18 @@ export interface ProductVariantRef {
   product_name: string;
 }
 
+/**
+ * A product as a line editor needs it: the identity, plus everything picking it decides for
+ * the line (its wording, its brand, its unit, its price). Money stays a STRING, as the API
+ * sends it and as every line endpoint expects it back.
+ */
+export interface ProductLineRef extends ProductVariantRef {
+  description?: string | null;
+  brand_id?: string | null;
+  base_uom_id?: string | null;
+  list_price?: string | null;
+}
+
 // Product Interface (matches database schema)
 export interface Product {
   id: string;

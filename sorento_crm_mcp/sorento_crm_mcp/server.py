@@ -1280,6 +1280,70 @@ def _strip_row_company_ids(tool_name: str, data: Any) -> Any:
     return {**data, "data": [_drop_company_id(row) for row in rows]}
 
 
+# --- project sales -------------------------------------------------------------
+# Internal UUIDs the agent must never quote (the chat and WhatsApp surfaces are the same
+# renderer), plus browser-only fields it cannot act on. `id` deliberately SURVIVES: both
+# crm_project_detail and crm_project_quotations_list take it, and the two-call pattern is how
+# a project answer gets any depth. Every dropped key has a human-readable twin that stays
+# (developer_name, type_name, owner_name, status_label, brands), so nothing becomes
+# unanswerable -- it becomes answerable in words.
+_PROJECT_SLIM_TOOLS = ("crm_projects_list", "crm_project_detail")
+_PROJECT_DROP_KEYS = frozenset(
+    {
+        "developer_party_id",
+        "type_id",
+        "template_id",
+        "lead_id",
+        "lead_owner_user_id",
+        "status_id",
+        "owner_user_id",
+        "architect_party_id",
+        "main_contractor_party_id",
+        "brand_ids",
+        # A permission answer for rendering a button.
+        "can_edit",
+    }
+)
+
+
+_QUOTATION_SLIM_TOOL = "crm_project_quotations_list"
+_QUOTATION_DROP_KEYS = frozenset(
+    {
+        # The caller passed this in to get the list.
+        "project_id",
+        # Nothing consumes it: the version the agent talks about is `current_version_no`.
+        "current_version_id",
+        # `issued_by_name` sits right beside it.
+        "issued_by",
+        # Line-level plumbing, when lines ride along.
+        "product_id",
+        "quotation_id",
+    }
+)
+
+
+def _slim_rows(data: Any, drop_keys: frozenset) -> Any:
+    """Drop `drop_keys` from every row, for a list payload, a bare list, or one detail row."""
+
+    def _row(item: Any) -> Any:
+        if not isinstance(item, dict):
+            return item
+        return {k: v for k, v in item.items() if k not in drop_keys}
+
+    if isinstance(data, list):
+        return [_row(item) for item in data]
+    if isinstance(data, dict):
+        if isinstance(data.get("data"), list):
+            return {**data, "data": [_row(r) for r in data["data"]]}
+        return _row(data)
+    return data
+
+
+def _slim_projects_response(data: Any) -> Any:
+    """Same rule for a list payload, a bare list, and one detail row."""
+    return _slim_rows(data, _PROJECT_DROP_KEYS)
+
+
 def _sanitize_tool_response(
     tool_name: str,
     raw: str,
@@ -1315,6 +1379,10 @@ def _sanitize_tool_response(
         data = _slim_orders_list_response(data, product_query if isinstance(product_query, str) else None)
     if tool_name.startswith(_GRN_TOOL_PREFIX):
         data = _slim_grn_response(data)
+    if tool_name in _PROJECT_SLIM_TOOLS:
+        data = _slim_projects_response(data)
+    if tool_name == _QUOTATION_SLIM_TOOL:
+        data = _slim_rows(data, _QUOTATION_DROP_KEYS)
     if any(tool_name.startswith(p) for p in _ATTACHMENT_TOOL_PREFIXES):
         data = _strip_attachment_internals(data)
     if tool_name == _RESOURCE_ATTACHMENT_LIST_TOOL:

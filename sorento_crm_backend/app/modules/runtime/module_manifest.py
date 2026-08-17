@@ -105,6 +105,17 @@ _RAW: Dict[str, dict] = {
         "description": "Reorder engine, net-position views, demand classification, supplier performance.",
         "dependencies": ["base", "product", "inventory", "order", "procurement"],
     },
+    "projects": {
+        "display_name": "Project sales",
+        "description": (
+            "Project registration and exclusivity, parties and stakeholders, "
+            "pipeline, quotations, samples and demand forecast."
+        ),
+        # `product` for the brands a project pushes; `resources` for tender documents
+        # and drawings. Deliberately NOT `order`: a Project PO is a customer's order
+        # to us and lives in its own table (ADR-0002).
+        "dependencies": ["base", "product", "resources"],
+    },
 }
 
 MODULE_MANIFEST: Dict[str, ModuleManifest] = {

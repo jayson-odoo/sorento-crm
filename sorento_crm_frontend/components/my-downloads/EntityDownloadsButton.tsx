@@ -5,9 +5,10 @@
  * (e.g. a complaint). Clicking opens a modal listing the current user's
  * downloads for that entity; each row is click-to-download (shared DownloadRow).
  *
- * Used in two places:
- *  - the Complaints DataGrid "Print Count" column (count comes from the row).
- *  - the complaint detail header (count derived from the fetched feed).
+ * Entity-agnostic: it only ever knows a source type and an id, so it serves the
+ * Complaints DataGrid "Print Count" column (count comes from the row), the
+ * complaint detail header (count derived from the fetched feed), and the
+ * quotation document header (the revision's exports) without a variant each.
  *
  * When `count` is provided we only fetch on open (cheap for a long list). When
  * it's omitted we fetch on mount to derive the count for the chip.
@@ -28,6 +29,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 
 import {
+  ENTITY_DOWNLOADS_QUERY_KEY,
   fetchDownloadsForEntity,
   type MyDownload,
   type MyDownloadsResponse,
@@ -59,7 +61,7 @@ export function EntityDownloadsButton({
   const hasCountProp = typeof count === 'number';
 
   const query = useQuery<MyDownloadsResponse>({
-    queryKey: ['entity-downloads', entityType, entityId],
+    queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, entityType, entityId],
     queryFn: () => fetchDownloadsForEntity(entityType, entityId, 100),
     // Fetch on mount only when we have no count to show; otherwise wait for open.
     enabled: !hasCountProp || open,
@@ -88,7 +90,7 @@ export function EntityDownloadsButton({
           e.stopPropagation();
           setOpen(true);
         }}
-        title="View downloads for this record"
+        title={label ? `View downloads for ${label}` : 'View downloads for this record'}
         className={cn(
           'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-sm transition-colors hover:bg-muted',
           displayCount > 0 ? 'text-foreground' : 'text-muted-foreground',
@@ -118,7 +120,7 @@ export function EntityDownloadsButton({
                   <p className="text-xs text-muted-foreground">
                     {query.isLoading
                       ? 'Loading…'
-                      : 'Generate a PDF and it will appear here.'}
+                      : 'Generate a file and it will appear here.'}
                   </p>
                 </div>
               ) : (

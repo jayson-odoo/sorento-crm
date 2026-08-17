@@ -15,6 +15,8 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { EventTimeline } from '@/components/common/EventTimeline';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -41,13 +43,9 @@ import type {
   PanelTab,
 } from './types';
 
-function relativeTime(iso: string): string {
-  const d = new Date(iso);
-  const diff = (Date.now() - d.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return d.toLocaleString();
+/** Absolute, per ADR 1d: a relative stamp rots while the page is open and cannot be quoted. */
+function stampedAt(iso: string): string {
+  return formatDateTimeInMalaysia(iso);
 }
 
 function formatSystemEvent(
@@ -199,40 +197,40 @@ function ActivitiesTab({
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {loading ? (
           <Skeleton className="h-20 w-full" />
-        ) : items.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center pt-4">No activity yet.</p>
         ) : (
-          items.map((it) => (
-            <div key={it.id} className="bg-muted/30 border rounded-md p-3">
-              <div className="flex items-center gap-2 mb-1">
-                {it.kind === 'system' ? (
-                  <Badge variant="secondary">System</Badge>
-                ) : (
-                  <>
-                    <Avatar className="size-6">
-                      <AvatarImage src={it.actor?.avatar_url ?? undefined} />
-                      <AvatarFallback>
-                        {(it.actor?.name ?? '?').charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="text-sm font-medium">{it.actor?.name ?? 'Unknown'}</span>
-                  </>
-                )}
-                <span className="ms-auto text-xs text-muted-foreground">
-                  {relativeTime(it.created_at)}
-                </span>
-              </div>
-              {it.kind === 'system' ? (
-                <p className="text-sm">
-                  {formatSystemEvent(it.system_template, it.system_payload)}
-                </p>
-              ) : (
-                <div className="text-sm whitespace-pre-wrap">
-                  {it.body_text ?? ''}
-                </div>
-              )}
-            </div>
-          ))
+          // A history reads as a timeline, not a stack of cards: one rail, grouped by day,
+          // with absolute times. See components/common/EventTimeline.
+          <EventTimeline
+            events={items.map((it, index) => ({
+              id: it.id,
+              title:
+                it.kind === 'system'
+                  ? formatSystemEvent(it.system_template, it.system_payload)
+                  : (it.actor?.name ?? 'Unknown'),
+              at: it.created_at,
+              tone: index === 0 ? 'current' : it.kind === 'system' ? 'muted' : 'default',
+              marker:
+                it.kind === 'system' ? undefined : (
+                  <Avatar className="size-5">
+                    <AvatarImage src={it.actor?.avatar_url ?? undefined} />
+                    <AvatarFallback className="text-[10px]">
+                      {(it.actor?.name ?? '?').charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                ),
+              tags:
+                it.kind === 'system' ? (
+                  <Badge variant="secondary" appearance="light" className="text-[11px]">
+                    System
+                  </Badge>
+                ) : null,
+              detail:
+                it.kind === 'system' ? null : (
+                  <span className="whitespace-pre-wrap">{it.body_text ?? ''}</span>
+                ),
+            }))}
+            emptyTitle="No activity yet"
+          />
         )}
       </div>
       <div className="border-t p-3 space-y-2">
@@ -322,7 +320,7 @@ function NotesTab({
           items.map((n) => (
             <div key={n.id} className="bg-muted/30 border rounded-md p-3">
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs text-muted-foreground">{relativeTime(n.created_at)}</span>
+                <span className="text-xs text-muted-foreground">{stampedAt(n.created_at)}</span>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -442,7 +440,7 @@ function MessagesTab({
               }
             >
               {m.body ?? ''}
-              <div className="text-[10px] opacity-70 mt-1">{relativeTime(m.sent_at)}</div>
+              <div className="text-[10px] opacity-70 mt-1">{stampedAt(m.sent_at)}</div>
             </div>
           ))
         )}

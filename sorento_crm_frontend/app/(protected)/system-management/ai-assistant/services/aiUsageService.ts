@@ -29,7 +29,7 @@ export interface TopContactItem {
   tokens: number;
 }
 
-export type AIUsageFeature = 'ai_assistant' | 'ai_extract';
+export type AIUsageFeature = 'ai_assistant' | 'ai_extract' | 'ai_document_extract';
 
 export interface RecentQueryItem {
   message_id: string;

@@ -1,6 +1,6 @@
 """User management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric, Text, Index, Integer, UniqueConstraint
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
@@ -243,6 +243,24 @@ class SystemSetting(Base):
     # Comma list of tier numbers, e.g. "1,2" (Tier 1 + Tier 2) or "1" (Tier 1 only).
     complaint_do_delivered_notify_tiers = Column(
         String(20), nullable=False, server_default="1,2", default="1,2"
+    )
+
+    # Project registration clash bars (AC-C5). Two, not one: surfacing is generous
+    # because a missed duplicate is silent, blocking is strict because a false block
+    # fired often enough teaches users to ignore the warning. Calibrated on the live
+    # title corpus -- see app/services/project_clash_service.py for the measurements.
+    # AC-I3: months from launch date to delivery, used to bucket the forecast by year.
+    # Seeded at 30 from the client's own worked example. A setting rather than a constant
+    # because it is a market observation, and it will change before the code does.
+    project_delivery_lag_months = Column(
+        Integer, nullable=False, server_default="30", default=30
+    )
+
+    project_clash_surface_threshold = Column(
+        Numeric(4, 3), nullable=False, server_default="0.550", default=0.550
+    )
+    project_clash_block_threshold = Column(
+        Numeric(4, 3), nullable=False, server_default="0.700", default=0.700
     )
 
     # SMTP for notification emails (password not returned in read APIs)

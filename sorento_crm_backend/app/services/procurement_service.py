@@ -7177,7 +7177,32 @@ class PurchaseRequestService:
         header = q.first()
         if not header:
             raise handle_not_found("Request", request_id)
+        self._attach_project_display(header)
         return header
+
+    def _attach_project_display(self, header) -> None:
+        """Stamp the linked project's CODE onto the row for serialization (AC-L3).
+
+        The response model reads attributes off the ORM object, so setting one here is what
+        gets `project_code` to the office-side detail page -- the portal already resolves it
+        for contacts, and the two surfaces showing different things (one a code, one nothing)
+        is how a link starts looking broken. `project_title` remains the fallback for the
+        thousands of rows that have no link.
+        """
+        if not getattr(header, "project_id", None):
+            header.project_code = None
+            return
+        try:
+            from app.models.projects import Project
+
+            row = (
+                self.db.query(Project.project_code)
+                .filter(Project.id == str(header.project_id))
+                .first()
+            )
+            header.project_code = row[0] if row else None
+        except Exception:  # noqa: BLE001 -- display sugar must never break a read
+            header.project_code = None
 
     def get_neighbour_ids(
         self, request_id: str, request_type: Optional[str] = None

@@ -153,20 +153,29 @@ _MODULE_BOOTSTRAPS = ("app.modules.dealer_kit.bootstrap",)
 
 
 def _register_core() -> None:
-    """Core registers no entities; modules append from their bootstraps.
+    """Core registers no entities of its own, then pulls in the modules'.
 
     The engine is infrastructure: it ships with an empty registry and every
-    entity arrives from a module bootstrap. Existing hardcoded status vocabularies
+    entity arrives from a module (ADR-0001). Existing hardcoded status vocabularies
     (complaints, PR/SF, stock inquiries, orders) are deliberately NOT migrated
-    here -- they move entity by entity, later (ADR-0001).
+    here -- they move entity by entity, later.
 
-    An import failure is swallowed with a warning rather than raised. This runs
-    on the first read of the registry, which can be deep inside an unrelated
-    request, and one module failing to import must not take down every status
-    surface in the system.
+    Two routes in, because the modules arrived by two roads and both still carry
+    live entities. ``_MODULE_BOOTSTRAPS`` is the named list (Dealer Kit's
+    bootstrap, the first entity on the engine); ``register_module_entities()`` is
+    the convention (``app/modules/<key>/status_entities.py``), so a module joining
+    that way needs no edit to core. A module listed in both registers once:
+    registration is idempotent.
+
+    An import failure is logged rather than raised, on both routes. This runs on
+    the first read of the registry, which can be deep inside an unrelated request,
+    and one module failing to import must not take down every status surface in
+    the system.
     """
     import importlib
     import logging
+
+    from app.status_engine.discovery import register_module_entities
 
     for module in _MODULE_BOOTSTRAPS:
         try:
@@ -184,6 +193,8 @@ def _register_core() -> None:
                 module,
                 exc_info=True,
             )
+
+    register_module_entities()
 
 
 _ensure_core = lazy_once(_register_core)

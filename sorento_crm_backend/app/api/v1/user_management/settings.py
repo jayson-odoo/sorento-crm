@@ -60,6 +60,10 @@ class SystemSettingUpdate(BaseModel):
     default_product_standard_lead_time_days: Optional[int] = Field(None, ge=0, le=10950)
     # Takeover cooldown window in seconds (0 = instant). Cap at 1 hour.
     takeover_cooldown_seconds: Optional[int] = Field(None, ge=0, le=3600)
+    # Project registration clash bars (AC-C5). Bounded to (0, 1] because a trigram
+    # score is a ratio, and 0 would make every project clash with every other.
+    project_clash_surface_threshold: Optional[float] = Field(None, gt=0, le=1)
+    project_clash_block_threshold: Optional[float] = Field(None, gt=0, le=1)
     # Global default grace window for form-SLA actions. 0 = nothing defers, which is
     # what ships; a stage may override it (form_sla_configs.grace_seconds).
     form_sla_grace_seconds: Optional[int] = Field(None, ge=0, le=600)
@@ -197,6 +201,18 @@ async def get_settings(
                 ),
                 "takeover_cooldown_seconds": (
                     getattr(settings, "takeover_cooldown_seconds", 60) if settings else None
+                ),
+                # float() because the column is NUMERIC, which psycopg2 hands back as
+                # Decimal -- and Decimal is not JSON-serialisable.
+                "project_clash_surface_threshold": (
+                    float(getattr(settings, "project_clash_surface_threshold", 0.55) or 0.55)
+                    if settings
+                    else None
+                ),
+                "project_clash_block_threshold": (
+                    float(getattr(settings, "project_clash_block_threshold", 0.70) or 0.70)
+                    if settings
+                    else None
                 ),
                 "purchase_request_default_approver_user_id": pr_uid,
                 "purchase_request_default_approver_name": user_pr.name if user_pr else None,
@@ -371,6 +387,33 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             if t in FORM_SLA_TYPES and t not in seen:
                 seen.append(t)
         update_data["handling_lock_enabled_types"] = ",".join(seen)
+
+    # A block bar below the surface bar means every surfaced candidate also blocks,
+    # which silently turns the two-bar design back into one aggressive bar. Reject it
+    # here rather than let an admin discover it through false blocks in the field.
+    if "project_clash_surface_threshold" in update_data or (
+        "project_clash_block_threshold" in update_data
+    ):
+        effective_surface = float(
+            update_data.get(
+                "project_clash_surface_threshold",
+                getattr(settings, "project_clash_surface_threshold", 0.55) or 0.55,
+            )
+        )
+        effective_block = float(
+            update_data.get(
+                "project_clash_block_threshold",
+                getattr(settings, "project_clash_block_threshold", 0.70) or 0.70,
+            )
+        )
+        if effective_block < effective_surface:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "The project clash blocking threshold must be at or above the "
+                    "surfacing threshold."
+                ),
+            )
 
     # Chatbot media: a model id belongs to the provider it was picked from, so a
     # provider change that does not also name the models clears them rather than

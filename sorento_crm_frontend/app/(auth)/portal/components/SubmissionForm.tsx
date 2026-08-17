@@ -49,6 +49,8 @@ import {
   SUBMISSION_LABELS,
   deleteDraftSubmission,
   fetchMe,
+  lookupProjects,
+  type ProjectLookupItem,
   fetchRequestorOptions,
   fetchSubmission,
   fetchSubmissionNeighbours,
@@ -100,6 +102,7 @@ type WidgetKind =
   | 'lookup-select'
   | 'product-async'
   | 'debtor-async'
+  | 'project-async'
   | 'do-multi-filter'
   | 'pill-product'
   | 'pill-text'
@@ -118,6 +121,13 @@ interface FieldDef {
   /** Render this field only when the predicate (given the current field values)
    *  returns true. Used e.g. for the sponsor-subject "Others" companion input. */
   showWhen?: (fields: Record<string, string | string[]>) => boolean;
+  /**
+   * Required only for SOME submitters (AC-F4). `required` is a static property of the
+   * FORM; this is a property of the CONTACT, so the two cannot be the same field. The
+   * server enforces the same rule -- this only decides whether the client stops first
+   * and says something useful.
+   */
+  requiredWhen?: (contact: PortalContact | null) => boolean;
   /**
    * `contact-select` only: name of the legacy free-text sibling column
    * (e.g. `requested_by`, `salesperson`) carrying the display label for the
@@ -246,6 +256,14 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
     { name: 'pic', label: 'PIC', placeholder: 'Name and contact number' },
     { name: 'delivery_address', label: 'Delivery address', widget: 'textarea' },
     { name: 'project_title', label: 'Project title' },
+    {
+      // AC-F3/AC-F4: shown to every contact, MANDATORY only for flagged ones. Unflagged
+      // submitters keep the free-text title above and nothing else changes for them.
+      name: 'project_id',
+      label: 'Registered project',
+      widget: 'project-async',
+      requiredWhen: (contact) => Boolean(contact?.requires_registered_project),
+    },
     { name: 'total_project_value', label: 'Total project value', widget: 'number', placeholder: 'e.g. 1234.00' },
     {
       name: 'sponsor_subject',
@@ -665,7 +683,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const collectMissingRequired = (): { name: string; label: string }[] => {
     const missing: { name: string; label: string }[] = [];
     for (const f of fieldDefs) {
-      if (!f.required) continue;
+      const isRequired = f.required || (f.requiredWhen ? f.requiredWhen(contact) : false);
+      if (!isRequired) continue;
       const v = fields[f.name];
       const empty = Array.isArray(v)
         ? v.length === 0
@@ -1182,6 +1201,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           onDOItemsChanged={handleDOItemsChanged}
           onDOProductsConfirmed={handleDOProductsConfirmed}
           invalidFields={invalidFields}
+          contact={contact}
           complaintLines={complaintLines}
           setComplaintLines={setComplaintLines}
         />
@@ -1197,6 +1217,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           frozenFields={frozenFields}
           statusBadge={statusBadge}
           onProductItemSelected={handleProductItemSelected}
+          contact={contact}
           resolveContactOption={resolveContactOption}
         />
       )}
@@ -1672,6 +1693,8 @@ interface SectionProps {
   invalidFields?: Set<string>;
   complaintLines?: ComplaintLine[];
   setComplaintLines?: Dispatch<SetStateAction<ComplaintLine[]>>;
+  /** Needed for `FieldDef.requiredWhen`: some fields are mandatory per CONTACT (AC-F4). */
+  contact?: PortalContact | null;
   /** `contact-select` fields only - resolves the picker's pre-selected option
    *  (id + human-readable name) so a saved-but-ineligible contact still shows
    *  its name instead of a blank or a UUID. */
@@ -1929,6 +1952,7 @@ function ComplaintFormSection({
   invalidFields,
   complaintLines,
   setComplaintLines,
+  contact,
 }: SectionProps) {
   return (
     <Card>
@@ -1952,6 +1976,7 @@ function ComplaintFormSection({
                 onDOProductsConfirmed={onDOProductsConfirmed}
                 invalid={invalidFields?.has(f.name)}
                 disabled={!isEditable || frozenFields?.has(f.name)}
+                contact={contact}
               />
             </div>
           ))}
@@ -1980,6 +2005,7 @@ function PurchaseRequestFormSection({
   frozenFields,
   statusBadge,
   onProductItemSelected,
+  contact,
   resolveContactOption,
 }: SectionProps & { kind: PortalSubmissionKind }) {
   const heading =
@@ -2013,6 +2039,7 @@ function PurchaseRequestFormSection({
                     onChange={(v) => setFieldValue(f.name, v)}
                     onItemSelect={(item) => onProductItemSelected(f.name, item)}
                     disabled={!isEditable || frozenFields?.has(f.name)}
+                    contact={contact}
                     contactOption={resolveContactOption?.(f)}
                   />
                 </div>
@@ -2033,6 +2060,7 @@ function FieldInput({
   onDOProductsConfirmed,
   invalid,
   disabled,
+  contact,
   contactOption,
 }: {
   field: FieldDef;
@@ -2046,13 +2074,18 @@ function FieldInput({
   }) => void;
   invalid?: boolean;
   disabled?: boolean;
+  contact?: PortalContact | null;
   contactOption?: SearchableSelectOption;
 }) {
+  // The asterisk has to agree with what submit actually enforces, or a flagged contact
+  // gets stopped by a field that never said it was needed.
+  const isRequired =
+    field.required || (field.requiredWhen ? field.requiredWhen(contact ?? null) : false);
   return (
     <div className="space-y-1.5 min-w-0" data-field-name={field.name}>
       <Label htmlFor={field.name} className="min-w-0">
         {field.label}
-        {field.required && <span className="ml-0.5 text-destructive">*</span>}
+        {isRequired && <span className="ml-0.5 text-destructive">*</span>}
       </Label>
       <div
         className={
@@ -2179,6 +2212,22 @@ function FieldControl({
           optionValue={(o) => o.debtor_name}
           optionLabel={(o) => o.debtor_name}
           placeholder={field.placeholder ?? 'Search debtors...'}
+          disabled={disabled}
+        />
+      );
+    case 'project-async':
+      return (
+        <AsyncCombobox<ProjectLookupItem>
+          id={field.name}
+          value={stringValue}
+          onChange={(v) => onChange(v)}
+          fetchOptions={(q) => lookupProjects(q)}
+          optionValue={(o) => o.id}
+          optionLabel={(o) => `${o.project_code} - ${o.title}`}
+          // The company on every row (AC-F4a): a contact mapped to two of them cannot
+          // otherwise tell two similarly-named phases apart.
+          optionMeta={(o) => o.company_name ?? ''}
+          placeholder={field.placeholder ?? 'Search your registered projects...'}
           disabled={disabled}
         />
       );

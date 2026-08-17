@@ -267,6 +267,12 @@ def fork_graph(db: Session, entity_type: str, scope_id: str) -> StatusGraph:
                 is_system=False,
                 position_x=source.position_x,
                 position_y=source.position_y,
+                # The per-rung dials come across with the rung (AC-H4, AC-I2). A fork that
+                # started with them NULL would silently have no staleness ladder and would
+                # contribute nothing to the weighted forecast, which reads as a bug in
+                # those features rather than as an unconfigured template.
+                win_probability=source.win_probability,
+                stale_after_days=source.stale_after_days,
                 tenant_id=source.tenant_id,
                 scope_id=scope_id,
             )
@@ -290,6 +296,51 @@ def fork_graph(db: Session, entity_type: str, scope_id: str) -> StatusGraph:
         )
     db.flush()
     return resolve_graph(db, entity_type, scope_id)
+
+
+def reapply_default_dials(db: Session, entity_type: str, scope_id: str) -> int:
+    """Copy the DEFAULT graph's per-rung dials back onto a fork (AC-H4). Returns rows changed.
+
+    The explicit way back. A fork deliberately stops receiving default changes, which is
+    right -- silent propagation is indistinguishable from data loss to whoever tuned the
+    fork -- but an admin who has decided the defaults are better needs one action rather
+    than editing eight rungs by hand.
+
+    Matched on ``key``, never on ``sort_order`` or position: key is the documented stable
+    identity per entity_type (grill finding G3), so a fork that re-ordered its board or
+    deleted a rung it does not use is still matched correctly, and a rung that exists only
+    on the fork is left alone.
+    """
+    defaults = {
+        row.key: row
+        for row in _statuses_for(db, entity_type, None)
+    }
+    if not defaults:
+        raise AppException(
+            status_code=422,
+            message=(
+                f"'{entity_type}' has no default status graph to copy from. "
+                "Configure the default first."
+            ),
+            code="status_graph_missing",
+        )
+
+    changed = 0
+    for row in _statuses_for(db, entity_type, scope_id):
+        source = defaults.get(row.key)
+        if source is None:
+            continue
+        if (
+            row.win_probability == source.win_probability
+            and row.stale_after_days == source.stale_after_days
+        ):
+            continue
+        row.win_probability = source.win_probability
+        row.stale_after_days = source.stale_after_days
+        changed += 1
+    if changed:
+        db.flush()
+    return changed
 
 
 # -------------------------------------------------------------- validation

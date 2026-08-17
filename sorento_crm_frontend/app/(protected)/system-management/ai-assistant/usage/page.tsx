@@ -44,7 +44,15 @@ const FEATURE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: FEATURE_ALL, label: 'All AI usage' },
   { value: 'ai_assistant', label: 'AI Assistant (chat)' },
   { value: 'ai_extract', label: 'AI Extract (portal forms)' },
+  { value: 'ai_document_extract', label: 'Document reading (PO, delivery schedule)' },
 ];
+
+// One place, so a new feature cannot appear in the filter but read as a dash in the table.
+const FEATURE_LABELS: Readonly<Record<string, string>> = {
+  ai_assistant: 'AI Assistant',
+  ai_extract: 'AI Extract',
+  ai_document_extract: 'Document reading',
+};
 
 const PERMISSION = 'system.ai_assistant_settings.view';
 
@@ -388,11 +396,7 @@ export default function AIUsagePage() {
                         // message_id is null for ai_extract rows; key on a stable composite.
                         const rowKey = q.message_id ?? `${q.created_at}-${q.contact_phone ?? q.user_name ?? ''}`;
                         const isExpanded = q.message_id != null && expandedId === q.message_id;
-                        const featureLabel = q.feature === 'ai_extract'
-                          ? 'AI Extract'
-                          : q.feature === 'ai_assistant'
-                            ? 'AI Assistant'
-                            : '—';
+                        const featureLabel = (q.feature && FEATURE_LABELS[q.feature]) || '—';
                         const principal =
                           q.contact_phone || q.contact_name
                             ? `${q.contact_name ?? 'unknown'} · ${q.contact_phone ?? ''}`.trim()

@@ -22,6 +22,10 @@ apscheduler>=3.10.4
 httpx>=0.25.0
 bcrypt>=4.1.0
 openpyxl>=3.1.2
+# Direct dependency since S21: product photographs are downscaled before they are embedded in a
+# quotation PDF or workbook (product_image_service). It already arrived transitively via
+# weasyprint, but a transitive pin is not a contract - openpyxl's own image support needs it too.
+pillow>=10.0.0
 redis>=5.0.0
 rq>=2.0
 pywebpush>=1.14.0

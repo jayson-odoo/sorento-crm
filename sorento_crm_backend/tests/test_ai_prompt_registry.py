@@ -52,8 +52,12 @@ def seeded(db: Session) -> Session:
 # --------------------------------------------------------------------------- #
 
 
-def test_seed_creates_ten_keys_each_v1_with_production_label(seeded: Session):
+def test_seed_creates_every_key_at_v1_with_a_production_label(seeded: Session):
     names = {r.name for r in seeded.query(AIPromptVersion).all()}
+    # Counted from PROMPT_KEYS, never a literal: the registry grows whenever a module adds a
+    # node (M0 added `semantic_parser`, ideation added `ideate_extractor`, SCM added its
+    # explainer and market advisory), and a hardcoded total turns every one of those into a
+    # false failure that says nothing about whether seeding actually works.
     assert names == set(PROMPT_KEYS.keys())
     # Counted against PROMPT_KEYS, not a literal: the key set grows (semantic_parser,
     # ideate_extractor, the SCM pair, spec_understanding...) and a hardcoded number
@@ -286,8 +290,14 @@ def wired_chat(seeded: Session, monkeypatch):
     )
     svc._rag_select_tools = lambda *, standalone_query, enabled_tools, top_k: ([], [])  # type: ignore[assignment]
     svc._generate_suggestions = lambda **_k: []  # type: ignore[assignment]
-    svc_module.resolve_references = lambda _db, _q: ResolutionResult(  # type: ignore[assignment]
-        tokens=[], resolutions=[], elapsed_ms=0.0
+    # Through `monkeypatch`, NOT a bare rebind: a raw `svc_module.resolve_references = ...` is
+    # never undone, so it leaked into every test that ran later in the same session and made a
+    # genuine resolution path look broken. `**_k` because this stub stands in for a function
+    # whose keyword arguments are free to grow.
+    monkeypatch.setattr(
+        svc_module,
+        "resolve_references",
+        lambda *_a, **_k: ResolutionResult(tokens=[], resolutions=[], elapsed_ms=0.0),
     )
     # The rate-limit clause is `func.now() - text("interval '1 minute'")`. It
     # used to be stubbed to literal(0), because sqlite cannot parse an interval

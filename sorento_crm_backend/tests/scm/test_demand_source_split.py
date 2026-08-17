@@ -130,11 +130,13 @@ def test_the_order_inquiry_stamps_its_origin_on_orders_it_creates():
     the whole split later. Asserted against the service's own instantiation seam."""
     import inspect
 
-    from app.services.scm import order_inquiry_service
+    # Project Sales owns the importer now (ADR 0010). SCM still depends on the stamp it
+    # writes, which is why this assertion stays on the SCM side of the fence.
+    from app.services import project_order_inquiry_import_service
 
-    src = inspect.getsource(order_inquiry_service)
+    src = inspect.getsource(project_order_inquiry_import_service)
     assert "demand_origin" in src, (
-        "order_inquiry_service never writes demand_origin; adoption will erase OI origin"
+        "the order-inquiry importer never writes demand_origin; adoption will erase OI origin"
     )
 
 

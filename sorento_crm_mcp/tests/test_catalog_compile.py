@@ -99,6 +99,46 @@ def test_no_freetext_query_on_data_list_tools():
         assert "query" not in spec.query_params, f"{spec.name} still exposes free-text query"
 
 
+def test_project_tools_are_read_only():
+    """AC-K2. No write-capable project tool ships in v1.
+
+    AI-assisted quotation editing is a later slice with its own grill: a confirm-gate, a diff
+    preview, version semantics and price-floor enforcement on AI-written lines are each a
+    decision. A tool that let the agent POST a price before those exist would be the fastest
+    route to a quotation nobody agreed to.
+    """
+    project_tools = [s for s in CATALOG if s.module == "projects"]
+    assert project_tools, "the project tools disappeared from the catalog"
+    for spec in project_tools:
+        assert spec.method == "GET", f"{spec.name} is not read-only"
+        assert not spec.body_params, f"{spec.name} takes a body"
+
+
+def test_project_list_filters_are_uuid_or_stable_key():
+    """The list tool must not tempt the model into free-text matching.
+
+    `status_key` is the one non-UUID filter and that is deliberate: `key` is the documented
+    stable identity per entity_type (grill finding G3), so "tendering" is an identifier, not
+    a search term.
+    """
+    spec = next(s for s in CATALOG if s.name == "crm_projects_list")
+    assert "project_ids" in spec.query_params
+    assert "owner_user_ids" in spec.query_params
+    assert "developer_party_ids" in spec.query_params
+    assert "status_key" in spec.query_params
+    assert "query" not in spec.query_params
+    assert "title" not in spec.query_params
+    assert "developer_name" not in spec.query_params
+
+
+def test_the_forecast_tool_refuses_to_offer_a_total():
+    """The three numbers are never blended (AC-I1), and the tool description is where that
+    rule reaches the model. If the description ever starts describing a total, an agent will
+    happily add them up in prose and the report becomes fiction."""
+    spec = next(s for s in CATALOG if s.name == "crm_project_forecast")
+    assert "NEVER BE ADDED TOGETHER" in spec.description
+    assert "SPECULATIVE" in spec.description
+    assert "undated" in spec.description
 def test_product_attachments_accepts_certificate_ids_as_a_narrower():
     """`certificate_ids` must be BOTH a query param and a recognised narrowing
     key. Listed as one but not the other, "the files for this certificate"

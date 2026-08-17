@@ -35,17 +35,25 @@ const cardVariants = cva('flex flex-col items-stretch text-card-foreground round
   },
 });
 
-const cardHeaderVariants = cva('flex items-center justify-between flex-wrap px-5 min-h-14 gap-2.5', {
-  variants: {
-    variant: {
-      default: 'border-b border-border',
-      accent: '',
+// `py-3` is load-bearing, not decoration. The header used to have horizontal padding only
+// and leaned on `items-center` + `min-h-14` to keep its content off the top and bottom
+// edges - so any caller overriding the axis (`flex-col`, `sm:items-start`, both common when
+// a header carries a toolbar) silently lost ALL vertical spacing and the title sat flush
+// against the card border. Real padding cannot be overridden away by an alignment class.
+const cardHeaderVariants = cva(
+  'flex items-center justify-between flex-wrap px-5 py-3 min-h-14 gap-2.5',
+  {
+    variants: {
+      variant: {
+        default: 'border-b border-border',
+        accent: '',
+      },
+    },
+    defaultVariants: {
+      variant: 'default',
     },
   },
-  defaultVariants: {
-    variant: 'default',
-  },
-});
+);
 
 const cardContentVariants = cva('grow p-5', {
   variants: {

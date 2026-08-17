@@ -7,9 +7,17 @@ import { Card, CardContent } from '@/components/ui/card';
 export function BrandedLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? '';
   // Portal routes render edge-to-edge on mobile so the contact gets the full
-  // viewport width / height. The branded card framing stays for everything
-  // else under the (auth) group.
-  if (pathname === '/portal' || pathname.startsWith('/portal/')) {
+  // viewport width / height. The counter-sign page joins them for the opposite
+  // reason: it prints a quotation table wide enough to need every pixel, and
+  // the branded card's max-width squeezed it into a narrow column with empty
+  // margins either side while the table scrolled inside it. Both own their own
+  // width. The branded card framing stays for everything else under the (auth)
+  // group.
+  if (
+    pathname === '/portal' ||
+    pathname.startsWith('/portal/') ||
+    pathname.startsWith('/quotation-sign/')
+  ) {
     return (
       <div className="grow w-full min-h-0 overflow-y-auto bg-background">
         {children}

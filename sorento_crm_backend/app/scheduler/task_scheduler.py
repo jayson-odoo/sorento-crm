@@ -307,6 +307,17 @@ def _handler_product_discontinued_check(db, task):
     return run_product_discontinued_check(db, task)
 
 
+def _handler_project_staleness_sweep(db, task):
+    """Move every live project up or off the staleness ladder (AC-H5, AC-H6).
+
+    Runs on this existing heartbeat rather than introducing a scheduler of its own. The
+    sweep notifies on a level CHANGE only, so a daily cadence does not re-nag.
+    """
+    from app.services.project_staleness_service import sweep
+
+    return sweep(db)
+
+
 def _handler_scm_analytics(db, task):
     """Nightly SCM analytics full recompute (demand + ABC/XYZ + supplier performance).
 
@@ -462,6 +473,7 @@ def register_task_handlers():
     register_handler("api_call_log_prune", _handler_api_call_log_prune)
     register_handler("import_job_rows_prune", _handler_import_job_rows_prune)
     register_handler("chat_latency_watchdog", _handler_chat_latency_watchdog)
+    register_handler("project_staleness_sweep", _handler_project_staleness_sweep)
     register_handler("scm_analytics", _handler_scm_analytics)
     register_handler("scm_reorder_run", _handler_scm_reorder_run)
 
