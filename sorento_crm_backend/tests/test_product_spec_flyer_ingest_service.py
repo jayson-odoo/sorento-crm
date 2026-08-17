@@ -458,3 +458,51 @@ def test_repropose_deletes_old_rows_and_recomputes_against_the_current_master(db
     # The master now already says chrome, so a fresh pass reads it as unchanged
     # rather than the stale `change` the first pass computed.
     assert second_row.kind == "unchanged"
+
+
+# --------------------------------------------------------------------------- #
+# Company scope - a batch belongs to the company whose flyer it was read from
+# --------------------------------------------------------------------------- #
+def test_a_batch_is_only_visible_under_its_own_companys_scope(db):
+    """`list_batches` / `batch_for` are read under a REAL scope here, not an open one.
+
+    The four route tests override `apply_company_scope` to a no-op (they are about the
+    HTTP surface), so nothing else in this slice ever runs these two reads with a company
+    filter attached - and `product_spec_flyer_batches` is an owned table, so a batch read
+    from one company's flyer must not appear in another company's list. This seeds the
+    reading and the batch under the incumbent company and then asks for them twice, from
+    each side of the fence.
+    """
+    from app.models.base import company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from app.services.product_spec_flyer_ingest import batch_for, list_batches
+
+    _product(db, "ZZT-FLYJOB-SCOPE", "SORENTO ONE PIECE WC ZZT-FLYJOB-SCOPE")
+    reading = _reading(db, cards=[_card("ZZT-FLYJOB-SCOPE", "Washdown. S-Trap outlet 250mm")])
+    batch = _batch_row(db, reading, status="proposed")
+    db.commit()
+
+    # Seeded under the suite's default scope, which is the incumbent company: the
+    # auto-stamp is what puts the company on both rows, exactly as a real propose does.
+    assert reading.company_id == DEFAULT_COMPANY_ID
+    assert batch.company_id == DEFAULT_COMPANY_ID
+
+    other = Company(
+        id=str(uuid.uuid4()),
+        name=f"ZZT Company B {uuid.uuid4().hex[:8]}",
+        code=f"ZB{uuid.uuid4().hex[:6]}",
+    )
+    db.add(other)
+    db.flush()
+
+    with company_scope(db, frozenset({DEFAULT_COMPANY_ID})):
+        mine = list_batches(db)
+        assert [str(row.id) for row, _reading_row in mine] == [str(batch.id)]
+        assert batch_for(db, reading) is not None
+
+    db.expire_all()
+
+    with company_scope(db, frozenset({other.id})):
+        theirs = list_batches(db)
+        assert [str(row.id) for row, _reading_row in theirs] == []
+        assert batch_for(db, reading) is None

@@ -45,7 +45,11 @@ export function SpecProposalSection({
   readingStatus,
 }: SpecProposalSectionProps) {
   const canWriteMaster = useHasPermission(MASTER_DATA_EDIT);
-  const { data, isLoading } = useFlyerSpecProposalsQuery(readingId);
+  // The route wants the product-master permission too, so without it the request
+  // can only come back 403. The section still renders, saying what it is.
+  const { data, isLoading } = useFlyerSpecProposalsQuery(readingId, {
+    enabled: canWriteMaster,
+  });
   const propose = useProposeFlyerSpecs(readingId);
 
   const isRead = readingStatus === 'done';

@@ -99,7 +99,11 @@ tombstoned, and which keys apply to the product's class. None of it is asked for
   `value`, `unit` (from the registry row), `evidence` (the printed words), `kind`, and a snapshot
   of the stored value / unit / source at propose time; the batch flips to `proposed` with
   `product_count`, `proposal_count` and per-kind counts filled and `finished_at` stamped. Cards
-  whose code is `unmatched` or `not_promoted` yield nothing. Hits with `origin == "code"` are not
+  whose code is `unmatched` yield nothing. A `not_promoted` code DOES yield proposals: it is a
+  subset of `matched` (a real product the linked promotion happens not to carry), and whether
+  marketing put a product in a promotion says nothing about what its card prints. Corrected
+  2026-08-17 in review - the first draft of this line said `not_promoted` yields nothing, which
+  the code never did and should not. Hits with `origin == "code"` are not
   proposals (PR 4 rule: read off the code, not the paper). Keys outside the product's class scope
   are not proposals (the same `_apply_scope` gate).
 - **AC-A.3** `[BE]` GIVEN the classifier WHEN a proposal is compared to the stored entry THEN the
@@ -208,8 +212,11 @@ tombstoned, and which keys apply to the product's class. None of it is asked for
   proposals yet" with a `Propose specs` button; `proposing` -> spinner + polling; `failed` -> the
   error + `Try again`; zero rows -> "The flyer stated nothing the master does not already hold".
 - **AC-D.6** `[FE]` GIVEN the sidebar WHEN it renders for a `master_data.products.edit` holder
-  THEN `Product Management -> Flyer Spec Proposals` exists in BOTH `MENU_SIDEBAR` and `MENU_MEGA`,
-  gated on `master_data.products.edit`, leading to a `DataGrid` list of batches (flyer, read on,
+  THEN `Product Management -> Flyer Spec Proposals` exists in BOTH `MENU_SIDEBAR` and
+  `MENU_SIDEBAR_COMPACT` (the two menus that carry this application's Product Management group).
+  Corrected 2026-08-17 in review: this line originally named `MENU_MEGA`, which carries no
+  Master Data group at all - it is the Metronic demo mega menu - so an entry there would have
+  had nowhere to sit. Gated on `master_data.products.edit`, leading to a `DataGrid` list of batches (flyer, read on,
   proposed on, status pill, products, proposals, new/change/conflict counts, applied on) with row
   click to the review page. Fixed layout, explicit `size`, `truncate` + `title`, empty state
   "No flyer has been proposed yet - read a flyer in Dealer Kit and press Propose specs".

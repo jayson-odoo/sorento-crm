@@ -354,7 +354,11 @@ def test_every_company_id_table_is_registered():
     # under every scope, while a company that adds a type of its own keeps it. Owned
     # without the shared flag would have hidden the seeds from every logged-in user
     # while an API-key caller still saw them.
-    assert len(owned) == 64, f"expected 64 owned tables, found {len(owned)}: {sorted(owned)}"
+    # `product_spec_flyer_batches` is owned: a proposal batch is ONE company's pass over
+    # its own flyer, and it copies the company off the reading it was started from. Its
+    # proposal rows are not owned - they hang off the scoped batch, so scoping them too
+    # would filter them twice (the `selection_line` rule above).
+    assert len(owned) == 65, f"expected 65 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

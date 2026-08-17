@@ -215,4 +215,24 @@ describe('SpecProposalSection, without master_data.products.edit (AC-D.1)', () =
     expect(screen.queryByTestId('dk-fr-spec-propose')).toBeNull();
     expect(screen.queryByTestId('dk-fr-spec-proposed')).toBeNull();
   });
+
+  it('does not fire the proposals request at all', () => {
+    // The route needs the product-master permission as well, so a request from
+    // here could only come back 403. The section says what it is without asking.
+    hasPermission.mockReturnValue(false);
+    setQuery(undefined);
+
+    renderSection('done');
+
+    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', { enabled: false });
+  });
+
+  it('does fire it for somebody who holds the permission', () => {
+    hasPermission.mockReturnValue(true);
+    setQuery(batch({ status: 'none' }));
+
+    renderSection('done');
+
+    expect(useFlyerSpecProposalsQuery).toHaveBeenCalledWith('r-1', { enabled: true });
+  });
 });

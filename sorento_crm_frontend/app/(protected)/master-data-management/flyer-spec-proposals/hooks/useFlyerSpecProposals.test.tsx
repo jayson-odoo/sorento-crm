@@ -151,6 +151,16 @@ describe('useFlyerSpecProposalsQuery, the 3 s poll (AC-D.8)', () => {
     expect(mockGet).not.toHaveBeenCalled();
   });
 
+  it('asks for nothing when the caller withholds it', () => {
+    // The route needs `master_data.products.edit`; the reading page renders this
+    // section for people who lack it, and a 403 nobody can act on is not worth asking for.
+    renderHook(() => useFlyerSpecProposalsQuery('r-1', { enabled: false }), {
+      wrapper: wrapperWith(freshClient()),
+    });
+
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
   it('polls every 3s while the batch is proposing, and stops once it settles', async () => {
     mockGet.mockResolvedValueOnce(proposals({ status: 'proposing' }));
     mockGet.mockResolvedValue(proposals({ status: 'proposed' }));

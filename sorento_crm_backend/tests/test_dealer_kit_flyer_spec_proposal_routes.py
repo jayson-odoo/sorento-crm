@@ -416,6 +416,14 @@ def test_apply_rejects_a_body_carrying_a_values_field(api, db):
 
 
 def test_apply_refuses_more_than_5000_ids(api, db):
+    """The ceiling is the SERVICE's, and it says so in words.
+
+    There is one guard, not two: the request schema declares no `max_length`, so this
+    request reaches `apply_batch` and is refused by `MAX_ROWS` with a sentence naming
+    both numbers. A schema ceiling would 422 first with pydantic's "List should have at
+    most 5000 items" and that sentence would be unreachable, which is why this asserts
+    the message and the code rather than only the status.
+    """
     client, allow = api
     allow.update({_VIEW, _EDIT})
     reading = _reading(db)
@@ -426,6 +434,9 @@ def test_apply_refuses_more_than_5000_ids(api, db):
     response = client.post(_APPLY.format(reading.id), json={"proposal_ids": ids})
 
     assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["code"] == "product_spec_batch_too_large"
+    assert body["message"] == "That is 5001 proposals. Apply at most 5000 at a time."
 
 
 def test_apply_refuses_a_proposal_id_not_in_this_batch(api, db):
@@ -708,3 +719,46 @@ def test_reapplying_an_already_matching_row_writes_nothing(api, db, monkeypatch)
     assert body["refused"][0]["reason"] == "already_matches"
     assert calls == [], "an already-matching row must never reach apply_spec_values"
     assert _spec_of(db, product.id).updated_at == stamped
+
+
+def test_reapplying_the_same_id_keeps_the_row_marked_applied(api, db):
+    """The answer says `already_matches`; the ROW still says it was applied (AC-C.5).
+
+    Ticking the same proposal twice is the ordinary second apply: the master now agrees
+    with it, so the second answer is a refusal. But the refusal must not be stamped over
+    the row, because the row is the record that this flyer is where the value came from.
+    Overwriting it dropped `applied_count` back to 0, which flipped the batch on the list
+    screen from Applied to Proposed for a request that changed nothing at all.
+    """
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-C5B", "SORENTO ONE PIECE WC ZZT-FLYRT-C5B")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-C5B", commit=True)
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-C5B", "Washdown. S-Trap outlet 250mm")])
+    batch = _batch(db, reading)
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    first = client.post(_APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]})
+    assert first.status_code == 200, first.text
+    assert first.json()["applied"][0]["spec_key"] == "trap_type"
+
+    db.expire_all()
+    applied_at = db.query(ProductSpecFlyerProposal).filter_by(id=proposal.id).one().applied_at
+
+    second = client.post(_APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]})
+
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["applied"] == []
+    assert body["refused"][0]["reason"] == "already_matches"
+
+    db.expire_all()
+    stored = db.query(ProductSpecFlyerProposal).filter_by(id=proposal.id).one()
+    assert stored.outcome == "applied", "a written row never un-writes itself"
+    assert stored.applied_at == applied_at, "the moment it was written does not move"
+    assert stored.applied_by == _USER["id"]
+
+    stored_batch = db.query(ProductSpecFlyerBatch).filter_by(id=batch.id).one()
+    assert stored_batch.applied_count == 1

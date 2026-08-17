@@ -1049,11 +1049,17 @@ class FlyerSpecApplyIn(BaseModel):
 
     `extra="forbid"`, so a body carrying `values` is refused rather than quietly
     ignored: a client that sent one believes it is being honoured.
+
+    There is deliberately NO `max_length` here. The ceiling on one apply belongs to
+    `product_spec_flyer_ingest.MAX_ROWS`, which refuses with a sentence naming the
+    number sent and the number allowed; a second ceiling in this schema would 422 first
+    with pydantic's own "List should have at most 5000 items" and that readable sentence
+    would never be reached. One guard, in the place that can explain itself.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    proposal_ids: list[UUID] = Field(min_length=1, max_length=5000)
+    proposal_ids: list[UUID] = Field(min_length=1)
 
 
 class AppliedFlyerSpecOut(BaseModel):

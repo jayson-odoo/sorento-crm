@@ -48,12 +48,22 @@ export function useFlyerSpecBatchesQuery() {
  * again. The apply re-checks it server-side either way (AC-C.2), so a stale
  * screen is a wasted click rather than a wrong write - but a wasted click on a
  * hundred-row batch is what makes the screen feel untrustworthy.
+ *
+ * `enabled` is a caller's to withhold: the route needs `master_data.products.edit`
+ * as well as the dealer-kit slug, so a surface that renders for somebody without it
+ * (the reading page's section, which still says what it is) passes `false` rather
+ * than firing a request that can only come back 403.
  */
-export function useFlyerSpecProposalsQuery(readingId: string) {
+export function useFlyerSpecProposalsQuery(
+  readingId: string,
+  options: { enabled?: boolean } = {},
+) {
+  const { enabled = true } = options;
+
   return useQuery<FlyerSpecProposals>({
     queryKey: [FLYER_SPEC_PROPOSALS_QUERY_KEY, readingId],
     queryFn: () => getFlyerSpecProposals(readingId),
-    enabled: Boolean(readingId),
+    enabled: enabled && Boolean(readingId),
     refetchInterval: (query) =>
       query.state.data?.status === 'proposing' ? PROPOSING_POLL_MS : false,
     staleTime: 0,

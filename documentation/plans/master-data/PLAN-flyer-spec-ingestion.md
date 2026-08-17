@@ -157,7 +157,7 @@ Contract block at the top of
 | Reading page section | `app/(protected)/dealer-kit/flyer-readings/components/SpecProposalSection.tsx`, rendered from `MatchReportSections.tsx` beside `DimensionReviewSection` |
 | Shared component | `components/spec-proposals/types.ts` kind union + `selectableKinds` prop + `SpecProposalReview.tsx` (pill mapping, per-row selectability) |
 | Counts sentence | `.../flyer-spec-proposals/lib/countsSentence.ts` - one sentence, read by BOTH the reading-page section and the review header |
-| Nav | `config/menu.config.tsx` - `Flyer Spec Proposals` under Product Management in `MENU_SIDEBAR` AND `MENU_MEGA`, `permission: 'master_data.products.edit'` |
+| Nav | `config/menu.config.tsx` - `Flyer Spec Proposals` under Product Management in `MENU_SIDEBAR` AND `MENU_SIDEBAR_COMPACT` (see section 5), `permission: 'master_data.products.edit'` |
 
 Selection: page state `Set<proposalId>` initialised to all `new` ids on first `proposed` load;
 per-product select-all toggles that product's `new` + `change` ids. Products render 25 per page
@@ -240,6 +240,32 @@ client-side (a "Show more" button), selection survives across.
   (`flyer-mixed`, `flyer-empty`, `flyer-failed`, `flyer-proposing`, `flyer-none`, matched by suffix
   too) make every state reachable from the list, and pressing Propose on any real reading walks the
   transition. Deleted in S3.
+
+### Amended during review (S4), with the reason
+
+- **The menu entry lives in `MENU_SIDEBAR` and `MENU_SIDEBAR_COMPACT`, not `MENU_MEGA`.** Section
+  3.6 and UAC AC-D.6 both said `MENU_MEGA`, written from the assumption that it is a second view
+  of the same navigation. It is not: `MENU_MEGA` is the Metronic demo mega menu and carries no
+  Master Data / Product Management group at all, so the entry would have had no parent to sit
+  under. `MENU_SIDEBAR_COMPACT` is the menu that actually carries a second copy of Product
+  Management, and it is where the shipped entry is. Both contract lines are corrected rather than
+  the code, because the code went to the only place the entry can be.
+- **A `not_promoted` code yields proposals.** UAC AC-A.2 said `unmatched` or `not_promoted` cards
+  yield nothing. `not_promoted` is a SUBSET of `MatchReport.matched` (`flyer_matching._not_promoted`
+  filters matched codes by promotion membership), so those cards name real products; whether
+  marketing added a product to the linked promotion says nothing about what its card prints, and
+  refusing to read a printed spec on that ground would silently drop values for products the flyer
+  clearly describes. The AC text is corrected; the behaviour is unchanged.
+- **One batch-size guard, in the service.** `FlyerSpecApplyIn.proposal_ids` carried
+  `max_length=5000` as well as `product_spec_flyer_ingest.MAX_ROWS`, so pydantic 422'd first and
+  the service's readable sentence ("That is N proposals. Apply at most 5000 at a time.",
+  `product_spec_batch_too_large`) was unreachable. The schema ceiling is dropped; the route test
+  now asserts the message and the code, not only the status.
+- **`_refuse` never overwrites an `applied` outcome.** It stamped the refusal on the row
+  unconditionally, so re-ticking a row that was already written (the ordinary second apply,
+  AC-C.6) replaced `outcome='applied'` with `already_matches` - `applied_count` fell to 0 and the
+  list screen flipped the batch from Applied back to Proposed for a request that wrote nothing.
+  The answer still says `already_matches`; the ROW keeps what happened to it (AC-C.5).
 
 ## 6. Evidence run (S3) - to be filled by the tester
 

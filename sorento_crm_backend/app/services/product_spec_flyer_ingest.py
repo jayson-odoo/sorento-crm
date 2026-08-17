@@ -85,6 +85,12 @@ MAX_ROWS = 5000
 # per matched code, so this is a bound on a job that has gone wrong rather than a budget.
 FLYER_SPEC_JOB_TIMEOUT = 900
 
+# Where a product whose pages nobody recorded sorts. Products are ordered by the page
+# they are printed on, so a product with no page has to go somewhere: last, because the
+# reviewer is working through the paper in order and a card that names no page is not
+# the first thing they turn to. Zero would have put it AHEAD of page 1.
+_NO_PAGE = 10**9
+
 
 def _now() -> datetime:
     """Naive UTC, matching every other timestamp column in this system."""
@@ -568,7 +574,10 @@ def grouped_proposals(db: Session, batch: ProductSpecFlyerBatch) -> list[dict]:
 
     return sorted(
         groups.values(),
-        key=lambda group: (min(group["pages"]) if group["pages"] else 0, group["product_code"]),
+        key=lambda group: (
+            min(group["pages"]) if group["pages"] else _NO_PAGE,
+            group["product_code"],
+        ),
     )
 
 
@@ -847,9 +856,17 @@ def _refuse(
     The row keeps it so the review screen can show, next time it is opened, what was
     decided about every proposal - a batch applied over several sittings is unreadable
     otherwise.
+
+    A row that was already WRITTEN keeps its `applied` outcome and the moment it was
+    written. Re-ticking it is the normal second apply (AC-C.6): the master now agrees, so
+    it comes back `already_matches` in the answer, but stamping that over the row would
+    erase the fact that this flyer is where the value came from - `applied_count` would
+    fall to zero and the list screen would flip a batch from Applied back to Proposed for
+    a request that changed nothing (AC-C.5).
     """
-    row.outcome = reason
-    row.applied_at = stamped_at
+    if row.outcome != APPLIED:
+        row.outcome = reason
+        row.applied_at = stamped_at
     return RefusedSpec(
         proposal_id=str(row.id),
         product_code=row.product_code,
