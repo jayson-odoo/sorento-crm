@@ -170,10 +170,10 @@ export async function publishSalesOrder(psoId: string): Promise<SalesOrderPublis
 /**
  * The AutoCount SO worksheet for one Project SO.
  *
- * EXPECTED API CONTRACT (Stage 1A, PLAN-scm-front-planning sections 1.2 steps 1-3 and 2).
- * The route does NOT exist yet; Phase 2 builds it to this shape. It is the same document
- * `ProjectSODraftService.import_file` already writes as CSV, read as JSON so the screen can
- * show it before anyone downloads it.
+ * API CONTRACT (Stage 1A, PLAN-scm-front-planning sections 1.2 steps 1-3 and 2). Built in
+ * Phase 2 to this exact shape and live since; `ProjectSODraftService.worksheet` is the one
+ * builder behind both this and the CSV `import_file` writes, so the screen and the
+ * downloaded file cannot describe different orders.
  *
  *   GET /api/v1/project-sales/sales-orders/{pso_id}/worksheet
  *   200 {
@@ -187,7 +187,8 @@ export async function publishSalesOrder(psoId: string): Promise<SalesOrderPublis
  *     import_file_url: string | null
  *   }
  *
- * Notes the backend has to honour:
+ * Notes the backend honours, each pinned by a test in
+ * `sorento_crm_backend/tests/test_project_so_worksheet.py`:
  * - `lines` is in AutoCount's column order and in `line_no` order; the screen does not sort.
  * - `reserve_qty` is "0" on every row until Stage 1C confirms a supply source.
  * - money and quantities are decimal STRINGS, never numbers.

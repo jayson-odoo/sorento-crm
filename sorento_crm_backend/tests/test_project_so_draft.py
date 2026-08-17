@@ -149,6 +149,31 @@ def _customer(db, name: str, *, credit_limit: str | None = None) -> Customer:
     return row
 
 
+def _numbering_rule(db, company_id: str) -> None:
+    """The provisional-ref counter as production carries it: enabled, and monotonic."""
+    from app.models.numbering import DocumentNumberingRule
+    from app.services.project_so_draft_service import NUMBERING_DOC_TYPE
+
+    rule = (
+        db.query(DocumentNumberingRule)
+        .filter(DocumentNumberingRule.doc_type == NUMBERING_DOC_TYPE)
+        .first()
+    )
+    if rule is None:
+        rule = DocumentNumberingRule(id=_uid(), doc_type=NUMBERING_DOC_TYPE)
+        if hasattr(DocumentNumberingRule, "company_id"):
+            rule.company_id = company_id
+        db.add(rule)
+    rule.enabled = True
+    rule.prefix_template = "PSO-"
+    rule.number_digits = 6
+    rule.next_value = 1
+    rule.start_value = 1
+    rule.reset_policy = "none"
+    rule.last_reset_key = None
+    db.flush()
+
+
 def _party(db, company_id: str, *, customer: Customer | None = None) -> ProjectParty:
     row = ProjectParty(
         id=_uid(),
@@ -1235,6 +1260,99 @@ def test_rebuilding_replaces_its_own_drafts_and_leaves_published_orders_alone(se
     assert [area for status, area in refs.values() if status != "published"] == [
         "COMMON AREA"
     ]
+
+
+def test_rebuilding_from_the_same_inputs_is_a_no_op(seeded):
+    """Re-uploading the same PO and schedule must produce the SAME orders, not new ones.
+
+    "Repeat upload is a no-op" is only true if the reference survives it: a rebuild that
+    replaces PSO-000123 with PSO-000125 leaves CS looking at a number nobody wrote down,
+    and every reference to the old one (an email, a printed worksheet) now points at a row
+    that no longer exists. The rows are genuinely deleted and re-inserted -- that is what
+    makes the rebuild correct when the schedule DID change -- so the provisional ref is
+    carried across per area group instead.
+
+    The numbering rule is seeded on purpose. Without one, ``_next_ref`` falls back to
+    "highest existing reference plus one", and because the rebuild deletes the old drafts
+    BEFORE minting the new ones the highest drops back and the same numbers come out by
+    accident. Production has the rule, whose counter only ever goes up, so a test on the
+    fallback alone would pass while the real install drifted.
+    """
+    db, company_id, owner = seeded
+    _numbering_rule(db, company_id)
+    project = _project(db, company_id, owner)
+    tower_product = _product(db, "SRTWC8613-RL")
+    common_product = _product(db, "SRTUB206-BI")
+    quotation = _quotation(
+        db, project, lines=[(tower_product, "10", "392.85"), (common_product, "5", "295.85")]
+    )
+    party = _party(db, company_id)
+    po = _po(db, project, party=party, quotation_version=quotation)
+    po_version = _po_version(
+        db,
+        po,
+        lines=[
+            (1, tower_product, "SRTWC8613-RL", "10", "UNIT", "392.85", "3928.50", False),
+            (2, common_product, "SRTUB206-BI", "5", "NOS", "295.85", "1479.25", False),
+        ],
+    )
+    schedule = _schedule(db, project, po, po_version=po_version)
+    tower = _phase(
+        db,
+        project,
+        area_group="TOWER",
+        sequence=1,
+        label="Level 2 & 7",
+        delivery_date=date(2026, 7, 1),
+        version=schedule,
+    )
+    common = _phase(
+        db,
+        project,
+        area_group="COMMON AREA",
+        sequence=13,
+        label=None,
+        delivery_date=date(2027, 6, 1),
+        version=schedule,
+    )
+    _cell(db, schedule, tower, tower_product, "10")
+    _cell(db, schedule, common, common_product, "5")
+
+    service = ProjectSODraftService(db)
+
+    def shape():
+        orders = (
+            db.query(ProjectSalesOrder)
+            .filter(ProjectSalesOrder.purchase_order_id == po.id)
+            .order_by(ProjectSalesOrder.provisional_ref.asc())
+            .all()
+        )
+        return [
+            (
+                order.provisional_ref,
+                order.area_group,
+                [
+                    (
+                        line.line_no,
+                        line.product_id,
+                        line.qty,
+                        line.delivery_date,
+                    )
+                    for line in _lines(db, order.id)
+                ],
+            )
+            for order in orders
+        ]
+
+    service.build(po.id, schedule.id)
+    before = shape()
+    assert len(before) == 2
+
+    second = service.build(po.id, schedule.id)
+    assert second["replaced_drafts"] == 2
+    assert second["skipped_published"] == 0
+
+    assert shape() == before
 
 
 def test_a_published_order_cannot_be_edited_in_place(seeded):
