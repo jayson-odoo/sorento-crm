@@ -565,7 +565,14 @@ def test_no_request_path_ever_calls_the_reader():
             continue
         callers.append(str(path.relative_to(root)))
 
-    assert callers == ["tasks/project_document_tasks.py"], callers
+    # The invariant is WHERE a caller lives, not which files exist. Naming one file made
+    # this fail the moment main added `tasks/media_tasks.py`, which reads a voice note the
+    # same way and is just as safely inside the queue. A caller outside `tasks/` is the
+    # only thing that breaks the promise in the docstring.
+    outside = [name for name in callers if not name.startswith("tasks/")]
+
+    assert not outside, f"extraction is startable from outside app/tasks: {outside}"
+    assert callers, "nothing calls run_extraction; the guard is watching a dead name"
 
 
 def test_the_worker_this_checkout_starts_listens_on_the_project_documents_queue():
