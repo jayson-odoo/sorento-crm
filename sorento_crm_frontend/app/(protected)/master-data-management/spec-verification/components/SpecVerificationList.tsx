@@ -130,21 +130,22 @@ function verificationTitle(block: VerificationBlock): string {
 }
 
 /**
- * The coverage figure, and the keys behind it.
+ * The coverage figure, and the specs behind it.
  *
  * "3 / 8" says how much is known and nothing about WHICH, so judging a row meant
- * opening the product. Every applicable key and what this code says for it is already
- * on the row (`coverage.items`), so the cell itself answers it: filled keys first,
- * then what is still blank. Hovering opens it, and so does tabbing to it - the same
- * `HoverCard` the reorder grid uses for a cell that has more to say than it can show.
+ * opening the product. What this code actually says is already on the row
+ * (`coverage.items`), so the cell answers "show me what is set": the count line
+ * carries the gap, the list carries only the keys that hold a value - a wall of
+ * "not set" rows is the same information the count already gave. Hovering opens it,
+ * and so does tabbing to it - the same `HoverCard` the reorder grid uses for a cell
+ * that has more to say than it can show.
  */
 function CoverageCell({ coverage }: { coverage: SpecVerificationCoverage }) {
-  const items = coverage.items ?? [];
-  // What the code DOES say is read before what it does not.
-  const ordered = [
-    ...items.filter((item) => item.value),
-    ...items.filter((item) => !item.value),
-  ];
+  // A key "holds a value" only if it reads as something, so the filter runs on the
+  // rendered text: an entry present but empty (`{ value: null }`) is not a value.
+  const filled = (coverage.items ?? [])
+    .map((item) => ({ ...item, text: readableEntry(item.value) }))
+    .filter((item) => item.text);
 
   return (
     <HoverCard openDelay={120}>
@@ -163,20 +164,14 @@ function CoverageCell({ coverage }: { coverage: SpecVerificationCoverage }) {
         <div className="text-xs uppercase tracking-wide text-muted-foreground">
           {coverage.have} of {coverage.applicable} applicable keys hold a value
         </div>
-        {ordered.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">
-            No specification key applies to this product.
-          </p>
+        {filled.length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">Nothing set yet</p>
         ) : (
           <ul className="mt-2 flex max-h-64 flex-col gap-1 overflow-y-auto text-sm">
-            {ordered.map((item) => (
+            {filled.map((item) => (
               <li key={item.spec_key} className="break-words">
                 <span className="font-medium">{item.label}</span>:{' '}
-                {item.value ? (
-                  <span>{readableEntry(item.value) || 'not set'}</span>
-                ) : (
-                  <span className="text-muted-foreground">not set</span>
-                )}
+                <span>{item.text}</span>
               </li>
             ))}
           </ul>

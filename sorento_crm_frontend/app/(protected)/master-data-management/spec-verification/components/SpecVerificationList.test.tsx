@@ -342,7 +342,7 @@ describe('data state', () => {
     expect(new URLSearchParams(back.split('?')[1]).get('focus')).toBe('WC100');
   });
 
-  it('the Coverage cell opens the keys behind the figure: filled first, then what is blank', async () => {
+  it('the Coverage cell opens only the keys that hold a value; the count carries the gap', async () => {
     mockWorklist([row('WC100', 'unverified')]);
     renderList();
     await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
@@ -357,11 +357,39 @@ describe('data state', () => {
     const entries = within(list)
       .getAllByRole('listitem')
       .map((li) => li.textContent);
-    expect(entries).toEqual([
-      'Material: Ceramic',
-      'Height: 770 mm',
-      'Finish or colour: not set',
-    ]);
+    expect(entries).toEqual(['Material: Ceramic', 'Height: 770 mm']);
+
+    // The blank key is not a row: how many are missing is what the header line says.
+    expect(screen.queryByText(/Finish or colour/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not set/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText('2 of 3 applicable keys hold a value'),
+    ).toBeInTheDocument();
+  });
+
+  it('the Coverage cell says nothing is set rather than listing blanks', async () => {
+    const bare = row('WC100', 'unverified');
+    bare.coverage = {
+      have: 0,
+      applicable: 2,
+      items: [
+        { spec_key: 'material', label: 'Material', value: null },
+        { spec_key: 'finish', label: 'Finish or colour', value: null },
+      ],
+    };
+    mockWorklist([bare]);
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+
+    fireEvent.focus(
+      screen.getByRole('button', {
+        name: 'Coverage: 0 of 2 applicable keys hold a value',
+      }),
+    );
+
+    expect(await screen.findByText('Nothing set yet')).toBeInTheDocument();
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Material/)).not.toBeInTheDocument();
   });
 
   it('the row action does not itself navigate (stops propagation)', async () => {
