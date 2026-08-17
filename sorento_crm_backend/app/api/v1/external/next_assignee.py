@@ -1,6 +1,6 @@
 """External endpoint for n8n: get next assignee by round-robin for (agent_id, team_id)."""
 import logging
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -16,7 +16,11 @@ from app.services.company_routing_service import (
 )
 from app.models.base import set_company_scope
 from app.services.sla_service import ConversationSLATrackingService
-from app.services.user_service import AccessAgentService
+from app.services.user_service import (
+    AccessAgentService,
+    normalise_brand_code,
+    split_legacy_team_set_code,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,17 +98,39 @@ def _tier_level_from_body(body: dict) -> Optional[int]:
         return None
 
 
+class ResolvedTeam(NamedTuple):
+    """What the team resolution decided, in n8n's terms.
+
+    ``brand_code`` is the brand we were ASKED to route (normalised, or None). It does
+    NOT pick the team - one team set has one team per tier - it narrows the member
+    pool inside that team, so whether it actually matched anybody is only known after
+    the round-robin draw and is reported separately.
+    """
+
+    team_id: str
+    team_set_code: Optional[str]
+    brand_code: Optional[str]
+
+
 def _resolve_round_robin_team_id(
     service: AccessAgentService, agent_id: str, body: dict, *, company_id: str
-) -> str:
+) -> ResolvedTeam:
     """
-    Resolve team_id for round-robin within ONE company. Cursors are per (agent_id, team_id);
-    the same team_code on multiple tiers must use tier (or tier_level) with team_code so we
-    advance the correct team.
+    Resolve team_id for round-robin within ONE company and brand. Cursors are per
+    (agent_id, team_id); the same team_code on multiple tiers must use tier (or
+    tier_level) with team_code so we advance the correct team.
+
+    Brand comes from ``brand_code`` in the body, falling back to the brand encoded in
+    a legacy suffixed team-set code. The explicit field wins: it is what an updated
+    n8n sends, and the suffix is only there so an un-updated one keeps working. It is
+    carried through rather than used here - the team is brand-blind; the brand picks
+    the members inside it.
     """
+    brand_code = normalise_brand_code(body.get("brand_code"))
+
     team_id = body.get("team_id")
     if team_id is not None and str(team_id).strip():
-        return str(team_id).strip()
+        return ResolvedTeam(str(team_id).strip(), None, brand_code)
 
     team_code = body.get("team_code") or body.get("team")
     code = body.get("code")
@@ -114,33 +140,35 @@ def _resolve_round_robin_team_id(
             status_code=400,
             detail="team_id, team_code, or code is required.",
         )
+    base_code, suffix_brand = split_legacy_team_set_code(code_eff)
+    brand_code = brand_code or suffix_brand
 
     tier_level = _tier_level_from_body(body)
     if tier_level is not None:
         tid = service.get_team_id_by_tier(
-            agent_id, tier_level, team_set_code=code_eff, company_id=company_id
+            agent_id, tier_level, team_set_code=base_code, company_id=company_id
         )
         if tid:
-            return tid
+            return ResolvedTeam(tid, base_code, brand_code)
 
-    ids = service.list_team_ids_for_agent_code(agent_id, code_eff, company_id=company_id)
+    ids = service.list_team_ids_for_agent_code(agent_id, base_code, company_id=company_id)
     if len(ids) > 1:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"team_code={code_eff!r} is linked to multiple teams for this agent (e.g. SLA tiers). "
+                f"team_code={base_code!r} is linked to multiple teams for this agent (e.g. SLA tiers). "
                 "Send tier (or tier_level) together with team_code so the correct round-robin pool is used."
             ),
         )
     if len(ids) == 1:
-        return ids[0]
+        return ResolvedTeam(ids[0], base_code, brand_code)
 
     # Naming the company matters: without it this reads as "the agent is misconfigured"
     # when the real cause is that this company has no team for that code yet (AC-C5).
     raise HTTPException(
         status_code=404,
         detail=(
-            f"No team found for agent and team_code={code_eff!r} in company "
+            f"No team found for agent and team_code={base_code!r} in company "
             f"{company_id!r}. Configure that company's team set before routing to it."
         ),
     )
@@ -237,6 +265,7 @@ def _routing_company_for_body(db: Session, body: dict, contact_phone: str) -> Ro
     try:
         return resolve_routing_company(
             db,
+            company_id=body.get("company_id"),
             company_code=body.get("company_code"),
             contact_id=body.get("contact_id") or body.get("respond_io_id"),
             space_id=body.get("space_id"),
@@ -271,6 +300,8 @@ def _enrich_n8n_response(
     conversation_assignee: Optional[dict] = None,
     sla_policy_tier: Optional[dict] = None,
     routing_company: Optional[RoutingCompany] = None,
+    resolved_team: Optional["ResolvedTeam"] = None,
+    brand_matched: bool = False,
 ) -> dict:
     status_flags: list[str] = []
     if not is_working_hours:
@@ -299,6 +330,13 @@ def _enrich_n8n_response(
         out["company_id"] = routing_company.company_id
         out["company_code"] = routing_company.company_code
         out["company_source"] = routing_company.source
+    if resolved_team is not None:
+        out["team_set_code"] = resolved_team.team_set_code
+        out["brand_code"] = resolved_team.brand_code
+        # True only when a member TAGGED with that brand took it; the untagged
+        # serve-all fallback reports false, which is the difference between "the
+        # brand specialist has it" and "nobody is tagged for this brand yet".
+        out["brand_matched"] = bool(resolved_team.brand_code) and brand_matched
     out["is_working_hours"] = is_working_hours
     out["is_already_assigned"] = is_already_assigned
     out["status_flags"] = status_flags
@@ -337,6 +375,13 @@ async def post_next_assignee(
       Tiers are independent; use conversation_assignee_* in the response for CRM state only.
     Body (optional): policy_code (or sla_policy_code) and tier (or tier_level) together —
       response includes policy_id, tier_response_hours, tier_resolution_hours from that SLA tier.
+    Body (optional): brand_code - the brand this item belongs to (lower-case
+      `brands.brand_code`; blank / absent = unknown). The team is unchanged; the
+      round-robin pool inside it narrows to members tagged with that brand plus
+      members tagged with none. Nobody tagged for it -> the whole team. The response
+      echoes brand_code, brand_matched and team_set_code.
+    Body (optional): company_id - a companies.id that overrides the contact-derived
+      company (company_source becomes "body"). An unknown id is ignored.
     Body (optional): preferred_assignee_id — when set to a valid member (user_id) of the resolved
       team, that member is returned directly and the round-robin cursor is NOT advanced. Discover
       valid ids via GET /external/team-members. 404 if not a member of the team.
@@ -390,9 +435,10 @@ async def post_next_assignee(
     if not agent_id:
         raise HTTPException(status_code=400, detail="agent_id or agent_code is required")
 
-    team_id = _resolve_round_robin_team_id(
+    resolved_team = _resolve_round_robin_team_id(
         service, str(agent_id).strip(), body, company_id=routing_company.company_id
     )
+    team_id = resolved_team.team_id
 
     # Preferred-assignee override: skip round-robin, go straight to the named member.
     # n8n discovers valid ids via GET /external/team-members. Cursor is NOT advanced.
@@ -425,10 +471,12 @@ async def post_next_assignee(
             phone=contact_phone,
         )
         contact_segments: Optional[set[str]] = resolved or None
-        if contact_segments:
-            result = service.get_next_assignee(agent_id, team_id, contact_segments)
-        else:
-            result = service.get_next_assignee(agent_id, team_id)
+        result = service.get_next_assignee(
+            agent_id,
+            team_id,
+            contact_segments,
+            brand_code=resolved_team.brand_code,
+        )
     if result is None:
         raise HTTPException(
             status_code=404,
@@ -441,4 +489,6 @@ async def post_next_assignee(
         conversation_assignee=conversation_assignee,
         sla_policy_tier=sla_policy_tier,
         routing_company=routing_company,
+        resolved_team=resolved_team,
+        brand_matched=bool(result.get("brand_matched")),
     )

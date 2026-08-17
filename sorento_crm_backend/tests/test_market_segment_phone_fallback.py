@@ -74,8 +74,9 @@ def test_phone_only_call_applies_segment_filter(
     kwargs = mock_seg.return_value.resolve_contact_segments.call_args.kwargs
     assert kwargs["phone"] == "+60120000001"
     # The scoped overload is the one that must be used.
+    # The brand is the second opt-in filter, always passed and None when unused.
     mock_access.return_value.get_next_assignee.assert_called_once_with(
-        "agent-1", "team-1", {"retail"}
+        "agent-1", "team-1", {"retail"}, brand_code=None
     )
 
 
@@ -96,7 +97,7 @@ def test_untagged_contact_still_unfiltered(
 
     assert r.status_code == 200
     mock_access.return_value.get_next_assignee.assert_called_once_with(
-        "agent-1", "team-1"
+        "agent-1", "team-1", None, brand_code=None
     )
 
 

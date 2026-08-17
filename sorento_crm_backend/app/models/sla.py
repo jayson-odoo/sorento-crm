@@ -128,6 +128,11 @@ class ConversationSLATracking(Base):
     source_entity_id = Column(UUID(as_uuid=False), nullable=True)
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="SET NULL"), nullable=True)  # FK to access_agents
     team_set_code = Column(String(100), nullable=True)  # Team assignment set code for escalation; cleared on resolve
+    # The brand the initial assignment resolved with (lower-case `brands.brand_code`),
+    # NULL = all brands / unknown. Stamped once at creation and read back by every
+    # escalation, exactly like company_id above: without it a tier-2 escalation of a
+    # Mocha conversation would fall back to the all-brands ladder.
+    brand_code = Column(Text, nullable=True)
     message_id = Column(BigInteger, nullable=True)  # External message id (e.g. n8n); cleared on resolve
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)

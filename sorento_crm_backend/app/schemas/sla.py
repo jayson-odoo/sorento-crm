@@ -112,6 +112,9 @@ class ConversationSLATrackingBase(BaseModel):
     resolution_duration: Optional[Decimal] = None
     agent_id: Optional[str] = None  # FK to access_agents.id
     team_set_code: Optional[str] = None
+    # The brand this tracker routes within (lower-case brands.brand_code), null =
+    # all brands. Echoed back so n8n can see which ladder the CRM picked.
+    brand_code: Optional[str] = None
     message_id: Optional[int] = None  # External message id; cleared when resolved
 
 
@@ -140,6 +143,12 @@ class ConversationSLATrackingCreate(BaseModel):
     # The backend owns policy selection — n8n's policy_id/current_tier are ignored.
     agent_code: str  # resolved → agent_id FK in service
     team_set_code: str  # team set; (agent_code, team_set_code) → SLA policy
+    # Optional routing inputs from n8n, both already resolved on its side. Blank /
+    # absent brand = unknown, which routes to the set's "all brands" row. A
+    # company_id that does not exist is ignored and the contact decides, because
+    # routing must never break on a bad field.
+    brand_code: Optional[str] = None
+    company_id: Optional[str] = None
     message_id: OptionalMessageId = None
     contact_phone_number: str  # Required field
 

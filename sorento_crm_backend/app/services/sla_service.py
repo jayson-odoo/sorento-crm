@@ -2203,6 +2203,7 @@ class ConversationSLATrackingService:
         contact_segments: Optional[set] = None,
         *,
         company_id: str,
+        brand_code: Optional[str] = None,
     ) -> dict:
         """
         Resolve the next assignee for escalation to the given tier using agent tier-team and round-robin.
@@ -2215,6 +2216,12 @@ class ConversationSLATrackingService:
         segments (members with a matching segment OR no segment set = serves all), and
         the cursor is segment-scoped. Empty / None -> unfiltered (round-robin over the
         whole tier team on the legacy cursor) — byte-identical to prior behaviour.
+
+        brand_code: the tracker's stamped brand. The tier TEAM is the same whatever the
+        brand is; the brand narrows the pool INSIDE it to members tagged with that
+        brand plus untagged members, so a Mocha conversation escalating to tier 2
+        reaches whoever on that tier handles Mocha. Nobody tagged -> the whole tier
+        team, i.e. the pre-brand behaviour.
         """
         from app.services.user_service import AccessAgentService
         from app.models.access import AccessAgent
@@ -2256,12 +2263,11 @@ class ConversationSLATrackingService:
                 f"No team assigned for agent '{agent_code}' with tier {target_tier}{suffix}. "
                 f"Add a Team Assignment with Tier = {target_tier} for this agent."
             )
-        # Opt-in segment filter: pass through only when the contact carries segment(s).
-        # Empty / None -> original arity so the no-filter RR path stays byte-identical.
-        if contact_segments:
-            assignee = agent_svc.get_next_assignee(agent_id, team_id, contact_segments)
-        else:
-            assignee = agent_svc.get_next_assignee(agent_id, team_id)
+        # Opt-in filters: both default to "no filter", so a caller that knows about
+        # neither segments nor brands gets the byte-identical pre-filter RR path.
+        assignee = agent_svc.get_next_assignee(
+            agent_id, team_id, contact_segments or None, brand_code=brand_code
+        )
         if not assignee:
             raise handle_validation_error(
                 f"No assignee in team for agent '{agent_code}' tier {target_tier}. Ensure the team has members."
@@ -3300,6 +3306,9 @@ class ConversationSLATrackingService:
         setattr(tracking, "agent_id", derived["agent_id"])
         setattr(tracking, "team_set_code", derived["team_set_code"])
         setattr(tracking, "current_tier", derived["tier"])
+        # brand_code is deliberately NOT touched here: it describes the ENQUIRY (the
+        # brand the customer asked about), not who is handling it. Moving the work to
+        # another person does not turn a Mocha question into a Cabana one.
 
         # Restart the tier clock from the matched tier's policy hours. If the tier row is
         # missing (misconfigured policy), keep existing clocks — routing fix still applies.
@@ -3407,10 +3416,45 @@ class ConversationSLATrackingService:
         # company from the row rather than re-deriving it, so a tier-2 escalation of a
         # Mocha conversation cannot land on Sorento even when it fires from a
         # scheduler tick with no request company at all.
-        from app.services.company_routing_service import company_for_contact
+        from app.services.company_routing_service import (
+            company_for_contact,
+            resolve_routing_company,
+        )
 
-        tracking_dict["company_id"] = company_for_contact(
-            self.db, contact_id=str(contact.id), phone=normalized_phone
+        # An explicit company_id from n8n wins (it already resolved the product, so
+        # it knows), but only when it names a real company - a stale or mistyped id
+        # falls through to the contact rather than stranding the conversation.
+        body_company_id = tracking_dict.pop("company_id", None)
+        # Only resolved when the field is actually present - the normal path must not
+        # pay for a lookup nobody asked for.
+        body_company = (
+            resolve_routing_company(self.db, company_id=body_company_id)
+            if str(body_company_id or "").strip()
+            else None
+        )
+        tracking_dict["company_id"] = (
+            body_company.company_id
+            if body_company is not None and body_company.source == "body"
+            else company_for_contact(
+                self.db, contact_id=str(contact.id), phone=normalized_phone
+            )
+        )
+
+        # Brand: the second routing axis, stamped once here and read back by every
+        # escalation. A legacy suffixed team-set code carries the brand in its name;
+        # an explicit brand_code from an updated n8n wins over it.
+        from app.services.user_service import (
+            normalise_brand_code,
+            split_legacy_team_set_code,
+        )
+
+        base_team_set_code, suffix_brand = split_legacy_team_set_code(
+            tracking_dict.get("team_set_code")
+        )
+        if base_team_set_code is not None:
+            tracking_dict["team_set_code"] = base_team_set_code
+        tracking_dict["brand_code"] = (
+            normalise_brand_code(tracking_dict.get("brand_code")) or suffix_brand
         )
 
         # Resolve agent_code → agent_id (FK). When no assignee is passed, pick via round-robin
@@ -3509,6 +3553,7 @@ class ConversationSLATrackingService:
                     team_set_code=tracking_dict.get("team_set_code") or None,
                     agent_id_override=str(_agent.id),
                     company_id=tracking_dict["company_id"],
+                    brand_code=tracking_dict.get("brand_code"),
                 )
                 tracking_dict["assigned_to_id"] = assignee["id"]
                 tracking_dict["assigned_to"] = (
@@ -3636,6 +3681,19 @@ class ConversationSLATrackingService:
                 # message belongs to the same open Respond.io conversation: return the
                 # existing tracking untouched (clocks, assignee, agent, team) except for
                 # message_id, refreshed so inbox deep-links point at the latest message.
+                incoming_brand = normalise_brand_code(tracking_dict.get("brand_code"))
+                open_brand = normalise_brand_code(getattr(existing, "brand_code", None))
+                if incoming_brand != open_brand:
+                    # No behaviour change - the open conversation keeps the brand it was
+                    # routed with - but a spine that has started resolving a different
+                    # brand for the same conversation is worth seeing in the log.
+                    logger.info(
+                        "conversation SLA idempotent create carried brand %s while open "
+                        "tracking %s is routing brand %s; the open tracking's brand is kept.",
+                        incoming_brand or "all brands",
+                        getattr(existing, "id", "?"),
+                        open_brand or "all brands",
+                    )
                 if tracking_dict.get("message_id") is not None:
                     setattr(existing, "message_id", tracking_dict["message_id"])
                     self.db.commit()

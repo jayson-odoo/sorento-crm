@@ -27,7 +27,7 @@ from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
 from app.models.resources import Attachment, AttachmentType
 from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
-from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments
+from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
 from app.models.respond_workspace import RespondWorkspace
 from app.models.respond_template import (
     RespondChannel,

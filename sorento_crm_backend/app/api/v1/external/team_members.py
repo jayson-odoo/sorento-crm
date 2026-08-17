@@ -48,6 +48,19 @@ async def get_team_members(
         description="Override the resolved company (tests / future use). Normally the "
         "company is derived from the contact.",
     ),
+    company_id: Optional[str] = Query(
+        None,
+        description="Override the resolved company by id (companies.id). Takes "
+        "precedence over company_code; an unknown id is ignored. Same field "
+        "next-assignee accepts, so both resolve the same company.",
+    ),
+    brand_code: Optional[str] = Query(
+        None,
+        description="Brand of the item being routed (lower-case brands.brand_code). "
+        "Filters the roster to members tagged with that brand plus members tagged "
+        "with none - identical to the pool next-assignee draws from, so an id "
+        "returned here is always accepted there.",
+    ),
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
@@ -58,6 +71,8 @@ async def get_team_members(
     Query (agent): agent_id or agent_code — required to resolve a team_code via the agent link.
     Query (segment): contact_id (respond_io_id) [+ space_id] to filter by the contact's
     market segment(s). No filter when omitted / contact unknown / contact untagged.
+    Query (brand/company): brand_code and company_id - the same two axes next-assignee
+    routes on, so this roster and that endpoint always resolve the same pool.
 
     Response: [{user_id, name, respond_user_id, email, sort_order}] (active users only).
     """
@@ -81,8 +96,8 @@ async def get_team_members(
     # there (AC-E1). Resolving the company differently in the two endpoints would
     # hand n8n a roster from one company and reject those ids from the other.
     routing_company = resolve_routing_company(
-        db, company_code=company_code, contact_id=contact_id, space_id=space_id,
-        phone=contact_phone_number,
+        db, company_id=company_id, company_code=company_code, contact_id=contact_id,
+        space_id=space_id, phone=contact_phone_number,
     )
     set_company_scope(db, frozenset({routing_company.company_id}))
 
@@ -96,15 +111,14 @@ async def get_team_members(
         str(resolved_agent_id).strip() if resolved_agent_id else "",
         body,
         company_id=routing_company.company_id,
-    )
+    ).team_id
 
     # Market-segment filter. Unknown / untagged contact -> empty set -> no filter.
     contact_segments = MarketSegmentService(db).resolve_contact_segments(
         respond_io_id=contact_id, space_id=space_id, phone=contact_phone_number
     )
-    if contact_segments:
-        return service.list_active_team_members_detail(
-            resolved_team_id, contact_segments
-        )
-
-    return service.list_active_team_members_detail(resolved_team_id)
+    # Brand narrows the same roster by the same rule next-assignee applies to the
+    # round-robin pool: tagged with it, or tagged with nothing.
+    return service.list_active_team_members_detail(
+        resolved_team_id, contact_segments or None, brand_code=brand_code
+    )

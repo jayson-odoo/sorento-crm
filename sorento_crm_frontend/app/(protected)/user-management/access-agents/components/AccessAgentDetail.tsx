@@ -27,6 +27,7 @@ import ContactAccessAgentsTable from './ContactAccessAgentsTable';
 import AgentFieldAccessCard from './AgentFieldAccessCard';
 import AccessAgentNavigation from './AccessAgentNavigation';
 import MemberMarketSegmentEditor from './MemberMarketSegmentEditor';
+import MemberBrandEditor from './MemberBrandEditor';
 import type { AgentTeamMemberInfo, AgentTeamAssignment } from '../services/accessAgentService';
 
 interface AccessAgentDetailProps {
@@ -423,6 +424,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                                       </div>
                                       <div className="flex items-center gap-2 shrink-0">
                                         <MemberMarketSegmentEditor teamId={a.team_id} userId={member.id} />
+                                        <MemberBrandEditor teamId={a.team_id} userId={member.id} />
                                         {excluded && (
                                           <Badge variant="outline" className="text-xs text-muted-foreground">
                                             Excluded from round robin

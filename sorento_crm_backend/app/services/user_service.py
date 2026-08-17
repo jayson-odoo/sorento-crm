@@ -70,6 +70,79 @@ def _rr_user_id_key(value: Optional[object]) -> str:
     return str(value).strip()
 
 
+# --------------------------------------------------------------- brand routing
+#
+# Brand is the second routing axis, orthogonal to company: Cabana and Mocha are
+# brands INSIDE the Sorento company. ONE team set per function with ONE team per
+# tier; the brand narrows the MEMBER POOL inside that team, exactly the way market
+# segments already do. A member tagged with no brand serves every brand, and when
+# no member carries the resolved brand the whole team round-robins - so routing
+# never dead-ends on a brand nobody tagged.
+
+
+# The suffixed team-set codes that used to encode the brand. One release of
+# compatibility for an n8n workflow that has not been updated yet - migration 371
+# rewrites the stored trackers, this map keeps the WIRE working while it rolls out.
+LEGACY_BRAND_TEAM_SET_CODES = {
+    "marketing_promotion_sorento": ("marketing_promotion", "sorento"),
+    "marketing_promotion_mocha": ("marketing_promotion", "mocha"),
+    "marketing_promotion_cabana": ("marketing_promotion", "cabana"),
+}
+
+
+def normalise_brand_code(value: Optional[object]) -> Optional[str]:
+    """Canonical brand handle: trimmed lower-case, blank -> None (= all brands).
+
+    Every read and write goes through this, so a row saved as "Mocha" and a
+    request carrying "MOCHA" are the same brand.
+    """
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    return s or None
+
+
+def split_legacy_team_set_code(code: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """``("marketing_promotion_mocha")`` -> ``("marketing_promotion", "mocha")``.
+
+    Anything not in the legacy map is returned unchanged with no brand, so this is
+    safe to call on every incoming team-set code.
+    """
+    if code is None:
+        return None, None
+    c = str(code).strip()
+    # Matched case-insensitively: the suffix is a handle typed into an n8n workflow,
+    # and "Marketing_Promotion_Mocha" is the same routing key as the lower-case one.
+    if c.lower() in LEGACY_BRAND_TEAM_SET_CODES:
+        return LEGACY_BRAND_TEAM_SET_CODES[c.lower()]
+    return c, None
+
+
+def brand_pool_key(brand_code: Optional[str]) -> str:
+    """Round-robin cursor suffix for a brand-narrowed pool ('' when it did not narrow).
+
+    Appended to the market-segment key so the two axes compose into ONE cursor key:
+    a mocha pool and a retail pool and a mocha+retail pool each rotate on their own
+    cursor, and the legacy '' cursor is untouched when neither filter applied.
+    """
+    code = normalise_brand_code(brand_code)
+    return f"~b:{code}" if code else ""
+
+
+def member_serves_brand(member_brand_codes, brand_code: Optional[str]) -> bool:
+    """The member-level matching rule: tagged with this brand, or tagged with nothing.
+
+    Mirrors the market-segment rule one-for-one - an untagged member serves every
+    brand, which is what keeps a minimally-configured team routable.
+    """
+    wanted = normalise_brand_code(brand_code)
+    if not wanted:
+        return True
+    codes = {normalise_brand_code(c) for c in (member_brand_codes or [])}
+    codes.discard(None)
+    return not codes or wanted in codes
+
+
 class UserService:
     """Service for user operations."""
     
@@ -1481,11 +1554,35 @@ class AccessAgentService:
         self.db.refresh(access)
         return access
     
+    def _brand_codes_by_member(self, member_ids) -> dict[str, set[str]]:
+        """``{team_member_id: {brand codes}}`` for the members given, tags only.
+
+        One query, and only ever called when a brand was actually requested: the
+        no-brand path must never touch ``team_member_brands``, exactly as the
+        no-segment path never touches ``team_member_market_segments``.
+        """
+        ids = [str(m) for m in (member_ids or [])]
+        if not ids:
+            return {}
+        from app.models.access import team_member_brands
+
+        rows = self.db.query(
+            team_member_brands.c.team_member_id, team_member_brands.c.brand_code
+        ).filter(team_member_brands.c.team_member_id.in_(ids)).all()
+        out: dict[str, set[str]] = {}
+        for member_id, code in rows:
+            normalised = normalise_brand_code(code)
+            if normalised:
+                out.setdefault(str(member_id), set()).add(normalised)
+        return out
+
     def get_next_assignee(
         self,
         agent_id: str,
         team_id: str,
         contact_segments: Optional[set[str]] = None,
+        *,
+        brand_code: Optional[str] = None,
     ) -> Optional[dict]:
         """
         Return the next assignee for (agent_id, team_id) using round-robin.
@@ -1499,6 +1596,11 @@ class AccessAgentService:
         When ``None`` / empty (the normal path, incl. every non-CS agent), the pool and
         the ``segment_key=''`` cursor are exactly as before — no behaviour change.
         An empty filtered pool falls back to the full team on the '' cursor.
+
+        ``brand_code`` (opt-in): the SECOND axis, same rule and ANDed with the first -
+        members tagged with that brand plus members tagged with none of them. The
+        returned dict carries ``brand_matched``, true only when a TAGGED member is in
+        the pool, so n8n can tell a real brand routing from the serve-all fallback.
         """
         from sqlalchemy import and_
         from sqlalchemy.orm import selectinload
@@ -1542,18 +1644,42 @@ class AccessAgentService:
         members = members_q.all()
         if not members:
             return None
-        # Opt-in segment scoping. Empty/absent -> '' cursor + full pool (unchanged).
+        wanted_brand = normalise_brand_code(brand_code)
+        brands_by_member = (
+            self._brand_codes_by_member([m.id for m in members]) if wanted_brand else {}
+        )
+        # Opt-in scoping on both axes, ANDed. Neither filter can widen the pool, and
+        # an empty pool falls back to the full team on the legacy '' cursor - the
+        # rule market segments already established, applied to the brand as well.
         segment_key = ""
+        brand_matched = False
+        pool = members
         if contact_segments:
             pool = [
                 m
-                for m in members
+                for m in pool
                 if not m.market_segments
                 or {str(s.code) for s in m.market_segments} & contact_segments
             ]
-            if pool:  # empty pool -> fall back to full team on the '' cursor
-                members = pool
+        if wanted_brand:
+            pool = [
+                m
+                for m in pool
+                if member_serves_brand(brands_by_member.get(str(m.id)), wanted_brand)
+            ]
+            # A tagged member in the pool is what makes this a BRAND routing; a pool of
+            # untagged members is the serve-all fallback and rotates on the same cursor
+            # it always did, so switching n8n on cannot split an untagged team's
+            # rotation into one queue per brand.
+            brand_matched = any(brands_by_member.get(str(m.id)) for m in pool)
+        if pool and (contact_segments or wanted_brand):
+            members = pool
+            if contact_segments:
                 segment_key = segment_key_for(contact_segments)
+            if brand_matched:
+                segment_key = f"{segment_key}{brand_pool_key(wanted_brand)}"
+        else:
+            brand_matched = False
         user_ids = [_rr_user_id_key(m.user_id) for m in members]
         # Get or create cursor and lock it (scoped by segment_key)
         cursor = (
@@ -1591,16 +1717,26 @@ class AccessAgentService:
         # Load user for response
         user = self.db.query(User).filter(User.id == next_user_id).first()
         if not user:
-            return {"id": next_user_id, "email": None, "name": None}
+            return {
+                "id": next_user_id,
+                "email": None,
+                "name": None,
+                "brand_matched": brand_matched,
+            }
         return {
             "id": user.id,
             "email": user.email,
             "name": user.name or user.email,
             "respond_user_id": user.respond_user_id,
+            "brand_matched": brand_matched,
         }
 
     def list_active_team_members_detail(
-        self, team_id: str, contact_segments: Optional[set[str]] = None
+        self,
+        team_id: str,
+        contact_segments: Optional[set[str]] = None,
+        *,
+        brand_code: Optional[str] = None,
     ) -> list[dict]:
         """
         Active members of a team joined to User, ordered by sort_order, user_id.
@@ -1612,6 +1748,10 @@ class AccessAgentService:
         serves all). If that filter yields nobody, fall back to the full active roster so
         a conversation always resolves to someone. ``None`` / empty set = no filter
         (byte-identical to the pre-segment behaviour).
+
+        ``brand_code`` applies the same rule on the brand axis and is ANDed with the
+        segment one, so this roster is exactly the pool ``get_next_assignee`` draws
+        from - an id returned here is always one next-assignee could return.
         """
         from sqlalchemy.orm import selectinload
 
@@ -1630,12 +1770,25 @@ class AccessAgentService:
         if contact_segments:
             query = query.options(selectinload(TeamMember.market_segments))
         rows = query.all()
-        if contact_segments:
+        wanted_brand = normalise_brand_code(brand_code)
+        brands_by_member = (
+            self._brand_codes_by_member([m.id for m, _u in rows]) if wanted_brand else {}
+        )
+        if contact_segments or wanted_brand:
             filtered = [
                 (member, user)
                 for member, user in rows
-                if not member.market_segments
-                or {str(s.code) for s in member.market_segments} & contact_segments
+                if (
+                    not contact_segments
+                    or not member.market_segments
+                    or {str(s.code) for s in member.market_segments} & contact_segments
+                )
+                and (
+                    not wanted_brand
+                    or member_serves_brand(
+                        brands_by_member.get(str(member.id)), wanted_brand
+                    )
+                )
             ]
             if filtered:  # empty -> fall back to the full roster (never return nobody)
                 rows = filtered
