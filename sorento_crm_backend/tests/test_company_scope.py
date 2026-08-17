@@ -354,7 +354,16 @@ def test_every_company_id_table_is_registered():
     # under every scope, while a company that adds a type of its own keeps it. Owned
     # without the shared flag would have hidden the seeds from every logged-in user
     # while an API-key caller still saw them.
-    assert len(owned) == 64, f"expected 64 owned tables, found {len(owned)}: {sorted(owned)}"
+    # Onboarding adds 3 owned tables under the same rule: a request is ONE company's
+    # intake batch (the requester is invited into that company, and the reviewer works
+    # a queue of her own company's requests), its people are that batch's named staff,
+    # and its templates are that company's own bundles of access. `onboarding_people`
+    # is owned rather than derived through its request on purpose: unlike
+    # `selection_line`, every per-person review write loads the person BY ID
+    # (`get_person`) and only then checks it belongs to the request in the path, so the
+    # id-keyed load is the query that has to be scoped - deriving scope from the parent
+    # would leave that load reachable under any company.
+    assert len(owned) == 67, f"expected 67 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------
