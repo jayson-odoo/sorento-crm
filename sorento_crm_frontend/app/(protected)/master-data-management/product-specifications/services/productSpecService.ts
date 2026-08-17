@@ -19,6 +19,14 @@
  *     -> `exceptions[]` carries `reason: 'human_override_conflict'` with
  *        `proposed` = what the rules now read. Answered by SETTING THE VALUE;
  *        there is no resolve endpoint and there is not meant to be one (D9).
+ *     -> `verification` is the VerificationBlock for the code (state, who vouched for
+ *        it and when, and the was/now diff when its values moved under the stamp), and
+ *        `values_hash` is the hash of the values on screen. Both ride this response so
+ *        the Specifications tab needs no second round trip and both company copies of a
+ *        code read the same badge (AC-D.14). The hash is echoed back on verify, which
+ *        is what makes the same-transaction guard apply from the tab (AC-D.4). The
+ *        verify / unverify routes themselves live in
+ *        `spec-verification/services/specVerificationService.ts`.
  *
  *   GET /api/v1/master-data/spec-registry
  *     -> { keys: SpecRegistryKey[] }, vocabulary already merged.

@@ -52,7 +52,7 @@ factual premises wrong, this UAC follows the code and the PLAN records the corre
 | D5 | **The verification screen is a standard list, not a split-pane workbench.** Settled by the captain at plan review, superseding the design's workbench proposal. It uses the shared `DataGrid` list component exactly as the user list does: multi-select with the standard select-all, filters, search, and **bulk actions**. The objective is to see and review many products at once. Clicking a product goes to **the existing product detail page's Specifications tab** - no new detail route. Since this is the repo's standard pattern, the deviation and its sign-off are moot. |
 | D6 | **Provenance evidence is kept**, as a source badge with the evidence behind hover/expand, rather than a permanent column of text. |
 | D7 | **Creating a spec key from the product page requires `master_data.spec_registry.add`** - the same grant as the master screen, no new permission. Duplicate prevention is a UX obligation: match against existing keys and synonyms and offer the match before allowing a create. |
-| D8 | **An authored value always wins a conflict.** When derivation later disagrees with a hand-set value, the authored value stays in force and the disagreement is raised as `ProductSpecException(reason='human_override_conflict', ...)` on the existing "Needs a human" card until a person resolves it. **A product with open exceptions cannot be verified.** |
+| D8 | **An authored value always wins a conflict.** When derivation later disagrees with a hand-set value, the authored value stays in force and the disagreement is raised as `ProductSpecException(reason='human_override_conflict', ...)`. **Amended by the captain 2026-08-17 (hands-on test):** the exception is no longer shown to anyone and no longer blocks anything - the "Needs a human" card is gone, the Exceptions column is gone, and a product with open exceptions verifies normally. Exceptions remain internal derivation data. The authored-value-wins rule itself is unchanged. |
 | D9 | **An exception is answered by setting the correct value, and nothing else.** No resolve action, no dismissal, no reason field, no justification. The people doing this work are the authority on the catalogue; asking them to explain themselves to the system is bureaucracy, not control. Derivation therefore stops flagging a key once a person has answered it (AC-D.17). |
 | D10 | **The spec table uses the shared `DataGrid` component - design principle, no parallel table implementations.** Settled by the captain, overruling the plan's CSS-grid proposal. Inline editing concerns are solved inside the component (edit icon / click swaps the value cell to an input), not by building a different table. |
 | D11 | **Never trust the frontend alone - every duplicate-prevention check is enforced server-side.** The client-side check is a latency courtesy; the API is the guard. Applies to key creation (AC-A.10) and value creation (AC-A.11) alike. |
@@ -77,9 +77,9 @@ before this UAC was written, plus further measurements during sub-plan investiga
 
 Consequences carried into the ACs: M1 makes a grant sweep mandatory in-milestone (AC-A.11). M3
 means there is no drift to reconcile, so the fan-out is purely forward-looking (AC-F.4). M5
-invalidates the design's coverage source (AC-D.7). M6 cuts the worklist 24% (AC-D.6). M7 means
-the exceptions-block-verify rule is a dead end unless a person's correction stops the flag
-re-raising (AC-D.17). M8 names the hash canonicalisation traps (AC-F.10).
+invalidates the design's coverage source (AC-D.7). M6 cuts the worklist 24% (AC-D.6). M7 was the
+count behind the exceptions-block-verify rule, which the captain dropped on 2026-08-17; the flag
+still stops re-raising once a person answers it (AC-D.17), which is now its whole job. M8 names the hash canonicalisation traps (AC-F.10).
 
 ---
 
@@ -159,14 +159,18 @@ colour. Nothing new to learn. This is a presentation change only.
 Verification. They have no list to prepare, no export, no spreadsheet.
 
 **What the system already knows:** every spec, its source, what changed since the last verify,
-every open exception, and how complete each code's coverage is.
+and how complete each code's coverage is - down to WHICH keys are filled and which are blank.
 
 1. **First screen** - a **list of products**, the same shared `DataGrid` the user list uses, and a
    progress line: **"Verified 0 of 8,812 live codes"**. Each row carries the code, class, brand,
-   coverage, open-exception count and a verification pill, so **many products are reviewable at a
-   glance without opening any of them**. Discontinued products are excluded by default with a
-   toggle. The order is the work order: needs-re-verify first (ten-second diffs), then
-   never-verified, grouped by class so the reviewer holds one mental model at a time. Filters
+   coverage and a verification pill, so **many products are reviewable at a glance without opening
+   any of them**. The coverage figure opens on hover (or on tab-to-focus) into the keys behind it -
+   every applicable key, filled ones with their value, blank ones named as blank - so "is 3 of 8
+   the right 3?" is answered in the list rather than by a trip into the product (captain ruling
+   2026-08-17 hands-on test). Discontinued products are excluded by default with a toggle. The
+   order is stable and does not depend on state: by class, then code, so the reviewer holds one
+   mental model at a time AND a row they have just verified stays exactly where it was rather than
+   sinking down the page (captain ruling 2026-08-17 hands-on test). Filters
    live in the URL so a person can own a slice and resume tomorrow.
 2. **Acting on one row, without leaving the list** - every row carries its own **Verify** button.
    A product that reads correctly at a glance is confirmed right there, one click, no navigation.
@@ -176,10 +180,15 @@ every open exception, and how complete each code's coverage is.
    the confirmation states the count. **Unverify selected** is offered the same way. This is what
    makes 8,812 codes tractable.
 4. **Reviewing one properly** - clicking a product opens **the existing product detail page on its
-   Specifications tab**, which by then is the editable table from Journey A. Open exceptions and,
-   for a needs-re-verify code, a diff of what changed since the last verify, sit alongside it.
-   They fix what is wrong and press **Verify** there. The page already carries prev/next record
-   navigation, so the next product is one click away without returning to the list.
+   Specifications tab**, which by then is the editable table from Journey A. For a needs-re-verify
+   code, a diff of what changed since the last verify sits alongside it. They fix what is wrong and
+   press **Verify** there. The page already carries prev/next record navigation, so the next
+   product is one click away without returning to the list. **Coming back costs nothing**: Back
+   returns to the worklist exactly as they left it - same search, filters, sort, page and ticks -
+   scrolled to the row they went in from, and that row already reads Verified (captain ruling
+   2026-08-17 hands-on test). There is **no exceptions concept anywhere in this journey**: a
+   product that reads wrong is put right by editing the value, which is what always answered a
+   flag.
 5. **Changing their mind** - a verification is never a one-way door. **Unverify** withdraws the
    stamp and the code reads plainly **unverified** again, not "needs re-verify", because nothing
    changed and there is no diff to show. The history keeps both facts: who vouched for it, and who
@@ -423,10 +432,14 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   withdrawal.
 - **AC-D.4** `[BE]` GIVEN a verify request WHEN it is served THEN the client echoes the hash it
   was shown, the handler locks the code's spec rows and compares in the same transaction, and it
-  409s with a distinguishable code when the values moved (`values_changed`) or exceptions are open
-  (`exceptions_open`). A concurrent double-verify yields exactly one row.
-- **AC-D.5** `[BE]` GIVEN a code with open `ProductSpecException` rows WHEN verify is attempted
-  THEN it is refused and the pane surfaces the exceptions inline (D8).
+  409s `values_changed` when the values moved. That is the **only** 409 (captain ruling 2026-08-17
+  hands-on test: the `exceptions_open` refusal is gone with the exceptions concept). A concurrent
+  double-verify yields exactly one row.
+- **AC-D.5** `[BE][FE]` GIVEN a code with open `ProductSpecException` rows WHEN verify is attempted
+  THEN it **succeeds like any other code**, and nothing anywhere names the exception (captain
+  ruling 2026-08-17 hands-on test: "no exceptions concept for the user; they just edit values").
+  Exceptions stay internal derivation data - the model, the derivation flags and the worklist row's
+  `open_exceptions` count remain, unrendered.
 - **AC-D.17** `[BE]` GIVEN a flagged spec key WHEN a user sets that key's value by hand THEN the
   exception is **answered and does not come back** on the next derivation. There is **no resolve
   action, no dismissal, and no reason field**: the user is the authority on their own catalogue,
@@ -439,15 +452,18 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   the rules disagree with the authored value THEN the disagreement surfaces as
   `human_override_conflict` (D8, AC-F.5), not as the original flag. An answered question does not
   re-ask itself; a new question gets asked once.
-- **AC-D.17c** `[FE]` GIVEN an open exception WHEN it renders THEN it names the key it is about
-  and offers the edit for that key **in place**, so answering it is one action on the row rather
-  than a trip to another screen. GIVEN the measured baseline (M7) THEN every one of the 258
-  blocked codes is answerable this way, because every flagged key is a spec key: `shape` (212),
-  `diameter` (25), `dim_*` (16) and `brand` (5).
+- **AC-D.17c** `[FE]` GIVEN the Specifications tab WHEN it renders THEN there is **no "Needs a
+  human" section and no per-exception Edit affordance** (captain ruling 2026-08-17 hands-on test).
+  The correction was always "set the right value in the table", so the table is the whole
+  interaction; a card naming a question whose only answer lived elsewhere was a second place to
+  look. GIVEN the measured baseline (M7) THEN nothing is lost: every flagged key is a spec key the
+  table already edits - `shape` (212), `diameter` (25), `dim_*` (16) and `brand` (5) - and no code
+  is blocked by a flag any more.
 - **AC-D.6** `[BE]` GIVEN the worklist WHEN it is served THEN discontinued codes are **excluded by
   default** with an include toggle, cutting the list from 11,415 to **8,812** (M6), and the
-  progress line counts the same set it lists. Default order is needs-re-verify first, then
-  unverified **grouped by class then code**.
+  progress line counts the same set it lists. Default order is **state-independent - class then
+  code** (captain ruling 2026-08-17): verifying a row must not move it, so state narrows the list
+  as a filter and never ranks it.
 - **AC-D.7** `[BE]` GIVEN coverage WHEN it is computed THEN it is computed **inline in the
   worklist SQL** against the 52-row registry, not by calling `keys-for-product` per code - that
   endpoint returns the numerator, is one query per code, and sits behind a zero-grant permission.
@@ -462,8 +478,31 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   virtualized list - the repo has no virtualization library and never loads thousands of rows
   client-side.
 - **AC-D.9** `[FE]` GIVEN a row WHEN it renders THEN it carries enough to judge the product
-  without opening it: code, class, brand, coverage, open-exception count and the verification
-  pill. Seeing many products at once is the point of the screen.
+  without opening it: code, class, brand, coverage and the verification pill. There is **no
+  Exceptions column** (captain ruling 2026-08-17 hands-on test). Seeing many products at once is
+  the point of the screen.
+- **AC-D.27** `[FE][BE]` GIVEN the Coverage cell WHEN it is hovered or focused THEN it opens the
+  keys behind the figure: every **applicable** registry key, by the same rule the denominator
+  counts, each as "Label: value" for a filled key or "Label: not set" for a blank one, filled
+  first, sorted by label, scrollable at a maximum height, and reachable from the keyboard (captain
+  ruling 2026-08-17 hands-on test). The list rides the worklist response as
+  `coverage.items: [{spec_key, label, value}]` - no second call per row - where `value` is the
+  stored entry (`{value, unit?}`) or null. Clicking it never navigates; the rest of the row still
+  does.
+- **AC-D.28** `[FE]` GIVEN a reviewer opens a product from the worklist WHEN they press Back THEN
+  the list is exactly as they left it - same search, filters, sort, page **and ticks** - scrolled
+  to the row they went in from (captain ruling 2026-08-17 hands-on test). Implemented on the URL
+  the list already writes, with no new store: the selection persists as `selected=<codes>`
+  (page-scoped as before, dropped when the page changes), the row click carries the whole worklist
+  URL plus `focus=<code>` in a `back` parameter, and the detail page's Back link honours a `back`
+  that is a relative path into the worklist and ignores anything else. `focus` is stripped from the
+  URL on the first pass, so the restore happens once. Prev/next on the detail page continues to
+  walk the products list, not the worklist.
+- **AC-D.29** `[FE]` GIVEN a code verified (or unverified) from inside the product WHEN the
+  reviewer returns to the worklist THEN that row already reads its new state, without a manual
+  refresh (captain ruling 2026-08-17 hands-on test). The tab patches the cached worklist row
+  through the **same patcher** the list's own bulk actions use, so the row and the progress line
+  move together, and still invalidates the query so an edit or a re-derive refreshes coverage.
 - **AC-D.10** `[FE]` GIVEN the grid WHEN it renders THEN it has the **standard select-all at the
   top left**, matching every other listing, plus per-row checkboxes. Selection is **page-scoped**,
   which is what the shared component already does (`toggleAllPageRowsSelected`). The optional
@@ -474,12 +513,13 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   confirmation states the count (per the bulk-action copy standard) and one bulk call stamps them.
   The response is **per-code, not all-or-nothing**: codes that cannot be verified are reported
   with their reason rather than failing the batch, and the result is surfaced as
-  "42 verified, 3 skipped - exceptions open, 1 skipped - changed while you were reviewing".
+  "42 verified, 1 skipped - changed while you were reviewing, 1 skipped - no longer in the list"
+  (those two are the only skip reasons left - captain ruling 2026-08-17 hands-on test).
   Anything skipped stays selected so it can be dealt with.
 - **AC-D.12** `[FE]` GIVEN a product row WHEN it is clicked THEN it opens **the existing product
-  detail page on its Specifications tab**. There is **no new detail route**: the editable table,
-  the exceptions and the diff all already live there, and that page already carries prev/next
-  record navigation, so reviewing one by one costs no extra build.
+  detail page on its Specifications tab**. There is **no new detail route**: the editable table and
+  the diff already live there, and that page already carries prev/next record navigation, so
+  reviewing one by one costs no extra build.
 - **AC-D.13** `[FE]` GIVEN the Specifications tab WHEN it renders for a code in the worklist THEN
   it carries the single-product **Verify** action, the verification pill with who and when, and
   for a needs-re-verify code the `invalidated_diff` as was/now pairs.
@@ -492,9 +532,10 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   exactly what happened to the spec registry (M1). Restricting verification to a smaller group is
   a deliberate decision that must arrive with a seeded grant in the same migration.
 - **AC-D.16** `[BE]` GIVEN the bulk verify endpoint WHEN it stamps a code THEN it applies the
-  **same guards as the single verify**: the values hash is compared in the same transaction and
-  open exceptions still block. Bulk is a loop over the same rule, never a second, laxer path -
-  otherwise the bulk button quietly becomes the way to stamp what the single button refuses.
+  **same guard as the single verify**: the values hash is compared in the same transaction (the
+  open-exception guard is gone from both - captain ruling 2026-08-17 hands-on test). Bulk is a loop
+  over the same rule, never a second, laxer path - otherwise the bulk button quietly becomes the
+  way to stamp what the single button refuses.
 - **AC-D.17b** `[FE]` GIVEN the filters WHEN they are set THEN they persist in the URL so a link
   is a shareable slice and a refresh resumes in place.
 - **AC-D.18** `[FE]` GIVEN the new screen WHEN it is named THEN it is **not** called
@@ -502,11 +543,11 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
 - **AC-D.19** `[E2E]` GIVEN a user WHEN they navigate **by sidebar clicks from `/`** to Spec
   Verification THEN: they can filter, verify a single row **from its own row button**, then
   **unverify that same row** and see it read unverified again; tick several rows, press Verify
-  selected, confirm the count, and see those rows flip state; a selected code with an open
-  exception is reported as skipped with its reason rather than failing the batch; clicking a
-  product lands on its Specifications tab where a single Verify works and prev/next moves to the
-  next product; and an edit to a verified code returns it as needs-re-verify with the diff. Clean
-  console, at **375px and 1280px**.
+  selected, confirm the count, and see those rows flip state; hover a Coverage cell and read the
+  keys behind it; click a product, verify it there, press Back and find the list intact - same
+  filters, page, ticks and scroll position - with that row reading Verified; and an edit to a
+  verified code returns it as needs-re-verify with the diff (captain ruling 2026-08-17 hands-on
+  test). Clean console, at **375px and 1280px**.
 
 ### B - Prompt box, extraction proposals, and the flyer discard (PR 4)
 
@@ -618,13 +659,14 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
 - **pytest:** the resurrection pin (AC-F.3), hash canonicality including the numeric and array
   traps (AC-F.11), fan-out (AC-F.4), conflict raised once per code and never for a tombstone
   (AC-F.5, F.6), the boost branch (AC-F.10), verification state derivation and party-agnostic
-  invalidation (AC-D.2, D.3), the same-transaction 409 taxonomy (AC-D.4), exception resolve
-  surviving re-derivation (AC-D.17), coverage per gate rule and worklist ordering/filters
-  (AC-D.6, D.7), extraction writing nothing and dropping invented vocabulary (AC-B.1, B.4), batch
+  invalidation (AC-D.2, D.3), the same-transaction `values_changed` 409 (AC-D.4), a code with open
+  exceptions verifying normally (AC-D.5), exception resolve surviving re-derivation (AC-D.17),
+  coverage per gate rule, its itemised keys and worklist ordering/filters (AC-D.6, D.7, D.27), extraction writing nothing and dropping invented vocabulary (AC-B.1, B.4), batch
   apply atomicity (AC-B.9), and the promote migration run twice plus a prior-bad-run repair
   fixture and an exact downgrade (AC-B.10). **Bulk verify specifically:** a mixed batch returns
-  per-code outcomes, a code with open exceptions is skipped rather than failing the batch, and a
-  code whose hash moved is skipped with its own reason (AC-D.11, AC-D.16). **Unverify
+  per-code outcomes and a
+  code whose hash moved is skipped with its own reason rather than failing the batch (AC-D.11,
+  AC-D.16). **Unverify
   specifically:** a verified code becomes `unverified` and not `needs_reverify`; the original
   `verified_by`/`verified_at` survive on the row while `invalidated_by_*` is stamped; a
   needs-re-verify code unverifies to `unverified` with its diff cleared; unverifying a code with
@@ -636,7 +678,10 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   per data type; read-to-edit leaving DOM order unchanged (the same-layout mandate as an
   assertion); the tombstone row; the near-duplicate matcher; pill classes; the proposal badges and
   default-unchecked conflicts; the selection-to-bulk-action strip including the count in the
-  confirmation copy and the partial-outcome summary.
+  confirmation copy and the partial-outcome summary; and, per the captain ruling 2026-08-17
+  hands-on test, the Coverage tooltip listing filled and unfilled keys (AC-D.27), the selection
+  round-tripping through the URL, Back honouring `back` and `focus` scrolling the row (AC-D.28),
+  and an in-product verify patching the cached worklist row (AC-D.29).
 - **playwright:** AC-A.16, AC-D.19, AC-B.17 - sidebar navigation only, asserting the expected
   `/api/v1/*` calls, at 375px and 1280px.
 

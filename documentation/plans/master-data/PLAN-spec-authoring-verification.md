@@ -13,7 +13,12 @@ half of AC-D.17; backend only, Phase 1 exception per the PR-map note). PR 2 (Edi
 pills) implemented on `fm/spec-pr2-editable-table`, 2026-08-15: AC-A.1 to AC-A.15 and AC-C.1 to
 AC-C.4, Phase 1 then Phase 2, with **AC-A.16 (the Playwright e2e spec) outstanding** - browser
 verification moved to `agent-browser` by captain ruling mid-slice and the ruling on committed
-`e2e/` specs is pending, so no new Playwright spec was written. PR 3 in flight in a parallel lane. PR 4 IN PROGRESS on
+`e2e/` specs is pending, so no new Playwright spec was written. PR 3 (Verification model +
+worklist, group D plus the PR-3 half of AC-D.17) implemented on
+`fm/spec-pr3-verification-list`, 2026-08-17: migration `369_product_spec_verifications`
+(renumbered from 367 because sibling branches took 367/368; chained on PR 4's
+`367_promote_flyer_provenance`), evidence run recorded in
+`spec-authoring-verification-evidence-pr3.md`, missing regression guard logged as BL-014. PR 4 IN PROGRESS on
 `fm/spec-pr4-extraction-prompt` (2026-08-16), contract below; its deploy runbook exists at
 `documentation/plans/master-data/RUNBOOK-flyer-promote.md` (steps 1-6 with the exact pre-flight,
 checksum and post-run SQL, re-measured 2026-08-16).
@@ -129,9 +134,18 @@ two can be retuned apart.
 
 ### C4 - an exception is answered by fixing the value, not by a resolve workflow (settled by the captain, 2026-08-14)
 
-The captain settled that a product with open exceptions cannot be verified. That rule stands. The
-question was what "resolving" one means, and the answer changed after the 258 blocked codes were
-actually inspected rather than counted.
+> **Amended by the captain on 2026-08-17, after hands-on testing of PR 3.** There is **no
+> exceptions concept for the user at all**: the "Needs a human" card and the worklist's Exceptions
+> column are removed, and the block is dropped - a product with open exceptions **verifies
+> normally**. `ProductSpecException` survives as internal derivation data (the model, the flags,
+> the authored-key filter below, and the worklist row's unrendered `open_exceptions` count); what
+> goes is every trace of it in the product. The reasoning below is unchanged and is why: correcting
+> the value was always the only answer, so a flag that blocked the confirmation was a gate in front
+> of a door that was never locked. The 258 "blocked" codes are simply not blocked.
+
+The captain first settled that a product with open exceptions cannot be verified (superseded
+above). The question was what "resolving" one means, and the answer changed after the 258 blocked
+codes were actually inspected rather than counted.
 
 **What they are.** All 258 were pulled and read:
 
@@ -191,10 +205,28 @@ What this changes:
   aimed at blind whole-catalogue stamping, and it does not apply to ticking rows you are looking
   at in a grid. It survives only as the narrow guard below.
 - **Clicking a product opens the existing product detail page's Specifications tab.** There is
-  **no new detail route at all**. That tab is already where the editable table (PR 2), the
-  exceptions and the diff live, and `products/[id]` already carries prev/next via
-  `ProductNavigation.tsx` feeding `RecordNavigation` in IDs mode. So reviewing one-by-one comes
-  for free and is the repo's mandated pattern.
+  **no new detail route at all**. That tab is already where the editable table (PR 2) and the diff
+  live, and `products/[id]` already carries prev/next via `ProductNavigation.tsx` feeding
+  `RecordNavigation` in IDs mode. So reviewing one-by-one comes for free and is the repo's
+  mandated pattern.
+
+**Added by the captain on 2026-08-17, after hands-on testing of PR 3.** Three things the list
+owed the journey and did not have, all built on what the screen already does:
+
+- **The Coverage cell opens.** "3 / 8" says how much is known and nothing about which, so judging
+  a row meant opening the product. The worklist row now carries `coverage.items` - every
+  applicable key by the same gate rule the denominator counts, with its label and its stored entry
+  or null - and the cell is a `HoverCard` (the pattern `PlanLineDecisionCell` already uses)
+  listing filled keys first, then blanks.
+- **The round trip keeps the list.** Going into a product and back must not cost the reviewer
+  their search, filters, sort, page, ticks or place. The screen already writes its query to the
+  URL, so the selection joins it as `selected=<codes>`, the row click hands the whole worklist URL
+  (plus `focus=<code>`) to the detail page in `back`, and the detail page's Back link honours it
+  when it is a relative path into the worklist. No new store, no cross-page cursor. Prev/next on
+  the detail page still walks the products list.
+- **A verify from inside the product shows in the list.** The tab patches the cached worklist row
+  through the same patcher the list's bulk actions use, on top of the invalidation it already
+  does, so the row reads Verified the moment the reviewer is back looking at it.
 - **The split pane, the prefetch orchestration, the `j`/`k`/`v`/`n` keyboard map and the
   cross-page cursor traversal are all dropped.** Efficiency is served by bulk action plus the
   existing prev/next, which is a smaller build than the workbench and needs no sign-off.
@@ -215,10 +247,11 @@ select-all and **do not** opt into `selectAllMatching`, so a bulk stamp can only
 that were on screen. "Just like currently" already means page-scoped, so this needs no argument -
 but enabling whole-filter selection later is a deliberate decision, not a default.
 
-**Bulk must not become a laxer path.** The bulk endpoint applies the *same* guards as the single
-verify - same-transaction hash compare, exceptions still block - and returns **per-code
-outcomes** rather than all-or-nothing, so a batch reports "42 verified, 3 skipped, exceptions
-open" instead of failing whole or, worse, stamping what the single button would have refused.
+**Bulk must not become a laxer path.** The bulk endpoint applies the *same* guard as the single
+verify - the same-transaction hash compare (the exception guard is gone, C4 as amended
+2026-08-17) - and returns **per-code outcomes** rather than all-or-nothing, so a batch reports
+"42 verified, 1 skipped - changed while you were reviewing" instead of failing whole or, worse,
+stamping what the single button would have refused.
 
 **Verify and Unverify are row buttons, not only bulk actions** (captain, 2026-08-14). Each row
 carries its own action in an actions column, so a product can be confirmed or withdrawn without
@@ -269,6 +302,15 @@ sends the reviewer to the emptiest, slowest products first, exactly where throug
 code** - batching one class at a time is what makes each review fast, because the reviewer holds
 one mental model of what a Water Closet should carry. Coverage stays a displayed column and an
 explicit sort. This is a query param, so the captain can overrule it without a schema change.
+
+**Amendment - captain ruling 2026-08-17 (hands-on):** stable order, verified rows do not sink;
+state is a filter, not the sort. Ranking by state first read well and worked badly: verifying a
+product from its Specifications tab and returning to the worklist re-sorted the row away from
+where the reviewer had left it, so the row they had just acted on sank down the page or off it.
+The default order is now **class then code** with the same tie-breakers, state-independent, so a
+row only changes its pill. The `state` query param still narrows the list, and `sort=coverage` /
+`sort=code` are unchanged; the state-first order is gone rather than kept as an option, because
+nothing asked for it.
 
 ### C7 - the coverage query is not the risk it looked like
 
@@ -455,7 +497,7 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
 
 ### PR 3 - Verification model + list with bulk verify (Phase 1 first)
 
-- **Phase 1:** the list against fixtures - all three states, a code with open exceptions, a code
+- **Phase 1:** the list against fixtures - all three states, a code
   with 0 specs and one with 14, a needs-re-verify with a 3-key diff, an empty result, plus the
   **selection and bulk strip**: nothing selected, a partial page selected, a whole page selected,
   and a mixed bulk outcome ("42 verified, 3 skipped"). Two fixtures deserve the captain's
@@ -463,12 +505,19 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
   needs-re-verify state is unreachable with real data until someone makes the first edit.
 - **Phase 2 (test-first):** the migration and model; the worklist with inline coverage, ordering,
   filters, summary, pagination and each row's `values_hash`; the single verify endpoint with row
-  locking, same-transaction hash compare and a distinguishable 409 taxonomy; the **bulk verify
-  endpoint applying the same guards per code and returning per-code outcomes**; the **unverify
+  locking, same-transaction hash compare and a `values_changed` 409; the **bulk verify
+  endpoint applying the same guard per code and returning per-code outcomes**; the **unverify
   endpoint** (single and bulk) stamping `manual_unverify` plus the actor, idempotent on a code
   with no history; the authored-key flag filter at the exception rebuild (C4); the verification
   block, row actions and single-product Verify/Unverify folded into the existing
   `by-product/{id}` response and the Specifications tab.
+- **Captain ruling, 2026-08-17 hands-on test** (folded into this PR, see C4 and C5 as amended):
+  **no exceptions anywhere in the product** - the "Needs a human" card, the per-exception Edit and
+  the Exceptions column are removed and the verify guard is dropped, leaving `values_changed` as
+  the only refusal; the **Coverage cell opens** into `coverage.items`; the **round trip keeps the
+  list** (selection in the URL, `back` + `focus` on the row click, honoured by the detail page's
+  Back link); and a **verify from inside the product patches the cached worklist row**. ACs
+  AC-D.27 / D.28 / D.29 were added and AC-D.4 / D.5 / D.9 / D.11 / D.16 / D.17c / D.19 amended.
 - **No new detail route.** Row click goes to `products/{id}` on the Specifications tab, which
   already carries prev/next through `ProductNavigation.tsx`. The worklist is keyed on
   `product_code` and the page is keyed on `product_id`, so the row resolves to the copy in the
