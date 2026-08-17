@@ -456,12 +456,24 @@ class AllocationApproval(BaseModel):
 @router.post("/packing-lists/preview")
 async def preview_packing_list(
     file: UploadFile = File(..., description="The pre-load list or packing list"),
+    supplier_id: Optional[str] = Form(None),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Every container block the file holds, and what each would create. Writes nothing."""
+    """Every container block the file holds, and what each would create. Writes nothing.
+
+    Takes the supplier and the currency the apply will take, so the preview can say which
+    money the prices are in before anything is written rather than after.
+    """
     return packing_list_service.preview(
-        db, await read_upload(file), source_ref=file.filename
+        db,
+        await read_upload(file),
+        source_ref=file.filename,
+        supplier_id=supplier_id,
+        currency=currency,
     )
 
 

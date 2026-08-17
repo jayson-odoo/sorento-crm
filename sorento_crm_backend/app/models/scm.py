@@ -1094,9 +1094,10 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     number at all, and a positional one (`PI-<file stem>-<block>`) is derived so a re-upload
     lands on the same five invoices instead of a second set (AC-P1.4, AC-P2.5).
 
-    `currency` is NOT NULL and never defaulted. Every line here is priced, and a price with
-    no currency is a number with no meaning; where nothing states one the upload is refused
-    rather than stored in a house default nobody would ever question (AC-P3.2).
+    `currency` is nullable and never defaulted. It is NULL only on a document with no priced
+    line at all: a price with no currency is a number with no meaning, so a PRICED document
+    whose currency resolves to nothing is refused before it is written rather than stored in
+    a house default nobody would ever question (AC-P3.2).
 
     `container_ref` / `bl_ref` are nullable and never invented: at proforma time the
     container usually has not been assigned, and the pre-loading list leaves both cells blank.

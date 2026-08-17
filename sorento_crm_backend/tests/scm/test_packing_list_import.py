@@ -375,3 +375,34 @@ def test_a_blank_bill_of_lading_label_does_not_swallow_the_next_label():
         shipment = _shipments(db, w)[0]
         assert shipment.bill_of_lading_number is None
         assert shipment.shipping_container_number == f"{MARKER}U9"
+
+
+def test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average():
+    """The same product twice in one block is merged into one shipment line (the row is
+    one per product), and the merged line used to keep whichever price came FIRST.
+
+    That silently values the whole quantity at one of the two prices - here 100 units would
+    have been costed at 10.00 instead of 12.00 - and the difference is invisible afterwards
+    because the two lines no longer exist separately. The honest merged figure is the
+    quantity-weighted average, which is what the container actually cost per unit.
+    """
+    with pg_session() as db:
+        w = World(db)
+        rows = [
+            [f"货柜号：{MARKER}U5"],
+            HEADER + ["RMB"],
+            [w.code("A"), "座厕", 40, 2, 0.21, 10],
+            [w.code("A"), "座厕", 60, 2, 0.21, 13.5],
+        ]
+
+        svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
+
+        line = (
+            db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
+            .one()
+        )
+        assert float(line.quantity_shipped) == 100
+        # (40 x 10 + 60 x 13.5) / 100
+        assert float(line.unit_cost) == pytest.approx(12.1)
+        assert line.currency == "CNY"

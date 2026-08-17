@@ -26,6 +26,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.scm import ProformaInvoice, ProformaInvoiceLine
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.proforma_invoice_reader import (
@@ -72,8 +73,11 @@ def pi_number_for(doc: ProformaDocument, *, source_ref: Optional[str]) -> str:
     """
     if doc.pi_number:
         return doc.pi_number.strip()[:100]
-    stem = (source_ref or "proforma").rsplit("/", 1)[-1].rsplit(".", 1)[0]
-    return f"{_DERIVED_PREFIX}-{stem}-{doc.index}"[:100]
+    # The STEM is truncated, not the composed name: a long filename would otherwise push the
+    # block index off the end of a `String(100)` column and turn five distinct invoices into
+    # one name that each block in turn overwrites.
+    stem = (source_ref or "proforma").rsplit("/", 1)[-1].rsplit(".", 1)[0][:80]
+    return f"{_DERIVED_PREFIX}-{stem}-{doc.index}"
 
 
 def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
@@ -85,8 +89,6 @@ def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
     """
     if not codes:
         return {}
-    from app.services.company_scope_sql import company_sql_predicate
-
     predicate, params = company_sql_predicate(db, "p.company_id", param_prefix="c")
     rows = db.execute(
         text(
@@ -99,14 +101,49 @@ def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
     return {str(r["product_code"]).upper(): dict(r) for r in rows}
 
 
-def _supplier_label(db: Session, supplier_id: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    if not supplier_id:
-        return None, None
-    row = db.execute(
-        text("SELECT supplier_code, supplier_name FROM suppliers WHERE id = :i"),
-        {"i": supplier_id},
+def _is_uuid(value: Any) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
+
+
+def _supplier_row(db: Session, supplier_id: Optional[str]) -> Optional[Any]:
+    """One supplier, scoped to the caller's company.
+
+    Raw SQL bypasses the ORM company filter (`suppliers` is an owned table), so the scope is
+    reproduced by hand exactly as `_products_by_code` does it. Unscoped, an upload could be
+    filed against another company's supplier and their name would be shown back as
+    confirmation that it was the right one.
+    """
+    if not supplier_id or not _is_uuid(supplier_id):
+        return None
+    predicate, params = company_sql_predicate(db, "s.company_id", param_prefix="c")
+    return db.execute(
+        text(
+            "SELECT s.supplier_code, s.supplier_name FROM suppliers s "
+            " WHERE s.id = :i "
+            f"   AND {predicate or 'true'}"
+        ),
+        {"i": str(supplier_id), **params},
     ).first()
+
+
+def _supplier_label(db: Session, supplier_id: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    row = _supplier_row(db, supplier_id)
     return (row[0], row[1]) if row else (None, None)
+
+
+def assert_supplier(db: Session, supplier_id: str) -> None:
+    """A file uploaded against a supplier we do not hold is a form mistake, not a 500.
+
+    Without this the insert dies on the foreign key (or on `invalid input syntax for type
+    uuid` when the field is not an id at all) and the operator is told the server broke.
+    Company-scoped, so another company's supplier is "does not exist" here too.
+    """
+    if _supplier_row(db, supplier_id) is None:
+        raise AppException(422, "That supplier does not exist.", detail="supplier_id")
 
 
 def _currencies(
@@ -133,18 +170,27 @@ def _summarise(
     supplier_id: Optional[str],
     source_ref: Optional[str],
     requested_currency: Optional[str] = None,
+    known: Optional[dict[str, dict]] = None,
+    resolved: Optional[dict[int, tuple[Optional[str], str]]] = None,
 ) -> dict[str, Any]:
+    """What the file holds, described. `known` and `resolved` are injectable so `apply`,
+    which needs both to do the writing, does not pay for them a second time to describe
+    what it wrote."""
     codes = {ln.item_code for d in parsed.documents for ln in d.lines}
-    known = _products_by_code(db, codes)
+    if known is None:
+        known = _products_by_code(db, codes)
     unknown = sorted({c for c in codes if c.upper() not in known})
-    resolved = _currencies(db, parsed, supplier_id=supplier_id, requested=requested_currency)
+    if resolved is None:
+        resolved = _currencies(
+            db, parsed, supplier_id=supplier_id, requested=requested_currency
+        )
 
     documents = []
-    unpriced_without_currency = 0
+    priced_without_currency = 0
     for doc in parsed.documents:
         currency, source = resolved.get(doc.index, (None, "none"))
         if doc.priced_lines and not currency:
-            unpriced_without_currency += doc.priced_lines
+            priced_without_currency += doc.priced_lines
         documents.append(
             {
                 "index": doc.index,
@@ -184,7 +230,7 @@ def _summarise(
         "unmapped_headers": parsed.unmapped_headers,
         "currency": file_currency,
         "currency_source": file_source,
-        "priced_lines_without_currency": unpriced_without_currency,
+        "priced_lines_without_currency": priced_without_currency,
     }
 
 
@@ -223,7 +269,10 @@ def validate(
         requested_currency=currency,
     )
 
-    problems: list[str] = [p.reason for p in parsed.problems]
+    # NOT the row problems: `apply` refuses only an unreadable file or an unresolved
+    # currency, so anything else counted as an error here would make Test say no to a file
+    # Apply would happily take - and the operator has no way to tell which one is lying.
+    problems: list[str] = []
     if parsed.missing_columns:
         problems.append(
             "The file does not name "
@@ -235,7 +284,7 @@ def validate(
     elif summary["priced_lines_without_currency"]:
         problems.append(_NO_CURRENCY)
 
-    warnings: list[str] = []
+    warnings: list[str] = [p.reason for p in parsed.problems]
     if summary["unmatched_items"]:
         warnings.append(
             "No product matches "
@@ -293,6 +342,12 @@ def apply(
 
     known = _products_by_code(
         db, {ln.item_code for d in parsed.documents for ln in d.lines}
+    )
+    # Built here, from the catalogue lookup and the currencies this apply is about to use,
+    # rather than re-read afterwards: the summary then describes exactly what was written.
+    summary = _summarise(
+        db, parsed, supplier_id=supplier_id, source_ref=source_ref,
+        requested_currency=currency, known=known, resolved=resolved,
     )
 
     created = updated = 0
@@ -378,9 +433,6 @@ def apply(
             }
         )
 
-    summary = _summarise(
-        db, parsed, supplier_id=supplier_id, source_ref=source_ref, requested_currency=currency
-    )
     summary.update(
         {
             "documents_created": created,
@@ -394,6 +446,45 @@ def apply(
         "results": results,
         "summary": summary,
     }
+
+
+def get_or_404(db: Session, invoice_id: str) -> ProformaInvoice:
+    """One invoice, or a refusal. Never another company's.
+
+    A 404 rather than an empty document: the id came from somewhere, and rendering an invoice
+    the caller's company does not own would be worse than saying no. The ORM query carries
+    the company filter, so an id belonging to another company reads as "not found" here -
+    which is the honest answer to a caller who cannot see it.
+    """
+    if not _is_uuid(invoice_id):
+        raise AppException(404, "Proforma invoice not found.", detail="invoice_id")
+    invoice = db.query(ProformaInvoice).filter(ProformaInvoice.id == str(invoice_id)).first()
+    if invoice is None:
+        raise AppException(404, "Proforma invoice not found.", detail="invoice_id")
+    return invoice
+
+
+def list_for_supplier(
+    db: Session, *, supplier_id: Optional[str] = None, limit: int = 25
+) -> dict:
+    """Invoices we have read, newest first. `supplier_id` narrows it to one supplier."""
+    if supplier_id and not _is_uuid(supplier_id):
+        raise AppException(422, "That supplier does not exist.", detail="supplier_id")
+
+    q = db.query(ProformaInvoice)
+    if supplier_id:
+        q = q.filter(ProformaInvoice.supplier_id == str(supplier_id))
+    rows = q.order_by(ProformaInvoice.created_at.desc()).limit(limit).all()
+    return {
+        "data": [serialize(db, r, with_lines=False) for r in rows],
+        "total": len(rows),
+    }
+
+
+def delete(db: Session, invoice_id: str) -> None:
+    """Hard delete, with its lines (the FK cascades), per the CRUD standard. Does not commit."""
+    db.delete(get_or_404(db, invoice_id))
+    db.flush()
 
 
 def serialize(db: Session, invoice: ProformaInvoice, *, with_lines: bool = True) -> dict:

@@ -238,3 +238,62 @@ def test_delete_hard_deletes_header_and_lines(scm_app):
 
     gone = client.get(f"{URL}/{inv_id}")
     assert gone.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Form and query validation - a bad value is a 422, never a 500
+# --------------------------------------------------------------------------- #
+
+
+def test_an_unknown_supplier_is_a_422_naming_the_field(scm_app):
+    client, db = _client(scm_app, upload=True)
+
+    r = client.post(
+        f"{URL}/apply",
+        files=_upload(kailu_proforma_workbook()),
+        data={"supplier_id": str(uuid.uuid4())},
+    )
+
+    assert r.status_code == 422, r.text
+
+
+def test_a_supplier_id_that_is_not_an_id_is_a_422_not_a_500(scm_app):
+    client, db = _client(scm_app, upload=True)
+
+    r = client.post(
+        f"{URL}/preview",
+        files=_upload(kailu_proforma_workbook()),
+        data={"supplier_id": "the one from last week"},
+    )
+
+    assert r.status_code == 422, r.text
+
+
+def test_a_currency_nobody_recognises_is_a_422_naming_the_value(scm_app):
+    client, db = _client(scm_app, upload=True)
+    supplier, product = _seed_supplier_and_product(db)
+
+    r = client.post(
+        f"{URL}/apply",
+        files=_upload(kailu_proforma_workbook({"SRTWT7443": product.product_code})),
+        data={"supplier_id": str(supplier.id), "currency": "dollars"},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "dollars" in r.text
+
+
+def test_listing_with_a_supplier_id_that_is_not_an_id_is_a_422(scm_app):
+    client, db = _client(scm_app, view=True)
+
+    r = client.get(URL, params={"supplier_id": "not-an-id"})
+
+    assert r.status_code == 422, r.text
+
+
+def test_fetching_an_invoice_id_that_is_not_an_id_is_a_404(scm_app):
+    client, db = _client(scm_app, view=True)
+
+    r = client.get(f"{URL}/not-an-id")
+
+    assert r.status_code == 404, r.text

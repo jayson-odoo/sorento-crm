@@ -371,3 +371,146 @@ def test_priced_lines_with_no_currency_anywhere_are_refused_not_stored():
         assert exc.value.status_code == 422
 
         assert _invoices(db, w) == []
+
+
+def test_a_currency_the_form_states_but_nobody_recognises_is_refused():
+    """A typo in the currency box must not fall through to the document.
+
+    Falling through succeeds - the file is read, the invoice is written, in CNY - and the
+    operator is never told that the code they typed was ignored. The only visible symptom
+    is a variance report in the wrong money weeks later.
+    """
+    with pg_session() as db:
+        w = World(db)
+        data = kailu_proforma_workbook({"SRTWT7443": w.code("A")})  # document says CNY
+
+        with pytest.raises(AppException) as exc:
+            svc.apply(db, data, supplier_id=str(w.supplier.id), currency="RMBB")
+
+        assert exc.value.status_code == 422
+        assert "RMBB" in str(exc.value.detail)
+        assert _invoices(db, w) == []
+
+
+# --------------------------------------------------------------------------------- #
+# AC-P1.1 / AC-P1.2 - the header and line fields the document states actually land
+# --------------------------------------------------------------------------------- #
+
+
+def test_the_container_bill_of_lading_uom_and_description_reach_the_row():
+    """The Kailu shape states neither a container nor a B/L, so a document that DOES state
+    them is built here - otherwise "never invented" is the only half of AC-P1.1 under test
+    and the labelled cells could stop reaching the header without anything failing."""
+    with pg_session() as db:
+        w = World(db)
+        data = workbook(
+            [
+                [f"货柜号：{MARKER}U7", None, f"提单号：BL-{MARKER}-1"],
+                ["产品型号", "品名", "数量", "单位", "PRICE"],
+                [w.code("A"), "连体马桶", 12, "PCS", 33.5],
+            ]
+        )
+
+        svc.apply(db, data, supplier_id=str(w.supplier.id), currency="CNY")
+
+        inv = _invoices(db, w)[0]
+        assert inv.container_ref == f"{MARKER}U7"
+        assert inv.bl_ref == f"BL-{MARKER}-1"
+
+        line = _lines(db, inv.id)[0]
+        assert line.uom == "PCS"
+        assert line.description == "连体马桶"
+        assert float(line.unit_price) == 33.5
+        assert line.product_id == w.product("A").id
+
+
+def test_a_document_that_states_no_container_leaves_both_references_null():
+    # AC-P1.1's other half: nullable, never invented.
+    with pg_session() as db:
+        w = World(db)
+        data = kailu_proforma_workbook({"SRTWT7443": w.code("A")})
+
+        svc.apply(db, data, supplier_id=str(w.supplier.id))
+
+        inv = _invoices(db, w)[0]
+        assert inv.container_ref is None
+        assert inv.bl_ref is None
+
+
+# --------------------------------------------------------------------------------- #
+# AC-P2.5 - a derived number stays distinct however long the file's name is
+# --------------------------------------------------------------------------------- #
+
+
+def test_a_very_long_filename_still_gives_five_distinct_invoice_numbers():
+    """`pi_number` is `String(100)`. Truncating the COMPOSED name pushes the block index off
+    the end, so all five blocks derive one identical number and each one overwrites the last
+    - five invoices arrive as one, and the file looks like it imported fine."""
+    with pg_session() as db:
+        w = World(db)
+        long_name = ("2026-07-31 SORENTO PRE LOADING LIST FOR KLANG " * 4) + ".xlsx"
+        assert len(long_name) > 100
+        data = preloading_list_workbook(
+            {"SRTWC287A-RL-250": w.code("A"), "CWB242": w.code("B")}
+        )
+
+        out = svc.apply(db, data, supplier_id=str(w.supplier.id), source_ref=long_name)
+
+        assert out["documents_created"] == 5
+        numbers = {inv.pi_number for inv in _invoices(db, w)}
+        assert len(numbers) == 5
+        assert all(len(n) <= 100 for n in numbers)
+
+
+# --------------------------------------------------------------------------------- #
+# Company isolation - the supplier lookup is raw SQL and has to scope itself
+# --------------------------------------------------------------------------------- #
+
+
+def test_a_supplier_of_another_company_is_refused():
+    """`suppliers` is an owned table and this lookup is raw SQL, which the ORM's company
+    filter never sees. Unscoped, an operator could file a proforma against another
+    company's supplier - and the preview would show that supplier's name back as
+    confirmation that it was the right one."""
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+
+    with pg_session() as db:
+        set_company_scope(db, None)
+        a = Company(id=str(uuid.uuid4()), code=f"{MARKER}A{uuid.uuid4().hex[:6]}".upper(),
+                    name=f"{MARKER} company A")
+        b = Company(id=str(uuid.uuid4()), code=f"{MARKER}B{uuid.uuid4().hex[:6]}".upper(),
+                    name=f"{MARKER} company B")
+        db.add_all([a, b])
+        db.flush()
+
+        ours = Supplier(
+            id=str(uuid.uuid4()), company_id=a.id,
+            supplier_code=f"{MARKER}-SA-{uuid.uuid4().hex[:8]}",
+            supplier_name=f"{MARKER} ours", is_active=True,
+        )
+        theirs = Supplier(
+            id=str(uuid.uuid4()), company_id=b.id,
+            supplier_code=f"{MARKER}-SB-{uuid.uuid4().hex[:8]}",
+            supplier_name=f"{MARKER} theirs", is_active=True,
+        )
+        db.add_all([ours, theirs])
+        db.flush()
+
+        set_company_scope(db, frozenset({a.id}))
+
+        svc.assert_supplier(db, str(ours.id))  # ours resolves
+
+        with pytest.raises(AppException) as exc:
+            svc.assert_supplier(db, str(theirs.id))
+        assert exc.value.status_code == 422
+
+        # And their name never leaks through the summary either.
+        assert svc._supplier_label(db, str(theirs.id)) == (None, None)
+
+
+def test_a_supplier_id_that_is_not_an_id_at_all_is_a_422_not_a_500():
+    with pg_session() as db:
+        with pytest.raises(AppException) as exc:
+            svc.assert_supplier(db, "not-a-uuid")
+        assert exc.value.status_code == 422

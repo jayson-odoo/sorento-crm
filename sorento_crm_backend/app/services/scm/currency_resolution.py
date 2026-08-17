@@ -20,6 +20,8 @@ from typing import Any, Iterable, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
+from app.services.error_handler import AppException
+
 #: Spelling -> ISO code, IN ORDER. Order is load-bearing twice over: `rmb` is checked before
 #: `rm` (or every `金额（rmb）` header reads as Malaysian ringgit), and the fuller spelling of
 #: a pair is always checked first for the same reason.
@@ -33,6 +35,15 @@ _TOKENS: tuple[tuple[str, str], ...] = (
     ("us$", "USD"),
     ("myr", "MYR"),
     ("rm", "MYR"),
+)
+
+#: Each token, anchored so it is a WORD rather than a fragment of one. `rm` inside `FORM`
+#: read as Malaysian ringgit, which is how a header called `Unit Price (FORM)` denominated a
+#: whole invoice in the wrong money without anything on screen saying so. Only ascii letters
+#: are a boundary: `rm12.50` still states MYR, and a Chinese token has no neighbours to
+#: exclude anyway.
+_TOKEN_PATTERNS: tuple[tuple[Any, str], ...] = tuple(
+    (re.compile(rf"(?<![a-z]){re.escape(token)}(?![a-z])"), code) for token, code in _TOKENS
 )
 
 
@@ -55,8 +66,8 @@ def currency_from_text(values: Iterable[Any]) -> Optional[str]:
         folded = _fold(value)
         if not folded:
             continue
-        for token, code in _TOKENS:
-            if token in folded:
+        for pattern, code in _TOKEN_PATTERNS:
+            if pattern.search(folded):
                 return code
     return None
 
@@ -133,10 +144,22 @@ def resolve_currency(
     found in the file. The source travels with the code so the preview can show it - a
     currency that appeared from somewhere is the kind of thing nobody questions until the
     variance report is wrong.
+
+    A `requested` value that is not a currency is REFUSED rather than ignored. Falling
+    through to the document would silently denominate the file in something other than what
+    the operator asked for, and they would have no way of telling: the upload succeeds and
+    the number they typed is simply gone.
     """
+    typed = "" if requested is None else str(requested).strip()
     code = normalise_currency(requested)
     if code:
         return code, "form"
+    if typed:
+        raise AppException(
+            422,
+            f'"{typed}" is not a currency. Use a three-letter code, for example MYR, CNY or USD.',
+            detail="currency",
+        )
     code = normalise_currency(stated)
     if code:
         return code, "document"

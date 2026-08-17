@@ -223,7 +223,9 @@ def test_a_blank_bill_of_lading_does_not_read_the_next_label(resolver):
          None, None, None, "提单号：", None, None, None, "Date 日期：", None, None,
          "2026-07-31"],
         [None, "产品型号", "品名", "数量", "单价(元)", "总价（元）"],
-        ["A-1", "座厕", 5, 100, 500],
+        # Leading None on the line too: the header itself starts one column in, and a line
+        # that did not would read its item code out of the description column.
+        [None, "A-1", "座厕", 5, 100, 500],
     ]
 
     out = read_workbook(workbook(rows), resolver)
@@ -298,9 +300,13 @@ def test_the_seeded_aliases_are_the_ones_this_suite_assumes():
     """
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location(
-        "m374", "alembic/versions/374_scm_proforma_invoice.py"
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "alembic"
+        / "versions"
+        / "374_scm_proforma_invoice.py"
     )
+    spec = importlib.util.spec_from_file_location("m374", path)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
 
@@ -310,3 +316,33 @@ def test_the_seeded_aliases_are_the_ones_this_suite_assumes():
 
     for field, alias in _ALIASES:
         assert (field, alias) in seeded, f"{field}/{alias} is not seeded"
+
+
+# --------------------------------------------------------------------------------- #
+# AC-P3.1 - what counts as a document STATING a currency (the reader's hint source)
+# --------------------------------------------------------------------------------- #
+
+
+def test_a_short_currency_token_inside_a_longer_word_is_not_a_currency():
+    """`rm` matched inside `FORM`, so a price column called `Unit Price (FORM)` denominated
+    the whole invoice in Malaysian ringgit - a Chinese proforma read as MYR, with nothing on
+    screen to say where that came from."""
+    from app.services.scm.currency_resolution import currency_from_text
+
+    assert currency_from_text(["Unit Price (FORM)"]) is None
+    assert currency_from_text(["PLATFORM"]) is None
+    # Still read where it IS the word: bracketed, standalone, or in front of a figure.
+    assert currency_from_text(["Unit Price (RM)"]) == "MYR"
+    assert currency_from_text(["RM"]) == "MYR"
+    assert currency_from_text(["金额（rmb）"]) == "CNY"
+    assert currency_from_text(["单价(元)"]) == "CNY"
+    assert currency_from_text(["US$"]) == "USD"
+
+
+def test_a_day_first_slash_date_reads_day_first():
+    # `%d/%m/%Y` is Kailu's `17.07.2026` written with slashes. Year-first stays year-first.
+    from app.services.scm.proforma_invoice_reader import _parse_date
+
+    assert _parse_date("31/07/2026") == date(2026, 7, 31)
+    assert _parse_date("2026/07/31") == date(2026, 7, 31)
+    assert _parse_date("nonsense") is None

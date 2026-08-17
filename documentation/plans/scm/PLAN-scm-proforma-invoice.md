@@ -164,6 +164,16 @@ same as an error. Each `InboundShipmentLineCreate` gets `unit_cost=ln.unit_price
 `currency=<resolved>` (both None when the line has no price). Everything else in `apply`
 untouched (another worker owns the container-replace behaviour and `supplier_id` on lines).
 
+`preview` takes the same `supplier_id` / `currency` and reports `currency` + `currency_source`,
+so the operator reads which money the file is in BEFORE pressing Confirm rather than after.
+
+FE (the one screen this slice touches): `PackingListUploadDialog` gains an optional three-letter
+`Currency` input, passed through `fulfilmentService.previewPackingList` / `applyPackingList` and
+omitted from the FormData when blank; the preview line names the resolved currency and its
+source, or says nothing states it. `create_shipment` merges duplicate product lines with a
+QUANTITY-WEIGHTED unit cost (a currency mismatch keeps the first and logs), because keeping the
+first line's price silently valued the whole merged quantity at one of two prices.
+
 ## Tests (Postgres only)
 
 - `tests/scm/test_proforma_invoice_reader.py`: builds the two real shapes cell-for-cell with
@@ -204,20 +214,11 @@ untouched (another worker owns the container-replace behaviour and `supplier_id`
 4. New DB column reaches the FE: n/a this slice; recorded for the verification task.
 5. User-perspective verification: API evidence run recorded in the PR body.
 
-## Review findings still open (2026-08-17, reviewer pass 1) - resume here
+## Review status
 
-Blockers: (1) move router DB work (supplier assert, invoice-or-404, list, delete) into
-`proforma_invoice_service`; (2) supplier lookups in route + `_supplier_label` are raw SQL with
-no `company_sql_predicate` - scope them. Should-fix: (3) `pi_number_for` truncate the STEM
-(`stem[:80]`) not the composed string; (4) proforma Test vs Apply disagree on row problems -
-make row problems warnings; (5) add `tests/test_migration_374_...` grant-sweep test mirroring
-361's; (6) FE packing-list upload has no `currency` field - add to
-`fulfilmentService.ts` + dialog or backlog it and say so in PR; (7) `create_shipment` merges
-duplicate product lines and keeps the first line's `unit_cost` - weight-average or refuse when
-prices differ; (8) unrecognised form currency must 422, not fall through; (9) model docstring
-says NOT NULL. Nits: anchor short currency tokens (`rm` matches FORM), drop dead
-`ProformaReadResult.currency_hint`, `_summarise` computed twice in apply, rename
-`unpriced_without_currency`, fix reader test row alignment (:220), add `%d/%m/%Y`,
-AppException consistency in route, validate list `supplier_id` query param, packing-list
-`preview` should take supplier_id/currency, assert container_ref/bl_ref/uom/description
-after apply.
+Reviewer pass 1 findings addressed (2026-08-17): router thinned to service calls, supplier
+lookups company-scoped, `pi_number_for` truncates the stem, proforma row problems are warnings,
+migration-374 grant sweep test added, currency field added to the packing-list upload, duplicate
+shipment lines merge to a quantity-weighted unit cost, an unrecognised form currency is a 422,
+plus the nits. The derived-number limit the review raised is recorded in the UAC's
+`Known limits`.

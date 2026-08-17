@@ -61,12 +61,15 @@ _TOTAL_LABELS = {
 #: pre-loading list writes a real date cell, which arrives already stringified as ISO.
 #: Anything else is reported against its row rather than guessed at - a date guessed the
 #: other way round moves an invoice by months and nothing on screen says so.
+#: Day-first `31/07/2026` is listed AFTER `%Y/%m/%d`, so an unambiguous `2026/07/31` is
+#: still read year-first and only a string that cannot be year-first falls to it.
 _DATE_FORMATS = (
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d",
     "%d.%m.%Y",
     "%Y.%m.%d",
     "%Y/%m/%d",
+    "%d/%m/%Y",
 )
 
 
@@ -151,13 +154,10 @@ class ProformaReadResult:
     def priced_line_count(self) -> int:
         return sum(d.priced_lines for d in self.documents)
 
-    @property
-    def currency_hint(self) -> Optional[str]:
-        """What the file as a whole states, i.e. the first document that states anything."""
-        for doc in self.documents:
-            if doc.currency_hint:
-                return doc.currency_hint
-        return None
+    # No file-wide `currency_hint` here, deliberately. One file holds several documents and
+    # the service resolves the currency PER document (`_currencies`): a single file-level
+    # answer would have to pick one of them, and a currency shown against the wrong invoice
+    # is worse than none at all.
 
 
 def _parse_date(value: Any) -> Optional[date]:

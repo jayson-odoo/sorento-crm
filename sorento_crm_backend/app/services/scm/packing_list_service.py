@@ -126,10 +126,29 @@ def _summarise(db: Session, parsed: PackingReadResult, *, source_ref: Optional[s
     }
 
 
-def preview(db: Session, data: bytes, *, source_ref: Optional[str] = None) -> dict:
-    """What this file would create, before anything is written."""
+def preview(
+    db: Session,
+    data: bytes,
+    *,
+    source_ref: Optional[str] = None,
+    supplier_id: Optional[str] = None,
+    currency: Optional[str] = None,
+) -> dict:
+    """What this file would create, before anything is written.
+
+    Takes the same `supplier_id` / `currency` the apply will, and reports which currency
+    resolved and where from: the preview is what the operator reads before pressing Confirm,
+    and a preview that cannot say the file is priced in nothing would let them press it and
+    only then be told (AC-P3.1).
+    """
     parsed = _parse(db, data)
     out = _summarise(db, parsed, source_ref=source_ref)
+    code, source = resolve_currency(
+        db, supplier_id=supplier_id, requested=currency, stated=parsed.currency_hint
+    )
+    out["currency"] = code
+    out["currency_source"] = source
+    out["priced_lines"] = _priced(parsed)
     out["ok"] = parsed.ok
     out["missing_columns"] = parsed.missing_columns
     out["problems"] = [p.reason for p in parsed.problems][:50]

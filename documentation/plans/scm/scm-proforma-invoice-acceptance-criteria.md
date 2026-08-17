@@ -3,9 +3,12 @@
 Status: Draft, 2026-08-17. Gaps G3b + G3c of the SCM fulfilment gap report (firstmate home,
 `data/scm-fulfilment-gap/report.md`). Plan: `PLAN-scm-proforma-invoice.md`.
 
-Backend-only slice. There is no screen in this slice: the deliverable is the document, its
-reader, its upload channel and the price that is no longer thrown away. The verification
-screen (PI vs PO, variance, overcharge) is the next task and depends on this one.
+Backend slice. There is no NEW screen in this slice: the deliverable is the document, its
+reader, its upload channel and the price that is no longer thrown away. The one frontend change
+is the currency field on the EXISTING packing-list upload (AC-P5.4), because that channel now
+refuses a priced file whose currency nothing states and the operator needs somewhere to state
+it. The verification screen (PI vs PO, variance, overcharge) is the next task and depends on
+this one.
 
 ## Journey
 
@@ -134,6 +137,21 @@ and no currency demanded (the existing tests keep passing unchanged).
 **AC-P5.3** A stated currency is never overwritten downstream: `_capture_incoming_cost`
 already returns early when `line.currency` is set; a test pins that a stated CNY survives an
 allocation against a PO line in MYR.
+
+**AC-P5.4** `[FE]` The packing-list upload dialog carries an optional `Currency` field (a
+three-letter code, upper-cased), sent with the read, the Test and the Apply, and left out
+entirely when empty so a blank never overrides what the file states. Where the read resolved
+one, the preview says which currency and where it came from; where the file is priced and
+nothing resolved, it says so before Confirm is pressed.
+
+## Known limits (accepted, not defects)
+
+- **A derived document number is only as unique as the file name.** A block that states no PI
+  number is named `PI-<file stem>-<block index>` (AC-P2.5), so two DIFFERENT files uploaded for
+  the same supplier under the SAME filename derive the same numbers and the second one replaces
+  the first in place. That is the price of idempotency without a generated id: the alternative
+  makes a genuine re-upload create a second set. A supplier whose documents state their own
+  number is unaffected. Where it bites, rename the file.
 
 ## Out of scope (owned elsewhere)
 
