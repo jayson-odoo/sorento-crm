@@ -23,10 +23,15 @@ function memberBrandsPath(teamId: string, userId: string): string {
   )}/brands`;
 }
 
-export async function getMemberBrands(teamId: string, userId: string): Promise<string[]> {
+export async function getMemberBrands(
+  teamId: string,
+  userId: string,
+): Promise<string[]> {
   const response = await apiFetch(memberBrandsPath(teamId, userId));
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to fetch member brands'));
+    throw new Error(
+      await extractApiError(response, 'Failed to fetch member brands'),
+    );
   const data = (await response.json()) as { codes?: string[] };
   return Array.isArray(data.codes) ? data.codes : [];
 }
@@ -42,7 +47,9 @@ export async function setMemberBrands(
     body: JSON.stringify({ codes }),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to update member brands'));
+    throw new Error(
+      await extractApiError(response, 'Failed to update member brands'),
+    );
   const data = (await response.json()) as { codes?: string[] };
   return Array.isArray(data.codes) ? data.codes : [];
 }

@@ -5,7 +5,11 @@ import { Bookmark } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import { useMemberBrands, useSetMemberBrands } from '../hooks/useMemberBrands';
 
@@ -80,7 +84,11 @@ export default function MemberBrandEditor({
           ) : assigned.length > 0 ? (
             <span className="flex flex-wrap items-center gap-1">
               {assigned.map((code) => (
-                <Badge key={code} variant="secondary" className="text-[10px] font-normal">
+                <Badge
+                  key={code}
+                  variant="secondary"
+                  className="text-[10px] font-normal"
+                >
                   {label(code)}
                 </Badge>
               ))}
@@ -92,7 +100,9 @@ export default function MemberBrandEditor({
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64">
         <div className="space-y-3">
-          <p className="text-xs font-medium text-muted-foreground">Brands served</p>
+          <p className="text-xs font-medium text-muted-foreground">
+            Brands served
+          </p>
           {options.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               No brands configured. Add some under Master Data → Brands.
@@ -102,7 +112,11 @@ export default function MemberBrandEditor({
               {options.map((opt) => {
                 const id = `member-brand-${teamId}-${userId}-${opt.code}`;
                 return (
-                  <label key={opt.code} htmlFor={id} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <label
+                    key={opt.code}
+                    htmlFor={id}
+                    className="flex items-center gap-2 text-sm cursor-pointer"
+                  >
                     <Checkbox
                       id={id}
                       checked={draft.includes(opt.code)}
@@ -119,10 +133,19 @@ export default function MemberBrandEditor({
             Leave empty to serve all brands.
           </p>
           <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setOpen(false)} disabled={setBrands.isPending}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setOpen(false)}
+              disabled={setBrands.isPending}
+            >
               Cancel
             </Button>
-            <Button size="sm" onClick={save} disabled={setBrands.isPending || options.length === 0}>
+            <Button
+              size="sm"
+              onClick={save}
+              disabled={setBrands.isPending || options.length === 0}
+            >
               Save
             </Button>
           </div>

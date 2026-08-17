@@ -14,9 +14,12 @@ vi.mock('../hooks/useMemberBrands', () => ({
   useSetMemberBrands: () => ({ mutate: setMutate, isPending: false }),
 }));
 
-vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query', () => ({
-  useBrandSelectQuery: (...a: unknown[]) => useBrandSelectQuery(...a),
-}));
+vi.mock(
+  '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query',
+  () => ({
+    useBrandSelectQuery: (...a: unknown[]) => useBrandSelectQuery(...a),
+  }),
+);
 
 const CATALOG = [
   { id: 'b1', brand_code: 'mocha', brand_name: 'Mocha', is_active: true },
@@ -24,8 +27,12 @@ const CATALOG = [
 ];
 
 function renderWithClient(ui: React.ReactElement) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -34,7 +41,9 @@ beforeEach(() => {
   setMutate.mockReset();
   useBrandSelectQuery.mockReturnValue({ data: CATALOG, isLoading: false });
   Element.prototype.scrollIntoView = vi.fn();
-  (Element.prototype as unknown as { hasPointerCapture: unknown }).hasPointerCapture = vi.fn();
+  (
+    Element.prototype as unknown as { hasPointerCapture: unknown }
+  ).hasPointerCapture = vi.fn();
 });
 
 afterEach(() => cleanup());
@@ -47,7 +56,10 @@ describe('MemberBrandEditor', () => {
   });
 
   it('renders the tagged brands as badges, resolved to their names', () => {
-    useMemberBrands.mockReturnValue({ data: ['mocha', 'cabana'], isLoading: false });
+    useMemberBrands.mockReturnValue({
+      data: ['mocha', 'cabana'],
+      isLoading: false,
+    });
     renderWithClient(<MemberBrandEditor teamId="t1" userId="u1" />);
     expect(screen.getByText('Mocha')).toBeInTheDocument();
     expect(screen.getByText('Cabana')).toBeInTheDocument();

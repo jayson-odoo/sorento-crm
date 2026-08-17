@@ -23,7 +23,8 @@ class ResizeObserverStub {
   unobserve() {}
   disconnect() {}
 }
-(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
+(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver =
+  ResizeObserverStub;
 
 import AccessAgentDetail from './AccessAgentDetail';
 
@@ -67,7 +68,12 @@ vi.mock('../hooks/useAccessAgents', () => ({
 
 vi.mock('@/app/providers/CompanyProvider', () => ({
   useCompany: () => ({
-    activeCompany: { id: 'company-1', name: 'Sorento', code: 'SORENTO', is_active: true },
+    activeCompany: {
+      id: 'company-1',
+      name: 'Sorento',
+      code: 'SORENTO',
+      is_active: true,
+    },
     companies: [],
     grants: [],
     setActiveCompany: vi.fn(),
@@ -81,7 +87,9 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
 
 // Children unrelated to the roster wiring - stub so this file tests only
 // AccessAgentDetail's own rendering logic.
@@ -112,7 +120,9 @@ vi.mock('./MemberBrandEditor', () => ({
 }));
 
 function renderDetail() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <AccessAgentDetail accessAgentId="agent-1" />

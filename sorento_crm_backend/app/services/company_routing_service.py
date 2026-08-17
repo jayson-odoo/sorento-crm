@@ -12,9 +12,11 @@ teaching the scope resolver to resolve by phone - would make every untagged cont
 unroutable. See the UAC's D6 / AC-A6.
 
 Resolution order (AC-A1), first hit wins:
-    1. an explicit ``company_code`` in the request body (override, D3)
-    2. the contact's single ``respond_contact_companies`` row
-    3. the default company (Sorento)
+    1. an explicit ``company_id`` in the request body (n8n already resolved the
+       product, so it knows; a malformed or unknown id is ignored, never an error)
+    2. an explicit ``company_code`` in the request body (override, D3)
+    3. the contact's single ``respond_contact_companies`` row
+    4. the default company (Sorento)
 
 A contact in MORE than one company resolves to no company at step 2 and falls to the
 default, flagged ``ambiguous`` - never an arbitrary pick (AC-A3).
