@@ -10,7 +10,10 @@ routes; the four red pytest files are green (52 tests) and `alembic heads` is a 
 Phase 2 frontend wiring (S3): **WIRED** - `USE_MOCK` and the Phase 1 fixtures are gone, the
 service is a plain `apiFetch` client and the FE types match the backend schemas field for
 field (no type change was needed); the 13 vitest files over these surfaces are green (183
-tests). The agent-browser evidence run (section 6) is still owed. Review (S4): pending.
+tests). The agent-browser evidence run (section 6) was **attempted 2026-08-17 and blocked** by
+severe shared-machine resource exhaustion (load average 7.8 -> 37.4 during the attempt) - login
+succeeded but sidebar navigation could not complete; still owed, tester's environment note is in
+section 6. Review (S4): pending.
 **UAC:** `flyer-spec-ingestion-acceptance-criteria.md` (the contract; this plan fulfils it).
 **Design source:** `firstmate/data/flyer-spec-ingestion/report.md` §3, §5, §7 (read-only report,
 2026-08-16). **Parent plan:** `PLAN-spec-authoring-verification.md` (PR 4 amendment, AC-B.18).
@@ -240,4 +243,125 @@ client-side (a "Show more" button), selection survives across.
 
 ## 6. Evidence run (S3) - to be filled by the tester
 
-_(steps, network calls, screenshots at 375/1280, console clean, second apply all `already_matches`)_
+**Attempted 2026-08-17, blocked by environment. Not the AC-E.1/E.2 walk - see below.**
+
+### Stack (isolated, this worktree, non-default ports)
+
+- Redis: `redis://localhost:6379/5` (db 5, isolated from the shared `flyer_read` queue other
+  lanes drain).
+- Backend: `uvicorn app.main:app --host 0.0.0.0 --port 8092` (PID 12031), `REDIS_URL` pointed at
+  db 5. Confirmed healthy: `curl http://localhost:8092/health` -> `{"status":"healthy"}`.
+- Worker: `worker.py` (PID 12047), `PGGSSENCMODE=disable OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`,
+  `REDIS_URL` db 5, `WORKER_QUEUES=flyer_read`, `ENABLE_SCHEDULER` unset (log shows the worker's
+  own APScheduler start regardless - that is `worker.py`'s default, not something this run turned
+  on). Confirmed listening on `flyer_read` only (`rq.worker: *** Listening on flyer_read...`).
+- Frontend: `PORT=3092 NEXT_PUBLIC_API_URL=http://localhost:8092 npm run dev` (PID 12144).
+  Confirmed `curl -o /dev/null -w '%{http_code}' http://localhost:3092` -> `200`.
+- Tables: `product_spec_flyer_batches` / `product_spec_flyer_proposals` did not exist on the
+  shared dev Postgres (alembic is stamped by another worktree, so `alembic upgrade` was correctly
+  NOT run). Created directly via `ProductSpecFlyerBatch.__table__.create(bind=engine,
+  checkfirst=True)` / same for `ProductSpecFlyerProposal`, both against `app.database.engine`.
+  Verified present via `information_schema` inspection and `SELECT count(*)` on both (0 rows).
+  Additive only - nothing else touched. Both tables were re-checked at the end of the run and are
+  still empty (0 rows each) - no partial data was written by the blocked attempt.
+
+### What was verified
+
+- `npx -y agent-browser@0.27.0 --session spec-flyer-ingestion open http://localhost:3092` reached
+  the app (`get url` confirmed `http://localhost:3092/` / `.../signin?callbackUrl=%2F`, never a
+  stray page - the `get url` discipline for the shared daemon was followed throughout).
+- Login with the `E2E_EMAIL` / `E2E_PASSWORD` pair from `sorento_crm_frontend/.env.local`
+  succeeded twice (fresh daemon each time): filling the email/password fields and clicking
+  Continue landed back on `/` with the full sidebar rendered (Dashboards, Ideas, User Management,
+  Supply Chain, **Dealer Kit**, Delivery Order Management, Complaint Management, SLA Management,
+  Product Management, Procurement, Project Sales Admin, Inventory Management, Marketing
+  Management, Forms Management, Workflow Forms, Resource Management, System Management), so
+  auth against the isolated :8092 backend is confirmed wired correctly (`NEXT_PUBLIC_API_URL`
+  took effect - no auth-loop, no CORS block).
+- Two "Failed to fetch" toasts appeared in the notifications region on the landing dashboard both
+  times; not investigated further because the walk never reached the dealer-kit or spec-proposal
+  surfaces this slice touches - noted here so it isn't mistaken for something this run cleared.
+
+### What could not be completed, and why
+
+The walk did not get past clicking the `Dealer Kit` sidebar group. Every command against the
+`agent-browser` daemon (session `spec-flyer-ingestion`, its own isolated per-session daemon and
+Chrome instance per `~/.agent-browser/spec-flyer-ingestion.*`) began failing with:
+
+```
+✗ Failed to read: Resource temporarily unavailable (os error 35) (after 5 retries - daemon may be busy or unresponsive)
+```
+
+This is `EAGAIN` on the daemon's own control socket read, i.e. the daemon process itself could
+not get CPU-scheduled to answer within its retry window - not a selector/ref bug (the same
+failure hit plain `get url` with no arguments). `sysctl -n vm.loadavg` was sampled repeatedly
+across the attempt and climbed steadily and then sharply:
+
+| Time into attempt | Load average (1 min) |
+|---|---|
+| ~2 min | 7.79 |
+| ~9 min | 10.20 |
+| ~14 min | 13.28 |
+| ~17 min | 15.14 |
+| ~20 min | 16.82 |
+| ~23 min | 18.35 |
+| ~30 min | **37.45** |
+
+`ps aux \| grep -c "Chrome for Testing Helper"` went from 20 to 38 processes over the same window
+- other agent lanes on this shared machine were concurrently spinning up their own
+`agent-browser` sessions, and macOS was thrashing (`vm_stat` showed heavy `Swapins`/`Swapouts`,
+`Pages free` in the low thousands against ~16 GB physical).
+
+Mitigations tried, in order, each confirmed in the transcript:
+1. Chained commands (`click` then `snapshot`) in separate CLI invocations - failed.
+2. Restarted my own session's daemon (`kill -9` its PID, remove
+   `~/.agent-browser/spec-flyer-ingestion.{sock,pid,engine,stream,version}`, reopen) - this
+   reliably unwedged the daemon for **one** command (confirmed 3 times: `open`, `get url`,
+   `snapshot -i` each succeeded as the first command after a fresh daemon), then failed again on
+   the next command.
+3. Switched to `agent-browser batch --bail "cmd1" "cmd2" ...` to fold multiple steps into one CLI
+   process (fewer daemon round-trips) - bought a longer run (login fully succeeded, five
+   sequential batch steps) but still failed mid-batch once load passed roughly 15-18.
+4. Replaced ref-based clicks with `find label` / `find placeholder` / `find role button` /
+   `find text` locators so batches would not depend on a prior snapshot's ref numbers - the login
+   batch with these locators succeeded end-to-end; the `Dealer Kit` click, tried both by ref and
+   by `find text`, failed once load passed ~18 and definitively at 37.45.
+
+No dumb `wait N` loop was used to force through; per-step waits were `--load networkidle` /
+`--text` as the skill instructs. The failure is not a wait-timing bug - it is the daemon not
+answering its own socket.
+
+**Decision:** stopped rather than keep retrying against a load average that quadrupled during a
+single attempt and was still climbing, per "never claim verification you did not do" and because
+continued retries add load to an already-struggling shared machine other agents depend on. AC-E.1
+and AC-E.2 remain **unverified in a browser** - the four backend routes, the service, the RQ task,
+and the frontend components are covered by the 52 backend pytest + 183 frontend vitest tests
+named in the S2/S3 status lines above, but nothing has exercised the real FE -> BE -> DB round
+trip for this slice yet.
+
+### Cleanup performed
+
+- Killed PID 12031 (backend), PID 12047 (worker, needed `-9`), PID 12144 (frontend); confirmed
+  `lsof -i :8092 -i :3092 -sTCP:LISTEN` returns nothing.
+- Confirmed no leftover `worker.py` process of mine (the two other `worker.py` PIDs seen in `ps`
+  belong to other lanes' scratchpad paths, left untouched).
+- The graceful `agent-browser --session spec-flyer-ingestion close` itself hung under the same
+  daemon unresponsiveness; killed the session's own daemon PID directly instead (`kill -9`,
+  recorded from `~/.agent-browser/spec-flyer-ingestion.pid`) and removed its session files. This
+  only touches the per-session daemon/Chrome I started - never `close --all`, never another
+  lane's daemon or session file. `ps aux | grep spec-flyer-ingestion` came back empty afterward.
+- `product_spec_flyer_batches` / `product_spec_flyer_proposals` re-checked empty (0 rows each) -
+  no partial writes from the blocked attempt; both tables were left in place (additive-only per
+  the brief) for the next attempt to reuse.
+
+### Re-run instructions for whoever picks this back up
+
+Re-run this exact evidence walk once the shared machine's load has returned to something sane
+(check `sysctl -n vm.loadavg` before starting - low single digits, not double). The stack-boot
+steps above are reusable verbatim (Redis db 5, ports 8092/3092, the two-table
+`checkfirst=True` create). Prefer `agent-browser batch --bail` over chained separate CLI
+invocations from the start - it survived further into the walk on this attempt before load broke
+it. Steps 2-8 of the original brief (upload/reuse the `flyer_sample.pdf` reading, propose specs,
+review, untick a `new` row / tick a `change` row if present, apply + confirm, verify the product's
+Specifications tab badges `Flyer`, re-propose + re-apply for `already_matches`, the Master Data
+list page, viewport checks at 375/1280) were never reached and still need to be walked.
