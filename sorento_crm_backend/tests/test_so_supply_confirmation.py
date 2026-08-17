@@ -1,0 +1,965 @@
+"""Atomic Project SO confirmation over HTTP (PLAN-scm-front-planning.md 3.1/5.2/5.3, Group C).
+
+RED for Stage 1C: `projects.so_supply_decisions` (migration 374), `app.models.project_so.
+SOSupplyDecision`, `app.services.project_supply_service.confirm`/`proposal_for`, and the
+`/project-sales/sales-orders/{pso_id}/confirm` + `.../supply` routes do not exist yet. Every
+test here either calls a route that 404s today, or imports a model that does not exist yet
+-- both are the "right reason" this file is meant to fail for, per
+`documentation/plans/scm/STAGE1C-scm-front-planning-promising.md` section 8.
+
+Postgres via `tests/_pg_fixture.py::blank_session`, never sqlite. Every test seeds its own
+full chain (company, project, project SO, lines linked to a real core SO+lines, warehouses,
+stock, classification, reorder level, SPO/shipment where needed) rather than borrowing an
+existing row, per PRINCIPLES.md and the CI-is-empty lesson in this repo's CLAUDE.md.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import date, timedelta
+from decimal import Decimal
+
+import pytest
+from sqlalchemy import text
+
+from app.models.inventory import Stock, Warehouse
+from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.project_so import (
+    SO_STATUS_PUBLISHED,
+    AllocationClaim,
+    CLAIM_ACCEPTED,
+    CLAIM_REQUESTED,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+)
+from app.models.user import User
+from app.services import project_seed_service
+
+from ._pg_fixture import blank_session
+
+MARKER = "zzt-confirm"
+BASE = "/api/v1/project-sales"
+VIEW = "projects.projects.view"
+EDIT = "projects.projects.edit"
+REQUIRED_DATE = date(2027, 3, 1)
+
+
+def _uid() -> str:
+    return str(uuid.uuid4())
+
+
+def _sorento(db) -> str:
+    return db.execute(text("select id from companies where code = 'SRT'")).scalar()
+
+
+def _second_company(db) -> str:
+    from app.models.company import Company
+
+    cid = _uid()
+    db.add(Company(id=cid, name=f"{MARKER} Other Co", code=f"ZZC{cid[:6]}"))
+    db.flush()
+    return cid
+
+
+def _user(db, name: str) -> str:
+    user_id = _uid()
+    db.add(User(id=user_id, email=f"{user_id}@zzt.test", name=name))
+    db.flush()
+    return user_id
+
+
+def _product(db, *, discontinued: bool = False) -> Product:
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Set")
+    category = ProductCategory(
+        id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} cat"
+    )
+    db.add_all([uom, category])
+    db.flush()
+    row = Product(
+        id=_uid(),
+        product_code=f"ZZT-{_uid()[:8]}",
+        product_name=f"{MARKER} Basin",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("120.00"),
+        is_discontinued=discontinued,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _warehouse(db, code: str, *, segment=None, pool_warehouse_id=None, active: bool = True) -> Warehouse:
+    row = Warehouse(
+        id=_uid(),
+        warehouse_code=code,
+        warehouse_name=code,
+        location="ZZT",
+        is_active=active,
+        segment=segment,
+        pool_warehouse_id=pool_warehouse_id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _stock(db, product: Product, warehouse: Warehouse, on_hand, reserved=0) -> Stock:
+    row = Stock(
+        id=_uid(),
+        product_id=product.id,
+        warehouse_id=warehouse.id,
+        quantity_on_hand=on_hand,
+        quantity_reserved=reserved,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _core_so(db, company_id: str):
+    from app.models.order import SalesOrder
+
+    so = SalesOrder(
+        id=_uid(),
+        company_id=company_id,
+        so_number=f"ZZT-CORE-{_uid()[:8]}",
+        status="open",
+        demand_class="project",
+    )
+    db.add(so)
+    db.flush()
+    return so
+
+
+def _core_line(db, so, product: Product, warehouse: Warehouse, *, qty_ordered, qty_delivered="0",
+                required_date=REQUIRED_DATE):
+    from app.models.order import SalesOrderLine
+
+    line = SalesOrderLine(
+        id=_uid(),
+        company_id=so.company_id,
+        sales_order_id=so.id,
+        product_id=product.id,
+        warehouse_id=warehouse.id,
+        qty_ordered=Decimal(qty_ordered),
+        qty_delivered=Decimal(qty_delivered),
+        required_date=required_date,
+        line_status="open",
+    )
+    db.add(line)
+    db.flush()
+    return line
+
+
+def _project_so(db, project, *, status=SO_STATUS_PUBLISHED):
+    order = ProjectSalesOrder(
+        id=_uid(),
+        company_id=project.company_id,
+        project_id=project.id,
+        provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+        area_group="TOWER",
+        status=status,
+    )
+    db.add(order)
+    db.flush()
+    return order
+
+
+def _project_line(db, order, *, line_no, product: Product, core_line):
+    line = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=order.company_id,
+        project_sales_order_id=order.id,
+        core_sales_order_line_id=core_line.id if core_line else None,
+        line_no=line_no,
+        product_id=product.id,
+        description=f"{MARKER} line {line_no}",
+        qty=core_line.qty_ordered if core_line else Decimal("0"),
+        uom="SET",
+        unit_price=Decimal("120.00"),
+        amount=Decimal("0"),
+        delivery_date=core_line.required_date if core_line else REQUIRED_DATE,
+    )
+    db.add(line)
+    db.flush()
+    return line
+
+
+def _classification(db, product: Product, warehouse: Warehouse, *, abc_class="A"):
+    from app.models.scm import ItemClassification
+
+    row = ItemClassification(
+        id=_uid(), product_id=product.id, warehouse_id=warehouse.id, abc_class=abc_class
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _reorder_level(db, company_id: str, product: Product, warehouse: Warehouse, *, level):
+    from app.models.scm import ReorderLevel
+
+    row = ReorderLevel(
+        id=_uid(), company_id=company_id, product_id=product.id, warehouse_id=warehouse.id,
+        level=Decimal(level),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _spo(db, company_id: str, product: Product, warehouse: Warehouse, *, qty, arrival_date,
+         spo_number="ZZT-SPO-0001"):
+    from app.models.procurement import InboundShipment, SPOAllocation
+
+    shipment = InboundShipment(
+        id=_uid(), company_id=company_id, shipment_date=arrival_date,
+        estimated_arrival_date=arrival_date, shipment_status="in_transit",
+    )
+    db.add(shipment)
+    db.flush()
+    alloc = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=spo_number, spo_line_number=1,
+        inbound_shipment_id=shipment.id, warehouse_id=warehouse.id, product_id=product.id,
+        allocated_quantity=int(qty),
+    )
+    db.add(alloc)
+    db.flush()
+    return shipment, alloc
+
+
+def _client(db, user_id: str):
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+    from app.services.company_scope_resolver import apply_company_scope
+    from app.services.user_service import UserPermissionService
+
+    actor = {"id": user_id, "email": f"{user_id}@zzt.test", "role": "user"}
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: dict(actor)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+    app.dependency_overrides[apply_company_scope] = lambda: None
+
+    originals = (
+        UserPermissionService.check_user_has_permission,
+        UserPermissionService.get_user_permission_slugs,
+    )
+    UserPermissionService.check_user_has_permission = lambda self, uid, slug: True
+    UserPermissionService.get_user_permission_slugs = lambda self, uid: [VIEW, "projects.projects.create", EDIT]
+    return TestClient(app), originals
+
+
+def _restore(originals) -> None:
+    from app.main import app
+    from app.services.user_service import UserPermissionService
+
+    UserPermissionService.check_user_has_permission = originals[0]
+    UserPermissionService.get_user_permission_slugs = originals[1]
+    app.dependency_overrides.clear()
+
+
+def _act_as(client, user_id: str) -> None:
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+
+    actor = {"id": user_id, "email": f"{user_id}@zzt.test", "role": "user"}
+    app.dependency_overrides[get_current_user] = lambda: dict(actor)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+
+
+class _World:
+    def __init__(self, db, company_id, eling, project, product, own_wh, pool_wh):
+        self.db = db
+        self.company_id = company_id
+        self.eling = eling
+        self.project = project
+        self.product = product
+        self.own_wh = own_wh
+        self.pool_wh = pool_wh
+
+
+@pytest.fixture()
+def api():
+    from app.models.base import company_scope
+    from app.services.project_service import register_project
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        eling = _user(db, f"{MARKER} Eling")
+        project = register_project(
+            db, company_id=company_id, actor_user_id=eling, developer_party_id=None,
+            title=f"{MARKER} Tuju Residences",
+        )
+        product = _product(db)
+        own_wh = _warehouse(db, f"ZZT-OWN-{_uid()[:4]}", segment="project")
+        pool_wh = _warehouse(db, f"ZZT-BRW-{_uid()[:4]}", segment="dealer")
+        own_wh.pool_warehouse_id = pool_wh.id
+        db.flush()
+        db.commit()
+        client, originals = _client(db, eling)
+        world = _World(db, company_id, eling, project, product, own_wh, pool_wh)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                yield client, world
+        finally:
+            _restore(originals)
+
+
+def _line_payload(project_line_id, *, timely_spo_qty="0", reserve=None, borrow=None,
+                   buy_qty="0", buy_reason=None):
+    body = {
+        "project_line_id": project_line_id,
+        "timely_spo_qty": timely_spo_qty,
+        "reserve": reserve or [],
+        "borrow": borrow or [],
+        "buy_qty": buy_qty,
+    }
+    if buy_reason is not None:
+        body["buy_reason"] = buy_reason
+    return body
+
+
+# --------------------------------------------------------------------------- happy path
+
+
+def test_confirming_a_balanced_multi_line_so_writes_one_active_decision_with_grouped_allocations(api):
+    """AC-C01/AC-C04: one Confirm writes one active revision covering every line."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=100)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    core_line_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="30")
+    line1 = _project_line(db, order, line_no=10, product=world.product, core_line=core_line_1)
+    line2 = _project_line(db, order, line_no=20, product=world.product, core_line=core_line_2)
+    db.commit()
+
+    payload = {
+        "lines": [
+            _line_payload(line1.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}]),
+            _line_payload(line2.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "30"}]),
+        ]
+    }
+    response = client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["revision_no"] == 1
+    assert body["review_state"] == "confirmed"
+    assert body["inquiry_rows_created"] == 0  # no Buy on either line
+    assert body["exceptions"] == []
+
+    from app.models.project_so import SOSupplyDecision, SOLineAllocation
+
+    decisions = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .all()
+    )
+    assert len(decisions) == 1
+    decision = decisions[0]
+    assert decision.state == "active"
+    assert decision.revision_no == 1
+    assert len(decision.line_snapshots) == 2
+
+    allocations = (
+        db.query(SOLineAllocation)
+        .filter(SOLineAllocation.decision_id == decision.id)
+        .all()
+    )
+    assert len(allocations) == 2
+    assert {a.so_line_id for a in allocations} == {line1.id, line2.id}
+
+
+# --------------------------------------------------------------------------- rollback
+
+
+def test_one_unbalanced_line_rolls_back_the_whole_confirmation(api):
+    """AC-C02: line 2's Buy is short of open qty by 10, so nothing commits, not even
+    line 1's otherwise-valid Reserve."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=100)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    core_line_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="30")
+    line1 = _project_line(db, order, line_no=10, product=world.product, core_line=core_line_1)
+    line2 = _project_line(db, order, line_no=20, product=world.product, core_line=core_line_2)
+    db.commit()
+
+    payload = {
+        "lines": [
+            _line_payload(line1.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}]),
+            # 20 buy against an open qty of 30: unbalanced by 10.
+            _line_payload(line2.id, buy_qty="20"),
+        ]
+    }
+    response = client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload)
+    assert response.status_code in (409, 422), response.text
+    body = response.json()
+    failing_line_nos = {row["line_no"] for row in body["failing_lines"]}
+    assert 20 in failing_line_nos
+
+    from app.models.project_so import OrderInquiryRow, SOLineAllocation, SOSupplyDecision
+
+    assert db.query(SOSupplyDecision).filter(
+        SOSupplyDecision.project_sales_order_id == order.id
+    ).count() == 0
+    assert db.query(SOLineAllocation).filter(
+        SOLineAllocation.so_line_id.in_([line1.id, line2.id])
+    ).count() == 0
+    assert db.query(OrderInquiryRow).filter(
+        OrderInquiryRow.so_line_id.in_([line1.id, line2.id])
+    ).count() == 0
+
+
+# --------------------------------------------------------------------------- recheck
+
+
+def test_confirmation_rechecks_stock_and_rejects_a_line_whose_free_stock_changed_after_the_sheet_was_read(api):
+    """AC-C03: the sheet proposed Reserve 10 when 10 was free; another allocation then
+    claims it, so the recheck at confirmation time must fail the line, not trust the
+    payload."""
+    client, world = api
+    db = world.db
+    stock = _stock(db, world.product, world.own_wh, on_hand=10, reserved=0)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    # Something else claimed the stock after the sheet was opened.
+    stock.quantity_reserved = 10
+    db.commit()
+
+    payload = {"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "10"}])]}
+    response = client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload)
+    assert response.status_code in (409, 422), response.text
+    body = response.json()
+    assert any(row["line_no"] == 10 for row in body["failing_lines"])
+
+    from app.models.project_so import SOSupplyDecision
+
+    assert db.query(SOSupplyDecision).filter(
+        SOSupplyDecision.project_sales_order_id == order.id
+    ).count() == 0
+
+
+# --------------------------------------------------------------------------- revision chain
+
+
+def test_reconfirming_supersedes_the_active_decision_and_increments_the_revision(api):
+    """AC-C04/AC-C07: a second Confirm on the same SO supersedes the first revision rather
+    than replacing it in place, and the superseded revision's allocations stay for audit."""
+    client, world = api
+    db = world.db
+    stock = _stock(db, world.product, world.own_wh, on_hand=50)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}])]},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["revision_no"] == 1
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[{"warehouse_id": world.own_wh.id, "qty": "30"}],
+                    buy_qty="20",
+                )
+            ]
+        },
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["revision_no"] == 2
+
+    from app.models.project_so import SOSupplyDecision, SOLineAllocation
+
+    decisions = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .order_by(SOSupplyDecision.revision_no)
+        .all()
+    )
+    assert [d.revision_no for d in decisions] == [1, 2]
+    assert [d.state for d in decisions] == ["superseded", "active"]
+
+    old_allocations = (
+        db.query(SOLineAllocation).filter(SOLineAllocation.decision_id == decisions[0].id).all()
+    )
+    assert len(old_allocations) == 1, "the superseded revision's allocation must stay for audit"
+
+
+# --------------------------------------------------------------------------- concurrency
+
+
+def test_a_second_confirmation_racing_an_already_active_decision_gets_a_conflict_with_no_partial_writes(api):
+    """AC-C05, via the DB-level singleton rather than real threads: simulate the winner of
+    a race already having committed an active decision, then attempt a second confirm and
+    assert it loses cleanly -- a 409 conflict, and no new decision or allocation row."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=50)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    from app.models.project_so import SOSupplyDecision
+
+    winner = SOSupplyDecision(
+        id=_uid(),
+        company_id=world.company_id,
+        project_sales_order_id=order.id,
+        revision_no=1,
+        state="active",
+        line_snapshots=[{"line_no": 10, "project_line_id": line.id}],
+        confirmed_by=world.eling,
+        confirmed_at=None,
+    )
+    db.add(winner)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}])]},
+    )
+    assert response.status_code == 409, response.text
+
+    remaining = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .all()
+    )
+    assert len(remaining) == 1, "the loser must not have written a second active row"
+    assert remaining[0].id == winner.id
+
+
+# --------------------------------------------------------------------------- supersession
+
+
+def test_publishing_an_amendment_supersedes_the_active_decision(api):
+    """AC-C06 (amendment leg, PLAN 5.3): a material amendment publish must supersede the
+    active revision so the SO returns to Needs CS review rather than staying confirmed
+    against stale facts."""
+    from app.models.project_so import (
+        AMENDMENT_PROPOSED,
+        OrderChangeNotice,
+        SOAmendment,
+        SOSupplyDecision,
+    )
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=50)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    decision = SOSupplyDecision(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state="active",
+        line_snapshots=[{"line_no": 10, "project_line_id": line.id}],
+        confirmed_by=world.eling, confirmed_at=None,
+    )
+    db.add(decision)
+    db.commit()
+
+    ocn = OrderChangeNotice(
+        id=_uid(), company_id=world.company_id, ocn_number=f"ZZT-OCN-{_uid()[:8]}",
+        project_id=world.project.id, project_sales_order_id=order.id,
+        approver_id=world.eling, approved_at=None,
+    )
+    db.add(ocn)
+    db.flush()
+    amendment = SOAmendment(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        ocn_id=ocn.id, delta_json={"rows": []}, status=AMENDMENT_PROPOSED,
+    )
+    db.add(amendment)
+    db.commit()
+
+    from app.services.project_so_delta_service import ProjectSODeltaService
+
+    ProjectSODeltaService(db).publish_amendment(amendment.id, actor_user_id=world.eling)
+    db.commit()
+
+    db.expire_all()
+    refreshed = db.get(SOSupplyDecision, decision.id)
+    assert refreshed.state == "superseded"
+    assert refreshed.superseded_reason
+
+
+def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
+    """AC-C06 (reconciliation leg, PLAN 5.3): `_persist` re-linking a Project line to a
+    different core line must also supersede an active decision built against the old
+    link."""
+    from app.models.project_so import SOSupplyDecision
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=50)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    decision = SOSupplyDecision(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state="active",
+        line_snapshots=[{"line_no": 10, "project_line_id": line.id, "core_line_id": core_line.id}],
+        confirmed_by=world.eling, confirmed_at=None,
+    )
+    db.add(decision)
+    db.commit()
+
+    # A material change on the CORE side: the line now needs a different quantity, which
+    # reconciliation would relink or flag on its next run.
+    core_line.qty_ordered = Decimal("80")
+    db.commit()
+
+    from app.services.project_so_reconciliation_service import ProjectSOReconciliationService
+
+    ProjectSOReconciliationService(db).reconcile(order)
+    db.commit()
+
+    db.expire_all()
+    refreshed = db.get(SOSupplyDecision, decision.id)
+    assert refreshed.state in ("superseded", "challenged")
+
+
+def test_a_fact_drift_challenges_the_active_decision_on_read(api):
+    """PLAN 5.3: `proposal_for` compares each snapshot against live facts on every read and
+    flips a mismatching active decision to `challenged`."""
+    from app.models.project_so import SOSupplyDecision
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=50)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    decision = SOSupplyDecision(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state="active",
+        line_snapshots=[{"line_no": 10, "project_line_id": line.id, "open_qty": "50"}],
+        confirmed_by=world.eling, confirmed_at=None,
+    )
+    db.add(decision)
+    db.commit()
+
+    # The customer took more delivery than the snapshot knew about: open qty has moved.
+    core_line.qty_delivered = Decimal("20")
+    db.commit()
+
+    response = client.get(f"{BASE}/sales-orders/{order.id}/supply")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["review_state"] == "needs_cs_review"
+    assert body.get("decision", {}).get("challenged_reason")
+
+    db.expire_all()
+    assert db.get(SOSupplyDecision, decision.id).state == "challenged"
+
+
+def test_review_states_for_reads_confirmed_when_an_active_decision_exists(api):
+    """PLAN 5.3: review state reads `confirmed` iff the Stage 1B conditions hold AND an
+    active decision exists, from the batched `review_states_for` the list route uses."""
+    from app.models.project_so import SOSupplyDecision
+
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    decision = SOSupplyDecision(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state="active",
+        line_snapshots=[{"line_no": 10, "project_line_id": line.id}],
+        confirmed_by=world.eling, confirmed_at=None,
+    )
+    db.add(decision)
+    db.commit()
+
+    from app.services.project_so_reconciliation_service import ProjectSOReconciliationService
+
+    states = ProjectSOReconciliationService(db).review_states_for([order.id])
+    assert states[str(order.id)]["review_state"] == "confirmed"
+
+
+# --------------------------------------------------------------------------- borrow / donor
+
+
+def test_borrow_without_a_reason_is_refused(api):
+    """AC-B09/AC-C03: a Borrow component with a blank reason must fail confirmation."""
+    client, world = api
+    db = world.db
+    other_wh = _warehouse(db, f"ZZT-OTH-{_uid()[:4]}")
+    _stock(db, world.product, other_wh, on_hand=100)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    payload = {
+        "lines": [
+            _line_payload(
+                line.id,
+                borrow=[
+                    {"source": "other_location", "warehouse_id": other_wh.id, "qty": "20", "reason": ""}
+                ],
+            )
+        ]
+    }
+    response = client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload)
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert any(row["line_no"] == 10 for row in body["failing_lines"])
+
+
+def test_cross_project_borrow_writes_an_accepted_claim_directly_with_no_requested_state(api):
+    """AC-B10/AC-C08: cross-project Borrow is one action -- the confirming CS's own
+    confirmation writes `allocation_claims` straight to `accepted`, actor-stamped, with
+    `decided_at` set. No row is ever left `requested` on this path."""
+    from app.services.project_service import register_project
+
+    client, world = api
+    db = world.db
+    donor_wh = _warehouse(db, f"ZZT-DNR-{_uid()[:4]}")
+    _stock(db, world.product, donor_wh, on_hand=100)
+    farah = _user(db, f"{MARKER} Farah")
+    donor_project = register_project(
+        db, company_id=world.company_id, actor_user_id=farah, developer_party_id=None,
+        title=f"{MARKER} Seri Heights",
+    )
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    payload = {
+        "lines": [
+            _line_payload(
+                line.id,
+                borrow=[
+                    {
+                        "source": "other_project",
+                        "warehouse_id": donor_wh.id,
+                        "donor_project_id": donor_project.id,
+                        "qty": "40",
+                        "reason": "Seri Heights has surplus this month.",
+                    }
+                ],
+            )
+        ]
+    }
+    response = client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload)
+    assert response.status_code == 200, response.text
+
+    claims = (
+        db.query(AllocationClaim)
+        .filter(AllocationClaim.from_project_id == world.project.id)
+        .all()
+    )
+    assert len(claims) == 1
+    claim = claims[0]
+    assert claim.state == CLAIM_ACCEPTED
+    assert claim.requested_by == world.eling
+    assert claim.decided_by == world.eling
+    assert claim.decided_at is not None
+    assert claim.reason == "Seri Heights has surplus this month."
+
+    assert (
+        db.query(AllocationClaim)
+        .filter(AllocationClaim.from_project_id == world.project.id, AllocationClaim.state == CLAIM_REQUESTED)
+        .count()
+        == 0
+    ), "no requested-state claim should ever exist on the confirmation path"
+
+
+# --------------------------------------------------------------------------- discontinued
+
+
+def test_a_discontinued_buy_without_a_reason_is_refused(api):
+    """AC-B11/AC-C03: Buy on a discontinued product needs a reason before it may confirm."""
+    client, world = api
+    db = world.db
+    discontinued = _product(db, discontinued=True)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, discontinued, world.own_wh, qty_ordered="15")
+    line = _project_line(db, order, line_no=10, product=discontinued, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="15")]},
+    )
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert any(row["line_no"] == 10 for row in body["failing_lines"])
+
+
+def test_a_discontinued_buy_with_a_reason_confirms(api):
+    """The other half of AC-B11: the same line, with the reason supplied, confirms and its
+    Buy residual reaches Purchasing without substitution."""
+    client, world = api
+    db = world.db
+    discontinued = _product(db, discontinued=True)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, discontinued, world.own_wh, qty_ordered="15")
+    line = _project_line(db, order, line_no=10, product=discontinued, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id, buy_qty="15",
+                    buy_reason="Customer committed; no substitute in the range.",
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["inquiry_rows_created"] == 1
+
+
+# --------------------------------------------------------------------------- authz
+
+
+def test_confirmation_is_denied_without_the_edit_permission(api):
+    """AC-C08: a view-only actor may read the proposal but may not confirm it."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=50)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    from app.services.user_service import UserPermissionService
+
+    original = UserPermissionService.check_user_has_permission
+    try:
+        UserPermissionService.check_user_has_permission = (
+            lambda self, uid, slug: slug != EDIT
+        )
+        response = client.post(
+            f"{BASE}/sales-orders/{order.id}/confirm",
+            json={"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}])]},
+        )
+        assert response.status_code == 403, response.text
+    finally:
+        UserPermissionService.check_user_has_permission = original
+
+
+def test_a_cross_company_project_so_is_denied_without_a_leak():
+    """AC-C08: a Sorento-scoped session confirming a Mocha-owned Project SO id gets a
+    plain 404 -- never a 403 that would confirm the id exists in another company."""
+    from app.models.base import company_scope
+    from app.services.project_service import register_project
+
+    with blank_session() as db:
+        sorento_id = _sorento(db)
+        other_id = _second_company(db)
+        project_seed_service.run(db, company_id=sorento_id)
+        project_seed_service.run(db, company_id=other_id)
+
+        eling = _user(db, f"{MARKER} Eling")
+        register_project(
+            db, company_id=sorento_id, actor_user_id=eling, developer_party_id=None,
+            title=f"{MARKER} Sorento Residences",
+        )
+
+        farah = _user(db, f"{MARKER} Farah")
+        other_project = register_project(
+            db, company_id=other_id, actor_user_id=farah, developer_party_id=None,
+            title=f"{MARKER} Mocha Residences",
+        )
+        other_product = _product(db)
+        other_wh = _warehouse(db, f"ZZT-OTHWH-{_uid()[:4]}")
+        other_order = _project_so(db, other_project)
+        other_core_so = _core_so(db, other_id)
+        other_core_line = _core_line(db, other_core_so, other_product, other_wh, qty_ordered="10")
+        other_line = _project_line(
+            db, other_order, line_no=10, product=other_product, core_line=other_core_line
+        )
+        db.commit()
+
+        client, originals = _client(db, eling)
+        try:
+            with company_scope(db, frozenset({sorento_id})):
+                response = client.post(
+                    f"{BASE}/sales-orders/{other_order.id}/confirm",
+                    json={"lines": [_line_payload(other_line.id, buy_qty="10")]},
+                )
+                assert response.status_code == 404, response.text
+                assert "mocha" not in response.text.lower()
+                assert other_order.id not in response.text
+
+            # Confirmed here to make this test genuinely RED, not merely a coincidental
+            # 404 off a route that does not exist at all yet: nothing was written for the
+            # foreign order either, checked against the model this slice adds.
+            from app.models.project_so import SOSupplyDecision
+
+            assert (
+                db.query(SOSupplyDecision)
+                .filter(SOSupplyDecision.project_sales_order_id == other_order.id)
+                .count()
+                == 0
+            )
+        finally:
+            _restore(originals)
+
+
+# --------------------------------------------------------------------------- list filter
+
+
+def test_the_fulfilment_planning_list_filters_by_the_confirmed_review_state(api):
+    """Section 6: `GET /fulfilment-planning` `review_state` Literal gains `confirmed`."""
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    unconfirmed = client.get(f"{BASE}/fulfilment-planning?review_state=confirmed")
+    assert unconfirmed.status_code == 200, unconfirmed.text
+    assert order.id not in {row["project_sales_order_id"] for row in unconfirmed.json()["data"]}
+
+    needs_review = client.get(f"{BASE}/fulfilment-planning?review_state=needs_cs_review")
+    assert needs_review.status_code == 200, needs_review.text
+    assert order.id in {row["project_sales_order_id"] for row in needs_review.json()["data"]}
