@@ -334,14 +334,22 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Internal Users',
         path: '/user-management/contact-access-agents',
+        permission: 'user_management.contacts.view',
       },
       {
         title: 'Contact Access Types',
         path: '/user-management/contact-access-types',
+        permission: 'user_management.access_agents.view',
       },
       {
         title: 'Market Segments',
         path: '/user-management/market-segments',
+        permission: 'user_management.reference_data.view',
+      },
+      {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
       },
       {
         title: 'Account',
@@ -698,6 +706,10 @@ export const MENU_SIDEBAR: MenuConfig = [
           {
             title: 'Promotion Attachments',
             path: '/marketing-management/promotion-attachments',
+          },
+          {
+            title: 'Promotion Types',
+            path: '/marketing-management/promotion-types',
           },
         ],
       },
@@ -1330,6 +1342,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/market-segments',
       },
       {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
+      },
+      {
         title: 'Account',
         path: '/user-management/account',
       },
@@ -1572,6 +1589,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
           {
             title: 'Promotion Attachments',
             path: '/marketing-management/promotion-attachments',
+          },
+          {
+            title: 'Promotion Types',
+            path: '/marketing-management/promotion-types',
           },
         ],
       },

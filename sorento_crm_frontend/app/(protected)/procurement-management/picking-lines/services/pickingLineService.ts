@@ -1,6 +1,12 @@
 import { apiFetch } from '@/lib/api';
 import type { PickingLinesListResponse } from '../types/pickingLine.types';
 
+/**
+ * Each item carries `spo_number_raw: string | null`, and `query` matches on it as
+ * well as on the allocation's SPO number and the product code. See
+ * `documentation/plans/purchasing/PLAN-grn-spo-forward-matching.md`.
+ */
+
 export interface PickingLinesListParams {
   page?: number;
   limit?: number;

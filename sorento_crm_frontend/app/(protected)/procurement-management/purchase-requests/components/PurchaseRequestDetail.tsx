@@ -310,12 +310,15 @@ export default function PurchaseRequestDetail({
     void runExcelExport(includeRevisions);
   };
 
-  const { data: systemSettingsPayload } = useQuery({
-    queryKey: ['system-settings'],
+  // Narrow, flat projection of system settings open to every authenticated user.
+  // The full blob is gated on `user_management.settings.view`, which the roles that
+  // work purchase requests do not hold, and only the default approver is needed here.
+  const { data: appConfig } = useQuery({
+    queryKey: ['system-app-config'],
     queryFn: async () => {
-      const r = await apiFetch('/api/user-management/settings');
+      const r = await apiFetch('/api/user-management/settings/app-config');
       if (!r.ok) throw new Error('Failed to load settings');
-      return r.json() as Promise<{ settings?: Record<string, unknown> }>;
+      return r.json() as Promise<Record<string, unknown>>;
     },
     staleTime: 60_000,
   });
@@ -356,7 +359,7 @@ export default function PurchaseRequestDetail({
   });
 
   const configuredDefaultApproverUserId = useMemo(() => {
-    const s = systemSettingsPayload?.settings;
+    const s = appConfig;
     if (!s || !request?.request_type) return null;
     if (request.request_type === 'purchase_request') {
       const id = s.purchase_request_default_approver_user_id;
@@ -364,10 +367,10 @@ export default function PurchaseRequestDetail({
     }
     const id = s.sponsorship_form_default_approver_user_id;
     return typeof id === 'string' && id.length > 0 ? id : null;
-  }, [systemSettingsPayload?.settings, request?.request_type]);
+  }, [appConfig, request?.request_type]);
 
   const configuredDefaultApproverEmail = useMemo(() => {
-    const s = systemSettingsPayload?.settings;
+    const s = appConfig;
     if (!s || !request?.request_type) return null;
     if (request.request_type === 'purchase_request') {
       const e = s.purchase_request_default_approver_email;
@@ -375,7 +378,7 @@ export default function PurchaseRequestDetail({
     }
     const e = s.sponsorship_form_default_approver_email;
     return typeof e === 'string' && e.length > 0 ? e : null;
-  }, [systemSettingsPayload?.settings, request?.request_type]);
+  }, [appConfig, request?.request_type]);
 
   const listLabel =
     basePath.includes('sponsorship-forms') ? 'Sponsorship Forms' : 'Purchase Requests';

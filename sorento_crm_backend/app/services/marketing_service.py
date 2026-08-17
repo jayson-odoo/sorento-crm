@@ -19,8 +19,16 @@ from sqlalchemy.exc import IntegrityError
 from typing import Any, Optional
 from decimal import Decimal
 
-from app.services import promotion_window
-from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, PromotionAttachment, CampaignType, MarketingCampaign
+from app.services import promotion_serving, promotion_window
+from app.models.marketing import (
+    Promotion,
+    PromotionGroup,
+    PromotionProduct,
+    PromotionAttachment,
+    PromotionType,
+    CampaignType,
+    MarketingCampaign,
+)
 from app.models.product import Product, ProductCategory, Brand
 from app.models.resources import Attachment, AttachmentType
 from app.schemas.marketing import (
@@ -39,8 +47,10 @@ from app.schemas.marketing import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error, handle_validation_error
 from app.services.contact_access_type_service import ContactAccessTypeService
+from app.services.company_scope import stamp_lookup_companies
 from app.services.embedding_events import publish_embedding_event
 from app.services.identifier_resolver import resolve_identifier
+from app.services.uuid_path_param import validate_uuid_path
 
 _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
@@ -83,6 +93,79 @@ def _promotion_is_expired(promotion, today: date) -> bool:
     return not promotion_window.is_live(
         promotion.is_active, promotion.start_date, promotion.end_date, today
     )
+
+
+def _promotion_type_labels(db: Session, type_ids) -> dict[str, tuple]:
+    """`{type_id: (type_code, type_name)}` for the ids on one page, in one query.
+
+    The relationship would answer this too, but lazily and once per row: a 50-row
+    page of promotions is 50 extra round trips to fetch at most five distinct
+    types. Same batching the attachments and product counts already do.
+    """
+    ids = [str(i) for i in dict.fromkeys(i for i in type_ids if i)]
+    if not ids:
+        return {}
+    rows = (
+        db.query(PromotionType.id, PromotionType.type_code, PromotionType.type_name)
+        .filter(PromotionType.id.in_(ids))
+        .all()
+    )
+    return {str(type_id): (code, name) for type_id, code, name in rows}
+
+
+def _default_type_labels(db: Session) -> tuple:
+    """`(code, name)` of the default type, or `(None, None)` when none is flagged.
+
+    An untyped promotion is not type-less as far as serving goes: it is served
+    under the DEFAULT type's rules (D3). Reporting a blank type for a row the
+    policy just honoured as `standard` contradicts the same payload's own
+    answer, so the display follows the policy rather than the raw column.
+    """
+    row = (
+        db.query(PromotionType.type_code, PromotionType.type_name)
+        .filter(PromotionType.is_default.is_(True))
+        .first()
+    )
+    return (row[0], row[1]) if row else (None, None)
+
+
+def _type_labels_for(raw_type_id, labels: dict, default_labels: tuple) -> tuple:
+    """Label pair for one row: its own type when it has one, else the default's."""
+    if not raw_type_id:
+        return default_labels
+    return labels.get(str(raw_type_id), (None, None))
+
+
+def _stamp_promotion_type_fields(db: Session, promotions, verdict=None) -> None:
+    """Copy the type's code/name onto each row, and the expired-but-usable flag.
+
+    The API never returns a bare `promotion_type_id` for display -- the UI rule is
+    no UUIDs on screen, and the bot needs the code to phrase the answer. An
+    untyped row reports the default type, which is the one that actually decided
+    whether it was served.
+    """
+    labels = _promotion_type_labels(db, [p.promotion_type_id for p in promotions])
+    default_labels = (
+        _default_type_labels(db)
+        if any(not p.promotion_type_id for p in promotions)
+        else (None, None)
+    )
+    if verdict is None and promotions:
+        # A detail read must answer the same question the list answered: "would
+        # the bot still honour this?". Evaluating the single row against the
+        # same policy keeps `expired_but_usable` truthful everywhere, so a
+        # drill-down cannot contradict the list it came from.
+        verdict = promotion_serving.evaluate_candidates(
+            db, [p.id for p in promotions], datetime.utcnow().date()
+        )
+    for promotion in promotions:
+        code, name = _type_labels_for(
+            promotion.promotion_type_id, labels, default_labels
+        )
+        promotion.promotion_type_code = code
+        promotion.promotion_type_name = name
+        if verdict is not None:
+            promotion.expired_but_usable = verdict.is_expired_but_usable(promotion.id)
 
 
 def _resolve_promotion_id_for_filter(db: Session, raw: Optional[str]) -> Optional[str]:
@@ -530,8 +613,15 @@ class PromotionService:
         product_ids: Optional[list[str]] = None,
         attachment_state: Optional[str] = None,
         expiry_notify_batch_id: Optional[str] = None,
+        serving_policy: bool = False,
     ):
         """List promotions with active-first fallback semantics.
+
+        `serving_policy=True` replaces the active gate and its inactive fallback
+        with the per-type serving policy (`app/services/promotion_serving.py`):
+        live rows win, and a type with no live row contributes its latest expired
+        row when the type's configuration allows it. This is what the chatbot
+        asks for; the FE DataGrid never passes it and is unaffected.
 
         active=None (default): return active rows; if a narrowing filter is
         present and zero active match, fall back to inactive rows.
@@ -562,12 +652,14 @@ class PromotionService:
         entity_buckets = _resolve_or_empty(self.db, entities)
         if entity_buckets is not None and not entity_buckets.has_resolved_filter:
             from app.schemas.common import PaginationResponse
-            return {
+            payload = {
                 "data": [],
                 "pagination": PaginationResponse(total=0, page=page, limit=limit),
                 "empty": True,
                 "resolved_entities": entity_buckets.as_echo(),
             }
+            stamp_lookup_companies(self.db, payload, [], product_ids=product_ids)
+            return payload
         entity_promotion_ids: Optional[list[str]] = None
         if entity_buckets is not None and entity_buckets.promotion_ids:
             entity_promotion_ids = list(entity_buckets.promotion_ids)
@@ -597,14 +689,30 @@ class PromotionService:
         )
 
         today = datetime.utcnow().date()
-        q = _ordered_query(primary_active_mode)
-        total = q.count()
         fallback_used = False
+        verdict = None
 
-        if fallback_allowed and total == 0 and narrowing_filter_present:
-            q = _ordered_query(False)
+        if serving_policy:
+            # The policy is a ranking over the whole candidate set, so the active
+            # gate is skipped entirely and the survivors are paginated afterwards.
+            candidate_ids = [
+                str(row[0])
+                for row in _ordered_query(None)
+                .with_entities(Promotion.id)
+                .limit(promotion_serving.CANDIDATE_CAP + 1)
+                .all()
+            ]
+            verdict = promotion_serving.evaluate_candidates(self.db, candidate_ids, today)
+            q = _ordered_query(None).filter(Promotion.id.in_(list(verdict.served_ids)))
             total = q.count()
-            fallback_used = total > 0
+        else:
+            q = _ordered_query(primary_active_mode)
+            total = q.count()
+
+            if fallback_allowed and total == 0 and narrowing_filter_present:
+                q = _ordered_query(False)
+                total = q.count()
+                fallback_used = total > 0
 
         offset = (page - 1) * limit
         promotions = q.offset(offset).limit(limit).all()
@@ -631,6 +739,7 @@ class PromotionService:
             )
             # Python mirror of active_clause — see `_promotion_is_expired`.
             promotion.is_expired = _promotion_is_expired(promotion, today)
+        _stamp_promotion_type_fields(self.db, promotions, verdict)
 
         payload = {
             "data": promotions,
@@ -638,6 +747,11 @@ class PromotionService:
             "empty": total == 0,
             "fallback_used": fallback_used,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(self.db, payload, promotions, product_ids=product_ids)
+        if serving_policy:
+            payload["serving_policy_applied"] = True
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
         # Data-miss (§3.3): the query scoped to a real product (product_ids) but no
@@ -845,6 +959,7 @@ class PromotionService:
                 self._load_attachments_for_promotion_ids([resolved_pid]).get(resolved_pid, []),
                 contact_access_codes,
             )
+            _stamp_promotion_type_fields(self.db, [promotion])
             return promotion
 
         promotion = (
@@ -874,9 +989,10 @@ class PromotionService:
             self._load_attachments_for_promotion_ids([resolved_pid]).get(resolved_pid, []),
             contact_access_codes,
         )
+        _stamp_promotion_type_fields(self.db, [promotion])
 
         return promotion
-    
+
     def create_promotion(self, promotion_data: PromotionCreate, created_by: str):
         """Create a new promotion. Validates access_levels against catalog; defaults to all active types if missing."""
         access_svc = ContactAccessTypeService(self.db)
@@ -888,10 +1004,16 @@ class PromotionService:
             )
         else:
             promotion_dict["access_levels"] = access_svc.get_default_access_levels()
+        if promotion_dict.get("promotion_type_id"):
+            self._assert_promotion_type_exists(promotion_dict["promotion_type_id"])
+            # A type chosen by a human in the UI is a manual classification, and a
+            # later re-upload of the same file must not overwrite it.
+            promotion_dict["promotion_type_source"] = "manual"
         promotion = Promotion(**promotion_dict)
         self.db.add(promotion)
         self.db.commit()
         self.db.refresh(promotion)
+        _stamp_promotion_type_fields(self.db, [promotion])
         publish_embedding_event(
             self.db,
             source_type="promotion",
@@ -915,11 +1037,25 @@ class PromotionService:
                 update_data["access_levels"], field_name="access_levels"
             )
 
+        if "promotion_type_id" in update_data:
+            incoming_type_id = update_data["promotion_type_id"]
+            if incoming_type_id:
+                self._assert_promotion_type_exists(incoming_type_id)
+            # Whoever RETYPED the promotion outranks the classifier from here on.
+            # The edit form re-sends the current type with every save, so only a
+            # value that actually differs (including a clear of a set type) is a
+            # human decision; an unchanged echo must leave an auto classification
+            # alone or the next re-send of the file could never reclassify it.
+            current_type_id = str(promotion.promotion_type_id) if promotion.promotion_type_id else None
+            if (str(incoming_type_id) if incoming_type_id else None) != current_type_id:
+                update_data["promotion_type_source"] = "manual"
+
         for key, value in update_data.items():
             setattr(promotion, key, value)
 
         self.db.commit()
         self.db.refresh(promotion)
+        _stamp_promotion_type_fields(self.db, [promotion])
         publish_embedding_event(
             self.db,
             source_type="promotion",
@@ -930,6 +1066,16 @@ class PromotionService:
             changed_fields=list(update_data.keys()),
         )
         return promotion
+
+    def _assert_promotion_type_exists(self, promotion_type_id: str) -> None:
+        validate_uuid_path(str(promotion_type_id), resource="Promotion Type")
+        exists_row = (
+            self.db.query(PromotionType.id)
+            .filter(PromotionType.id == str(promotion_type_id))
+            .first()
+        )
+        if not exists_row:
+            raise handle_not_found("Promotion Type", str(promotion_type_id))
 
     def delete_promotion(self, promotion_id: str):
         """Delete a promotion (cascade deletes promotion_products and promotion_attachments)."""
@@ -1160,8 +1306,13 @@ class PromotionProductService:
         any_dimension_max: Optional[float] = None,
         contact_access_codes: Optional[list[str]] = None,
         entities: Optional[list[str]] = None,
+        serving_policy: bool = False,
     ):
         """List products for a promotion, several promotions, or all promotion products.
+
+        `serving_policy=True` replaces the parent-promotion active gate with the
+        per-type serving policy (see `app/services/promotion_serving.py`), so the
+        chatbot cannot be handed a line whose parent is an expired special.
 
         Text `query` is tokenized on whitespace; every token must match (case-insensitive)
         somewhere across Product.product_code, product_name, description, item_type, or
@@ -1189,12 +1340,16 @@ class PromotionProductService:
         _entity_buckets = _resolve_or_empty(self.db, entities)
         if _entity_buckets is not None and not _entity_buckets.has_resolved_filter:
             from app.schemas.common import PaginationResponse
-            return {
+            payload = {
                 "data": [],
                 "pagination": PaginationResponse(total=0, page=page, limit=limit),
                 "empty": True,
                 "resolved_entities": _entity_buckets.as_echo(),
             }
+            stamp_lookup_companies(
+                self.db, payload, [], product_ids=product_ids_filter
+            )
+            return payload
         if _entity_buckets is not None and _entity_buckets.promotion_ids:
             promotion_ids = list({*(promotion_ids or []), *_entity_buckets.promotion_ids})
 
@@ -1214,21 +1369,29 @@ class PromotionProductService:
                 if resolved:
                     resolved_bulk.append(resolved)
             if not resolved_bulk:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=product_ids_filter
+                )
+                return payload
             q = q.filter(PromotionProduct.promotion_id.in_(resolved_bulk))
             logger.debug("Filtering by promotion_ids count=%s", len(resolved_bulk))
         elif promotion_id:
             resolved_pid = _resolve_promotion_id_for_filter(self.db, promotion_id)
             if not resolved_pid:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=product_ids_filter
+                )
+                return payload
             logger.debug(f"Filtering by resolved promotion_id: {resolved_pid}")
             q = q.filter(PromotionProduct.promotion_id == resolved_pid)
 
@@ -1245,11 +1408,15 @@ class PromotionProductService:
             code_fields=("category_code", "category_name"),
         )
         if category_uuids is not None and not category_uuids:
-            return {
+            payload = {
                 "data": [],
                 "pagination": {"total": 0, "page": page, "limit": limit},
                 "empty": True,
             }
+            stamp_lookup_companies(
+                self.db, payload, [], product_ids=product_ids_filter
+            )
+            return payload
         brand_uuids = resolve_identifier(
             self.db,
             brand_id,
@@ -1257,11 +1424,15 @@ class PromotionProductService:
             code_fields=("brand_code", "brand_name"),
         )
         if brand_uuids is not None and not brand_uuids:
-            return {
+            payload = {
                 "data": [],
                 "pagination": {"total": 0, "page": page, "limit": limit},
                 "empty": True,
             }
+            stamp_lookup_companies(
+                self.db, payload, [], product_ids=product_ids_filter
+            )
+            return payload
 
         needs_product_join = (
             bool(query)
@@ -1383,7 +1554,23 @@ class PromotionProductService:
         today = datetime.utcnow().date()
         active_clause = _promotion_active_clause(today)
         fallback_used = False
-        if active is None:
+        serving_verdict = None
+        if serving_policy:
+            # Rank the PARENT promotions the filtered lines belong to, then keep
+            # only the lines whose parent survives the policy.
+            parent_ids = [
+                str(row[0])
+                for row in q.with_entities(PromotionProduct.promotion_id)
+                .distinct()
+                .limit(promotion_serving.CANDIDATE_CAP + 1)
+                .all()
+            ]
+            serving_verdict = promotion_serving.evaluate_candidates(self.db, parent_ids, today)
+            q_final = q.filter(
+                PromotionProduct.promotion_id.in_(list(serving_verdict.served_ids))
+            )
+            total = q_final.count()
+        elif active is None:
             q_final = q
             total = q_final.count()
         elif active is False:
@@ -1416,12 +1603,28 @@ class PromotionProductService:
         # document for the SKU they just asked about.
         parent_pids = list({p.promotion_id for p in products})
         attachments_map = _load_attachments_by_promotion_ids(self.db, parent_pids)
+        parent_type_ids = [
+            getattr(p.promotion, "promotion_type_id", None) for p in products
+        ]
+        parent_type_labels = _promotion_type_labels(self.db, parent_type_ids)
+        parent_default_labels = (
+            _default_type_labels(self.db) if any(not t for t in parent_type_ids) else (None, None)
+        )
         for line in products:
             line.promotion_attachments = attachments_map.get(line.promotion_id, [])
             # Row-level expiry of the PARENT promotion, mirroring the promotions
             # list — lets MCP/n8n say "found but expired" for fallback/historical
             # lines instead of presenting them as live.
             line.is_expired = _promotion_is_expired(line.promotion, today)
+            code, name = _type_labels_for(
+                getattr(line.promotion, "promotion_type_id", None),
+                parent_type_labels,
+                parent_default_labels,
+            )
+            line.promotion_type_code = code
+            line.promotion_type_name = name
+            if serving_verdict is not None:
+                line.expired_but_usable = serving_verdict.is_expired_but_usable(line.promotion_id)
 
         payload = {
             "data": products,
@@ -1429,6 +1632,13 @@ class PromotionProductService:
             "empty": total == 0,
             "fallback_used": fallback_used,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(
+            self.db, payload, products, product_ids=product_ids_filter
+        )
+        if serving_policy:
+            payload["serving_policy_applied"] = True
         if _entity_buckets is not None:
             payload["resolved_entities"] = _entity_buckets.as_echo()
         return payload
@@ -1612,6 +1822,142 @@ class PromotionProductService:
         self.db.delete(row)
         self.db.commit()
         return {"message": "Product removed from promotion"}
+
+
+#: NOT NULL on `promotion_types`. An explicit null for one of these means "leave
+#: it alone", not "write NULL" -- the column would reject it at commit time and
+#: the caller would get a 500 for what is a malformed payload.
+_PROMOTION_TYPE_REQUIRED_COLUMNS = (
+    "type_code",
+    "type_name",
+    "show_expired",
+    "expired_valid_until_year_end",
+    "match_markers",
+    "match_priority",
+    "is_default",
+    "sort_order",
+)
+
+
+class PromotionTypeService:
+    """CRUD for the promotion-type vocabulary an admin maintains."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def _counts_by_type(self) -> dict[str, int]:
+        rows = (
+            self.db.query(Promotion.promotion_type_id, func.count(Promotion.id))
+            .filter(Promotion.promotion_type_id.isnot(None))
+            .group_by(Promotion.promotion_type_id)
+            .all()
+        )
+        return {str(type_id): count for type_id, count in rows}
+
+    def list_promotion_types(self):
+        types = (
+            self.db.query(PromotionType)
+            .order_by(
+                PromotionType.sort_order.asc(),
+                PromotionType.match_priority.asc(),
+                PromotionType.type_code.asc(),
+            )
+            .all()
+        )
+        counts = self._counts_by_type()
+        for promo_type in types:
+            promo_type.promotions_count = counts.get(str(promo_type.id), 0)
+        return types
+
+    def get_promotion_type(self, type_id: str):
+        promo_type = self.db.query(PromotionType).filter(PromotionType.id == type_id).first()
+        if not promo_type:
+            raise handle_not_found("Promotion Type", type_id)
+        promo_type.promotions_count = self._counts_by_type().get(str(promo_type.id), 0)
+        return promo_type
+
+    def _assert_code_free(self, type_code: str, *, exclude_id: Optional[str] = None) -> None:
+        q = self.db.query(PromotionType.id).filter(PromotionType.type_code == type_code)
+        if exclude_id:
+            q = q.filter(PromotionType.id != exclude_id)
+        if q.first():
+            raise handle_conflict(f"A promotion type with code '{type_code}' already exists")
+
+    def _clear_other_defaults(self, keep_id: Optional[str]) -> None:
+        """One default type, so `is_default` is a switch and not a checkbox pile.
+
+        The DB carries a partial unique index that would otherwise reject the
+        second tick with a constraint error nobody can act on.
+        """
+        q = self.db.query(PromotionType).filter(PromotionType.is_default.is_(True))
+        if keep_id:
+            q = q.filter(PromotionType.id != keep_id)
+        for row in q.all():
+            row.is_default = False
+        self.db.flush()
+
+    def create_promotion_type(self, type_data):
+        payload = type_data.model_dump()
+        self._assert_code_free(payload["type_code"])
+        if payload.get("is_default"):
+            self._clear_other_defaults(None)
+        promo_type = PromotionType(**payload)
+        self.db.add(promo_type)
+        self.db.commit()
+        self.db.refresh(promo_type)
+        promo_type.promotions_count = 0
+        return promo_type
+
+    def update_promotion_type(self, type_id: str, type_data):
+        promo_type = self.db.query(PromotionType).filter(PromotionType.id == type_id).first()
+        if not promo_type:
+            raise handle_not_found("Promotion Type", type_id)
+        update_data = type_data.model_dump(exclude_unset=True)
+        for column in _PROMOTION_TYPE_REQUIRED_COLUMNS:
+            if column in update_data and update_data[column] is None:
+                update_data.pop(column)
+        if "type_code" in update_data:
+            self._assert_code_free(update_data["type_code"], exclude_id=type_id)
+        if update_data.get("is_default"):
+            self._clear_other_defaults(type_id)
+        if update_data.get("is_default") is False and promo_type.is_default:
+            raise handle_conflict(
+                "Untick the default on this type by making another type the default instead; "
+                "an unclassified promotion needs one type to fall back to."
+            )
+        for key, value in update_data.items():
+            setattr(promo_type, key, value)
+        self.db.commit()
+        self.db.refresh(promo_type)
+        promo_type.promotions_count = self._counts_by_type().get(str(promo_type.id), 0)
+        return promo_type
+
+    def delete_promotion_type(self, type_id: str):
+        """Hard delete. Promotions pointing here fall back to the default type's policy."""
+        promo_type = self.db.query(PromotionType).filter(PromotionType.id == type_id).first()
+        if not promo_type:
+            raise handle_not_found("Promotion Type", type_id)
+        if promo_type.is_default:
+            raise handle_conflict(
+                "This is the default promotion type. Make another type the default before deleting it."
+            )
+        # Unclassify the promotions here rather than leaning on the FK's SET NULL:
+        # the source has to go with the type, or a `manual` row would keep a
+        # classification nobody can see and the re-send path would never retype it.
+        affected = (
+            self.db.query(Promotion)
+            .filter(Promotion.promotion_type_id == str(promo_type.id))
+            .update(
+                {"promotion_type_id": None, "promotion_type_source": None},
+                synchronize_session=False,
+            )
+        )
+        self.db.delete(promo_type)
+        self.db.commit()
+        return {
+            "message": "Promotion type deleted",
+            "promotions_unclassified": affected,
+        }
 
 
 class CampaignTypeService:
@@ -1847,8 +2193,12 @@ class PromotionAttachmentService:
         promotion_ids: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         active: Optional[bool] = None,
+        serving_policy: bool = False,
     ):
         """List promotion attachments with pagination and filtering.
+
+        `serving_policy=True` replaces the parent-promotion active gate with the
+        per-type serving policy (see `app/services/promotion_serving.py`).
 
         When *contact_access_codes* is supplied the result is restricted to attachments
         whose underlying file's ``access_levels`` overlaps the contact's codes (and whose
@@ -1952,7 +2302,21 @@ class PromotionAttachmentService:
         today = datetime.utcnow().date()
         active_has = PromotionAttachment.promotion.has(_promotion_active_clause(today))
         fallback_used = False
-        if active is None:
+        serving_verdict = None
+        if serving_policy:
+            parent_ids = [
+                str(row[0])
+                for row in q.with_entities(PromotionAttachment.promotion_id)
+                .distinct()
+                .limit(promotion_serving.CANDIDATE_CAP + 1)
+                .all()
+            ]
+            serving_verdict = promotion_serving.evaluate_candidates(self.db, parent_ids, today)
+            q_final = q.filter(
+                PromotionAttachment.promotion_id.in_(list(serving_verdict.served_ids))
+            )
+            total = q_final.count()
+        elif active is None:
             q_final = q
             total = q_final.count()
         elif active is False:
@@ -1981,10 +2345,28 @@ class PromotionAttachmentService:
         offset = (page - 1) * limit
         promotion_attachments = q_final.offset(offset).limit(limit).all()
 
+        attachment_type_ids = [
+            getattr(pa.promotion, "promotion_type_id", None) for pa in promotion_attachments
+        ]
+        attachment_type_labels = _promotion_type_labels(self.db, attachment_type_ids)
+        attachment_default_labels = (
+            _default_type_labels(self.db)
+            if any(not t for t in attachment_type_ids)
+            else (None, None)
+        )
         for pa in promotion_attachments:
             # Row-level expiry of the parent promotion — mirrors the promotions /
             # promotion-products lists so MCP/n8n can say "found but expired".
             pa.is_expired = _promotion_is_expired(pa.promotion, today)
+            code, name = _type_labels_for(
+                getattr(pa.promotion, "promotion_type_id", None),
+                attachment_type_labels,
+                attachment_default_labels,
+            )
+            pa.promotion_type_code = code
+            pa.promotion_type_name = name
+            if serving_verdict is not None:
+                pa.expired_but_usable = serving_verdict.is_expired_but_usable(pa.promotion_id)
 
         payload = {
             "data": promotion_attachments,
@@ -1992,6 +2374,8 @@ class PromotionAttachmentService:
             "empty": total == 0,
             "fallback_used": fallback_used,
         }
+        if serving_policy:
+            payload["serving_policy_applied"] = True
         if _entity_buckets is not None:
             payload["resolved_entities"] = _entity_buckets.as_echo()
         return payload

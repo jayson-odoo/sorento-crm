@@ -531,3 +531,74 @@ def test_resolve_product_and_warehouse_labels(scm_app):
     assert res["product"]["product_code"] == code
     assert res["warehouse"]["warehouse_code"] == wcode
     assert "affected_sku_count" not in res  # AC-PREV-5 deferred
+
+
+# --- cover scope is READ here, never written (AC-3.2) -----------------------
+#
+# `cover_scope` is a GLOBAL setting with exactly ONE writer: PUT /scm/config/cover-scope.
+# The policy grid shows it because a screen that cannot see it would silently disagree with
+# what the plan does, but the grid must never write it: while it sat in the write schema,
+# saving ANY unrelated policy field (from a form that does not even carry cover_scope) reset
+# the company's setting back to the schema default.
+
+def test_a_policy_save_leaves_the_global_cover_scope_alone(scm_app):
+    app, db = _client(scm_app, "purchasing")
+    gid = db.execute(text(
+        "SELECT id FROM scm.reorder_policy WHERE scope_type = 'global' "
+        "ORDER BY is_active DESC, created_at ASC LIMIT 1"
+    )).scalar()
+    with TestClient(app) as c:
+        assert c.put("/api/v1/scm/config/cover-scope",
+                     json={"cover_scope": "all_locations"}).status_code == 200
+
+        # A grid save of the SAME row, with a payload that carries no cover_scope at all.
+        saved = c.put(f"{BASE}/{gid}", json=_write(scope_type="global", safety_days=9))
+        assert saved.status_code == 200, saved.text
+
+        assert c.get("/api/v1/scm/config/cover-scope").json() == {
+            "cover_scope": "all_locations"
+        }
+    row = db.execute(text("SELECT safety_days, cover_scope FROM scm.reorder_policy "
+                          "WHERE id = :id"), {"id": gid}).fetchone()
+    assert float(row[0]) == 9  # the save DID land
+    assert row[1] == "all_locations"  # and it did not touch the setting
+
+
+def test_the_grid_reads_the_value_the_config_route_wrote(scm_app):
+    app, db = _client(scm_app, "purchasing")
+    gid = db.execute(text(
+        "SELECT id FROM scm.reorder_policy WHERE scope_type = 'global' "
+        "ORDER BY is_active DESC, created_at ASC LIMIT 1"
+    )).scalar()
+    with TestClient(app) as c:
+        c.put("/api/v1/scm/config/cover-scope", json={"cover_scope": "all_locations"})
+        listed = c.get(f"{BASE}?page=1&limit=200").json()
+    mine = [r for r in listed["data"] if r["id"] == str(gid)]
+    assert mine and mine[0]["cover_scope"] == "all_locations"
+
+
+def test_a_new_policy_row_starts_at_own_pool(scm_app):
+    """The captain's answer is the default a fresh row lands on, from the column default -
+    not from a value the write schema smuggled in."""
+    app, db = _client(scm_app, "purchasing")
+    pid, _code, _cat = _a_product(db)
+    with TestClient(app) as c:
+        created = c.post(BASE, json=_write(scope_type="sku", scope_ref=pid))
+    assert created.status_code == 201, created.text
+    assert created.json()["cover_scope"] == "own_pool"
+    assert db.execute(text("SELECT cover_scope FROM scm.reorder_policy WHERE id = :id"),
+                      {"id": created.json()["id"]}).scalar() == "own_pool"
+
+
+def test_a_legacy_row_with_no_cover_scope_reads_as_own_pool(scm_app):
+    """A row written before the column existed must not read as "the whole network"."""
+    app, db = _client(scm_app, "purchasing")
+    pid, _code, _cat = _a_product(db)
+    with TestClient(app) as c:
+        created = c.post(BASE, json=_write(scope_type="sku", scope_ref=pid)).json()
+        db.execute(text("UPDATE scm.reorder_policy SET cover_scope = NULL WHERE id = :id"),
+                   {"id": created["id"]})
+        db.flush()
+        listed = c.get(f"{BASE}?page=1&limit=200").json()
+    mine = [r for r in listed["data"] if r["id"] == created["id"]]
+    assert mine and mine[0]["cover_scope"] == "own_pool"

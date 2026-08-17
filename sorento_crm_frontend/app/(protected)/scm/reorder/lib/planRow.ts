@@ -39,6 +39,13 @@ export interface PlanRowSupplierOption {
   value: string; // supplier CODE (what /adjust's override_supplier_id wants)
   label: string;
   unit_cost: number;
+  /** The money `unit_cost` is in. Null on a row that predates the book holding more than
+   *  one currency, which means it already meant ringgit. Carried because the shortlist is
+   *  a price COMPARISON: bare, a USD 8.00 option reads cheaper than an RM 10.00 one. */
+  currency: string | null;
+  /** The same price restated in the base currency, which is what the ranking compared.
+   *  Null when the candidate's currency has no rate on file. */
+  unit_cost_base: number | null;
   lead_time_days: number;
 }
 
@@ -122,6 +129,8 @@ export function supplierOptionsFor(rec: ReorderRecommendation): PlanRowSupplierO
       value: s.supplier_code,
       label: s.supplier_name ?? s.supplier_code,
       unit_cost: s.unit_cost,
+      currency: s.currency ?? null,
+      unit_cost_base: s.unit_cost_base ?? null,
       lead_time_days: s.lead_time_days ?? 0,
     });
   }

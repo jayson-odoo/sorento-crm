@@ -1,6 +1,6 @@
 'use client';
 
-import { LoaderCircle } from 'lucide-react';
+import { LoaderCircle, TestTube } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,6 +21,7 @@ import {
   type LevelImportOutcome,
 } from '../services/reorderLevelImportService';
 import { CountTile } from './UploadCountTile';
+import { UploadReadingIndicator } from './UploadReadingIndicator';
 
 /**
  * The AutoCount reorder level + reorder quantity listing (S13c).
@@ -29,6 +30,12 @@ import { CountTile } from './UploadCountTile';
  * the conflict list: a level a person set by hand is never silently overwritten - the file
  * and the buyer disagreeing is put on screen for the buyer to settle, because "last writer
  * wins" between a person and a feed is how a decision quietly reverts.
+ *
+ * Test then Confirm, with nothing running on file select - the same three presses as every
+ * other upload in this system. This channel's Confirm is still SYNCHRONOUS, unlike the five
+ * order-book feeds: it writes a level per product on a listing of a few thousand rows, well
+ * inside a request, and it has no queued task. So the result is still shown here rather than
+ * on a job page, and that difference is deliberate rather than an oversight.
  */
 
 function OutcomePanel({ outcome, applied }: { outcome: LevelImportOutcome; applied: boolean }) {
@@ -122,7 +129,7 @@ export function ReorderLevelUploadDialog({
         <DialogBody className="space-y-4">
           <FileDropzone
             files={up.file ? [up.file] : []}
-            onFilesChange={(next) => void up.choose(next[0] ?? null)}
+            onFilesChange={(next) => up.choose(next[0] ?? null)}
             onReject={up.reject}
             accept={up.accept}
             maxSizeMb={MAX_SIZE_MB}
@@ -136,12 +143,7 @@ export function ReorderLevelUploadDialog({
             </Alert>
           ) : null}
 
-          {up.previewing ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
-              Reading the file...
-            </div>
-          ) : null}
+          <UploadReadingIndicator reading={up.previewing} />
 
           {up.result ? (
             <OutcomePanel outcome={up.result} applied />
@@ -154,10 +156,27 @@ export function ReorderLevelUploadDialog({
             {up.result ? 'Close' : 'Cancel'}
           </Button>
           {!up.result ? (
-            <Button onClick={() => void up.confirm()} disabled={!up.canConfirm}>
-              {up.applying ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null}
-              Confirm upload
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void up.runTest()}
+                disabled={!up.file || up.previewing || up.applying || up.testing}
+              >
+                {up.testing ? (
+                  <LoaderCircle className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <TestTube className="size-4" aria-hidden />
+                )}
+                Test
+              </Button>
+              <Button onClick={() => void up.confirm()} disabled={!up.canConfirm}>
+                {up.applying ? (
+                  <LoaderCircle className="size-4 animate-spin" aria-hidden />
+                ) : null}
+                Confirm upload
+              </Button>
+            </>
           ) : null}
         </DialogFooter>
       </DialogContent>

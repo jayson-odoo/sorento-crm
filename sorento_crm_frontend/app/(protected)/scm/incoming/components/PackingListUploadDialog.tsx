@@ -16,7 +16,7 @@ import { FileDropzone } from '@/components/common/FileDropzone';
 import { MAX_SIZE_MB, useTwoStepUpload } from '../../reorder/hooks/useTwoStepUpload';
 import { CountTile } from '../../reorder/components/UploadCountTile';
 import { UploadTestVerdict } from '../../reorder/components/UploadTestVerdict';
-import { EM_DASH } from '../../lib/format';
+import { EM_DASH, fmtInt } from '../../lib/format';
 import {
   applyPackingList,
   previewPackingList,
@@ -151,7 +151,7 @@ export function PackingListUploadDialog({
                       </div>
                     </div>
                     <span className="shrink-0 text-2xs text-muted-foreground">
-                      {b.lines} lines · {b.qty.toLocaleString()} pcs
+                      {b.lines} lines · {fmtInt(b.qty)} pcs
                     </span>
                   </div>
                 ))}
@@ -191,20 +191,18 @@ export function PackingListUploadDialog({
         </DialogBody>
 
         <DialogFooter>
-          {upload.runTest ? (
-            <Button
-              variant="outline"
-              onClick={() => void upload.runTest?.()}
-              disabled={!upload.file || upload.testing || upload.applying}
-            >
-              {upload.testing ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <TestTube className="size-4" />
-              )}
-              Test
-            </Button>
-          ) : null}
+          <Button
+            variant="outline"
+            onClick={() => void upload.runTest()}
+            disabled={!upload.file || upload.testing || upload.applying}
+          >
+            {upload.testing ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <TestTube className="size-4" />
+            )}
+            Test
+          </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {result ? 'Close' : 'Cancel'}
           </Button>

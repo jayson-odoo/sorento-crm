@@ -4,6 +4,7 @@ import {
   forecastAddOn,
   forecastQtyCap,
   lineBreachStatus,
+  roundBuyQty,
   roundOrderQty,
 } from './orderQtyLedger';
 import type { TrajectoryEntry } from './trajectory';
@@ -87,6 +88,32 @@ describe('roundOrderQty - byte-for-byte parity with reorder_engine.round_order_q
     expect(roundOrderQty(1, 100, 25)).toBe(100); // floors to 100, already a multiple of 25
     expect(roundOrderQty(110, 100, 25)).toBe(125); // above MOQ, rounds up to next multiple
     expect(roundOrderQty(164, null, 1)).toBe(164); // multiple of 1 is always a no-op
+  });
+});
+
+/**
+ * The ONE rounding every recorded buy goes through, whichever control typed it (review
+ * finding 1, round 2): the ledger rounded and the Accept / Adjust paths did not, so the SAME
+ * row recorded 14 or 20 depending on where the buyer clicked.
+ */
+describe('roundBuyQty - one rounding rule for every recorded buy', () => {
+  it('rounds the remainder up to the order multiple', () => {
+    expect(roundBuyQty(14, { moq: null, order_multiple: 10 })).toBe(20);
+  });
+
+  it('floors to the MoQ, and takes both rules in the engine order', () => {
+    expect(roundBuyQty(14, { moq: 50, order_multiple: 12 })).toBe(60);
+  });
+
+  it('a buy of nothing stays nothing, so a MoQ can never invent an order', () => {
+    // `reorder_engine.order_qty` returns 0 BEFORE it rounds, for exactly this reason.
+    expect(roundBuyQty(0, { moq: 100, order_multiple: 25 })).toBe(0);
+    expect(roundBuyQty(-4, { moq: 100, order_multiple: 25 })).toBe(0);
+  });
+
+  it('passes a legal figure through untouched', () => {
+    expect(roundBuyQty(20, { moq: null, order_multiple: 10 })).toBe(20);
+    expect(roundBuyQty(23, { moq: null, order_multiple: null })).toBe(23);
   });
 });
 

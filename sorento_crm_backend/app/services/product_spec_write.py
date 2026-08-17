@@ -42,9 +42,10 @@ logger = logging.getLogger(__name__)
 # treat a supplier-submitted entry as machine-derived everywhere that test runs.
 # `supplier` has no writer in this milestone; it is reserved for the supplier portal.
 # `flyer` joins this set in the bulk flyer-ingestion slice after PRs 1-4, once the
-# promote migration has re-stamped the legacy entries, and not before (AC-F.7):
-# derivation writes `source='flyer'` itself on every run today, so an early flip would
-# badge a machine read as a person's own work.
+# promote migration (367) has re-stamped the legacy entries in every environment, and
+# not before (AC-F.7): derivation no longer writes `source='flyer'` (PR 4, AC-B.18),
+# but rows written before the promote still carry it, so an early flip would badge a
+# machine read as a person's own work.
 AUTHORED_SOURCES: frozenset[str] = frozenset({"human", "supplier"})
 
 DEFAULT_AUTHORED_SOURCE = "human"

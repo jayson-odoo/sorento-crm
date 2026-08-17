@@ -51,7 +51,14 @@ export function PlanHealthCell({
   }
 
   const decision = econ?.lifecycle_decision ?? null;
-  const suggested: 'keep' | 'discontinue' = advice?.consider ? 'discontinue' : 'keep';
+  // Null when there is no verdict to offer, so NEITHER button gets the outline that means
+  // "this is the suggestion". Defaulting it to keep would put a recommendation on screen
+  // that nothing computed.
+  const suggested: 'keep' | 'discontinue' | null = advice
+    ? advice.consider
+      ? 'discontinue'
+      : 'keep'
+    : null;
 
   const record = async (next: 'keep' | 'discontinue' | null) => {
     if (!onDecideLifecycle || !econ) return;
@@ -94,10 +101,13 @@ export function PlanHealthCell({
       </PopoverTrigger>
       <PopoverPortal>
         <PopoverContent className="w-80 text-xs" align="start">
+          {/* One line, the same shape every time: the verdict, named. The prose it replaces
+              ("The product is earning its place.") told the buyer nothing the factor lines
+              below do not already say, and read as an opinion rather than an answer.
+              No advice yet (still loading, or no economics to judge on) says so with a dash
+              rather than defaulting to "keep selling", which would be a claim. */}
           <p className="font-medium text-foreground">
-            {advice?.consider
-              ? 'The factors argue for discontinuing this product.'
-              : 'The product is earning its place.'}
+            Suggestion: {advice ? (advice.consider ? 'Discontinue' : 'Keep selling') : EM_DASH}
           </p>
 
           {/* The arithmetic behind "Margin 33.3%" - no prose, just the three figures the
@@ -175,11 +185,6 @@ export function PlanHealthCell({
               ) : null}
             </div>
           ) : null}
-
-          <p className="mt-3 border-t pt-2 text-2xs text-muted-foreground">
-            Based on our own orders and stock only. A discontinue decision is recorded
-            here; marking it in AutoCount stays your job.
-          </p>
         </PopoverContent>
       </PopoverPortal>
     </Popover>

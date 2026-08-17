@@ -298,6 +298,18 @@ _COMPANY_ID_ALLOWLIST = {
     # unfiltered also means one tenant can read another's custom size. The fix is
     # `company_id IS NULL OR company_id = <scope>` in that one reader, not the mixin.
     "container_size",
+    # The salesperson master is per-company OR shared, and in the captain's own files it is
+    # shared: the same agent codes sell for both companies, so partitioning the master would
+    # duplicate every agent and split one person's demand class across two rows. A NULL
+    # company therefore means "everyone's", and the mixin's auto-filter drops NULL-company
+    # rows - which here would hide the entire master and leave every imported order with no
+    # agent to classify from. Same shape and same known gap as `container_size`: the day a
+    # tenant needs its own agent, the fix is `company_id IS NULL OR company_id = <scope>` in
+    # `sales_agent_service`, not the mixin. That fix is now WRITEABLE rather than aspirational:
+    # migration 356 replaced the global unique on the code with one on
+    # `(coalesce(company_id, nil), sales_agent)`, exactly `container_size`'s index, so a tenant
+    # row can coexist with the shared row it overrides.
+    "sales_agents",
 }
 
 
@@ -337,7 +349,12 @@ def test_every_company_id_table_is_registered():
     # contact -> customer link are each a fact about ONE company's catalogue.
     # `selection_line` is deliberately NOT owned: it hangs off a scoped parent, so
     # scoping it too would filter it twice and add nothing.
-    assert len(owned) == 63, f"expected 63 owned tables, found {len(owned)}: {sorted(owned)}"
+    # `promotion_types` is owned but SHARED (`__company_shared__`, like attachments):
+    # the five kinds the migration seeds carry no company and have to stay visible
+    # under every scope, while a company that adds a type of its own keeps it. Owned
+    # without the shared flag would have hidden the seeds from every logged-in user
+    # while an API-key caller still saw them.
+    assert len(owned) == 64, f"expected 64 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

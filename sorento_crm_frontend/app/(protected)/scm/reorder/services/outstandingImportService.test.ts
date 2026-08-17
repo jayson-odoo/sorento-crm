@@ -8,10 +8,14 @@
  * (`app/api/v1/scm/outstanding_import.py`):
  *
  *   POST /api/v1/scm/outstanding/{kind}/preview   writes NOTHING, returns the diff
- *   POST /api/v1/scm/outstanding/{kind}/apply     writes it, returns applied counts
+ *   POST /api/v1/scm/outstanding/{kind}/apply     QUEUES the write, returns the job
  *
  *   kind = 'sales-orders' | 'purchase-orders'
  *   multipart body, single field named exactly "file"
+ *
+ * Both steps refuse a session with no single active company, with the same message: the
+ * order books are owned tables, and a diff computed across every company is about the wrong
+ * company's products.
  *
  * SCM services call `apiFetch('/api/v1/scm/...')` with the version segment spelled
  * out (see reorderRunService) - `lib/api.ts` has no `/api/scm` rewrite entry, so a
@@ -185,27 +189,34 @@ describe('outstandingImportService - preview', () => {
       'Invalid file type: notes.txt. Upload .xlsx.',
     );
   });
+
+  it('surfaces the single-company refusal, which preview makes too', async () => {
+    // Preview is refused at the same scope apply runs at: read across every company the
+    // item codes resolve to the wrong company's products and the diff is untrue.
+    apiFetch.mockResolvedValue(
+      fail(400, { detail: 'Select a single company before uploading the order book.' }),
+    );
+
+    await expect(previewOutstandingImport('sales-orders', xlsx())).rejects.toThrow(
+      'Select a single company before uploading the order book.',
+    );
+  });
 });
 
 describe('outstandingImportService - apply', () => {
-  const APPLY_BODY = {
-    ok: true,
-    counts: {
-      added: 1,
-      qty_changed: 0,
-      date_moved: 2,
-      date_and_qty_changed: 0,
-      closed: 0,
-      unchanged: 412,
-    },
-    applied: { added: 1, updated: 2, closed: 0, unchanged: 412 },
-    scope_documents: ['SO397450'],
-    resolution_issues: [],
-    row_problems: [],
+  /**
+   * The 202 body, and the whole body. Apply QUEUES the write, so the counts do not exist
+   * when the request answers - they land on the job, under `result.upload`. A test still
+   * asserting `applied` here would be pinning a response no route returns.
+   */
+  const QUEUED = {
+    message: 'Order book upload queued.',
+    job_id: 'e2c3a5f0-1c22-4f77-9b3a-6b8a0a1d5f11',
+    id: '9f9c7b1e-3f0a-4a2e-8a4e-5c6d7e8f9a0b',
   };
 
   it('POSTs the same file as multipart field "file" to the apply route', async () => {
-    apiFetch.mockResolvedValue(ok(APPLY_BODY));
+    apiFetch.mockResolvedValue(ok(QUEUED));
     const file = xlsx();
 
     const result = await applyOutstandingImport('sales-orders', file);
@@ -213,16 +224,20 @@ describe('outstandingImportService - apply', () => {
     expect(calledUrl().pathname).toBe('/api/v1/scm/outstanding/sales-orders/apply');
     expect(lastInit().method).toBe('POST');
     expect((lastInit().body as FormData).get('file')).toBe(file);
-    expect(result.applied).toEqual({ added: 1, updated: 2, closed: 0, unchanged: 412 });
+    // The job to watch, not the outcome: the outcome is computed on the worker.
+    expect(result).toEqual(QUEUED);
   });
 
-  it('throws the extracted backend message when apply rejects the file', async () => {
+  it('throws the extracted backend message when the session has no single company', async () => {
+    // The only 400 left on this route. An unreadable file no longer fails the request - it
+    // fails the JOB, because the reading happens on the worker - so this refusal, which
+    // happens before any job row exists, is the one the dialog has to render.
     apiFetch.mockResolvedValue(
-      fail(400, { detail: 'The file is missing required columns: required_date' }),
+      fail(400, { detail: 'Select a single company before uploading the order book.' }),
     );
 
     await expect(applyOutstandingImport('sales-orders', xlsx())).rejects.toThrow(
-      'The file is missing required columns: required_date',
+      'Select a single company before uploading the order book.',
     );
   });
 });

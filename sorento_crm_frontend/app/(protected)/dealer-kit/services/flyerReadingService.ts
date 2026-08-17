@@ -8,16 +8,40 @@
  * ---------------------------------------------------------------------------
  *
  * POST   /flyer-readings                     multipart `file`, `?promotionId=`
- *          -> 201 FlyerReading (summary + report)
- *          Read INSIDE the request: the real 36 page flyer takes about a
- *          second, so there is no job, no queue and nothing to poll.
- *          400 when the file is not a PDF, 413 over 50 MB, and both say so in
- *          words - a designer who uploaded the wrong file must be told.
+ *          -> 202 FlyerReadingSummary, `status: 'processing'`, in well under a
+ *          second. The read itself is an RQ job: extraction of the real 36
+ *          page A3 flyer measures 18 s quiet and more on a loaded box, which
+ *          is past the gateway's patience, so the request returns before the
+ *          work starts. There is no report on this response - the row is the
+ *          receipt, and the report arrives on the GET once the job is done.
+ *          413 over 50 MB is still answered in the request, as the bytes
+ *          arrive, and says so in words - that is the one refusal this route
+ *          still owns. Nothing else reads the bytes in-request any more: a
+ *          non-PDF, password protected, or otherwise unreadable file lands on
+ *          the row as `status: 'failed'` with `errorMessage` in the same
+ *          words. The 400 `FLYER_NOT_A_PDF` mime refusal only exists on the
+ *          from-attachment path below, checked against the attachment's
+ *          recorded mime before any bytes are fetched.
+ *          Re-clicking while the same file is already being read returns the
+ *          SAME row rather than starting a second read.
+ * POST   /flyer-readings/from-attachment  {attachmentId, promotionId?}
+ *          -> 202 FlyerReadingSummary, identical in every respect to an upload.
+ *          Same permission, same limits, same words on a refusal. An
+ *          attachment outside the caller's company scope is a 404, never a
+ *          403, so the id's existence is not confirmed.
  * GET    /flyer-readings                     -> FlyerReadingSummary[], newest
  *          first, WITHOUT reports: one report per row is one match run per row.
+ *          Every row carries `status`, `errorMessage` and `finishedAt`, so the
+ *          list is what tells a designer their read is still running, or why it
+ *          is not going to finish.
  * GET    /flyer-readings/{id}?promotionId=   -> FlyerReading
+ *          Answers on any status. A processing or failed reading has an empty
+ *          report rather than an error, because the row exists from the first
+ *          second and the screen has to be able to open it.
  * POST   /flyer-readings/{id}/seed  {pageId | name+slug, promotionId?,
  *          commitMessage?}                   -> 201 FlyerSeedResult
+ *          409 FLYER_NOT_READ_YET on a reading that is not done. The screen
+ *          does not offer it before then, so this is the backstop.
  * POST   /flyer-readings/{id}/dimensions/apply {codes[], overwriteConflicts?}
  *          -> 200 DimensionApplyResult
  *          The ONE route here that writes outside the Kit. It needs
@@ -111,6 +135,13 @@ export interface MatchReport {
   promotionId: string | null;
 }
 
+/**
+ * Where a reading is. `processing` from the moment the POST returns until the
+ * job writes one of the other two, and nothing else is ever a status - the
+ * column is checked at the database.
+ */
+export type FlyerReadingStatus = 'processing' | 'done' | 'failed';
+
 export interface FlyerReadingSummary {
   id: string;
   filename: string;
@@ -118,6 +149,11 @@ export interface FlyerReadingSummary {
   pageCount: number;
   codeCount: number;
   uploadedAt: string;
+  status: FlyerReadingStatus;
+  /** Why it failed, in the words the request used to say. Null unless failed. */
+  errorMessage: string | null;
+  /** When the job wrote done or failed. Null while it is still running. */
+  finishedAt: string | null;
 }
 
 /** What the reader thinks one flyer page is called. */
@@ -216,6 +252,17 @@ function toReport(wire: Partial<MatchReport> | undefined): MatchReport {
 }
 
 /**
+ * An absent or unrecognised status is `done`, never `processing`.
+ *
+ * Every row that existed before the job was built was read synchronously and
+ * successfully, and the migration's server default says so; a client that
+ * guessed `processing` for them would poll forever for a job nobody queued.
+ */
+function toStatus(wire: string | undefined | null): FlyerReadingStatus {
+  return wire === 'processing' || wire === 'failed' ? wire : 'done';
+}
+
+/**
  * The fields a ROW carries, and only those.
  *
  * Split out from `toReading` so the list cannot grow detail fields by accident.
@@ -232,6 +279,9 @@ function toSummary(wire: Partial<FlyerReadingSummary>): FlyerReadingSummary {
     pageCount: wire.pageCount ?? 0,
     codeCount: wire.codeCount ?? 0,
     uploadedAt: wire.uploadedAt ?? '',
+    status: toStatus(wire.status),
+    errorMessage: wire.errorMessage ?? null,
+    finishedAt: wire.finishedAt ?? null,
   };
 }
 
@@ -277,7 +327,12 @@ export async function getFlyerReading(
 }
 
 /**
- * Send the PDF and get the report back in the same call.
+ * Send the PDF and get back the row that will hold the report.
+ *
+ * 202, not 201: the bytes are staged and a job is queued, and what comes back
+ * is the reading in `processing`. It is the same id the finished reading will
+ * have, so the list row and the review screen are the same row throughout - the
+ * designer never has to find their read again once it lands.
  *
  * No `Content-Type` header on purpose: the browser sets it with the multipart
  * boundary, and naming it by hand produces a body FastAPI cannot parse.
@@ -285,7 +340,7 @@ export async function getFlyerReading(
 export async function uploadFlyerReading(
   file: File,
   promotionId?: string | null,
-): Promise<FlyerReading> {
+): Promise<FlyerReadingSummary> {
   const body = new FormData();
   body.append('file', file);
 
@@ -293,7 +348,40 @@ export async function uploadFlyerReading(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Could not read that flyer'));
   }
-  return toReading(await response.json());
+  return toSummary(await response.json());
+}
+
+/**
+ * Read a flyer the system is already holding.
+ *
+ * The same reading, by the same code path, from a file nobody had to download
+ * and upload back again: only the id travels, and the server takes the
+ * filename, the size and the bytes off the attachment itself. Marketing files
+ * the season's flyer in Resource Management long before anybody opens the Kit,
+ * so this is the common case rather than the exotic one.
+ *
+ * Refusals read exactly as the upload's do - not a PDF, over 50 MB, password
+ * protected - because they come from the same checks. The ones that need only
+ * the attachment row come back on this call; the ones that need the bytes land
+ * on the reading as `failed`. `promotionId` is only sent when there is one, for
+ * the same reason `withPromotion` exists.
+ */
+export async function createFlyerReadingFromAttachment(
+  attachmentId: string,
+  promotionId?: string | null,
+): Promise<FlyerReadingSummary> {
+  const body: Record<string, unknown> = { attachmentId };
+  if (promotionId) body.promotionId = promotionId;
+
+  const response = await apiFetch(`${BASE}/from-attachment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not read that flyer'));
+  }
+  return toSummary(await response.json());
 }
 
 export async function deleteFlyerReading(readingId: string): Promise<void> {

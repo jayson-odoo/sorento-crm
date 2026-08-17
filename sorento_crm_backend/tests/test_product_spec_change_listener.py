@@ -131,7 +131,7 @@ def test_inline_rederive_reads_the_registry_once_and_hands_the_same_object_to_ev
         scopes_calls.append(1)
         return {}
 
-    def _fake_derive_for_code(db, code, *, commit=False, rules_by_key=None, scopes_by_key=None, flyer_text=None):
+    def _fake_derive_for_code(db, code, *, commit=False, rules_by_key=None, scopes_by_key=None):
         derive_calls.append((code, id(rules_by_key), id(scopes_by_key)))
         return {"written": 0, "skipped": 0, "exceptions": 0}
 

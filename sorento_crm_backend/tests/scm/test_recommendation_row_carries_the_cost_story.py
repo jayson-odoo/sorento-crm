@@ -30,6 +30,9 @@ def _rec(**over):
         # nothing about the thing under test.
         "status": None,
         "warehouse_code": "WH", "warehouse_name": "WH", "segment": "dealer",
+        # COALESCE(w.pool_warehouse_id, w.id): a location with no pool of its own IS its
+        # own pool, so a row at "w1" reports "w1".
+        "pool_warehouse_id": "w1",
         "supplier_code": "S1", "supplier_name": "S1",
         "currency": "USD", "rate_to_base": 4.4, "rate_as_of": None,
         "inputs": {
@@ -105,6 +108,20 @@ def test_a_free_buy_is_costed_rather_than_flagged():
 
     assert got["cost_status"] == "ok"
     assert got["cash_impact"] == 0.0
+
+
+def test_a_network_row_reports_no_pool_rather_than_the_word_none():
+    """The row's pool is what narrows the shared per-product cover map to the sources this
+    row may draw on. A network row has no location and therefore no pool, and that absence
+    has to arrive as null - stringifying it would hand the screen a pool called "None" and
+    every source would fall outside it."""
+    assert _row(_rec())["pool_warehouse_id"] == "w1"
+
+    got = _row(_rec(warehouse_id=None, warehouse_code=None, warehouse_name=None,
+                    segment=None, pool_warehouse_id=None))
+
+    assert got["pool_warehouse_id"] is None
+    assert got["is_network"] is True
 
 
 def test_a_disposition_row_carries_no_cost_story_at_all():

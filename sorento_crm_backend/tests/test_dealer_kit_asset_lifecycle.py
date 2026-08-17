@@ -48,7 +48,10 @@ from fastapi.testclient import TestClient
 # MUST be first app import - resolves a circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
+from app.services.dealer_kit import flyer_reading_service as svc  # noqa: E402
+
 from tests._fake_storage import patch_storage
+from tests._flyer_read import finish_reads, patch_flyer_read
 from tests._pg_fixture import blank_session, unique_code
 
 FIXTURE_PDF = Path(__file__).parent / "fixtures" / "dealer_kit" / "flyer_sample.pdf"
@@ -113,6 +116,7 @@ def api(monkeypatch):
     with blank_session() as db:
         _seed_roles(db)
         storage = patch_storage(monkeypatch)
+        patch_flyer_read(monkeypatch, db)
 
         def _override_get_db():
             yield db
@@ -143,7 +147,11 @@ def _upload(client: TestClient, *, filename: str = "zzt-flyer.pdf") -> str:
         "/api/v1/dealer-kit/flyer-readings",
         files={"file": (filename, FIXTURE_PDF.read_bytes(), "application/pdf")},
     )
-    assert res.status_code == 201, res.text
+    # The read is a background job now: the POST answers 202 with the row in
+    # `processing`, and the extraction happens when the worker runs the job.
+    # `finish_reads` is that worker, on this test's own session.
+    assert res.status_code == 202, res.text
+    assert [job["status"] for job in finish_reads()] == ["done"]
     return res.json()["id"]
 
 
@@ -318,7 +326,16 @@ class TestAnUnusedBannerGoesWithItsReading:
         """
         db, storage = api
 
-        def _explode(**_kwargs):
+        real_upload = storage.upload_file
+
+        def _explode(**kwargs):
+            # The asset library is out; parking the upload's own bytes for the
+            # worker is not. Since the read became a background job those go to
+            # the same bucket first, and breaking that PUT too would refuse the
+            # upload outright (502 FLYER_STAGING_FAILED) - no reading, nothing
+            # to delete, and this test asserting a different thing than its name.
+            if str(kwargs.get("file_path", "")).startswith(svc.STAGING_PREFIX):
+                return real_upload(**kwargs)
             raise RuntimeError("bucket unreachable")
 
         monkeypatch.setattr(storage, "upload_file", _explode)

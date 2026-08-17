@@ -1,23 +1,38 @@
 /**
- * The order-trend popup: "who bought it" as a table.
+ * The order-trend popup: "who bought it" as a table, and the orders behind each name.
  *
  * > "similar to SO - what is the trend of purchase" (user markup, 2026-08-11) names the
  * >  table shape this mirrors on the buy side; the SO side asked for the same thing first:
- * >  Customer | Qty | Last order date, not a bare list of names.
+ * >  Customer | Qty | Last order date, not a bare list of names. A quantity beside a name
+ * >  still does not answer "sells RM 0.94?", which is what the expand is for.
  */
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { PlanTrendPopover } from './PlanTrendPopover';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { TrajectoryEntry } from '../lib/trajectory';
+
+const useCustomerOrders = vi.fn();
+vi.mock('../hooks/useReorderRun', () => ({
+  useCustomerOrders: (...a: unknown[]) => useCustomerOrders(...a),
+}));
+
+import { PlanTrendPopover } from './PlanTrendPopover';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
 Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture ?? (() => false);
 
+/** Every render of the chart, so the options it was handed can be asserted on. */
+const chartRenders = vi.hoisted(
+  () => [] as Array<{ options: Record<string, never>; height: number }>,
+);
+
 vi.mock('react-apexcharts', () => ({
-  default: () => <div data-testid="trend-chart" />,
+  default: (props: { options: Record<string, never>; height: number }) => {
+    chartRenders.push(props);
+    return <div data-testid="trend-chart" />;
+  },
 }));
 
 const entry = (over: Partial<TrajectoryEntry> = {}): TrajectoryEntry => ({
@@ -35,19 +50,52 @@ const entry = (over: Partial<TrajectoryEntry> = {}): TrajectoryEntry => ({
   ...over,
 });
 
+const orders = (over: Record<string, unknown> = {}) => ({
+  lines: [
+    { so_number: 'SO414050', order_date: '2026-07-12', qty: 60, unit_price: 0.94, warehouse_code: 'BRW-BB' },
+    { so_number: 'SO414051', order_date: '2026-06-05', qty: 40, unit_price: null, warehouse_code: 'BRW-BB' },
+  ],
+  total: 2,
+  shown: 2,
+  ...over,
+});
+
+function stubOrders(data: unknown, extra: Record<string, unknown> = {}) {
+  useCustomerOrders.mockReturnValue({
+    data, isLoading: false, isError: false, error: null, ...extra,
+  });
+}
+
+beforeEach(() => {
+  useCustomerOrders.mockReset();
+  stubOrders(orders());
+});
+
+const customer = (over: Record<string, unknown> = {}) => ({
+  customer_name: 'Vivo Homes',
+  customer_key: 'cust-1',
+  qty: 120,
+  last_order_date: '2026-07-12',
+  ...over,
+});
+
+function openTrend() {
+  fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+}
+
 describe('PlanTrendPopover - who bought it', () => {
   it('renders a table with customer, quantity and last order date', () => {
     render(
       <PlanTrendPopover
         trend={entry({
           customers: [
-            { customer_name: 'Vivo Homes', qty: 120, last_order_date: '2026-07-12' } as never,
-            { customer_name: 'Beta Trading', qty: 40, last_order_date: '2026-06-01' } as never,
+            customer() as never,
+            customer({ customer_name: 'Beta Trading', customer_key: 'cust-2', qty: 40, last_order_date: '2026-06-01' }) as never,
           ],
         })}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+    openTrend();
 
     expect(screen.getByText('Vivo Homes')).toBeInTheDocument();
     expect(screen.getByText('120')).toBeInTheDocument();
@@ -58,7 +106,7 @@ describe('PlanTrendPopover - who bought it', () => {
 
   it('says no orders in the window when nobody bought it', () => {
     render(<PlanTrendPopover trend={entry({ customers: [] })} />);
-    fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+    openTrend();
 
     expect(screen.getByText('No orders in the window.')).toBeInTheDocument();
   });
@@ -67,41 +115,279 @@ describe('PlanTrendPopover - who bought it', () => {
     render(
       <PlanTrendPopover
         trend={entry({
-          customers: [{ customer_name: 'Unnamed customer', qty: 5, last_order_date: null } as never],
+          customers: [customer({ customer_name: 'No customer on order', customer_key: 'none', qty: 5, last_order_date: null }) as never],
         })}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+    openTrend();
 
     expect(screen.getByText('-')).toBeInTheDocument();
   });
+});
 
-  it('renders nothing when no trend information exists for the line', () => {
+describe('PlanTrendPopover - the orders behind a customer (AC-4.1)', () => {
+  const rendered = () =>
+    render(
+      <PlanTrendPopover
+        trend={entry({ customers: [customer() as never] })}
+        runId="run-1"
+        productId="prod-1"
+        segment="project"
+      />,
+    );
+
+  it('does not fetch until the row is expanded', () => {
+    // The query lives inside the expanded row, so a popover listing five customers holds
+    // no subscription for the four nobody opened.
+    rendered();
+    openTrend();
+
+    expect(useCustomerOrders).not.toHaveBeenCalled();
+  });
+
+  it('fetches and renders SO, date, qty and price when expanded', async () => {
+    rendered();
+    openTrend();
+    fireEvent.click(screen.getByRole('button', { name: /Vivo Homes/ }));
+
+    await waitFor(() =>
+      expect(useCustomerOrders).toHaveBeenCalledWith('run-1', 'prod-1', 'project', 'cust-1', true),
+    );
+    expect(screen.getByText('SO414050')).toBeInTheDocument();
+    expect(screen.getByText('60')).toBeInTheDocument();
+    expect(screen.getByText('RM 0.94')).toBeInTheDocument();
+    // Twice: the customer row's "last order" IS this order's date.
+    expect(screen.getAllByText('12/07/2026')).toHaveLength(2);
+  });
+
+  it('marks the row expanded so the disclosure is announced', () => {
+    rendered();
+    openTrend();
+    const row = screen.getByRole('button', { name: /Vivo Homes/ });
+
+    expect(row).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(row);
+    expect(row).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('pairs the disclosure with the row it opens, and titles the button itself', () => {
+    // aria-expanded alone says a control exists; aria-controls says WHAT it opened, so a
+    // screen reader can move to the orders instead of hunting for them. The tooltip sits
+    // on the button rather than the cell, which is the thing the pointer is over.
+    rendered();
+    openTrend();
+    const row = screen.getByRole('button', { name: /Vivo Homes/ });
+    expect(row).toHaveAttribute('title', 'Vivo Homes');
+
+    fireEvent.click(row);
+    const panelId = row.getAttribute('aria-controls');
+
+    expect(panelId).toBeTruthy();
+    expect(document.getElementById(panelId as string)).toContainElement(
+      screen.getByText('SO414050'),
+    );
+  });
+
+  it('names the location each order asked for, and says so when it named none', () => {
+    stubOrders(orders({
+      lines: [
+        { so_number: 'SO414050', order_date: '2026-07-12', qty: 60, unit_price: 0.94, warehouse_code: 'BRW-BB' },
+        { so_number: 'SO414051', order_date: '2026-06-05', qty: 40, unit_price: null, warehouse_code: null },
+      ],
+    }));
+    rendered();
+    openTrend();
+    fireEvent.click(screen.getByRole('button', { name: /Vivo Homes/ }));
+
+    expect(screen.getByText('BRW-BB')).toBeInTheDocument();
+    expect(screen.getByText('No location')).toBeInTheDocument();
+  });
+
+  it('says how many orders it is NOT showing rather than dropping them silently', () => {
+    stubOrders(orders({ total: 27, shown: 2 }));
+    rendered();
+    openTrend();
+    fireEvent.click(screen.getByRole('button', { name: /Vivo Homes/ }));
+
+    expect(screen.getByText('25 more')).toBeInTheDocument();
+  });
+
+  it('shows a loading state while the orders are being fetched', () => {
+    stubOrders(undefined, { isLoading: true });
+    rendered();
+    openTrend();
+    fireEvent.click(screen.getByRole('button', { name: /Vivo Homes/ }));
+
+    expect(screen.queryByText('SO414050')).not.toBeInTheDocument();
+  });
+
+  it('surfaces the error rather than an empty list', () => {
+    stubOrders(undefined, { isError: true, error: new Error('Backend said no') });
+    rendered();
+    openTrend();
+    fireEvent.click(screen.getByRole('button', { name: /Vivo Homes/ }));
+
+    expect(screen.getByText('Backend said no')).toBeInTheDocument();
+  });
+});
+
+describe('PlanTrendPopover - a line with open demand and no dated history (AC-4.4)', () => {
+  it('says the window is empty, not that the product has no history', () => {
     render(<PlanTrendPopover trend={undefined} />);
 
-    expect(screen.getByText('No order history')).toBeInTheDocument();
+    expect(screen.getByText('No orders dated in the last 24 months.')).toBeInTheDocument();
+    expect(screen.queryByText(/Open now/)).not.toBeInTheDocument();
+  });
+
+  it('says what is open now when the row carries open demand', () => {
+    // The outstanding book never wrote an order date, so a row really can carry 51 open
+    // units and no dated history at all. "No order history" beside them read as a defect.
+    render(<PlanTrendPopover trend={undefined} outstandingSales={51} />);
+
+    expect(screen.getByText('No orders dated in the last 24 months.')).toBeInTheDocument();
+    expect(screen.getByText('Open now: 51 (see Demand)')).toBeInTheDocument();
+  });
+
+  it('says the window the payload actually read, not a hardcoded 24', () => {
+    // The backend states `series_months`; repeating 24 here is a second copy of it that is
+    // free to be wrong the day the window changes.
+    render(<PlanTrendPopover trend={undefined} seriesMonths={36} />);
+
+    expect(screen.getByText('No orders dated in the last 36 months.')).toBeInTheDocument();
   });
 });
 
 describe('PlanTrendPopover - selling price (Fix D, user feedback, 2026-08-12)', () => {
   it('renders the selling price above "Who bought it"', () => {
     render(<PlanTrendPopover trend={entry()} sellingPrice={90} />);
-    fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+    openTrend();
 
     expect(screen.getByText('Selling price RM 90.00')).toBeInTheDocument();
   });
 
   it('omits the line when the selling price is null', () => {
     render(<PlanTrendPopover trend={entry()} sellingPrice={null} />);
-    fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+    openTrend();
 
     expect(screen.queryByText(/Selling price/)).not.toBeInTheDocument();
   });
 
   it('omits the line when no selling price prop is passed at all', () => {
     render(<PlanTrendPopover trend={entry()} />);
-    fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+    openTrend();
 
     expect(screen.queryByText(/Selling price/)).not.toBeInTheDocument();
+  });
+});
+
+describe('PlanTrendPopover - the chart is readable (AC-6)', () => {
+  /** Open the popover and hand back the options the chart was rendered with. */
+  async function chartOptions() {
+    chartRenders.length = 0;
+    render(<PlanTrendPopover trend={entry()} />);
+    fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+    await screen.findByTestId('trend-chart');
+    const last = chartRenders[chartRenders.length - 1];
+    expect(last).toBeDefined();
+    return last as unknown as {
+      height: number;
+      options: {
+        legend: { position: string; horizontalAlign: string };
+        yaxis: {
+          min: number;
+          tickAmount?: number;
+          forceNiceScale: boolean;
+          labels: { formatter: (v: number) => string };
+        };
+        xaxis: { labels: { rotate: number; hideOverlappingLabels: boolean } };
+      };
+    };
+  }
+
+  it('puts the legend in one row above the plot', async () => {
+    // Under the plot it stole height from the only thing worth looking at.
+    const { options } = await chartOptions();
+
+    expect(options.legend.position).toBe('top');
+    expect(options.legend.horizontalAlign).toBe('left');
+  });
+
+  it('gives the plot enough height to read at 12 months', async () => {
+    const { height } = await chartOptions();
+
+    expect(height).toBe(240);
+  });
+
+  it('quotes the y axis in whole units from zero', async () => {
+    // A quantity axis labelled 0.25 / 0.5 is a formatting accident, not a measurement.
+    const { options } = await chartOptions();
+
+    expect(options.yaxis.min).toBe(0);
+    expect(options.yaxis.labels.formatter(1234)).toBe('1,234');
+  });
+
+  it('lets the scale pick its own whole-number ticks instead of forcing four', async () => {
+    // `tickAmount: 4` makes ApexCharts derive yMax = min + step * tickAmount, and on a
+    // product whose best month is 1 or 2 units that step is fractional: the axis then
+    // prints the SAME integer twice (0 | 1 | 1 | 2 | 2) and the gridline labelled 1
+    // actually sits at 0.5. A duplicated axis label is worse than a sparse one, because
+    // the reader trusts it and misreads the plot. `forceNiceScale` picks integral steps.
+    const { options } = await chartOptions();
+
+    expect(options.yaxis.tickAmount).toBeUndefined();
+    expect(options.yaxis.forceNiceScale).toBe(true);
+  });
+
+  it('prints nothing for a fractional tick rather than rounding it into a lie', async () => {
+    // Belt and braces for the same failure: should a fractional gridline still appear,
+    // it stays blank instead of being rounded to an integer it is not.
+    const { options } = await chartOptions();
+    const label = options.yaxis.labels.formatter;
+
+    expect(label(0.5)).toBe('');
+    expect(label(1.5)).toBe('');
+    expect(label(0)).toBe('0');
+    expect(label(1)).toBe('1');
+    expect(label(2)).toBe('2');
+    expect(label(9)).toBe('9');
+  });
+
+  it('angles the month labels and drops the ones that would collide', async () => {
+    const { options } = await chartOptions();
+
+    expect(options.xaxis.labels.rotate).toBe(-45);
+    expect(options.xaxis.labels.hideOverlappingLabels).toBe(true);
+  });
+
+  it('overrides the app-wide stacked legend so the two names sit on one row', async () => {
+    // `css/components/apexcharts.css` sets `flex-direction: column` on EVERY Apex legend in
+    // the app, so `legend.position: 'top'` alone still rendered "This year" and "Last year"
+    // on two lines, eating chart height. The override is scoped to this chart's wrapper.
+    render(<PlanTrendPopover trend={entry()} />);
+    fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+    const chart = await screen.findByTestId('trend-chart');
+
+    const wrapper = chart.parentElement as HTMLElement;
+    expect(wrapper.className).toContain('[&_.apexcharts-legend]:flex-row');
+  });
+
+  it('renders the popover wide enough for the chart, and scrollable at phone height', () => {
+    render(<PlanTrendPopover trend={entry()} />);
+    fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+
+    const panel = document.querySelector('[class*="w-\\[30rem\\]"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain('max-w-[92vw]');
+    // Chart + customer table is taller than a phone screen, and PopoverContent caps
+    // nothing by itself, so without this the bottom of the list is unreachable.
+    expect(panel?.className).toContain('max-h-[85vh]');
+    expect(panel?.className).toContain('overflow-y-auto');
+  });
+
+  it('drops the "based on our own orders only" footer', () => {
+    render(<PlanTrendPopover trend={entry()} />);
+    fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
+
+    expect(screen.queryByText(/Based on our own orders only/i)).not.toBeInTheDocument();
   });
 });

@@ -55,6 +55,7 @@ npm run test                 # vitest run
 npm run test:watch
 npm run test:e2e             # playwright (e2e/, chromium, baseURL :3000)
 npm run format               # prettier --write .
+npm run format:check         # prettier --check . (currently red: 1743 files predate the config, see BL-008)
 
 npx prisma db push           # apply schema
 npx prisma generate          # regenerate client
@@ -85,13 +86,13 @@ For any development task, Claude boots and owns the local stack as **background 
 | Service  | Command (run from its own dir)                                                                 | Port | Reload behavior |
 |----------|------------------------------------------------------------------------------------------------|------|-----------------|
 | Backend  | `venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` (in `sorento_crm_backend/`) | 8000 | `--reload` — backend file edits auto-restart uvicorn; nothing to do |
-| Worker   | `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES venv/bin/python worker.py` (in `sorento_crm_backend/`) | —    | **No reload.** Restart manually after editing any RQ task (`app/tasks/*`). |
+| Worker   | `PGGSSENCMODE=disable OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES venv/bin/python worker.py` (in `sorento_crm_backend/`) | —    | **No reload.** Restart manually after editing any RQ task (`app/tasks/*`). |
 | Frontend | `npm run dev` (in `sorento_crm_frontend/`)                                                      | 3000 | **HMR — edits hot-reload; no rebuild.** Keep ONE persistent `npm run dev` server; do NOT kill/rebuild it to see a change. Use `npm run build && npm start` ONLY for handoff / final verify (see "Frontend dev loop"). |
 | MCP      | `CRM_BASE_URL=http://localhost:8000 EXTERNAL_API_KEY=<from backend .env> backend venv's python -m sorento_crm_mcp` (in `sorento_crm_mcp/`; package installed in the backend venv) | 8765 | Restart manually after MCP code/catalog changes |
 
 - Run each as `run_in_background: true` Bash so logs are inspectable and sessions survive across turns.
 - Before booting, check ports (`lsof -i :3000 -i :8000 -i :8765 -sTCP:LISTEN`) and the worker (`ps aux | grep worker.py`) — if already running, reuse, don't double-boot.
-- **Worker is required for imports.** RQ jobs on the `imports` / `respond_io` queues (Excel imports, GRN lines, Respond.io sends) run ONLY on the worker — the API process no longer drains them in-process. No worker = uploads enqueue but never process. The `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` prefix is mandatory on macOS: RQ forks a work-horse and the Obj-C runtime aborts it (signal 6) without it. Needs `REDIS_URL` reachable (`redis-cli ping`). Run `worker.py` with `ENABLE_SCHEDULER` unset locally (cron ticks aren't needed for most dev).
+- **Worker is required for imports.** RQ jobs on the `imports` / `respond_io` / `catalogue_render` / `flyer_read` queues (Excel imports, GRN lines, Respond.io sends, catalogue PDF exports, dealer-kit flyer reads) run ONLY on the worker — the API process no longer drains them in-process. No worker = uploads enqueue but never process (a flyer read sits at `Processing` forever). The `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` prefix is mandatory on macOS: RQ forks a work-horse and the Obj-C runtime aborts it (signal 6) without it. `PGGSSENCMODE=disable` is mandatory for the same reason and a different signal: without it the forked child segfaults (signal 11) in libpq's Kerberos/XPC path the first time it opens a connection, and the job dies before it runs - see the lesson at the bottom of this file. Needs `REDIS_URL` reachable (`redis-cli ping`). Run `worker.py` with `ENABLE_SCHEDULER` unset locally (cron ticks aren't needed for most dev).
 - During internal iteration, FE edits hot-reload on the `npm run dev` server — no action needed. **Every handoff to the user must be a prod build:** before you ask them to test/review :3000, kill dev and `npm run build && npm start` (never hand off a dev server). It matches their prod-build test env and surfaces build-only (RSC / server-component / `next build` type) errors dev hides. See "Frontend dev loop".
 - Backend changes need no action beyond confirming uvicorn's reload log line — **except** edits to `app/tasks/*` (RQ tasks), which require restarting the Worker session.
 
@@ -218,7 +219,7 @@ Build the UI against **mock data / stubbed hooks** first, before any backend end
 
 - Create components with hard-coded mock fixtures (`__mocks__/foo.ts` or inline `useState` seeds).
 - Stub mutation/query hooks to return synthetic responses including `success`, `failed`, `processing`, `partial` cases.
-- Verify in browser via Playwright MCP — click sidebar → reach the new screen → exercise every state. Screenshot the golden path + edge cases.
+- Verify in browser via agent-browser (headless) — click sidebar → reach the new screen → exercise every state. Screenshot the golden path + edge cases.
 - Output: working FE branch where the new screens render correctly with mock data; a documented **expected API contract** (request shape, response shape, status enums) at the top of the relevant service file or in the plan doc.
 - Do NOT touch backend code in this phase. Do NOT write tests yet — the UI shape may still shift after stakeholder review of the prototype.
 
@@ -230,16 +231,16 @@ Once the FE prototype is signed off, build the backend to match the contract doc
 - FE: replace mocks with real hooks / services / `api-client` calls. Delete `__mocks__` fixtures unless they're reused by tests.
 - **Tests must land in this phase, not deferred:**
   - **Vitest** (`sorento_crm_frontend/`): component tests for every new component covering loading / empty / error / data states. Hook tests for new query/mutation hooks. Use existing `vitest` + `@testing-library/react` patterns. Single test: `npx vitest run path/to/file.test.ts`.
-  - **Playwright** (`sorento_crm_frontend/e2e/`): one spec per user-facing flow that exercises the FE→BE→DB round-trip (click sidebar → action → assert outcome → check `browser_network_requests` for the right `/api/v1/*` call). Add real fixtures to `e2e/fixtures/` for AI / file flows.
+  - **Playwright** (`sorento_crm_frontend/e2e/`): **a NEW spec is not currently added** - see "Persisted Playwright spec" below for the standing order and what covers a flow instead. The shape a spec would have had is still the target: one per user-facing flow, exercising the FE→BE→DB round-trip (click sidebar → action → assert outcome → assert the right `/api/v1/*` call), with real fixtures in `e2e/fixtures/` for AI / file flows.
   - **pytest** (`sorento_crm_backend/`): endpoint tests for every new route covering happy path + auth denial + validation error. Service-level tests for non-trivial business logic.
-- Re-verify with Playwright MCP against the real stack: `localhost:3000` (FE) + `localhost:8000` (BE) + worker if relevant. Hit the same flows the prototype demonstrated; states should look identical with live data.
+- Re-verify with agent-browser against the real stack: `localhost:3000` (FE) + `localhost:8000` (BE) + worker if relevant. Hit the same flows the prototype demonstrated; states should look identical with live data.
 - Output: backend merged, FE off-mocks, all three test suites green in CI.
 
 ### Phase 3 — Code review
 
 Run `/code-review` (or `/code-review ultra` for big diffs) on the merged Phase 1 + Phase 2 branch before opening PR for human review. Address findings with `/code-review --fix` or `/simplify` where appropriate. Then open the PR.
 
-- Reviewer checklist: `docs/PR-CHECKLIST.md` plus — "did Phase 1 prototype get a screenshot in the PR description? did Phase 2 add tests (vitest + playwright + pytest)? does the contract doc match what shipped?"
+- Reviewer checklist: `documentation/reference/PR-CHECKLIST.md` plus — "did Phase 1 prototype get a screenshot in the PR description? did Phase 2 add tests (vitest + pytest) and a recorded evidence run for the user flow? does the contract doc match what shipped?"
 
 ### Why this order
 
@@ -247,29 +248,75 @@ Run `/code-review` (or `/code-review ultra` for big diffs) on the merged Phase 1
 - **Tests in Phase 2, not Phase 3** because once the contract is locked the wiring is the right time to pin it — adding tests after review usually means rushed tests.
 - **Code review last** because reviewing a mocked FE in isolation tells you nothing about whether the data flow works end-to-end.
 
-## Browser verification (Playwright)
+## Browser verification (agent-browser)
 
 Frontend changes are not done until verified in a real browser. Type-check + Vitest = code correctness, not feature correctness. UI/flow changes MUST be exercised end-to-end before reporting complete.
 
+**Use `agent-browser` (headless). Playwright MCP is retired for verification - do not use the `mcp__plugin_playwright_playwright__*` tools.** The committed specs under `e2e/` are unchanged and still run, but no NEW one is added - see "Persisted Playwright spec" below.
+
 Two paths, pick one:
 
-### 1. Interactive verification via Playwright MCP (preferred during a task)
+### 1. Interactive verification via agent-browser (preferred during a task)
 
-Use the `mcp__plugin_playwright_playwright__*` tools to drive Chromium against the running dev server.
+`npx -y agent-browser@0.27.0 <command>` drives a headless Chromium-family browser against the running
+dev server. It picks whatever it finds installed (Chrome, Brave, ...), so do not assume a specific
+one. Headless is the default; `--headed` opts into a visible window. The browser persists between
+invocations via a daemon, so each command is a separate shell call and `&&` chaining works:
+
+```bash
+npx -y agent-browser@0.27.0 open http://localhost:3000 && npx -y agent-browser@0.27.0 snapshot -i
+```
+
+**Read `agent-browser skills get core --full` before driving it.** That is the version-matched command
+reference and workflow guide; it is the source of truth, not this section. What follows is only the
+repo-specific policy plus the handful of commands that map onto our old MCP flow.
+
+| Need | Command |
+| --- | --- |
+| Navigate | `open <url>` |
+| See the page (accessibility tree with `@ref`s) | `snapshot`, or `snapshot -i` for interactive elements only |
+| Click | `click <sel>` or `click @e2` (ref from the snapshot) |
+| Find by role/text | `find role button click --name Submit` |
+| Enter text | `fill <sel> <text>` (clear + fill), `type <sel> <text>` |
+| Console output | `console` |
+| Uncaught page errors | `errors` |
+| Network calls | `network requests [--filter <pattern>]` |
+| Screenshot | `screenshot [path]`, `--full`, `--annotate` for a labelled shot |
+| Responsive check | `set viewport 375 812` / `set viewport 1280 800` |
+| Finish | `close` |
+
+Policy, unchanged from the MCP era:
 
 - Ensure the FE dev server runs at `http://localhost:3000` (`npm run dev` in `sorento_crm_frontend/`, HMR) and BE at `http://localhost:8000`. For a final pre-handoff verification, do it against a prod build (`npm run build && npm start`) — see "Frontend dev loop".
-- **Always navigate to a feature by clicking through the sidebar / top nav from the home page — never `browser_navigate` directly to a deep URL.** Direct URL navigation hides nav-config bugs (missing entries, wrong `moduleKey`, broken permission gating, hidden behind a collapsed group). The first verification step for any new page is "open the sidebar group it belongs to and confirm the entry renders, then click it."
-- Tool flow: land on `/`, `browser_snapshot` to find the relevant sidebar group button, `browser_click` to expand, then `browser_click` the leaf entry → `browser_snapshot` the destination → continue with `browser_click` / `browser_fill_form` / `browser_type` → re-snapshot to assert state.
-- Always check `browser_console_messages` after the interaction. Treat unexpected `error` / `warning` as a regression.
-- Use `browser_take_screenshot` for visual confirmation of CRUD flows (list → modal create → row appears → row edit → confirm-delete dialog → row gone).
-- Use `browser_network_requests` to verify the FE hit the expected `/api/v1/*` endpoint with the right method/payload — confirms the hook → service → api-client chain wired correctly.
+- **Login for browser verification reads `E2E_EMAIL` / `E2E_PASSWORD` from `sorento_crm_frontend/.env.local` (gitignored).** The per-spec `*_E2E_EMAIL` / `*_E2E_PASSWORD` names used by the older `e2e/` specs (`REQUEST_BATCH_E2E_*`, `STOCK_E2E_*`, ...) are legacy aliases of the same pair. Names and path only ever appear in commits / status lines - never the values.
+- **Always navigate to a feature by clicking through the sidebar / top nav from the home page - never `open` a deep URL directly.** Direct URL navigation hides nav-config bugs (missing entries, wrong `moduleKey`, broken permission gating, hidden behind a collapsed group). The first verification step for any new page is "open the sidebar group it belongs to and confirm the entry renders, then click it."
+- Command flow: `open http://localhost:3000`, `snapshot -i` to find the relevant sidebar group button, `click @ref` to expand, `click @ref` the leaf entry, `snapshot` the destination, then `click` / `fill` / `select` and re-snapshot to assert state.
+- Always check `console` (and `errors`) after the interaction. Treat unexpected error / warning output as a regression.
+- Use `screenshot` for visual confirmation of CRUD flows (list → modal create → row appears → row edit → confirm-delete dialog → row gone).
+- Use `network requests --filter /api/v1/` to verify the FE hit the expected endpoint with the right method/payload - confirms the hook → service → api-client chain wired correctly.
 - Test the golden path AND edge cases: empty states (every section per CRUD UX standard), validation errors, delete confirmation copy, RBAC denial.
-- Close with `browser_close` when done.
+- `close` when done. Never `close --all` - it closes every session, including other agents' browsers on the same machine.
 
-If unable to reach a browser (server down, sandboxed, etc.), state that explicitly. Never claim a UI change works without browser verification.
+**The daemon's browser is SHARED across every agent on this machine, and it is one tab list.**
+Another agent's `open` navigates the page out from under you, and nothing warns you: your next
+`snapshot` / `console` / `network requests` silently describes *their* app. This is the worst
+failure mode available here, because it looks like a bug in your feature rather than a mix-up -
+you read a missing sidebar entry or a stack of console errors off a screen that was never yours.
+Proven the hard way: an `open https://example.com` came back fine, and minutes later `get url`
+reported `http://localhost:3090/signin`, another lane's dev server, in the only tab.
+
+- `--session-name` does NOT isolate you. It is cookie/storage persistence, not a separate browser.
+- **`get url` before you trust any read.** Confirm you are on the page you think you are on, at the
+  start of a verification run and again after any gap between commands.
+- `tab new` gives you your own tab, which helps, but tab focus is still global - re-check with
+  `get url` rather than assuming the tab you made is the tab you are on.
+- Verifying at a non-default port (`PORT=3090 npm run dev`) makes a stray page obvious on sight.
+
+If unable to reach a browser (server down, sandboxed, daemon unresponsive), state that explicitly. Never claim a UI change works without browser verification.
 
 ### 2. Persisted Playwright spec (when the flow deserves regression coverage)
 
+- **Do NOT add a new spec.** A standing order is that no project carries a playwright trace, and a new spec is a new trace. The ~40 pre-existing specs, `playwright.config.ts` and the dependency are untouched and still run; what replaces them repo-wide is an open decision. A flow that would have earned a spec is covered instead by a reproducible **agent-browser evidence run** (the exact steps, the network calls and the outcome written into the plan and the commit, so it can be re-walked), and the missing regression guard is logged in `documentation/backlogs/backlog.md`. The trade is spelled out in `documentation/plans/dealer-kit/PLAN-flyer-read-hardening.md` ("The e2e spec, and why it is not here").
 - Specs live in `sorento_crm_frontend/e2e/`, config in `sorento_crm_frontend/playwright.config.ts` (chromium only, `baseURL` from `PORTAL_E2E_BASE_URL` ?? `http://localhost:3000`, viewport 1400x1600, single worker, no retries).
 - Run all: `npm run test:e2e`. Run one: `npx playwright test e2e/foo.spec.ts`. Headed debug: `npx playwright test --headed --project=chromium`.
 - Fixtures in `e2e/fixtures/` are real committed sample files (per memory rule: AI/file features test against real fixtures, not stubbed mocks). Add new fixtures alongside, do not gitignore them.
@@ -277,15 +324,15 @@ If unable to reach a browser (server down, sandboxed, etc.), state that explicit
 
 ### When to use which
 
-- New CRUD page / modal / detail page → MCP interactive verification minimum; promote to a spec only when it exercises a non-trivial cross-feature flow worth pinning.
-- AI / file-extraction / portal flows → spec required, real fixture required.
-- Pure visual / Tailwind tweak → MCP screenshot is sufficient.
+- New CRUD page / modal / detail page → agent-browser interactive verification minimum.
+- AI / file-extraction / portal flows → a recorded agent-browser evidence run, against a real fixture, is what a spec would have been. No new spec (see above).
+- Pure visual / Tailwind tweak → an agent-browser `screenshot` is sufficient.
 
 ## Frontend dev loop (HMR by default; build only at handoff)
 
 **The rule: `npm run dev` (HMR) for internal/team development; `npm run build && npm start` (prod) whenever handing off to the user.** These are the only two modes and the line between them is hard.
 
-- **Internal dev / iteration → `npm run dev`.** One persistent Claude-managed server on :3000; FE edits hot-reload almost instantly, **no rebuild**. Use this for ALL coding + Claude-side Playwright MCP verification while a task is in progress. Running `npm run build` on every change is the slow path and is NOT how to iterate — a full prototype build cycle costs minutes and is the main thing that makes FE work drag.
+- **Internal dev / iteration → `npm run dev`.** One persistent Claude-managed server on :3000; FE edits hot-reload almost instantly, **no rebuild**. Use this for ALL coding + Claude-side agent-browser verification while a task is in progress. Running `npm run build` on every change is the slow path and is NOT how to iterate — a full prototype build cycle costs minutes and is the main thing that makes FE work drag.
 - **Handoff to the user → `npm run build && npm start`, ALWAYS.** Any time you stop and ask the user to test / review / sign off on :3000, the running server MUST be a prod build — **never hand off a `npm run dev` server.** Kill dev, `npm run build && npm start`, then tell them :3000 is ready. This matches the user's prod-build test env AND surfaces build-only errors (RSC / server-component mistakes, type errors) that `next build` catches but `dev` hides. Also do a build before opening a PR.
 - **Auth on dev:** the dev server must share the backend `JWT_SECRET` via `.env.local` (`NEXTAUTH_SECRET`) or NextAuth login flaps on :3000. Fix the env — do NOT prod-build every iteration to dodge it. If dev auth genuinely can't be made to work in a given environment, fall back to a prod build for login-gated Playwright verification (and say so).
 - If HMR wedges (rare) or a change won't appear: `rm -rf sorento_crm_frontend/.next`, restart `npm run dev`, hard-refresh the browser.
@@ -304,7 +351,7 @@ If unable to reach a browser (server down, sandboxed, etc.), state that explicit
 - **Hand-rolled `<table className="table-fixed">` overlaps columns** when content exceeds declared width. Always use shared `DataGrid` with explicit `size`, `tableLayout: { width: 'fixed', columnsResizable: true }`, and `truncate` + `title` for long text (see ARCHITECTURE-RULES).
 - **Vitest + jsdom does not implement `scrollIntoView`.** Guard with optional chain — `ref.current?.scrollIntoView?.({...})` — so component tests don't TypeError.
 - **`DataGridTable` DOES mount rows under jsdom.** The long-standing "it doesn't, so rows are untestable" note was wrong: `DataGrid` calls `useListingColumnPreferences`, which fetches the user's hidden/resized columns and renders skeletons until it answers. Under jsdom nothing answers. Mock it - `vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({ useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }) }))` - and rows, badges, per-row buttons and the pagination footer all assert normally. Proven by moving `BrochureImagePicker` onto the shared grid with all 35 of its tests intact.
-- **Playwright MCP can disconnect mid-session.** No interactive browser available in that case, and the persisted-spec path requires `USER_GUIDE_E2E_EMAIL` / `PASSWORD` env vars (not in `.env*`). Component-level vitest is the autonomous fallback to verify DOM structure / classes; do not claim full UI verification from it.
+- **When the interactive browser is unreachable, vitest is the fallback - but it is not UI verification.** The persisted-spec path needs the browser-verification login pair `E2E_EMAIL` / `E2E_PASSWORD` from `sorento_crm_frontend/.env.local` (per-spec `*_E2E_EMAIL` / `*_E2E_PASSWORD` names are legacy aliases), so it is often not available either. Component-level vitest verifies DOM structure / classes autonomously; do not claim full UI verification from it. Say explicitly that the browser could not be reached.
 - **Don't silently duplicate chat / list panels across domains.** Complaint, stock_inquiry, purchase_request all share the Respond.io chat panel — render lives in shared `components/common/RespondChatList.tsx` so date pills, ticks, and selection rendering can't drift across the three.
 - **AI assistant tool dropdown is sourced from the live MCP server, not the DB catalog.** `/api/v1/system/ai-assistant/tools` calls `MCPRuntimeClient.list_tools()` against `settings.ai_assistant_mcp_url` (default `http://localhost:8765/mcp`). Adding a tool to `sorento_crm_mcp.catalog.CATALOG` is not enough — you must restart the MCP process so FastMCP re-registers tools at startup. The persisted `mcp_tools` table is for AccessAgent ownership (`sync_catalog`), separate from the assistant settings dropdown.
 - **Tools that don't proxy CRM HTTP endpoints need `external=True` on `ToolSpec`.** `_compile_tool` builds an HTTP-backed impl from `spec.method` + `spec.path` and would 404 for an external service like Outline. Set `external=True` on the spec, skip it in the compile loop, and register the real impl with `mcp.add_tool(...)` from a custom handler (see `register_user_guide_tools`). It still ends up in `mcp_tools` via `sync_catalog` so admins can assign it.
@@ -323,6 +370,7 @@ If unable to reach a browser (server down, sandboxed, etc.), state that explicit
 - **Post-commit side effects must be best-effort.** A side effect that runs AFTER the main row commits (e.g. `_write_assign_event_log` after `create_tracking` commit) must catch + warn, never raise: the caller gets a 500 for an operation that actually succeeded, and the retry takes the idempotent path which never backfills the missed side effect. Same family as the idempotent-marker pattern: service smuggles `_already_active` / `_already_resolved` / `_overwrote_resolved` as instance attrs; routes read them with `getattr(tracking, "_x", False)` and expose clean response fields — markers die on re-query, so extract them BEFORE calling `get_tracking()` again.
 - **Tests run on Postgres ONLY, NEVER sqlite (hard rule, see PRINCIPLES.md).** Do not build a `sqlite:///:memory:` engine, register `@compiles(..., "sqlite")` shims, or mutate shared `Base.metadata` column types (`col.type = JSON()`). Two concrete failure modes this caused: (1) sqlite's NUMERIC affinity coerces a mostly-zero UUID (e.g. the Sorento company id `00000000-...-0001`) to the integer `1`, so a later read blows up in `uuid.UUID(1)` -> `'int' object has no attribute 'replace'`; (2) a sqlite fixture rewriting `col.type` on the process-global metadata leaks into other tests' `create_all` schema (dropped FKs, wrong column types), and the breakage surfaces only in a full-suite run, in a file that touches no sqlite. Use `tests/_pg_fixture.py`: `blank_session()` for an isolated blank schema (the `companies` table is auto-seeded with Sorento via an `after_create` hook in `conftest.py`, so auto-stamped `company_id` FKs resolve), or `SessionLocal` inside a rolled-back transaction. Seed REAL FK targets (category, uom, import_jobs parent, ...) - Postgres enforces the constraints sqlite silently ignored, so a loose invented UUID that "worked" on sqlite now aborts the transaction. Mock-chain tests (`qm.filter.return_value = qm`) still break silently when a query gains `.order_by()` - the auto-created child mock's `.first()` returns a truthy MagicMock instead of your sentinel.
 - **CI's database has NO data. Tests that borrow existing rows pass locally and fail in CI.** The local `DATABASE_URL` is a copy of production, so `SELECT id FROM sla_policies LIMIT 1`, "the live `complaint`/`main` stage config", and "whatever roles hold `.approve`" all silently resolve to something real. CI runs a freshly migrated Postgres where every one of those is `None`/absent, and the dependent INSERT then dies on a NOT NULL FK (`null value in column "policy_id" violates not-null constraint`) - one borrowed lookup produced 16 failures. **Every test seeds its own chain**: policy -> config -> entity -> tracker, each with a marker prefix, never `LIMIT 1` off an existing table and never an assertion about a production row. Where the thing under test IS seed/config wiring, import the migration and run its `upgrade()` inside a rolled-back transaction (seeding the pre-migration row when absent) rather than asserting the live row - that tests the code instead of the environment. If a suite genuinely needs shared reference data, write a seeder fixture; do not assume it is there. **The only honest check is an empty database**: build the schema on a scratch DB (`createdb`, `Base.metadata.create_all`, needs `CREATE EXTENSION vector` as a superuser), confirm the tables you depend on are empty, and run the suite against it before pushing. Marker-scoped cleanup must delete children first (trackers -> entity -> config -> policy).
+- **A migration-seeded reference table needs `__company_shared__ = True`, or its own seeds are invisible.** `build_company_predicate` (`app/services/company_scope.py`) compiles an OWNED `CompanyScopedMixin` table to `company_id IN (scope)`, which excludes the NULL-company rows a migration seeds; only a `__company_shared__` table gets the `OR company_id IS NULL` arm. The symptom is split by principal and reads as an auth bug: an API-key caller (unscoped) sees all the seeds, a logged-in user sees none, so the same endpoint returns five rows to n8n and an empty list to the FE. Hit by `promotion_types` (migration 361), whose five seeded rows vanished from every ORM query under a real user scope.
 - **NEVER use em-dashes (or en-dashes) in any writing** - code comments, commit messages, PR bodies, docs, chat. Use a spaced hyphen, comma, colon, or parentheses instead.
 - **Suffixed NextAuth session cookie breaks `getToken` → refresh-logout.** `auth-options.ts` renames the session cookie with `NEXTAUTH_COOKIE_SUFFIX` (e.g. `next-auth.session-token.sorento`) so :3000/:3001 instances don't clobber each other (browsers scope cookies by host, ignoring port). But `/api/auth/token` and `lib/api-proxy.ts` called `getToken()` with the DEFAULT name → found nothing → 401 on every FastAPI call after a hard refresh, while `/api/auth/session` stayed valid (so it looked like "logged out" but the NextAuth session was fine). Fix: single source of truth `lib/auth-cookie.ts` `sessionTokenCookieName()`, passed as `cookieName` to every `getToken` caller AND used in auth-options. Never hardcode `next-auth.session-token`.
 - **Deep-link-after-login is the `(protected)` layout's job.** It redirects unauthenticated users to `/signin?callbackUrl=<full relative URL>` — capture `pathname + search + hash`, NOT just `pathname` (else query strings are dropped). The signin page honours same-origin (`/`, not `//`) callbacks. Every internal route renders through this one layout, so fixing it here is the system-wide solution. Portal contact links live under `(auth)` (`/view`, `/portal` + OTP confirm-identity) — a separate NextAuth-independent flow that never hits this layout.
@@ -344,7 +392,10 @@ If unable to reach a browser (server down, sandboxed, etc.), state that explicit
 - **The prompt dry-run (`POST .../prompts/{name}/test`) is END-TO-END, not per-node.** It runs the WHOLE assistant turn (`reformulator → RAG → agent_system → synthesizer`) with ONLY the tested key overridden, and shows the **final synthesizer answer** — you do NOT see an individual node's raw output (e.g. the reformulator's own text). Per-node in/out inspection = M2 trace (`PLAN-ai-assistant-node-trace.md`). Also: dry-run runs the **saved** selected version, not the unsaved editor buffer; it deletes the throwaway conversation after; and it **strips write-capable MCP tools** (`_is_write_tool`: `*_submit`/`*_create`/`*_link`) so a test can't persist a real complaint/PR/ticket. Don't instruct `reformulator` to emit JSON — downstream RAG expects a natural-language standalone query; JSON routing is the `router`/M2.5 job.
 - **Prompt-registry save-validation returns a TOP-LEVEL body, not the `AppException` envelope.** `POST .../prompts/{name}/versions` on an unknown `{{token}}` returns `422 {error, unknown_tokens, missing_vars}` via raw `JSONResponse` (bypasses `response_model`) — unknown token = hard block, missing declared var = 201 + soft warn. FE reads those fields directly (can't use `extractApiError`, which is string-only). Declared vars are a fixed property of the KEY in `PROMPT_KEYS`, not free-form.
 - **Form handling-lock "escalated" = `escalated_at` stamped, NOT `current_tier > 1`.** Some form-SLA configs START above tier 1: `project_sales` begins at tier 2 (no tier-1 team); PR/SF approval routes to the configured default approver at THEIR tier (2/3) via `_start_for_config`. So a fresh, never-escalated tracker sits at tier 2/3 with `escalated_at IS NULL`. Keying the lock on `current_tier > 1` falsely showed the "Escalated to Tier N — claim it" banner + disabled CTAs on an approver-assigned form. `escalated_at` is set ONLY by `_escalate_tracker` (alongside `escalation_reason` — always in lockstep), never on initial assignment. Gate both sides on it: FE `resolveHandlingLockState` (`!activeTracker.escalated_at`), BE `handling_lock_service._is_escalated()` (used by `assert_can_act_on_form` + `_assert_claimable`). Type-agnostic across all `FORM_SLA_TYPES`. Assignment to a high tier ≠ escalated; only a real SLA breach that escalates locks the form.
-- **The in-form lock banner and SLA-escalation banner are TWO separate queries** — a manual "Escalate" must invalidate BOTH or the lock banner lags a reload. Lock banner ← `useHandlingLock` → `form-sla-tracking` (key `form-handling-tracker`); SLA banner ← `SlaActiveTrackerControls` → `conversation-sla-tracking/by-source` (key `form-sla-trackers`). The gear-menu escalate handlers invalidated only `form-sla-trackers`, so the SLA banner updated live but the lock banner stayed stale. Fix: `useHandlingLock()` exposes `refresh()`; call it after `escalateFormTracking` in every form detail page (stock-inquiry / complaint / PR-SF). Verify via `browser_network_requests` that the `form-sla-tracking` GET refetches right after the escalate POST.
+- **The in-form lock banner and SLA-escalation banner are TWO separate queries** — a manual "Escalate" must invalidate BOTH or the lock banner lags a reload. Lock banner ← `useHandlingLock` → `form-sla-tracking` (key `form-handling-tracker`); SLA banner ← `SlaActiveTrackerControls` → `conversation-sla-tracking/by-source` (key `form-sla-trackers`). The gear-menu escalate handlers invalidated only `form-sla-trackers`, so the SLA banner updated live but the lock banner stayed stale. Fix: `useHandlingLock()` exposes `refresh()`; call it after `escalateFormTracking` in every form detail page (stock-inquiry / complaint / PR-SF). Verify via `agent-browser network requests --filter form-sla-tracking` that the GET refetches right after the escalate POST.
+- **"One client is jammed, another is fine" does NOT rule out a blocked event loop - prod runs 4 gunicorn workers.** `sorento_crm/docker-compose.yml` starts `gunicorn --workers 4 --timeout 120 --keep-alive 5`, so an `async def` route doing heavy synchronous work kills ONE worker for its duration and leaves three serving. The desktop that started the slow request is additionally parked on it and can hold keep-alive connections pinned to the dead worker; a phone on fresh connections lands on a live one and looks healthy. The discriminating measurement is a single-worker local run: poll a cheap endpoint from a second shell while the slow request is in flight. The flyer read measured `GET /health` at **57.5s** that way (`documentation/plans/dealer-kit/PLAN-flyer-read-hardening.md` has the full method). Fix is `run_in_threadpool` from `fastapi.concurrency`, already the idiom in `app/api/v1/resources/attachments.py`, or plain `def` when the handler has no await worth keeping (FastAPI then threadpools the whole handler; portal `ai_extract` and `preview_spec_search`) - keep `async def` only where an `await file.read()` enforces a size ceiling as bytes arrive, as the flyer upload does. Check first that the hot library releases the GIL, or the threadpool buys nothing (PyMuPDF does; measure loop tick lag in a thread to confirm for a new one). About 40 more handlers of this shape are listed in `documentation/plans/ai-extract/PLAN-ai-extract-off-the-loop.md` (BL-009).
+- **On macOS an RQ work-horse SEGFAULTS (signal 11) the moment it opens a NEW psycopg2 connection, and it looks like your job crashed.** The child's `psycopg2.connect` goes into libpq's `PQconnectPoll` -> `pg_GSS_have_cred_cache` -> `gss_acquire_cred` -> `libkrb5`'s `api_macos_ptcursor_next` -> `libxpc`, and XPC is not fork-safe: the forked child dies before a single line of the task runs. RQ reports only `Work-horse terminated unexpectedly; waitpid returned 11`, the job never marks itself failed, and any row the task was supposed to flip stays `processing` forever. `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` does NOT cover it - that is the Obj-C abort (signal 6), this is a segv on a different path. It fires whenever the PARENT already touched XPC/GSS, which `ENABLE_SCHEDULER=true` guarantees because APScheduler opens its own DB connections before the first fork. Fix: run the worker with `PGGSSENCMODE=disable` (libpq then skips the credential-cache probe entirely). Measured on the flyer read: scheduler on, 3 of 3 jobs segfaulted; scheduler off, or `PGGSSENCMODE=disable` with the scheduler on, the real 36-page flyer completes in 25 s. **Linux is unaffected** - the faulting frames are literally macOS-only (`api_macos_ptcursor_next`, `libxpc`), so production containers do not take this path. Suspect it FIRST for "the job enqueued and nothing happened" on a dev Mac, and note it kills every queue, not just the one you are working on: the identical stack is in `~/Library/Logs/DiagnosticReports/Python-*.ips` from other lanes' worker deaths.
+- **A docstring asserting a performance number is load-bearing, and goes stale silently.** The flyer routes justified doing extraction in-request with "the real 36 page flyer takes about a second" and named their own threshold ("stops holding at roughly ten seconds"). Measured: 17-18s quiet. Nothing failed, so nothing caught it, and every later decision inherited the wrong premise. When a comment justifies a design with a number, record what it was measured against and re-measure before reusing it.
 
 ## Agent skills
 
@@ -355,6 +406,18 @@ executes the mandatory order in `PRINCIPLES.md` and calls the `mattpocock-skills
 slot. Two overrides: UAC + PLAN **files** under `documentation/plans/` are the contract (tickets
 are only the queue), and the frontend mock is built before any backend code (so `/implement` is
 scoped to Phase 2). See the skill map at the bottom of that file.
+
+### Session handoff (instead of autocompact)
+
+Long sessions take a deliberate cut rather than letting autocompact pick one: **`/handoff`**
+writes a resume document to `.claude/handoffs/<UTC ts>-<slug>.md` (gitignored, worktree-local),
+the user runs `/clear`, then **`/resume-handoff`** restores from it - re-reading the artifacts
+the document points at and re-checking its "Assumed, not verified" section before acting. An
+agent cannot clear its own conversation, so the middle step is the user's; an unattended agent
+instead reports `blocked:` with the document path and its supervisor resumes from it. **Never run
+`/compact`** - it is the lossy summary this replaces, not a lighter alternative to it. Upstream
+`/mattpocock-skills:handoff` stays available for work that leaves this checkout (it writes to
+the OS temp dir and has no resume half). See `documentation/agents/session-handoff.md`.
 
 ### Issue tracker
 

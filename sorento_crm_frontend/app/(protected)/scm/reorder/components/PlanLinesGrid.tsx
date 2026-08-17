@@ -61,6 +61,7 @@ import {
 } from '../lib/productHealth';
 import { PlanChecklistPopover } from './PlanChecklistPopover';
 import { PlanDemandPopover } from './PlanDemandPopover';
+import { ProductPhotoPopover, type ProductPhotoStatus } from './ProductPhotoPopover';
 import {
   DaysCoverDrill,
   ExplainNumber,
@@ -134,9 +135,13 @@ export function PlanLinesGrid({
   onAmendLevel,
   poFor,
   trendFor,
+  trendSeriesMonths = 24,
   purchaseTrendFor,
   purchaseTrendWindowMonths = 3,
   onOpenPurchaseTrend,
+  hasPhotoFor,
+  photoStatus = 'idle',
+  onOpenPhoto,
   economicsFor,
   healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
   onDecideLifecycle,
@@ -169,6 +174,9 @@ export function PlanLinesGrid({
   poFor?: (line: PlanLine) => PoReceipt[];
   /** Is this product's demand sustaining or dying off, on this line's side. */
   trendFor?: (line: PlanLine) => TrajectoryEntry | undefined;
+  /** How far back that trend's series reaches, for the "no orders dated in the last N
+   *  months" line. Off the payload, never a literal on the screen. */
+  trendSeriesMonths?: number;
   /** The mirror of `trendFor`, on the buy side: what we have actually purchased. */
   purchaseTrendFor?: (line: PlanLine) => ProductPurchaseTrend | undefined;
   /** The window the purchase-trend sentence compares (months). */
@@ -176,6 +184,13 @@ export function PlanLinesGrid({
   /** Fired the first time a PO cell's popover opens - lets the caller lazily start the
    *  purchase-trend fetch instead of it running for every product on plan mount. */
   onOpenPurchaseTrend?: () => void;
+  /** Whether the run's photo map says this line's product has a photo at all. */
+  hasPhotoFor?: (line: PlanLine) => boolean;
+  /** Where the run's photo map is. Until it is `ready`, "no photo" is not yet a fact. */
+  photoStatus?: ProductPhotoStatus;
+  /** Fired the first time a photo popover opens - starts the run-wide photo fetch, the same
+   *  laziness `onOpenPurchaseTrend` gives the PO cell. */
+  onOpenPhoto?: () => void;
   /** What the product sells for and how fast it moves. Undefined = no opinion. */
   economicsFor?: (line: PlanLine) => ProductEconomics | undefined;
   /** The policy's lines for "thin margin" and "dead turnover". */
@@ -380,6 +395,17 @@ export function PlanLinesGrid({
               <StopClick>
                 <PlanDemandPopover runId={runId ?? null} recId={row.original.id} />
                 <PlanChecklistPopover rec={row.original.rec} />
+                {/* What the thing IS. A buyer who never handles the goods cannot tell two
+                    codes apart, and the photo is the one Dealer Kit already chose. */}
+                <ProductPhotoPopover
+                  runId={runId ?? null}
+                  productId={row.original.product_id}
+                  sku={row.original.sku}
+                  productName={row.original.product_name}
+                  hasPhoto={hasPhotoFor?.(row.original) ?? false}
+                  status={photoStatus}
+                  onOpen={onOpenPhoto}
+                />
               </StopClick>
             </div>
             <div className="truncate text-xs text-muted-foreground" title={row.original.product_name}>
@@ -458,6 +484,11 @@ export function PlanLinesGrid({
               <PlanTrendPopover
                 trend={trendFor?.(row.original)}
                 sellingPrice={economicsFor?.(row.original)?.avg_sell_price ?? null}
+                runId={runId ?? null}
+                productId={row.original.product_id}
+                segment={row.original.rec.segment ?? 'project'}
+                outstandingSales={row.original.rec.outstanding_sales ?? null}
+                seriesMonths={trendSeriesMonths}
               />
             </StopClick>
             {/* The velocity behind the trend verdict - the fast/slow, high/low evidence a
@@ -816,8 +847,8 @@ export function PlanLinesGrid({
     ],
     [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor,
      levelFor, onAmendLevel, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
-     onOpenPurchaseTrend, economicsFor, healthThresholds, onDecideLifecycle, staleAfterDays,
-     renderSuggestedQtyCell],
+     onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
+     onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell],
   );
 
   // The story order (see the header comment): each chapter leads with its result and is
@@ -867,7 +898,10 @@ export function PlanLinesGrid({
     [],
   );
 
-  const Toolbar = () => (
+  // A plain element, NOT a component defined in the render body: that would be a new
+  // component type on every render, so React would unmount the toolbar and the search
+  // input would lose focus after each keystroke.
+  const toolbar = (
     <CardHeader className="block">
       <DataGridListToolbar
         table={table}
@@ -990,7 +1024,7 @@ export function PlanLinesGrid({
       onRowClick={(row) => setDetailRec(row.rec)}
     >
       <Card>
-        <Toolbar />
+        {toolbar}
         <CardTable>
           <ScrollArea>
             <DataGridTable />

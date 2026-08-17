@@ -23,7 +23,7 @@
  * always shows / hides the same signal across reloads).
  * ============================================================================
  */
-import { EM_DASH, fmtInt, fmtMoney } from '../../lib/format';
+import { fmtInt, fmtMoney, fmtTrimmedDecimal } from '../../lib/format';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
 /** Phase-1 flag - mirrors `USE_SLICE_B_MOCKS`. Phase 2: wired to the real
@@ -37,8 +37,7 @@ export const REFUSAL = "I can't compute that from this recommendation's data.";
 
 /** Compact decimal - trims trailing zeros so 11.0 reads "11" (matches the dialog's `dec`). */
 function dec(v: number | null | undefined): string {
-  if (v === null || v === undefined) return EM_DASH;
-  return Number(v.toFixed(2)).toLocaleString('en-MY', { maximumFractionDigits: 2 });
+  return fmtTrimmedDecimal(v, 2);
 }
 
 /** Stable non-negative hash of a string - drives the deterministic advisory gate. */

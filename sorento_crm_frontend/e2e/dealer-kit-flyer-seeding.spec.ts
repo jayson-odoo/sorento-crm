@@ -171,7 +171,16 @@ async function openFlyers(page: Page) {
   await page.waitForURL(/flyer-readings/, { timeout: 30_000 });
 }
 
-/** Upload the fixture and land on its review screen. Returns the reading id. */
+/**
+ * Upload the fixture, let the queued job finish, and open the review screen.
+ * Returns the reading id.
+ *
+ * The read is a background job: the POST answers 202 with a row that says
+ * `processing` and carries no counts yet, and the dialog closes WITHOUT
+ * navigating. Everything the old in-request contract read off the POST body is
+ * now reached the way the app reaches it - the list polls until the row says
+ * Done, and the row is what opens the review screen.
+ */
 async function readTheFlyer(page: Page): Promise<string> {
   await tap(page.getByRole('button', { name: /read a flyer/i }).first());
   await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15_000 });
@@ -188,15 +197,31 @@ async function readTheFlyer(page: Page): Promise<string> {
   await tap(page.getByTestId('dk-fr-upload-submit'));
 
   const response = await uploaded;
-  // Extraction runs inside the request: 201 with the report, not 202 with a job.
-  expect(response.status(), await response.text()).toBe(201);
-  const body = (await response.json()) as { id: string; pageCount: number; codeCount: number };
+  // The read is queued: 202 with the row, not 201 with the report.
+  expect(response.status(), await response.text()).toBe(202);
+  const body = (await response.json()) as { id: string; status: string };
   createdReadings.push(body.id);
+  expect(body.status).toBe('processing');
 
-  // The fixture is a 3 page cut of the real A3 flyer.
-  expect(body.pageCount).toBe(3);
-  expect(body.codeCount).toBeGreaterThan(0);
+  // The dialog closes at once and goes nowhere - the whole point of the queue.
+  // BY NAME, and `toBeHidden` rather than a count: Radix can leave a closed
+  // dialog mounted, and any other dialog on the page would fail strict mode.
+  await expect(page.getByRole('dialog', { name: /read a flyer/i })).toBeHidden({
+    timeout: 15_000,
+  });
+  expect(page.url()).not.toContain(body.id);
 
+  // The row is in the Flyers list from the first second, newest first, and the
+  // list polls itself until the job writes Done onto it.
+  const pill = page.getByTestId('dk-fr-status-pill').first();
+  await expect(pill).toBeVisible({ timeout: 30_000 });
+  await expect(pill, 'the queued read should reach Done on its own').toHaveText(/done/i, {
+    timeout: 180_000,
+  });
+
+  // The row is what opens the review screen now, and the id proves the row
+  // opened is the reading this run created.
+  await tap(page.getByRole('row').filter({ has: page.getByTestId('dk-fr-status-pill') }).first());
   await page.waitForURL(new RegExp(`flyer-readings/${body.id}`), { timeout: 30_000 });
   await expect(page.getByTestId('dk-fr-filename')).toBeVisible({ timeout: 30_000 });
   return body.id;

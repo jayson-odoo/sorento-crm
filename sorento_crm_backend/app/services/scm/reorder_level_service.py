@@ -65,7 +65,7 @@ def monthly_movement(db: Session, product_ids: list[str],
     params: dict[str, Any] = {"pids": _texts(product_ids), "start": start_month,
                               "end": date(today.year, today.month, 1)}
     if warehouse_ids:
-        where_wh = " AND c.warehouse_id::text = ANY(:whs)"
+        where_wh = " AND c.warehouse_id = ANY(CAST(:whs AS uuid[]))"
         params["whs"] = _texts(warehouse_ids)
 
     rows = db.execute(text(f"""
@@ -73,7 +73,7 @@ def monthly_movement(db: Session, product_ids: list[str],
                date_trunc('month', c.day)::date AS month,
                COALESCE(sum(c.qty_out), 0) AS qty
           FROM scm.consumption_v c
-         WHERE c.product_id::text = ANY(:pids)
+         WHERE c.product_id = ANY(CAST(:pids AS uuid[]))
            AND c.day >= :start AND c.day < :end
            {where_wh}
          GROUP BY 1, 2
@@ -186,7 +186,7 @@ def get_levels(db: Session, product_ids: list[str],
     params: dict[str, Any] = {"pids": _texts(product_ids), **co_params}
     if warehouse_ids:
         # The product-wide row is always in scope: it is the fallback for every location.
-        where_wh = " AND (rl.warehouse_id IS NULL OR rl.warehouse_id::text = ANY(:whs))"
+        where_wh = " AND (rl.warehouse_id IS NULL OR rl.warehouse_id = ANY(CAST(:whs AS uuid[])))"
         params["whs"] = _texts(warehouse_ids)
     rows = db.execute(text(f"""
         SELECT rl.id::text AS id, rl.product_id::text AS product_id,
@@ -194,7 +194,7 @@ def get_levels(db: Session, product_ids: list[str],
                rl.suggested_level, rl.suggested_at, rl.suggestion_basis,
                rl.amended_level, rl.amended_at, rl.amended_by, rl.notes
           FROM scm.reorder_level rl
-         WHERE rl.product_id::text = ANY(:pids)
+         WHERE rl.product_id = ANY(CAST(:pids AS uuid[]))
            {where_wh}
            {("AND " + co) if co else ""}
     """), params).mappings().all()
@@ -301,7 +301,7 @@ def supplier_constraints(db: Session, product_ids: list[str]) -> dict[str, dict]
                COALESCE(ps.moq, ps.min_order_quantity) AS moq,
                ps.order_multiple
           FROM product_suppliers ps
-         WHERE ps.product_id::text = ANY(:pids)
+         WHERE ps.product_id = ANY(CAST(:pids AS uuid[]))
          ORDER BY ps.product_id, ps.is_primary DESC NULLS LAST, ps.unit_cost ASC NULLS LAST
     """), {"pids": _texts(product_ids)}).mappings().all()
     return {r["product_id"]: {"moq": _f(r["moq"]), "order_multiple": _f(r["order_multiple"])}
@@ -351,7 +351,7 @@ def _existing(db: Session, product_id: str, warehouse_id: Optional[str],
                warehouse_id::text AS warehouse_id, level, source, suggested_level,
                suggested_at, suggestion_basis, notes, company_id::text AS company_id
           FROM scm.reorder_level
-         WHERE product_id::text = :pid
+         WHERE product_id = CAST(:pid AS uuid)
            AND COALESCE(warehouse_id::text, :zero) = COALESCE(CAST(:wid AS text), :zero)
            AND COALESCE(company_id::text, :zero) = COALESCE(CAST(:co AS text), :zero)
     """), {"pid": product_id, "wid": warehouse_id, "co": company_id,

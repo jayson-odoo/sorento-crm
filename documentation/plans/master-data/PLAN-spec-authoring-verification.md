@@ -8,9 +8,19 @@ not workbench, per-row and bulk Verify/Unverify, manual unverify, fix-the-value 
 handling, shared `DataGrid` for the spec table, server-side duplicate guards, cross-page
 select-all off). Amended 2026-08-14: PR 4 lifts the flyer text pass into a pure
 `propose_from_text` instead of deleting it, ahead of a bulk flyer-ingestion slice after PRs 1-4.
-IN PROGRESS: PR 1 (Foundations) implemented on `fm/spec-pr1-foundations`, 2026-08-14 (AC-F.1 to
-AC-F.14 plus the PR-1 half of AC-D.17; backend only, Phase 1 exception per the PR-map note).
-PRs 2-4 pending.
+IN PROGRESS: PR 1 (Foundations) merged as #144, 2026-08-14 (AC-F.1 to AC-F.14 plus the PR-1
+half of AC-D.17; backend only, Phase 1 exception per the PR-map note). PR 2 (Editable table +
+pills) implemented on `fm/spec-pr2-editable-table`, 2026-08-15: AC-A.1 to AC-A.15 and AC-C.1 to
+AC-C.4, Phase 1 then Phase 2, with **AC-A.16 (the Playwright e2e spec) outstanding** - browser
+verification moved to `agent-browser` by captain ruling mid-slice and the ruling on committed
+`e2e/` specs is pending, so no new Playwright spec was written. PR 3 in flight in a parallel lane. PR 4 IN PROGRESS on
+`fm/spec-pr4-extraction-prompt` (2026-08-16), contract below; its deploy runbook exists at
+`documentation/plans/master-data/RUNBOOK-flyer-promote.md` (steps 1-6 with the exact pre-flight,
+checksum and post-run SQL, re-measured 2026-08-16).
+
+Also landed out of band: #150, a merge revision joining the `323`/`356` alembic fork that
+PRs #144 and #145 created between them. Not a defect in either; see C8's neighbour note and
+`alembic/versions/360_merge_container_status_and_spec.py`.
 
 ## Goal
 
@@ -422,12 +432,14 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
 
 - **Phase 1 (mock, no backend, no tests):** the `spec-table/` component trio built props-driven
   against fixtures covering every state - derived, flyer, category and authored values, a
-  tombstoned key, an open conflict, an enum key, a numeric key with a unit, a boolean, a free-text
+  tombstoned key (which per AC-A.5 as amended renders **no row**, so the fixture pins the absence),
+  an open conflict, an enum key, a numeric key with a unit, a boolean, a free-text
   key, and a stored key the registry no longer defines. Verify in a real browser by **sidebar
   clicks from `/`**, never a deep link, at 375px and 1280px. Document the contract at the top of
   the service file.
 - **Phase 2 (test-first):** `applicable_keys_for_code`, the `similar` endpoint and its server-side
-  guard, the split-by-field `PATCH` permission for add-a-value, the two relaxations and the grant
+  guard, the split-by-field `PATCH` permission and the appending `POST .../values` route that
+  add-a-value ended up on (D18), the two relaxations and the grant
   migration; then the frontend off mocks onto react-query hooks. Delete `AddSpecByHand.tsx` rather
   than leaving it beside the new component.
 - **The spec table is the shared `DataGrid`** (D10, captain-settled, overruling this plan's
@@ -483,6 +495,7 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
   5. Schedule and verify the full-catalogue re-derive.
   6. A later deploy: drop `ProductFlyerText`, after its own `pg_dump`.
   Steps 1-4 are revertible. Step 6 is not.
+  Written up, with the exact SQL, in `documentation/plans/master-data/RUNBOOK-flyer-promote.md`.
 
 **Binding amendment (captain, 2026-08-14): the flyer text pass is lifted, not deleted.** Flyer
 ingestion becomes a **bulk proposals-review-accept feature**, its own slice after PRs 1-4 (own
@@ -506,6 +519,226 @@ changes PR 4's retirement list in exactly one way, and it is binding on whoever 
   PR 1.
 - Everything else in this PR stands unchanged: promote-then-discard (D2), the migration runbook
   above, the paste-once prompt box, and the `ProductFlyerText` drop.
+
+#### PR 4 evidence run (AC-B.17 stand-in, recorded 2026-08-17)
+
+Standing order: no new Playwright spec; this reproducible agent-browser run is the regression
+record (guard logged as BL-012). Stack: FE dev :3021, BE :8020, local prod-copy DB. Product:
+`BRWTF6429564BW-A-ENG` (7 derived spec rows). Steps, each with the network call observed:
+
+1. Sign in, sidebar Product Management > Products > All Products, search the code, open the row,
+   open the Specifications tab. `GET /api/v1/master-data/product-specifications/by-product/{id}` 200.
+2. Paste a card-like text stating one new value (swivel spout), one differing value (chrome vs
+   stored black) and one restated value (exposed mounting). Press "Read specs from this".
+   `POST .../by-product/{id}/extract` 200 with `{engine: "semantic", model, proposals: 3,
+   unchanged: 5}`; badges New / New / "Changes Black to Chrome"; zero flyer-text calls in the
+   whole session.
+3. Untick two rows, press "Apply 1". `POST .../by-product/{id}/values/batch` 200
+   (`{rows_written: 2, spec_keys: ["spout_type"]}` - two company copies, AC-F.4), then the
+   `by-product` refetch; the row lands with the "Set by hand" pill and evidence
+   "read from text: SWIVEL"; status pill Derived -> Authored.
+4. "Needs a human (0)" stays empty (a new key cannot conflict), console and `errors` clean at
+   every step. Repeated the paste-extract cycle at 375x812: page never scrolls sideways, the
+   grid scrolls inside its own container; Discard closes with no network call (nothing persisted).
+5. Prompts screen: `spec_extractor` offers no dry-run and states the not-in-pipeline reason;
+   `agent_system` still offers the dry-run box.
+6. Cleanup: row action Reset (confirm dialog) restored both company copies to the original
+   7-key derived state, verified by DB read.
+
+Note for re-walkers: a `conflict`-kind proposal needs an authored or tombstoned stored value;
+the catalogue holds zero authored entries at baseline (measurement 3), so the run exercises
+`change` (ticked by default) and pins `conflict` behaviour in vitest/pytest instead.
+
+#### PR 4 implementation contract (main session, 2026-08-16; charted against main at `eb2cf0ce`)
+
+Verified before this was written: PR 1's source-keyed boost branch is present
+(`product_spec_search.py:822-824`, `source_boosts` keyed by source with `flyer` on its own knob),
+so runbook step 1 passes and the promote migration may ship. Main carries TWO alembic heads
+(`363_merge_flyer_promo_um`, `365_merge_scm_plan_feedback`) and
+`tests/test_alembic_revision_ids.py::test_migration_graph_has_a_single_head` is red on main; this
+PR joins them with an empty merge revision before the promote revision.
+
+**Document input (captain's intent, judged here).** The dealer-kit flyer read (PR #184) is a
+whole-A3-flyer card extractor (background job, R2 attachment, card geometry, per-code report). It
+is not a generic document-to-text path for one product's supplier PDF or photo, and
+`AIExtractService` renders PDFs to images for a vision model against a registered form schema,
+not the spec registry. Neither reuse is straightforward, so **this PR ships paste-text only** and
+reports the document input as a follow-up finding. No new extraction subsystem is built.
+
+**Two engines, one endpoint.** Proposals come from (1) the lifted rule pass
+`propose_from_text(text, code)` - deterministic, always run, the flyer-tuned knowledge - and (2)
+the LLM sibling `extract_specs_from_text` in `product_spec_understanding`, run when a model is
+reachable, adding keys the rule pass did not fire. When no model is reachable the response is
+`engine: "deterministic"` (AC-B.5), otherwise `engine: "semantic"` with `model` named. Both go
+through the same validation (`_vocabulary` / `_coerce` / `_validated_pairs`) and the same
+`_apply_scope` gate as derivation, so neither can propose invented vocabulary or an out-of-class
+key (AC-B.4). `understand_phrase` is not touched.
+
+**Backend routes** (in `app/api/v1/master_data/product_specifications.py`, style of the file:
+inline permission `Depends(require_permission_with_api_key(...))`, hand-built dict responses):
+
+- `POST /product-specifications/by-product/{product_id}/extract` - `master_data.products.edit`.
+  Body `{"text": str}`. 422 with a readable message when blank or over 8,000 characters (no
+  truncation). Writes nothing to `product_specifications` or `product_flyer_text` (AC-B.1/B.2; the
+  usage log row `understand_phrase` already writes for `spec_search` is acceptable and is not a
+  spec write). Response:
+  ```json
+  {"product_code": "SRT...", "engine": "semantic" | "deterministic", "model": "gpt-4o" | null,
+   "proposals": [{"spec_key": "finish", "label": "Finish", "data_type": "enum",
+                  "value": "matt black", "unit": null, "evidence": "Matt Black finish",
+                  "kind": "new" | "change" | "conflict",
+                  "stored_value": "chrome" | null, "stored_unit": null,
+                  "stored_source": "derived" | "human" | ... | null}],
+   "unchanged": 3}
+  ```
+  `kind` is computed server-side (AC-B.3): stored key absent -> `new`; stored equal after
+  coercion (`_canonical_entry`) -> omitted, counted in `unchanged`; stored provenance authored
+  (`AUTHORED_SOURCES`) or tombstoned (`absent: true`) -> `conflict`; stored non-authored and
+  different -> `change`, EXCEPT a key in `_DESCRIPTION_FIRST_KEYS` that is stored non-authored,
+  which is `conflict` (membership in that set alone: provenance does not record which text a
+  stored value was read from) (this is the lifted "the description beats the flyer for
+  sizes" rule, expressed as default-unticked rather than silently applied). One proposal per key;
+  `finish` (the multi-value key) may propose a joined value exactly as derivation stores it.
+  **Amended at the second review (2026-08-17), two points.** (a) A rule hit whose `origin` is
+  `code` is DROPPED before validation: `propose_from_text` fires the code passes against the
+  product's own code regardless of what was pasted, derivation already reads the code every run,
+  and presenting it as a reading of the pasted text is not what "read this text" means. (b) The
+  usage-log sentence above is now a positive requirement rather than a tolerated side effect:
+  `extract_specs_from_text` writes exactly ONE `AIAssistantUsageLog` row on a semantic call,
+  `feature="spec_extract"`, stamped with the caller, the same try/commit/rollback-on-failure
+  escape hatch `understand_phrase` uses for `spec_search`, never raising. On the deterministic
+  path it writes nothing at all.
+- `POST /product-specifications/by-product/{product_id}/values/batch` - `master_data.products.edit`.
+  Body `{"entries": [{"spec_key", "value", "unit"?, "evidence"}]}` (1..50 entries; empty is 422).
+  ONE `apply_spec_values(db, code, entries, actor=...)` call with `op="set"`,
+  `source="human"`, evidence `"read from text: <evidence>"` (AC-B.9); atomic - any bad entry
+  fails the whole batch through the choke point's own validation. Response `{product_code,
+  rows_written, spec_keys}` as the service returns it. Nothing else new; the FE refetches
+  `by-product` afterwards.
+  **Amended at review (2026-08-17).** The choke point knows nothing about the registry, so
+  "the choke point's own validation" is not enough on its own: every entry is first put
+  through the SAME coercion the single `PUT .../values/{spec_key}` runs, extracted into one
+  shared `_value_for_registry(row, value, reject)` that both routes call. It coerces by
+  `data_type`, refuses a value outside the merged allowed values, and takes the `unit` from
+  the registry row - a `unit` in the body is accepted and ignored, because the unit belongs to
+  the key. The refusal is 422 here and 400 on the PUT (`reject` is the caller's), except a
+  blank value, which is 400 either way because it is the choke point's own refusal. A list
+  value is accepted only for `MULTI_VALUE_KEYS` (`finish`), coerced element-wise and kept as a
+  list, so accepting a two-tone proposal stores exactly what a re-derivation of the same words
+  stores. Evidence collapses to `"read from text"` when the entry's own evidence is blank.
+  **Amended at the second review (2026-08-17).** Three more refusals, all 422 and all before
+  anything is written: a `spec_key` over 100 characters, an `evidence` over 500 (both Pydantic
+  bounds on `SpecBatchEntry` - a provenance entry is one sentence, not a place to park a pasted
+  document), and the same `spec_key` twice in ONE batch, named in the message. Two entries for
+  one key are two claims about one thing; the choke point would apply them in list order and keep
+  the last silently, so the user's other tick would vanish without a word.
+- `PUT .../flyer-text` and the four `/findability/*` routes are DELETED; the by-product response
+  drops `flyer_text` (AC-B.14). `product_flyer_import.py` (zero callers) and
+  `spec_findability.py` are deleted with `tests/test_spec_findability.py`. The findability
+  tables and `ProductFlyerText` model stay (runbook step 6 is a later deploy).
+
+**`propose_from_text(text, code, *, rules_by_key=None, scopes_by_key=None) -> list[dict]`** in
+`product_spec_derivation.py` (AC-B.18): pure, no session, writes nothing. Runs `apply_rules`
+over `{"flyer": text}` plus the code passes, keeps the source-major order and the `source:
+"flyer"` rule scope, applies the same value post-processing (units, `_MM_KEYS`, `MULTI_VALUE_KEYS`)
+and `_apply_scope`, and returns `[{"spec_key", "value", "unit", "evidence", "origin":
+"flyer"|"code", "description_first": bool}]` where `description_first` is membership in
+`_DESCRIPTION_FIRST_KEYS`. `derive()` and `derive_for_code()` lose their `flyer_text` parameter,
+`derive_all` its preload, and `_input_hash` its `flyer_text` part (so the fingerprint changes and
+AC-B.13's full re-derive is real); `DERIVATION_VERSION` bumps. The seven flyer tests in
+`tests/test_product_spec_derivation.py` (:861, :881, :951, :967, :994, :1007, :1019) are lifted
+onto `propose_from_text` where they test the pass and deleted where they test the flyer beating or
+losing to the description inside one derivation (that ordering no longer exists inside
+derivation; its survivor is the `description_first` flag). Shipped rules with `"source":
+"flyer"` in `product_spec_registry.py` stay - they feed the proposal path - and the rule editor's
+"Flyer only" scope stays.
+
+**Prompt key** `spec_extractor` in `PROMPT_KEYS`: `active=True`, `variables=[]`, hardcoded
+fallback (the extraction system prompt: read the pasted text onto the given vocabulary, JSON
+`{"specs": [{"key","value","evidence"}]}`, never invent keys or values, quote the words). No
+seed migration - `spec_understanding` was added the same way and `get_prompt` falls back to the
+hardcoded text when no row exists. Dry-run hiding (C10): the assistant dry-run must not run a
+non-assistant key through the chat pipeline. Add `dry_runnable: bool` to `PromptKeySpec` (True
+only for the assistant-pipeline keys), surface it from `list_keys()`, have `POST .../test`
+refuse with 400 when it is False, and have the FE `PromptDetail` pass
+`disabled={!meta.active || !meta.dry_runnable}` with the matching reason. `spec_understanding`,
+`scm_market_advisory`, `ideate_extractor` and `spec_extractor` are not dry-runnable.
+**Amended in the wiring (2026-08-17):** `dry_runnable` is surfaced from `list_keys()`
+only, as written above, and `PromptVersionsResponse` does not carry it - but
+`PromptDetail`'s `meta` IS the versions response. So the screen reads the flag off the
+key list (`usePromptKeys()`, already fetched beside it by the "Runs on" card and cached
+under the list page's own query key) rather than off `meta`, and an in-flight list reads
+as runnable so a slow query cannot tell a pipeline key it is outside the pipeline. The
+route's own 400 is the real gate either way. The alternative - adding the field to the
+versions response - was not taken because it duplicates a key-level property onto a
+per-version payload.
+
+**Migrations** (`alembic/versions/`, ids <= 32 chars, one head after):
+1. `366_merge_363_365` - empty merge of `363_merge_flyer_promo_um` +
+   `365_merge_scm_plan_feedback`. Landed on main separately, so this slice does not add it
+   and only chains onto it.
+2. `367_promote_flyer_provenance` - down_revision `366_...`. UPDATE `product_specifications` SET
+   `provenance` = the same object with every entry whose `source = 'flyer'` rewritten to
+   `{"source": "human", "confidence": <kept>, "evidence": "flyer: " || <original evidence>,
+   "migrated_from": "flyer"}` (other entries byte-identical), and `status = 'authored'` where
+   `status = 'derived'` and the row now holds an authored entry - WHERE the row holds at least one
+   `source = 'flyer'` entry (mismatch-based, so a second run updates 0 rows and a prior partial run
+   is completed by the next run). `values`, `rendered_text` and `derived_hash` are NOT touched.
+   `downgrade()` is exact: entries with `migrated_from = 'flyer'` go back to
+   `{"source": "flyer", "confidence", "evidence": <with the "flyer: " prefix stripped>}` and
+   `status` returns to `derived` where `authored` and no other authored entry remains. The
+   docstring states the blast radius (3,353 entries, 1,389 rows, 695 codes measured 2026-08-13)
+   and both migrations log before/after counts through `logging`. The pytest runs the upgrade
+   twice against a seeded blank schema, asserts the second run changes nothing, asserts an
+   `md5(values::text)` checksum per row is identical before and after, repairs a hand-made
+   half-promoted row, and asserts the downgrade restores the seeded provenance exactly.
+
+**Runbook doc**: `documentation/plans/master-data/RUNBOOK-flyer-promote.md` - the six steps
+verbatim from this plan with the exact SQL for the pre-flight count, the checksum, and the
+post-run assertions, the `pg_dump` command, and how the full re-derive is started (`Read the
+catalogue again` on the master spec screen, which spawns `derive_product_specs`, or the RQ task
+directly) with the counts to compare. Steps 1-4 ship in this PR's deploy; step 5 is run after;
+step 6 is a later deploy and is NOT executed here.
+
+**Frontend** (Phase 1 against fixtures, then wired):
+- `components/spec-proposals/SpecProposalReview.tsx` - the shared review (AC-B.8): props
+  `{proposals: SpecProposal[]; selectedKeys: string[]; onSelectionChange(keys: string[]): void;
+  disabled?: boolean}`. `SpecProposal` = the response row above; `kind` is data. Renders on the
+  shared `DataGrid` (D10) with `buildSelectColumn`, one row per proposal, badge copy exactly
+  **New** / **Changes X to Y** / **Conflicts with your value X**, evidence in a truncated cell with
+  `title`. Owns no product identity and imports no service. The parent seeds the selection with
+  every non-conflict key (AC-B.7). Fixtures in `components/spec-proposals/__mocks__/`.
+  **Amended at the second review (2026-08-17).** `SpecProposal['value']` (and `stored_value`)
+  accept `SpecProposalScalar | SpecProposalScalar[]`, because a multi-value key arrives as a
+  LIST from the route above, and `readableValue` reads an array element-wise and joins with
+  ", " - so a two-tone finish badges "Changes Chrome to Matte black, Rose gold" rather than
+  printing the array. The same widening reaches `SpecProposalEntry['value']` so the accepted
+  list passes through to `entries[].value` unchanged.
+- `SpecExtractPanel` in `products/[id]/components/` replaces `FlyerCard` at the same position on
+  the Specifications tab: a `Textarea` and one button "Read specs from this" (Journey B). States:
+  idle, reading (button busy, textarea locked), proposals (review + "Apply N" + "Discard"), zero
+  proposals ("Nothing new in this text" with the `unchanged` count; **amended at the second
+  review, 2026-08-17:** with `unchanged` also 0 it reads "Nothing recognisable in this text"
+  and shows no count line, because "0 values it states are already stored" claims the text was
+  understood and merely agreed), degraded (`engine ===
+  'deterministic'` shows one short line that the rules alone read it), error (Alert with the
+  extracted message, text kept), applying (busy), applied (toast, panel resets, table refetches).
+  Text lives in component state only. Gated on `master_data.products.edit` like the table.
+- Service: `extractSpecProposals(productId, text)` and `applySpecProposals(productId, entries)`
+  in `productSpecService.ts`, added to the contract banner; `setFlyerText`, `getFlyers`,
+  `runFindability`, `getFindabilityRuns`, `getFindabilityRun`, `FindabilityRun`,
+  `FindabilityResult`, `flyer_text` on `ProductSpecDetail`, `FindabilityPanel` and the "Flyer
+  check" tab in `SpecWorkbench` are deleted. Hooks: `useSpecExtraction(productId, productCode)`
+  beside `useProductSpecTable`, invalidating the same two query keys on apply - the second
+  argument because the applicable-keys key is keyed on the CODE, so the hook cannot invalidate
+  it from the id alone; `useProductSpecTable` now exports both key builders so there is one
+  copy of each.
+- `StoredSpecProvenance` gains `migrated_from?: string`; `SpecSourceBadge` shows a
+  `migrated_from === 'flyer'` value as "Set by hand" with the evidence line already reading
+  "flyer: ..." (AC-B.15) - no new pill colour.
+- Phase 1 mocks: the two service functions return fixtures keyed on the pasted text
+  (`"nothing new"` -> zero proposals, `"no model"` -> deterministic, `"fail"` -> error, anything
+  else -> the three-kind result), swapped for real calls at the service boundary in Phase 2.
 
 ---
 
@@ -597,11 +830,56 @@ creation from the product page; an authored value always wins a conflict.
   CSS-grid proposal; inline editing is solved inside the component via an edit affordance on the
   row.
 - **Duplicate-prevention checks are enforced server-side** (D11, 2026-08-14). "We should not
-  trust frontend" - the client-side check stays as a latency courtesy, but the `PATCH
-  user_values` route now rejects near-duplicates with a 422 + acknowledge flag, mirroring the
-  key-creation guard.
+  trust frontend" - the client-side check stays as a latency courtesy, and the server rejects a
+  near-duplicate with a 422, mirroring the key-creation guard. *Superseded in part by D17 (the
+  acknowledge flag is withdrawn - a near-duplicate is refused outright) and D18 (the add-a-word
+  path is `POST /spec-registry/{spec_key}/values`, not the replacing `PATCH`).*
 - **Cross-page `selectAllMatching` stays off** (D12, 2026-08-14). Bulk covers rows the user had
   on screen. Enabling it later is a one-prop change plus a confirm stating the full count.
+
+### Settled by the captain at PR 2 hands-on testing (2026-08-15)
+
+All four are deliberate product orders; the UAC's Journey A, AC-A.2 and AC-A.4 are amended to
+match. Do not propose reverting them.
+
+- **Create/edit/add-word affordances are permission-gated in the UI** (D13):
+  `spec_registry.add` to create a key, `products.edit` for value writes, either edit grant to
+  extend vocabulary. The server remains the actual guard; the UI gating only hides what a user
+  cannot do.
+- **A dropdown-typed key gets the `SearchableSelect` editor even with an empty vocabulary**
+  (D14). The free-text fallthrough is removed on purpose; the empty dropdown's only affordance
+  is the add-a-word path, so the first word becomes vocabulary and value together.
+- **The fixed-list data type is labeled "Dropdown"** (D15) in both create dialogs
+  (`AddSpecificationDialog` and the registry page's `AddSpecKey`) - named after the control the
+  user will see.
+- **The row's tombstone action is plain "Remove"** (D16), behind the standard "Confirm delete"
+  dialog, keeping the durable-absence semantics (survives re-derivation); the second action is
+  **"Reset"** (back to derived). These replace the earlier sentence-length labels "This product
+  does not have this spec" and "Use what the rules read".
+
+### Settled by the captain at PR 2 review (2026-08-16)
+
+- **A near-duplicate is refused outright - there is NO override** (D17). D11's acknowledge flag
+  is withdrawn, and the plumbing is deleted rather than left unreachable: no `acknowledge_similar`
+  on the create or update payloads, no `acknowledge_field` in the 422 body, which keeps
+  `{error, match}`. Two names for one thing leave a registry answering half of every customer
+  question each, and a flag nothing sends only made the code disagree with the product.
+- **Adding one word APPENDS server-side** (D18). `POST /spec-registry/{spec_key}/values` takes
+  `{value}` alone, re-reads the row under `FOR UPDATE` and appends, gated on the same either-grant
+  as the vocabulary-only PATCH field. The PATCH keeps its replace semantics for the registry
+  editor, which shows and submits the whole list. The product page was rebuilding that list from a
+  cached applicable-keys read, so one merchandiser's add deleted a word another had just added,
+  silently - and migration 361 widened who can reach that from registry admins to every holder of
+  `master_data.products.edit`.
+- **A word struck off a specification is not available from the product page** (D19). It is not
+  offered in the value dropdown, its alternative spellings are neither matched nor published in
+  the shared vocabulary, and adding it back is refused with a message saying it was taken off and
+  that an administrator can restore it on the specification's own screen. Restoring stays a
+  registry-admin action. Adding must never report success while storing nothing, and must never
+  silently reverse the administrator's decision by un-striking the word. Two deeper defects in
+  the same area are known, deliberately out of scope for this PR, and tracked as **issue #183**:
+  wording left orphaned when an administrator deletes a staff-added value, and a restore
+  republishing a word that has since become a value in its own right.
 
 ### Outstanding - still the captain's call
 

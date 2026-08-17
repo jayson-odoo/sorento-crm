@@ -11,9 +11,14 @@ Guards the two "manual dict builder drops fields" gotchas (CLAUDE.md):
    users.get_current_user_profile, not merely inherited on UserResponse — the
    builder silently drops any field it doesn't list).
 
-Runs against an in-memory sqlite bind. Auth deps are overridden; the settings
-route hits the real GET dict + PUT/POST impl; get_me hits the real UserService +
-manual dict builder + UserResponse.
+Runs against a Postgres `blank_session()` (never sqlite - see PRINCIPLES.md). Auth
+deps are overridden; the settings route hits the real GET dict + PUT/POST impl;
+get_me hits the real UserService + manual dict builder + UserResponse.
+
+`GET /settings/` is gated on `user_management.settings.view` (Q2 of
+documentation/plans/security/PLAN-user-management-read-gates.md), so the fixture
+grants that slug to the overridden caller. Grant the slug in the fixture, never
+loosen the gate.
 
 Run: venv/bin/pytest tests/test_form_handling_lock_settings_me.py -q
 """
@@ -38,14 +43,22 @@ _ACTOR: dict = {"id": None}
 
 
 @pytest.fixture
-def client(db):
+def client(db, monkeypatch):
     from app.main import app
     from app.database import get_db
     from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.services.user_service import UserPermissionService
 
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: dict(_ACTOR)
     app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(_ACTOR)
+    # The settings read is permission-gated; this suite is about the field
+    # round-trip, not the gate (tests/test_settings_app_config_gate.py owns that).
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug == "user_management.settings.view",
+    )
     try:
         yield TestClient(app)
     finally:

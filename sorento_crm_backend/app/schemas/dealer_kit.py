@@ -470,6 +470,12 @@ class FlyerReadingSummary(BaseModel):
 
     The list screen only says which flyers have been read. Attaching a report to
     each row would run a match per row for a screen nobody reads them on.
+
+    ``status`` is on the SUMMARY and not only the detail because the list is the
+    surface a designer watches a read on: they post a flyer, the dialog closes,
+    and this row is where they learn it is still going, finished, or failed.
+    ``errorMessage`` travels beside it for the same reason - a Failed pill with
+    no words sends them back to upload the same broken file.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -480,6 +486,14 @@ class FlyerReadingSummary(BaseModel):
     page_count: int = Field(default=0, serialization_alias="pageCount")
     code_count: int = Field(default=0, serialization_alias="codeCount")
     uploaded_at: datetime = Field(serialization_alias="uploadedAt")
+    # ``processing`` / ``done`` / ``failed``. Defaulted so a row written before
+    # migration 359 (or by a test building the model by hand) reads as done,
+    # which is what happened to every one of them.
+    status: str = Field(default="done")
+    error_message: Optional[str] = Field(default=None, serialization_alias="errorMessage")
+    finished_at: Optional[datetime] = Field(
+        default=None, serialization_alias="finishedAt"
+    )
 
 
 class PageHeadingOut(BaseModel):
@@ -514,6 +528,24 @@ class FlyerReadingOut(FlyerReadingSummary):
 
     report: MatchReportOut
     headings: list[PageHeadingOut] = Field(default_factory=list)
+
+
+class FlyerReadingFromAttachmentIn(BaseModel):
+    """Read a flyer that is already in the file library.
+
+    The whole request is which file, because everything else about it - name,
+    size, type, folder - is already known. ``promotionId`` is the same optional
+    question the upload asks as a query parameter: which offer to report the
+    printed products against.
+
+    Both are ``UUID`` and not ``str``, so a malformed value is a 422 at the edge
+    and can never reach a WHERE clause. This feature has produced that 500 once.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    attachment_id: UUID = Field(validation_alias="attachmentId")
+    promotion_id: Optional[UUID] = Field(default=None, validation_alias="promotionId")
 
 
 # ---------------------------------------------------------------------------

@@ -139,9 +139,13 @@ export function PlanLinesSection({
         onAmendLevel={planLines.amendLevel}
         poFor={planLines.poFor}
         trendFor={planLines.trendFor}
+        trendSeriesMonths={planLines.trendSeriesMonths}
         purchaseTrendFor={planLines.purchaseTrendFor}
         purchaseTrendWindowMonths={planLines.purchaseTrendWindowMonths}
         onOpenPurchaseTrend={planLines.requestPurchaseTrend}
+        hasPhotoFor={planLines.hasPhotoFor}
+        photoStatus={planLines.photoStatus}
+        onOpenPhoto={planLines.requestProductImages}
         economicsFor={planLines.economicsFor}
         healthThresholds={planLines.healthThresholds}
         onDecideLifecycle={planLines.decideLifecycle}

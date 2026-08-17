@@ -11,7 +11,9 @@ The defects cluster into four families, which is why they are worth fixing toget
 * **liveness** (1, 2) - the importer's idea of "this document is live" is narrower than every
   reader's, so re-uploads double supply and lifted drafts import supply then hide it;
 * **identity** (6, 8) - a line is identified by content, so a line that comes back is
-  inserted twice and a line stated twice in one file becomes twice the supply;
+  inserted twice, and a line stated twice in one file must not creep the supply upward on
+  every re-upload (defect 8, whose reader-level complaint has since been removed: see the
+  test, and AC-2.1);
 * **honesty** (3, 7, 11) - a file that is wrong, stale or self-contradicting is applied in
   silence, and nothing ever surfaces it;
 * **one definition** (4, 5, 9, 10) - `line_status`, cost and `issue_date` are read by the
@@ -497,30 +499,41 @@ def test_a_rising_quantity_on_a_part_received_line_is_reported(db, seeded):
 
 
 # --------------------------------------------------------------------------- #
-# 8. identity: the same line twice in one file is a file problem
+# 8. identity: a repeated line is a second line, and stays one line on re-upload
 # --------------------------------------------------------------------------- #
 
-def test_the_same_line_stated_twice_in_one_file_is_reported(db, seeded):
-    """Double supply that then sits perfectly stable is the hardest kind of wrong to find.
+def test_a_line_stated_twice_becomes_two_lines_and_stays_two_on_re_upload(db, seeded):
+    """The defect this pinned was double supply that then sits perfectly stable.
 
-    Two rows sharing a document, item, location and date are one line stated twice, but the
-    diff pairs by content and has no reason to suspect them: the first pairs with the existing
-    line as `unchanged`, the second has nothing left to pair with and is ADDED. The purchase
-    order now carries two open lines for one real line, on-order is double, and every
-    subsequent upload of the same file pairs both rows and reports `unchanged`, so nothing ever
-    surfaces it again. What the write should do is arguable; that a human is told is not.
+    Its original fix was a reader-level complaint, and that was measured wrong. On the client's
+    real export 605 groups share a document, item and location: 567 of them differ in quantity
+    (SO339706 asks for 31 and for 20, which is one order with two deliveries and is exactly
+    what the plan must see) and the other 38 are byte-identical and legitimate - "totally
+    acceptable in 1 SO". The complaint therefore fired 605 times on a good file, on the same
+    lists that carry the rows which really did fail, so it has been removed (AC-2.1).
+
+    What actually prevents the doubling is grouped pairing in `outstanding_diff`, and this test
+    now pins THAT: a file stating the line twice writes two lines, and re-uploading the same
+    file writes nothing further and reads `unchanged` twice - so supply cannot creep upward one
+    upload at a time, which was the real fear. The sales-order equivalents live in
+    `tests/scm/test_outstanding_duplicate_lines.py`.
     """
     at = date(2026, 7, 1)
     row = po_minimal_row(seeded.main_po, seeded.creditor_main, seeded.item_rl, 100, at,
                          seeded.loc_project)
+    doubled = po_workbook([row, row], headers=PO_MINIMAL)
     svc.apply(db, po_workbook([row], headers=PO_MINIMAL), PO)
 
-    out = svc.apply(db, po_workbook([row, row], headers=PO_MINIMAL), PO)
+    grown = svc.apply(db, doubled, PO)
+    again = svc.apply(db, doubled, PO)
 
-    blob = _report_blob(out)
-    assert _reported(out), "one line stated twice became two open lines with no complaint"
-    assert seeded.main_po in blob and seeded.item_rl in blob, \
-        f"the report does not name the duplicated line: {blob}"
+    assert "stated twice" not in _report_blob(grown), \
+        "a legitimately repeated line is still reported as a duplicate"
+    assert len(_po_lines(db, seeded.main_po, seeded.item_rl)) == 2
+    assert again["applied"] == {"added": 0, "updated": 0, "closed": 0, "unchanged": 2}, \
+        f"re-uploading the same file was not a no-op: {again['applied']}"
+    assert len(_po_lines(db, seeded.main_po, seeded.item_rl)) == 2, \
+        "the second upload added a third line, so on-order creeps upward per upload"
 
 
 # --------------------------------------------------------------------------- #

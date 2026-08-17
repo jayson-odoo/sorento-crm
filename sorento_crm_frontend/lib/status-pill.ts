@@ -14,6 +14,10 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   pending_project_sales: 'bg-amber-100 text-amber-800',
   pending_purchasing: 'bg-amber-100 text-amber-800',
   updated: 'bg-amber-100 text-amber-800',
+  // Work that was accepted and is still running (a queued flyer read). Amber
+  // like the other "waiting on something" states, so a list reads at a glance
+  // as not-finished-yet rather than as an outcome.
+  processing: 'bg-amber-100 text-amber-800',
   responded: 'bg-indigo-100 text-indigo-800',
   approved: 'bg-blue-100 text-blue-800',
   rejected: 'bg-red-100 text-red-800',
@@ -65,6 +69,23 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   // amber - somebody still has to look at it.
   partially_completed: 'bg-amber-100 text-amber-800',
   cancelled: 'bg-gray-200 text-gray-600',
+  // Product specifications. A spec row's status, plus whether the product can be
+  // found by describing it. Every colour above is reused: a spec status is not a
+  // new kind of state, it is the same three-way "machine said / person said /
+  // somebody must look" the rest of the system already renders.
+  derived: 'bg-muted text-muted-foreground',
+  needs_review: 'bg-amber-100 text-amber-800',
+  // A person's own word, so it takes the same affirmative blue as `manual`.
+  authored: 'bg-blue-100 text-blue-800',
+  findable: 'bg-emerald-100 text-emerald-800',
+  // Neutral, not red: a product nothing can find yet is unfinished, not broken.
+  not_findable: 'bg-gray-200 text-gray-600',
+  // Verification (PR 3). Registered here with no call site on purpose, so the
+  // slice that builds the verification screen cannot invent a second palette for
+  // states this one already named.
+  verified: 'bg-emerald-100 text-emerald-800',
+  needs_reverify: 'bg-amber-100 text-amber-800',
+  unverified: 'bg-muted text-muted-foreground',
 };
 
 /** Base classes for the pill chip (shape + sizing); pair with statusPillClass(). */

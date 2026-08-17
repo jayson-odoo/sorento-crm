@@ -1,27 +1,43 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import {
   applyDimensions,
+  createFlyerReadingFromAttachment,
   getFlyerReading,
   listFlyerReadings,
   seedFromFlyerReading,
   uploadFlyerReading,
   type DimensionApplyInput,
   type DimensionApplyResult,
-  type FlyerReading,
+  type FlyerReadingSummary,
   type FlyerSeedInput,
   type FlyerSeedResult,
 } from '../../services/flyerReadingService';
 
 export const FLYER_READINGS_QUERY_KEY = 'dealer-kit-flyer-readings';
 
+/** How often a reading that is still being read is asked about again. */
+const PROCESSING_POLL_MS = 3000;
+
+/**
+ * The flyers read so far, and the ones being read right now.
+ *
+ * Polls only while something is `processing`, and stops the moment nothing is:
+ * a read takes tens of seconds, so a designer who is watching gets the flip to
+ * Done without touching anything, and a designer who is not costs the server
+ * nothing.
+ */
 export function useFlyerReadingsQuery() {
   return useQuery({
     queryKey: [FLYER_READINGS_QUERY_KEY],
     queryFn: listFlyerReadings,
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((row) => row.status === 'processing')
+        ? PROCESSING_POLL_MS
+        : false,
     refetchOnWindowFocus: false,
     retry: 1,
   });
@@ -49,6 +65,11 @@ export function useFlyerReadingQuery(readingId: string, promotionId: string | nu
     // of a match run. The previous answer stays on screen and the header says
     // it is being recomputed.
     placeholderData: (previous) => previous,
+    // Same rule as the list: a reading opened while its job is still running
+    // fills itself in. Somebody who clicked a Processing row is the person most
+    // likely to be waiting for it.
+    refetchInterval: (query) =>
+      query.state.data?.status === 'processing' ? PROCESSING_POLL_MS : false,
     staleTime: 0,
     refetchOnWindowFocus: false,
     retry: 1,
@@ -56,30 +77,69 @@ export function useFlyerReadingQuery(readingId: string, promotionId: string | nu
 }
 
 /**
- * Read a flyer. Synchronous on the server, so this resolves with the report.
+ * What happens after a flyer has been HANDED OVER, whichever source it came
+ * from.
  *
- * The detail cache is seeded from the response rather than invalidated: the
- * upload already paid for a match run, and a refetch on arrival would pay for a
- * second one and blank the screen it just filled.
+ * Shared by both create hooks on purpose: the two sources produce the same
+ * reading, so anything one of them did to the cache and not the other would be
+ * a difference the designer could see.
+ *
+ * The list is invalidated and nothing else. There is no report yet to seed a
+ * detail cache with, and no reason to send anybody to a screen that has nothing
+ * on it - the row appears at the top of the list as Processing, which is where
+ * the toast says to look.
+ *
+ * A 202 does NOT mean the read is on its way. The backend answers 202 with a
+ * row already `failed` when it could not queue the job at all (Redis down), and
+ * telling that designer their flyer is being read in the background is telling
+ * them something that will never happen. The row is right here, so it decides
+ * which toast they get.
+ */
+function onFlyerReadingCreated(queryClient: QueryClient, reading: FlyerReadingSummary) {
+  queryClient.invalidateQueries({ queryKey: [FLYER_READINGS_QUERY_KEY] });
+  if (reading.status === 'failed') {
+    toast.error(reading.errorMessage || 'Could not read that flyer');
+    return;
+  }
+  toast.success('Reading the flyer in the background - it will appear in your uploads');
+}
+
+function onFlyerReadingFailed(error: Error) {
+  // The backend says "not a PDF" and "larger than the 50 MB limit" in words,
+  // so the message is passed through rather than replaced.
+  toast.error(error.message || 'Could not read that flyer');
+}
+
+/**
+ * Read a flyer off the designer's machine. Queued on the server, so this
+ * resolves as soon as the row exists - with the row, not the report.
  */
 export function useUploadFlyerReading() {
   const queryClient = useQueryClient();
 
-  return useMutation<FlyerReading, Error, { file: File; promotionId?: string | null }>({
+  return useMutation<FlyerReadingSummary, Error, { file: File; promotionId?: string | null }>({
     mutationFn: ({ file, promotionId }) => uploadFlyerReading(file, promotionId),
-    onSuccess: (reading, { promotionId }) => {
-      queryClient.setQueryData(
-        [FLYER_READINGS_QUERY_KEY, reading.id, promotionId ?? ''],
-        reading,
-      );
-      queryClient.invalidateQueries({ queryKey: [FLYER_READINGS_QUERY_KEY] });
-      toast.success(`Read ${reading.pageCount} page${reading.pageCount === 1 ? '' : 's'}`);
-    },
-    onError: (error) => {
-      // The backend says "not a PDF" and "larger than the 50 MB limit" in
-      // words, so the message is passed through rather than replaced.
-      toast.error(error.message || 'Could not read that flyer');
-    },
+    onSuccess: (reading) => onFlyerReadingCreated(queryClient, reading),
+    onError: onFlyerReadingFailed,
+  });
+}
+
+/**
+ * Read a flyer the file library already holds. Only the attachment id travels;
+ * everything else the server takes off the attachment.
+ */
+export function useCreateFlyerReadingFromAttachment() {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    FlyerReadingSummary,
+    Error,
+    { attachmentId: string; promotionId?: string | null }
+  >({
+    mutationFn: ({ attachmentId, promotionId }) =>
+      createFlyerReadingFromAttachment(attachmentId, promotionId),
+    onSuccess: (reading) => onFlyerReadingCreated(queryClient, reading),
+    onError: onFlyerReadingFailed,
   });
 }
 

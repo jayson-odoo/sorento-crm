@@ -24,6 +24,7 @@ import { Container } from '@/components/common/container';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableTextarea } from '@/components/common/find-in-text/SearchableTextarea';
 import {
+  usePromptKeys,
   usePromptVersion,
   usePromptVersions,
   useSaveVersion,
@@ -45,6 +46,16 @@ export function PromptDetail({ name }: { name: string }) {
 
   const meta = versionsQuery.data;
   const productionVersion = meta?.labels.production ?? meta?.versions[0]?.version ?? null;
+
+  // Whether a dry-run of THIS key would exercise the edit. It is a property of the
+  // key rather than of a version, and the versions response does not carry it, so it
+  // is read off the key list - already fetched beside this by the "Runs on" card and
+  // cached under the same query key as the list page. Unknown reads as runnable: a
+  // list still in flight must not tell the user their key is outside the pipeline,
+  // and the route refuses a non-runnable key with a 400 in any case.
+  const keysQuery = usePromptKeys();
+  const dryRunnable =
+    keysQuery.data?.find((row) => row.name === name)?.dry_runnable ?? true;
 
   // Which version is loaded as the editor base. Defaults to production.
   const [baseVersion, setBaseVersion] = useState<number | null>(null);
@@ -413,9 +424,13 @@ export function PromptDetail({ name }: { name: string }) {
             keyName={name}
             versionId={baseVersionId}
             versionLabel={`v${baseVersion}`}
-            disabled={!meta.active}
+            disabled={!meta.active || !dryRunnable}
             disabledReason={
-              meta.active ? undefined : `Dormant key — no runtime call site until ${meta.activates_in}.`
+              !meta.active
+                ? `Dormant key - no runtime call site until ${meta.activates_in}.`
+                : !dryRunnable
+                  ? 'This key is not part of the assistant pipeline - the dry-run would not exercise it.'
+                  : undefined
             }
           />
         </div>

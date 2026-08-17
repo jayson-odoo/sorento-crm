@@ -8,18 +8,19 @@
 **Slug:** `spec-authoring-verification` · **Domain:** master-data · **Milestone:** 1
 **Classification:** CORE, schema `public`, normal FKs (per `PRINCIPLES.md` modular-architecture
 rule: products and their specifications are a base-platform capability every install needs).
-**Status:** ACCEPTED - captain-reviewed 2026-08-14, the contract for milestone 1. PR 1
-(Foundations) implemented on `fm/spec-pr1-foundations`: AC-F.1 to AC-F.14 plus the PR-1 half of
-AC-D.17. PRs 2-4 pending.
+**Status:** ACCEPTED - captain-reviewed 2026-08-14, the contract for milestone 1. Amended
+2026-08-15 per captain decisions at PR 2 hands-on testing (see the plan's Decisions section):
+editor and action-label wording in Journey A, AC-A.2 and AC-A.4. Implementation progress is
+tracked in the plan's Status line, not here.
 
 ## Scope
 
 Make the spec table the single source of truth for product specifications, and make a person
 able to vouch for it.
 
-- **A** - the spec table becomes editable: add, edit, remove, with dropdown where the registry
-  defines a vocabulary and free text otherwise, and a real removal (a tombstone) rather than
-  today's "revert to derived".
+- **A** - the spec table becomes editable: add, edit, remove, with a dropdown for every
+  dropdown-typed key (even one whose vocabulary is still empty) and free text otherwise, and a
+  real removal (a tombstone) rather than today's "revert to derived".
 - **B** - the stored flyer card becomes a paste-once prompt box: extraction proposes, a person
   reviews, accepted rows write as authored values, the pasted text is never stored. Then the
   flyer-derived values are promoted to authored and `ProductFlyerText` is discarded.
@@ -98,20 +99,26 @@ None of that is asked for.
 
 1. They see the table. Each row shows its value and a **source badge**; the evidence sits behind
    the badge on hover and behind a tap-to-expand strip on touch, not in a column of its own.
-2. **Edit** - they click a value. It swaps to an input **in place**: a dropdown when the registry
-   defines the vocabulary, Yes/No for a boolean, free text otherwise. The unit is shown as a
-   suffix and is never typed. Nothing on the page moves. Save writes it as authored.
+2. **Edit** - they click a value. It swaps to an input **in place**: a dropdown when the key's
+   data type is dropdown - even while its vocabulary is still empty, where the add-a-word row is
+   the only affordance, so the first word becomes vocabulary and value together - Yes/No for a
+   boolean, free text otherwise (amended 2026-08-15, captain). The unit is shown as a suffix and
+   is never typed. Nothing on the page moves. Save writes it as authored.
 3. **The word is not in the list** - before offering to create anything, the system checks what
    they typed against every value and every customer synonym the key already holds, normalised.
    If "Brushed Brass" already exists for "brushed brass" it offers that instead. Only when
    nothing matches does the dropdown's last row read `Add "brushed brass" to Finish`.
 4. **Add a spec** - "Add a specification" offers the keys this product's class can carry that it
-   does not already hold, everything else one click away. If genuinely nothing matches, a create
-   dialog opens, and before it will submit it checks the proposed label against every existing
-   key, label and synonym and offers the match instead.
-5. **Remove** - the row's menu offers the two intents **by name**: **"This product does not have
-   this spec"** (a tombstone that survives re-derivation) or **"Use what the rules read"** (revert
-   to derived). Confirmation dialog either way.
+   does not already hold, everything else one click away. If no key goes by the name they typed,
+   the search list's **last row reads `Create "<name>"`** - the same shape as adding a word on a
+   value dropdown, no separate link (amended 2026-08-15, captain) - and it asks the type before
+   checking the proposed label against every existing key, label and synonym and offering the
+   match instead. A removed key is offered again here; a key the product already carries is named
+   as already on the table, with nothing to click.
+5. **Remove** - the row's menu offers the two intents as **"Remove"** (a tombstone that survives
+   re-derivation, behind the standard "Confirm delete" dialog) and **"Reset"** (revert to
+   derived, with its own confirmation). Labels amended 2026-08-15 by the captain from the earlier
+   sentence-length names; the semantics are unchanged.
 
 **They leave with:** the table showing exactly what they set, badged as theirs, and a promise the
 next catalogue run cannot undo it.
@@ -265,20 +272,25 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   edit icon) THEN the value cell swaps to an input **in place** - the cells keep their DOM order
   and nothing reflows. On a narrow screen the grid scrolls horizontally inside its own container,
   per the repo's responsive standard; the page never scrolls sideways.
-- **AC-A.2** `[FE]` GIVEN a spec key WHEN its editor renders THEN a boolean gets Yes/No, a key
-  with a non-empty merged vocabulary gets a `SearchableSelect`, and anything else gets a typed
-  input. The **unit renders as a suffix and can never be typed**. A stored key the registry no
-  longer defines renders read-only rather than crashing.
+- **AC-A.2** `[FE]` GIVEN a spec key WHEN its editor renders THEN a boolean gets Yes/No, a
+  dropdown-typed key or a key with a non-empty merged vocabulary gets a `SearchableSelect` -
+  **even when the vocabulary is empty**, in which case the add-a-word row is the only affordance
+  and there is no free-text fallthrough (amended 2026-08-15, captain) - and anything else gets a
+  typed input. The **unit renders as a suffix and can never be typed**. A stored key the registry
+  no longer defines renders read-only rather than crashing.
 - **AC-A.3** `[FE]` GIVEN any dropdown in this slice THEN it is
   `SearchableSelect`/`SearchableMultiSelect`; a raw `<select>` or `@/components/ui/select` is an
   auto-reject. Optional selects are `clearable`.
-- **AC-A.4** `[FE]` GIVEN the remove control WHEN it is used THEN the two intents are offered
-  **by name** - "This product does not have this spec" (tombstone) and "Use what the rules read"
-  (revert to derived) - each behind `ConfirmDeleteDialog`. `confirm()` is never used.
-- **AC-A.5** `[FE]` GIVEN a **tombstoned** key WHEN the table renders THEN it still shows a row.
-  The table model is the **union** of the `values` keys and the `absent` provenance entries, since
-  a tombstone lives only in `provenance`. The row reads "Not on this product" with a revert
-  action.
+- **AC-A.4** `[FE]` GIVEN the remove control WHEN it is used THEN the two intents are offered as
+  **"Remove"** (tombstone, behind the standard "Confirm delete" dialog) and **"Reset"** (revert
+  to derived) - labels amended 2026-08-15 by the captain, semantics unchanged - each behind a
+  confirmation dialog. `confirm()` is never used.
+- **AC-A.5** `[FE][BE]` GIVEN a **removed** key WHEN the table renders THEN it shows **no row**
+  for it - removed means gone (amended 2026-08-15 by the captain: "when I click remove, I really
+  mean it"; the earlier "Not on this product" row is withdrawn). The tombstone still lives in
+  `provenance` as `absent: true`, so re-derivation will not refill it, and
+  `applicable_keys_for_code` reports the key as **not held**, so the add picker is the way back
+  on; setting a value there replaces the stamp wholesale.
 - **AC-A.6** `[FE]` GIVEN a row WHEN it renders THEN it shows a **source badge** with the evidence
   behind hover **and** a tap-to-expand strip (hover `title` is unreachable at 375px, which is a
   DoD gate). There is **no permanent evidence column** (D6). For an authored row the strip is
@@ -290,20 +302,30 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   (M5). Applicability is `applies_when` alone, and absence of a gate value never excludes a key.
 - **AC-A.8** `[FE]` GIVEN the picker WHEN it opens THEN keys this product may carry and does not
   hold come first, everything else behind one more click.
-- **AC-A.9** `[FE]` GIVEN the picker finds no matching key WHEN the create dialog opens THEN it
-  is gated on `master_data.spec_registry.add` (D7); a user without the grant sees the picker
-  **without** the create option plus one line saying who to ask.
+- **AC-A.9** `[FE]` GIVEN a typed name no key goes by WHEN the picker's list is shown THEN
+  **"Create"** is the last entry of that list (amended 2026-08-15 by the captain: same shape
+  as adding a word on a row's value dropdown, no separate create link), it leads to the type
+  question and then the key is on the product with its editor open. It is gated on
+  `master_data.spec_registry.add` (D7); a user without the grant sees the picker **without**
+  the create entry plus one line saying who to ask. A typed name that already IS a key points
+  at that key instead; a name the product ALREADY CARRIES says so plainly, with nothing to
+  click, since its row is on the table behind the dialog (2026-08-16).
 - **AC-A.10** `[FE][BE]` GIVEN a proposed new key label WHEN the create dialog validates THEN a
   new `GET /spec-registry/similar` runs a normalised match against every existing `spec_key`,
   label **and merged synonym**, and on a hit offers the existing key instead. The guard is also
   enforced server-side on `POST /spec-registry`, so no other client can bypass it.
 - **AC-A.11** `[FE][BE]` GIVEN a value dropdown with no match WHEN the create row is used THEN
-  the value is added to that key's `user_values` after a normalised near-duplicate check against
-  merged values **and** merged synonyms - **enforced on the server** (D11): the `PATCH` route
-  rejects a near-duplicate `user_values` addition with a 422 carrying the match, and accepts it
-  only with an explicit acknowledge flag, mirroring the key-creation guard in AC-A.10. The FE
-  runs the same check client-side first, against data it already holds, so the common case never
-  round-trips - but the frontend check is a courtesy, never the guard.
+  the word is sent ALONE to `POST /spec-registry/{spec_key}/values`, which re-reads the row under
+  `FOR UPDATE` and **appends** it after a normalised near-duplicate check against merged values
+  **and** merged synonyms - **enforced on the server** (D11). A near-duplicate is refused with a
+  422 carrying the match and **there is no way past it** (D17, 2026-08-16): the acknowledge flag
+  is withdrawn. The client never sends the list (D18, 2026-08-16) - it was rebuilding it from a
+  cached read, so one person's add deleted another's; the replacing `PATCH` remains only for the
+  registry editor, which shows and submits the whole list. The FE runs the same duplicate check
+  client-side first, against data it already holds, so the common case never round-trips - but
+  the frontend check is a courtesy, never the guard. A word an administrator **struck off** the
+  key is refused the same way (`matched_on: suppressed_value`), naming who can put it back - see
+  D19 in the plan for that ruling and its reasoning.
 - **AC-A.12** `[FE]` GIVEN the spec table component WHEN it is written THEN it is
   **props-driven** - values, vocabulary and callbacks in, **no `apiFetch`, no service import, no
   react-query inside the cells** - and it lives in a folder milestone 2's `(auth)`-group portal

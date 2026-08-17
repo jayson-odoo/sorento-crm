@@ -34,14 +34,19 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.inventory import Warehouse
 from app.models.product import Product
+from app.services import import_outcome_codes as oc
+from app.services.import_outcome import ImportOutcome
 from app.services.import_alias_service import AliasResolver
+from app.services.scm.customer_label import normalize_debtor_code
+from app.services.scm.history_sources import SO_HISTORY_SOURCE
 from app.services.scm.so_listing_reader import (
     DOC_TYPE,
     SoListingResult,
@@ -53,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 #: Written on every row this feed creates, so a later reader can tell absorbed history from
 #: an order somebody raised in the system, and so a correction can find its own rows.
-SOURCE_SYSTEM = "scm_so_history"
+SOURCE_SYSTEM = SO_HISTORY_SOURCE
 SOURCE_REF = "so_listing"
 
 #: What a historical document carries. The exclusion from `committed_v` is done by the LINE
@@ -76,6 +81,29 @@ def _by_code(db: Session, model, code_col, codes: set[str]) -> dict[str, str]:
         .all()
     )
     return {str(code): str(row_id) for code, row_id in rows}
+
+
+#: The precision `sales_order_lines.unit_price` stores. Comparing at anything finer asks
+#: the file and the column to agree about digits the column never kept.
+_PRICE_PLACES = Decimal("0.01")
+
+
+def _price(value) -> Optional[Decimal]:
+    """A unit price as the column would hold it, and None kept as None.
+
+    Compared rather than written unconditionally, like every other column in this feed: a
+    re-upload of an unchanged book must still report zero updates. `Decimal("12.50")` and
+    `12.5` are the same price and must not read as a change.
+
+    Quantized to two places because that is what the column stores: a sheet stating 0.945
+    comes back out of it as 0.95, so comparing the raw figures reports that line as updated
+    on every single upload, for ever, and stamps `updated_at` on a row nothing changed.
+    ROUND_HALF_UP is how Postgres rounds into NUMERIC(_, 2) - verified against it - so the
+    comparison agrees with the value the previous upload actually wrote.
+    """
+    if value is None:
+        return None
+    return Decimal(str(value)).quantize(_PRICE_PLACES, rounding=ROUND_HALF_UP)
 
 
 def _has_foreign_lines(db: Session, order_id: str) -> bool:
@@ -173,7 +201,9 @@ def preview(db: Session, file_data: bytes) -> dict:
     return _serialise_dates(_summarise(db, parsed))
 
 
-def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
+def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
+          outcome: Optional[ImportOutcome] = None,
+          on_total_rows: Optional[Callable[[int], None]] = None) -> dict:
     """Write the history. Idempotent on the document number.
 
     Re-uploading is normal - somebody re-exports a wider date range and sends the whole book
@@ -184,9 +214,20 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
     Lines are keyed by their ORDINAL within the document, because the export carries no line
     number and one order routinely repeats the same item at the same location and price. Any
     content-based key would collapse those repeats into one line and lose real quantity.
+
+    `outcome` records what happened to each source LINE for the job detail. Optional so a
+    direct caller keeps the old signature; a throwaway non-persisting recorder stands in when
+    it is absent.
     """
+    outcome = outcome or ImportOutcome(None, persist=False)
     resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
     parsed = read_so_listing(file_data, resolver)
+    if on_total_rows is not None:
+        # Every non-blank row of the file, the 9,144 package captions included. They are not
+        # lines and are never written, but they ARE rows somebody uploaded, so each carries
+        # its own `not_a_line` outcome below and the total they are counted in is reachable.
+        # One definition of "total" across all five channels: the source rows.
+        on_total_rows(parsed.total_rows)
     summary = _summarise(db, parsed)
     summary.update({
         "orders_created": 0, "orders_updated": 0, "orders_unchanged": 0,
@@ -196,6 +237,21 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
     })
     if not parsed.ok:
         return _serialise_dates(summary)
+
+    # Captions, spacers and the package headings this export puts above each block. Their own
+    # code rather than a failure: 9,144 of them in the client's file would bury the handful of
+    # rows that really did fail, and dropping them silently leaves the job unable to say what
+    # became of them.
+    for row_number in parsed.layout_row_numbers:
+        outcome.skip(row=row_number, code=oc.NOT_A_LINE)
+
+    # Rows the reader could not turn into a line at all. Recorded before the write loop so
+    # every row in the file is accounted for exactly once.
+    for problem in parsed.problems:
+        outcome.skip(row=problem.row_number or None,
+                     code=oc.MISSING_REQUIRED_FIELD if problem.reason.startswith("missing")
+                     else oc.ROW_ERROR,
+                     message=problem.reason, value=problem.value or None)
 
     stock_codes = {
         ln.item_code for o in parsed.orders for ln in o.lines if ln.is_stock_item
@@ -238,9 +294,15 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
                 source_system=SOURCE_SYSTEM,
                 source_ref=SOURCE_REF,
                 source_doc_no=parsed_order.so_number,
+                # The code in its own column, so a reader can attribute the order without
+                # parsing a note: the plan's demand and trend popovers fall back to
+                # "Debtor 300-R009" when the link failed.
+                debtor_code=normalize_debtor_code(parsed_order.debtor_code),
                 # The debtor code and the customer's printed name are kept even when the
                 # link fails, because "ROWENDA KITCHEN SDN BHD / 300-R009" is what makes the
-                # link fixable later. Dropping it leaves an order nobody can attribute.
+                # link fixable later. Dropping it leaves an order nobody can attribute. Kept
+                # alongside the column: the note also carries the printed NAME, which no
+                # column holds.
                 internal_note=" / ".join(
                     p for p in (parsed_order.customer_name, parsed_order.debtor_code,
                                 parsed_order.note) if p
@@ -272,6 +334,15 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
             # uploader is told which documents and how many units hang on the answer.
             if _has_foreign_lines(db, str(order.id)):
                 conflicted_orders.append(parsed_order.so_number)
+                # Per LINE, not per document: the count the job reports is a count of source
+                # rows, and a document skipped whole means every one of its rows was skipped.
+                for parsed_line in parsed_order.lines:
+                    outcome.skip(
+                        row=parsed_line.row_number, code=oc.DOCUMENT_OWNED_ELSEWHERE,
+                        identity={"doc_no": parsed_order.so_number,
+                                  "item_code": parsed_line.item_code},
+                        value=parsed_order.so_number,
+                    )
                 continue
 
             changed = False
@@ -285,6 +356,12 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
                 changed = True
             if customer_id and order.customer_id != customer_id:
                 order.customer_id = customer_id
+                changed = True
+            stated_debtor = normalize_debtor_code(parsed_order.debtor_code)
+            if stated_debtor and order.debtor_code != stated_debtor:
+                # The file is the record of what the document printed, so a restated code
+                # corrects the column. An absent one never blanks a code we already hold.
+                order.debtor_code = stated_debtor
                 changed = True
             if order.status != _ORDER_STATUS:
                 if _has_open_quantity(db, str(order.id)):
@@ -309,14 +386,21 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
         }
 
         for parsed_line in parsed_order.lines:
+            identity = {"doc_no": parsed_order.so_number,
+                        "item_code": parsed_line.item_code,
+                        "location": parsed_line.location or ""}
             if not parsed_line.is_stock_item:
                 # Real money on the order with no product behind it. Carried by the reader so
                 # the document reconciles, and never written as a stock line: a quantity of 1
                 # "TRANSPORT CHARGE" is not demand for anything.
+                outcome.skip(row=parsed_line.row_number, code=oc.CHARGE_LINE,
+                             identity=identity)
                 continue
             product_id = product_by_code.get(parsed_line.item_code)
             if product_id is None:
                 # Counted and named in the summary. Never created.
+                outcome.skip(row=parsed_line.row_number, code=oc.PRODUCT_NOT_FOUND,
+                             identity=identity, value=parsed_line.item_code)
                 continue
 
             ref = str(parsed_line.ordinal)
@@ -333,12 +417,19 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
                     warehouse_id=warehouse_id,
                     qty_ordered=qty,
                     qty_delivered=qty,
+                    # What the customer paid. The reader has always parsed it and the write
+                    # dropped it, so every price cell on the plan's "who bought it" drill
+                    # was blank - which is where "sells RM 0.94?" is asked. Absent stays
+                    # absent: a price we do not know is not 0.00.
+                    unit_price=parsed_line.unit_price,
                     required_date=parsed_line.required_date,
                     line_status=_LINE_STATUS,
                     source_system=SOURCE_SYSTEM,
                     source_ref=ref,
                 ))
                 lines_created += 1
+                outcome.success(row=parsed_line.row_number, code=oc.CREATED,
+                                identity=identity, value=parsed_order.so_number)
             else:
                 # Same -> skip, different -> update. Compared field by field rather than
                 # written unconditionally, because "updated" has to mean something changed:
@@ -346,12 +437,16 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
                 # `updated_at` touched on 64,526 rows that did not change is a lie the audit
                 # trail then carries for ever.
                 want = (str(product_id), warehouse_id, float(qty), float(qty),
-                        parsed_line.required_date, _LINE_STATUS)
+                        parsed_line.required_date, _LINE_STATUS,
+                        _price(parsed_line.unit_price))
                 have = (str(line.product_id), line.warehouse_id,
                         float(line.qty_ordered or 0), float(line.qty_delivered or 0),
-                        line.required_date, line.line_status)
+                        line.required_date, line.line_status, _price(line.unit_price))
                 if want == have:
                     lines_unchanged += 1
+                    outcome.unchanged(row=parsed_line.row_number, identity=identity,
+                                      value=parsed_order.so_number,
+                                      entity_type="order_line", entity_id=line.id)
                 else:
                     line.product_id = product_id
                     line.warehouse_id = warehouse_id
@@ -359,7 +454,11 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
                     line.qty_delivered = qty
                     line.required_date = parsed_line.required_date
                     line.line_status = _LINE_STATUS
+                    line.unit_price = parsed_line.unit_price
                     lines_updated += 1
+                    outcome.updated(row=parsed_line.row_number, identity=identity,
+                                    value=parsed_order.so_number,
+                                    entity_type="order_line", entity_id=line.id)
 
     db.flush()
     summary.update({
