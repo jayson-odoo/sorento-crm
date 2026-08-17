@@ -358,16 +358,16 @@ def seed_scm_module_data() -> None:
     module_358 = importlib.util.module_from_spec(spec_358)
     spec_358.loader.exec_module(module_358)
 
-    # 374 adds the `proforma_invoice` doc type: both real invoice shapes (Jinbaichuan's
+    # 375 adds the `proforma_invoice` doc type: both real invoice shapes (Jinbaichuan's
     # 19-column pre-loading list and Kailu's seven-column proforma). Same create_all gap as
     # 311/338/347/357/358, and this one decides whether a proforma is READ at all - the
     # header is recognised by resolving item code, quantity and unit price on one row, so
     # with no aliases every upload is refused as "the file does not name the columns".
-    spec_374 = importlib.util.spec_from_file_location(
-        "_scm_seed_374", versions / "375_scm_proforma_invoice.py"
+    spec_375 = importlib.util.spec_from_file_location(
+        "_scm_seed_375", versions / "375_scm_proforma_invoice.py"
     )
-    module_374 = importlib.util.module_from_spec(spec_374)
-    spec_374.loader.exec_module(module_374)
+    module_375 = importlib.util.module_from_spec(spec_375)
+    spec_375.loader.exec_module(module_375)
 
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
@@ -375,7 +375,7 @@ def seed_scm_module_data() -> None:
         aliases += module_338.seed(conn)
         aliases += module_357.seed(conn)
         aliases += module_358.seed(conn)
-        aliases += module_374.seed(conn)
+        aliases += module_375.seed(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "

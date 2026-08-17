@@ -22,13 +22,20 @@ from sqlalchemy.orm import Session
 
 from app.services.error_handler import AppException
 
-#: Spelling -> ISO code, IN ORDER. Order is load-bearing twice over: `rmb` is checked before
-#: `rm` (or every `金额（rmb）` header reads as Malaysian ringgit), and the fuller spelling of
-#: a pair is always checked first for the same reason.
+#: Spelling -> ISO code, IN ORDER. Order is load-bearing three times over: `rmb` is checked
+#: before `rm` (or every `金额（rmb）` header reads as Malaysian ringgit), the fuller spelling
+#: of a pair is always checked first for the same reason, and every 元 currency that is NOT
+#: the yuan is listed above the bare 元.
 _TOKENS: tuple[tuple[str, str], ...] = (
     ("rmb", "CNY"),
     ("cny", "CNY"),
     ("人民币", "CNY"),
+    ("美元", "USD"),
+    ("美金", "USD"),
+    ("欧元", "EUR"),
+    ("日元", "JPY"),
+    ("港元", "HKD"),
+    ("港币", "HKD"),
     ("元", "CNY"),
     ("¥", "CNY"),
     ("usd", "USD"),
@@ -37,13 +44,25 @@ _TOKENS: tuple[tuple[str, str], ...] = (
     ("rm", "MYR"),
 )
 
+#: Characters that turn 元 into another country's money. The four mapped ones are matched by
+#: their own token above; this guard is what stops the rest (韩元, 澳元, 台元, ...) falling
+#: through to the yuan. `币种：韩元` resolving to CNY is the worst available outcome here: the
+#: price is stored, nothing on screen disagrees, and the variance report is wrong by an FX
+#: factor. Unmapped is None, and None is a question the operator gets asked.
+_YUAN_QUALIFIERS = "美欧日港澳韩台加英瑞新"
+
 #: Each token, anchored so it is a WORD rather than a fragment of one. `rm` inside `FORM`
 #: read as Malaysian ringgit, which is how a header called `Unit Price (FORM)` denominated a
 #: whole invoice in the wrong money without anything on screen saying so. Only ascii letters
 #: are a boundary: `rm12.50` still states MYR, and a Chinese token has no neighbours to
-#: exclude anyway.
+#: exclude anyway - except 元, which has the qualifiers above.
+def _compile_token(token: str) -> Any:
+    guard = rf"(?<![{_YUAN_QUALIFIERS}])" if token == "元" else ""
+    return re.compile(rf"(?<![a-z]){guard}{re.escape(token)}(?![a-z])")
+
+
 _TOKEN_PATTERNS: tuple[tuple[Any, str], ...] = tuple(
-    (re.compile(rf"(?<![a-z]){re.escape(token)}(?![a-z])"), code) for token, code in _TOKENS
+    (_compile_token(token), code) for token, code in _TOKENS
 )
 
 

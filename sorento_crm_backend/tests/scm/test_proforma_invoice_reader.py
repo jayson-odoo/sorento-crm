@@ -4,7 +4,7 @@ TEST-FIRST: `app/services/scm/proforma_invoice_reader.py` does not exist yet at 
 this file is written. Every test here is expected to be red (ImportError) until the
 reader lands, then green against the exact numbers the two real files produce.
 
-The resolver is built from the aliases migration 374 seeds (mirrored below as `_ALIASES`,
+The resolver is built from the aliases migration 375 seeds (mirrored below as `_ALIASES`,
 same style as `test_packing_list_reader.py`), so the Chinese/English spellings under test
 are the ones actually agreed with the two suppliers rather than ones invented here. A
 migration-import check pins that the copy is a true one.
@@ -37,7 +37,7 @@ from tests.scm.fixtures.proforma_shapes import (
     preloading_list_workbook,
 )
 
-#: The aliases migration 374 seeds for `proforma_invoice`, so this suite fails if that
+#: The aliases migration 375 seeds for `proforma_invoice`, so this suite fails if that
 #: seed changes under it rather than passing against a mapping only the test believes in.
 #: Copied verbatim from PLAN-scm-proforma-invoice.md's Aliases table.
 _ALIASES = [
@@ -249,8 +249,45 @@ def test_a_file_with_no_recognisable_header_says_what_is_missing(resolver):
     assert set(out.missing_columns) >= {"item_code", "qty", "unit_price"}
 
 
+def test_a_priced_line_whose_quantity_will_not_parse_is_reported_not_dropped(resolver):
+    """A row naming an item with an unreadable quantity is still dropped, but out loud.
+
+    This table is the document of record the overcharge check runs against, so a line missing
+    from it understates what the supplier charged - and `line_count` and the stored total
+    agree with the understatement unless the row is complained about.
+    """
+    rows = [
+        [None, "产品型号", "品名", "数量", "单价(元)", "总价（元）"],
+        [None, "A-1", "座厕", 5, 100, 500],
+        [None, "A-2", "座厕", "面议", 200, None],
+        [None, "A-3", "座厕", None, 300, None],
+    ]
+
+    out = read_workbook(workbook(rows), resolver)
+
+    assert out.ok
+    assert [ln.item_code for ln in out.documents[0].lines] == ["A-1"]
+    reasons = [p.reason for p in out.problems]
+    assert len(reasons) == 2
+    assert any("A-2" in r and "面议" in r for r in reasons)
+    assert any("A-3" in r for r in reasons)
+    assert [p.row_number for p in out.problems] == [3, 4]
+
+
+def test_the_real_shapes_report_no_unreadable_quantity(resolver):
+    """The complaint above must not fire on either real file.
+
+    The pre-loading list's blank numbered filler rows, its `总金额` totals rows, Kailu's
+    `合 计` and its bank-detail rows all fail the item-code test, which is what keeps a
+    warning about a supplier's document from appearing on a document with nothing wrong.
+    """
+    for data in (preloading_list_workbook(), kailu_proforma_workbook()):
+        out = read_workbook(data, resolver)
+        assert out.problems == []
+
+
 # --------------------------------------------------------------------------------- #
-# The alias mapping this suite assumes is the one migration 374 actually seeds.
+# The alias mapping this suite assumes is the one migration 375 actually seeds.
 # --------------------------------------------------------------------------------- #
 
 
@@ -294,7 +331,7 @@ def test_the_real_files_read_the_same_as_the_reproduced_fixtures(resolver):
 def test_the_seeded_aliases_are_the_ones_this_suite_assumes():
     """The mapping above is a copy. This is the check that it is still a true one.
 
-    Migration 374's `_ALIASES` is a flat ``(field, alias)`` list - unlike migration 311's
+    Migration 375's `_ALIASES` is a flat ``(field, alias)`` list - unlike migration 311's
     packing_list seeder, `proforma_invoice` is the only doc type in that module, so there
     is no ``doc``/``locale`` column to unpack (see the migration's own `seed()`).
     """
@@ -306,13 +343,13 @@ def test_the_seeded_aliases_are_the_ones_this_suite_assumes():
         / "versions"
         / "375_scm_proforma_invoice.py"
     )
-    spec = importlib.util.spec_from_file_location("m374", path)
+    spec = importlib.util.spec_from_file_location("m375", path)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
 
     assert m.DOC_TYPE == DOC_TYPE
     seeded = set(m._ALIASES)
-    assert seeded, "migration 374 seeds no proforma_invoice aliases"
+    assert seeded, "migration 375 seeds no proforma_invoice aliases"
 
     for field, alias in _ALIASES:
         assert (field, alias) in seeded, f"{field}/{alias} is not seeded"
@@ -337,6 +374,31 @@ def test_a_short_currency_token_inside_a_longer_word_is_not_a_currency():
     assert currency_from_text(["金额（rmb）"]) == "CNY"
     assert currency_from_text(["单价(元)"]) == "CNY"
     assert currency_from_text(["US$"]) == "USD"
+
+
+def test_a_cjk_currency_ending_in_yuan_is_not_the_yuan():
+    """`美元` is the US dollar, and 元 matched inside it read a USD proforma as CNY.
+
+    The route in was the labelled `币种：` cell this channel collects: the currency it names is
+    the FIRST thing offered to the resolver, so a document stating US dollars stored `CNY` on
+    itself and on every shipment line, with a variance report wrong by an FX factor and
+    nothing on screen disagreeing.
+    """
+    from app.services.scm.currency_resolution import currency_from_text, normalise_currency
+
+    assert currency_from_text(["币种：美元"]) == "USD"
+    assert currency_from_text(["欧元"]) == "EUR"
+    assert currency_from_text(["日元"]) == "JPY"
+    assert currency_from_text(["港元"]) == "HKD"
+    assert currency_from_text(["港币"]) == "HKD"
+    assert normalise_currency("美元") == "USD"
+    # Unmapped is a question, never the yuan by default.
+    assert currency_from_text(["韩元"]) is None
+    assert normalise_currency("韩元") is None
+    # The yuan itself is untouched: it is what both real files state.
+    assert currency_from_text(["单价(元)"]) == "CNY"
+    assert currency_from_text(["人民币"]) == "CNY"
+    assert normalise_currency("元") == "CNY"
 
 
 def test_a_day_first_slash_date_reads_day_first():

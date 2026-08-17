@@ -1,12 +1,12 @@
 """The proforma-invoice grant sweep - AC-P4.3, `PRINCIPLES.md` DoD gate 3.
 
-A new permission that nobody holds is a feature that silently 403s, so migration 374 sweeps
+A new permission that nobody holds is a feature that silently 403s, so migration 375 sweeps
 `scm.proforma_invoice.upload` onto every role that already holds `scm.reorder.run` - whoever
 runs the module's uploads today. This pins that sweep against the migration's own code rather
 than against whatever grants the local database happens to carry.
 
 Mirrors `test_migration_361_spec_registry_grant_sweep.py` with ONE deliberate difference: it
-calls `grant_upload_permission()` rather than `upgrade()`. 374's `upgrade()` also creates
+calls `grant_upload_permission()` rather than `upgrade()`. 375's `upgrade()` also creates
 `scm.proforma_invoice` and its line table, and `op.create_table(..., schema="scm")` names the
 real schema outright - `blank_session`'s schema translation does not reach it, so running the
 whole body here would collide with the tables that already exist rather than test anything.
@@ -41,7 +41,7 @@ TARGET_SLUG = "scm.proforma_invoice.upload"
 
 
 def _migration_module():
-    spec = importlib.util.spec_from_file_location("zzt_migration_374", _MIGRATION_PATH)
+    spec = importlib.util.spec_from_file_location("zzt_migration_375", _MIGRATION_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -116,7 +116,7 @@ def db():
 
 
 def test_a_role_that_runs_the_reorder_gains_the_upload(db):
-    role = _role(db, "zzt374_operator")
+    role = _role(db, "zzt375_operator")
     _grant(db, role, SOURCE_SLUG)
 
     _run_sweep(db)
@@ -165,7 +165,7 @@ def test_every_integration_role_is_excluded_not_just_n8n(db):
 
 
 def test_a_role_holding_no_reorder_permission_gains_nothing(db):
-    role = _role(db, "zzt374_outsider")
+    role = _role(db, "zzt375_outsider")
 
     _run_sweep(db)
 
@@ -173,7 +173,7 @@ def test_a_role_holding_no_reorder_permission_gains_nothing(db):
 
 
 def test_running_it_twice_changes_nothing(db):
-    role = _role(db, "zzt374_idempotent")
+    role = _role(db, "zzt375_idempotent")
     _grant(db, role, SOURCE_SLUG)
 
     _run_sweep(db)

@@ -31,7 +31,7 @@ router = APIRouter()
 
 # Writing a supplier's document of record is the operator's capability, not the reader's, so
 # it sits behind its own permission - swept onto whoever already runs the module's uploads
-# by migration 374.
+# by migration 375.
 _UPLOAD = require_permission("scm.proforma_invoice.upload")
 _READ = require_permission("scm.dashboard.view")
 
@@ -99,12 +99,13 @@ async def apply_proforma_invoice(
 def list_proforma_invoices(
     supplier_id: Optional[str] = Query(None, description="Whose invoices to show"),
     limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0, description="Skip this many, so a second page is reachable"),
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """Invoices we have read, newest first."""
+    """Invoices we have read, newest first. `total` counts all of them, not just this page."""
     return proforma_invoice_service.list_for_supplier(
-        db, supplier_id=supplier_id, limit=limit
+        db, supplier_id=supplier_id, limit=limit, offset=offset
     )
 
 

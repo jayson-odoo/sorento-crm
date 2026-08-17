@@ -465,19 +465,30 @@ def get_or_404(db: Session, invoice_id: str) -> ProformaInvoice:
 
 
 def list_for_supplier(
-    db: Session, *, supplier_id: Optional[str] = None, limit: int = 25
+    db: Session, *, supplier_id: Optional[str] = None, limit: int = 25, offset: int = 0
 ) -> dict:
-    """Invoices we have read, newest first. `supplier_id` narrows it to one supplier."""
+    """Invoices we have read, newest first. `supplier_id` narrows it to one supplier.
+
+    `total` is counted separately from the page, so it is how many invoices are held rather
+    than how many came back: `len(rows)` after a `LIMIT` can never exceed the page size, and a
+    supplier with more invoices than one page would have read as having exactly a page of them.
+    `offset` is what makes the rest of them reachable.
+    """
     if supplier_id and not _is_uuid(supplier_id):
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
 
     q = db.query(ProformaInvoice)
     if supplier_id:
         q = q.filter(ProformaInvoice.supplier_id == str(supplier_id))
-    rows = q.order_by(ProformaInvoice.created_at.desc()).limit(limit).all()
+    total = q.count()
+    rows = (
+        q.order_by(ProformaInvoice.created_at.desc()).offset(max(offset, 0)).limit(limit).all()
+    )
     return {
         "data": [serialize(db, r, with_lines=False) for r in rows],
-        "total": len(rows),
+        "total": total,
+        "limit": limit,
+        "offset": max(offset, 0),
     }
 
 

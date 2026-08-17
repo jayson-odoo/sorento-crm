@@ -210,7 +210,9 @@ first line's price silently valued the whole merged quantity at one of two price
 1. Mock -> real: n/a (no FE).
 2. Existing rows: none to backfill (new tables; shipment-line prices only from now on).
 3. New permission -> grant sweep in the migration (AC-P4.3).
-4. New DB column reaches the FE: n/a this slice; recorded for the verification task.
+4. New DB column reaches the FE: `currency` sits on `InboundShipmentLineBase`, so every
+   shipment-line read returns it beside `unit_cost` rather than handing a caller a price with
+   no money attached. The screen consuming it ships with the verification task.
 5. User-perspective verification: API evidence run recorded in the PR body.
 
 ## Review status

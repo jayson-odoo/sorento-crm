@@ -1,11 +1,11 @@
 """G3b: the proforma invoice becomes a document we hold, with priced lines.
 
 Revision ID: 375_scm_proforma_invoice
-Revises: ("373_merge_372_flyer_specs", "373_merge_media_into_main")
+Revises: 374_merge_proj_media_flyer
 Create Date: 2026-08-17
 
-Main carried two heads when this was written, so this revision joins them and adds its own
-tables in one step rather than leaving a merge nobody owns.
+Written against two heads on main and renumbered onto their merge (`374_merge_proj_media_flyer`)
+after rebasing, so this revision is a plain single-parent one and 375 is the only head.
 
 What it adds:
 

@@ -238,6 +238,34 @@ def _pi_line_from(raw: list, col_field: dict[int, str], row_number: int) -> Opti
     )
 
 
+def _unreadable_qty(
+    raw: list, col_field: dict[int, str], row_number: int
+) -> Optional[RowProblem]:
+    """A complaint about a row that NAMES an item but states no readable quantity.
+
+    The row is still dropped - a line with no quantity cannot be priced - but it is dropped
+    out loud. This table is the document of record the overcharge check runs against, so a
+    line missing from it understates what the supplier charged, and `line_count` and the
+    stored total quietly agree with the understatement.
+
+    A row with no item code stays silent: that is the pre-loading list's blank numbered
+    filler (`序号` filled, nothing else) and its totals row, neither of which is a line.
+    """
+    vals: dict[str, Any] = {}
+    for pos, f in col_field.items():
+        if pos < len(raw):
+            vals[f] = raw[pos]
+
+    code = _text(vals.get("item_code"))
+    if not code or _number(vals.get("qty")) is not None:
+        return None
+    stated = _text(vals.get("qty"))
+    reason = (
+        f'quantity "{stated}" is not a number' if stated else "the row states no quantity"
+    )
+    return RowProblem(row_number, f"skipped {code}: {reason}", value=stated)
+
+
 def read_workbook(
     file_data: bytes, resolver: Optional[AliasResolver] = None, *, db: Optional[Session] = None
 ) -> ProformaReadResult:
@@ -316,7 +344,15 @@ def read_workbook(
                 continue
             # Not a line and not a total. It may be the labels introducing the NEXT document,
             # which is how a stacked file separates one invoice from the one before it.
-            _absorb(pending, _labelled(raw, resolver, _BLOCK_FIELDS), row_number)
+            labelled = _labelled(raw, resolver, _BLOCK_FIELDS)
+            if not labelled:
+                # A labelled row is not a failed line, so only a row that carries none of
+                # those labels is complained about (`货单号：` sitting in the item-code column
+                # would otherwise read as an item whose quantity went missing).
+                problem = _unreadable_qty(raw, col_field, row_number)
+                if problem is not None:
+                    result.problems.append(problem)
+            _absorb(pending, labelled, row_number)
             continue
 
         if current is not None:

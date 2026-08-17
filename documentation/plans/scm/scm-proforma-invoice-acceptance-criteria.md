@@ -154,6 +154,14 @@ nothing resolved, it says so before Confirm is pressed.
   makes a genuine re-upload create a second set. A supplier whose documents state their own
   number is unaffected. Where it bites, rename the file.
 
+- **Two blocks in ONE file stating the same PI number replace each other.** `apply` resolves
+  each block independently by `(company, supplier, pi_number)`, so the second block's lines
+  overwrite the first block's and the stored `line_count` / `total_amount` describe the last
+  block only. Unreachable in both known supplier shapes: Jinbaichuan's blocks state no number
+  at all, so theirs are positional and therefore distinct, and Kailu's file is a single
+  document. If a supplier ever stacks a repeated number, the honest outcomes are to merge the
+  blocks or to refuse the file naming the duplicate, and that is the change to make then.
+
 ## Out of scope (owned elsewhere)
 
 - PI-to-PO matching, variance, overcharge detection (next task).
