@@ -234,3 +234,52 @@ sidebar navigation to switch mock scenarios.
 - Product Management > Units of Measure: "Decimal Places" list column; Create UOM form has the
   0..4 field defaulting to 0, `7` is refused at submit (AC-F12 UOM half); 375px viewport renders.
 - `errors` empty; console only dev noise. Screenshots kept in the session scratchpad.
+
+### 4.2 S2-BE-1 (UOM decimal_places) and S2-BE-2 (plan grain) - Phase 2 green, 2026-08-17
+
+Migrations, chained from `373_merge_scm_stage0_1a`, one head (`alembic heads` ->
+`375_plan_grain_run_stamp`):
+
+- `374_uom_decimal_places` - adds `units_of_measure.decimal_places` nullable, runs
+  `app.services.uom_decimal_places.backfill_uom_decimal_places`, then NOT NULL DEFAULT 0 +
+  CHECK `0..4`.
+- `375_plan_grain_run_stamp` - `system_settings.plan_grain` (NOT NULL, default `product`)
+  and `scm.reorder_run.decision_grain` / `.front_planning_contract_version`, both nullable
+  and deliberately un-backfilled (NULL contract version = legacy = read-only).
+
+**Backfill behaviour on a row with no value.** Classification is by NAME only; a count
+name, an unknown name and a measure name with no observed fractional quantity all resolve
+to `0`, and `0` is also the column default afterwards, so the rollout fallback survives and
+nothing is left NULL. Measured on the prod-copy database: 12 units, all 12 land on 0 -
+`Kilogram` and `Liter` are measure names but no `order_lines` / `sales_order_lines` /
+`purchase_order_lines` quantity for their products carries a fractional part, so the
+observed scale is 0. An admin edit (or a re-run of the backfill) is how such a unit gets
+decimals; nothing is inferred.
+
+**Contract note (deviation, agreed with the red tests).** The backfill treats a row as
+unclassified when `decimal_places IS NULL` **or** `= 0`, not NULL alone. During the
+migration every row is NULL, so the two are identical there; the `= 0` arm is what lets the
+function re-value a row still sitting on the rollout fallback, and it is required by
+`tests/test_uom_decimal_places.py::test_backfill_measure_uom_takes_greatest_observed_scale
+_capped_at_four`, which measures a unit created under the finished (NOT NULL DEFAULT 0)
+schema. A value an admin has actually carried (anything above 0) is never overwritten.
+
+**Neighbour suites that had to state their grain.** The guard is contract, not regression:
+a run stamped `product` refuses a location decision and vice versa. `test_m4_decisions` and
+`test_m8_slice_c` decide at LOCATION grain, so their run helpers now call the shared
+`tests/scm/conftest.py::set_plan_grain(db, "location")` before `create_run`;
+`test_summary_order_service` and `test_order_summary_routes` build their run rows directly
+and now stamp `decision_grain="product", front_planning_contract_version=1`, because
+`record_decision` IS the Product-grain decision and an unstamped run is legacy.
+
+Test counts: `tests/test_uom_decimal_places.py` 77 passed;
+`tests/scm/test_plan_grain_policy.py` 20 passed (21 minus the migration-marker test its own
+docstring said to delete once the column exists); neighbours
+`test_summary_order_service` + `test_m4_decisions` + `test_planning_mode` +
+`test_alembic_revision_ids` + `test_order_summary_routes` + `test_settings_app_config_gate`
+196 passed together with the two above. FE: `tsc --noEmit` clean on the touched files (28
+pre-existing errors, all in `.test.ts(x)` files, unchanged); vitest 3 files / 24 tests
+passed for `units-of-measure` + `user-management/settings`.
+
+FE mocks swapped off and deleted: `uomDecimalPlacesMockStore.ts`, `planGrainMockStore.ts`.
+The SCM plan mocks (`USE_FRONT_PLANNING_MOCKS`, summary / PO worklist) stay ON for BE-3/BE-4.

@@ -49,6 +49,9 @@ class CanonicalUnitOfMeasure(_Canonical):
 
     code: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
+    # Canonical divisibility, 0..4 (front-planning plan 6.4). Absent means 0: an
+    # upstream master that has never expressed precision counts in whole units.
+    decimal_places: int = Field(0, ge=0, le=4)
     description: Optional[str] = None
     is_active: bool = True
 

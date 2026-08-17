@@ -32,19 +32,11 @@
  *     `uom_decimal_places` at calculation, and validation and allocation read that
  *     snapshot, so editing a unit here never changes a run already calculated.
  *
- * Phase 1: `USE_UOM_DECIMAL_PLACES_MOCKS` (in `lib/uomDecimalPlacesMockStore.ts`)
- * overlays the field on reads and strips it from writes, because the column does
- * not exist yet. Phase 2 flips that flag and deletes the store; nothing here or in
- * the screens changes shape.
+ * Live since slice S2-BE-1 (migration `374_uom_decimal_places`). The Phase-1 mock
+ * store that overlaid the field is deleted; the field now travels on the real
+ * payload in both directions, and no screen changed shape.
  */
 import { apiFetch } from '@/lib/api';
-import {
-  USE_UOM_DECIMAL_PLACES_MOCKS,
-  rememberDecimalPlaces,
-  stripDecimalPlaces,
-  withDecimalPlaces,
-  withDecimalPlacesList,
-} from '../lib/uomDecimalPlacesMockStore';
 import type { UnitOfMeasure, UOMFormData } from '../types/uom.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
@@ -60,44 +52,39 @@ export async function getUOMs(params: DataGridApiFetchParams): Promise<DataGridA
   });
   const response = await apiFetch(`/api/v1/master-data/units-of-measure?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch UOMs');
-  const body = (await response.json()) as DataGridApiResponse<UnitOfMeasure>;
-  return { ...body, data: withDecimalPlacesList(body.data) };
+  return (await response.json()) as DataGridApiResponse<UnitOfMeasure>;
 }
 
 export async function getUOM(id: string): Promise<UnitOfMeasure> {
   const response = await apiFetch(`/api/v1/master-data/units-of-measure/${id}`);
   if (!response.ok) throw new Error('Failed to fetch UOM');
-  return withDecimalPlaces((await response.json()) as UnitOfMeasure);
+  return (await response.json()) as UnitOfMeasure;
 }
 
 export async function createUOM(data: UOMFormData): Promise<UnitOfMeasure> {
   const response = await apiFetch('/api/v1/master-data/units-of-measure', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(USE_UOM_DECIMAL_PLACES_MOCKS ? stripDecimalPlaces(data) : data),
+    body: JSON.stringify(data),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to create UOM' }));
     throw new Error(error.message);
   }
-  const created = (await response.json()) as UnitOfMeasure;
-  if (USE_UOM_DECIMAL_PLACES_MOCKS) rememberDecimalPlaces(created.id, data.decimal_places);
-  return withDecimalPlaces(created);
+  return (await response.json()) as UnitOfMeasure;
 }
 
 export async function updateUOM(id: string, data: Partial<UOMFormData>): Promise<UnitOfMeasure> {
   const response = await apiFetch(`/api/v1/master-data/units-of-measure/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(USE_UOM_DECIMAL_PLACES_MOCKS ? stripDecimalPlaces(data) : data),
+    body: JSON.stringify(data),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to update UOM' }));
     throw new Error(error.message);
   }
-  const updated = (await response.json()) as UnitOfMeasure;
-  if (USE_UOM_DECIMAL_PLACES_MOCKS) rememberDecimalPlaces(id, data.decimal_places);
-  return withDecimalPlaces(updated);
+  return (await response.json()) as UnitOfMeasure;
 }
 
 export async function deleteUOM(id: string): Promise<void> {

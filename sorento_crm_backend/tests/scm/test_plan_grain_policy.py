@@ -147,13 +147,11 @@ def test_settings_post_general_rejects_unknown_plan_grain_value(settings_api, bl
     assert resp.status_code == 422, resp.text
 
 
-def test_system_setting_model_has_no_plan_grain_column_yet_is_the_red_signal():
-    """Direct model-level pin: the column simply does not exist. Once the coder adds it,
-    this construction stops raising and the test starts failing loudly (an unmapped kwarg
-    that used to explode now silently succeeds) - which is the intended signal to delete
-    this test in the green step; it is a migration marker, not a permanent assertion."""
-    with pytest.raises(TypeError):
-        SystemSetting(id=str(uuid.uuid4()), name="x", plan_grain="location")
+# `test_system_setting_model_has_no_plan_grain_column_yet_is_the_red_signal` lived here.
+# It was the red marker for the missing column - `SystemSetting(..., plan_grain=...)`
+# raising TypeError - and its own docstring said to delete it in the green step once the
+# column exists, which migration 375 did. The behaviour it stood in for is covered by the
+# three settings tests above.
 
 
 # =========================================================================== #

@@ -24,6 +24,7 @@ from sqlalchemy import (
     Numeric,
     Date,
     Index,
+    SmallInteger,
     UniqueConstraint,
     text,
 )
@@ -271,6 +272,16 @@ class ReorderRun(Base, CompanyScopedMixin):
     overview = Column(Text, nullable=True)  # LLM (M5) — lazy-cached run-level AI overview
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # Front planning (plan 5.1 / 5.4). `decision_grain` is the ONE grain this run may be
+    # decided at - `product` (the order_summary_row chosen quantity) or `location` (the
+    # recommendation decisions and overrides) - stamped from the admin plan-grain policy
+    # when the run is created and never changed, so a later policy edit cannot move a
+    # frozen run and the two grains can never order the same requirement.
+    # `front_planning_contract_version` is 1 on every run created under the contract and
+    # NULL on every run that predates it; NULL is what makes a run legacy and read-only,
+    # and neither column is backfilled.
+    decision_grain = Column(String(20), nullable=True)
+    front_planning_contract_version = Column(SmallInteger, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     recommendations = relationship(

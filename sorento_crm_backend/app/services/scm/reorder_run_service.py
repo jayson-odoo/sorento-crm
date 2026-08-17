@@ -46,6 +46,7 @@ from app.services.scm.money import (
     normalize_currency,
     to_base,
 )
+from app.services.scm import plan_grain
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     DEFAULT_OVERSTOCK_DAYS,
@@ -83,6 +84,11 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     ``warehouse`` (per-warehouse planning; each buy is tied to a real warehouse, not
     an aggregated ``Network`` row). The HTTP request schema dropped it. Direct service
     callers may still pass ``network`` explicitly.
+
+    The run STAMPS the admin plan-grain policy (front-planning plan 5.1) and the contract
+    version here, at creation, and never again: the grain a screen shows for a run is its
+    stamp rather than the live setting, so changing the policy affects only later runs and
+    an existing run's decisions stay valid where they were made.
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
@@ -103,6 +109,8 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
         run_log={"stage": _STAGES[0]},
         source_system="scm",
         source_ref=_SEED,
+        decision_grain=plan_grain.resolve_plan_grain(db),
+        front_planning_contract_version=plan_grain.FRONT_PLANNING_CONTRACT_VERSION,
     ))
     db.commit()
 
@@ -206,7 +214,8 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
     """
     if today is None:
         today = datetime.now(_KL_TZ).date()
-    cols = ("id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log")
+    cols = ("id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log, "
+            "decision_grain, front_planning_contract_version")
     # Company-scoped by hand: raw SQL, so the ORM isolation filter never sees it. Without the
     # predicate the reorder page opens on whichever company ran most recently, which is
     # another company's plan wearing this company's chrome.

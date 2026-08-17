@@ -168,6 +168,9 @@ def _uom_columns(payload: Any, db: Session) -> dict[str, Any]:
     return {
         "uom_code": payload.code,
         "uom_name": payload.name,
+        # Canonical divisibility (plan 6.4). A source that does not state it lands on
+        # 0, the same rollout fallback the backfill gives an unknown unit name.
+        "decimal_places": payload.decimal_places,
         "description": payload.description,
         "is_active": payload.is_active,
     }

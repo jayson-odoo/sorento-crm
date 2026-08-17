@@ -263,6 +263,13 @@ class SystemSetting(Base):
         Numeric(4, 3), nullable=False, server_default="0.700", default=0.700
     )
 
+    # SCM front planning: the admin PLAN GRAIN policy (plan 5.1, AC-F01). `product` or
+    # `location`, rollout default `product`. It is policy, not a per-run selector - each
+    # new reorder run stamps the configured value at creation and keeps it, so changing
+    # this affects only runs created afterwards. Separate from the buyer's own
+    # Planning mode: Auto / Manual, which it never renames or overrides.
+    plan_grain = Column(String(20), nullable=False, server_default="product", default="product")
+
     # SMTP for notification emails (password not returned in read APIs)
     smtp_host = Column(String(255), nullable=True)
     smtp_port = Column(String(10), nullable=True)

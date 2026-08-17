@@ -37,12 +37,6 @@ import {
   getUsersForApproverSelect,
   type UserForSelect,
 } from '@/app/(protected)/procurement-management/purchase-requests/services/purchaseRequestService';
-import {
-  USE_PLAN_GRAIN_MOCKS,
-  mockPlanGrain,
-  rememberPlanGrain,
-  type PlanGrainSetting,
-} from './lib/planGrainMockStore';
 
 type SupplierSelectRow = {
   id: string;
@@ -230,11 +224,8 @@ export default function Page() {
     defaultProductStandardLeadTimeDays: settings?.defaultProductStandardLeadTimeDays ?? 90,
     takeoverCooldownSeconds: settings?.takeoverCooldownSeconds ?? 60,
     formSlaGraceSeconds: settings?.formSlaGraceSeconds ?? 0,
-    // Phase 1: the blob does not carry `plan_grain` yet, so the mock store answers
-    // for it. Phase 2 (S2-BE-2) deletes the store and this reads the saved value.
-    planGrain: USE_PLAN_GRAIN_MOCKS
-      ? mockPlanGrain(settings?.planGrain)
-      : (settings?.planGrain ?? 'product'),
+    // The rollout default (plan 5.1) when the blob carries no value yet.
+    planGrain: settings?.planGrain ?? 'product',
     purchaseRequestDefaultApproverUserId:
       settings?.purchaseRequestDefaultApproverUserId &&
       settings.purchaseRequestDefaultApproverUserId.length > 0
@@ -285,9 +276,7 @@ export default function Page() {
       defaultProductStandardLeadTimeDays: settings.defaultProductStandardLeadTimeDays ?? 90,
       takeoverCooldownSeconds: settings.takeoverCooldownSeconds ?? 60,
       formSlaGraceSeconds: settings.formSlaGraceSeconds ?? 0,
-      planGrain: USE_PLAN_GRAIN_MOCKS
-        ? mockPlanGrain(settings.planGrain)
-        : (settings.planGrain ?? 'product'),
+      planGrain: settings.planGrain ?? 'product',
       purchaseRequestDefaultApproverUserId:
         settings.purchaseRequestDefaultApproverUserId &&
         settings.purchaseRequestDefaultApproverUserId.length > 0
@@ -332,13 +321,6 @@ export default function Page() {
             ? null
             : values.sponsorshipFormDefaultApproverUserId,
       };
-
-      if (USE_PLAN_GRAIN_MOCKS) {
-        // Phase 1: the column does not exist, so the choice is remembered here and
-        // the field is not sent. Phase 2 removes this block and the body carries it.
-        rememberPlanGrain(values.planGrain as PlanGrainSetting);
-        delete body.plan_grain;
-      }
 
       const response = await apiFetch('/api/user-management/settings/general', {
         method: 'POST',

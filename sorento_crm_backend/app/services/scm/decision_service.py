@@ -30,8 +30,9 @@ from typing import Optional
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
-from app.models.scm import RecommendationOverride, ReorderRecommendation
+from app.models.scm import RecommendationOverride, ReorderRecommendation, ReorderRun
 from app.services.error_handler import AppException
+from app.services.scm import plan_grain
 from app.services.numbering_service import NumberingService
 
 DRAFT_STATUS = "draft_recommendation"
@@ -41,6 +42,19 @@ _SRC = "scm_recommendation"
 # ---------------------------------------------------------------------------
 # lookups
 # ---------------------------------------------------------------------------
+
+def _assert_location_grain(db: Session, run_id: str) -> None:
+    """A location decision may only be written on a run stamped at location grain.
+
+    Product-grain runs decide through `summary_order_service.record_decision`, and a
+    pre-contract run decides nowhere at all (plan 5.4, AC-F09). Shared with that service
+    through `plan_grain.assert_decision_grain`, so the two refusals cannot drift.
+    """
+    run = db.query(ReorderRun).filter(ReorderRun.id == run_id).first()
+    if run is None:
+        raise AppException(status_code=404, message="Reorder run not found.")
+    plan_grain.assert_decision_grain(run, plan_grain.LOCATION_GRAIN)
+
 
 def _get_buy_rec(db: Session, rec_id: str) -> ReorderRecommendation:
     rec = (
@@ -305,6 +319,7 @@ def accept_recommendation(db: Session, rec_id: str, actor: Optional[str]) -> dic
     """Stage an Accept (M4-D4) — sets status only, NO PO. The draft PO is created
     later at Confirm decisions, so the planner keeps an editable overview first."""
     rec = _get_buy_rec(db, rec_id)
+    _assert_location_grain(db, str(rec.run_id))
     choice = _resolve_choice(db, rec, None)
     rec.status = "accepted"
     db.flush()
@@ -323,6 +338,7 @@ def adjust_recommendation(
     supplier switch) and sets status; NO PO. Confirm decisions consolidates the
     latest override into the draft PO line."""
     rec = _get_buy_rec(db, rec_id)
+    _assert_location_grain(db, str(rec.run_id))
     if override_qty is None or float(override_qty) <= 0:
         raise AppException(status_code=422, message="Override quantity must be greater than zero.")
     if not (reason_text or "").strip():
@@ -356,6 +372,7 @@ def reject_recommendation(
     """Reject (M4-D8) → rec dismissed, reason stored (feedback trigger). Any draft PO
     line the rec previously landed in is pulled back out."""
     rec = _get_buy_rec(db, rec_id)
+    _assert_location_grain(db, str(rec.run_id))
     if not (reason_text or "").strip():
         raise AppException(status_code=422, message="A reason is required to reject a recommendation.")
     _remove_rec_line(db, rec.id)
@@ -382,6 +399,7 @@ def reject_recommendation(
 def bulk_accept(db: Session, run_id: str, ids: list[str], actor: Optional[str]) -> dict:
     """Bulk Accept funded recs (M4-D9) — STAGES each as accepted; no PO yet
     (materialised at Confirm decisions). ``po_count`` stays 0 for the staged step."""
+    _assert_location_grain(db, run_id)
     recs = _run_recs(db, run_id, ids)
     for rec in recs:
         accept_recommendation(db, rec.id, actor)

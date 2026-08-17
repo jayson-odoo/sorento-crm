@@ -191,6 +191,9 @@ def chain(scm_app):  # noqa: F811
         id=_u(), status="completed", buy_scope="warehouse",
         started_at=to_naive_datetime(datetime.now(MALAYSIA_TZ)),
         source_system="scm", source_ref=_code("RUN"),
+        # Stamped as a CURRENT product-grain run (front planning 5.4): `record_decision`
+        # IS the Product-grain decision, and a run with no stamp is legacy and read-only.
+        decision_grain="product", front_planning_contract_version=1,
     )
     db.add(run)
     db.flush()

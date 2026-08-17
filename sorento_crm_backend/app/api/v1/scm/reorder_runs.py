@@ -113,7 +113,8 @@ def list_reorder_runs(
         text(f"SELECT count(*) FROM scm.reorder_run {where}"), co_params
     ).scalar() or 0
     rows = db.execute(text(f"""
-        SELECT id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log
+        SELECT id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log,
+               decision_grain, front_planning_contract_version
         FROM scm.reorder_run
         {where}
         ORDER BY started_at DESC NULLS LAST, created_at DESC
@@ -193,6 +194,8 @@ def _list_item(r, code_by_id: dict, buy_counts: dict[str, int] | None = None) ->
         "started_at": _iso(r["started_at"]),
         "finished_at": _iso(r["finished_at"]),
         "summary": summary,
+        "decision_grain": r["decision_grain"],
+        "front_planning_contract_version": r["front_planning_contract_version"],
     }
 
 
@@ -270,7 +273,8 @@ def get_reorder_run(
     ``error`` once ``status='failed'``."""
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
-        "SELECT id, status, buy_scope, error_text, run_log FROM scm.reorder_run "
+        "SELECT id, status, buy_scope, error_text, run_log, decision_grain, "
+        "       front_planning_contract_version FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": run_id, **co_params}).mappings().first()
     if not row:
@@ -295,6 +299,8 @@ def get_reorder_run(
         "buy_scope": row["buy_scope"],
         "error": row["error_text"],
         "summary": summary,
+        "decision_grain": row["decision_grain"],
+        "front_planning_contract_version": row["front_planning_contract_version"],
     }
 
 

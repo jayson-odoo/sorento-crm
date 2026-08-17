@@ -242,3 +242,28 @@ def _sessions_for(app):
     except Exception:  # noqa: BLE001 - a non-generator override is not ours to interpret
         return []
     return [db] if db is not None else []
+
+
+def set_plan_grain(db, grain: str) -> None:
+    """Put the admin plan-grain policy on `grain` before a run is created.
+
+    A run stamps the configured grain at creation (front planning 5.1 / 5.4) and only that
+    grain may be decided on it, so a suite whose decisions are LOCATION-grain (accept /
+    adjust / reject a recommendation) has to create its run under the `location` policy -
+    under the rollout default, `product`, the run owns the `order_summary_row` decision
+    instead and refuses them with `decision_grain_mismatch`, which is the contract rather
+    than a defect.
+
+    The settings row is created when absent so this does not depend on a seeded singleton
+    (CI's database has none), and everything is rolled back with the caller's savepoint.
+    """
+    import uuid as _uuid
+
+    from app.models.user import SystemSetting
+
+    settings = db.query(SystemSetting).first()
+    if settings is None:
+        settings = SystemSetting(id=str(_uuid.uuid4()), name="ZZTSCM settings")
+        db.add(settings)
+    settings.plan_grain = grain
+    db.flush()

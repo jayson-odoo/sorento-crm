@@ -50,6 +50,12 @@ class ReorderRunStatusResponse(BaseModel):
     buy_scope: Optional[str] = None
     error: Optional[str] = None
     summary: Optional[ReorderRunSummary] = None
+    # The grain this run may be DECIDED at, stamped from the admin plan-grain policy when
+    # it was created (front-planning plan 5.1). NULL on a legacy run, which
+    # `front_planning_contract_version IS NULL` identifies and which accepts no decision
+    # in either grain. Never the live setting - the FE chip reads the stamp.
+    decision_grain: Optional[Literal["product", "location"]] = None
+    front_planning_contract_version: Optional[int] = None
 
 
 # --- run history (list) -----------------------------------------------------
@@ -67,6 +73,10 @@ class ReorderRunListItem(BaseModel):
     started_at: Optional[str] = None   # naive-UTC ISO — FE formats in Malaysia time
     finished_at: Optional[str] = None
     summary: Optional[ReorderRunSummary] = None
+    # Same stamp as ReorderRunStatusResponse, so the history list and today's run label a
+    # run's grain identically. NULL = legacy run.
+    decision_grain: Optional[Literal["product", "location"]] = None
+    front_planning_contract_version: Optional[int] = None
 
 
 class ReorderRunListResponse(BaseModel):

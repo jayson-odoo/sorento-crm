@@ -50,6 +50,7 @@ from app.models.scm import (
     SupplierPerformance,
 )
 from app.services.error_handler import AppException
+from app.services.scm import plan_grain
 from app.services.scm.coverage_service import CoverageService
 from app.services.scm.cost_capture_service import cost_variance
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
@@ -358,6 +359,11 @@ def report(db: Session, *, run_id: Optional[str] = None) -> dict:
     )
     return {
         "run_id": str(run.id),
+        # The run's STAMP, never the live policy setting: a run is read at the grain it was
+        # created with (AC-F01/F10). `is_legacy` is the older, pre-contract run whose
+        # channel breakdown is unavailable and whose decisions are closed.
+        "decision_grain": plan_grain.decision_grain_of(run),
+        "is_legacy": plan_grain.is_legacy_run(run),
         # Off the rows, not off `date.today()`: an empty report has no computed date to state,
         # and inventing today's would date a book that was never built.
         "as_of": (rows[0][0].as_of.isoformat() if rows else None),
@@ -818,6 +824,9 @@ def record_decision(
         raise AppException(422, "An order quantity cannot be negative.")
 
     run = _run_for(db, run_id)
+    # Product grain owns this decision. A legacy run owns neither, and a location-grain
+    # run owns the recommendation decisions instead (plan 5.4, AC-F09).
+    plan_grain.assert_decision_grain(run, plan_grain.PRODUCT_GRAIN)
     product = _product_by_code(db, product_code)
     row = (
         db.query(OrderSummaryRow)

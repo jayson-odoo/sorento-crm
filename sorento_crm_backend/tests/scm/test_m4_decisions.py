@@ -20,7 +20,7 @@ from sqlalchemy import text
 from app.services.scm import decision_service as dsvc
 from app.services.scm import reorder_run_service as run_svc
 from app.services.scm.purchase_order_service import PurchaseOrderService
-from tests.scm.conftest import as_user, requires_pg, seed_user
+from tests.scm.conftest import as_user, requires_pg, seed_user, set_plan_grain
 from tests.scm.test_m4_cash import (
     _client,
     _link,
@@ -41,6 +41,8 @@ _PO_CANONICAL = re.compile(r"^PO-\d{4}/\d{2}-\d{4}$")
 # ===========================================================================
 
 def _run_buys(db, wid_code) -> str:
+    # These are LOCATION-grain decisions, so the run must be created under that policy.
+    set_plan_grain(db, "location")
     created = run_svc.create_run(db, [wid_code], "warehouse", enqueue=False)
     assert run_svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
     return created["run_id"]
