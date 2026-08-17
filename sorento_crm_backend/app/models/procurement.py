@@ -431,6 +431,18 @@ class PickingLine(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     picking_header_id = Column(UUID(as_uuid=False), ForeignKey("picking_headers.id", ondelete="CASCADE"), nullable=False)
     spo_allocation_id = Column(UUID(as_uuid=False), ForeignKey("spo_allocations.id", ondelete="SET NULL"), nullable=True)
+    # What the SHEET said this line was received against - the line's own "Our PO
+    # No." when populated, else the GRN header's single-SPO fallback. Stored
+    # whether or not it matched an allocation, so a line the matcher could not
+    # place still reads as stated instead of as a dash, and so the forward matcher
+    # can revisit it the day its allocation arrives.
+    #
+    # Faithful to the sheet: no case folding, no separator rewriting. The
+    # tolerating is `_spo_match_key`'s job at match time; this column is evidence,
+    # and evidence is not normalised. NULL for a multi-SPO cell (it names no single
+    # allocation, so a stored value would display a claim the scalar matcher can
+    # never honour). Same width as `picking_headers.spo_number`.
+    spo_number_raw = Column(String(255), nullable=True)
     # SCM (M0): soft link to the originating PO line when this pick is a goods-received
     # against a purchase order (drives supplier lead-time / quality snapshots).
     po_line_id = Column(UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"), nullable=True)
@@ -466,6 +478,19 @@ class PickingLine(Base, CompanyScopedMixin):
         Index("ix_picking_lines_product_id", "product_id"),
         Index("ix_picking_lines_spo_allocation_id", "spo_allocation_id"),
         Index("ix_picking_lines_po_line_id", "po_line_id"),
+        # The forward-matching query, exactly: "unlinked lines whose stated SPO
+        # reduces to this match key". Partial, because a linked line is never a
+        # candidate. `upper` and `regexp_replace` are both IMMUTABLE, so the
+        # expression is indexable. It MUST strip the same set as
+        # `procurement_service._spo_match_key` (`[^A-Za-z0-9]`, then uppercase) or
+        # SQL would offer a candidate the Python comparison then rejects - the same
+        # twin obligation the container-number normalizers carry. Migration
+        # 324_grn_line_spo_number_raw emits the identical statement.
+        Index(
+            "ix_picking_lines_spo_number_raw_key",
+            func.upper(func.regexp_replace(spo_number_raw, "[^A-Za-z0-9]", "", "g")),
+            postgresql_where=spo_allocation_id.is_(None),
+        ),
     )
 
 

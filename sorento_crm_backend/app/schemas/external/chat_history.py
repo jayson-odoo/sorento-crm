@@ -54,6 +54,10 @@ class ChatHistoryMessageIngestRequest(BaseModel):
 
 class ChatHistoryMessageIngestResponse(BaseModel):
     id: int
+    # "created" for a new row, "duplicate" when this Respond message_id was
+    # already mirrored for this contact and the existing row was returned
+    # instead (AC-J5 - the direct webhook lane and Respond's outgoing-message
+    # trigger both mirror the same message).
     status: str = "created"
 
 

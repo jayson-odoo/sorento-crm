@@ -32,6 +32,7 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
 
 # Mirror of ``scm.on_order_v``'s status filter (M4-D5/D6): a PO counts as incoming
 # supply only in these statuses AND while it still has an unreceived OPEN line.
@@ -45,8 +46,10 @@ _DRAFT_STATUS = "draft_recommendation"
 _REC_SOURCE = "scm_recommendation"
 #: Orders that arrived through the purchase-history upload. Reported as `import` rather than
 #: folded into `manual`: nobody keyed 1,586 orders by hand, and a buyer asking where a 2020
-#: order came from is owed the real answer.
-_IMPORT_SOURCES = ("scm_po_history",)
+#: order came from is owed the real answer. Both document families are listed - the channel
+#: writes shipping orders under their own stamp (`po_history_service.SPO_SOURCE_SYSTEM`), and
+#: an unlisted stamp would read as "somebody keyed this by hand".
+_IMPORT_SOURCES = (PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE)
 
 
 def _source_label(source_system: Optional[str]) -> str:

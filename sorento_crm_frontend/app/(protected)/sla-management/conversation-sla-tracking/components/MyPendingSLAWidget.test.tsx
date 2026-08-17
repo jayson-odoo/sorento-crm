@@ -68,6 +68,27 @@ vi.mock('@/app/(protected)/account/notifications/components', () => ({
   ),
 }));
 
+// The ticket drawer is exercised on its own (InterventionTicketDrawer.test.tsx);
+// here we only care that the widget opens/closes it with the right ticketId.
+vi.mock('./InterventionTicketDrawer', () => ({
+  default: ({
+    ticketId,
+    open,
+    onSent,
+  }: {
+    ticketId: string | null;
+    open: boolean;
+    onSent?: () => void;
+  }) =>
+    open ? (
+      <div data-testid="ticket-drawer" data-ticket-id={ticketId ?? ''}>
+        <button data-testid="drawer-sent" onClick={() => onSent?.()}>
+          sent
+        </button>
+      </div>
+    ) : null,
+}));
+
 function renderWidget() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -142,6 +163,41 @@ const ticketItem: MyPendingSLAItem = {
   is_responded: false,
   current_tier: 1,
   policy_name: 'Default',
+};
+
+// Two intervention tickets for the SAME contact (UAC AC-B1: no de-dup by contact).
+const ticketOne: MyPendingSLAItem & Record<string, unknown> = {
+  id: 'ticket-1',
+  source_entity_type: null,
+  source_entity_id: null,
+  is_form_sla: false,
+  reference: 'Aisyah Rahman',
+  respond_io_id: '10025531',
+  next_action: null,
+  due_at: new Date(Date.now() + 46 * 60_000).toISOString(),
+  due_at_resolution: new Date(Date.now() + 350 * 60_000).toISOString(),
+  active_due_at: new Date(Date.now() + 46 * 60_000).toISOString(),
+  due_kind: 'respond',
+  is_responded: false,
+  current_tier: 1,
+  policy_name: 'Conversation SLA - Standard',
+  is_intervention_ticket: true,
+  contact_name: 'Aisyah Rahman',
+  contact_phone: '+60 12-334 5566',
+  enquiry_snippet: 'Yes, please connect me to a person.',
+  source_message_id: '1001',
+  team_label: 'Customer Service - Tier 1',
+  initiated_at: new Date(Date.now() - 170 * 60_000).toISOString(),
+  escalated_at: null,
+};
+
+const ticketTwo: MyPendingSLAItem & Record<string, unknown> = {
+  ...ticketOne,
+  id: 'ticket-2',
+  due_at: new Date(Date.now() + 4 * 60_000).toISOString(),
+  enquiry_snippet: 'Also, can someone quote installation for 3 bathrooms?',
+  source_message_id: '1002',
+  team_label: 'Sales - Tier 1',
 };
 
 const teamItem: TeamPendingItem = {
@@ -562,5 +618,267 @@ describe('MyPendingSLAWidget clickable rows', () => {
     const otherButton = rows[1].querySelector('[role="button"]') as HTMLElement;
     expect(targetButton.className).toMatch(/ring-2 ring-primary/);
     expect(otherButton.className).not.toMatch(/ring-2 ring-primary/);
+  });
+
+  // ---- intervention tickets (UAC AC-B1/B2) -------------------------------
+
+  it('AC-B1: two tickets for one contact both render, each with its own chips - no de-dup', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne, ticketTwo]);
+    renderWidget();
+
+    // Both enquiry snippets show - two distinct rows for the same contact.
+    expect(await screen.findByText('Yes, please connect me to a person.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Also, can someone quote installation for 3 bathrooms?'),
+    ).toBeInTheDocument();
+
+    // Ticket rows carry NO inline Escalate/Resolve (those live in the drawer).
+    expect(hasActionButton(/Escalate/i)).toBe(false);
+    expect(hasActionButton(/Resolve/i)).toBe(false);
+  });
+
+  it('a ticket row offers Reassign and Extend - handing work over is a worklist decision', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    renderWidget();
+
+    await waitFor(() =>
+      expect(screen.getByText('Yes, please connect me to a person.')).toBeInTheDocument(),
+    );
+    expect(getActionButton(/Reassign/i)).toBeInTheDocument();
+    expect(getActionButton(/Extend/i)).toBeInTheDocument();
+  });
+
+  it('Extend stays hidden on a ticket with no resolution deadline', async () => {
+    getMyPendingSLA.mockResolvedValue([{ ...ticketOne, due_at_resolution: null }]);
+    renderWidget();
+
+    await waitFor(() => expect(getActionButton(/Reassign/i)).toBeInTheDocument());
+    expect(hasActionButton(/Extend/i)).toBe(false);
+  });
+
+  it('Reassign on a ticket row opens the picker, NOT the chat drawer', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    getVisibleUsers.mockResolvedValue([{ id: 'u-tay', name: 'Tay', email: 'tay@example.com' }]);
+    renderWidget();
+
+    await waitFor(() => expect(getActionButton(/Reassign/i)).toBeInTheDocument());
+    fireEvent.click(getActionButton(/Reassign/i));
+
+    await waitFor(() => expect(screen.getByText('Reassign task')).toBeInTheDocument());
+    expect(screen.queryByTestId('ticket-drawer')).not.toBeInTheDocument();
+  });
+
+  it('a ticket row loses Reassign without the reassign slug', async () => {
+    deniedSlugs = new Set(['sla_management.conversation_sla_tracking.reassign']);
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    renderWidget();
+
+    await waitFor(() =>
+      expect(screen.getByText('Yes, please connect me to a person.')).toBeInTheDocument(),
+    );
+    expect(hasActionButton(/Reassign/i)).toBe(false);
+  });
+
+  it('AC-B2: clicking a ticket row opens the drawer in place - no navigation, no Respond', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    renderWidget();
+
+    await waitFor(() =>
+      expect(screen.getByText('Yes, please connect me to a person.')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText('Yes, please connect me to a person.'));
+
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute(
+      'data-ticket-id',
+      'ticket-1',
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it('AC-E7: a blank enquiry snippet falls back to a neutral label, never an empty row', async () => {
+    getMyPendingSLA.mockResolvedValue([{ ...ticketOne, enquiry_snippet: '   ' }]);
+    renderWidget();
+
+    expect(await screen.findByText('Enquiry from this contact')).toBeInTheDocument();
+  });
+
+  it('a reply from the drawer reloads the worklist so the chips agree', async () => {
+    // The worklist is loaded imperatively (getMyPendingSLA into useState), not
+    // through react-query, so invalidating a query key refreshes nothing: the
+    // row behind the drawer keeps the pre-reply "Respond by" chip until the
+    // drawer is closed. The drawer reports the send instead.
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    renderWidget();
+
+    await waitFor(() =>
+      expect(screen.getByText('Yes, please connect me to a person.')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText('Yes, please connect me to a person.'));
+    await screen.findByTestId('ticket-drawer');
+
+    const before = getMyPendingSLA.mock.calls.length;
+    fireEvent.click(screen.getByTestId('drawer-sent'));
+
+    await waitFor(() =>
+      expect(getMyPendingSLA.mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
+  it('deep link ?ticket= opens the drawer directly and strips the query param', async () => {
+    extraParams = { ticket: 'ticket-2' };
+    getMyPendingSLA.mockResolvedValue([ticketOne, ticketTwo]);
+    renderWidget();
+
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute(
+      'data-ticket-id',
+      'ticket-2',
+    );
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/', { scroll: false }));
+  });
+});
+
+// ------------------------------------------------- AC-M2: recently resolved
+// A resolved row leaves the pending list (right), so the trail has to stay one
+// click away (also right). The link is honest: it carries the filter the SLA
+// listing applies server-side, not a client-side slice.
+
+describe('MyPendingSLAWidget recently-resolved affordance (AC-M2)', () => {
+  beforeEach(() => {
+    getMyPendingSLA.mockReset();
+    getTeamPendingSLA.mockReset();
+    getVisibleUsers.mockReset();
+    getTakeoverState.mockReset();
+    push.mockReset();
+    replace.mockReset();
+    searchParam = null;
+    extraParams = {};
+    deniedSlugs = new Set();
+    getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
+    getVisibleUsers.mockResolvedValue([]);
+    getTakeoverState.mockResolvedValue({});
+  });
+
+  it('links to the SLA listing filtered to what I resolved, newest first', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    renderWidget();
+
+    const link = await screen.findByTestId('recently-resolved-link');
+    expect(link).toHaveAttribute(
+      'href',
+      '/sla-management/conversation-sla-tracking?is_resolved=true&resolved_by=me&sort=resolved_at&dir=desc',
+    );
+    expect(link).toHaveTextContent(/Recently resolved/i);
+  });
+
+  it('shows on an empty pending list too - that is exactly when it is asked for', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    renderWidget();
+
+    await screen.findByText(/all caught up/i);
+    expect(screen.getByTestId('recently-resolved-link')).toBeInTheDocument();
+  });
+
+  it('is a My Pending affordance only, not a My Team one', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    renderWidget();
+    await screen.findByTestId('recently-resolved-link');
+
+    fireEvent.click(screen.getByRole('button', { name: 'My Team' }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('recently-resolved-link')).not.toBeInTheDocument(),
+    );
+  });
+});
+
+// ---- Deadline urgency + extended marker (feedback 2026-08-16, item 6) ----
+// The scenario: marketing extends a deadline while waiting on a supplier, then
+// forgets. Nothing on the row used to distinguish "due in a week" from "due in
+// ten minutes" until it was already red, and nothing said the deadline had been
+// moved at all.
+describe('MyPendingSLAWidget deadline urgency', () => {
+  beforeEach(() => {
+    getMyPendingSLA.mockReset();
+    getTeamPendingSLA.mockReset();
+    getVisibleUsers.mockReset();
+    getTakeoverState.mockReset();
+    push.mockReset();
+    replace.mockReset();
+    searchParam = null;
+    extraParams = {};
+    deniedSlugs = new Set();
+    getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
+    getVisibleUsers.mockResolvedValue([]);
+    getTakeoverState.mockResolvedValue({});
+  });
+
+  const dueIn = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+
+  it('a deadline days away reads neutral', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      { ...formItem, due_at: dueIn(3 * 24 * 60), active_due_at: dueIn(3 * 24 * 60) },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Purchase request');
+    const label = screen.getByText(/Respond by:/i);
+    expect(label.className).toMatch(/text-muted-foreground/);
+  });
+
+  it('a deadline inside four hours reads amber, before it has breached', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      { ...formItem, due_at: dueIn(45), active_due_at: dueIn(45) },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Purchase request');
+    expect(screen.getByText(/Respond by:/i).className).toMatch(/amber/);
+  });
+
+  it('a passed deadline reads red', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      { ...formItem, due_at: dueIn(-10), active_due_at: dueIn(-10) },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Purchase request');
+    expect(screen.getByText(/Respond by:/i).className).toMatch(/text-destructive/);
+  });
+
+  it('an extended row is marked, and the marker carries the new due date', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      {
+        ...formItem,
+        is_responded: true,
+        due_kind: 'resolve',
+        due_at_resolution: dueIn(5 * 24 * 60),
+        active_due_at: dueIn(5 * 24 * 60),
+        extension_count: 1,
+      },
+    ]);
+    renderWidget();
+
+    const marker = await screen.findByTestId('row-extended-marker');
+    expect(marker).toHaveTextContent('Extended');
+    expect(marker.getAttribute('title')).toMatch(/^Deadline extended to /);
+  });
+
+  it('a never-extended row carries no marker', async () => {
+    getMyPendingSLA.mockResolvedValue([formItem]);
+    renderWidget();
+
+    await screen.findByText('Purchase request');
+    expect(screen.queryByTestId('row-extended-marker')).not.toBeInTheDocument();
+  });
+
+  it('an extended intervention ticket shows the marker on its chips', async () => {
+    getMyPendingSLA.mockResolvedValue([{ ...ticketOne, extension_count: 2 }]);
+    renderWidget();
+
+    const chip = await screen.findByTestId('sla-extended-chip');
+    expect(chip).toHaveTextContent('Extended ×2');
   });
 });

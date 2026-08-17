@@ -448,6 +448,14 @@ _IMPORT_JOB_TYPE_LABELS: Dict[str, str] = {
     "grn_listing_import": "GRN listing import",
     "grn_lines_import": "GRN lines import",
     "spo_import": "SPO allocations import",
+    # Title case to match the two frontend job-type maps (import-jobs list + detail),
+    # which is the name the operator reads; this map is only the no-filename fallback.
+    "customer_import": "Customer Import",
+    "outstanding_so_import": "Outstanding Sales Orders Import",
+    "outstanding_po_import": "Outstanding Purchase Orders Import",
+    "po_history_import": "Purchase History Import",
+    "sales_history_import": "Sales History Import",
+    "order_inquiry_import": "Order Inquiry Import",
 }
 
 

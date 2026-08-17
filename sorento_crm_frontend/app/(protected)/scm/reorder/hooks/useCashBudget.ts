@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import { fmtMoney } from '../../lib/format';
 
 /**
  * The company's configured cash budget (`scm.purchasing_budget`).
@@ -55,7 +56,7 @@ export function useSaveCashBudget() {
       qc.setQueryData(KEY, data);
       toast.success(
         data.configured
-          ? `Cash budget saved: ${(data.budget_amount ?? 0).toLocaleString()}.`
+          ? `Cash budget saved: ${fmtMoney(data.budget_amount ?? 0)}.`
           : 'Cash budget cleared. The plan now shows in full.',
       );
     },

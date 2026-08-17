@@ -13,8 +13,10 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import date
-from typing import Optional
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import Callable, Optional
 
+import sqlalchemy as sa
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -22,6 +24,8 @@ from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.inventory import Warehouse
 from app.models.product import Product
+from app.services import import_outcome_codes as oc
+from app.services.import_outcome import ImportOutcome
 from app.services.import_alias_service import AliasResolver
 from app.services.scm.outstanding_diff import (
     ADDED,
@@ -35,6 +39,16 @@ from app.services.scm.outstanding_diff import (
 )
 from app.services.scm import plan_exception_service
 from app.services.scm import reorder_run_service
+from app.services.scm import sales_agent_service
+# Imported rather than defined here, and re-exported under the names this module has always
+# used. The vocabulary moved to `demand_class.py` when the salesperson master gained a
+# `demand_class` column of its own: two modules now WRITE this value and one of them is a
+# check constraint, so a second copy of the word list would be a database that accepts what
+# the importer rejects.
+from app.services.scm.history_sources import HISTORY_SOURCE_SYSTEMS
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS
+from app.services.scm.demand_class import class_of as _class_of
+from app.services.scm.customer_label import normalize_debtor_code
 from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
 
 logger = logging.getLogger(__name__)
@@ -42,9 +56,7 @@ logger = logging.getLogger(__name__)
 # Demand class drives fulfilment priority: `scm.priority_policy.demand_class_weights` is
 # keyed on it. A stated split that is not recognisably a project is retail, because that is
 # the only other class the seeded weights carry and a new word would score as nothing.
-# A split nobody states is NOT retail - see `_class_of`.
-_PROJECT_SEGMENTS = {"project", "projects", "contract"}
-DEFAULT_DEMAND_CLASS = "retail"
+# A split nobody states is NOT retail - see `_class_of`, imported above.
 
 # A quantity difference below this is noise between two exports, not a decision. Same figure
 # the diff uses, for the same reason.
@@ -78,8 +90,7 @@ class _Binding:
     # so the diff saw a document with no lines and inserted them all again, doubling on-order.
     write_status: str
     live_statuses: tuple[str, ...]
-    # Line columns fed from the file's money columns, when it has any. Empty for the sales
-    # book, whose extract carries no price at all.
+    # Line columns fed from the file's money columns, when it has any.
     money_cols: tuple[tuple[str, str], ...] = ()
     # Header columns fed from the file, per document. Same (column, extras key) shape.
     header_cols: tuple[tuple[str, str], ...] = ()
@@ -89,12 +100,23 @@ class _Binding:
     # later extract corrects them; these are for a value a person may have set by hand, where
     # a weekly re-upload silently overwriting it is the failure.
     header_fill_cols: tuple[tuple[str, str], ...] = ()
+    # The header column the counterparty CODE itself is kept in, when the header has one.
+    # Its presence changes what an unresolvable code MEANS: the code is not lost, so the
+    # order stays attributable ("Debtor 300-R009") and there is nothing to report. Absent
+    # (the PO side), an unresolvable code leaves the document unlinked with no trace, which
+    # is a resolution issue the operator has to see.
+    party_code_header_col: Optional[str] = None
     # The header column fulfilment priority is weighed on, and the header column the
     # project-versus-dealer split is stated in. Both None for purchase orders, which carry
     # no demand at all. `demand_split_col` is the source of truth (plan amendment of
     # 4 Aug 2026); `demand_class_col` is what the policy reads, stamped from it at import.
     demand_class_col: Optional[str] = None
     demand_split_col: Optional[str] = None
+    # The header column the salesperson master is linked through, and None for purchase
+    # orders, which have no agent at all. Its presence is also what turns the agent half of
+    # the classification and the unmapped-agent report on, so the PO path cannot acquire
+    # either by accident.
+    agent_fk: Optional[str] = None
 
 
 _BINDINGS: dict[str, _Binding] = {
@@ -103,21 +125,37 @@ _BINDINGS: dict[str, _Binding] = {
         number="so_number", header_fk="sales_order_id",
         date="required_date", fulfilled="qty_delivered",
         party_fk="customer_id", party_code="debtor_code",
-        # The SO path deliberately does NOT link the customer yet. The debtor code is read but
-        # nothing consumes `sales_orders.customer_id` from this channel, and reporting an
-        # unresolvable debtor code as an issue before anything reads it is noise on a screen
-        # whose whole job is to show the operator what needs fixing. Linking it is the same
-        # three lines as the PO side the day a consumer exists.
-        party=None, party_code_col="customer_code",
+        # The customer IS linked now, exactly as the PO side links its supplier. It used to
+        # be deliberately skipped because nothing read `sales_orders.customer_id` from this
+        # channel; the plan's demand and trend popovers now name who ordered every line, and
+        # 2,546 of the 2,548 orders this feed created had no customer at all - so every one
+        # of them read "Unnamed customer" while the debtor code was sitting in the file.
+        party=Customer, party_code_col="customer_code",
+        # ... and the code itself is kept on the header whether or not it resolves, so an
+        # order this feed cannot link is still attributable and still fixable later.
+        party_code_header_col="debtor_code",
         # `scm.committed_v` counts exactly one sales-order status, so writing and reading are
         # the same value here.
         write_status="open", live_statuses=("open",),
+        # What the customer pays. The extract has stated it since migration 338 seeded the
+        # `UNIT PRICE` alias, and nothing on this channel wrote it - so the demand popover,
+        # whose whole job is "who ordered it and at what price", quoted a blank on every real
+        # row. Same shape and same rule as the PO side's cost: an absent price stays NULL
+        # rather than becoming a 0 that reads as goods given away.
+        money_cols=(("unit_price", "unit_price"),),
         # OPTIONAL in the file and FILL-only on the header: no export carries an order type
         # today, so this is the column that lets a differently-worded export classify its own
         # documents the day it does, without a release. A value already on the header wins,
         # because that is what a person set and the extract is not the record of it.
-        header_fill_cols=(("order_type", "order_type"),),
+        #
+        # `order_date` is FILL-only for a different reason: the extract states the SO date
+        # and the header had none (the trend reads `order_date` over 24 months, so an order
+        # imported without one carries open demand and no history at all - "No order
+        # history" beside 51 open units). It fills the gap; an existing date, wherever it
+        # came from, stands.
+        header_fill_cols=(("order_type", "order_type"), ("order_date", "order_date")),
         demand_class_col="demand_class", demand_split_col="order_type",
+        agent_fk="sales_agent_id",
     ),
     PO: _Binding(
         header=PurchaseOrder, line=PurchaseOrderLine,
@@ -160,6 +198,23 @@ class ResolutionIssue:
 
 
 @dataclass
+class AgentNotice:
+    """An agent code in this file that can classify nothing, and why.
+
+    Its own list rather than a row problem or a resolution issue, because it is neither: the
+    file is fine, the code resolved (or was created), and nothing is being skipped. What it
+    reports is a gap in MASTER data that only the client can close - which of his 38 codes
+    still need a demand class - and that is a different question from "which rows of this file
+    could not be read". Kept off the row lists so it cannot bury them.
+    """
+
+    code: str
+    #: True when this upload is the first thing that has ever named the agent.
+    is_new: bool
+    reason: str
+
+
+@dataclass
 class PreviewResult:
     doc_type: str
     scope_documents: tuple[str, ...]
@@ -174,6 +229,9 @@ class PreviewResult:
     # the confirm screen shows the side effect BEFORE it happens and the commit reports the
     # same fact afterwards.
     activated_documents: list[str] = field(default_factory=list)
+    # Agent codes in this file that carry no demand class, so the client can see which of his
+    # master rows still need one. Same key on both responses, same reason as above.
+    unmapped_agents: list[AgentNotice] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -192,6 +250,7 @@ class PreviewResult:
             "resolution_issues": [asdict(i) for i in self.resolution_issues],
             "samples": self.samples,
             "activated_documents": list(self.activated_documents),
+            "unmapped_agents": [asdict(a) for a in self.unmapped_agents],
         }
 
 
@@ -210,6 +269,14 @@ class _Resolved:
     # Header-level values the file states per document (`_Binding.header_cols`), first
     # non-empty wins: the extract repeats them on every row of the document.
     header_by_doc: dict = field(default_factory=dict)
+    # Which agent CODE (normalised) sold each document. Per document and first non-empty
+    # wins, and a document naming two different agents is REPORTED - the same rule as the
+    # counterparty, in both halves, for the same reason: the extract states one value per
+    # document on every row of it, so a second value is a file to fix rather than a shape to
+    # support. Normalised by `sales_agent_service.normalize_code`, the same authority the
+    # master is keyed by, so the class lookup, the row creation and the report all compare
+    # one string.
+    agent_by_doc: dict = field(default_factory=dict)
 
 
 def _norm(code: str) -> str:
@@ -276,6 +343,7 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
     party_by_doc: dict[str, str] = {}
     party_code_by_doc: dict[str, str] = {}
     header_by_doc: dict[str, dict] = {}
+    agent_by_doc: dict[str, str] = {}
 
     kept: list[Line] = []
     for l in read.lines:
@@ -292,6 +360,29 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
                                           "no warehouse with this code"))
             continue
         kept.append(l)
+
+        # Who sold it. Read only where the document type HAS an agent, so the purchase book
+        # cannot pick one up from a stray column, and normalised through
+        # `sales_agent_service.normalize_code` - the ONE authority - so the key this builds is
+        # byte-for-byte the key the master is looked up and created under. A second
+        # normaliser that merely happened to agree would, the day the two drifted, report
+        # every agent as new and create a duplicate master row on every upload.
+        if bind.agent_fk:
+            agent_code = sales_agent_service.normalize_code(extra.get("agent"))
+            if agent_code:
+                seen_agent = agent_by_doc.get(l.doc_number)
+                if seen_agent is not None and seen_agent != agent_code:
+                    # One document is sold by one agent, so a file naming two is a file to
+                    # fix. The first row still wins the write, but SAID OUT LOUD - exactly the
+                    # counterparty rule below. Silent first-wins would attribute half the
+                    # document's demand to a salesperson who never sold it, and where the two
+                    # agents carry different demand classes it would also decide the order's
+                    # fulfilment priority from whichever row the export happened to list first.
+                    issues.append(ResolutionIssue(
+                        row, "agent", agent_code,
+                        f"{l.doc_number} names two different agent values, "
+                        f"{seen_agent} and {agent_code}; the first is being used"))
+                agent_by_doc.setdefault(l.doc_number, agent_code)
 
         # Header-level values the file repeats on every row of the document. First non-empty
         # wins rather than last, so a trailing blank cell cannot erase a stated date.
@@ -321,9 +412,17 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
             continue
         pid_party = parties.get(code)
         if pid_party is None:
-            issues.append(ResolutionIssue(
-                row, bind.party_code, code,
-                f"no {bind.party.__name__.lower()} with this code"))
+            # An unresolvable code is only a PROBLEM when it would otherwise be lost. The
+            # sales book keeps it on the header, so the order stays attributable and there
+            # is nothing for the operator to fix in this file - reporting 2,546 of them
+            # would bury the rows that really did fail. The purchase book has nowhere to
+            # put it, so there it is reported and the document is left unlinked.
+            if bind.party_code_header_col:
+                party_code_by_doc.setdefault(l.doc_number, code)
+            else:
+                issues.append(ResolutionIssue(
+                    row, bind.party_code, code,
+                    f"no {bind.party.__name__.lower()} with this code"))
             continue
         seen_code = party_code_by_doc.get(l.doc_number)
         if seen_code is not None and seen_code != code:
@@ -341,11 +440,13 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
 
     return _Resolved(lines=kept, issues=issues, product_by_code=products,
                      warehouse_by_code=warehouses, party_by_doc=party_by_doc,
-                     party_code_by_doc=party_code_by_doc, header_by_doc=header_by_doc)
+                     party_code_by_doc=party_code_by_doc, header_by_doc=header_by_doc,
+                     agent_by_doc=agent_by_doc)
 
 
 def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
-                    fulfilled_into: Optional[dict[str, float]] = None) -> list[Line]:
+                    fulfilled_into: Optional[dict[str, float]] = None,
+                    money_into: Optional[dict[str, dict]] = None) -> list[Line]:
     """Current outstanding lines for the documents named in the file, as diff Lines.
 
     `row_ref` carries the DB line id so apply() can update in place rather than matching
@@ -355,6 +456,10 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
     delivered/received quantity. The diff has no place for it (it is deliberately
     document-agnostic and compares OUTSTANDING figures) but the honesty checks need it, and a
     caller that only wants the diff should not have to unpack a pair to get it.
+
+    `money_into` is the same idea for the money columns, and it is read for every line the
+    file restates unchanged - so it comes out of THIS query rather than a lookup per row. On
+    the client's 4,349-row book that is one statement instead of four thousand.
     """
     if not docs:
         return []
@@ -363,6 +468,7 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
     # by it.
     line, header = bind.line, bind.header
     fulfilled = getattr(line, bind.fulfilled)
+    money = [getattr(line, col) for col, _key in bind.money_cols]
     rows = (
         db.query(
             line.id,
@@ -372,6 +478,7 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
             (line.qty_ordered - fulfilled).label("outstanding"),
             getattr(line, bind.date),
             fulfilled,
+            *money,
         )
         .join(header, header.id == getattr(line, bind.header_fk))
         .join(Product, Product.id == line.product_id)
@@ -391,6 +498,11 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
     )
     if fulfilled_into is not None:
         fulfilled_into.update({str(r[0]): float(r[6] or 0) for r in rows})
+    if money_into is not None:
+        money_into.update({
+            str(r[0]): {col: r[7 + i] for i, (col, _key) in enumerate(bind.money_cols)}
+            for r in rows
+        })
     return [
         Line(doc_number=r[1], item_code=r[2], location=r[3] or "",
              qty=float(r[4] or 0), required_date=r[5], row_ref=str(r[0]))
@@ -413,19 +525,6 @@ def _header_state(db: Session, docs: tuple[str, ...],
         .all()
     )
     return {r[0]: (r[1], str(r[2]) if r[2] else None) for r in rows}
-
-
-def _class_of(value: Optional[str]) -> Optional[str]:
-    """The planning class a stated split maps to, or None when it states nothing.
-
-    None is NOT retail, and the difference is the whole point: "this is not a project" and
-    "nobody said" look identical in the column and mean opposite things. Only the second is
-    worth a person's time, and only the first may be written.
-    """
-    stated = (value or "").strip().lower()
-    if not stated:
-        return None
-    return "project" if any(seg in stated for seg in _PROJECT_SEGMENTS) else DEFAULT_DEMAND_CLASS
 
 
 def _segment_of(db: Session, debtor_code: str) -> Optional[str]:
@@ -480,15 +579,64 @@ def _demand_state(db: Session, docs: tuple[str, ...],
     return {r[0]: (r[1], r[2]) for r in rows}
 
 
+def _agent_state(db: Session, resolved: _Resolved,
+                 bind: _Binding) -> tuple[dict[str, Optional[str]], list[AgentNotice]]:
+    """Every agent code this file names: the class it carries, and what needs saying about it.
+
+    A read, never a write: `preview` runs this too and must create nothing, so an unknown code
+    is REPORTED here and created by `apply` (which is also the only place that should be
+    inventing master data).
+
+    Two kinds of notice, told apart because the answers differ. A code nobody holds is new
+    master data the client has just acquired without asking for it, and it wants a class. A
+    code held with a NULL class is one of the 38 he already has and has not got to yet - which
+    is the state every one of them ships in, since the I/III/IV suffix maps to neither company
+    nor market segment anywhere in this database and guessing it would silently mis-prioritise
+    real orders (UAC AC-3.3). An agent that HAS a class produces no notice at all: a list that
+    names all 38 every week is a list nobody reads.
+    """
+    if not bind.agent_fk:
+        return {}, []
+    codes = sorted(set(resolved.agent_by_doc.values()))
+    if not codes:
+        return {}, []
+    held = sales_agent_service.resolve_many(db, codes)
+    classes: dict[str, Optional[str]] = {}
+    notices: list[AgentNotice] = []
+    for code in codes:
+        agent = held.get(code)
+        if agent is None:
+            notices.append(AgentNotice(
+                code, True,
+                "new agent, unclassified: this upload is the first thing to name this agent "
+                "code, so the master row is being created with no demand class"))
+            continue
+        classes[code] = agent.demand_class
+        if not agent.demand_class:
+            notices.append(AgentNotice(
+                code, False,
+                "this agent carries no demand class, so it cannot classify an order that "
+                "states nothing else"))
+    return classes, notices
+
+
 def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
                      state: dict[str, tuple[Optional[str], Optional[str]]],
-                     bind: _Binding) -> tuple[dict[str, str], list[RowProblem]]:
+                     bind: _Binding,
+                     agent_classes: dict[str, Optional[str]]) -> tuple[dict[str, str],
+                                                                       list[RowProblem]]:
     """What each in-scope document's demand class should be, and what could not be decided.
 
     Per DOCUMENT, in order: the order type the header already carries, then the one the file
     states (which is also the value that fills an absent header), then the customer's market
-    segment via the debtor code the file names. When none of the three answers, the document
-    is REPORTED and left exactly as it was.
+    segment via the debtor code the file names, and last the demand class held against the
+    agent who sold it. When none of the four answers, the document is REPORTED and left
+    exactly as it was.
+
+    The agent is LAST on purpose. An agent who mostly sells project work will still sell the
+    occasional trade order, so their class is a tendency about the seller while the three
+    ahead of it are statements about this order and this buyer. Reading it earlier would
+    overwrite a fact with a tendency.
 
     Defaulting to retail is the failure this column exists to avoid: it under-prioritises a
     project order invisibly, and the wrong answer is stable, so no later upload surfaces it
@@ -517,8 +665,14 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
     for number in diff.scope_documents:
         stored_split, current = state.get(number, (None, None))
         stated_split = resolved.header_by_doc.get(number, {}).get("order_type")
+        agent_code = resolved.agent_by_doc.get(number, "")
         cls = (_class_of(stored_split) or _class_of(stated_split)
-               or _class_of(_segment_of(db, resolved.party_code_by_doc.get(number, ""))))
+               or _class_of(_segment_of(db, resolved.party_code_by_doc.get(number, "")))
+               # Taken as stored, NOT through `_class_of`: the column holds a class already,
+               # constrained to the vocabulary, so passing it through the segment matcher
+               # would turn a value that somehow escaped the constraint into `retail` - a
+               # guess, in the one place this module refuses to guess.
+               or agent_classes.get(agent_code))
         if cls is not None:
             out[number] = cls
             continue
@@ -527,11 +681,17 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
             # a project quietly demoted to retail mid-fulfilment shows up only as an order
             # that stopped winning stock, weeks later, with nothing to point at.
             continue
+        # Named specifically, because the four sources have four different fixes: an order
+        # type on the header, an order type in the export, a market segment on the customer,
+        # or a demand class on the agent. "Unclassified" alone tells the operator nothing
+        # about which one to go and set.
+        agent_says = (f"agent {agent_code} carries no demand class" if agent_code
+                      else "it names no agent")
         problems.append(RowProblem(
             first_row.get(number, 0),
-            f"{number} states no order type and its debtor code resolves to no customer "
-            f"market segment, so its fulfilment priority is left unclassified rather than "
-            f"defaulted to {DEFAULT_DEMAND_CLASS}",
+            f"{number} states no order type, its debtor code resolves to no customer "
+            f"market segment, and {agent_says}, so its fulfilment priority is left "
+            f"unclassified rather than defaulted to {DEFAULT_DEMAND_CLASS}",
             value=number))
     return out, problems
 
@@ -640,22 +800,38 @@ class _Plan:
     # Row-scoped complaints this module raises on top of the reader's own, so both entry
     # points hand the operator ONE list of rows to look at.
     problems: list[RowProblem] = field(default_factory=list)
+    # Agent codes in the file that can classify nothing yet. Master-data gaps, not row
+    # failures, so they travel separately.
+    agent_notices: list[AgentNotice] = field(default_factory=list)
+    # DB line id -> the money columns that line currently holds, read alongside the lines
+    # themselves. It is what lets the write path tell a line the file merely restates from
+    # one whose PRICE moved, without a lookup per unchanged row.
+    money_by_line: dict[str, dict] = field(default_factory=dict)
 
 
-def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
+def _build(db: Session, file_data: bytes, doc_type: str,
+           on_total_rows: Optional[Callable[[int], None]] = None) -> _Plan:
     bind = _binding(doc_type)
     resolver = AliasResolver.for_doc_type(db, doc_type)
     read = read_workbook(file_data, doc_type, resolver)
+    if on_total_rows is not None:
+        # Published the moment the sheet is read, before the diff. Without it `total_rows`
+        # first appears when the job completes and the upload drawer shows 0/0 for the whole
+        # run, which reads as stuck (the same lesson as the customer importer).
+        on_total_rows(read.total_rows)
     if not read.ok:
         return _Plan(read=read)
     resolved = _resolve(db, read, bind)
     fulfilled: dict[str, float] = {}
+    money: dict[str, dict] = {}
     existing = _existing_lines(db, {l.doc_number for l in resolved.lines}, bind,
-                               fulfilled_into=fulfilled)
+                               fulfilled_into=fulfilled, money_into=money)
     diff = diff_lines(existing, resolved.lines)
     header_state = _header_state(db, diff.scope_documents, bind)
+    agent_classes, agent_notices = _agent_state(db, resolved, bind)
     demand, demand_problems = _classify_demand(
-        db, diff, resolved, _demand_state(db, diff.scope_documents, bind), bind)
+        db, diff, resolved, _demand_state(db, diff.scope_documents, bind), bind,
+        agent_classes)
     return _Plan(
         read=read,
         resolved=resolved,
@@ -665,6 +841,8 @@ def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
         activate=_to_activate(diff, header_state, bind),
         demand=demand,
         problems=demand_problems,
+        agent_notices=agent_notices,
+        money_by_line=money,
     )
 
 
@@ -710,6 +888,7 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         resolution_issues=plan.issues,
         samples=_samples(diff),
         activated_documents=plan.activate,
+        unmapped_agents=plan.agent_notices,
     )
 
 
@@ -720,6 +899,20 @@ def _closed_line(db: Session, bind: _Binding, header_id: str, product_id: Option
     An explicit lookup rather than widening `_existing_lines`: the diff must stay open-only,
     or a closed line simply absent from the next upload would be re-closed on every re-run
     and `applied.closed` would never settle at 0.
+
+    **A HISTORY line is never revived.** `po_history_service` writes into these same tables,
+    closed and fully received, precisely so `scm.on_order_v` and `scm.po_ordered_v` cannot
+    count it. Reviving one sets `line_status='open'` and adds the incoming quantity on top of
+    what was already received, which satisfies both views: a 2023 purchase that was delivered
+    years ago would read as stock on its way in, permanently, and re-uploading would never
+    correct it. The two feeds share the table and are told apart by the stamp
+    (`history_sources.HISTORY_SOURCE_SYSTEMS`) - so the outstanding book adds its own line for
+    that item instead, which is the truth: this document really is open again, and the closed
+    history row really did happen.
+
+    Only reachable since S5, which is what makes the guard necessary now: history lines used
+    to carry NULL `warehouse_id` and NULL `expected_date`, so the equality below could not
+    match a row that stated either. The structured PO + SPO export states both.
     """
     if product_id is None:
         return None
@@ -728,13 +921,56 @@ def _closed_line(db: Session, bind: _Binding, header_id: str, product_id: Option
         db.query(line)
         .filter(getattr(line, bind.header_fk) == header_id,
                 line.product_id == product_id,
-                line.line_status == "closed")
+                line.line_status == "closed",
+                sa.or_(line.source_system.is_(None),
+                       line.source_system.notin_(list(HISTORY_SOURCE_SYSTEMS))))
     )
     q = q.filter(line.warehouse_id.is_(None) if warehouse_id is None
                  else line.warehouse_id == warehouse_id)
     dated = getattr(line, bind.date)
     q = q.filter(dated.is_(None) if when is None else dated == when)
     return q.order_by(line.created_at).first()
+
+
+#: Both money columns on both books are stored at 2 decimal places, so that is the precision
+#: a comparison between the file and the database can honestly be made at. A sheet stating
+#: 0.945 comes back out of the column as 0.95, and comparing the raw figures would call that
+#: a price change on every single re-upload, for ever.
+_MONEY_PLACES = Decimal("0.01")
+
+
+def _money_2dp(value) -> Optional[Decimal]:
+    """`value` as the column would store it, or None when it is not a number at all."""
+    if value is None or value == "":
+        return None
+    try:
+        # ROUND_HALF_UP, which is how Postgres rounds into NUMERIC(_, 2). A different
+        # rounding here would disagree with the value it just wrote.
+        return Decimal(str(value)).quantize(_MONEY_PLACES, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _money_differs(held: dict, extra: dict, bind: _Binding) -> bool:
+    """Whether this extract states money that is not what the line already holds.
+
+    Only what the file STATES counts: an absent value is not a disagreement, for the same
+    reason `_refresh_money` never blanks a figure the file omits.
+    """
+    for col, key in bind.money_cols:
+        stated = extra.get(key)
+        if stated is None:
+            continue
+        stored = held.get(col)
+        a, b = _money_2dp(stated), _money_2dp(stored)
+        if a is not None and b is not None:
+            if a != b:
+                return True
+            continue
+        # A currency code, or a price arriving where the column was empty.
+        if str(stated).strip() != str(stored if stored is not None else "").strip():
+            return True
+    return False
 
 
 def _refresh_money(line, extra: dict, bind: _Binding) -> None:
@@ -752,18 +988,82 @@ def _refresh_money(line, extra: dict, bind: _Binding) -> None:
             setattr(line, col, value)
 
 
+def _identity(doc_number: str, item_code: str, location: str) -> dict:
+    """What names a row in the job detail. No ids - the operator reads document numbers."""
+    return {"doc_no": doc_number, "item_code": item_code, "location": location or ""}
+
+
+def _record_rows_never_written(read: ReadResult, resolved: _Resolved,
+                               outcome: ImportOutcome) -> None:
+    """Record every source row that did NOT become a line, with the reason it did not.
+
+    Worked out STRUCTURALLY - which row numbers came out of the reader, and which of those
+    survived resolution - rather than by reading the wording of a problem. A row can carry a
+    problem and still be written (an unreadable date leaves the line dated null; a document
+    naming two agents keeps the first), so classifying by message would report rows as
+    skipped that are sitting in the database.
+    """
+    read_rows = {str(l.row_ref) for l in read.lines}
+    kept_rows = {str(l.row_ref) for l in resolved.lines}
+
+    for row_number in read.layout_row_numbers:
+        outcome.skip(row=row_number, code=oc.NOT_A_LINE)
+    for row_number in read.settled_row_numbers:
+        outcome.skip(row=row_number, code=oc.NOTHING_OUTSTANDING)
+
+    for problem in read.problems:
+        if str(problem.row_number) in read_rows:
+            continue  # reported, but the row IS a line - it is counted where it was written
+        outcome.skip(
+            row=problem.row_number or None,
+            code=oc.MISSING_REQUIRED_FIELD if problem.reason.startswith("missing")
+            else oc.ROW_ERROR,
+            message=problem.reason,
+            value=problem.value or None,
+        )
+
+    # The only two fields that DROP a row in `_resolve`. Every other issue it raises (an
+    # unknown creditor, two agents on one document) is reported while the line is written, so
+    # recording those here would count the row twice and claim a skip that never happened.
+    codes = {"item_code": oc.PRODUCT_NOT_FOUND, "stock_location": oc.WAREHOUSE_NOT_FOUND}
+    for issue in resolved.issues:
+        code = codes.get(issue.field)
+        if code is None or str(issue.row_number) in kept_rows:
+            continue
+        outcome.skip(row=issue.row_number or None, code=code, message=issue.reason,
+                     value=issue.value or None)
+
+
 def apply(db: Session, file_data: bytes, doc_type: str = SO,
-          actor: Optional[str] = None) -> dict:
+          actor: Optional[str] = None, outcome: Optional[ImportOutcome] = None,
+          on_total_rows: Optional[Callable[[int], None]] = None) -> dict:
     """Write the upload. Returns the same counts the preview showed.
 
     Closing is `line_status = 'closed'`, not a delete. The line existed and was planned
     against; erasing it would make last week's plan unexplainable, and `scm.committed_v`
     already excludes non-open lines (migration 311).
+
+    `outcome` records what happened to each SOURCE ROW for the job detail. Optional so a
+    direct caller (and every existing test) keeps the old signature; when absent a throwaway
+    non-persisting recorder stands in, so there is exactly one code path either way.
     """
-    plan = _build(db, file_data, doc_type)
+    outcome = outcome or ImportOutcome(None, persist=False)
+    plan = _build(db, file_data, doc_type, on_total_rows=on_total_rows)
     read, resolved, diff = plan.read, plan.resolved, plan.diff
     if diff is None or resolved is None:
         return {"ok": False, "missing_columns": read.missing_columns, "counts": {}}
+
+    _record_rows_never_written(read, resolved, outcome)
+
+    # What this JOB accounts for, which is more than the file states. A closed line is reached
+    # by its ABSENCE from the upload, so it carries an outcome and no source row: with the
+    # file's own row count as the total, a five-row file that closes one line finishes
+    # "6 / 5" with a progress bar past 100%. Published again here - the diff is known and
+    # nothing has been written yet - so the denominator is right before the first write.
+    closed_rows = sum(1 for c in diff.changes if c.kind == CLOSED)
+    total_rows = read.total_rows + closed_rows
+    if on_total_rows is not None:
+        on_total_rows(total_rows)
 
     # The BEFORE half of every Plan Exception (AC-D4), taken while the old position is still
     # the one in the database. Reconstructing it afterwards by inverting the deltas would be
@@ -785,6 +1085,17 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
 
     bind = _binding(doc_type)
     lift = set(plan.activate)
+
+    # The salesperson master, created where this file names a code nobody holds (AC-6.4).
+    # Resolved once per CODE rather than per document: one agent sells many orders, and
+    # creating inside the header loop would issue the same lookup for each of them.
+    # Deliberately before the loop and never inside `preview`, which writes nothing.
+    agent_ids: dict[str, str] = {}
+    if bind.agent_fk:
+        for code in sorted(set(resolved.agent_by_doc.values())):
+            agent = sales_agent_service.resolve_or_create(db, code)
+            if agent is not None:
+                agent_ids[code] = agent.id
 
     # Header per document in scope, created if absent. `write_status` differs per type: an
     # outstanding-PO extract is a book of orders already PLACED, and `scm.on_order_v`
@@ -841,6 +1152,14 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             value = resolved.header_by_doc.get(number, {}).get(key)
             if value is not None and not getattr(header, col, None):
                 setattr(header, col, value)
+        # Who sold it. Written whenever the file names an agent we could resolve or create,
+        # because the extract is the record of that and a re-upload restating the same code
+        # is a no-op. An absent code never clears an existing link: a file that simply left
+        # the column blank is not evidence that the order changed hands.
+        if bind.agent_fk:
+            agent_id = agent_ids.get(resolved.agent_by_doc.get(number, ""))
+            if agent_id:
+                setattr(header, bind.agent_fk, agent_id)
         # What the fulfilment policy actually weighs, stamped from the split above.
         # Written ONLY when this upload could decide it: a document nothing classified keeps
         # whatever it already had and is reported by name instead (`_classify_demand`).
@@ -854,10 +1173,26 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         party_id = resolved.party_by_doc.get(number)
         if party_id and str(getattr(header, bind.party_fk, None) or "") != str(party_id):
             setattr(header, bind.party_fk, party_id)
+        # The code as printed, kept whether or not it linked. The file is the record of
+        # what the document says, so a restated code overwrites; a file that simply omits
+        # it never blanks one we already hold.
+        #
+        # `party_code_by_doc` holds it already `_norm`ed (trimmed, upper), which is what
+        # `customer_label.normalize_debtor_code` writes from the history feed. The two feeds
+        # write the SAME column, so a difference in spelling shows up as two Who-bought-it
+        # rows for one debtor - passed through that helper here so there is one authority
+        # for the value rather than two that merely agree today.
+        if bind.party_code_header_col:
+            code = normalize_debtor_code(resolved.party_code_by_doc.get(number))
+            if code:
+                setattr(header, bind.party_code_header_col, code)
         order_ids[number] = header.id
 
     applied = {"added": 0, "updated": 0, "closed": 0, "unchanged": 0}
     for c in diff.changes:
+        source_row = (int(c.after.row_ref)
+                      if c.after is not None and (c.after.row_ref or "").isdigit() else None)
+        identity = _identity(c.doc_number, c.item_code, c.location)
         if c.kind == CLOSED:
             line = db.query(bind.line).filter(bind.line.id == c.before.row_ref).one_or_none()
             if line is not None:
@@ -866,6 +1201,13 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 # lead-time measurement and the picking reconciliation.
                 line.line_status = "closed"
                 applied["closed"] += 1
+                # No source row on purpose: a closed line is reached by its ABSENCE from the
+                # file, so there is no row in the upload to point at. It is recorded all the
+                # same - it is the destructive half, and the job detail is where somebody
+                # goes to find out what an upload took away.
+                outcome.updated(code=oc.LINE_CLOSED, identity=identity,
+                                value=c.doc_number, entity_type="order_line",
+                                entity_id=c.before.row_ref)
             continue
 
         if c.kind == ADDED:
@@ -887,6 +1229,9 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 setattr(revived, bind.date, c.after.required_date)
                 _refresh_money(revived, extra, bind)
                 applied["added"] += 1
+                outcome.success(row=source_row, code=oc.CREATED, identity=identity,
+                                value=c.doc_number, entity_type="order_line",
+                                entity_id=revived.id)
                 continue
             fields = {
                 bind.header_fk: order_ids[c.doc_number],
@@ -901,15 +1246,38 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 fields[col] = extra.get(key)
             db.add(bind.line(**fields))
             applied["added"] += 1
+            outcome.success(row=source_row, code=oc.CREATED, identity=identity,
+                            value=c.doc_number)
             continue
 
         if c.kind == "unchanged":
+            # Unchanged is about the QUANTITY and the DATE, which is what the diff compares.
+            # The same line can still be repriced, and nothing else on either channel ever
+            # revisits that column, so a line left alone here quotes last week's money for
+            # ever. Compared at the 2 decimals the column stores, so a sheet that states a
+            # third one cannot report an update on every re-upload.
+            extra = read.extras.get(str(c.after.row_ref), {})
+            if _money_differs(plan.money_by_line.get(str(c.before.row_ref), {}), extra, bind):
+                line = (db.query(bind.line)
+                        .filter(bind.line.id == c.before.row_ref).one_or_none())
+                if line is not None:
+                    _refresh_money(line, extra, bind)
+                    applied["updated"] += 1
+                    outcome.updated(row=source_row, identity=identity, value=c.doc_number,
+                                    entity_type="order_line", entity_id=line.id)
+                    continue
             applied["unchanged"] += 1
+            outcome.unchanged(row=source_row, identity=identity, value=c.doc_number)
             continue
 
         # qty and/or date changed: update the row the diff paired, in place.
         line = db.query(bind.line).filter(bind.line.id == c.before.row_ref).one_or_none()
         if line is None:
+            # The line the diff paired against has gone since it was read. Nothing is
+            # written, so the row is a skip rather than a silent nothing.
+            outcome.skip(row=source_row, code=oc.ORDER_NOT_FOUND, identity=identity,
+                         value=c.doc_number,
+                         message="the line this row updates no longer exists")
             continue
         # The extract states what is OUTSTANDING, so ordered is outstanding plus whatever has
         # already been delivered or received. Writing the figure straight in would erase a
@@ -919,6 +1287,8 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         setattr(line, bind.date, c.after.required_date)
         _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind)
         applied["updated"] += 1
+        outcome.updated(row=source_row, identity=identity, value=c.doc_number,
+                        entity_type="order_line", entity_id=line.id)
 
     db.flush()
 
@@ -958,6 +1328,12 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     return {
         "ok": True,
         "exception_batch_id": exception_batch_id,
+        # Everything this upload accounted for: every non-blank row of the file, plus the
+        # lines it closed by absence. One outcome per unit, so processed reaches total exactly.
+        "total_rows": total_rows,
+        # The file's own row count, kept beside it: it is the number the operator sees at the
+        # top of their spreadsheet, and the two differing is the closures.
+        "file_rows": read.total_rows,
         "counts": diff.counts,
         "applied": applied,
         "scope_documents": list(diff.scope_documents),
@@ -965,4 +1341,9 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         "adopted_documents": adopted,
         "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems + plan.problems],
+        # Reported by the commit as well as by the preview, and stated as it was BEFORE the
+        # creation above: "new agent, unclassified" is exactly the fact the operator needs
+        # after the fact, and re-reading the master here would report every one of them as
+        # merely unclassified, losing which ones this upload invented.
+        "unmapped_agents": [asdict(a) for a in plan.agent_notices],
     }

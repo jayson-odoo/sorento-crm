@@ -16,6 +16,7 @@ creates. `unique_code()` exists to make that easy and collision-free.
 """
 from __future__ import annotations
 
+import os
 import uuid
 from contextlib import contextmanager
 
@@ -23,9 +24,30 @@ from sqlalchemy.orm import Session
 
 from app.database import Base, engine
 
-# Prefix reserved for test-created rows. Distinctive enough to filter on and to
+# Prefix reserved for test-created ROWS. Distinctive enough to filter on and to
 # recognise if one ever escapes a rollback.
 TEST_PREFIX = "ZZT"
+
+# Prefix reserved for the scratch SCHEMAS this module creates. Deliberately NOT
+# ``zzt_``, which is what it used to be, and the difference is the whole point.
+#
+# Every checkout of this repository shares one local Postgres, and several are
+# checked out at once (git worktrees, one per feature). The suite's session-start
+# sweep in tests/conftest.py drops leftover scratch schemas, and until recently it
+# dropped EVERY schema matching ``zzt_%`` unconditionally -- including one that a
+# suite running in a sibling checkout was in the middle of using. That version is
+# still on main and therefore still live in those checkouts, so it is not enough
+# for this one to sweep politely: it has to be UNMATCHABLE by an impolite sweeper
+# it cannot change.
+#
+# The cost of the old behaviour was real. The victim's run reported dozens of
+# ``relation "zzt_blank_....lookup_bindings" does not exist`` errors at fixture
+# setup -- Postgres words a dropped SCHEMA exactly like a missing TABLE -- with no
+# connection to any code anybody had touched, and the tests that had already run
+# passed, so it read as "the change I am holding broke this suite" rather than
+# "another process deleted my database". Hours went into bisecting an innocent
+# diff. A one-word prefix is a cheap price for never paying that again.
+SCRATCH_SCHEMA_PREFIX = "zzs"
 
 
 def unique_code(stem: str = "") -> str:
@@ -34,11 +56,20 @@ def unique_code(stem: str = "") -> str:
 
 
 @contextmanager
-def pg_session() -> Session:
-    """Yield a session whose work is discarded at the end."""
+def pg_session(autoflush: bool = True) -> Session:
+    """Yield a session whose work is discarded at the end.
+
+    ``autoflush=False`` reproduces how the application actually runs: ``SessionLocal`` is
+    built with ``autoflush=False``, so a row that a service has only ``db.add``ed is NOT
+    visible to the next SELECT that service makes. A test session that autoflushes writes
+    that row out before the read and therefore hides a whole class of defect - the "does
+    this already exist?" guard that sits in front of a unique index passes under the test
+    and collides at flush in production. Ask for it wherever the behaviour under test is a
+    get-or-create.
+    """
     connection = engine.connect()
     transaction = connection.begin()
-    session = Session(bind=connection)
+    session = Session(bind=connection, autoflush=autoflush)
     try:
         yield session
     finally:
@@ -63,9 +94,10 @@ def blank_schema_engine():
     paid once for the whole session rather than per test. Data isolation is the
     caller's job: use ``blank_session()``, which discards writes.
 
-    ``scm`` and ``projects`` are translated alongside the default schema, so the
-    models that declare a schema -- which could not be created on sqlite at all --
-    are included.
+    ``scm``, ``dealer_kit`` and ``projects`` are translated alongside the default
+    schema, so those models -- which could not be created on sqlite at all -- are
+    included. Any future module that declares its own schema must be added here
+    too, or ``create_all`` fails on the first table it cannot place.
     """
     if "engine" not in _BLANK:
         from app import models  # noqa: F401  register every model's table
@@ -79,10 +111,17 @@ def blank_schema_engine():
         # whole run failed, which reads as flakiness rather than as an ordering bug.
         _globally_required_tables()
 
-        name = f"zzt_blank_{uuid.uuid4().hex[:10]}"
+        # The PID is IN THE NAME so the orphan sweep can tell a schema whose
+        # owner is still running from one a killed run abandoned. Belt to the
+        # prefix's braces: the prefix hides this schema from a sibling checkout's
+        # sweeper, the PID stops OUR sweeper dropping a schema belonging to a
+        # second run of this same checkout. See
+        # tests/conftest.py::_sweep_orphan_scratch_schemas.
+        name = f"{SCRATCH_SCHEMA_PREFIX}_blank_{os.getpid()}_{uuid.uuid4().hex[:8]}"
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_scm"')
+        admin.exec_driver_sql(f'CREATE SCHEMA "{name}_dealer_kit"')
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_projects"')
         admin.close()
 
@@ -90,6 +129,7 @@ def blank_schema_engine():
             schema_translate_map={
                 None: name,
                 "scm": f"{name}_scm",
+                "dealer_kit": f"{name}_dealer_kit",
                 "projects": f"{name}_projects",
             }
         )
@@ -114,6 +154,7 @@ def drop_blank_schema():
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_scm" CASCADE')
+        admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_dealer_kit" CASCADE')
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_projects" CASCADE')
         admin.close()
 
@@ -230,7 +271,7 @@ def pg_empty_schema(tables) -> Session:
     one through a foreign key must not have it quietly dropped.
     """
     tables = _with_dependencies(list(tables) + _globally_required_tables())
-    name = f"zzt_scratch_{uuid.uuid4().hex[:12]}"
+    name = f"{SCRATCH_SCHEMA_PREFIX}_scratch_{os.getpid()}_{uuid.uuid4().hex[:8]}"
     admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}_scm"')

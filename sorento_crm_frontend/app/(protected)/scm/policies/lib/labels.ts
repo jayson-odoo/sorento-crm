@@ -4,6 +4,7 @@
  * UUID).
  */
 import type {
+  CoverScope,
   PolicyType,
   SafetyStockMethod,
   ScopeType,
@@ -53,6 +54,18 @@ export const SAFETY_METHOD_OPTIONS: { value: SafetyStockMethod; label: string }[
   { value: 'fixed_days', label: 'Fixed days' },
   { value: 'statistical', label: 'Statistical' },
   { value: 'manual', label: 'Manual' },
+];
+
+// Where "use stock" may draw from before buying. Two options only, and the wording is the
+// buyer's own: a site, or anywhere.
+export const COVER_SCOPE_LABEL: Record<CoverScope, string> = {
+  own_pool: 'Own site only',
+  all_locations: 'Any location',
+};
+
+export const COVER_SCOPE_OPTIONS: { value: CoverScope; label: string }[] = [
+  { value: 'own_pool', label: COVER_SCOPE_LABEL.own_pool },
+  { value: 'all_locations', label: COVER_SCOPE_LABEL.all_locations },
 ];
 
 export const SUPPLIER_SELECTION_OPTIONS: { value: SupplierSelection; label: string }[] = [

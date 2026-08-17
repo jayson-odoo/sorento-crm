@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     UniqueConstraint,
+    event,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -47,6 +48,47 @@ class OrderStatus(Base):
 
 class Customer(Base, CompanyScopedMixin):
     __tablename__ = "customers"
+    # Who changed this customer, and from what. Every write path is ORM
+    # (CustomerService for the edit form, the order import's debtor upsert, the
+    # customer import), so one flush listener covers all of them - but only in a
+    # process that HAS that listener. app/main.py registers it at startup, so the
+    # API covers the edit form; worker.py registers the company-scope listeners
+    # only, so nothing an RQ job writes is audited per row today. That is why the
+    # customer import writes its own coarse job-level row.
+    __audit_track__ = True
+    # Singular, matching the coarse row the customer import already writes.
+    # `_CUSTOMER_ENTITY_TYPE` in app/tasks/import_tasks.py suppresses the per-row
+    # audit by this exact string, so the two are pinned together by a test - a
+    # mismatch would silently restore 4,000 rows per import.
+    __audit_entity_type__ = "customer"
+    # Identity, contact details and commercial classification: the fields a person
+    # sets and later has to account for. Left out on purpose: `id` is the audit
+    # row's own entity_id, `company_id` its own column, and created/updated
+    # bookkeeping is what `changed_at` + `user_id` already say - repeating them
+    # inside every diff is noise, not history.
+    __audit_columns__ = [
+        "customer_code",
+        "customer_name",
+        "email",
+        "phone_number",
+        "mobile_number",
+        "is_active",
+        "registered_name",
+        "trading_name",
+        "registration_number",
+        "industry",
+        "website",
+        "billing_address",
+        "country",
+        "tax_id",
+        "notes",
+        "account_owner_user_id",
+        "customer_type",
+        "salutation",
+        "first_name",
+        "last_name",
+        "market_segment_code",
+    ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     # Not column-unique. Real customers can share a single code across
@@ -105,14 +147,36 @@ class Customer(Base, CompanyScopedMixin):
         Index("ix_customers_account_owner_user_id", "account_owner_user_id"),
         # Composite uniqueness — see column docstring. Created as a functional
         # UNIQUE INDEX by migration 220 so case + whitespace differences don't
-        # produce silent duplicates.
+        # produce silent duplicates, then re-created WITH company_id by migration
+        # 305: the same code+name legally exists once per company (884 pairs are
+        # held by both Sorento and Mocha today), so the pre-305 global shape would
+        # reject a real row. `products` was updated to its composite at the time
+        # and this one was not, which mattered because a test building its schema
+        # from `Base.metadata.create_all` got the GLOBAL index and failed on data
+        # production accepts. Keep this in step with the live index.
         Index(
-            "uq_customers_code_name_lower",
+            "uq_customers_company_code_name_lower",
+            "company_id",
             func.lower(func.btrim(customer_code)),
             func.lower(func.btrim(customer_name)),
             unique=True,
         ),
     )
+
+
+@event.listens_for(Customer, "init")
+def _assign_customer_id(target, args, kwargs):  # noqa: ANN001
+    """Give a new customer its id at construction, not at flush.
+
+    The audit listener runs in ``before_flush``, where a primary key still waiting on
+    its column default reads as ``None``; the row is then skipped as "no PK yet" and
+    the create goes unrecorded. The importer already assigned the id by hand for its
+    own reasons - doing it here instead means every construction site is audited,
+    including ones written later, rather than whichever ones remembered.
+
+    A caller that supplies its own id keeps it.
+    """
+    kwargs.setdefault("id", str(uuid.uuid4()))
 
 
 class CustomerContact(Base, CompanyScopedMixin):
@@ -298,6 +362,17 @@ class SalesOrder(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     so_number = Column(String(100), unique=True, nullable=False)
     customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
+    # The debtor code the source document printed, kept whether or not it resolves to a
+    # customer. Both SO importers write it: an order whose code names nobody we hold is
+    # still attributable ("Debtor 300-R009"), and the day that customer is created the code
+    # is what makes the link fixable. Never a substitute for the FK - `customer_id` stays
+    # the link, this is the evidence behind it.
+    debtor_code = Column(String(64), nullable=True)
+    # Who sold it, as the salesperson master (`sales_agents`), resolved from the agent code
+    # the extract states. Nullable because most orders predate the column and no export is
+    # required to carry an agent; `SET NULL` because deleting a salesperson must not delete
+    # their orders. It is also the fourth and last source the demand class is read from.
+    sales_agent_id = Column(UUID(as_uuid=False), ForeignKey("sales_agents.id", ondelete="SET NULL"), nullable=True)
     order_date = Column(Date, nullable=True)
     # Customer-requested delivery / ship-by date (M1-D14). Distinct from order_date
     # (when the SO was raised); drives the FE "requested_delivery_date" column.
@@ -336,8 +411,10 @@ class SalesOrder(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_sales_orders_customer_id", "customer_id"),
+        Index("ix_sales_orders_debtor_code", "debtor_code"),
         Index("ix_sales_orders_so_number", "so_number"),
         Index("ix_sales_orders_status", "status"),
+        Index("ix_sales_orders_sales_agent_id", "sales_agent_id"),
     )
 
 
@@ -351,6 +428,12 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
     qty_ordered = Column(Numeric(15, 4), default=0, nullable=False)
     qty_delivered = Column(Numeric(15, 4), default=0, nullable=False)
+    # What the customer pays for this line. The column has always been on the table and
+    # was simply never mapped (same as `source_doc_no` / `internal_note` on the header
+    # above), so every read through the ORM dropped it and a schema built from the models
+    # did not carry it at all. Mapped now because the demand drill quotes it: "who ordered
+    # it and at what price" is the question the buyer opens that popover with.
+    unit_price = Column(Numeric(15, 2), nullable=True)
     priority = Column(String(20), nullable=True)  # inherit from header / override
     # When this line's quantity must be on hand. PER LINE, not per header: the order
     # inquiry the business works from states a delivery date per line and one SO routinely

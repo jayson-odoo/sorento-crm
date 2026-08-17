@@ -216,6 +216,16 @@ describe('LoadingPlanView - the plan', () => {
     expect(screen.getByText('50% full')).toBeInTheDocument();
   });
 
+  it('keeps a volume to three decimals, which is how a cbm is quoted', async () => {
+    // Container and item volumes are 3 dp in this trade (a pan is 0.123 cbm, not 0.12).
+    // Rounding to 2 loses a real difference between two products.
+    buildResult = plan({ capacity_cbm: 68.125, planned_cbm: 34.5 });
+    renderView();
+    await chooseSupplier();
+
+    expect(await screen.findByText('68.125 cbm')).toBeInTheDocument();
+  });
+
   it('changing the container count re-runs the same plan rather than making another', async () => {
     // AC-E6. `rerun` carries the plan id; `build` would create a second plan for one decision.
     buildResult = plan();

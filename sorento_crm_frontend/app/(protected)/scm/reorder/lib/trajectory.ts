@@ -9,8 +9,24 @@
  * turns them into words. Every sentence is a fact about OUR OWN order book - like the
  * price advice, nothing here claims to see the market.
  */
+import { fmtInt } from '../../lib/format';
 
 export type TrajectoryVerdict = 'rising' | 'holding' | 'falling' | 'quiet' | 'no_history';
+
+/**
+ * One Who-bought-it row.
+ *
+ * `customer_key` is what the drill into the orders behind the row is keyed by: the
+ * customer id, `debtor:<code>` when the order's debtor code resolves to no customer, or
+ * `none` when it names neither. The label falls back through the same three cases, so a
+ * row that cannot be named is still a row that can be opened.
+ */
+export interface TrajectoryCustomer {
+  customer_name: string;
+  customer_key: string;
+  qty: number;
+  last_order_date?: string | null;
+}
 
 export interface TrajectoryEntry {
   verdict: TrajectoryVerdict;
@@ -21,13 +37,16 @@ export interface TrajectoryEntry {
   year_change_pct: number | null;
   window_months: number;
   months: { month: string; qty: number }[];
-  customers: { customer_name: string; qty: number }[];
+  customers: TrajectoryCustomer[];
   agents: { name: string; qty: number }[];
   agents_available: boolean;
 }
 
 export interface TrajectoryPayload {
   windows: { retail_months: number; project_months: number };
+  /** How far back the monthly series reaches, so the empty state can say it rather than
+   *  carry a second copy of the backend's window. */
+  series_months: number;
   movement_threshold_pct: number;
   series: Record<string, TrajectoryEntry>;
 }
@@ -127,11 +146,11 @@ export function describeYearAgo(t: TrajectoryEntry | undefined): string | null {
     return `Same window last year: ${fmtQty(t.year_ago_qty)}.`;
   }
   const dir = t.year_change_pct >= 0 ? 'up' : 'down';
-  return `Against the same window last year (${fmtQty(t.year_ago_qty)}): ${dir} ${Math.abs(t.year_change_pct).toFixed(0)}%.`;
+  return `Against the same window last year (${fmtQty(t.year_ago_qty)}): ${dir} ${fmtInt(Math.round(Math.abs(t.year_change_pct)))}%.`;
 }
 
 function fmtQty(n: number): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return fmtInt(Math.round(n));
 }
 
 /** The key both the plan row and the trajectory map agree on. */

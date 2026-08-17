@@ -6,9 +6,16 @@ import { Card, CardContent, CardHeader, CardHeading, CardTitle } from '@/compone
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
-import { usePlanningMode, useSavePlanningMode } from '../hooks/usePolicies';
-import type { PlanningMode } from '../types/policy.types';
+import { COVER_SCOPE_OPTIONS } from '../lib/labels';
+import {
+  useCoverScope,
+  usePlanningMode,
+  useSaveCoverScope,
+  useSavePlanningMode,
+} from '../hooks/usePolicies';
+import type { CoverScope, PlanningMode } from '../types/policy.types';
 
 const OPTIONS: { value: PlanningMode['mode']; title: string; description: string }[] = [
   {
@@ -32,10 +39,14 @@ const OPTIONS: { value: PlanningMode['mode']; title: string; description: string
 export function PlanningModePanel() {
   const { data, isLoading, isError } = usePlanningMode();
   const save = useSavePlanningMode();
+  const cover = useCoverScope();
+  const saveCover = useSaveCoverScope();
   const [pending, setPending] = useState<PlanningMode['mode'] | null>(null);
   const groupId = useId();
+  const coverId = useId();
 
   const current = data?.mode ?? 'auto';
+  const coverScope: CoverScope = cover.data?.cover_scope ?? 'own_pool';
 
   const onPick = (value: PlanningMode['mode']) => {
     if (value === current) return;
@@ -106,6 +117,30 @@ export function PlanningModePanel() {
             Per-SKU or per-class overrides (set through policy rows) still win over this
             default - this only moves what a product falls back to.
           </p>
+
+          {/* Where a plan row may cover a shortage from before it buys. Sits with the
+              planning mode because both are the one global row the next plan reads. */}
+          <div className="flex flex-col gap-1.5 border-t pt-4">
+            <Label htmlFor={coverId} className="text-sm font-medium text-mono">
+              Cover from
+            </Label>
+            {cover.isError ? (
+              <Alert variant="destructive">
+                <AlertDescription>Failed to load the cover setting.</AlertDescription>
+              </Alert>
+            ) : cover.isLoading ? (
+              <Skeleton className="h-10 w-full" />
+            ) : (
+              <SearchableSelect
+                id={coverId}
+                value={coverScope}
+                onChange={(v) => saveCover.mutate({ cover_scope: v as CoverScope })}
+                options={COVER_SCOPE_OPTIONS}
+                disabled={saveCover.isPending}
+                placeholder="Choose where stock may come from"
+              />
+            )}
+          </div>
         </CardContent>
       </Card>
 

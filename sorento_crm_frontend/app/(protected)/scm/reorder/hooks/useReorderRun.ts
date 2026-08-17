@@ -9,6 +9,8 @@ import {
   getBuyRecommendationsForCash,
   getCoveredRecommendations,
   getNeedsLevelRecommendations,
+  getCustomerOrders,
+  getProductImage,
   getRecommendationDemand,
   getReorderRun,
   getRecommendations,
@@ -324,6 +326,58 @@ export function useRecommendationDemand(
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: 1,
+  });
+}
+
+/**
+ * The sales orders behind ONE customer row of the trend popover.
+ *
+ * Fetched only while that row is expanded, for the same reason the demand drill is:
+ * a popover holding five customers would otherwise issue five requests nobody asked
+ * for, on every row of the plan.
+ */
+export function useCustomerOrders(
+  runId: string | null,
+  productId: string | null,
+  segment: string,
+  customerKey: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'customer-orders', runId, productId, segment, customerKey],
+    queryFn: () =>
+      getCustomerOrders(runId as string, productId as string, segment, customerKey as string),
+    enabled: enabled && !!runId && !!productId && !!customerKey,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * The photo of one product, fetched when its popover opens (AC-7).
+ *
+ * Per product rather than per run because the URL is signed: the run-wide call answers only
+ * which icons are lit, and the signature is bought here, once, for the row the buyer asked
+ * about. Cached for ten minutes - a signed URL outlives that comfortably, and re-opening the
+ * same row must not re-sign.
+ *
+ * `meta.silent` keeps a failed photo out of the global error toast. A picture is context, not
+ * an input to a decision, and the popover says so in place.
+ */
+export function useProductPhoto(
+  runId: string | null,
+  productId: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'product-image', runId, productId],
+    queryFn: () => getProductImage(runId as string, productId as string),
+    enabled: enabled && !!runId && !!productId,
+    staleTime: 600_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+    meta: { silent: true },
   });
 }
 

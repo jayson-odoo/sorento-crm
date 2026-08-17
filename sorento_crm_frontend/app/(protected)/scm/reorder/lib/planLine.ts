@@ -114,6 +114,15 @@ export function recToPlanLine(rec: ReorderRecommendation): PlanLine {
 }
 
 /**
+ * The pool a line's own location belongs to - `COALESCE(pool_warehouse_id, id)` as the
+ * backend stamps it, falling back to the warehouse itself for a payload that predates the
+ * field. Null on a network row, which has no location and therefore no pool to scope by.
+ */
+export function poolWarehouseIdOf(line: Pick<PlanLine, 'warehouse_id' | 'rec'>): string | null {
+  return line.rec.pool_warehouse_id ?? line.warehouse_id ?? null;
+}
+
+/**
  * Every line of a plan, in one list, ranked.
  *
  * Ranked across the WHOLE plan rather than within each former band: the buyer works down one

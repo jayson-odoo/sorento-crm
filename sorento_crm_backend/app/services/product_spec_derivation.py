@@ -9,7 +9,8 @@ substring it came from.
 
 Precedence, highest first:
 
-  1. a `source='human'` value already stored   - a reviewer settled it, never touch it
+  1. a value a person already set              - a reviewer settled it, never touch it
+                                                 (`AUTHORED_SOURCES`, product_spec_write)
   2. the products table's own columns          - curated data outranks parsed text
   3. literal tokens in the description         - shape-gated, see below
   4. a closed code lookup (the finish suffix)
@@ -37,17 +38,19 @@ import hashlib
 import json
 import re
 import uuid
-from decimal import Decimal
 
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.product import Product, ProductCategory
 from app.models.product_spec import (
-    ProductFlyerText,
     ProductSpecException,
     ProductSpecifications,
 )
-from app.services.product_spec_rendering import render_spec_sentence
+from app.services.product_spec_write import (
+    authored_keys,
+    merge_authored_over,
+    write_spec_row,
+)
 
 # --------------------------------------------------------------------------- #
 # vocabulary, mirroring the Spec Registry's allowed_values
@@ -892,7 +895,6 @@ def derive(
     *,
     rules_by_key: dict[str, list[dict]] | None = None,
     scopes_by_key: dict[str, dict] | None = None,
-    flyer_text: str = "",
 ) -> _Derivation:
     """Everything readable about one product. Pure: no session, no writes.
 
@@ -903,18 +905,18 @@ def derive(
     `scopes_by_key` is each key's `applies_when`: which products may carry it at all.
     Same fallback, same reason.
 
-    `flyer_text` is what the printed flyer says about this code. It is a GAP-FILLER: a
-    rule is tried against the description first and only falls through to the flyer,
-    because the master is the business's own record and marketing copy is a leaflet.
-    Where a value does come from the flyer, its provenance says `flyer` so nobody has to
-    guess which of the two they are looking at.
+    THE FLYER IS NO LONGER AN INPUT (AC-B.18). It used to arrive as `flyer_text` and act
+    as a gap-filler under the description; a flyer now reaches specs only as reviewed
+    proposals, through `propose_from_text` below. The `flyer` text stays in the table,
+    empty, because a rule may still name it as its scope: reading it as "" is what makes
+    such a rule fire on a proposal and never on a derivation.
     """
     out = _Derivation()
     description = (product.description or "").upper()
     code = (product.product_code or "").upper()
     texts = {
         "description": description,
-        "flyer": (flyer_text or "").upper(),
+        "flyer": "",
         # What the product IS, with the code, dimensions, parentheticals and
         # accompaniments removed. Only class rules read this by default.
         "class_tail": class_text(product.description or "", code),
@@ -1076,7 +1078,7 @@ def derive(
     return out
 
 
-def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
+def _apply_scope(out: "_Derivation", applies_when: dict[str, dict]) -> None:
     """Remove derived keys whose `applies_when` the product does not satisfy.
 
     Gate values are compared case-insensitively against what THIS derivation produced,
@@ -1111,6 +1113,72 @@ def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
                 break
 
 
+# --------------------------------------------------------------------------- #
+# the flyer pass, lifted out of derivation (AC-B.18)
+# --------------------------------------------------------------------------- #
+def propose_from_text(
+    text: str,
+    code: str,
+    *,
+    rules_by_key: dict[str, list[dict]] | None = None,
+    scopes_by_key: dict[str, dict] | None = None,
+) -> list[dict]:
+    """What a piece of marketing copy SAYS about one code. Proposals, never writes.
+
+    This is the flyer text pass that used to run inside `derive()`, lifted whole
+    (captain, 2026-08-14): the source-major order, the `source: "flyer"` rule scope,
+    the millimetre units and the `applies_when` gate all behave exactly as they did,
+    because the knowledge in them was tuned against the real flyer document and is
+    the thing the bulk flyer-ingestion slice inherits.
+
+    What is gone is the merge. The pass no longer competes with a description, so the
+    one piece of precedence it owed - the description owns a size - survives as the
+    `description_first` flag on each proposal, for the caller to render as a conflict
+    the reviewer unticks rather than as a rule applied silently.
+
+    Pure on purpose: no session, no product row, no writes. `code` is here because the
+    code passes (`code_suffix` and friends) are part of the same pass; pass "" when
+    there is no code to read.
+    """
+    if rules_by_key is None:
+        rules_by_key = shipped_rules()
+    if scopes_by_key is None:
+        scopes_by_key = shipped_scopes()
+
+    code = (code or "").upper()
+    texts = {
+        # There is no description here, and that is the point: a rule scoped to the
+        # product master must not fire on a leaflet somebody pasted.
+        "description": "",
+        "flyer": (text or "").upper(),
+        "class_tail": "",
+    }
+    fired = apply_rules(rules_by_key, texts, code)
+
+    # Accumulated into the same shape `derive()` builds, so the SAME `_apply_scope`
+    # runs over it - a second copy of the gate rules would drift the first time
+    # somebody edited `applies_when`.
+    out = _Derivation()
+    origins: dict[str, str] = {}
+    for key, (value, evidence, origin) in fired.items():
+        unit = "mm" if key in _MM_KEYS else None
+        out.set(key, value, evidence, unit=unit, source="derived")
+        origins[key] = "flyer" if origin == "flyer" else "code"
+    _apply_scope(out, scopes_by_key)
+
+    return [
+        {
+            "spec_key": key,
+            "value": entry.get("value"),
+            "unit": entry.get("unit"),
+            "evidence": (out.provenance.get(key) or {}).get("evidence") or "",
+            "origin": origins.get(key, "flyer"),
+            "description_first": key in _DESCRIPTION_FIRST_KEYS,
+        }
+        for key, entry in out.values.items()
+    ]
+
+
 # Bump whenever the RULES above change: new key, new token, changed precedence.
 #
 # `derived_hash` skips a re-derive when nothing about the product changed, which is what
@@ -1120,14 +1188,17 @@ def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
 # which kept their old values and reported a successful run. The failure is invisible:
 # the job says "skipped", which is exactly what it says when there is genuinely nothing
 # to do.
-DERIVATION_VERSION = "26"
+# 27: the flyer left the input entirely (AC-B.13), so every code's fingerprint moves
+# and the next catalogue run rewrites every row. That is the point - a flyer-only value
+# must not survive as a derived one - and it is why the runbook schedules a full
+# re-derive as its own step rather than leaving it to the nightly job.
+DERIVATION_VERSION = "27"
 
 
 def _input_hash(
     product: Product,
     category: ProductCategory | None,
     rules_fingerprint: str = "",
-    flyer_text: str = "",
 ) -> str:
     parts = [
         DERIVATION_VERSION,
@@ -1135,7 +1206,6 @@ def _input_hash(
         # DERIVATION_VERSION alone can no longer say "nothing changed". Without this,
         # editing a rule in the UI would report a successful run that skipped every row.
         rules_fingerprint,
-        flyer_text,
         product.product_code or "",
         product.description or "",
         # `brand` is read off this column now, so a re-brand has to move the hash.
@@ -1197,7 +1267,6 @@ def derive_for_code(
     commit: bool = False,
     rules_by_key: dict[str, list[dict]] | None = None,
     scopes_by_key: dict[str, dict] | None = None,
-    flyer_text: str | None = None,
 ) -> dict:
     """Derive one code and fan the result out to every row that shares it.
 
@@ -1211,9 +1280,6 @@ def derive_for_code(
         rules_by_key = configured_rules(db)
     if scopes_by_key is None:
         scopes_by_key = configured_scopes(db)
-    if flyer_text is None:
-        flyer = db.query(ProductFlyerText).filter_by(product_code=product_code).first()
-        flyer_text = flyer.text if flyer else ""
 
     rows = (
         db.query(Product, ProductCategory)
@@ -1249,7 +1315,6 @@ def derive_for_code(
         # move the hash exactly as a rule edit does. Without it, narrowing a key
         # reports "skipped" for every product and leaves the old values in place.
         _rules_fingerprint({"rules": rules_by_key, "scopes": scopes_by_key}),
-        flyer_text or "",
     )
 
     existing = {
@@ -1264,7 +1329,14 @@ def derive_for_code(
     ):
         return {"written": 0, "skipped": len(rows), "exceptions": 0}
 
-    result = derive(product, category, rules_by_key=rules_by_key, flyer_text=flyer_text)
+    # Scopes as well as rules: they are already in hand for the fingerprint above,
+    # and without them one code's re-derive gated on the SHIPPED `applies_when`
+    # while the catalogue run gated on the configured one - the same product read
+    # two ways depending on which button produced it. Extraction already passes
+    # both (`product_spec_extract`), so this is derivation catching up with it.
+    result = derive(
+        product, category, rules_by_key=rules_by_key, scopes_by_key=scopes_by_key
+    )
 
     # Brand is the one spec that lives on the ROW while derivation is keyed on the CODE.
     # Where two company copies of a model carry different brands (6 rows catalog-wide),
@@ -1282,28 +1354,50 @@ def derive_for_code(
             stored=", ".join(sorted(brands)),
         )
 
-    written = 0
+    # Two passes, because `status` depends on the exception set and the exception set
+    # now depends on the merged provenance. A reviewer-confirmed value outranks
+    # anything derivable, and the merge rule for that lives in one place.
+    merged: list[tuple[ProductSpecifications, dict, dict]] = []
+    answered: set[str] = set()
+    conflicts: list[dict] = []
     for row_product, _ in rows:
         spec = existing.get(row_product.id)
         if spec is None:
             spec = ProductSpecifications(product_id=row_product.id)
             db.add(spec)
 
-        # A reviewer-confirmed value outranks anything derivable.
-        kept_values, kept_provenance = {}, {}
-        for key, entry in (spec.provenance or {}).items():
-            if entry.get("source") == "human":
-                kept_provenance[key] = entry
-                if key in (spec.values or {}):
-                    kept_values[key] = spec.values[key]
+        values, provenance, row_conflicts = merge_authored_over(
+            result.values, result.provenance, spec.values, spec.provenance
+        )
+        merged.append((spec, values, provenance))
+        answered |= authored_keys(provenance)
+        conflicts.extend(row_conflicts)
 
-        spec.values = {**result.values, **kept_values}
-        spec.provenance = {**result.provenance, **kept_provenance}
-        # The only text spec search may match. Rendered here so it can never drift
-        # from the values it describes.
-        spec.rendered_text = render_spec_sentence(spec.values)
-        spec.derived_hash = fingerprint
-        spec.status = "needs_review" if result.exceptions else "derived"
+    # A question a person has answered does not re-ask itself. `flag()` appends
+    # unconditionally and knows nothing about what is stored, so without this filter
+    # setting `shape` by hand sees `round_or_square` come back on the very next run and
+    # the 258 flagged codes can never be cleared.
+    exceptions = [f for f in result.exceptions if f["spec_key"] not in answered]
+
+    # A NEW disagreement still gets asked, once. Exceptions are keyed on the code with
+    # no product_id, and every company copy produces the same conflict.
+    seen: set[tuple[str, str]] = set()
+    for conflict in conflicts:
+        identity = (conflict["spec_key"], conflict["reason"])
+        if identity in seen:
+            continue
+        seen.add(identity)
+        exceptions.append(conflict)
+
+    written = 0
+    for spec, values, provenance in merged:
+        write_spec_row(
+            spec,
+            values=values,
+            provenance=provenance,
+            has_exceptions=bool(exceptions),
+            derived_hash=fingerprint,
+        )
         written += 1
 
     # Rebuild this code's open exceptions rather than appending, so a fixed input
@@ -1312,7 +1406,7 @@ def derive_for_code(
         ProductSpecException.product_code == product_code,
         ProductSpecException.resolved_at.is_(None),
     ).delete(synchronize_session=False)
-    for flagged in result.exceptions:
+    for flagged in exceptions:
         db.add(
             ProductSpecException(
                 id=str(uuid.uuid4()),
@@ -1328,7 +1422,7 @@ def derive_for_code(
     if commit:
         db.commit()
 
-    return {"written": written, "skipped": 0, "exceptions": len(result.exceptions)}
+    return {"written": written, "skipped": 0, "exceptions": len(exceptions)}
 
 
 def derive_all(
@@ -1352,7 +1446,6 @@ def derive_all(
     # answer that cannot change mid-run.
     rules_by_key = configured_rules(db)
     scopes_by_key = configured_scopes(db)
-    flyer_by_code = {row.product_code: row.text for row in db.query(ProductFlyerText).all()}
 
     totals = {"codes": 0, "written": 0, "skipped": 0, "exceptions": 0}
     for index in range(0, len(codes), chunk_size):
@@ -1362,7 +1455,6 @@ def derive_all(
                 code,
                 rules_by_key=rules_by_key,
                 scopes_by_key=scopes_by_key,
-                flyer_text=flyer_by_code.get(code, ""),
             )
             totals["codes"] += 1
             for key in ("written", "skipped", "exceptions"):

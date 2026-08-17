@@ -1,0 +1,40 @@
+/**
+ * The salesperson master, as the backend serialises it.
+ *
+ * `source` carries `import` as well as the two the AutoCount mirror knows: a row an
+ * outstanding-SO upload created on meeting a code nobody held. Those are the rows the
+ * captain comes to this page to classify, so the type has to admit them.
+ */
+export interface SalesAgent {
+  id: string;
+  sales_agent: string;
+  description: string | null;
+  is_active: boolean;
+  internal_note: string | null;
+  follow_up: boolean;
+  /** Who the codes belong to. Metadata, never identity. */
+  person_label: string | null;
+  /** What this agent's orders are for. Null = nobody has decided yet. */
+  demand_class: string | null;
+  source: 'autocount' | 'manual' | 'import';
+  created_at: string;
+  updated_at: string | null;
+}
+
+/**
+ * PATCH body for `/{id}/annotation`. The backend forbids unknown keys and treats an
+ * omitted key as "leave it alone", so only the fields the modal actually edited are sent
+ * and `null` means "unset this".
+ *
+ * Named `MirrorAnnotationPayload` because that is the name the AutoCount branch's detail
+ * page imports; `SalesAgentAnnotationPayload` is an alias for it, so both spellings
+ * resolve and the merge does not have to rename a call site.
+ */
+export interface MirrorAnnotationPayload {
+  person_label?: string | null;
+  demand_class?: string | null;
+  internal_note?: string | null;
+  follow_up?: boolean;
+}
+
+export type SalesAgentAnnotationPayload = MirrorAnnotationPayload;

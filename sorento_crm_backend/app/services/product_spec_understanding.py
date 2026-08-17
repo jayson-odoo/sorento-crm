@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -39,18 +40,40 @@ from app.models.ai_assistant import AIAssistantUsageLog
 from app.models.product_spec import ProductSpecifications
 from app.services.ai_prompt_registry import agent_model, get_prompt
 from app.services.llm_provider import get_provider
+# The keys a product may hold more than one of. Imported rather than restated: the set
+# is derivation's, and a second copy would let an accepted proposal store a shape a
+# re-derivation of the same words would not.
+from app.services.product_spec_derivation import MULTI_VALUE_KEYS
 from app.services.product_spec_registry import (
     active_registry,
     merged_allowed_values,
     merged_synonyms,
 )
 from app.services.product_spec_search import (
+    NEGATOR_WORDS,
     SELF_SYNONYM_KEY,
     normalise_quantity,
-    resolve_terms_to_specs,
+    resolve_terms_to_specs_with_spans,
 )
 
 logger = logging.getLogger(__name__)
+
+# Words that turn the thing after them into a refusal, in the two languages the
+# catalogue's customers write in. Word-boundary matched, so "notch" and "nonstick"
+# are not refusals. The vocabulary itself is owned by `product_spec_search`, which
+# also keeps these words out of `unrecognized_terms`: a word we read as a refusal is
+# never a word we admit we did not understand. Longest first so "non" is preferred
+# over "no" when both could start a match.
+_NEGATORS = re.compile(
+    r"(?<!\w)("
+    + "|".join(sorted(NEGATOR_WORDS, key=lambda word: (-len(word), word)))
+    + r")(?!\w)"
+)
+
+# How far before a value's own words a negator may sit and still refuse it. Wide
+# enough for "kitchen sink, not the glass one", short enough that a "not" about
+# one thing does not reach across the sentence and refuse the next.
+_NEGATION_WINDOW = 15
 
 # Understanding one short sentence. Kept small and cheap: this runs on a customer's
 # message, so it is on the latency path of a WhatsApp reply.
@@ -62,6 +85,16 @@ _TEMPERATURE = 0.0
 # (its registry fallback) is what runs if the registry row is missing.
 AGENT_NAME = "spec_understanding"
 
+# The sibling agent: reading a statement ABOUT one product (a flyer card, a supplier
+# blurb) rather than a customer's enquiry. Its own prompt key because the two jobs pull
+# in opposite directions - understanding a customer means interpreting them, and reading
+# a supplier's copy means refusing to.
+EXTRACTOR_AGENT_NAME = "spec_extractor"
+
+# Longer than the enquiry budget: one flyer card can state a dozen specifications, and
+# this runs behind a button on a staff screen rather than on a WhatsApp reply.
+_EXTRACT_MAX_OUTPUT_TOKENS = 1500
+
 
 @dataclass
 class Understanding:
@@ -72,12 +105,35 @@ class Understanding:
     # request for the opposite: "not glass" removes glass, it does not ask for ceramic.
     exclusions: list[dict] = field(default_factory=list)
     free_terms: list[str] = field(default_factory=list)
+    # The customer's OWN words that earned each binding, verbatim, keyed by the
+    # spec key they earned. A caller deciding "was this part of the sentence
+    # answered" needs the words that were heard, not the key they resolved to:
+    # "double bowl" earns `bowl_count=2`, and nobody reading `bowl_count` back
+    # can tell whether "double" was understood. Keyed rather than flat because
+    # binding a word is not the same as ANSWERING it - only the caller knows
+    # which keys the products it is about to show actually matched.
+    bound_phrases: dict[str, list[str]] = field(default_factory=dict)
     notes: str = ""
     # How this was produced, so the preview screen can be honest about it and a
     # reviewer can tell a model result from a fallback.
     source: str = "deterministic"
     model: str | None = None
     elapsed_ms: int | None = None
+
+
+@dataclass
+class Extraction:
+    """What a pasted piece of text says about one product, as the registry's own terms.
+
+    `specs` are `{key, value, evidence}` and are already validated: a key or a value the
+    registry does not recognise never reaches this object. `source` is `semantic` only
+    when a model actually answered - anything else (no key, no provider, bad JSON, a
+    timeout) degrades to `deterministic`, where the caller's rule pass stands alone.
+    """
+
+    specs: list[dict] = field(default_factory=list)
+    source: str = "deterministic"
+    model: str | None = None
 
 
 # An open-vocabulary key has no closed list in the registry because its values come from
@@ -173,6 +229,23 @@ def _coerce(row, value: Any, open_values: list[str] | None = None) -> Any | None
     reaching a customer.
     """
     data_type = (row.data_type or "").lower()
+
+    if isinstance(value, (list, tuple)) and row.spec_key in MULTI_VALUE_KEYS:
+        # "Rose Gold + Matt Black" is one tap in two finishes, and both readings are
+        # true. `apply_rules` already produces the list and derivation stores it, so
+        # coercing the list element-wise and KEEPING its shape is what makes an
+        # accepted proposal store what a re-derivation of the same words would have.
+        # Stringified, the whole list matches nothing in the vocabulary and the reading
+        # is dropped on the floor - the text said something real and no screen shows it.
+        items: list = []
+        for item in value:
+            coerced = _coerce(row, item, open_values)
+            if coerced is not None and coerced not in items:
+                items.append(coerced)
+        if not items:
+            return None
+        # One tone is stored as the tone, exactly as `apply_rules` does it.
+        return items[0] if len(items) == 1 else items
 
     if data_type == "boolean":
         if isinstance(value, bool):
@@ -278,12 +351,18 @@ def _validate(
     return specs, exclusions, free_terms, notes
 
 
-def _resolve_provider(db: Session):
+def _resolve_provider(db: Session, agent_name: str = AGENT_NAME):
     """The provider and model THIS agent runs on. None when unconfigured.
 
     Per-agent, falling back to the global assistant config. Reading a misspelt customer
     sentence is not the same job as writing an explanatory paragraph, so the model is
-    set against the `spec_understanding` agent row rather than shared with everything.
+    set against the agent's own row rather than shared with everything.
+
+    `agent_name` is an argument rather than the module constant because two agents call
+    this: the enquiry reader and the extractor beneath it. Hardcoded, the extractor
+    read its own words (its system prompt IS asked for under `spec_extractor`) with
+    whatever model an admin had configured for the enquiry reader, and nothing on
+    either screen said so.
     """
     from app.models.ai_assistant import AIAssistantConfig
 
@@ -292,7 +371,7 @@ def _resolve_provider(db: Session):
         .order_by(AIAssistantConfig.created_at.asc())
         .first()
     )
-    agent_provider, agent_model_name = agent_model(db, AGENT_NAME)
+    agent_provider, agent_model_name = agent_model(db, agent_name)
     provider_name = agent_provider or (cfg.provider if cfg else "openai") or "openai"
     model_name = agent_model_name or (cfg.model if cfg else "") or ""
     api_key = (cfg.api_key_ciphertext if cfg else "") or settings.openai_api_key or ""
@@ -308,12 +387,102 @@ def _resolve_provider(db: Session):
         return None, provider_name, model_name
 
 
+def _split_refusals(
+    specs: list[dict],
+    spans: dict[str, list[tuple[int, int]]],
+    haystack: str,
+) -> tuple[list[dict], list[dict]]:
+    """Move every spec the customer said "not" in front of into the refusals.
+
+    The word-level reader has no concept of negation: it sees "kitchen sink, not
+    glass" as the word "glass" and offers glass sinks first, which is the exact
+    opposite of what was asked. Only the model could hear the refusal, so a
+    customer without the LLM flag on was answered backwards.
+
+    Nothing here is inferred. A binding is refused only when a negator word ends
+    within `_NEGATION_WINDOW` characters before the span that EARNED the binding,
+    so "glass kitchen sink" is untouched and a "not" about one value cannot
+    silently refuse another.
+
+    Spans consumed by a brand phrase are not read as negators: "no logo" is the
+    catalogue's own name for the unbranded range, and reading its "no" as a
+    refusal would have turned a real ask into a refusal of the kitchen sink
+    beside it (F8 is why the brand binds at all).
+    """
+    if not specs or not haystack:
+        return specs, []
+
+    brand_spans = spans.get("brand") or []
+    negators = [
+        match
+        for match in _NEGATORS.finditer(haystack)
+        if not any(start <= match.start() and match.end() <= end for start, end in brand_spans)
+    ]
+    if not negators:
+        return specs, []
+
+    kept: list[dict] = []
+    refused: list[dict] = []
+    for entry in specs:
+        own_spans = spans.get(str(entry.get("key"))) or []
+        negated = any(
+            0 <= start - match.end() <= _NEGATION_WINDOW
+            for (start, _end) in own_spans
+            for match in negators
+        )
+        (refused if negated else kept).append(entry)
+    return kept, refused
+
+
+def derive_search_inputs(
+    db: Session,
+    phrase: str | None,
+    *,
+    specs: list[dict] | None = None,
+    free_terms: list[str] | None = None,
+    allow_model: bool = True,
+    user_id: str | None = None,
+    registry_rows=None,
+) -> tuple[list[dict], list[str], list[dict], Understanding | None]:
+    """Read the sentence, then let the caller's own extraction win over it.
+
+    The ONE place a raw customer sentence becomes ranker inputs. Both surfaces
+    that do this - the resolve endpoint n8n calls and the Product Specifications
+    preview page - used to carry their own copy of the same six lines, which is
+    how the two readings drifted apart in the first place (the preview handled
+    raw text; resolve hid the same call behind an LLM flag). One helper, so a
+    fix to how a sentence is read reaches both callers or neither.
+
+    Returns `(specs, free_terms, exclusions, understanding)`. `understanding` is
+    None when there was no phrase to read.
+    """
+    merged_specs = list(specs or [])
+    merged_terms = list(free_terms or [])
+    if not phrase or not phrase.strip():
+        return merged_specs, merged_terms, [], None
+
+    understanding = understand_phrase(
+        db, phrase, user_id=user_id, allow_model=allow_model, registry_rows=registry_rows
+    )
+    # A spec the caller pinned by hand always wins: they saw the whole sentence
+    # (or the screen), this saw one phrase.
+    stated = {str(entry.get("key")) for entry in merged_specs if entry.get("key")}
+    merged_specs = merged_specs + [
+        entry for entry in understanding.specs if entry["key"] not in stated
+    ]
+    merged_terms = merged_terms + [
+        term for term in understanding.free_terms if term not in merged_terms
+    ]
+    return merged_specs, merged_terms, list(understanding.exclusions), understanding
+
+
 def understand_phrase(
     db: Session,
     phrase: str,
     *,
     user_id: str | None = None,
     allow_model: bool = True,
+    registry_rows=None,
 ) -> Understanding:
     """Map a customer's sentence onto registry specs, semantically where possible.
 
@@ -326,8 +495,28 @@ def understand_phrase(
         return Understanding()
 
     # The deterministic reading first — it is free, and it is the floor.
-    baseline = resolve_terms_to_specs(db, [phrase])
-    fallback = Understanding(specs=baseline, free_terms=[phrase], source="deterministic")
+    baseline, spans, haystack = resolve_terms_to_specs_with_spans(
+        db, [phrase], registry_rows=registry_rows
+    )
+    # ...and it now hears a refusal too, so the floor cannot reinstate the thing
+    # the customer ruled out (see _split_refusals).
+    baseline, baseline_refusals = _split_refusals(baseline, spans, haystack)
+    # Every span that bound something, refusals included: "not glass" understood
+    # as a refusal is still the word "glass" heard.
+    bound_phrases = {
+        str(entry.get("key")): [
+            haystack[start:end] for (start, end) in spans.get(str(entry.get("key"))) or []
+        ]
+        for entry in baseline + baseline_refusals
+        if spans.get(str(entry.get("key")))
+    }
+    fallback = Understanding(
+        specs=baseline,
+        exclusions=baseline_refusals,
+        free_terms=[phrase],
+        bound_phrases=bound_phrases,
+        source="deterministic",
+    )
 
     if not allow_model:
         return fallback
@@ -367,6 +556,16 @@ def understand_phrase(
     specs, exclusions, free_terms, notes = _validate(
         payload if isinstance(payload, dict) else {}, index, open_values
     )
+
+    # A refusal the word-level reader heard stands even when the model missed it,
+    # for the same reason the literal spec reading survives: a refusal understood
+    # is not something a model's silence should undo.
+    already_refused = {(e["key"], str(e["value"]).strip().lower()) for e in exclusions}
+    exclusions = exclusions + [
+        entry
+        for entry in baseline_refusals
+        if (entry["key"], str(entry["value"]).strip().lower()) not in already_refused
+    ]
 
     # The model supplements the literal reading, it does not replace it. If a synonym
     # matched outright, that is not something a model should be able to talk us out of.
@@ -409,8 +608,115 @@ def understand_phrase(
         specs=merged,
         exclusions=exclusions,
         free_terms=terms,
+        # The literal reader's spans still hold: the model adds meaning on top of
+        # them, it does not unsay the words that matched outright.
+        bound_phrases=bound_phrases,
         notes=notes,
         source="semantic",
         model=model_name,
         elapsed_ms=elapsed_ms,
     )
+
+
+def extract_specs_from_text(
+    db: Session,
+    text: str,
+    *,
+    vocabulary: tuple[list[dict], dict[str, Any], dict[str, list[str]]] | None = None,
+    allow_model: bool = True,
+    user_id: str | None = None,
+) -> Extraction:
+    """Read a statement about ONE product onto the registry. Writes no product data.
+
+    The sibling entry point AC-B.4 asks for: it shares `_vocabulary`, `_coerce` and
+    `_validated_pairs` with `understand_phrase`, so neither can propose vocabulary the
+    ranker has never heard of, and `understand_phrase` is NOT overloaded with a mode
+    flag - it carries a WhatsApp latency budget this does not.
+
+    Degrades rather than fails, exactly as the enquiry reader does: no provider, a
+    provider that raises, or a reply that is not JSON all return an empty
+    `Extraction` marked `deterministic`, and the caller's rule pass is what the user
+    gets (AC-B.5). `vocabulary` is accepted so a caller that already rendered the
+    registry does not pay for it twice - the open-vocabulary values behind it are a
+    DISTINCT per key.
+
+    The ONE thing it does write is an `AIAssistantUsageLog` row, and only when a model
+    actually answered: the same bookkeeping `understand_phrase` writes for
+    `spec_search`, under `feature="spec_extract"`, so a model call made from the
+    product page is billed and counted beside every other one. Best effort, exactly as
+    there - a failed insert is rolled back and warned about, never raised, because
+    losing the reading over its own bookkeeping would be the worse outcome. Nothing
+    about the product's specifications is touched (AC-B.1).
+    """
+    text = (text or "").strip()
+    if not text or not allow_model:
+        return Extraction()
+
+    provider, provider_name, model_name = _resolve_provider(db, EXTRACTOR_AGENT_NAME)
+    if provider is None:
+        return Extraction()
+
+    described, index, open_values = vocabulary if vocabulary is not None else _vocabulary(db)
+    messages = [
+        {"role": "system", "content": get_prompt(db, EXTRACTOR_AGENT_NAME).text},
+        {
+            "role": "user",
+            "content": (
+                "Specifications that exist:\n"
+                + json.dumps(described, ensure_ascii=False)
+                + "\n\nText about the product:\n"
+                + text
+            ),
+        },
+    ]
+
+    started = time.monotonic()
+    try:
+        result = provider.chat(
+            messages,
+            temperature=_TEMPERATURE,
+            max_tokens=_EXTRACT_MAX_OUTPUT_TOKENS,
+            response_format={"type": "json_object"},
+        )
+        payload = json.loads(result.content or "{}")
+    except Exception as exc:  # noqa: BLE001 - any provider failure degrades, never raises
+        logger.warning("spec extraction failed, using the rule pass alone: %s", exc)
+        return Extraction()
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+
+    items = (payload.get("specs") if isinstance(payload, dict) else None) or []
+    # The words the model read each value from, kept beside the validation rather than
+    # inside it: `_validated_pairs` is shared with the enquiry reader, which has no
+    # evidence to carry, and widening it for one caller would put an unused field on
+    # every customer sentence.
+    evidence_by_key = {
+        str(item.get("key") or "").strip(): str(item.get("evidence") or "").strip()
+        for item in items
+        if isinstance(item, dict)
+    }
+    specs = _validated_pairs(items, index, open_values, one_per_key=True)
+    for entry in specs:
+        entry["evidence"] = evidence_by_key.get(entry["key"], "")
+
+    try:
+        db.add(
+            AIAssistantUsageLog(
+                user_id=user_id,
+                feature="spec_extract",
+                provider=provider_name,
+                model=model_name,
+                prompt_tokens=int(result.prompt_tokens or 0),
+                completion_tokens=int(result.completion_tokens or 0),
+                total_tokens=int(result.total_tokens or 0),
+                tool_calls_count=0,
+                response_time_ms=elapsed_ms,
+                was_answered=bool(specs),
+            )
+        )
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 - never fail a reading over bookkeeping
+        logger.warning("spec extraction: usage log failed: %s", exc)
+        db.rollback()
+
+    return Extraction(specs=specs, source="semantic", model=model_name)

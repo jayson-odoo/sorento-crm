@@ -22,7 +22,8 @@ async def get_activity(
     entity_type: Optional[list[str]] = Query(
         None,
         description="Repeatable or CSV FE entity type(s): complaint, order, user, "
-        "supplier, promotion, form, ticket, stock_inquiry, purchase_request, product",
+        "supplier, promotion, form, ticket, stock_inquiry, purchase_request, product, "
+        "customer",
     ),
     action: Optional[str] = Query(
         None, description="created | updated | deleted"

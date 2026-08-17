@@ -19,6 +19,9 @@ class PromptKeySummary(BaseModel):
     active: bool
     activates_in: Optional[str] = None
     variables: list[str] = Field(default_factory=list)
+    # False for a key that is not an assistant-pipeline node, so the FE can disable
+    # its dry-run button with a reason instead of offering a misleading test.
+    dry_runnable: bool = False
     production_version: Optional[int] = None
     staging_version: Optional[int] = None
     # The LLM this agent runs on in production. None = the global assistant model.

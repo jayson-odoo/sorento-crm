@@ -9,6 +9,7 @@ import {
   getPoBook,
   getPriceHistory,
   getProductEconomics,
+  getProductImages,
   getPurchaseTrend,
   getTrajectory,
   recordLifecycleDecision,
@@ -25,6 +26,7 @@ import {
   type CoverSource,
   type TakenByWarehouse,
 } from '../lib/coverPlan';
+import { poolWarehouseIdOf } from '../lib/planLine';
 import { planTotals, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
 import type { ProductEconomics } from '../lib/productHealth';
 import {
@@ -34,6 +36,7 @@ import {
   type PriceAdvice,
 } from '../lib/priceAdvice';
 import { trajectoryKey, type TrajectoryEntry } from '../lib/trajectory';
+import type { ProductPhotoStatus } from '../components/ProductPhotoPopover';
 import { levelKey, type LevelSuggestion } from '../lib/levelSuggestion';
 import type { PoReceipt } from '../lib/poCover';
 import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
@@ -152,6 +155,52 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [buys.data, covered.data, needsLevel.data, dispositions.data],
   );
 
+  /**
+   * WHICH products have a photo (AC-7), fetched the same lazy way the purchase trend is.
+   *
+   * > "as IT I do not know what a product looks like"
+   *
+   * One cheap call for the whole run: it answers only the question the icon asks, so nothing
+   * is signed for the thousands of rows nobody opens. `requestProductImages` flips the flag
+   * when the FIRST icon opens; the picture itself is a separate per-product fetch inside the
+   * popover that wants it.
+   */
+  const [photosWanted, setPhotosWanted] = useState(false);
+  const requestProductImages = useCallback(() => setPhotosWanted(true), []);
+  const photos = useQuery({
+    queryKey: ['plan-lines', runId, 'product-images'],
+    queryFn: () => getProductImages(runId as string),
+    enabled: on && photosWanted,
+    // Losing the photos must not take the plan down: the popover says so and nothing else on
+    // the row changes - a photo is context, never an input to a decision.
+    retry: false,
+    // Reported in place, so it must not raise the page-level destructive toast.
+    meta: { silent: true },
+  });
+
+  /** Whether this line's product has a photo to show. */
+  const hasPhotoFor = useCallback(
+    (line: PlanLine): boolean =>
+      !!line.product_id && !!photos.data?.has_image[line.product_id],
+    [photos.data],
+  );
+
+  /**
+   * Where the map is, so the icon knows whether "no photo" is a FACT yet.
+   *
+   * Dimming before the answer lands would tell the buyer this product has no photo when we
+   * have not looked. `data` is checked BEFORE `isError` because react-query keeps the last
+   * good map through a failed refetch, and an answer we still hold beats an error about
+   * fetching it again.
+   */
+  const photoStatus: ProductPhotoStatus = !photosWanted
+    ? 'idle'
+    : photos.data
+      ? 'ready'
+      : photos.isError
+        ? 'error'
+        : 'loading';
+
   const [decisions, setDecisions] = useState<Record<string, PlanDecision | undefined>>({});
 
   const decide = useCallback((line: PlanLine, next: PlanDecision) => {
@@ -192,12 +241,20 @@ export function usePlanLines(runId: string | null, enabled = true) {
     return out;
   }, [lines, decisions]);
 
-  /** The suggested action for a line, against the stock still unspoken for. */
+  /**
+   * The suggested action for a line, against the stock still unspoken for AND inside the
+   * scope the policy allows.
+   *
+   * The scope filter belongs here rather than on the endpoint because the pool is keyed by
+   * PRODUCT: two rows of the same product can sit in different pools, so one filtered map
+   * would be wrong for one of them.
+   */
+  const coverScope = cover.data?.cover_scope;
   const coverFor = useCallback(
     (line: PlanLine): CoverProposal => {
       if (!line.purchasable) return NO_COVER;
       const pid = line.product_id ?? '';
-      const free: CoverSource[] | undefined = cover.data?.[pid];
+      const free: CoverSource[] | undefined = cover.data?.sources[pid];
       const taken = takenByProduct[pid] ?? {};
       // Exclude what THIS line already took, or its own decision would shrink its own options.
       const own = decisions[line.id];
@@ -205,9 +262,12 @@ export function usePlanLines(runId: string | null, enabled = true) {
       for (const s of own?.stock?.sources ?? []) mine[s.warehouse_id] = s.qty;
       const net: Record<string, number> = { ...taken };
       for (const [w, q] of Object.entries(mine)) net[w] = (net[w] ?? 0) - q;
-      return coverForLine(line, free, net);
+      return coverForLine(line, free, net, {
+        scope: coverScope,
+        poolWarehouseId: poolWarehouseIdOf(line),
+      });
     },
-    [cover.data, takenByProduct, decisions],
+    [cover.data, coverScope, takenByProduct, decisions],
   );
 
   /**
@@ -320,8 +380,14 @@ export function usePlanLines(runId: string | null, enabled = true) {
     levelFor,
     poFor,
     purchaseTrendFor,
+    // How far back the ORDER trend's series reaches, off the payload rather than repeated
+    // as a literal on the screen that renders it.
+    trendSeriesMonths: trend.data?.series_months ?? 24,
     purchaseTrendWindowMonths: purchaseTrend.data?.window_months ?? 3,
     requestPurchaseTrend,
+    hasPhotoFor,
+    photoStatus,
+    requestProductImages,
     economicsFor,
     decideLifecycle,
     healthThresholds: economics.data?.thresholds ?? {
@@ -331,7 +397,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
     amendLevel,
     levelSuggestions: levels.data?.suggestions ?? {},
     staleAfterDays: prices.data?.stale_after_days ?? 180,
-    coverSources: cover.data ?? {},
+    coverSources: cover.data?.sources ?? {},
     isLoading:
       buys.isLoading || covered.isLoading || needsLevel.isLoading || dispositions.isLoading,
     isError: buys.isError || covered.isError || needsLevel.isError || dispositions.isError,

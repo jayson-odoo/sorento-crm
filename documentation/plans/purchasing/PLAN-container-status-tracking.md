@@ -98,7 +98,7 @@ Two structural facts that shaped everything:
 | D23 | Why not just ship the enum into the parser prompt? | **It would vary the prompt per contact per turn**, breaking prompt caching and - more seriously - the pinning the `sorento-regression-*` capture/replay/judge harness relies on. Resolving keeps the prompt constant. |
 | D24 | One `incoming_stock` tool with per-field access - possible? | **Yes, that is D19 + D20.** And the enum and the enforcement derive from the **same** `resource_field_access` rows, so they cannot drift: a contact without gatepass access neither resolves "gate pass date" to anything nor receives the key. |
 | D21 | With one generic tool, how does "send me the container status" pick the right file? | **Attachment types get natural-language aliases**, same pattern as `lookup_option_keywords`. One-time build; every future document is then an upload plus a couple of keywords. Skipping it forces a tool per file. |
-| D18 | Only keep the latest sheet? | **No - keep every upload.** The endpoint serves the newest by `created_at`. Prior uploads survive as attachments and per-job source bytes, which is what makes a bad re-import reversible. |
+| D18 | Only keep the latest sheet? | ~~**No - keep every upload.**~~ **SUPERSEDED**: each import now trashes (soft-deletes) that company's previous sheets, keeping one live workbook per company - see `enforce_single_current` in `app/services/container_status_document.py` and `PLAN-container-status-per-company.md`. Superseded copies stay recoverable from the trash and per-job source bytes, which is what makes a bad re-import reversible. |
 
 ## 4. Domain notes worth keeping
 
@@ -196,8 +196,9 @@ tool** (D17-revised). Instead:
 - ~~`resource_field_access` table + serializer hook (D20)~~ **delivered early in S4** as
   `agent_field_access`, keyed on the agent rather than on access levels (D38-revised). Unmapped
   fields stay visible, proven by test.
-- Container status rows get `access_levels = ["sorento_office"]`; every upload retained, newest
-  served (D18).
+- Container status rows get `access_levels = ["sorento_office"]`; one live workbook per company,
+  older copies trashed but recoverable (D18, as superseded - see
+  `PLAN-container-status-per-company.md`).
 
 **S6 - carrier scraper adapters.** `integrations` row of type `container_tracking`; adapter registry
 keyed on carrier; **CMA adapter first** as the pattern; **polled** via

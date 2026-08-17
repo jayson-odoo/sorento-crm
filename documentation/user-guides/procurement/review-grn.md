@@ -8,7 +8,7 @@ A Goods Receipt Note (GRN) records what was physically received against an SPO. 
 
 ## Review a GRN
 
-On the detail page you'll see the GRN header (GRN number, SPO number, picking date, **Picking Status**) and the **Picking Lines** section — one row per received line with its product, **Expected** vs **Picked** quantity, any discrepancy, condition, batch, and location. Review the lines and quantities before changing status.
+On the detail page you'll see the GRN header (GRN number, SPO number, picking date, **Picking Status**) and the **Picking Lines** section — one row per received line with its SPO allocation, product, **Expected** vs **Picked** quantity, any discrepancy, condition, batch, and location. A line whose stated SPO has no allocation yet shows the stated number with an **Unmatched** badge instead of a link; it links automatically once that SPO's allocations are uploaded. Review the lines and quantities before changing status.
 
 ## Change the status
 

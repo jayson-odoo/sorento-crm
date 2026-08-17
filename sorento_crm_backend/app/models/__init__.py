@@ -7,6 +7,7 @@ from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
 from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
+from app.models.sales_agent import SalesAgent
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
 from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
@@ -24,9 +25,11 @@ from app.models.complaint_master_data import ComplaintRootCause, ComplaintResolu
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
+from app.models.ticket_comment import ConversationTicketComment
+from app.models.message_snippet import MessageSnippet
 from app.models.resources import Attachment, AttachmentType
 from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
-from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments
+from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments
 from app.models.respond_workspace import RespondWorkspace
 from app.models.respond_template import (
     RespondChannel,
@@ -90,6 +93,19 @@ from app.models.email_template import EmailTemplate
 from app.models.automation import Automation, AutomationRun
 from app.models.impersonation import ImpersonationSession, ContactImpersonationSession
 from app.models.email_outbox import EmailOutbox, EmailEventConfig
+from app.models.dealer_kit import (
+    Page,
+    PageVersion,
+    PageLabel,
+    TileTemplate,
+    Asset,
+    Collection,
+    Bundle,
+    BundleComponent,
+    FlyerReadingRecord,
+    Selection,
+    SelectionLine,
+)
 from app.models.scm import (
     ReorderPolicy,
     ItemClassification,
@@ -155,6 +171,7 @@ __all__ = [
     "OrderLine",
     "SalesOrder",
     "SalesOrderLine",
+    "SalesAgent",
     "Warehouse",
     "StorageZone",
     "Stock",
@@ -199,6 +216,8 @@ __all__ = [
     "SLAPolicyTier",
     "ConversationSLATracking",
     "ConversationSLAEventLog",
+    "ConversationTicketComment",
+    "MessageSnippet",
     "FormSLAConfig",
     "Attachment",
     "AttachmentType",
@@ -209,6 +228,7 @@ __all__ = [
     "ContactAgentAccess",
     "ContactAccessType",
     "RespondContact",
+    "RespondContactCustomer",
     "respond_contact_access_types",
     "RespondWorkspace",
     "RespondChannel",
@@ -305,6 +325,18 @@ __all__ = [
     "MarketSignal",
     "ScmAnalyticsRun",
     "MarketResearchRun",
+    # Dealer Kit (schema: dealer_kit)
+    "Page",
+    "PageVersion",
+    "PageLabel",
+    "TileTemplate",
+    "Asset",
+    "Collection",
+    "Bundle",
+    "Selection",
+    "SelectionLine",
+    "BundleComponent",
+    "FlyerReadingRecord",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

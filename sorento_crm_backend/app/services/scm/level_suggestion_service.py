@@ -124,7 +124,7 @@ def amend_suggestion(db: Session, *, product_id: str, warehouse_id: Optional[str
     row = db.execute(text(f"""
         SELECT rl.id::text AS id, rl.suggested_level
           FROM scm.reorder_level rl
-         WHERE rl.product_id::text = :pid
+         WHERE rl.product_id = CAST(:pid AS uuid)
            AND COALESCE(rl.warehouse_id::text, '') = COALESCE(CAST(:wid AS text), '')
            {("AND " + co) if co else ""}
     """), {"pid": product_id, "wid": warehouse_id, **co_params}).mappings().first()

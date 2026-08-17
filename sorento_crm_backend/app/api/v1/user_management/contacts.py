@@ -79,7 +79,7 @@ async def get_contacts(
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db)
 ):
     """Get all respond contacts with pagination and filtering."""
@@ -167,7 +167,7 @@ async def bulk_delete_contacts(
 @router.get("/{contact_id}", response_model=RespondContactResponse)
 async def get_contact(
     contact_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db)
 ):
     """Get a single contact by ID."""
@@ -217,6 +217,9 @@ async def update_contact(
         raise handle_internal_error(str(e))
 
 
+# No permission dependency by design: the gate is in the handler body, which calls
+# `_require_superadmin(db, current_user)` before reading anything. See
+# `documentation/plans/security/PLAN-user-management-read-gates.md`.
 @router.get("/{contact_id}/companies")
 async def get_contact_companies(
     contact_id: str,
@@ -370,7 +373,7 @@ class CsRoutingPinRequest(BaseModel):
 
 @router.get("/cs-routing/candidates")
 async def list_cs_routing_candidates(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
 ):
     """Tier-1 members of the procurement customer-service team (pin dropdown options)."""
@@ -387,7 +390,7 @@ async def list_cs_routing_candidates(
 @router.get("/{contact_id}/cs-routing")
 async def get_contact_cs_routing(
     contact_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
 ):
     """List a salesman's CS-PIC pins (one per procurement use_case)."""
@@ -437,7 +440,7 @@ async def upsert_contact_cs_routing(
 @router.get("/cs-routing/fields")
 async def list_cs_routing_fields(
     use_case: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
 ):
     """Routable predicate fields for a use_case's form (lookup + curated header fields)."""
@@ -474,7 +477,7 @@ async def delete_contact_cs_routing(
 @router.get("/{contact_id}/market-segments")
 async def get_contact_market_segments(
     contact_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
 ):
     """List a contact's assigned market segments (retail / project). Empty = matches all CS members."""
@@ -511,7 +514,7 @@ async def set_contact_market_segments(
 @router.get("/{contact_id}/attachment-types")
 async def get_contact_attachment_types(
     contact_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
 ):
     """Document types this contact may retrieve, on top of the direct-access baseline.
@@ -557,7 +560,7 @@ async def get_contact_access_agents(
     contact_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db)
 ):
     """Get all access agents for a specific contact."""

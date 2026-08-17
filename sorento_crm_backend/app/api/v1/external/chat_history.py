@@ -3,6 +3,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
+from app.models.chat_history import CHAT_HISTORY_DEDUPE_PREDICATE
 from app.schemas.external.chat_history import (
     ChatHistoryMessageIngestRequest,
     ChatHistoryMessageIngestResponse,
@@ -18,8 +20,15 @@ from app.schemas.external.chat_history import (
     ChatHistoryMessagesResponse,
 )
 from app.schemas.integration import IntegrationLogCreate
+from app.schemas.ticket_comment import (
+    TicketCommentIngestRequest,
+    TicketCommentIngestResponse,
+)
+from app.models.access import RespondContact
+from app.services import conversation_event_bus
 from app.services.chat_message_resolver import respond_ts_from_message_id
 from app.services.integration_service import IntegrationLogService
+from app.services.ticket_comment_service import TicketCommentService
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +58,33 @@ def ingest_chat_message(
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
-    """Ingest one chat message from n8n into local storage."""
+    """Ingest one chat message from n8n into local storage.
+
+    Idempotent on the Respond ``message_id`` for a given contact (AC-J5): a
+    message mirrored twice resolves to the one row and answers with the same id
+    and ``status: "duplicate"``. A payload with no ``message_id`` has nothing to
+    dedupe on and always inserts, as it always did.
+    """
     _ = current_user
     try:
         sent_at = _safe_utc_datetime_from_epoch_ms(payload.sent_at)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
+    # AC-J5: a CRM drawer send reaches this endpoint TWICE - once from the direct
+    # respond-send-user webhook lane, once from Respond's own outgoing-message
+    # trigger - so the same WhatsApp message must resolve to one row whichever
+    # lane wins the race. The conflict target is the partial unique index from
+    # migration 326; its predicate is repeated verbatim because Postgres infers
+    # the arbiter index from it (see CHAT_HISTORY_DEDUPE_PREDICATE). Rows with no
+    # message_id are outside the index and keep inserting exactly as before.
+    #
+    # DO UPDATE, not DO NOTHING: DO NOTHING returns no row (so the caller could
+    # not be told which row its message is), and the losing lane often carries
+    # context the winner lacked (turn_id, the quoted message). Fill-if-null only:
+    # a mirror re-states a message, it never edits it.
     insert_query = text(
-        """
+        f"""
         INSERT INTO chat_histories (
             channel, contact_id, phone_number, message, sent_at, first_name, last_name, type,
             message_id, result, reply_to_message_id, reply_to_message, turn_id, ingest_at,
@@ -67,11 +94,26 @@ def ingest_chat_message(
             :message_id, :result, :reply_to_message_id, :reply_to_message, :turn_id, :ingest_at,
             :respond_ts, :state_trace
         )
-        RETURNING id
+        ON CONFLICT (contact_id, message_id) WHERE {CHAT_HISTORY_DEDUPE_PREDICATE}
+        DO UPDATE SET
+            first_name = COALESCE(chat_histories.first_name, EXCLUDED.first_name),
+            last_name = COALESCE(chat_histories.last_name, EXCLUDED.last_name),
+            result = COALESCE(chat_histories.result, EXCLUDED.result),
+            reply_to_message_id = COALESCE(
+                chat_histories.reply_to_message_id, EXCLUDED.reply_to_message_id
+            ),
+            reply_to_message = COALESCE(
+                chat_histories.reply_to_message, EXCLUDED.reply_to_message
+            ),
+            turn_id = COALESCE(chat_histories.turn_id, EXCLUDED.turn_id),
+            respond_ts = COALESCE(chat_histories.respond_ts, EXCLUDED.respond_ts),
+            state_trace = COALESCE(chat_histories.state_trace, EXCLUDED.state_trace)
+        RETURNING id, (xmax <> 0) AS already_existed
         """
     )
 
     message_id: int | None = None
+    already_existed = False
     status_code = status.HTTP_201_CREATED
     error_message: str | None = None
 
@@ -110,7 +152,9 @@ def ingest_chat_message(
                 else None,
             },
         )
-        message_id = result.scalar_one()
+        row = result.one()
+        message_id = row.id
+        already_existed = bool(row.already_existed)
         db.commit()
     except Exception as e:
         db.rollback()
@@ -152,7 +196,165 @@ def ingest_chat_message(
             detail="Failed to ingest chat history message.",
         )
 
-    return ChatHistoryMessageIngestResponse(id=message_id)
+    # AC-K1: poke every drawer open on this contact so the thread refetches
+    # within seconds instead of waiting for its slow poll. NOT on the dedupe
+    # path (AC-K4/AC-J5): the second mirror lane resolves the row the first one
+    # already announced, so a second poke would be a wasted refetch on every
+    # open drawer. `payload.contact_id` IS the Respond.io contact id the bus
+    # keys on, so nothing is resolved here.
+    if not already_existed:
+        conversation_event_bus.publish(
+            conversation_event_bus.EVENT_MESSAGE, contact_id=payload.contact_id
+        )
+
+    # 201 either way: the caller (n8n) treats anything else as a lane failure and
+    # retries, which is exactly the loop this endpoint exists to end. "duplicate"
+    # names the outcome in the body instead, mirroring the conversation-SLA
+    # create's `already_active` marker.
+    return ChatHistoryMessageIngestResponse(
+        id=message_id, status="duplicate" if already_existed else "created"
+    )
+
+
+@router.post(
+    "/comments",
+    response_model=TicketCommentIngestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def ingest_respond_comment(
+    payload: TicketCommentIngestRequest,
+    request: Request,
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """Ingest one comment made in Respond's own inbox (UAC AC-L3).
+
+    The CRM half of the n8n ``comment.created`` forward lane. Respond comments
+    are CONTACT-scoped, not ticket-scoped, so the stored row carries the contact
+    only and renders in every open ticket drawer for that contact.
+
+    Idempotent on Respond's own ``comment_id``, which is REQUIRED: a replayed
+    webhook answers with the id of the row it already created and
+    ``status: "duplicate"`` - a 201 either way, mirroring the message ingest,
+    because the forwarder treats anything else as a lane failure and retries.
+    A payload with no ``comment_id`` is a 400: there would be nothing to
+    recognise a replay by, so every retry would add another copy of the same
+    note to every open drawer for that contact.
+
+    Every call leaves an inbound ``integration_log`` row, success AND refusal,
+    exactly as the message ingest above does. The refusal is the case worth
+    having: "n8n says it forwarded the comment" versus "the CRM had never heard
+    of that contact" is the whole diagnosis, and without the row neither side
+    could show its work.
+    """
+    _ = current_user
+    status_code = status.HTTP_201_CREATED
+    error_message: Optional[str] = None
+    try:
+        contact_ref = (payload.contact_id or "").strip()
+        phone = (payload.phone_number or "").strip()
+        if not contact_ref and not phone:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Provide contact_id (Respond contact id) or phone_number.",
+            )
+        comment_id = (payload.comment_id or "").strip()
+        if not comment_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "comment_id is required: it is the key a replayed comment.created "
+                    "event is recognised by."
+                ),
+            )
+
+        contact = None
+        if contact_ref:
+            contact = (
+                db.query(RespondContact)
+                .filter(RespondContact.respond_io_id == contact_ref)
+                .first()
+            )
+        if contact is None and phone:
+            contact = (
+                db.query(RespondContact)
+                .filter(RespondContact.phone_number == phone)
+                .first()
+            )
+        if contact is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No CRM contact matches this Respond.io contact.",
+            )
+
+        comment, already_existed = TicketCommentService(db).ingest_respond_comment(
+            contact=contact,
+            body=payload.text,
+            respond_comment_id=comment_id,
+            author_respond_user_id=payload.author_respond_user_id,
+            author_name=payload.author_name,
+            created_at_ms=payload.created_at,
+        )
+    except HTTPException as exc:
+        status_code = exc.status_code
+        error_message = str(exc.detail)
+        _log_comment_ingest(db, request, payload, status_code, error_message)
+        raise
+
+    _log_comment_ingest(db, request, payload, status_code, error_message)
+
+    # AC-K1: poke every drawer open on this contact, but never on the replay
+    # path - the first lane already announced this comment.
+    if not already_existed and contact.respond_io_id:
+        conversation_event_bus.publish(
+            conversation_event_bus.EVENT_MESSAGE, contact_id=str(contact.respond_io_id)
+        )
+
+    return TicketCommentIngestResponse(
+        id=str(comment.id), status="duplicate" if already_existed else "created"
+    )
+
+
+def _log_comment_ingest(
+    db: Session,
+    request: Request,
+    payload: TicketCommentIngestRequest,
+    status_code: int,
+    error_message: Optional[str],
+) -> None:
+    """One inbound row per comment ingest call. Best-effort, like its sibling:
+    logging must never be the reason an ingest fails."""
+    try:
+        request_headers = dict(request.headers)
+        if "x-api-key" in request_headers:
+            request_headers["x-api-key"] = "***"
+
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="n8n",
+                business_table="conversation_ticket_comments",
+                business_id=str(uuid.uuid4()),
+                external_reference=str(payload.contact_id or payload.phone_number or ""),
+                direction="inbound",
+                endpoint=str(request.url.path),
+                http_method=request.method,
+                request_headers=json.dumps(request_headers),
+                request_payload=payload.model_dump_json(),
+                status_code=status_code,
+                status="success" if status_code < 400 else "failed",
+                error_message=error_message,
+            )
+        )
+    except Exception as log_error:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning(
+            "Failed to create integration log for comment ingestion: %s",
+            log_error,
+            exc_info=True,
+        )
 
 
 @router.post("", response_model=ChatHistoryMessagesResponse, status_code=status.HTTP_200_OK)

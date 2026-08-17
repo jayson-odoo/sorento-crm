@@ -111,6 +111,17 @@ SEARCH_POLICY_SEED: list[dict] = [
         ),
     },
     {
+        "policy_key": "human_source_boost",
+        "label": "A spec a person set counts extra",
+        "value": 1.5,
+        "help_text": (
+            "A multiplier on the match, like the flyer boost and deliberately a separate "
+            "knob so the two can be tuned apart. A value somebody set by hand, or a "
+            "supplier confirmed, is the best evidence there is: nobody types a spec that "
+            "is already right. Set it to 1 to treat a hand-set spec like a parsed one."
+        ),
+    },
+    {
         "policy_key": "relevance_floor",
         "label": "Show nothing below a score of",
         "value": 1.5,
@@ -1227,6 +1238,16 @@ def merged_synonyms(row: ProductSpecRegistry) -> dict:
 
     Suppression is applied LAST, so suppressing a word the seed ships and adding it back
     under another value both work, in either order.
+
+    A SUPPRESSED VALUE publishes no words. Its spellings stay STORED - a suppressed value
+    is still in `allowed_values`, and keeping them is what makes putting it back one click
+    rather than a retyping exercise - but nothing reads them while it is withdrawn.
+
+    Unpublished matters because every reader takes this map: `find_similar_value` would
+    refuse a proposal by naming the suppressed value, the product dropdown would say
+    "pick it above" when it is not above, and `GET /spec-registry` would advertise words
+    for a value the same response reports as not allowed - in the one vocabulary the
+    ranker and the n8n parser share.
     """
     merged = {value: list(words) for value, words in (row.synonyms or {}).items()}
     for value, words in (row.user_synonyms or {}).items():
@@ -1239,7 +1260,8 @@ def merged_synonyms(row: ProductSpecRegistry) -> dict:
             continue
         dropped = {str(w).strip().lower() for w in words}
         merged[value] = [w for w in merged[value] if str(w).strip().lower() not in dropped]
-    return merged
+    silenced = {str(v).strip() for v in (row.suppressed_values or [])}
+    return {value: words for value, words in merged.items() if str(value).strip() not in silenced}
 
 
 def shipped_scopes() -> dict[str, dict]:
@@ -1280,3 +1302,193 @@ def active_registry(db: Session) -> list[ProductSpecRegistry]:
         .order_by(ProductSpecRegistry.spec_key)
         .all()
     )
+
+
+# --------------------------------------------------------------------------- #
+# Which keys a product MAY carry, and whether a word is already in the vocabulary
+#
+# Both of these exist because the frontend must not be the one deciding. The
+# applicability rules live in derivation and the vocabulary is the contract the
+# ranker and the n8n parser share; a second copy of either on the client drifts the
+# first time somebody edits `applies_when` or adds a synonym, and milestone 2's
+# supplier portal calls the same logic from a different principal entirely.
+# --------------------------------------------------------------------------- #
+def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
+    """Every active key, whether this product may carry it, and whether it already does.
+
+    **Not `keys-for-product`.** That endpoint builds its answer from `spec.values`, so
+    it returns the keys the product already HOLDS - the numerator, where the picker
+    needs the denominator. It is also one query per code, and it was sitting behind a
+    permission granted to no role at all.
+
+    Applicability is `applies_when` and nothing else. `applies_to_classes` was never
+    seeded, never read and never held a value in any row, so a picker keyed on it would
+    have offered every product every key while looking deliberate about it.
+
+    The gate is evaluated exactly as `product_spec_derivation._apply_scope` evaluates
+    it, and the three rules it encodes are all load-bearing:
+
+      * a key is excluded only when the gate's own key holds a value that CONTRADICTS
+        it - an absent gate value never excludes, because absence of a word is never
+        evidence of absence;
+      * the comparison is case-insensitive;
+      * a class INHERITED FROM THE CATEGORY never gates, because it is a decode of a
+        filing code and evidence read from the product cannot be overruled by a guess
+        about the product.
+
+    Keeping this in one place rather than two is the point: change the rule in
+    derivation and the picker changes with it.
+    """
+    from sqlalchemy import func
+
+    from app.models.base import company_scope
+    from app.models.product import Product
+    from app.models.product_spec import ProductSpecifications
+    from app.services.error_handler import AppException
+
+    code = (product_code or "").strip()
+
+    # All-companies, like the authored write: a spec value is true of the model rather
+    # than of one company's copy of it, so which copy the caller can see must not change
+    # which keys the picker offers.
+    with company_scope(db, None):
+        product = (
+            db.query(Product).filter(func.upper(Product.product_code) == code.upper()).first()
+        )
+        if product is None:
+            # Not an empty list. An empty list reads as "this product may carry
+            # nothing", which is a sentence about the product rather than about the
+            # code being wrong, and the picker would render it as a finished answer.
+            raise AppException(
+                status_code=404,
+                message=f"No product carries the code {code}.",
+                code="product_not_found",
+            )
+
+        spec = (
+            db.query(ProductSpecifications)
+            .join(Product, Product.id == ProductSpecifications.product_id)
+            .filter(Product.product_code == product.product_code)
+            .first()
+        )
+
+    values = (spec.values if spec else None) or {}
+    provenance = (spec.provenance if spec else None) or {}
+
+    # Held is "has a value" and nothing else. A removed key keeps its tombstone in
+    # `provenance` so re-derivation will not refill it, but it is off the table, and
+    # the picker is the one way back on: setting a value replaces the stamp wholesale.
+    held = set(values)
+
+    out: list[dict] = []
+    for row in active_registry(db):
+        gate = row.applies_when or {}
+        applicable = True
+        for gate_key, permitted in gate.items():
+            gate_value = (values.get(gate_key) or {}).get("value")
+            allowed = {str(v).strip().lower() for v in (permitted or [])}
+            if not allowed or gate_value is None:
+                continue
+            if (provenance.get(gate_key) or {}).get("source") == "category":
+                continue
+            if str(gate_value).strip().lower() not in allowed:
+                applicable = False
+                break
+
+        out.append(
+            {
+                "spec_key": row.spec_key,
+                "label": row.label,
+                "data_type": row.data_type,
+                "unit": row.unit,
+                "allowed_values": merged_allowed_values(row),
+                "synonyms": merged_synonyms(row),
+                "applicable": applicable,
+                "held": row.spec_key in held,
+            }
+        )
+    return out
+
+
+def normalise_vocabulary(text) -> str:
+    """Case, spacing, punctuation and separators folded away, for comparison only.
+
+    Never stored. The point is that "Brushed Brass", "brushed_brass" and
+    "  BRUSHED-BRASS  " are one word, because storing them as three does not add a
+    word - it splits one, and half the products then answer a customer's question
+    while the other half do not, with nothing on any screen saying why.
+    """
+    import re
+
+    folded = str(text or "").strip().lower()
+    folded = re.sub(r"[\s_\-/]+", " ", folded)
+    folded = re.sub(r"[^a-z0-9 ]", "", folded)
+    return folded.strip()
+
+
+def find_similar_key(db: Session, label: str) -> dict | None:
+    """The existing key a proposed label already means, or None when it is new.
+
+    Checked against the key, the label AND every merged synonym, because that is
+    where the near-duplicates actually are: somebody proposing "Surface colour" has
+    not looked for a key called `finish`, and nothing about the two strings says they
+    are the same thing except the synonym that binds them.
+
+    Enforced on the server as well as offered in the dialog (D7, D11): the dialog is a
+    courtesy to the person typing, and any other client would otherwise walk straight
+    past it.
+    """
+    needle = normalise_vocabulary(label)
+    if not needle:
+        return None
+
+    rows = db.query(ProductSpecRegistry).order_by(ProductSpecRegistry.spec_key).all()
+
+    for row in rows:
+        if normalise_vocabulary(row.spec_key) == needle:
+            return {
+                "spec_key": row.spec_key,
+                "label": row.label,
+                "matched_on": "spec_key",
+                "matched_text": row.spec_key,
+            }
+    for row in rows:
+        if normalise_vocabulary(row.label) == needle:
+            return {
+                "spec_key": row.spec_key,
+                "label": row.label,
+                "matched_on": "label",
+                "matched_text": row.label,
+            }
+    for row in rows:
+        for words in merged_synonyms(row).values():
+            for word in words or []:
+                if normalise_vocabulary(word) == needle:
+                    return {
+                        "spec_key": row.spec_key,
+                        "label": row.label,
+                        "matched_on": "synonym",
+                        "matched_text": word,
+                    }
+    return None
+
+
+def find_similar_value(row: ProductSpecRegistry, value: str) -> dict | None:
+    """The value a proposed word already means on THIS key, or None when it is new.
+
+    Synonyms are checked as well as values for the reason `matte black` exists: it
+    ships as a WORD for `black`, so adding it as a value of its own creates a value
+    nothing can ever match while looking like it worked.
+    """
+    needle = normalise_vocabulary(value)
+    if not needle:
+        return None
+
+    for existing in merged_allowed_values(row):
+        if normalise_vocabulary(existing) == needle:
+            return {"value": existing, "matched_on": "value", "matched_text": str(existing)}
+    for existing, words in merged_synonyms(row).items():
+        for word in words or []:
+            if normalise_vocabulary(word) == needle:
+                return {"value": existing, "matched_on": "synonym", "matched_text": word}
+    return None

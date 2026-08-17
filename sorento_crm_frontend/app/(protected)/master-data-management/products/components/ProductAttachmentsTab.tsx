@@ -3,13 +3,23 @@
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, LoaderCircleIcon, Eye, Download, Folder, ChevronDown, FolderOpen, Settings2, Star } from 'lucide-react';
+import { Plus, Trash2, LoaderCircleIcon, Eye, Download, Folder, ChevronDown, FolderOpen, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useProductAttachmentsByProduct, useDeleteProductAttachment, useUpdateProductAttachment } from '../../product-attachments/hooks/useProductAttachments';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { useProductAttachmentsByProduct, useDeleteProductAttachment } from '../../product-attachments/hooks/useProductAttachments';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import type { ProductAttachment } from '../../product-attachments/types/productAttachment.types';
 import { formatDate } from '@/lib/helpers';
@@ -20,6 +30,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { useFieldLinkageSchema } from '../hooks/useFieldLinkageSchema';
 import { useProduct } from '../hooks/useProducts';
+import { useProductBrochureImage } from '../hooks/useProductBrochureImage';
+import ProductBrochureImageControl, {
+  BrochureImageBadge,
+  isImageAttachment,
+} from './ProductBrochureImageControl';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 function attachmentDirectoriesHref(directoryId: string | null | undefined): string {
@@ -41,6 +56,9 @@ export default function ProductAttachmentsTab({
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [detailModalAttachmentId, setDetailModalAttachmentId] = useState<string | null>(null);
   const [manageLinksFor, setManageLinksFor] = useState<{ attachmentId: string; initialKeys: string[] } | null>(null);
+  // Held as a pair so the dialog can name the file: the rows carry near-identical
+  // filenames, and an id alone tells the user nothing about which one they hit.
+  const [unlinkTarget, setUnlinkTarget] = useState<{ id: string; filename: string } | null>(null);
 
   // Fetch existing product attachments
   const { data: productAttachments, isLoading: isLoadingAttachments } = useProductAttachmentsByProduct(productId || null);
@@ -54,7 +72,13 @@ export default function ProductAttachmentsTab({
   }, [accessTypes]);
   const downloadMutation = useDownloadAttachment();
   const deleteMutation = useDeleteProductAttachment();
-  const updateMutation = useUpdateProductAttachment();
+  const {
+    chosenAttachmentId,
+    chooseBrochureImage,
+    clearChosenBrochureImage,
+    savingAttachmentId,
+    isClearing,
+  } = useProductBrochureImage(productId, productAttachments);
 
   // Build a per-attachment field-key list from the product's `field_attachments`
   // map. The map is keyed by field_key, so we invert it once.
@@ -172,35 +196,30 @@ export default function ProductAttachmentsTab({
     return entries;
   }, [productAttachments]);
 
-  /**
-   * Record that THIS file is the product's photograph.
-   *
-   * One decision for the whole system: `product_attachments.is_primary` is what the brochure,
-   * 3D-model generation and the quotation all read, so choosing here answers it everywhere at
-   * once. The server clears whichever row held it before, so there is exactly one.
-   */
-  const handleChoosePhoto = (id: string) => {
-    updateMutation.mutate({ id, data: { is_primary: true } });
-  };
-
   const renderAttachmentItem = (pa: ProductAttachment) => {
     const attachmentId = pa.attachment?.id;
     const fieldKeys = attachmentId ? (fieldKeysByAttachmentId.get(attachmentId) ?? []) : [];
-    // Only an image can be the product's photograph. `product_attachments` links whatever is
-    // attached, and the live data holds 532 PDFs: a spec sheet rendered as the product photo is
-    // worse than no photo at all.
-    const isImage = Boolean(pa.attachment?.mime_type?.toLowerCase().startsWith('image/'));
+    // Only an image can be the photo on a catalogue tile; a spec sheet there is
+    // worse than no photo, so PDFs are never offered the control.
+    const canBeBrochureImage = isImageAttachment(
+      pa.attachment?.mime_type,
+      pa.attachment?.original_filename,
+    );
+    // Compared against the one chosen id rather than read off the row, so two
+    // rows can never render the mark at the same time. Not gated on the file
+    // being an image: a flag that legacy data left on a PDF has to stay visible
+    // and clearable, or the product is marked with nothing on screen saying so.
+    const isBrochureImage = !!attachmentId && attachmentId === chosenAttachmentId;
     return (
     <div
       key={pa.id}
-      className="flex items-center justify-between rounded-lg border p-4"
+      data-testid={`product-attachment-row-${pa.id}`}
+      className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between"
     >
-      <div className="flex items-center gap-3 flex-1">
-        {pa.is_primary && (
-          <Badge variant="primary">Product photo</Badge>
-        )}
-        <div className="flex-1">
-          <p className="font-medium text-sm">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        {isBrochureImage && <BrochureImageBadge />}
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-sm break-words">
             {pa.attachment?.original_filename || 'Unknown'}
           </p>
           <p className="text-xs text-muted-foreground">
@@ -220,27 +239,15 @@ export default function ProductAttachmentsTab({
           )}
         </div>
       </div>
-      <div className="flex gap-2">
-        {isEditMode && isImage && !pa.is_primary && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => handleChoosePhoto(pa.id)}
-                disabled={updateMutation.isPending}
-                data-testid={`choose-product-photo-${pa.id}`}
-              >
-                {updateMutation.isPending ? (
-                  <LoaderCircleIcon className="size-4 animate-spin" />
-                ) : (
-                  <Star className="size-4" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Use as product photo</TooltipContent>
-          </Tooltip>
+      <div className="flex shrink-0 flex-wrap justify-end gap-1 sm:gap-2">
+        {isEditMode && attachmentId && (canBeBrochureImage || isBrochureImage) && (
+          <ProductBrochureImageControl
+            isChosen={isBrochureImage}
+            isSaving={savingAttachmentId === attachmentId}
+            isClearing={isClearing}
+            onChoose={() => chooseBrochureImage(attachmentId)}
+            onClear={clearChosenBrochureImage}
+          />
         )}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -298,7 +305,14 @@ export default function ProductAttachmentsTab({
             type="button"
             variant="ghost"
             size="sm"
-            onClick={() => handleRemove(pa.id)}
+            aria-label="Unlink attachment"
+            title="Unlink attachment"
+            onClick={() =>
+              setUnlinkTarget({
+                id: pa.id,
+                filename: pa.attachment?.original_filename || 'this attachment',
+              })
+            }
             disabled={deleteMutation.isPending}
           >
             {deleteMutation.isPending ? (
@@ -450,6 +464,37 @@ export default function ProductAttachmentsTab({
           }}
         />
       )}
+      <AlertDialog
+        open={unlinkTarget != null}
+        onOpenChange={(open) => !open && setUnlinkTarget(null)}
+      >
+        {/* Capped height because at 375px a long filename pushes the footer off
+            screen, leaving the user with no way to cancel. */}
+        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unlink attachment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <span className="font-medium break-words">{unlinkTarget?.filename}</span> will no
+              longer be attached to this product. This action cannot be undone. The file stays in
+              Resource Management and can be linked again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault();
+                if (unlinkTarget) handleRemove(unlinkTarget.id);
+                setUnlinkTarget(null);
+              }}
+              disabled={deleteMutation.isPending}
+            >
+              Unlink
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

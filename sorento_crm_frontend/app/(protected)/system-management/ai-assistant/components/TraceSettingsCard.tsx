@@ -33,13 +33,17 @@ const DEFAULTS: TraceSettings = {
 export default function TraceSettingsCard() {
   const [form, setForm] = useState<TraceSettings>(DEFAULTS);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const res = await apiFetch('/api/user-management/settings/');
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (alive) setLoadFailed(true);
+          return;
+        }
         const data = await res.json();
         const s = data?.settings ?? {};
         if (!alive) return;
@@ -51,6 +55,8 @@ export default function TraceSettingsCard() {
             s.ai_trace_max_payload_bytes ?? DEFAULTS.ai_trace_max_payload_bytes,
           ),
         });
+      } catch {
+        if (alive) setLoadFailed(true);
       } finally {
         if (alive) setLoading(false);
       }
@@ -95,6 +101,11 @@ export default function TraceSettingsCard() {
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> Loading…
+          </div>
+        ) : loadFailed ? (
+          <div data-testid="trace-settings-load-failed" className="text-sm text-destructive">
+            Could not load the current tracing settings, so they cannot be edited here. This
+            usually means the account lacks permission to read system settings.
           </div>
         ) : (
           <>

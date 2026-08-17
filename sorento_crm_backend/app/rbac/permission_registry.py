@@ -42,9 +42,19 @@ PERMISSION_REGISTRY.extend([
     {"slug": "user_management.account.view", "name": "View Account", "description": "Permission to view own account."},
 ])
 PERMISSION_REGISTRY.append({
+    "slug": "user_management.contacts.view",
+    "name": "View Contacts",
+    "description": "Permission to view respond contacts and their routing, segments and access grants.",
+})
+PERMISSION_REGISTRY.append({
     "slug": "user_management.contacts.portal_link",
     "name": "Get contact portal link",
     "description": "Generate or send a user-submission portal link for a respond contact.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.reference_data.view",
+    "name": "View Reference Data",
+    "description": "Permission to read shared reference catalogs (contact access types, market segments) used by pickers across modules.",
 })
 
 # Delivery Order Management
@@ -54,6 +64,13 @@ PERMISSION_REGISTRY.append({"slug": "order_management.orders.export", "name": "E
 PERMISSION_REGISTRY.append({"slug": "order_management.orders.bulk_delete", "name": "Bulk Delete Delivery Orders", "description": "Permission to bulk delete delivery orders."})
 PERMISSION_REGISTRY.extend(_crud("order_management", "order_statuses", "Delivery Order Statuses"))
 PERMISSION_REGISTRY.extend(_crud("order_management", "customers", "Customers"))
+PERMISSION_REGISTRY.append({
+    "slug": "order_management.customers.import",
+    "name": "Import Customers",
+    "description": (
+        "Upload a debtor listing to create and update customers for the active company."
+    ),
+})
 
 # Complaint Management
 PERMISSION_REGISTRY.extend(_crud("complaint_management", "complaints", "Complaints"))
@@ -111,6 +128,20 @@ PERMISSION_REGISTRY.extend([
     {"slug": "sla_management.conversation_sla_tracking.takeover", "name": "Takeover SLA task", "description": "Take over a teammate's conversation SLA task (and cancel/reject pending takeovers)."},
 ])
 PERMISSION_REGISTRY.extend(_crud("sla_management", "escalation_logs", "SLA Event Logs"))
+# Conversations inbox (UAC AC-N2). READ access to a contact thread is a
+# PERMISSION, deliberately not ticket assignment: a reassigned-away previous
+# assignee, a mentioned colleague and a manager all have to be able to read.
+# `.reply` is the separate act gate for sending from the inbox - the ticket
+# drawer's own send keeps its assignee-or-manager rule and needs neither slug.
+PERMISSION_REGISTRY.extend([
+    {"slug": "sla_management.conversations.view", "name": "View Conversations", "description": "Read any contact's conversation thread, its notes and its media from the Conversations inbox (read access is a permission, not ticket assignment)."},
+    {"slug": "sla_management.conversations.reply", "name": "Reply in Conversations", "description": "Send a WhatsApp reply to a contact from the Conversations inbox. Stamped onto the sender's own open ticket for that contact when they hold exactly one."},
+])
+# Composer snippets (UAC AC-L4). `.view` is what the ticket composer's "/" picker
+# reads, so it is granted to everyone who works tickets (migration 329 copies the
+# grants from `sla_management.conversation_sla_tracking.view`); add/edit/delete
+# are the admin CRUD page.
+PERMISSION_REGISTRY.extend(_crud("sla_management", "message_snippets", "Message Snippets"))
 PERMISSION_REGISTRY.extend([
     {"slug": "sla_management.form_sla_config.view", "name": "View Form SLA Configurations", "description": "View per-form SLA stage configurations (start / respond / resolve trigger transitions, agent + chain)."},
     {"slug": "sla_management.form_sla_config.manage", "name": "Manage Form SLA Configurations", "description": "Create, update, delete per-form SLA stage configurations."},
@@ -140,6 +171,10 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 PERMISSION_REGISTRY.extend(_with_import_export("master_data", "certificates", "Certificates"))
+# The salesperson master. `.edit` gates the annotation (who a code belongs to, and what
+# its orders count as); there is no add/delete surface, but the four slugs ship together
+# so the slug set matches the AutoCount branch's mirror pages exactly.
+PERMISSION_REGISTRY.extend(_crud("master_data", "sales_agents", "Sales Agents"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_root_causes", "Complaint Root Causes"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Complaint Resolutions"))
 

@@ -226,3 +226,15 @@ class PlanningMode(BaseModel):
 
 class PlanningModeUpdate(BaseModel):
     mode: Literal["auto", "manual"]
+
+
+# --- cover scope quick setting (global reorder_policy.cover_scope) -----------
+
+class CoverScope(BaseModel):
+    #: 'own_pool' = a plan row may only use stock from its own site (its pool);
+    #: 'all_locations' = any location holding spare stock is offered.
+    cover_scope: Literal["own_pool", "all_locations"]
+
+
+class CoverScopeUpdate(BaseModel):
+    cover_scope: Literal["own_pool", "all_locations"]

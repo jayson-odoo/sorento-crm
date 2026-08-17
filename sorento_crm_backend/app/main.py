@@ -160,6 +160,13 @@ register_lookup_write_listeners()
 from app.services.company_scope import register_company_scope_listeners
 register_company_scope_listeners()
 
+# Dealer Kit collection rules are evaluated by the SAME rule engine as automation
+# triggers, so its `product` fact source has to be on the registry before the
+# first /rule-facts request - otherwise the RuleBuilder renders an empty field
+# list and a Designer cannot author a collection at all.
+from app.services.dealer_kit.product_facts import register_product_facts
+register_product_facts()
+
 
 def _register_activities_adapters() -> None:
     """Register per-entity Activities & Notes adapters at process boot.
@@ -263,6 +270,12 @@ async def startup_event():
         logging.info("Product spec listeners registered")
     except Exception as e:
         logging.error(f"Failed to register product spec listeners: {str(e)}", exc_info=True)
+    try:
+        from app.services.product_spec_write import register_spec_write_backstop
+        register_spec_write_backstop()
+        logging.info("Spec write backstop registered")
+    except Exception as e:
+        logging.error(f"Failed to register spec write backstop: {str(e)}", exc_info=True)
     try:
         # The status engine ships with an empty registry; every entity arrives from
         # a module. `inbound_shipment` is the first adopter in this repo, and it

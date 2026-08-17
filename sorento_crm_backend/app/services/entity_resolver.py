@@ -2414,7 +2414,11 @@ def _tier3_embedding_lookup(
         """
     )
     try:
-        rows = db.execute(sql, {"vec": list(query_vec), "types": list(allowed_types)}).all()
+        # SAVEPOINT: this lookup is best-effort, and a failed statement
+        # otherwise leaves the whole transaction aborted - every later
+        # query in the request would die on InFailedSqlTransaction.
+        with db.begin_nested():
+            rows = db.execute(sql, {"vec": list(query_vec), "types": list(allowed_types)}).all()
     except Exception:
         logger.exception("Tier-3 vector query failed for token=%s", token)
         return []
@@ -2502,25 +2506,29 @@ def _trgm_lookup(
             # curated-looking variants (SRTKT71SS, -BL/-GM) beat digit-neighbours
             # (SRTKT72SS) even when raw similarity ties (§3.2). Self is excluded.
             scope_sql, scope_params = _company_scope_sql(db)
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT id, product_code, product_name,
-                           similarity(product_code, :p) AS sim,
-                           (left(lower(regexp_replace(product_code, '[-\\s]', '', 'g')),
-                                 length(lower(regexp_replace(:p, '[-\\s]', '', 'g'))))
-                              = lower(regexp_replace(:p, '[-\\s]', '', 'g')))
-                             AS is_variant
-                    FROM products
-                    WHERE product_code % :p
-                      AND lower(regexp_replace(product_code, '[-\\s]', '', 'g'))
-                          <> lower(regexp_replace(:p, '[-\\s]', '', 'g')){scope_sql}
-                    ORDER BY is_variant DESC, sim DESC, product_code
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT id, product_code, product_name,
+                               similarity(product_code, :p) AS sim,
+                               (left(lower(regexp_replace(product_code, '[-\\s]', '', 'g')),
+                                     length(lower(regexp_replace(:p, '[-\\s]', '', 'g'))))
+                                  = lower(regexp_replace(:p, '[-\\s]', '', 'g')))
+                                 AS is_variant
+                        FROM products
+                        WHERE product_code % :p
+                          AND lower(regexp_replace(product_code, '[-\\s]', '', 'g'))
+                              <> lower(regexp_replace(:p, '[-\\s]', '', 'g')){scope_sql}
+                        ORDER BY is_variant DESC, sim DESC, product_code
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -2552,27 +2560,31 @@ def _trgm_lookup(
                 if scope_params
                 else ""
             )
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT o.debtor_name, o.debtor_code,
-                           c.id AS customer_id,
-                           GREATEST(
-                               similarity(COALESCE(o.debtor_name, ''), :p),
-                               similarity(COALESCE(o.debtor_code, ''), :p)
-                           ) AS sim
-                    FROM orders o
-                    LEFT JOIN customers c ON lower(btrim(c.customer_name)) = lower(btrim(o.debtor_name))
-                    WHERE o.deleted_at IS NULL
-                      AND o.debtor_name IS NOT NULL
-                      AND (o.debtor_name % :p OR o.debtor_code % :p){order_scope_sql}{cust_scope_sql}
-                    GROUP BY o.debtor_name, o.debtor_code, c.id
-                    ORDER BY sim DESC
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT o.debtor_name, o.debtor_code,
+                               c.id AS customer_id,
+                               GREATEST(
+                                   similarity(COALESCE(o.debtor_name, ''), :p),
+                                   similarity(COALESCE(o.debtor_code, ''), :p)
+                               ) AS sim
+                        FROM orders o
+                        LEFT JOIN customers c ON lower(btrim(c.customer_name)) = lower(btrim(o.debtor_name))
+                        WHERE o.deleted_at IS NULL
+                          AND o.debtor_name IS NOT NULL
+                          AND (o.debtor_name % :p OR o.debtor_code % :p){order_scope_sql}{cust_scope_sql}
+                        GROUP BY o.debtor_name, o.debtor_code, c.id
+                        ORDER BY sim DESC
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -2589,22 +2601,26 @@ def _trgm_lookup(
                     )
                 )
             scope_sql, scope_params = _company_scope_sql(db)
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT id, customer_code, customer_name,
-                           GREATEST(
-                               similarity(customer_code, :p),
-                               similarity(customer_name, :p)
-                           ) AS sim
-                    FROM customers
-                    WHERE (customer_code % :p OR customer_name % :p){scope_sql}
-                    ORDER BY sim DESC
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT id, customer_code, customer_name,
+                               GREATEST(
+                                   similarity(customer_code, :p),
+                                   similarity(customer_name, :p)
+                               ) AS sim
+                        FROM customers
+                        WHERE (customer_code % :p OR customer_name % :p){scope_sql}
+                        ORDER BY sim DESC
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -2626,18 +2642,22 @@ def _trgm_lookup(
     if "customer_order" in allowed_entity_types:
         try:
             scope_sql, scope_params = _company_scope_sql(db)
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT id, order_number, similarity(order_number, :p) AS sim
-                    FROM orders
-                    WHERE deleted_at IS NULL AND order_number % :p{scope_sql}
-                    ORDER BY sim DESC
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT id, order_number, similarity(order_number, :p) AS sim
+                        FROM orders
+                        WHERE deleted_at IS NULL AND order_number % :p{scope_sql}
+                        ORDER BY sim DESC
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -2659,19 +2679,23 @@ def _trgm_lookup(
     if "promotion" in allowed_entity_types:
         try:
             scope_sql, scope_params = _company_scope_sql(db)
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT id, description,
-                           similarity(COALESCE(description, ''), :p) AS sim
-                    FROM promotions
-                    WHERE description % :p{scope_sql}
-                    ORDER BY sim DESC
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT id, description,
+                               similarity(COALESCE(description, ''), :p) AS sim
+                        FROM promotions
+                        WHERE description % :p{scope_sql}
+                        ORDER BY sim DESC
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -2693,23 +2717,27 @@ def _trgm_lookup(
     if "transporter" in allowed_entity_types:
         try:
             scope_sql, scope_params = _company_scope_sql(db)
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT id, code, name, normalized_name,
-                           GREATEST(
-                               similarity(COALESCE(code, ''), :p),
-                               similarity(COALESCE(name, ''), :p),
-                               similarity(COALESCE(normalized_name, ''), :p)
-                           ) AS sim
-                    FROM transporters
-                    WHERE (code % :p OR name % :p OR normalized_name % :p){scope_sql}
-                    ORDER BY sim DESC
-                    LIMIT :n
-                    """
-                ),
-                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"""
+                        SELECT id, code, name, normalized_name,
+                               GREATEST(
+                                   similarity(COALESCE(code, ''), :p),
+                                   similarity(COALESCE(name, ''), :p),
+                                   similarity(COALESCE(normalized_name, ''), :p)
+                               ) AS sim
+                        FROM transporters
+                        WHERE (code % :p OR name % :p OR normalized_name % :p){scope_sql}
+                        ORDER BY sim DESC
+                        LIMIT :n
+                        """
+                    ),
+                    {"p": phrase, "n": TRGM_LIMIT, **scope_params},
+                ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
@@ -3787,17 +3815,21 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
             continue  # global / unpartitioned type — leave company_id None, never gate
         shared = bool(getattr(model, "__company_shared__", False))
         try:
-            rows = db.execute(
-                text(
-                    f"SELECT id::text AS id, company_id::text AS company_id "  # noqa: S608 - table name from the model registry
-                    # `fullname`, not `__tablename__`: a schema-qualified model would
-                    # otherwise emit its bare name, and seven of those name a CORE table
-                    # too (ADR-0011). No projects model reaches here today; the day one
-                    # does, this reads the right rows rather than another module's.
-                    f"FROM {model.__table__.fullname} WHERE id::text = ANY(:ids)"
-                ),
-                {"ids": [str(m.uuid) for m in group]},
-            ).all()
+            # SAVEPOINT: this lookup is best-effort, and a failed statement
+            # otherwise leaves the whole transaction aborted - every later
+            # query in the request would die on InFailedSqlTransaction.
+            with db.begin_nested():
+                rows = db.execute(
+                    text(
+                        f"SELECT id::text AS id, company_id::text AS company_id "  # noqa: S608 - table name from the model registry
+                        # `fullname`, not `__tablename__`: a schema-qualified model would
+                        # otherwise emit its bare name, and seven of those name a CORE table
+                        # too (ADR-0011). No projects model reaches here today; the day one
+                        # does, this reads the right rows rather than another module's.
+                        f"FROM {model.__table__.fullname} WHERE id::text = ANY(:ids)"
+                    ),
+                    {"ids": [str(m.uuid) for m in group]},
+                ).all()
         except Exception:  # noqa: BLE001 — attribution is additive, never fatal
             logger.exception("company attribution lookup failed for %s", entity_type)
             if not _scope_allows(scope, None, shared=shared):
@@ -4539,10 +4571,14 @@ def _rag_resolve_phrase(
         """
     )
     try:
-        rows = db.execute(
-            sql,
-            {"vec": list(query_vec), "types": allowed_source_types, "k": top_k},
-        ).all()
+        # SAVEPOINT: this lookup is best-effort, and a failed statement
+        # otherwise leaves the whole transaction aborted - every later
+        # query in the request would die on InFailedSqlTransaction.
+        with db.begin_nested():
+            rows = db.execute(
+                sql,
+                {"vec": list(query_vec), "types": allowed_source_types, "k": top_k},
+            ).all()
     except Exception:
         logger.exception("RAG vector query failed for phrase=%s", phrase)
         try:

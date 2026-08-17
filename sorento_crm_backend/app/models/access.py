@@ -8,6 +8,62 @@ from app.models.base import CompanyScopedMixin
 import uuid
 
 
+class RespondContactCustomer(Base, CompanyScopedMixin):
+    """Links a WhatsApp contact to the customer account they belong to.
+
+    Not to be confused with ``customer_contacts``, which is a PERSON under a
+    customer (name, job title, typed in by staff). This is the identity link:
+    the phone number Respond.io knows, tied to the account that gets quoted and
+    invoiced. A contact can exist with no customer (they have never bought
+    anything) and a customer can exist with no contact (they were imported).
+
+    **Why a table rather than ``respond_contacts.customer_id``.** ``customers``
+    is company-scoped and ``respond_contacts`` is not, so one column cannot hold
+    "customer X at Sorento, customer Y at Mocha" - and a company-scoped value
+    living on an unscoped table is one join away from leaking across the
+    partition. The link row carries its own ``company_id`` and the scope filter
+    handles the rest.
+
+    ``is_primary`` exists because a person genuinely can be the contact for two
+    accounts; when they are, somebody has to say which one a quote defaults to,
+    and the partial unique index below means only one ever can.
+    """
+
+    __tablename__ = "respond_contact_customers"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=False
+    )
+    customer_id = Column(
+        UUID(as_uuid=False), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False
+    )
+    is_primary = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # How the link was made: 'manual' (a human confirmed it) or the matcher that
+    # proposed it. A proposal never writes itself, so nothing here is unreviewed.
+    source = Column(String(32), nullable=False, default="manual", server_default="manual")
+    linked_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("contact_id", "customer_id", name="uq_respond_contact_customers_pair"),
+        Index("ix_respond_contact_customers_contact_id", "contact_id"),
+        Index("ix_respond_contact_customers_customer_id", "customer_id"),
+        # At most one primary per contact PER COMPANY - the same person may be
+        # primary for a Sorento account and a Mocha one.
+        Index(
+            "uq_respond_contact_customers_one_primary",
+            "contact_id",
+            "company_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+    )
+
+
 class ContactAccessType(Base):
     """Configurable catalog for contact access types (e.g. end_user, dealer, sorento_dealer). Used for promotion/attachment visibility and contact classification."""
     __tablename__ = "contact_access_types"
@@ -164,6 +220,12 @@ class RespondContact(Base):
     requires_registered_project = Column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
+    # Per-contact outbound kill switch. False silences every outbound Respond.io
+    # send to this contact (text, attachment, template) at the client boundary;
+    # reads are untouched. Defaults ON, so a new or migrated row behaves exactly
+    # as it did before the switch existed. Flipped in bulk or per contact by
+    # scripts/set_contact_outbound.py.
+    outbound_enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)

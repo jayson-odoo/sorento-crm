@@ -53,7 +53,7 @@ opinion. Running a step in the wrong seat is a process violation.
    `userSelectService`, `ConfirmDeleteDialog`, `DataGrid`, mutation-hook factories.)
 3. **Phase 1 — Frontend-first (mock).** UI → hook → service → **mock**. Tune every state
    (loading / empty / error / partial / success) with no backend running. Verify in a real
-   browser (Playwright MCP, sidebar-click nav). Document the expected API contract. NO tests yet
+   browser (agent-browser headless, sidebar-click nav). Document the expected API contract. NO tests yet
    (shape may still shift), NO backend code. When the open question is "which of these designs",
    run `/prototype` BEFORE this phase and throw the result away — it is not built to the layering
    rules below and must never become the shipped FE.
@@ -66,7 +66,9 @@ opinion. Running a step in the wrong seat is a process violation.
    and, above all, **deterministic engines** (e.g. the SCM reorder maths): the golden-set expected
    numbers are written as failing tests first, and the code is built to satisfy them. FE hook/logic
    tests (vitest) are likewise test-first; FE component-state tests may follow once the prototype
-   shape settles. One Playwright E2E per user flow (real clicks, FE→BE→DB). Tests are **never
+   shape settles. Per user flow, real clicks FE→BE→DB, but **no new Playwright spec**: a
+   recorded agent-browser evidence run stands in, per CLAUDE.md "Persisted Playwright spec".
+   Tests are **never
    deferred** to Phase 3. Re-verify live. `/tdd` drives the loop; `/implement` may drive a whole
    ticket **at this phase only** (it calls `/tdd` internally and knows nothing of Phase 1).
 5. **Phase 3 — Code review.** `/code-review` (or `ultra` for big diffs) → address via `--fix` /
@@ -199,7 +201,9 @@ Raw SQL / DB query in a router · a React component calling axios/fetch directly
 soft-delete named "delete" · a hidden empty section on a detail page · a hand-rolled
 `<table className="table-fixed">` (use shared `DataGrid`) · a "done" slice still serving a mock ·
 a new column/engine with no backfill for existing rows · a new permission with no existing-role
-grant path · a new DB column missing from a manual dict builder · a non-searchable dropdown —
+grant path · a new DB column missing from a manual dict builder · a write to `spec.values` /
+`spec.provenance` / `spec.rendered_text` outside `app/services/product_spec_write.py` · a
+non-searchable dropdown —
 `@/components/ui/select`, raw `<select>`, or a hand-rolled `CommandInput` picker (every
 dropdown-select MUST use `SearchableSelect`/`SearchableMultiSelect` from `@/components/common`; see
 `ADR-PRODUCT-STANDARDS.md`).
@@ -216,4 +220,6 @@ dropdown-select MUST use `SearchableSelect`/`SearchableMultiSelect` from `@/comp
 - Deploy: `DEPLOY.md` (blue/green via CI + `scripts/blue_green_deploy.sh`). Prod server
   `/opt/sorento-crm2/` has **no git repo** — CI scp's the deploy script; compose is edited by hand.
 - New Alembic `down_revision` must chain onto a **committed** main head (not an uncommitted WIP
-  migration); revision ids ≤ 32 chars. A branch merge forks two heads → fix with `alembic merge`.
+  migration); revision ids ≤ 32 chars. Immediately before merging, re-check `alembic heads`
+  against the latest default branch. Concurrent migrations can leave multiple heads despite a
+  clean rebase; rejoin every current head with an empty `alembic merge` revision.

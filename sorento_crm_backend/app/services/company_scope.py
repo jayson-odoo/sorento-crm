@@ -25,6 +25,7 @@ by definition (AC-H5).
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Optional
 
@@ -43,6 +44,8 @@ from app.models.base import (
 )
 from app.services.error_handler import AppException
 
+logger = logging.getLogger(__name__)
+
 # Re-export the state helpers so callers can `from app.services.company_scope import ...`.
 __all__ = [
     "UNSET",
@@ -54,6 +57,8 @@ __all__ = [
     "register_company_scope_listeners",
     "build_company_predicate",
     "admin_listing_company_filter",
+    "pending_company_id",
+    "stamp_lookup_companies",
 ]
 
 
@@ -195,6 +200,51 @@ def resolve_write_company_id(
     )
 
 
+#: Returned by ``_stamp_scope`` for an object the auto-stamp will not touch.
+_NO_STAMP = object()
+
+
+def _stamp_scope(target: Any) -> Any:
+    """The scope that governs ``target``'s auto-stamp, or ``_NO_STAMP`` when the
+    ``before_insert`` hook would leave ``company_id`` alone: not an owned row, a
+    company already set, a shared (attachment) row, or enforcement switched off.
+
+    Shared by the hook itself and by ``pending_company_id`` so the two can never
+    disagree about which inserts get stamped.
+    """
+    if not _ENFORCE:
+        return _NO_STAMP
+    if not isinstance(target, CompanyScopedMixin):
+        return _NO_STAMP
+    if getattr(target, "company_id", None) is not None:
+        return _NO_STAMP
+    if _is_shared(type(target)):
+        return _NO_STAMP
+    sess = object_session(target)
+    return get_company_scope(sess) if sess is not None else UNSET
+
+
+def pending_company_id(target: Any) -> Optional[str]:
+    """The company an about-to-be-inserted row will end up in, resolved EARLY.
+
+    ``before_insert`` stamps ``company_id``, but that is a mapper-level hook and so
+    runs after ``before_flush``. A ``before_flush`` listener reading ``company_id``
+    off a brand new row therefore sees ``None`` and records the row as belonging to
+    no company. For the audit log that is not merely incomplete: the admin listing
+    deliberately shows company-less rows to everyone (legacy rows predate the
+    column), so a CREATE row snapshotting ``None`` leaks that entity's values to
+    every other company.
+
+    Returns ``None`` when nothing would be stamped, INCLUDING when the scope cannot
+    name a single company: the stamp itself raises in that case, so the insert never
+    happens. Never invent a company that the write path would not have chosen.
+    """
+    scope = _stamp_scope(target)
+    if scope is _NO_STAMP:
+        return None
+    return resolve_write_company_id(scope, ambiguous=None)
+
+
 def register_company_scope_listeners() -> None:
     """Install the scope SELECT filter + insert auto-stamp. Idempotent."""
     global _INSTALLED
@@ -245,15 +295,12 @@ def register_company_scope_listeners() -> None:
 
     @event.listens_for(Mapper, "before_insert")
     def _stamp_company_id(mapper, connection, target) -> None:  # noqa: ANN001
-        if not isinstance(target, CompanyScopedMixin):
+        # Not owned / already stamped / shared (attachments may legitimately be
+        # company-less). ``pending_company_id`` reads the same guard, so an audit
+        # snapshot taken in before_flush lands on the same company as the stamp.
+        scope = _stamp_scope(target)
+        if scope is _NO_STAMP:
             return
-        if getattr(target, "company_id", None) is not None:
-            return  # explicit company (imports, backfilled paths) — leave as-is
-        if _is_shared(type(target)):
-            return  # attachments may legitimately be company-less (shared)
-
-        sess = object_session(target)
-        scope = get_company_scope(sess) if sess is not None else UNSET
 
         # ``None`` = the deliberate system / all-companies principal (a valid
         # X-API-Key call with NO contact_id/space_id — the n8n backward-compat
@@ -272,3 +319,124 @@ def register_company_scope_listeners() -> None:
         company_id = resolve_write_company_id(scope)
         if company_id is not None:
             target.company_id = company_id
+
+
+# --------------------------------------------------------------------------
+# Multi-company reply clarity (PLAN-multi-company-reply-clarity-backend.md §2)
+# --------------------------------------------------------------------------
+def _lookup_row_company_id(row: Any, row_company_id) -> Optional[str]:
+    """The company a returned row belongs to, whatever shape the row is in."""
+    if row_company_id is not None:
+        value = row_company_id(row)
+    elif isinstance(row, dict):
+        value = row.get("company_id")
+    else:
+        value = getattr(row, "company_id", None)
+    return str(value) if value else None
+
+
+def stamp_lookup_companies(
+    db,
+    payload: dict,
+    rows,
+    *,
+    product_ids=None,
+    row_company_id=None,
+) -> None:
+    """Label a list payload per company iff the lookup spans more than one company.
+
+    The company set is ``companies of the products the tool was asked about``
+    (read through the SCOPED ORM, so a product the caller cannot see contributes
+    nothing) UNION ``companies of the rows returned``. With one company in it
+    (the overwhelmingly common case) this returns having touched nothing, so a
+    single-company reply stays byte-identical to what it was before.
+
+    With two or more, ONE ``companies`` query resolves the names, every row gets
+    ``company_name`` (and ``company_id`` where the row does not already carry it),
+    and ``payload["lookup_companies"]`` names every company searched, including
+    the ones that returned no row, which is what lets a consumer say "I checked
+    Mocha and Sorento" on an empty result.
+
+    ``rows`` may be ORM instances (which already carry ``company_id``), plain
+    dicts, or Pydantic models declaring both fields. ``row_company_id`` is an
+    optional callable for rows whose company lives somewhere other than
+    ``.company_id``.
+
+    A caller scoped to a single company short-circuits before any query at all:
+    the union cannot exceed one, so there is nothing to find out.
+
+    Best-effort: labelling is additive, so any failure warns and leaves the
+    payload exactly as it was rather than turning a working list into a 500,
+    and the queries run in a SAVEPOINT so a failed one cannot poison the
+    caller's transaction either.
+    """
+    try:
+        scope = get_company_scope(db)
+        if isinstance(scope, frozenset) and len(scope) == 1:
+            # A caller who can see exactly one company cannot produce a union
+            # bigger than one, whatever was asked for or returned. Answer here,
+            # before spending the products query that could only confirm it.
+            return
+
+        rows = list(rows or [])
+
+        company_ids: set[str] = set()
+        names: dict = {}
+        ids = {str(pid) for pid in (product_ids or []) if pid}
+        # Both queries run inside a SAVEPOINT. Swallowing the exception is only
+        # half of "never fatal": on Postgres a failed statement (a non-UUID
+        # product id is the realistic one) aborts the WHOLE transaction, so a
+        # bare try/except would leave the rest of the request on a session
+        # where every later query dies with "current transaction is aborted".
+        # The savepoint rolls the failure back locally instead.
+        with db.begin_nested():
+            if ids:
+                from app.models.product import Product
+
+                company_ids.update(
+                    str(cid)
+                    for (cid,) in db.query(Product.company_id)
+                    .filter(Product.id.in_(ids))
+                    .distinct()
+                    .all()
+                    if cid
+                )
+            for row in rows:
+                cid = _lookup_row_company_id(row, row_company_id)
+                if cid:
+                    company_ids.add(cid)
+
+            if len(company_ids) <= 1:
+                return
+
+            from app.models.company import Company
+
+            names = {
+                str(cid): name
+                for cid, name in db.query(Company.id, Company.name)
+                .filter(Company.id.in_(company_ids))
+                .all()
+            }
+
+        for row in rows:
+            cid = _lookup_row_company_id(row, row_company_id)
+            if not cid:
+                continue
+            name = names.get(cid)
+            if isinstance(row, dict):
+                row["company_id"] = cid
+                row["company_name"] = name
+            else:
+                # An ORM row already holds the real column; only assign it when
+                # it is missing (a Pydantic row built field-by-field), so we
+                # never mark a loaded ORM instance dirty over its own value.
+                if not getattr(row, "company_id", None):
+                    setattr(row, "company_id", cid)
+                setattr(row, "company_name", name)
+
+        payload["lookup_companies"] = sorted(
+            ({"id": cid, "name": names.get(cid)} for cid in company_ids),
+            key=lambda entry: (entry["name"] or "").lower(),
+        )
+    except Exception:  # noqa: BLE001 - labelling is additive, never fatal
+        logger.warning("Could not label a list payload per company", exc_info=True)

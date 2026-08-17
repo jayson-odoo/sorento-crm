@@ -6,6 +6,7 @@ import {
   Bitcoin,
   Bolt,
   Book,
+  BookOpen,
   Briefcase,
   Building,
   Building2,
@@ -328,14 +329,22 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Internal Users',
         path: '/user-management/contact-access-agents',
+        permission: 'user_management.contacts.view',
       },
       {
         title: 'Contact Access Types',
         path: '/user-management/contact-access-types',
+        permission: 'user_management.access_agents.view',
       },
       {
         title: 'Market Segments',
         path: '/user-management/market-segments',
+        permission: 'user_management.reference_data.view',
+      },
+      {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
       },
       {
         title: 'Account',
@@ -411,6 +420,56 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
+    // Dealer Kit — the catalogue page builder.
+    //
+    // Deliberately carries NO `moduleKey` and NO `permission` yet. The sidebar
+    // hides any branch whose moduleKey is absent from the tenant's enabled set,
+    // so declaring `dealer_kit` before the backend seeds its catalogue row would
+    // hide this entry outright. Both gates land in S1 phase 2, together with the
+    // module row and the permission slugs that actually enforce them — a gate
+    // added before its enforcement exists is a gate that lies.
+    title: 'Dealer Kit',
+    icon: BookOpen,
+    children: [
+      {
+        title: 'Catalogue Pages',
+        path: '/dealer-kit',
+      },
+      {
+        title: 'Product Collections',
+        path: '/dealer-kit/collections',
+      },
+      {
+        title: 'Tile Designs',
+        path: '/dealer-kit/tile-designs',
+      },
+      {
+        title: 'Brochure Images',
+        path: '/dealer-kit/brochure-images',
+      },
+      {
+        title: 'Flyers',
+        path: '/dealer-kit/flyer-readings',
+      },
+      {
+        title: 'Editions',
+        path: '/dealer-kit/editions',
+      },
+      {
+        title: 'Bundles',
+        path: '/dealer-kit/bundles',
+      },
+      {
+        title: 'Room Designer',
+        path: '/dealer-kit/design',
+      },
+      {
+        title: 'Design Summary',
+        path: '/dealer-kit/design/summary',
+      },
+    ],
+  },
+  {
     title: 'Delivery Order Management',
     icon: ShoppingCart,
     moduleKey: 'order',
@@ -463,6 +522,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sla-management/sla-policies',
       },
       {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
+      },
+      {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
@@ -481,6 +545,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
       },
       {
         title: 'KPI Dashboard',
@@ -717,6 +786,10 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Promotion Attachments',
             path: '/marketing-management/promotion-attachments',
           },
+          {
+            title: 'Promotion Types',
+            path: '/marketing-management/promotion-types',
+          },
         ],
       },
       {
@@ -904,6 +977,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Respond.io Workspaces',
         path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
+        title: 'Respond.io Contacts',
+        path: '/system-management/respond-contacts',
         permission: 'system.respond_workspaces.view',
       },
       {
@@ -1344,6 +1422,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/market-segments',
       },
       {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
+      },
+      {
         title: 'Account',
         path: '/user-management/account',
       },
@@ -1407,6 +1490,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/sla-management/sla-policies',
       },
       {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
+      },
+      {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
@@ -1425,6 +1513,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
       },
       {
         title: 'KPI Dashboard',
@@ -1661,6 +1754,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
             title: 'Promotion Attachments',
             path: '/marketing-management/promotion-attachments',
           },
+          {
+            title: 'Promotion Types',
+            path: '/marketing-management/promotion-types',
+          },
         ],
       },
       {
@@ -1848,6 +1945,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Respond.io Workspaces',
         path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
+        title: 'Respond.io Contacts',
+        path: '/system-management/respond-contacts',
         permission: 'system.respond_workspaces.view',
       },
     ],

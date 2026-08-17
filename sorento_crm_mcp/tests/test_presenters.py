@@ -327,7 +327,51 @@ def test_resource_attachments_carry_the_upload_date_when_present():
     assert [f["value"] for f in out["items"][0]["fields"]] == [
         "Container Status 2026.xlsx", "2026-08-07",
     ]
-    assert out["items"][1]["fields"][1]["value"] == "2026-08-01"
+    # Looked up by label, not by index: a fixture that later carries a company
+    # would shift the position and silently assert against the wrong field.
+    assert next(
+        f["value"] for f in out["items"][1]["fields"] if f["label"] == "Uploaded"
+    ) == "2026-08-01"
+
+
+def test_resource_attachments_same_name_different_company_are_distinguishable():
+    """AC-D2. A contact granted both Mocha and Sorento gets a current workbook
+    from EACH, and each company names its sheet the same thing - the File ID is
+    deliberately withheld from this render, so the Company field is the only
+    handle left to tell the two apart.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "http://x/sorento.xlsx",
+             "company_name": "Sorento"},
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "http://x/mocha.xlsx",
+             "company_name": "Mocha"},
+        ],
+    })
+    assert len(out["items"]) == 2
+    company_by_item = [
+        next(f["value"] for f in item["fields"] if f["label"] == "Company")
+        for item in out["items"]
+    ]
+    assert company_by_item == ["Sorento", "Mocha"]
+    assert company_by_item[0] != company_by_item[1], (
+        "same filename, different company - the two items must not read identically"
+    )
+
+
+def test_resource_attachments_no_company_renders_no_company_line():
+    """AC-D3. A shared / company-less attachment (`company_name` absent or
+    None) must render with NO Company field at all, never an empty one."""
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "Shared Catalogue.pdf", "file_path": "http://x/shared.pdf"},
+            {"original_filename": "Also Shared.pdf", "file_path": "http://x/also.pdf",
+             "company_name": None},
+        ],
+    })
+    for item in out["items"]:
+        labels = [f["label"] for f in item["fields"]]
+        assert "Company" not in labels
 
 
 def test_resource_attachments_do_not_expose_the_row_id():
@@ -702,3 +746,267 @@ def test_attachment_without_an_upload_time_omits_the_key():
         "data": [{"original_filename": "a.pdf", "file_path": "https://cdn/a.pdf"}],
     })
     assert "uploadedAt" not in out["attachments"][0]
+
+
+# =============================================================================
+# Multi-company reply clarity (UAC AC-C1..AC-C4,
+# documentation/plans/multi-company/multi-company-reply-clarity-acceptance-criteria.md).
+# =============================================================================
+
+
+# --- AC-C1: lookup_companies passthrough ------------------------------------
+
+
+def test_ac_c1_lookup_companies_passes_through_when_present():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [],
+        "empty": True,
+        "lookup_companies": [
+            {"id": "00000000-0000-0000-0000-000000000001", "name": "Sorento"},
+            {"id": "00000000-0000-0000-0000-000000000002", "name": "Mocha"},
+        ],
+    })
+    assert out.get("lookup_companies") == [
+        {"id": "00000000-0000-0000-0000-000000000001", "name": "Sorento"},
+        {"id": "00000000-0000-0000-0000-000000000002", "name": "Mocha"},
+    ]
+
+
+def test_ac_c1_lookup_companies_omitted_not_null_when_absent():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "A", "warehouse": "BRW", "quantity_on_hand": 5}],
+    })
+    assert "lookup_companies" not in out
+
+
+def test_ac_c1_lookup_companies_omitted_when_explicitly_null():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "A", "warehouse": "BRW", "quantity_on_hand": 5}],
+        "lookup_companies": None,
+    })
+    assert "lookup_companies" not in out
+
+
+# --- AC-C2: leading Company field, per builder -------------------------------
+
+
+def test_ac_c2_stock_row_with_company_name_leads_with_company_field():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{
+            "product_code": "A", "warehouse": "BRW", "quantity_on_hand": 5,
+            "company_name": "Mocha",
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    assert fields[0] == {"key": "company_name", "label": "Company", "value": "Mocha"}
+
+
+def test_ac_c2_stock_row_without_company_name_has_no_company_field():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "A", "warehouse": "BRW", "quantity_on_hand": 5}],
+    })
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert "Company" not in labels
+
+
+def test_ac_c2_orders_list_smoke_company_field():
+    out = env("crm_order_management_orders_list", {
+        "data": [{
+            "order_number": "X1", "lines": [{"quantity": 1, "product": {"product_code": "AAA"}}],
+            "company_name": "Mocha",
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    assert {"key": "company_name", "label": "Company", "value": "Mocha"} in fields
+
+
+def test_ac_c2_orders_by_product_smoke_company_field():
+    out = env("crm_order_management_orders_by_product_list", {
+        "data": [{
+            "order_number": "X2",
+            "matched_products": [{"product_code": "AAA", "quantity": 1}],
+            "company_name": "Mocha",
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    assert {"key": "company_name", "label": "Company", "value": "Mocha"} in fields
+
+
+def test_ac_c2_incoming_list_smoke_company_field_from_shipment():
+    """The company lives on the shipment (`s`), not the nested line."""
+    out = env("crm_incoming_stock_list", {
+        "data": [{
+            "shipment_number": "SH1", "company_name": "Mocha",
+            "lines": [{"product_code": "A", "remaining_incoming_quantity": 5}],
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    assert {"key": "company_name", "label": "Company", "value": "Mocha"} in fields
+
+
+def test_ac_c2_incoming_by_product_smoke_company_field_from_product():
+    """The company lives on the product group (`p`), not the nested shipment."""
+    out = env("crm_incoming_stock_by_product", {
+        "data": [{
+            "product_code": "A", "company_name": "Mocha",
+            "shipments": [{"shipping_container_number": "C1", "remaining_incoming_quantity": 5}],
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    assert {"key": "company_name", "label": "Company", "value": "Mocha"} in fields
+
+
+def test_ac_c2_incoming_shipments_smoke_company_field():
+    out = env("crm_incoming_stock_shipments", {
+        "data": [{"shipment_number": "SH1", "company_name": "Mocha"}],
+    })
+    fields = out["items"][0]["fields"]
+    assert {"key": "company_name", "label": "Company", "value": "Mocha"} in fields
+
+
+def test_ac_c2_promotions_smoke_company_field():
+    out = env("crm_marketing_promotions_list", {
+        "data": [{"description": "Promo A", "company_name": "Mocha"}],
+    })
+    fields = out["items"][0]["fields"]
+    assert {"key": "company_name", "label": "Company", "value": "Mocha"} in fields
+
+
+def test_ac_c2_promotion_products_smoke_company_field():
+    out = env("crm_marketing_promotion_products_list", {
+        "data": [{
+            "product": {"product_code": "A"}, "promotion": {"description": "Promo A"},
+            "company_name": "Mocha",
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    assert {"key": "company_name", "label": "Company", "value": "Mocha"} in fields
+
+
+def test_ac_c2_products_smoke_company_field():
+    out = env("crm_master_products_list", {
+        "data": [{"product_code": "A", "product_name": "A", "company_name": "Mocha"}],
+    })
+    fields = out["items"][0]["fields"]
+    assert {"key": "company_name", "label": "Company", "value": "Mocha"} in fields
+
+
+def test_ac_c2_product_attachments_smoke_company_field():
+    out = env("crm_master_product_attachments_list", {
+        "data": [{
+            "product": {"product_code": "A"}, "attachment": {"original_filename": "a.pdf"},
+            "company_name": "Mocha",
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    assert {"key": "company_name", "label": "Company", "value": "Mocha"} in fields
+
+
+def test_ac_c2_certificates_smoke_company_field():
+    out = env("crm_certificates_list", {
+        "data": [{"certificate_number": "CERT-1", "scheme": "PPS", "company_name": "Mocha"}],
+    })
+    fields = out["items"][0]["fields"]
+    assert {"key": "company_name", "label": "Company", "value": "Mocha"} in fields
+
+
+# --- AC-C3: empty-result intro names the companies searched -----------------
+
+
+def test_ac_c3_empty_intro_names_two_companies():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [], "empty": True,
+        "lookup_companies": [
+            {"id": "00000000-0000-0000-0000-000000000002", "name": "Mocha"},
+            {"id": "00000000-0000-0000-0000-000000000001", "name": "Sorento"},
+        ],
+    })
+    assert out["has_result"] is False
+    assert out["intro"] == "No matching results found for Mocha or Sorento."
+
+
+def test_ac_c3_empty_intro_names_three_or_more_companies():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [], "empty": True,
+        "lookup_companies": [
+            {"id": "1", "name": "A"}, {"id": "2", "name": "B"}, {"id": "3", "name": "C"},
+        ],
+    })
+    assert out["intro"] == "No matching results found for A, B or C."
+
+
+def test_ac_c3_empty_intro_plain_when_a_company_name_is_missing():
+    """F4 (review round): naming only the companies we happen to have a name for
+    turns "I checked two companies" into a confident, wrong "I checked Sorento".
+    A partial `lookup_companies` falls back to the plain intro."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [], "empty": True,
+        "lookup_companies": [
+            {"id": "00000000-0000-0000-0000-000000000001", "name": "Sorento"},
+            {"id": "00000000-0000-0000-0000-000000000002", "name": None},
+        ],
+    })
+    assert out["intro"] == "No matching results found."
+
+
+def test_ac_c3_empty_intro_plain_when_every_company_name_is_missing():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [], "empty": True,
+        "lookup_companies": [{"id": "00000000-0000-0000-0000-000000000001"}],
+    })
+    assert out["intro"] == "No matching results found."
+
+
+def test_ac_c3_empty_intro_unchanged_without_lookup_companies():
+    out = env("crm_master_products_list", {"data": [], "empty": True})
+    assert out["intro"] == "No matching results found."
+
+
+# --- AC-C4: byte-identical single-company output -----------------------------
+
+
+def test_ac_c4_byte_identical_when_company_keys_null_vs_absent_stock():
+    # Realistic single-company shape: the row DOES carry its own company_id
+    # (the ORM column, filled by `from_attributes`); only `company_name` and
+    # `lookup_companies` are null because the lookup spanned one company.
+    with_nulls = {
+        "data": [{
+            "product_code": "A", "warehouse": "BRW", "quantity_on_hand": 5,
+            "company_id": "00000000-0000-0000-0000-000000000001",
+            "company_name": None,
+        }],
+        "lookup_companies": None,
+    }
+    without_keys = {
+        "data": [{"product_code": "A", "warehouse": "BRW", "quantity_on_hand": 5}],
+    }
+    assert present_response(
+        "crm_inventory_stock_balance_list", json.dumps(with_nulls)
+    ) == present_response("crm_inventory_stock_balance_list", json.dumps(without_keys))
+
+
+def test_ac_c4_byte_identical_when_company_keys_null_vs_absent_orders():
+    with_nulls = {
+        "data": [{
+            "order_number": "X1", "lines": [{"quantity": 1, "product": {"product_code": "AAA"}}],
+            "company_id": "00000000-0000-0000-0000-000000000001",
+            "company_name": None,
+        }],
+        "lookup_companies": None,
+    }
+    without_keys = {
+        "data": [{
+            "order_number": "X1", "lines": [{"quantity": 1, "product": {"product_code": "AAA"}}],
+        }],
+    }
+    assert present_response(
+        "crm_order_management_orders_list", json.dumps(with_nulls)
+    ) == present_response("crm_order_management_orders_list", json.dumps(without_keys))
+
+
+def test_ac_c4_byte_identical_empty_result_null_lookup_companies():
+    with_null = {"data": [], "empty": True, "lookup_companies": None}
+    without_key = {"data": [], "empty": True}
+    assert present_response(
+        "crm_master_products_list", json.dumps(with_null)
+    ) == present_response("crm_master_products_list", json.dumps(without_key))

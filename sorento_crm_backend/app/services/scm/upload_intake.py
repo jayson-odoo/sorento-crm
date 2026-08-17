@@ -11,6 +11,9 @@ order history by hand before the system will look at it.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Optional
+
 from fastapi import HTTPException, UploadFile, status
 
 from app.config import settings
@@ -26,11 +29,30 @@ def allowed_extensions() -> tuple[str, ...]:
     return tuple(f".{e.strip().lstrip('.').lower()}" for e in raw if e.strip())
 
 
-async def read_upload(file: UploadFile) -> bytes:
-    """The uploaded bytes, refusing a type outside the configured list.
+@dataclass(frozen=True)
+class RetainedUpload:
+    """One upload, in both the forms a queued import needs.
 
-    The message names what IS accepted, because "invalid file type" tells somebody holding a
-    `.xls` nothing about what to do next.
+    `data` is what the reader parses (macros stripped, so openpyxl will open it) and
+    `source_bytes` is exactly what arrived. They are kept apart because the source file the
+    job retains for tracing must be the operator's own file: handing the stripped copy to
+    `store_import_source_file` means the bytes somebody downloads from the job to check what
+    they uploaded are bytes they never had.
+    """
+
+    data: bytes
+    filename: str
+    source_bytes: bytes
+    source_name: str
+    content_type: Optional[str]
+
+
+async def read_upload_retained(file: UploadFile) -> RetainedUpload:
+    """The uploaded bytes for a QUEUED import: what to parse, and what to keep.
+
+    Same extension guard and same macro strip as `read_upload` - the difference is only that
+    the original is not thrown away. Used by the `apply` routes, which hand the parse copy to
+    the worker and the original to the source-file store.
     """
     name = (file.filename or "").lower()
     allowed = allowed_extensions()
@@ -42,13 +64,29 @@ async def read_upload(file: UploadFile) -> bytes:
                 f"Upload {', '.join(allowed)}."
             ),
         )
+    source_name = file.filename or "upload.xlsx"
+    source_bytes = await file.read()
+    if not source_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uploaded file is empty",
+        )
+    if name.endswith(".xls"):
+        # Legacy BIFF: openpyxl cannot open it at all, so there is nothing to strip.
+        return RetainedUpload(source_bytes, source_name, source_bytes, source_name,
+                              file.content_type)
     from app.services.excel_macro_stripper import maybe_strip
 
-    data = await file.read()
-    # The macro stripper rewrites through openpyxl, which cannot open legacy BIFF at all, so
-    # a `.xls` is passed through untouched. It carries no macro sheet in the `.xlsm` sense,
-    # and every reader opens it read-only.
-    if name.endswith(".xls"):
-        return data
-    data, _ = maybe_strip(data, file.filename or "upload.xlsx")
-    return data
+    data, cleaned_name = maybe_strip(source_bytes, source_name)
+    return RetainedUpload(data, cleaned_name, source_bytes, source_name, file.content_type)
+
+
+async def read_upload(file: UploadFile) -> bytes:
+    """Just the bytes to parse, for a read that keeps nothing (preview, Test).
+
+    The same guards as `read_upload_retained` because it IS that function - the extension
+    check, the empty-file refusal and the macro strip were written twice and drifted: the
+    preview path accepted a zero-byte upload and handed it to a reader, which reported "this
+    file could not be read" where the apply path says "the uploaded file is empty".
+    """
+    return (await read_upload_retained(file)).data

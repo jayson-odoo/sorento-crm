@@ -520,10 +520,14 @@ export async function validateProductsImport(
 
 /**
  * Bulk import products from Excel data (queued).
- * Expected columns: Item Code, Description, Desc 2, Item Group, Item Brand, Price, Is Active (T/F), UOM (optional).
+ * Expected columns: Item Code, Description, Desc 2, Item Group, Item Brand, Price, Is Active (T/F), UOM (optional),
+ * Reorder Level (optional), Reorder Qty (optional).
  * Item Group / Item Brand / UOM match a category / brand / unit-of-measure code or name;
  * anything unmatched is created by the import (code = name = the value in the file),
  * so master data does not have to exist before the upload.
+ * Reorder Level / Reorder Qty land on the product AND on the SCM planning table. A 0 is a
+ * real level; a blank cell in a file that CARRIES the column clears the held one; a file
+ * with no such column leaves every level untouched.
  * Returns job_id for tracking progress in Import Jobs.
  */
 export async function bulkImportProducts(

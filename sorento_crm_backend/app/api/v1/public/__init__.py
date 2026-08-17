@@ -3,8 +3,10 @@ from fastapi import APIRouter
 from app.api.v1.public import (
     ai_extract,
     approval,
+    catalogue,
     geo,
     portal,
+    print as print_route,
     quotation_sign,
     ticket_drafts,
     view,
@@ -24,3 +26,7 @@ router.include_router(
 # The signature pad asks this while a customer is still signing, so it has to be reachable
 # without a session exactly like the counter-sign page above it.
 router.include_router(geo.router, prefix="/geo", tags=["public-geo"])
+# Published catalogue pages: /api/v1/public/c/{company_code}/{slug}
+router.include_router(catalogue.router, prefix="/c", tags=["public-catalogue"])
+# Render payload for the PDF worker: /api/v1/public/print/{download_id}?token=
+router.include_router(print_route.router, prefix="/print", tags=["public-print"])

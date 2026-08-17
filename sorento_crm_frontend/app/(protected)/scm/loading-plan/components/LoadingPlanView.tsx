@@ -24,7 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
-import { EM_DASH, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtTrimmedDecimal } from '../../lib/format';
 import {
   useBuildLoadingPlan,
   useContainerSizes,
@@ -100,7 +100,9 @@ function fillLabel(rate: number): string {
 }
 
 function cbm(value: number | null | undefined): string {
-  return value === null || value === undefined ? EM_DASH : `${value.toLocaleString()} cbm`;
+  // Three places: a cbm is quoted that way in this trade (a pan is 0.123 cbm, not
+  // 0.12), so rounding to two loses a real difference between two products.
+  return value === null || value === undefined ? EM_DASH : `${fmtTrimmedDecimal(value, 3)} cbm`;
 }
 
 export function LoadingPlanView() {

@@ -5,6 +5,8 @@ external caller) can disambiguate codes mid-turn. The resolver itself lives in
 `app.services.entity_resolver`.
 """
 import logging
+import re
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -20,10 +22,13 @@ from sqlalchemy import or_ as _sa_or
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.models.access import ContactAccessType
+from app.models.company import Company
 from app.models.marketing import Promotion, PromotionProduct
+from app.services import promotion_serving, promotion_window
 from app.models.product import Brand, Product
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_resolver import (
+    _CODE_RE,
     _canonical_entity_type,
     fetch_product_brands,
     resolve_references,
@@ -112,6 +117,11 @@ def _resolve_with_domain_hint(
     description, scoped to `attachment_type_id = <resolved hint type>`. When
     the hint resolves to no AttachmentType, returns an empty payload with
     `domain_hint_unresolved=True` so the agent knows the hint label was bad.
+
+    Every match carries `company_id` / `company_name`, the same attribution the
+    main resolver stamps in `_attach_company_info` - this short-circuit is the
+    path a document request actually takes, and a contact granted two companies
+    gets one current workbook from each.
     """
     type_row = _resolve_attachment_type_for_hint(db, hint)
     base_empty: dict[str, Any] = {
@@ -144,6 +154,11 @@ def _resolve_with_domain_hint(
 
     resolutions: list[dict[str, Any]] = []
     for term in terms:
+        # LEFT JOIN, not a filter: company ISOLATION is already done by the
+        # `do_orm_execute` scope filter on this ORM query. This only ATTRIBUTES
+        # the rows that survive it, so a contact granted both Mocha and Sorento
+        # gets both current workbooks and can tell them apart - two files named
+        # "Container Status 2026.xlsx" are otherwise indistinguishable.
         q = (
             db.query(
                 Attachment.id,
@@ -151,7 +166,10 @@ def _resolve_with_domain_hint(
                 Attachment.description,
                 Attachment.mime_type,
                 Attachment.full_directory_path,
+                Attachment.company_id,
+                Company.name,
             )
+            .outerjoin(Company, Company.id == Attachment.company_id)
             .filter(
                 Attachment.attachment_type_id == type_id,
                 Attachment.is_deleted.is_(False),
@@ -174,15 +192,22 @@ def _resolve_with_domain_hint(
                 "match_field": "original_filename",
                 "match_tier": "substring" if term else "scope",
                 "similarity": None,
+                # Same shape the main resolver emits (`_attach_company_info`):
+                # at the match level for callers that read the match, and again
+                # inside `display` for renderers that only read `display`.
+                "company_id": str(company_id) if company_id else None,
+                "company_name": company_name,
                 "display": {
                     "filename": filename,
                     "description": description,
                     "attachment_type": type_row.type_name,
                     "mime_type": mime,
                     "directory": dir_path,
+                    "company_id": str(company_id) if company_id else None,
+                    "company_name": company_name,
                 },
             }
-            for aid, filename, description, mime, dir_path in rows
+            for aid, filename, description, mime, dir_path, company_id, company_name in rows
         ]
         resolutions.append(
             {
@@ -438,6 +463,41 @@ def _resolve_promotion_ids_for_token(
     return out
 
 
+def _apply_serving_policy_to_promo_matches(
+    db: Session, matches: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Drop promotion matches the serving policy withholds, and stamp the rest.
+
+    The resolver's own promotion probe finds rows by description text, which is
+    a different door into the same answer - so it gets the same policy as the
+    product walk and the name probe. Matches without a resolvable UUID are left
+    alone rather than silently dropped.
+    """
+    if not matches:
+        return matches
+    ids = [str(m.get("uuid")) for m in matches if m.get("uuid")]
+    if not ids:
+        return matches
+
+    today = _today()
+    verdict = promotion_serving.evaluate_candidates(db, ids, today)
+    kept: list[dict[str, Any]] = []
+    for match in matches:
+        key = str(match.get("uuid")) if match.get("uuid") else None
+        if key is None:
+            kept.append(match)
+            continue
+        if not verdict.is_served(key):
+            continue
+        promo_type = verdict.type_by_promotion.get(key)
+        display = match.setdefault("display", {})
+        display["promotion_type_code"] = getattr(promo_type, "type_code", None)
+        display["promotion_type_name"] = getattr(promo_type, "type_name", None)
+        display["expired_but_usable"] = verdict.is_expired_but_usable(key)
+        kept.append(match)
+    return kept
+
+
 def _build_promotion_resolutions(
     db: Session, promotion_ids: set[str]
 ) -> list[dict[str, Any]]:
@@ -451,25 +511,55 @@ def _build_promotion_resolutions(
     if not promotion_ids:
         return []
     rows = (
-        db.query(Promotion.id, Promotion.description, Promotion.is_active)
+        db.query(
+            Promotion.id,
+            Promotion.description,
+            Promotion.is_active,
+            Promotion.start_date,
+            Promotion.end_date,
+        )
         .filter(Promotion.id.in_(promotion_ids))
         .all()
     )
-    return [
-        {
-            "entity_type": "promotion",
-            "canonical_code": str(pid),
-            "uuid": str(pid),
-            "match_field": "description",
-            "match_tier": "domain_hint",
-            "similarity": None,
-            "display": {
-                "description": desc,
-                "is_active": bool(is_active),
-            },
-        }
-        for pid, desc, is_active in rows
-    ]
+    if not rows:
+        return []
+
+    # The same per-type serving policy the product walk applies. Naming a promo
+    # is not a licence to be told about one that cannot be honoured: without
+    # this, asking for "special promo" by name returned an expired special that
+    # the product route would have withheld, so one endpoint answered the same
+    # question two ways.
+    today = _today()
+    verdict = promotion_serving.evaluate_candidates(db, [str(r[0]) for r in rows], today)
+
+    resolutions: list[dict[str, Any]] = []
+    for pid, desc, is_active, start_date, end_date in rows:
+        key = str(pid)
+        if not verdict.is_served(key):
+            continue
+        promo_type = verdict.type_by_promotion.get(key)
+        live = promotion_window.is_live(is_active, start_date, end_date, today)
+        resolutions.append(
+            {
+                "entity_type": "promotion",
+                "canonical_code": key,
+                "uuid": key,
+                "match_field": "description",
+                "match_tier": "domain_hint",
+                "similarity": None,
+                "display": {
+                    "description": desc,
+                    "is_active": live,
+                    "start_date": start_date.isoformat() if start_date else None,
+                    "end_date": end_date.isoformat() if end_date else None,
+                    "promotion_type_code": getattr(promo_type, "type_code", None),
+                    "promotion_type_name": getattr(promo_type, "type_name", None),
+                    "is_expired": not live,
+                    "expired_but_usable": verdict.is_expired_but_usable(key),
+                },
+            }
+        )
+    return resolutions
 
 
 def _build_product_resolutions_from_promotions(
@@ -532,10 +622,18 @@ def _build_promotions_for_products(
     the token already resolved to product(s), this walks `promotion_products`
     backward so `domain_hint=promotion` can still answer "the promo for X".
 
-    Surfaces INACTIVE promos too, flagged `display.is_active`, so an expired promo
-    reads as "exists but expired" instead of a blank. When `allowed_access_codes`
-    is non-empty, filters by `Promotion.access_levels` intersection (mirrors the
-    description probe's gating).
+    Surfaces expired promos too when their TYPE still honours them, flagged
+    `display.expired_but_usable`, so the answer can read "found, ended on 31/07,
+    still applies" instead of a blank. The per-type serving policy
+    (`app/services/promotion_serving.py`) decides, so this resolver and the
+    promotions list cannot disagree about which promotion answers the question:
+    a live promotion always wins, a type with no live promotion may contribute
+    its latest expired one, and an expired `special` is never returned.
+
+    When `allowed_access_codes` is non-empty, filters by
+    `Promotion.access_levels` intersection (mirrors the description probe's
+    gating) BEFORE the policy runs, so a contact's own candidate set is what gets
+    ranked.
     """
     if not product_uuids:
         return []
@@ -545,6 +643,8 @@ def _build_promotions_for_products(
             Promotion.description,
             Promotion.is_active,
             Promotion.access_levels,
+            Promotion.start_date,
+            Promotion.end_date,
             Product.product_code,
         )
         .join(PromotionProduct, PromotionProduct.promotion_id == Promotion.id)
@@ -553,7 +653,7 @@ def _build_promotions_for_products(
         .all()
     )
     by_promo: dict[str, dict[str, Any]] = {}
-    for pid, desc, is_active, levels, code in rows:
+    for pid, desc, is_active, levels, start_date, end_date, code in rows:
         if allowed_access_codes:
             if not isinstance(levels, list) or not allowed_access_codes.intersection(levels):
                 continue
@@ -569,14 +669,41 @@ def _build_promotions_for_products(
                 "similarity": None,
                 "display": {
                     "description": desc,
-                    "is_active": bool(is_active),
+                    # The LIVE definition, not the raw column: the daily sync job
+                    # papers over a window that lapsed today, and until it ticks
+                    # the flag says active for a promotion that ended yesterday.
+                    "is_active": promotion_window.is_live(
+                        is_active, start_date, end_date, _today()
+                    ),
+                    "start_date": start_date.isoformat() if start_date else None,
+                    "end_date": end_date.isoformat() if end_date else None,
                     "products": [],
                 },
             },
         )
         if code not in entry["display"]["products"]:
             entry["display"]["products"].append(code)
-    return list(by_promo.values())
+
+    if not by_promo:
+        return []
+
+    today = _today()
+    verdict = promotion_serving.evaluate_candidates(db, list(by_promo.keys()), today)
+    served: list[dict[str, Any]] = []
+    for key, entry in by_promo.items():
+        if not verdict.is_served(key):
+            continue
+        promo_type = verdict.type_by_promotion.get(key)
+        entry["display"]["promotion_type_code"] = getattr(promo_type, "type_code", None)
+        entry["display"]["promotion_type_name"] = getattr(promo_type, "type_name", None)
+        entry["display"]["is_expired"] = not entry["display"]["is_active"]
+        entry["display"]["expired_but_usable"] = verdict.is_expired_but_usable(key)
+        served.append(entry)
+    return served
+
+
+def _today() -> date:
+    return datetime.utcnow().date()
 
 
 def _translate_access_names_to_codes(
@@ -763,9 +890,9 @@ def _expand_products_via_promotions(
                 m for m in existing
                 if m.get("entity_type") not in ("product", "promotion")
             ]
-            kept_existing_promos = [
-                m for m in existing if m.get("entity_type") == "promotion"
-            ]
+            kept_existing_promos = _apply_serving_policy_to_promo_matches(
+                db, [m for m in existing if m.get("entity_type") == "promotion"]
+            )
             # The resolved products are KEPT — a product SKU must still resolve
             # under domain_hint=promotion (the expander used to wipe them, so a
             # valid SKU returned empty just because it wasn't a promo name).
@@ -870,9 +997,9 @@ def _expand_products_via_promotions(
             m for m in existing_inter
             if m.get("entity_type") not in ("product", "promotion")
         ]
-        kept_existing_promos = [
-            m for m in existing_inter if m.get("entity_type") == "promotion"
-        ]
+        kept_existing_promos = _apply_serving_policy_to_promo_matches(
+            db, [m for m in existing_inter if m.get("entity_type") == "promotion"]
+        )
         # Keep resolved products (see OR-branch rationale) and walk membership.
         kept_products = [
             m for m in existing_inter if m.get("entity_type") == "product"
@@ -1191,7 +1318,11 @@ class ResolveReferenceRequest(BaseModel):
             "Opt in to spec search. When true AND the normal (code-only) product "
             "probes return zero matches, the resolver additionally ranks the catalog "
             "against `extracted_specs` + `free_terms` and returns `spec_candidates` "
-            "plus `floor_missed`, leaving `resolutions` untouched. Absent or false "
+            "plus `floor_missed`, leaving `resolutions` untouched. Two honesty "
+            "fields come with it, and they are DIFFERENT sentences: `spec_unmet` is "
+            "a known key nothing offered can satisfy ('thickness isn't recorded for "
+            "these'), `unrecognized_terms` is a word that named nothing at all ('I "
+            "don't know what X means'). Absent or false "
             "means the response is byte-identical to today, so the feature is inert "
             "for every existing caller. It is a FALLBACK: it never runs when the "
             "normal probes already resolved something."
@@ -1294,6 +1425,85 @@ def _product_words_unanswered(result: dict[str, Any]) -> bool:
             if claim.get("entity_type") == "product" and claim.get("unmatched_words"):
                 return True
     return False
+
+
+def _has_unresolved_tokens(result: dict[str, Any]) -> bool:
+    """OR-shaped result in which at least one token found nothing.
+
+    A token that matched nothing is unanswered by definition, and the whole point
+    of spec search is to answer the words a code probe cannot. Before this,
+    "Sorento" prefix-matching four stale codes was enough to declare the turn
+    answered, and "double bowl kitchen sink" beside it never reached the ranker
+    (live turn 12303509). The relevance floor stays the counterweight against
+    nonsense: opening the path is not the same as offering something.
+    """
+    resolutions = result.get("resolutions")
+    if not isinstance(resolutions, list):
+        return False
+    return any(not (tr.get("matches") or []) for tr in resolutions)
+
+
+def _suppress_brand_prefix_junk(
+    db: Session, result: dict[str, Any], brands: list[str] | None = None
+) -> None:
+    """A brand word is answered as a brand, not as whatever codes start with it.
+
+    "sorento" prefix-matches SORENTOBAG and SORENTO188 ("NOT USE THIS CODE"), and
+    those rows are what the customer was shown as the answer to a kitchen sink
+    question. Once the ranker HAS answered, a code that merely CONTAINS the brand
+    word is catalogue noise; an exact full code is still a code and stays, as does
+    every non-product match (the brand entity itself among them).
+
+    Only ever called with spec candidates in hand: junk beats silence, so nothing
+    is removed on a turn where the ranker found nothing to put in its place.
+    """
+    resolutions = result.get("resolutions")
+    if not isinstance(resolutions, list) or not resolutions:
+        return
+    tokens = {(tr.get("token") or "").strip().lower() for tr in resolutions}
+    tokens.discard("")
+    if not tokens:
+        return
+
+    # The caller may already hold the brand list for this request; only fetch it
+    # when it does not (every other caller stays untouched).
+    if brands is None:
+        brand_tokens = {
+            str(name).strip().lower()
+            for (name,) in db.query(Brand.brand_name)
+            .filter(func.lower(Brand.brand_name).in_(sorted(tokens)))
+            .all()
+        }
+    else:
+        brand_tokens = {str(name).strip().lower() for name in brands} & tokens
+    if not brand_tokens:
+        return
+
+    unresolved = list(result.get("unresolved_tokens") or [])
+    ambiguous = list(result.get("ambiguous_tokens") or [])
+    for tr in resolutions:
+        token = (tr.get("token") or "").strip().lower()
+        if token not in brand_tokens:
+            continue
+        matches = tr.get("matches") or []
+        kept = [
+            m
+            for m in matches
+            if m.get("entity_type") != "product"
+            or str(m.get("canonical_code") or "").strip().lower() == token
+        ]
+        if len(kept) == len(matches):
+            continue
+        tr["matches"] = kept
+        tr["resolved"] = len(kept) == 1
+        tr["ambiguous"] = len(kept) > 1
+        if not tr["ambiguous"] and tr.get("token") in ambiguous:
+            ambiguous = [t for t in ambiguous if t != tr.get("token")]
+        if not kept and tr.get("token") not in unresolved:
+            unresolved.append(tr.get("token"))
+    result["unresolved_tokens"] = unresolved
+    if "ambiguous_tokens" in result:
+        result["ambiguous_tokens"] = ambiguous
 
 
 def _collect_match_types(result: dict[str, Any]) -> list[str]:
@@ -1687,7 +1897,68 @@ def resolve_reference(
     )
 
 
-def _emit_spec_matches(result: dict[str, Any], candidates: list[dict], token: str) -> None:
+# A measurement, never a code: a number carrying a unit. This catalogue's own
+# codes look exactly like "B2155", so the code test below cannot also demand two
+# letters - and once it does not, "2mm" and "750MM" would read as codes and be
+# reported as products we could not find. `L750 x W165 x H247mm` is the flyer's
+# own notation for a size and `_labelled_dimensions` binds it as one, so a single
+# L/W/H in front of a number is a measurement too.
+_MEASUREMENT_SHAPED_RE = re.compile(
+    r"^(?:[LWH])?\d+(?:\.\d+)?\s*(?:mm|cm|m|kg|g|l|ml|inch|inches|in|\"|”)?$",
+    re.IGNORECASE,
+)
+
+
+def _searchable_words(candidate: dict[str, Any]) -> set[str]:
+    """Every word a shown candidate can be said to have answered.
+
+    Its own spec VALUES, the sentence it renders as, and its class - the three
+    things a customer reads off the row. A word in here is a word this product
+    genuinely speaks to; a word absent from every shown row was not answered by
+    showing them.
+    """
+    words: set[str] = set()
+
+    def absorb(text: Any) -> None:
+        for word in re.split(r"[^a-z0-9]+", str(text or "").lower()):
+            if word:
+                words.add(word)
+
+    absorb(candidate.get("summary"))
+    absorb(candidate.get("class"))
+    for value in (candidate.get("specifications") or {}).values():
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                absorb(item)
+        else:
+            absorb(value)
+    return words
+
+
+def _is_code_shaped(token: str) -> bool:
+    """Is this token shaped like a product CODE the catalogue might hold?
+
+    The resolver's own notion, reused rather than re-guessed: `_CODE_RE` is what
+    `extract_candidate_tokens` runs to decide a token is worth a code probe, so a
+    token it would probe is exactly a token whose absence is worth reporting.
+    The local copy that stood here demanded TWO letters, which quietly exempted
+    every single-letter code in the catalogue ("B2155", "S7850") - a customer
+    naming one we do not stock was told nothing at all.
+    """
+    word = str(token or "").strip()
+    if len(word) < 3:
+        return False
+    if _MEASUREMENT_SHAPED_RE.match(word):
+        return False
+    return bool(_CODE_RE.fullmatch(word))
+
+
+def _emit_spec_matches(
+    result: dict[str, Any],
+    candidates: list[dict],
+    token: str,
+    bound_words: set[str] | None = None,
+) -> None:
     """Emit ranker candidates as ordinary product matches.
 
     `spec_candidates` alone was a dead end: it is a different shape parked beside
@@ -1722,7 +1993,16 @@ def _emit_spec_matches(result: dict[str, Any], candidates: list[dict], token: st
                 "product_name": candidate["summary"],
                 "via_token": token,
                 "class": candidate.get("class"),
+                # What this product IS, as `{key: value}`. Without it the caller
+                # can rank rows it cannot describe: "here are five sinks" with no
+                # way to say which one is the 1.2mm one the customer asked for.
+                # Copied faithfully, `None` included: null means nothing was ever
+                # recorded, where `{}` would claim a block that is merely empty.
+                "specifications": candidate.get("specifications"),
                 "matched_specs": candidate.get("matched_specs", []),
+                # Keys a standing house preference added, kept apart from the ones
+                # the customer's own words earned - two different sentences.
+                "preferred_specs": candidate.get("preferred_specs", []),
                 "is_discontinued": candidate.get("is_discontinued", False),
             },
         }
@@ -1759,11 +2039,46 @@ def _emit_spec_matches(result: dict[str, Any], candidates: list[dict], token: st
         # so this honestly yields no claims.
         _attach_and_coverage(result)
     result.setdefault("resolutions", []).append(spec_resolution)
-    # Something was found, so the token is no longer unresolved. Nothing else is
-    # touched: `unresolved_tokens` and `alternatives` are what drive "did you
-    # mean", and a match is neither.
+    # Something was found, so the words it answered are no longer unresolved.
+    #
+    # "Answered" means the CANDIDATES answered it, word by word. Membership of
+    # the searched TERM was not enough: the whole sentence is one term, so every
+    # descriptive token in the turn was cleared by any spec row at all - a
+    # customer who asked for a sink AND a bathroom mirror got sinks and was told
+    # nothing about the mirror, and a company name sitting in the sentence was
+    # silently declared found. A token is cleared only when every content word in
+    # it either earned a binding for this query, or appears in the text of a
+    # product actually being shown.
+    #
+    # Nothing else is touched: `unresolved_tokens` and `alternatives` are what
+    # drive "did you mean", and a match is neither.
+    #
+    # `_content_words` is the honesty channel's own reading of "which words here
+    # could carry product meaning", reused so a token cannot be cleared on words
+    # `unrecognized_terms` would never have checked.
+    from app.services.product_spec_search import _content_words
+
+    answered_words: set[str] = set(bound_words or set())
+    for candidate in candidates:
+        answered_words |= _searchable_words(candidate)
+
+    def _answered(candidate_token: str) -> bool:
+        words = _content_words(str(candidate_token or ""))
+        if not words:
+            # Nothing reportable in it (a bare measurement, punctuation, a
+            # stopword): there is no claim to keep alive.
+            return True
+        return all(word in answered_words for word in words)
+
+    # Spec rows answer DESCRIPTIONS. They never vouch for a CODE the catalogue
+    # does not contain, so a code-shaped token keeps its place in the footer even
+    # when the sentence around it found products: "ZZTKS999 kitchen sink" must
+    # still say the code was not found, or the customer reads the sinks as the
+    # answer to a code we never had.
     result["unresolved_tokens"] = [
-        t for t in (result.get("unresolved_tokens") or []) if t != spec_resolution["token"]
+        t
+        for t in (result.get("unresolved_tokens") or [])
+        if _is_code_shaped(t) or not _answered(t)
     ]
 
 
@@ -1821,47 +2136,128 @@ def resolve_reference_post(
     # request that resolves a code fully. The product probes themselves are
     # untouched: see _and_probe_product's "CODE-ONLY by design" note.
     if payload.spec_fallback and (
-        _result_has_zero_matches(result) or _product_words_unanswered(result)
+        _result_has_zero_matches(result)
+        or _product_words_unanswered(result)
+        or _has_unresolved_tokens(result)
     ):
         import time
 
-        from app.services.product_spec_search import search_specs
+        from app.services.product_spec_registry import active_registry
+        from app.services.product_spec_search import (
+            brand_names,
+            search_specs,
+            unrecognized_terms,
+        )
 
-        specs = list(payload.extracted_specs or [])
-        free_terms = list(payload.free_terms or [])
+        # ONE read of each per request. The registry and the brand list are
+        # consulted by the binder, the vocabulary and the junk suppressor, and
+        # each used to fetch its own copy - four round trips for two tables that
+        # cannot change mid-request.
+        registry_rows = active_registry(db)
+        brands = brand_names(db)
 
-        # Reading the sentence with a model costs 2-3 SECONDS on the reply path, so it
-        # is opt-in and it announces itself. `semantic_used` lets the caller tell the
-        # customer why the answer is slow instead of leaving them watching nothing:
-        # the chatbot can say it is looking properly and thank them for waiting.
-        semantic_used = False
-        semantic_ms = None
-        exclusions: list[dict] = []
-        if payload.understand_phrase and payload.query:
-            from app.services.product_spec_understanding import understand_phrase
+        # The sentence is ALWAYS read - through the SAME helper the Product
+        # Specifications preview page uses, which is why raw text "just works"
+        # there. The word-level read (allow_model=False) is deterministic and
+        # free; only the MODEL read costs 2-3 SECONDS on the reply path, so that
+        # half stays behind the caller's flag, and `semantic_used` lets the
+        # caller tell the customer why the answer is slow instead of leaving
+        # them watching nothing.
+        #
+        # Before this ran unconditionally, a caller sending only `query` left
+        # the ranker blind, so n8n rebuilt free_terms from its parser's entities
+        # - a lossy hop that dropped "thickness 1.0mm" before the CRM ever saw
+        # it (live turn 12303548). Raw text in, CRM derives; explicit
+        # extracted_specs/free_terms still win over the derived reading.
+        from app.services import product_spec_understanding
 
-            started = time.monotonic()
-            understanding = understand_phrase(db, payload.query)
-            semantic_ms = int((time.monotonic() - started) * 1000)
-            semantic_used = understanding.source == "semantic"
-            stated = {entry["key"] for entry in specs}
-            specs = specs + [e for e in understanding.specs if e["key"] not in stated]
-            free_terms = free_terms + [
-                t for t in understanding.free_terms if t not in free_terms
-            ]
-            # Only the semantic read can see a refusal - the word-level resolver has no
-            # concept of "not". Without the model on, "not glass" is simply not heard.
-            exclusions = list(understanding.exclusions)
+        started = time.monotonic()
+        specs, free_terms, exclusions, understanding = (
+            product_spec_understanding.derive_search_inputs(
+                db,
+                payload.query,
+                specs=list(payload.extracted_specs or []),
+                free_terms=list(payload.free_terms or []),
+                allow_model=payload.understand_phrase,
+                user_id=current_user.get("id"),
+                registry_rows=registry_rows,
+            )
+        )
+        semantic_used = bool(understanding and understanding.source == "semantic")
+        semantic_ms = (
+            int((time.monotonic() - started) * 1000) if understanding is not None else None
+        )
 
         found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms)
         result["spec_candidates"] = found["candidates"]
         result["floor_missed"] = found["floor_missed"]
 
+        # A brand token's code-prefix junk stops headlining, but only now that the
+        # ranker has something to show instead.
+        if found["candidates"]:
+            _suppress_brand_prefix_junk(db, result, brands=brands)
+
+        # Words the shown products ANSWERED through a binding - the customer's
+        # own words where they were heard (`bound_phrases`), plus what they
+        # resolved to. Restricted to keys a shown row actually matched: binding
+        # "bathroom mirror" to `product_type=mirror` and then showing five sinks
+        # has not answered the mirror, and clearing it from the footer would say
+        # it had.
+        satisfied = {
+            key
+            for candidate in found["candidates"]
+            for key in candidate.get("matched_specs") or []
+        }
+        bound_words: set[str] = set()
+        parts = [
+            str(phrase)
+            for key, phrases in (understanding.bound_phrases if understanding else {}).items()
+            if key in satisfied
+            for phrase in phrases
+        ]
+        for entry in found["asked_for"]:
+            if str(entry.get("key")) in satisfied:
+                parts.extend([str(entry.get("key") or ""), str(entry.get("value") or "")])
+        for part in parts:
+            for word in re.split(r"[^a-z0-9]+", part.lower()):
+                if word:
+                    bound_words.add(word)
         # AND emit them as ordinary product matches (see _emit_spec_matches).
-        _emit_spec_matches(result, found["candidates"], payload.query or "")
+        _emit_spec_matches(
+            result, found["candidates"], payload.query or "", bound_words=bound_words
+        )
         # What the customer asked for that nothing offered can satisfy. The caller says
         # "no Cabana one, here are Sorento" rather than silently substituting.
         result["spec_unmet"] = found["unmet"]
+        # What the sentence was READ as asking for, as the ranker resolved it and
+        # AFTER free terms bound. The caller can then say "you asked for 1.2mm"
+        # without re-parsing the customer's words with a second, different reader.
+        # House preferences are absent by construction: they are not asks.
+        result["spec_asked"] = found["asked_for"]
+        # The other half of the same honesty, and a different sentence: `spec_unmet`
+        # is a KNOWN key the catalogue is silent on ("thickness isn't recorded for
+        # these"), this is a word that bound to nothing at all ("I don't know what
+        # 'flurbish' means"). Same field name and semantics as shape B's
+        # `predicate.unrecognized_terms`, so a caller learns one vocabulary.
+        #
+        # It speaks ONLY for a turn that was describing a product - candidates
+        # came back, or something in the sentence bound. "Quotation for Encik
+        # Baharudin" is not a product description at all, and answering it with
+        # "I don't know what 'baharudin' means" is the CRM mistaking a person's
+        # name for a spec. The field stays on the wire either way: a caller
+        # reading it must never have to tell absent from empty.
+        descriptive = bool(found["candidates"]) or bool(specs)
+        result["unrecognized_terms"] = (
+            unrecognized_terms(
+                db,
+                query=payload.query,
+                free_terms=payload.free_terms,
+                registry_rows=registry_rows,
+                brands=brands,
+            )
+            if descriptive
+            else []
+        )
         result["semantic_used"] = semantic_used
         if semantic_ms is not None:
             result["semantic_ms"] = semantic_ms

@@ -48,6 +48,11 @@ class RespondContactResponse(RespondContactBase):
     access_types: List[RespondContactAccessTypeRef] = []
     workspace_name: Optional[str] = None
     workspace_space_id: Optional[str] = None
+    # Read-only mirror of respond_contacts.outbound_enabled so the contacts grid
+    # can show, and flip, who may receive a WhatsApp message. Writes go through
+    # POST /api/v1/system/respond-contacts/{id}/outbound, never through a contact
+    # update, so this is deliberately absent from RespondContactUpdate.
+    outbound_enabled: bool = True
 
     class Config:
         from_attributes = True
@@ -308,6 +313,12 @@ class ContactAgentAccessResponse(ContactAgentAccessBase):
     updated_at: Optional[datetime] = None
     agent_code: Optional[str] = None  # Added for frontend display
     agent_name: Optional[str] = None  # Added for frontend display
+    # The CONTACT's outbound kill switch (respond_contacts.outbound_enabled), not
+    # the grant's. Every grant row for the same contact reports the same value, so
+    # the grid can show it per row and de-duplicate by respond_contact_id before
+    # writing. None = the row is not linked to a respond_contacts row (legacy,
+    # phone-only), which is "unknown", never "reachable".
+    outbound_enabled: Optional[bool] = None
 
     class Config:
         from_attributes = True

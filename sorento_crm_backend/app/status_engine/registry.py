@@ -139,6 +139,19 @@ def list_status_entities() -> List[StatusEntity]:
     return sorted(_REGISTRY.values(), key=lambda e: e.label)
 
 
+# Module bootstraps that register status entities. Imported for their side
+# effect the first time anything reads the registry.
+#
+# Loaded HERE rather than from each module's router package, which is where the
+# Dealer Kit bootstrap was first hooked. A router-mount side effect registers the
+# entity in the API process and nowhere else: the RQ worker, a management script
+# and a test that touches the registry without building the app would every one
+# of them see an unregistered entity, and the symptom is a status graph that
+# reports no records using it - which is the answer that makes a status DELETABLE
+# out from under live rows.
+_MODULE_BOOTSTRAPS = ("app.modules.dealer_kit.bootstrap",)
+
+
 def _register_core() -> None:
     """Core registers no entities of its own, then pulls in the modules'.
 
@@ -147,10 +160,39 @@ def _register_core() -> None:
     (complaints, PR/SF, stock inquiries, orders) are deliberately NOT migrated
     here -- they move entity by entity, later.
 
-    Discovery is by convention (``app/modules/<key>/status_entities.py``) rather
-    than a list, so core never has to learn the name of a module.
+    Two routes in, because the modules arrived by two roads and both still carry
+    live entities. ``_MODULE_BOOTSTRAPS`` is the named list (Dealer Kit's
+    bootstrap, the first entity on the engine); ``register_module_entities()`` is
+    the convention (``app/modules/<key>/status_entities.py``), so a module joining
+    that way needs no edit to core. A module listed in both registers once:
+    registration is idempotent.
+
+    An import failure is logged rather than raised, on both routes. This runs on
+    the first read of the registry, which can be deep inside an unrelated request,
+    and one module failing to import must not take down every status surface in
+    the system.
     """
+    import importlib
+    import logging
+
     from app.status_engine.discovery import register_module_entities
+
+    for module in _MODULE_BOOTSTRAPS:
+        try:
+            importlib.import_module(module)
+        except Exception:  # pragma: no cover - defensive
+            # error, not warning. The consequence is spelled out above: an
+            # unregistered entity reports ZERO records in a status, which is the
+            # answer that makes the status deletable out from under live rows,
+            # and /migrate-records answers {"migrated": 0} while records exist.
+            # A warning is the wrong volume for a lie to an admin.
+            logging.getLogger(__name__).error(
+                "Status entity bootstrap %s failed to import; its entity is now "
+                "UNREGISTERED for this process and its status graph will report "
+                "no records using any status",
+                module,
+                exc_info=True,
+            )
 
     register_module_entities()
 

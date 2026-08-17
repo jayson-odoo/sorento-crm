@@ -72,11 +72,14 @@ class ReorderPolicy(Base):
     # one, and either would make a transfer proposal look better than the truth.
     transfer_lead_time_days = Column(Integer, nullable=True)
     transfer_cost_per_unit = Column(Numeric(12, 2), nullable=True)
-    # reorder_level basis dials. How many months of movement to study, and how many months
-    # of it a level should cover. Both only ever shape the SUGGESTION.
     # May a sibling bin's surplus cover another bin's shortage? OFF: this phase does not
     # propose transfers, so it must not assume one. Both behaviours stay in the engine.
     pool_netting = Column(Boolean, nullable=True, server_default=text("false"))
+    # Where "use stock" may draw from before buying: own_pool (the row's own site) or
+    # all_locations. Unset reads as own_pool, never as the whole network.
+    cover_scope = Column(String(16), nullable=True, server_default=text("'own_pool'"))
+    # reorder_level basis dials. How many months of movement to study, and how many months
+    # of it a level should cover. Both only ever shape the SUGGESTION.
     level_study_months = Column(Integer, nullable=True, server_default=text("3"))
     level_cover_months = Column(Numeric(6, 2), nullable=True, server_default=text("2"))
     # S13d trajectory windows: how many months of orders decide sustaining vs dying off.

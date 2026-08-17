@@ -9,9 +9,15 @@
  *
  * GET  /api/v1/system/ai-assistant/prompts
  *   -> PromptKeySummary[]
- *      { name, role, active, activates_in|null, variables:[...],
+ *      { name, role, active, activates_in|null, variables:[...], dry_runnable,
  *        production_version, staging_version|null, latest_version,
  *        updated_at, updated_by_name }
+ *      `dry_runnable` is false for a key that is not an assistant-pipeline node
+ *      (spec_understanding, spec_extractor, scm_market_advisory, ideate_extractor):
+ *      the dry-run runs ONE whole assistant turn, so a key no turn reads would
+ *      report an answer the edit had no part in. It is a property of the KEY and
+ *      the versions response below does NOT carry it, so the detail screen reads
+ *      it from this list.
  *
  * GET  /api/v1/system/ai-assistant/prompts/{name}/versions
  *   -> PromptVersionsResponse
@@ -37,7 +43,7 @@
  * POST /api/v1/system/ai-assistant/prompts/{name}/test          # single-message dry-run
  *   req { message, version_id }                                 # override THIS key only
  *   200 { output, token_usage, tool_calls:[{name,ok}], used_overrides }
- *   400 dormant key not testable
+ *   400 dormant key not testable, or dry_runnable=false (not in the pipeline)
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -63,6 +69,12 @@ export interface PromptKeySummary {
   active: boolean;
   activates_in: string | null;
   variables: string[];
+  /**
+   * Whether the dry-run means anything for this key. False for a prompt read
+   * outside the assistant turn, whose dry-run would exercise the pipeline and
+   * not the edit. Only on this summary - the versions response has no such field.
+   */
+  dry_runnable: boolean;
   production_version: number | null;
   staging_version: number | null;
   latest_version: number | null;

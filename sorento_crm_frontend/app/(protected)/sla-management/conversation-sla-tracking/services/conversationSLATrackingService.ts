@@ -1,6 +1,10 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { RespondConversationResponse } from '@/app/(protected)/procurement-management/stock-inquiries/services/stockInquiryService';
+import type {
+  ConversationSearchMatch,
+  ConversationThreadPage,
+} from '@/components/common/conversation/useConversationThread';
 import type { ConversationSLATracking, ConversationSLATrackingDetail, ConversationSLAEventLog, SLATrackingDashboardMetrics } from '../types/conversationSLATracking.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
@@ -43,6 +47,11 @@ export type ConversationSLATrackingListParams = DataGridApiFetchParams & {
   policy_id?: string;
   status?: string;
   assigned_to?: string;
+  /** AC-M2 history links. Respond.io contact id / phone - never the CRM UUID. */
+  contact?: string;
+  is_resolved?: boolean;
+  /** users.id, respond_user_id, email, or the literal 'me' (expanded server-side). */
+  resolved_by?: string;
 };
 
 /**
@@ -64,7 +73,18 @@ export const CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH =
   '/api/v1/sla-management/conversation-sla-tracking/neighbours';
 
 export async function getConversationSLATracking(params: ConversationSLATrackingListParams): Promise<DataGridApiResponse<ConversationSLATracking>> {
-  const { pageIndex, pageSize, sorting, searchQuery, policy_id, status, assigned_to } = params;
+  const {
+    pageIndex,
+    pageSize,
+    sorting,
+    searchQuery,
+    policy_id,
+    status,
+    assigned_to,
+    contact,
+    is_resolved,
+    resolved_by,
+  } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -75,6 +95,9 @@ export async function getConversationSLATracking(params: ConversationSLATracking
     ...(policy_id ? { policy_id } : {}),
     ...(status ? { status } : {}),
     ...(assigned_to ? { assigned_to } : {}),
+    ...(contact ? { contact } : {}),
+    ...(is_resolved !== undefined ? { is_resolved: String(is_resolved) } : {}),
+    ...(resolved_by ? { resolved_by } : {}),
   });
   const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch conversation SLA tracking');
@@ -144,6 +167,10 @@ export interface MyPendingSLAItem {
   responded_at?: string | null;
   is_responded: boolean;
   current_tier: number;
+  /** How many times the resolution deadline has been extended (0 = never).
+   *  Drives the row's "Extended" marker: a deadline somebody pushed out is one
+   *  somebody is waiting on, and it must not read like an ordinary due date. */
+  extension_count?: number;
   policy_name: string | null;
   /** Pending takeover on this row, if any (inline "being taken over" indicator). */
   takeover?: TakeoverInfo | null;
@@ -334,6 +361,80 @@ export async function getSlaTrackingConversation(
 }
 
 // ---------------------------------------------------------------------------
+// Thread scroll-back + in-thread search (UAC AC-L7 / AC-L8)
+//
+// Backend contract (GET .../{tracking_id}/conversation/page):
+//   query: before | after | around (at most ONE, each a Respond message id) + limit (1..200)
+//   body : { items, has_more_older, has_more_newer, oldest_message_id,
+//            newest_message_id, anchor_message_id, source, backfilled, error }
+//   items are ALWAYS oldest-to-newest, whichever direction was requested.
+//
+// GET .../{tracking_id}/conversation/search?q=&limit=
+//   body : { items: [{ message_id, sent_at, direction, snippet }], total,
+//            truncated, query } newest-first.
+// ---------------------------------------------------------------------------
+
+export async function getSlaTrackingConversationPage(
+  trackingId: string,
+  params: { before?: string; after?: string; around?: string; limit?: number },
+): Promise<ConversationThreadPage> {
+  const sp = new URLSearchParams();
+  if (params.before) sp.set('before', params.before);
+  if (params.after) sp.set('after', params.after);
+  if (params.around) sp.set('around', params.around);
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${trackingId}/conversation/page${qs ? `?${qs}` : ''}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load earlier messages'));
+  }
+  return response.json();
+}
+
+export async function searchSlaTrackingConversation(
+  trackingId: string,
+  query: string,
+  limit = 100,
+): Promise<ConversationSearchMatch[]> {
+  const sp = new URLSearchParams({ q: query, limit: String(limit) });
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${trackingId}/conversation/search?${sp.toString()}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Search failed'));
+  }
+  const body = (await response.json()) as { items?: ConversationSearchMatch[] };
+  return body.items ?? [];
+}
+
+/**
+ * Ticket-scoped byte proxy for a chat attachment (UAC AC-N4).
+ *
+ * GET .../{tracking_id}/media?url=<absolute url>
+ *   -> the upstream bytes, upstream content-type, `Content-Disposition: inline`.
+ *   Host allowlisted server-side (our storage + Respond media); 400 off it,
+ *   413 over 50 MB, 404 for a viewer who cannot see the ticket.
+ *
+ * Returns the raw `Response` on purpose: the only consumer is
+ * `AttachmentPreviewModal`'s `fetchBytes`, which wants to read `.blob()` /
+ * `.arrayBuffer()` itself rather than be handed a copy of the payload.
+ */
+export async function fetchSlaTrackingMedia(
+  trackingId: string,
+  url: string,
+): Promise<Response> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${encodeURIComponent(trackingId)}/media?url=${encodeURIComponent(url)}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not load this attachment'));
+  }
+  return response;
+}
+
+// ---------------------------------------------------------------------------
 // My Team Tasks / Takeover / Reassign (team coverage & reassignment)
 // ---------------------------------------------------------------------------
 
@@ -356,6 +457,8 @@ export interface TeamPendingItem {
   responded_at?: string | null;
   is_responded: boolean;
   current_tier: number;
+  /** Times the resolution deadline has been extended (see MyPendingSLAItem). */
+  extension_count?: number;
   policy_name: string | null;
   next_action: string | null;
   /** Pending takeover on this row (running bar / observer-locked state). */
@@ -399,6 +502,15 @@ export interface VisibleUser {
   id: string;
   name: string;
   email: string;
+  /**
+   * AC-N7: whether a reply sent by this person can carry a real Respond sender
+   * identity. Resolved server-side by the SAME helper the send path uses, so
+   * the badge can never promise a linkage the send would find unusable. Comes
+   * from this endpoint, NOT from the `user_management.users.view`-gated
+   * user-select one - which is what makes it work for every holder of the
+   * picker rather than only for user-admins.
+   */
+  respond_linked: boolean;
 }
 
 export async function getVisibleUsers(): Promise<VisibleUser[]> {
