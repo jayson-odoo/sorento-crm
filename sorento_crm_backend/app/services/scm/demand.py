@@ -24,7 +24,7 @@ finds the other.
 """
 from __future__ import annotations
 
-from sqlalchemy import func
+from sqlalchemy import func, literal, select
 
 from app.models.order import SalesOrder, SalesOrderLine
 
@@ -57,16 +57,54 @@ PROJECT_CLASS = "project"
 #: reports as unclassified) is demand straight from the book. What this predicate sets
 #: aside is counted by `demand_source_service.set_aside_project_demand`, never silently
 #: dropped.
+#:
+#: Front planning section 4 narrows the sheet leg once more: it counts only while the core
+#: SO has NO active confirmed supply decision. After CS confirms, the confirmed Buy
+#: residual in `projects.order_inquiry_rows` IS the project demand, and leaving the sheet
+#: leg on would count the same requirement twice - once as the quantity the sheet named
+#: and once as the quantity CS decided still had to be bought. The join is through
+#: `projects.sales_orders.so_id`, never a reference, a document number or an item.
 PLAN_DEMAND_ORDER_SQL = (
     "(so.demand_class IS DISTINCT FROM 'project' "
-    "OR so.demand_origin = 'scm_order_inquiry')"
+    "OR (so.demand_origin = 'scm_order_inquiry' "
+    "    AND NOT EXISTS ("
+    "        SELECT 1 FROM projects.sales_orders pso "
+    "        JOIN projects.so_supply_decisions d "
+    "          ON d.project_sales_order_id = pso.id "
+    "        WHERE pso.so_id = so.id AND d.state = 'active')))"
 )
+
+
+def _has_active_supply_decision():
+    """EXISTS an active `projects.so_supply_decisions` row for this core sales order.
+
+    Built over the TABLES rather than the mapped classes so the company-scope loader
+    criteria cannot rewrite a sub-select whose only job is to answer "is this order
+    decided": the scoping that matters is the caller's, on `sales_orders` itself.
+    """
+    from app.models.project_so import (
+        DECISION_ACTIVE,
+        ProjectSalesOrder,
+        SOSupplyDecision,
+    )
+
+    pso = ProjectSalesOrder.__table__
+    decision = SOSupplyDecision.__table__
+    return (
+        select(literal(1))
+        .select_from(
+            pso.join(decision, decision.c.project_sales_order_id == pso.c.id)
+        )
+        .where(pso.c.so_id == SalesOrder.id, decision.c.state == DECISION_ACTIVE)
+        .exists()
+    )
 
 
 def is_plan_demand_order():
     """`PLAN_DEMAND_ORDER_SQL`, as a SQLAlchemy expression over `sales_orders`."""
     return SalesOrder.demand_class.is_distinct_from(PROJECT_CLASS) | (
-        SalesOrder.demand_origin == ORDER_INQUIRY_ORIGIN
+        (SalesOrder.demand_origin == ORDER_INQUIRY_ORIGIN)
+        & ~_has_active_supply_decision()
     )
 
 
@@ -109,8 +147,18 @@ WHERE so.status = 'open'
   AND sol.purchasing_status <> 'covered'
   AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                - COALESCE(sol.qty_delivered, 0), 0) > 0
-  -- S13b: project demand comes from the Order Inquiry; the book supplies the rest
+  -- S13b: project demand comes from the Order Inquiry; the book supplies the rest.
+  -- Front planning section 4: and only while CS has not confirmed a supply decision for
+  -- it, after which the confirmed Buy residual replaces the sheet quantity.
   AND (so.demand_class IS DISTINCT FROM 'project'
-       OR so.demand_origin = 'scm_order_inquiry')
+       OR (so.demand_origin = 'scm_order_inquiry'
+           AND NOT EXISTS (
+               SELECT 1
+               FROM projects.sales_orders pso
+               JOIN projects.so_supply_decisions d
+                 ON d.project_sales_order_id = pso.id
+               WHERE pso.so_id = so.id
+                 AND d.state = 'active'
+           )))
 GROUP BY sol.product_id, sol.warehouse_id;
 """
