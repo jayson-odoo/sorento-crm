@@ -28,13 +28,13 @@ written through the choke point, with the printed words as its evidence.
 Every statement is idempotent (IF NOT EXISTS / a `pg_constraint` probe) so this is a
 no-op on a database where it has already been applied by hand.
 
-Revision ID: 368_flyer_spec_proposals
+Revision ID: 370_flyer_spec_proposals
 Revises: 367_promote_flyer_provenance
 """
 
 from alembic import op
 
-revision = "368_flyer_spec_proposals"
+revision = "370_flyer_spec_proposals"
 down_revision = "367_promote_flyer_provenance"
 branch_labels = None
 depends_on = None

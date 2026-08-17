@@ -5,7 +5,7 @@ the unmerged PR 4 branch `fm/spec-pr4-extraction-prompt` because `propose_from_t
 `SpecProposalReview` component and the batch-apply route only exist there; rebase onto `main`
 once PR 4 merges). Phase 1 mock (S1): BUILT, browser verification outstanding.
 Phase 2 backend (S2): **BUILT** - classifier + registry-helper lift, `AUTHORED_SOURCES` flip,
-migration `368_flyer_spec_proposals`, both models, the ingest service, the RQ task and the four
+migration `370_flyer_spec_proposals`, both models, the ingest service, the RQ task and the four
 routes; the four red pytest files are green (52 tests) and `alembic heads` is a single head.
 Phase 2 frontend wiring (S3): **WIRED** - `USE_MOCK` and the Phase 1 fixtures are gone, the
 service is a plain `apiFetch` client and the FE types match the backend schemas field for
@@ -43,7 +43,7 @@ read-only) -> `Apply N selected` -> every row reported applied or refused -> the
 
 ## 3. Design (backwards from the journey)
 
-### 3.1 Tables (migration `368_flyer_spec_proposals`, down `367_promote_flyer_provenance`)
+### 3.1 Tables (migration `370_flyer_spec_proposals`, down `367_promote_flyer_provenance`)
 
 `product_spec_flyer_batches` (`CompanyScopedMixin`, company copied from the reading):
 

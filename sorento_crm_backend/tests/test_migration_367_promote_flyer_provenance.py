@@ -420,7 +420,7 @@ def test_there_is_one_alembic_head_and_367_is_on_its_path():
     """One head, and this revision is an ancestor of it.
 
     It used to assert the head IS 367, which was true for exactly as long as 367 was
-    the newest migration - the bulk flyer-ingestion slice chained 368 onto it and the
+    the newest migration - the bulk flyer-ingestion slice chained 370 onto it and the
     assertion failed for the one reason that is not a defect. The invariant worth
     guarding is that the branches never split, not which revision happens to be last,
     so it is written that way now.
