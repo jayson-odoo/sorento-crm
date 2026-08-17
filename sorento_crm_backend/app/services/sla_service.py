@@ -3,7 +3,8 @@ import logging
 import re
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, update
-from typing import Optional
+from sqlalchemy.exc import IntegrityError
+from typing import Iterable, Optional
 from datetime import date, datetime, timezone, timedelta
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
 from app.models.access import RespondContact
@@ -13,6 +14,7 @@ from app.schemas.sla import (
 )
 from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services import conversation_event_bus
 from app.services.sla_scope import open_tracker_scope
 
 _module_logger = logging.getLogger(__name__)
@@ -298,7 +300,7 @@ class SLAPolicyService:
         config_count = self.db.query(func.count(FormSLAConfig.id)).filter(
             FormSLAConfig.policy_id == policy_id
         ).scalar() or 0
-        # Distinct team sets (agent, code) bound to this policy — every tier row of a
+        # Distinct team sets (agent, code) bound to this policy - every tier row of a
         # set shares the policy, so count distinct (agent_id, code) for a clean message.
         binding_count = self.db.query(
             func.count(func.distinct(func.concat(AgentTeam.agent_id, ':', AgentTeam.code)))
@@ -411,6 +413,86 @@ def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
+def format_myt(dt: Optional[datetime]) -> Optional[str]:
+    """An SLA timestamp as Malaysia wall clock WITH the day and the zone.
+
+    "Mon 17 Aug 09:00 MYT". Both halves are load-bearing (AC-G2): staff read
+    these notifications at 22:00, when the deadline is another day, so a bare
+    "10:00" is worse than useless. Every SLA column is naive UTC, which
+    ``_to_aware_utc`` is the single place that knows.
+
+    Deliberately NOT ``form_sla_service._fmt_due`` ("18 Aug 2026, 10:00 AM"),
+    which carries no weekday and no zone.
+    """
+    aware = _to_aware_utc(dt)
+    if aware is None:
+        return None
+    local = aware.astimezone(MALAYSIA_TZ)
+    # `local.day` rather than %-d: the no-pad strftime flag is platform-specific.
+    return f"{local:%a} {local.day} {local:%b} {local:%H:%M} MYT"
+
+
+# A clock recomputed from `now` a few microseconds after `initiated_at` is the
+# SAME instant for a reader; only a real deferral to the next working window is
+# "out of hours".
+_CLOCK_DEFERRED_THRESHOLD = timedelta(seconds=1)
+
+
+def sla_clock_line(tracking) -> Optional[str]:
+    """The one-line clock statement every assignment notification carries (AC-G2).
+
+    Out of hours (the clock start was pushed to the next working-window open):
+
+        "Clock starts Mon 17 Aug 09:00 MYT · respond by Mon 17 Aug 10:00 MYT"
+
+    In hours, unconditionally - a missing line reads as "there is no clock",
+    which is the misreading this AC exists to remove:
+
+        "Respond by Fri 14 Aug 15:00 MYT"
+
+    Once the first response has landed the response clock has stopped, so on a
+    reassign / takeover the clock that is actually running is the resolution
+    one and the line says so ("Resolve by ..."). Returns None only when there is
+    no deadline at all to state.
+
+    One builder, used by the in-app / email / WhatsApp body alike: the same
+    string is passed to ``build_sla_whatsapp_data``, so the three channels
+    cannot disagree about the deadline.
+    """
+    responded = bool(getattr(tracking, "is_responded", False))
+    if responded:
+        due = format_myt(getattr(tracking, "due_at_resolution", None))
+        return f"Resolve by {due}" if due else None
+
+    due = format_myt(getattr(tracking, "due_at", None))
+    if not due:
+        return None
+    start = _to_aware_utc(getattr(tracking, "current_tier_started_at", None))
+    initiated = _to_aware_utc(getattr(tracking, "initiated_at", None))
+    if start and initiated and start - initiated > _CLOCK_DEFERRED_THRESHOLD:
+        return f"Clock starts {format_myt(start)} · respond by {due}"
+    return f"Respond by {due}"
+
+
+def append_clock_line(body: str, tracking) -> str:
+    """``body`` with the AC-G2 clock line appended, when there is one to state."""
+    line = sla_clock_line(tracking)
+    return f"{body}\n\n{line}" if line else body
+
+
+def _coerce_flag(value) -> bool:
+    """Coerce a JSON-ish truthy flag (True / 1 / "true" / "1") to bool.
+
+    Integration callers post `is_responded` / `is_resolved` as a real bool, an
+    int, or a string, so a bare `bool(value)` would read the string "false" as
+    True. Shared so the idempotency short-circuits and the field-application
+    branches below agree on what "the caller asked for this" means.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1")
+    return value is True or value == 1
+
+
 def _working_clock_start(db, start_dt: Optional[datetime]) -> Optional[datetime]:
     """Normalize an SLA clock start to the next working-window open.
 
@@ -476,7 +558,7 @@ def compute_tracking_timings(tracking, tier) -> dict:
     responded_at = _to_aware_utc(tracking.responded_at)
     resolved_at = _to_aware_utc(tracking.resolved_at)
     due_at_resolution = _to_aware_utc(getattr(tracking, "due_at_resolution", None))
-    # float() — resolution_hours is a Decimal column; timedelta rejects Decimal.
+    # float() - resolution_hours is a Decimal column; timedelta rejects Decimal.
     resolution_hours = float(getattr(tier, "resolution_hours", None) or 24)
     resolution_due_at = due_at_resolution if due_at_resolution is not None else (
         (current_tier_started_at + timedelta(hours=resolution_hours)) if current_tier_started_at else None
@@ -526,12 +608,27 @@ def compute_tracking_timings(tracking, tier) -> dict:
 def conversation_tracking_scope():
     """SQLAlchemy filter selecting conversation-SLA rows only.
 
-    Conversation SLA (created by n8n, max one open per contact — mirrors the
-    Respond.io conversation) and form SLA stage rows (created by
-    form_sla_service, per-entity, multi-active) share this table. Form rows are
-    identified by source_entity_type in FORM_SLA_TYPES; everything contact-keyed
-    on the conversation side must apply this filter or it can falsely match a
-    form row (e.g. the create-time singleton check, thread-assignee lookups).
+    Conversation SLA (created by n8n; the invariant is now ONE open ticket
+    per (contact, triggering message) - a contact may hold several open
+    intervention tickets at once, per-enquiry, not one merged conversation)
+    and form SLA stage rows (created by form_sla_service, per-entity,
+    multi-active) share this table. Form rows are identified by
+    source_entity_type in FORM_SLA_TYPES; everything contact-keyed on the
+    conversation side must apply this filter or it can falsely match a form
+    row (e.g. the source_message_id idempotency check, thread-assignee
+    lookups).
+    Conversation rows are never voided, so a query already carrying this scope
+    reads `is_resolved = false` as "open" correctly and does NOT also need
+    `sla_scope.not_voided()` / `open_tracker_scope()`. The only writer of
+    `ConversationSLATracking.voided_at` is `form_sla_service` (one assignment,
+    inside a loop over `_open_form_trackers`, which pins to FORM_SLA_TYPES and
+    passes through the NEGATED conversation scope - UAC F4b, "conversation SLA
+    is never touched"). The open-ticket unique index carries the same scope in
+    its predicate. Reviewers keep flagging the conversation lane for a missing
+    not_voided(); it is a no-op there by construction, and this note exists so
+    the check is a read rather than a re-derivation. It stops being true the
+    day something voids a conversation row - then every caller of this helper
+    needs open_tracker_scope() beside it.
     """
     from app.services.form_sla_service import FORM_SLA_TYPES
 
@@ -660,6 +757,9 @@ class ConversationSLATrackingService:
         sort_dir: str = "desc",
         assigned_to: Optional[str] = None,
         tracking_ids: Optional[list[str]] = None,
+        contact: Optional[str] = None,
+        is_resolved: Optional[bool] = None,
+        resolved_by: Optional[str] = None,
     ):
         """Apply the conversation-scope filters + sort shared by ``list_tracking``
         (scope="conversation") and ``neighbours`` so the two can never drift.
@@ -670,14 +770,51 @@ class ConversationSLATrackingService:
         so neighbours can never bleed into form SLA rows. The ORDER BY always appends
         ``ConversationSLATracking.id`` as a deterministic tie-breaker so offset position
         and prev/next neighbours are unambiguous when the sort column has equal values.
+
+        ``contact`` / ``is_resolved`` / ``resolved_by`` back the AC-M2 history links
+        (the drawer's "View history" for one contact, the widget's "Recently
+        resolved" for one resolver). ``contact`` accepts whatever identifies a
+        contact elsewhere in this service - CRM id, Respond.io id or phone - and an
+        UNRESOLVABLE one filters the set to empty rather than being ignored: a link
+        that silently shows every contact's tickets is worse than one that shows none.
         """
-        from sqlalchemy import asc, desc
+        from sqlalchemy import asc, desc, false
         from app.models.user import User
 
         q = base_query.filter(conversation_tracking_scope())
 
         if policy_id:
             q = q.filter(ConversationSLATracking.policy_id == policy_id)
+
+        if contact and str(contact).strip():
+            internal_contact_id = self.resolve_internal_respond_contact_id(str(contact).strip())
+            if not internal_contact_id:
+                return q.filter(false())
+            q = q.filter(
+                ConversationSLATracking.respond_contact_id == internal_contact_id
+            )
+
+        if is_resolved is not None:
+            q = q.filter(ConversationSLATracking.is_resolved.is_(bool(is_resolved)))
+
+        if resolved_by and str(resolved_by).strip():
+            resolver_val = str(resolved_by).strip()
+            resolver = (
+                self.db.query(User)
+                .filter(
+                    or_(
+                        User.id == resolver_val,
+                        User.respond_user_id == resolver_val,
+                        User.email == resolver_val,
+                    )
+                )
+                .first()
+            )
+            if resolver is None:
+                return q.filter(false())
+            # resolved_by stores users.id (update_tracking normalizes it), so a
+            # single equality is the honest predicate - no OR over stale shapes.
+            q = q.filter(ConversationSLATracking.resolved_by == str(resolver.id))
 
         if tracking_ids is not None:
             q = q.filter(ConversationSLATracking.id.in_(tracking_ids))
@@ -721,6 +858,9 @@ class ConversationSLATrackingService:
         sort_dir: str = "desc",
         assigned_to: Optional[str] = None,
         tracking_ids: Optional[list[str]] = None,
+        contact: Optional[str] = None,
+        is_resolved: Optional[bool] = None,
+        resolved_by: Optional[str] = None,
     ) -> dict:
         """Resolve prev/next neighbours for ``tracking_id`` within the active
         conversation-SLA list query.
@@ -745,6 +885,9 @@ class ConversationSLATrackingService:
             sort_dir=sort_dir,
             assigned_to=assigned_to,
             tracking_ids=tracking_ids,
+            contact=contact,
+            is_resolved=is_resolved,
+            resolved_by=resolved_by,
         )
         result = compute_neighbours(_ordered_ids(filtered_q), tracking_id)
         if result["index"] is not None:
@@ -768,12 +911,15 @@ class ConversationSLATrackingService:
         assigned_to: Optional[str] = None,
         tracking_ids: Optional[list[str]] = None,
         scope: str = "conversation",
+        contact: Optional[str] = None,
+        is_resolved: Optional[bool] = None,
+        resolved_by: Optional[str] = None,
     ):
         """List SLA tracking records. query filters by contact phone or contact name.
 
         scope="conversation" (default) lists contact-keyed conversation SLA rows;
         scope="form" lists per-entity form SLA stage rows (source_entity_type in
-        FORM_SLA_TYPES). Both live in the same table — see conversation_tracking_scope.
+        FORM_SLA_TYPES). Both live in the same table - see conversation_tracking_scope.
         """
         from app.services.form_sla_service import FORM_SLA_TYPES
         from sqlalchemy.orm import joinedload
@@ -830,6 +976,9 @@ class ConversationSLATrackingService:
                 sort_dir=sort_dir,
                 assigned_to=assigned_to,
                 tracking_ids=tracking_ids,
+                contact=contact,
+                is_resolved=is_resolved,
+                resolved_by=resolved_by,
             )
 
         ref_map: dict = {}
@@ -1080,9 +1229,12 @@ class ConversationSLATrackingService:
         reference_by_row = self._resolve_my_pending_references(rows)
         action_by_row = self._form_next_actions(rows)
 
-        # Conversation rows (no source entity) need the contact's respond_io_id so
-        # the widget can build a Respond inbox deep link. Batched once.
+        # Conversation rows (no source entity) need the contact's respond_io_id,
+        # name and phone: the inbox deep link (legacy rows) plus the ticket header
+        # (contact_name / contact_phone). Batched once.
         respond_io_by_contact: dict[str, Optional[str]] = {}
+        contact_name_by_contact: dict[str, Optional[str]] = {}
+        contact_phone_by_contact: dict[str, Optional[str]] = {}
         contact_ids = {
             str(r.respond_contact_id)
             for r in rows
@@ -1090,32 +1242,53 @@ class ConversationSLATrackingService:
         }
         if contact_ids:
             try:
-                for cid, rio in (
-                    self.db.query(RespondContact.id, RespondContact.respond_io_id)
+                for cid, rio, name, phone in (
+                    self.db.query(
+                        RespondContact.id,
+                        RespondContact.respond_io_id,
+                        RespondContact.name,
+                        RespondContact.phone_number,
+                    )
                     .filter(RespondContact.id.in_(contact_ids))
                     .all()
                 ):
                     respond_io_by_contact[str(cid)] = str(rio) if rio else None
+                    contact_name_by_contact[str(cid)] = name
+                    contact_phone_by_contact[str(cid)] = phone
             except Exception:  # noqa: BLE001
                 self.db.rollback()
 
-        return [
-            {
+        team_label_by_row = self._ticket_team_labels(rows)
+
+        result = []
+        for r in rows:
+            is_form_sla = r.source_entity_type in FORM_SLA_TYPES
+            contact_key = (
+                str(r.respond_contact_id)
+                if getattr(r, "respond_contact_id", None)
+                else None
+            )
+            # UAC B: a conversation row is an intervention TICKET only once it
+            # carries the enquiry identity this feature introduced
+            # (source_message_id, migration 321/S2a) - a pre-migration row with
+            # no trigger message keeps its old widget behaviour (Respond inbox
+            # deep link, inline Escalate/Resolve) rather than opening a drawer
+            # with no enquiry to show.
+            is_ticket = (not is_form_sla) and bool(getattr(r, "source_message_id", None))
+            row = {
                 "id": str(r.id),
                 "source_entity_type": r.source_entity_type,
                 "source_entity_id": r.source_entity_id,
                 # Authoritative form-vs-conversation flag (single source of truth so
-                # the widget never re-derives it and drifts — e.g. 'ticket' is a form
+                # the widget never re-derives it and drifts - e.g. 'ticket' is a form
                 # type the FE route map doesn't know). Conversation rows = false.
-                "is_form_sla": r.source_entity_type in FORM_SLA_TYPES,
+                "is_form_sla": is_form_sla,
                 "reference": reference_by_row.get(str(r.id)),
                 "respond_io_id": (
-                    respond_io_by_contact.get(str(r.respond_contact_id))
-                    if getattr(r, "respond_contact_id", None)
-                    else None
+                    respond_io_by_contact.get(contact_key) if contact_key else None
                 ),
                 "due_at": r.due_at.isoformat() if r.due_at else None,
-                # Resolution deadline — the Extend action targets this. Emitted so the
+                # Resolution deadline - the Extend action targets this. Emitted so the
                 # widget can gate the Extend button client-side (hidden when null) and
                 # the dialog can show "Current due" without a preview round-trip.
                 "due_at_resolution": (
@@ -1130,13 +1303,77 @@ class ConversationSLATrackingService:
                 "due_kind": "resolve" if bool(r.is_responded) else "respond",
                 "is_responded": bool(r.is_responded),
                 "current_tier": r.current_tier,
+                # How many times the resolution deadline has been moved. The
+                # widget marks an extended row so a deadline somebody pushed out
+                # (and then forgot for a week) is visible before it breaches -
+                # the counter is already maintained by the extend service.
+                "extension_count": int(getattr(r, "extension_count", 0) or 0),
                 "policy_name": r.policy.name if r.policy else None,
                 # SLA-config-driven next action for form rows (e.g. "Send for
                 # approval", "Approve", "Mark resolved"); None for conversation rows.
                 "next_action": action_by_row.get(str(r.id)),
             }
+            if is_ticket:
+                # UAC AC-B1: never re-derived by the widget - explicit backend flag.
+                row["is_intervention_ticket"] = True
+                row["contact_name"] = (
+                    contact_name_by_contact.get(contact_key) if contact_key else None
+                )
+                row["contact_phone"] = (
+                    contact_phone_by_contact.get(contact_key) if contact_key else None
+                )
+                snippet = (getattr(r, "source_message_text", None) or "").strip()
+                row["enquiry_snippet"] = (snippet[:140] or None) if snippet else None
+                row["source_message_id"] = r.source_message_id
+                row["team_label"] = team_label_by_row.get(str(r.id))
+                row["initiated_at"] = (
+                    r.initiated_at.isoformat() if r.initiated_at else None
+                )
+                row["escalated_at"] = (
+                    r.escalated_at.isoformat() if r.escalated_at else None
+                )
+            result.append(row)
+        return result
+
+    def _ticket_team_labels(
+        self, rows: list[ConversationSLATracking]
+    ) -> dict[str, Optional[str]]:
+        """Tracker id -> the display name of the team bound to its
+        (agent_id, team_set_code, current_tier) - the enquiry header's "team" line.
+
+        Batched: one query for every distinct triple across the whole row set,
+        never per row. Rows with no ``agent_id`` (legacy, pre-agent-routing) map
+        to None; the FE renders "Unassigned team".
+        """
+        from app.models.access import AgentTeam, Team
+
+        triples = {
+            (str(r.agent_id), r.team_set_code or "", int(r.current_tier or 1))
             for r in rows
-        ]
+            if getattr(r, "agent_id", None)
+        }
+        if not triples:
+            return {}
+        agent_ids = {t[0] for t in triples}
+        try:
+            lookup: dict[tuple, str] = {}
+            for agent_id, code, tier, name in (
+                self.db.query(AgentTeam.agent_id, AgentTeam.code, AgentTeam.tier, Team.name)
+                .join(Team, Team.id == AgentTeam.team_id)
+                .filter(AgentTeam.agent_id.in_(agent_ids))
+                .all()
+            ):
+                lookup[(str(agent_id), code or "", int(tier or 1))] = name
+        except Exception:  # noqa: BLE001
+            self.db.rollback()
+            return {}
+        out: dict[str, Optional[str]] = {}
+        for r in rows:
+            if not getattr(r, "agent_id", None):
+                continue
+            key = (str(r.agent_id), r.team_set_code or "", int(r.current_tier or 1))
+            out[str(r.id)] = lookup.get(key)
+        return out
 
     # ---- Team Tasks: visibility, listing, takeover, reassign ----------------
 
@@ -1192,7 +1429,7 @@ class ConversationSLATrackingService:
 
     def _team_label_by_member(self, team_ids, member_ids) -> dict[str, tuple]:
         """For each member id, a representative (team_id, team_name) within the
-        visible set — context for the Team Tasks row (a user can be in several
+        visible set - context for the Team Tasks row (a user can be in several
         visible teams; the first by name is used for display)."""
         from app.models.access import Team, TeamMember
 
@@ -1225,17 +1462,51 @@ class ConversationSLATrackingService:
             return True
         if self._is_admin(user_id):
             return True
+        # Resolving a CONVERSATION ticket NULLs assigned_to_id by design, so an
+        # assignee-only rule locks the resolver out of the very drawer AC-M1
+        # keeps open in front of them (thread, comments, snippet picker, AI
+        # draft) the instant they press Resolve. Read access follows whoever
+        # resolved it; the write paths (send, takeover, reassign, escalate) keep
+        # their own is_resolved guards, so this widens reading only.
+        resolved_by = getattr(tracking, "resolved_by", None)
+        if resolved_by is not None and str(resolved_by) == str(user_id):
+            return True
         if assignee is None:
             return False
         members = self._members_of_teams(self._visible_team_ids(user_id))
         return str(assignee) in members
 
+    def _picker_rows(self, member_ids: set) -> list[dict]:
+        """Serialize a picker's user set. ONE builder for both branches below,
+        so a field added for the picker cannot land on only one of them.
+
+        ``respond_linked`` (UAC AC-N7) says whether a reply sent by this person
+        can carry a real Respond sender identity - resolved by the SAME helper
+        the send path uses, so the badge never promises a linkage the send would
+        find unusable. Human-readable name, no UUIDs beyond the row id.
+        """
+        from app.models.user import User
+        from app.services.crm_chat_outbound_webhook import usable_respond_user_id
+
+        if not member_ids:
+            return []
+        rows = self.db.query(User).filter(User.id.in_(list(member_ids))).all()
+        out = [
+            {
+                "id": str(u.id),
+                "name": (u.name or u.email or "").strip() or None,
+                "email": u.email,
+                "respond_linked": usable_respond_user_id(u) is not None,
+            }
+            for u in rows
+        ]
+        out.sort(key=lambda x: (x["name"] or x["email"] or "").lower())
+        return out
+
     def list_visible_users(self, user_id: str) -> list[dict]:
         """Scope-B picker source: users I can see (members of my visible teams),
         excluding myself. Admins see every user, so the picker matches what their
         bypass actually allows them to save. Human-readable name, no UUIDs."""
-        from app.models.user import User
-
         if self._is_admin(user_id):
             # Every user who belongs to at least one team, i.e. everyone who can
             # actually own an SLA task (22 people here, vs ~2.5k user rows). An
@@ -1245,36 +1516,10 @@ class ConversationSLATrackingService:
             member_ids = {
                 str(uid) for (uid,) in self.db.query(TeamMember.user_id).distinct().all()
             }
-            member_ids.discard(str(user_id))
-            if not member_ids:
-                return []
-            rows = self.db.query(User).filter(User.id.in_(list(member_ids))).all()
-            out = [
-                {
-                    "id": str(u.id),
-                    "name": (u.name or u.email or "").strip() or None,
-                    "email": u.email,
-                }
-                for u in rows
-            ]
-            out.sort(key=lambda x: (x["name"] or x["email"] or "").lower())
-            return out
-
-        member_ids = self._members_of_teams(self._visible_team_ids(user_id))
+        else:
+            member_ids = self._members_of_teams(self._visible_team_ids(user_id))
         member_ids.discard(str(user_id))
-        if not member_ids:
-            return []
-        rows = self.db.query(User).filter(User.id.in_(list(member_ids))).all()
-        out = [
-            {
-                "id": str(u.id),
-                "name": (u.name or u.email or "").strip() or None,
-                "email": u.email,
-            }
-            for u in rows
-        ]
-        out.sort(key=lambda x: (x["name"] or x["email"] or "").lower())
-        return out
+        return self._picker_rows(member_ids)
 
     def list_team_pending(
         self,
@@ -1378,6 +1623,8 @@ class ConversationSLATrackingService:
                     "due_kind": "resolve" if bool(r.is_responded) else "respond",
                     "is_responded": bool(r.is_responded),
                     "current_tier": r.current_tier,
+                    # Same "someone moved this deadline" marker My Pending shows.
+                    "extension_count": int(getattr(r, "extension_count", 0) or 0),
                     "policy_name": r.policy.name if r.policy else None,
                     "next_action": action_by_row.get(str(r.id)),
                 }
@@ -1406,7 +1653,7 @@ class ConversationSLATrackingService:
         Used by reassign, takeover, and escalate so the Respond conversation owner
         follows the CRM assignee. The actual Respond call + its outbox row (success
         AND failure, with the Respond HTTP status/body on 4xx/5xx) run on the
-        ``respond_io`` worker queue — decoupled from the request. Form-SLA rows have
+        ``respond_io`` worker queue - decoupled from the request. Form-SLA rows have
         no Respond conversation -> skipped; a missing assignee respond_user_id ->
         skipped. Enqueue is best-effort: never raises (post-commit side effect)."""
         import logging
@@ -1439,7 +1686,7 @@ class ConversationSLATrackingService:
                 queue_name="respond_io",
                 job_timeout=60,
             )
-        except Exception as exc:  # noqa: BLE001 — enqueue is best-effort
+        except Exception as exc:  # noqa: BLE001 - enqueue is best-effort
             log.warning(
                 "Respond assignee push enqueue failed for %s: %s",
                 getattr(tracking, "id", "?"),
@@ -1480,9 +1727,10 @@ class ConversationSLATrackingService:
                 str(tracking.id)
             ) or "an SLA task"
 
-            # New assignee — always. Same window-aware WhatsApp data as form SLA assign.
+            # New assignee - always. Same window-aware WhatsApp data as form SLA assign.
             new_title = "An SLA task was assigned to you"
-            new_body = f"{ref} has been assigned to you."
+            # AC-G2: the new owner is told which clock is running and until when.
+            new_body = append_clock_line(f"{ref} has been assigned to you.", tracking)
             if detail:
                 new_body += f"\n\nOpen: {detail}"
             new_data = {
@@ -1519,7 +1767,7 @@ class ConversationSLATrackingService:
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
 
-            # Old assignee — only when actor != old assignee (someone moved your task).
+            # Old assignee - only when actor != old assignee (someone moved your task).
             if (
                 old_assignee_id
                 and str(old_assignee_id) != str(actor_id)
@@ -1551,7 +1799,7 @@ class ConversationSLATrackingService:
                     email_pref_attr="notify_email_on_assignment",
                     whatsapp_pref_attr="notify_whatsapp_on_assignment",
                 )
-        except Exception as e:  # noqa: BLE001 — best-effort; mutation already committed
+        except Exception as e:  # noqa: BLE001 - best-effort; mutation already committed
             log.warning(
                 "reassignment notify failed for %s: %s", getattr(tracking, "id", "?"), e
             )
@@ -1565,7 +1813,7 @@ class ConversationSLATrackingService:
         touch due_at / due_at_resolution / current_tier_started_at.
 
         Resolution order for (agent_id, team, tier):
-          1. The taker's own membership in the task's agent chain — pick the most
+          1. The taker's own membership in the task's agent chain - pick the most
              senior tier they hold (so escalation continues above them). This is what
              a user means by "take it onto my desk".
           2. Fall back to the passed queue ``team_id``'s AgentTeam link when the taker
@@ -1590,7 +1838,7 @@ class ConversationSLATrackingService:
             raise handle_not_found("User", user_id)
         old_assignee_id = getattr(tracking, "assigned_to_id", None)
 
-        # The queue team the row was shown under (assignee's team) — the fallback.
+        # The queue team the row was shown under (assignee's team) - the fallback.
         passed_link = (
             self.db.query(AgentTeam)
             .filter(AgentTeam.team_id == str(team_id))
@@ -1660,7 +1908,7 @@ class ConversationSLATrackingService:
 
     def _agent_link_for_user(self, agent_id, user_id):
         """The AgentTeam link representing ``user_id``'s standing in agent
-        ``agent_id``'s chain — the most senior tier they hold (so escalation
+        ``agent_id``'s chain - the most senior tier they hold (so escalation
         continues above them). None when the user isn't part of that chain.
         Shared by takeover (taker) and reassign (target) for tier re-derivation."""
         from app.models.access import AgentTeam, TeamMember
@@ -1793,6 +2041,13 @@ class ConversationSLATrackingService:
         # Owner reassigned their own task away -> void the pending takeover (best-effort).
         if _pending is not None:
             _tk.void_for_tracking(tracking_id, "reassigned")
+        # Two worklists changed: the task left one pending list and joined
+        # another, so both owners are poked (AC-K3).
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_UPDATED,
+            user_ids=[old_assignee_id, target_user_id],
+        )
         return tracking
 
     def _write_reassignment_log(
@@ -1827,7 +2082,7 @@ class ConversationSLATrackingService:
                     ),
                 )
             )
-        except Exception as e:  # noqa: BLE001 — mutation already committed
+        except Exception as e:  # noqa: BLE001 - mutation already committed
             log.warning(
                 "reassignment event log failed for %s: %s",
                 getattr(tracking, "id", "?"),
@@ -1840,7 +2095,7 @@ class ConversationSLATrackingService:
         """For each FORM SLA row, the concrete next action the assignee must take,
         derived from the stage's SLA config (not a generic "respond/resolve").
 
-        The active stage is identified by (source_entity_type, team_set_code) — the
+        The active stage is identified by (source_entity_type, team_set_code) - the
         tracker copies team_set_code from the config that spawned it, and that pair
         is unique per stage. The action humanizes the stage's respond_event (while
         unresponded) or its primary resolve_event (the advance_on_event, else the
@@ -1991,7 +2246,19 @@ class ConversationSLATrackingService:
     def get_preferred_tracking_for_contact(
         self, contact: RespondContact
     ) -> Optional[ConversationSLATracking]:
-        """Prefer open tracking, else most recent by created_at."""
+        """The single "preferred" conversation-SLA row for a contact: open first, else
+        most recent by created_at.
+
+        AC-F1 (multi-open consumer audit): a contact can now hold several open
+        tickets simultaneously (per-enquiry identity, not a contact singleton). This
+        is a deliberate MOST-RECENT-OPEN reduction, not a bug - callers here are all
+        "give me a representative snapshot for this contact" reads (external GET-by-
+        contact summary, next-assignee's "is this contact already assigned"
+        signal, legacy set-assignee-by-phone) that predate per-ticket identity and
+        were never meant to enumerate every open ticket. Callers that need the FULL
+        open set (the worklist) use ``list_my_pending`` / ``list_tracking`` instead.
+        Pinned by tests/test_conversation_multi_open_consumer_audit.py.
+        """
         from sqlalchemy.orm import joinedload
         from app.models.sla import ConversationSLAEventLog
 
@@ -2012,6 +2279,28 @@ class ConversationSLATrackingService:
                 ConversationSLATracking.created_at.desc(),
             )
             .first()
+        )
+
+    def count_open_tickets_for_contact(self, contact: RespondContact) -> int:
+        """How many OPEN conversation-scope tickets this contact holds (AC-I2).
+
+        The counterpart to ``get_preferred_tracking_for_contact``: that one
+        reduces a multi-open contact to a single representative row, which
+        cannot answer "does this contact still have anything unresolved". n8n
+        gates the customer-facing "conversation closed and resolved" message on
+        this number, so it counts rows rather than picking one, and form-SLA
+        stage rows are excluded via ``conversation_tracking_scope()`` (they share
+        the table and belong to a different family).
+        """
+        return (
+            self.db.query(func.count(ConversationSLATracking.id))
+            .filter(
+                ConversationSLATracking.respond_contact_id == contact.id,
+                ConversationSLATracking.is_resolved.is_(False),
+                conversation_tracking_scope(),
+            )
+            .scalar()
+            or 0
         )
 
     def resolve_respond_contact(
@@ -2106,6 +2395,13 @@ class ConversationSLATrackingService:
         """
         Get the conversation SLA tracking for a contact and policy.
         Prefers an unresolved (open) tracking; otherwise returns the most recent by created_at.
+
+        AC-F1: a contact can hold several open tickets on the SAME policy at once,
+        so this is a MOST-RECENT-OPEN pick among possibly-several matches, not a
+        singleton lookup. Used as the legacy fallback in ``escalate_tracking``'s
+        internal contact+policy resolution path (only when the caller has no
+        ``tracking_id`` - see that method). Callers that already hold a specific
+        tracking_id must NOT go through here - pass it directly instead.
         """
         from sqlalchemy.orm import joinedload
         from app.models.sla import ConversationSLAEventLog
@@ -2134,12 +2430,21 @@ class ConversationSLATrackingService:
         self,
         respond_contact_id: str,
     ) -> Optional[ConversationSLATracking]:
-        """Get the OPEN conversation SLA tracking for a contact (policy-agnostic).
+        """Get an OPEN conversation SLA tracking for a contact (policy-agnostic).
 
-        Conversation SLA is max one-open-per-contact (``conversation_tracking_scope``
-        excludes form-SLA rows), so the contact alone identifies the row to escalate —
-        its stored policy_id (tied at create via agent_code + team_set_code) is the
-        source of truth. Prefers an unresolved row; falls back to the most recent.
+        AC-F1 (multi-open consumer audit): conversation SLA is NO LONGER max
+        one-open-per-contact - a contact can hold several open tickets at once
+        (per-enquiry identity). This is the primary resolution path for
+        ``POST /integration/escalate`` (n8n's signal-only, contact-keyed escalation
+        call, which carries no tracking_id): with 2+ open tickets for the contact,
+        it returns only the MOST-RECENTLY-CREATED open one - a documented, tested,
+        interim limitation, not a crash. A sibling open ticket on the same contact
+        is simply not escalated by that call; it still surfaces separately via
+        ``list_due_escalations`` (which is per-tracking_id) whenever ITS OWN due_at
+        breaches. Precise per-ticket escalation requires n8n to send the ticket id
+        (S3.2 cutover); until then this stays the accepted contact-only behavior
+        (regression net 3 - do not change without updating the n8n contract).
+        Prefers an unresolved row; falls back to the most recent overall.
         """
         from sqlalchemy.orm import joinedload
         from app.models.sla import ConversationSLAEventLog
@@ -2215,7 +2520,7 @@ class ConversationSLATrackingService:
         non-empty, the tier's round-robin pool is filtered to members serving those
         segments (members with a matching segment OR no segment set = serves all), and
         the cursor is segment-scoped. Empty / None -> unfiltered (round-robin over the
-        whole tier team on the legacy cursor) — byte-identical to prior behaviour.
+        whole tier team on the legacy cursor) - byte-identical to prior behaviour.
 
         brand_code: the tracker's stamped brand. The tier TEAM is the same whatever the
         brand is; the brand narrows the pool INSIDE it to members tagged with that
@@ -2292,25 +2597,42 @@ class ConversationSLATrackingService:
         escalation_reason: Optional[str] = None,
         assigned_to_id: Optional[str] = None,
         assigned_to_respond_user_id: Optional[str] = None,
+        tracking_id: Optional[str] = None,
     ) -> ConversationSLATracking:
         """
-        Escalate a conversation SLA tracking by respond_contact_id and policy_id: set new tier,
-        timestamps, and recalculate due_at (response) and due_at_resolution from policy tier KPIs.
-        Creates an escalation event log. Called by external system via integration API.
+        Escalate a conversation SLA tracking: set new tier, timestamps, and recalculate
+        due_at (response) and due_at_resolution from policy tier KPIs. Creates an
+        escalation event log. Called by external system via integration API and the UI
+        escalate action.
 
         escalation_reason None → auto-escalation default mentioning from_tier (signal-only
         callers like the scheduled n8n runner don't know the tier before the call).
         assigned_to_id / assigned_to_respond_user_id: the new tier assignee, applied BEFORE
         the event log is written so the escalation log records the new assignee, not the
         previous tier's (the caller resolves the assignee from the target tier first).
+
+        tracking_id (AC-F1, multi-open consumer audit): when given, escalates THAT exact
+        row via a direct id lookup. Callers that already resolved a specific ticket (the
+        UI escalate route, keyed by tracking_id in the URL; the n8n integration route,
+        which resolves "the" tracking before calling here) MUST pass it - a contact can
+        now hold several open tickets on the same policy, so re-resolving by
+        (respond_contact_id, policy_id) here can silently pick a DIFFERENT sibling than
+        the one the caller intended (this was a real bug: the UI escalate action could
+        escalate the wrong ticket for a contact with 2 open tickets on the same policy).
+        Omit only for legacy/back-compat callers that never had an id (none remain in
+        this codebase as of this audit, but the contact+policy fallback is kept for any
+        external caller still on the old contract).
         """
         from datetime import timedelta
 
-        tracking = self.get_tracking_by_contact_and_policy(respond_contact_id, policy_id)
+        if tracking_id:
+            tracking = self.get_tracking(str(tracking_id), load_event_logs=False)
+        else:
+            tracking = self.get_tracking_by_contact_and_policy(respond_contact_id, policy_id)
         if not tracking:
             raise handle_not_found(
                 "Conversation SLA tracking",
-                f"respond_contact_id={respond_contact_id}, policy_id={policy_id}",
+                f"tracking_id={tracking_id}, respond_contact_id={respond_contact_id}, policy_id={policy_id}",
             )
         if bool(getattr(tracking, "is_resolved", False)):
             raise handle_validation_error(
@@ -2392,10 +2714,17 @@ class ConversationSLATrackingService:
             )
         )
         self.db.refresh(tracking)
-        # Escalation changes the owner/tier — void any pending takeover (AC-VOID-3).
+        # Escalation changes the owner/tier - void any pending takeover (AC-VOID-3).
         from app.services.sla_takeover_service import SlaTakeoverService
 
         SlaTakeoverService(self.db).void_for_tracking(str(tracking.id), "escalated")
+        # Both tiers refetch: the task left the breaching owner's list and
+        # landed on the next tier's (AC-K3).
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_UPDATED,
+            user_ids=[prev_assigned_to_id, getattr(tracking, "assigned_to_id", None)],
+        )
         return tracking
 
     # ---- Extend resolution deadline (PLAN-sla-extend-deadline) ---------------
@@ -2403,7 +2732,7 @@ class ConversationSLATrackingService:
     def _extension_base(self, tracking: ConversationSLATracking) -> datetime:
         """Base point for an extension = the current due_at_resolution (naive UTC).
 
-        Always relative to the existing deadline, NEVER `now` — extending an overdue
+        Always relative to the existing deadline, NEVER `now` - extending an overdue
         row adds working days onto its original due (e.g. due 13/05 + 1 wd = 14/05),
         not onto today. The increment is still strictly after the current due (days>=1
         / target_date guard), so 'can only extend' holds even when the result is still
@@ -2670,16 +2999,23 @@ class ConversationSLATrackingService:
                     triggered_by_id=str(actor_user_id),
                 )
             )
-        except Exception as e:  # noqa: BLE001 — mutation already committed
+        except Exception as e:  # noqa: BLE001 - mutation already committed
             import logging
 
             logging.getLogger(__name__).warning(
                 "extend event log failed for %s: %s", getattr(tracking, "id", "?"), e
             )
 
-        # Best-effort: notify the NEXT escalation tier only (notify-only — no tier /
+        # Best-effort: notify the NEXT escalation tier only (notify-only - no tier /
         # clock mutation). Never raise (must not 500 a successful extend).
         self._notify_next_tier_deadline_extended(tracking, reason=reason)
+        # The resolve-by countdown on the widget row just moved (AC-K3). Form
+        # rows share this method and are filtered out by the publisher.
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_UPDATED,
+            user_ids=[getattr(tracking, "assigned_to_id", None)],
+        )
         return tracking
 
     def _notify_next_tier_deadline_extended(
@@ -2688,13 +3024,13 @@ class ConversationSLATrackingService:
         """Notify the higher tiers that the deadline was extended.
 
         Fans UP every tier above the current one (current+1 .. 3, capped at tier 3)
-        whose ``AgentTeam`` row has ``notify_on_extension = true`` — so the parent AND
+        whose ``AgentTeam`` row has ``notify_on_extension = true`` - so the parent AND
         the grandparent tier are reached when both opt in, while an admin can untick a
         tier to silence it. The tier chain is the agent team config
         (``AgentTeam(agent_id, tier, team_set_code, team_id)``), not parent_team_id.
 
         Per-tier recipient = that tier team's next round-robin assignee, resolved by
-        PEEKING the cursor (never advancing it — no tier/clock/RR mutation on extend).
+        PEEKING the cursor (never advancing it - no tier/clock/RR mutation on extend).
         Recipients are deduped so a shared member isn't double-sent. No higher tier
         configured / opted-in -> skip silently. Never raises.
         """
@@ -2756,7 +3092,7 @@ class ConversationSLATrackingService:
                 self._notify_user_deadline_extended(
                     tracking, recipient_user_id=str(next_id), reason=reason
                 )
-        except Exception as e:  # noqa: BLE001 — best-effort, extend already committed
+        except Exception as e:  # noqa: BLE001 - best-effort, extend already committed
             log.warning(
                 "deadline-extended notify failed for %s: %s",
                 getattr(tracking, "id", "?"),
@@ -2850,14 +3186,14 @@ class ConversationSLATrackingService:
     def list_due_escalations(self) -> list[dict]:
         """Work-list for the scheduled escalation runner (n8n).
 
-        Conversation-SLA rows (scope filter — never form rows) that are unresolved, in
+        Conversation-SLA rows (scope filter - never form rows) that are unresolved, in
         breach, and still escalatable (tier 1 or 2; tier 3 has nowhere to go). Split-clock
-        breach rule — the response clock stops on response (compute_tracking_timings), so
+        breach rule - the response clock stops on response (compute_tracking_timings), so
         escalation must not fire on a stopped clock:
         - not responded → breach when due_at (response deadline) passes
         - responded     → breach when due_at_resolution passes; never before
-        Each item carries everything the runner needs downstream — contact phone and
-        Respond.io id included — so n8n needs no SQL nodes, plus `breach_type`
+        Each item carries everything the runner needs downstream - contact phone and
+        Respond.io id included - so n8n needs no SQL nodes, plus `breach_type`
         ("response" | "resolution") for message templating. Datetime columns store naive
         UTC; compared against naive-UTC now and serialized as aware-UTC ISO.
         """
@@ -2938,6 +3274,13 @@ class ConversationSLATrackingService:
         If there is a conversation SLA tracking for this contact phone that already has an assignee,
         return that user's info (id, email, name, respond_user_id). Otherwise return None.
         Used by next-assignee API to avoid reassigning conversations that are already assigned.
+
+        AC-F1: not currently wired into any route (kept for callers that may want a
+        single "who owns this contact's thread" answer). A contact can hold several
+        assigned open tickets at once, so this is a MOST-RECENT-OPEN pick - the
+        explicit ``order_by`` below (matching ``get_preferred_tracking_for_contact``)
+        replaces what used to be an undocumented, unordered ``.first()`` over a
+        possibly-multi-row result.
         """
         from sqlalchemy.orm import joinedload
         from app.models.access import RespondContact
@@ -2956,6 +3299,10 @@ class ConversationSLATrackingService:
                 ConversationSLATracking.respond_contact_id == contact.id,
                 ConversationSLATracking.assigned_to_id.isnot(None),
                 conversation_tracking_scope(),
+            )
+            .order_by(
+                ConversationSLATracking.is_resolved.asc(),  # open first
+                ConversationSLATracking.created_at.desc(),
             )
             .first()
         )
@@ -2977,6 +3324,15 @@ class ConversationSLATrackingService:
         """
         Fetch contact from Respond.io by phone, get assignee.id, match to user by respond_user_id,
         and update tracking assigned_to if different. Uses existing Respond.io config (base URL, API key).
+
+        AC-F2 (multi-open consumer audit): deprecated no-op for conversation-family
+        rows. CRM is now the assignee authority per-ticket (each open ticket has its
+        own assignee); pulling "the" Respond.io conversation assignee back onto a
+        SPECIFIC ticket is meaningless once a contact can hold several open tickets
+        against one shared Respond conversation - there is no longer a 1:1 mapping to
+        sync. Kept for form-SLA rows (unaffected; they never shared this ambiguity)
+        and kept as a route (not retired to 404) so an existing caller gets a clear
+        "deprecated, nothing changed" response instead of breaking.
         """
         import json
         import logging
@@ -2986,6 +3342,20 @@ class ConversationSLATrackingService:
 
         logger = logging.getLogger(__name__)
         tracking = self.get_tracking(tracking_id)
+
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        if getattr(tracking, "source_entity_type", None) not in FORM_SLA_TYPES:
+            return {
+                "updated": False,
+                "deprecated": True,
+                "message": (
+                    "Sync assignee from Respond.io is deprecated for conversation "
+                    "tickets: CRM is now the assignee authority (per-ticket, "
+                    "multi-open). No changes made."
+                ),
+            }
+
         phone = None
         if tracking.contact:
             phone = (getattr(tracking.contact, "phone_number", None) or "").strip()
@@ -3117,7 +3487,7 @@ class ConversationSLATrackingService:
 
         # Assignee-driven routing correction: re-derive agent/team(/tier) from the new
         # assignee's team membership so escalation follows the correct team afterwards.
-        # Unassign carries no routing signal — skip derivation.
+        # Unassign carries no routing signal - skip derivation.
         derivation = None
         if user is not None:
             derivation = self.apply_assignee_team_derivation(
@@ -3127,7 +3497,7 @@ class ConversationSLATrackingService:
         tracking = self.get_tracking(tracking_id)
 
         # Notify the NEW assignee (in-app + email/WhatsApp per their toggles), same as
-        # auto-assign on create. Only on a genuine change to a real user — unassign and
+        # auto-assign on create. Only on a genuine change to a real user - unassign and
         # re-setting the same person carry no new assignment. Best-effort (never raises);
         # the occurrence-keyed event_type dedups a no-op repeat at the same tier clock.
         new_assignee_id = getattr(tracking, "assigned_to_id", None)
@@ -3171,17 +3541,17 @@ class ConversationSLATrackingService:
         Resolve the (agent_id, team_set_code, tier, team_id) an assignee belongs to, for
         assignee-driven routing correction (PLAN-sla-assignee-team-derivation).
 
-        Step 1 — global tier-1 lookup: the user's unique tier-1-linked TEAM wins (team-level
+        Step 1 - global tier-1 lookup: the user's unique tier-1-linked TEAM wins (team-level
         invariant enforced in TeamService/AccessAgentService: a user belongs to at most one
         team that is linked at tier 1). The same team is commonly linked at tier 1 under
         many agents (shared executive pools), so among that team's tier-1 links prefer the
         tracking's current agent (agent stays put, only the team set flips); otherwise pick
-        the deterministic first link (code, then agent_id) — tier-2/3 configuration is
+        the deterministic first link (code, then agent_id) - tier-2/3 configuration is
         expected to be equivalent across those agents.
-        Step 2 — scoped tier-2/3 lookup: otherwise, if the user is in the tier-2/3 team of
+        Step 2 - scoped tier-2/3 lookup: otherwise, if the user is in the tier-2/3 team of
         the tracking's current (agent_id, team_set_code), keep agent/team and return the
         matched tier (lowest when in both).
-        Step 3 — None: unknown user, or a manager of some other team set (ambiguous).
+        Step 3 - None: unknown user, or a manager of some other team set (ambiguous).
         """
         import logging
         from app.models.access import AccessAgent, AgentTeam, TeamMember
@@ -3194,7 +3564,7 @@ class ConversationSLATrackingService:
         # Only CONVERSATION-SLA agents' tier-1 links participate in derivation.
         # Form-SLA agents route via FormSLAConfig stages, so a user may sit in
         # many form tier-1 teams; counting them here would falsely read as
-        # "multiple tier-1 teams" and abort derivation (plan decision 3c —
+        # "multiple tier-1 teams" and abort derivation (plan decision 3c -
         # conversation scope only). Mirrors the relaxed membership invariant.
         form_codes = form_sla_agent_codes(self.db)
         tier1_q = (
@@ -3211,7 +3581,7 @@ class ConversationSLATrackingService:
         ).all()
         distinct_teams = {str(l.team_id) for l in tier1_links}
         if len(distinct_teams) > 1:
-            # Team-level invariant violated (config predates enforcement) — ambiguous.
+            # Team-level invariant violated (config predates enforcement) - ambiguous.
             logging.getLogger(__name__).warning(
                 "User %s is a member of multiple tier-1-linked teams %s; "
                 "skipping assignee-driven routing.",
@@ -3276,10 +3646,10 @@ class ConversationSLATrackingService:
         from app.services.form_sla_service import FORM_SLA_TYPES
 
         tracking = self.get_tracking(tracking_id)
-        # Resolved trackings clear escalation routing on resolve — never resurrect it.
+        # Resolved trackings clear escalation routing on resolve - never resurrect it.
         if bool(getattr(tracking, "is_resolved", False)):
             return None
-        # Form SLA trackings own their routing via FormSLAConfig stages — assignee changes
+        # Form SLA trackings own their routing via FormSLAConfig stages - assignee changes
         # must not flip stage-configured agent/team. Conversation trackings only.
         if (getattr(tracking, "source_entity_type", None) or "") in FORM_SLA_TYPES:
             return None
@@ -3311,7 +3681,7 @@ class ConversationSLATrackingService:
         # another person does not turn a Mocha question into a Cabana one.
 
         # Restart the tier clock from the matched tier's policy hours. If the tier row is
-        # missing (misconfigured policy), keep existing clocks — routing fix still applies.
+        # missing (misconfigured policy), keep existing clocks - routing fix still applies.
         # Clamp past the policy's top defined tier rather than fabricate 24h (D7).
         tier_row = self._resolve_tier_with_clamp(tracking.policy_id, derived["tier"])
         if tier_row is not None:
@@ -3319,7 +3689,7 @@ class ConversationSLATrackingService:
             resolution_hours = float(getattr(tier_row, "resolution_hours", None) or 24.0)
             setattr(tracking, "current_tier_started_at", now_utc)
             # Routing-correction clock restart (team flip / misroute fix), not a real
-            # SLA escalation — keep calendar-hour math here. Working-hours math applies
+            # SLA escalation - keep calendar-hour math here. Working-hours math applies
             # to the SLA countdown itself (create_tracking + escalate_tracking).
             setattr(tracking, "due_at", now_utc + timedelta(hours=response_hours))
             setattr(tracking, "due_at_resolution", now_utc + timedelta(hours=resolution_hours))
@@ -3350,7 +3720,7 @@ class ConversationSLATrackingService:
         reason_parts = [f"assignee correction via {source}"]
         if team_changed:
             reason_parts.append(
-                f"team_set: {current_team_set or '—'} → {derived['team_set_code']}"
+                f"team_set: {current_team_set or ' - '} → {derived['team_set_code']}"
             )
         self.db.flush()
         self.create_event_log(
@@ -3380,6 +3750,57 @@ class ConversationSLATrackingService:
             "agent_id": derived["agent_id"],
         }
 
+    def _open_ticket_for_identity(
+        self, respond_contact_id: str, source_message_id: str
+    ) -> Optional[ConversationSLATracking]:
+        """The OPEN ticket for this (contact, trigger message), if one exists.
+
+        FINDING 6: a ticket's identity is the PAIR, not the message alone -
+        WhatsApp message ids are not guaranteed globally unique across different
+        contacts/threads, so a bare source_message_id lookup would hand contact B
+        contact A's ticket on a coincidental collision. Mirrors the partial
+        unique index exactly (open + conversation scope), which is what makes it
+        usable both as the idempotency pre-query and as the recovery read after
+        that index rejects a concurrent insert.
+        """
+        return (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_message_id == source_message_id,
+                ConversationSLATracking.respond_contact_id == respond_contact_id,
+                ConversationSLATracking.is_resolved.is_(False),
+                conversation_tracking_scope(),
+            )
+            .first()
+        )
+
+    def _log_reused_ticket_brand_mismatch(
+        self,
+        existing: ConversationSLATracking,
+        incoming_brand_code: Optional[str],
+    ) -> None:
+        """Note a create that reuses an OPEN ticket routed for a different brand.
+
+        No behaviour change - the open tracking keeps the brand it was routed with -
+        but a spine that has started resolving a different brand for the same
+        conversation is worth seeing in the log. Called from both reuse paths: the
+        per-enquiry retry (same trigger message) and the legacy one-open-per-contact
+        singleton a payload without any trigger-message identity falls back to.
+        """
+        from app.services.user_service import normalise_brand_code
+
+        incoming_brand = normalise_brand_code(incoming_brand_code)
+        open_brand = normalise_brand_code(getattr(existing, "brand_code", None))
+        if incoming_brand == open_brand:
+            return
+        _module_logger.info(
+            "conversation SLA idempotent create carried brand %s while open "
+            "tracking %s is routing brand %s; the open tracking's brand is kept.",
+            incoming_brand or "all brands",
+            getattr(existing, "id", "?"),
+            open_brand or "all brands",
+        )
+
     def create_tracking(self, tracking_data: ConversationSLATrackingCreate):
         """Create a new tracking record."""
         from datetime import timedelta, datetime, timezone
@@ -3392,7 +3813,7 @@ class ConversationSLATrackingService:
         tracking_dict = tracking_data.model_dump()
         contact_phone_number = tracking_dict.pop("contact_phone_number", None)
 
-        # Conversation SLA always starts at tier 1 — any n8n-supplied current_tier is
+        # Conversation SLA always starts at tier 1 - any n8n-supplied current_tier is
         # ignored (D2). Forced BEFORE the assignee/tier logic that reads current_tier.
         tracking_dict["current_tier"] = 1
 
@@ -3468,7 +3889,7 @@ class ConversationSLATrackingService:
             or (ato_raw is not None and str(ato_raw).strip() != "")
         )
         # Set when the RR branch resolved the assignee via get_escalation_assignee_for_tier,
-        # which already applied the coverage redirect — so the generic redirect below must
+        # which already applied the coverage redirect - so the generic redirect below must
         # NOT run again (would be a 2nd hop, violating one-hop). Explicit-assignee paths are
         # NOT redirected yet → the block below handles them.
         coverage_applied_in_rr = False
@@ -3617,12 +4038,20 @@ class ConversationSLATrackingService:
         else:
             tracking_dict["initiated_at"] = _to_aware_utc(tracking_dict["initiated_at"])
 
+        # AC-A4/AC-A9: whether THIS request arrived inside the working window.
+        # Computed once here (not tied to whether current_tier_started_at ends up
+        # auto-derived below) and stamped on every return path - including an
+        # idempotent retry - because n8n reads it from every response to pick its
+        # in-hours vs out-of-hours auto-reply, not only on the first insert.
+        _normalized_start = _working_clock_start(self.db, now_utc)
+        in_working_hours = _normalized_start == _to_aware_utc(now_utc)
+
         if not tracking_dict.get("current_tier_started_at"):
             # Automatic start: the clock begins when work can actually begin.
             # initiated_at above keeps the true event instant for audit.
-            tracking_dict["current_tier_started_at"] = _working_clock_start(self.db, now_utc)
+            tracking_dict["current_tier_started_at"] = _normalized_start
         else:
-            # Caller-supplied start is authoritative — stored verbatim, not normalized.
+            # Caller-supplied start is authoritative - stored verbatim, not normalized.
             tracking_dict["current_tier_started_at"] = _to_aware_utc(tracking_dict["current_tier_started_at"])
 
         # Reset escalation and resolution fields
@@ -3664,57 +4093,78 @@ class ConversationSLATrackingService:
             tracking_dict["due_at"] = None
             tracking_dict["due_at_resolution"] = None
 
-        # Singleton check: one open conversation tracking per contact (mirrors the
-        # Respond.io conversation). Scoped to conversation rows — an active form-SLA
-        # stage row for the same contact must not block (or be returned by) this.
-        existing = self.db.query(ConversationSLATracking).filter(
-            ConversationSLATracking.respond_contact_id == tracking_dict["respond_contact_id"],
-            conversation_tracking_scope(),
-        ).order_by(
-            ConversationSLATracking.is_resolved.asc(),  # open first
-            ConversationSLATracking.created_at.desc(),
-        ).first()
+        # Ticket identity (AC-A1/AC-A2): a conversation SLA row is "this enquiry",
+        # keyed on the message that asked for a human. A contact may hold several
+        # open tickets at once; only a retry of the SAME trigger message is
+        # idempotent. Fall back to message_id (legacy n8n payloads carry no
+        # source_message_id yet), and - with neither - to the old one-open-per-
+        # contact singleton so a bare payload doesn't fan out.
+        if not tracking_dict.get("source_message_id") and tracking_dict.get("message_id") is not None:
+            tracking_dict["source_message_id"] = str(tracking_dict["message_id"])
+        identity_key = tracking_dict.get("source_message_id")
 
-        if existing:
-            if not bool(getattr(existing, "is_resolved", False)):
-                # Active conversation already tracked — idempotent hit. The new inbound
-                # message belongs to the same open Respond.io conversation: return the
-                # existing tracking untouched (clocks, assignee, agent, team) except for
-                # message_id, refreshed so inbox deep-links point at the latest message.
-                incoming_brand = normalise_brand_code(tracking_dict.get("brand_code"))
-                open_brand = normalise_brand_code(getattr(existing, "brand_code", None))
-                if incoming_brand != open_brand:
-                    # No behaviour change - the open conversation keeps the brand it was
-                    # routed with - but a spine that has started resolving a different
-                    # brand for the same conversation is worth seeing in the log.
-                    logger.info(
-                        "conversation SLA idempotent create carried brand %s while open "
-                        "tracking %s is routing brand %s; the open tracking's brand is kept.",
-                        incoming_brand or "all brands",
-                        getattr(existing, "id", "?"),
-                        open_brand or "all brands",
-                    )
-                if tracking_dict.get("message_id") is not None:
-                    setattr(existing, "message_id", tracking_dict["message_id"])
-                    self.db.commit()
-                    self.db.refresh(existing)
+        existing = None
+        if identity_key:
+            existing = self._open_ticket_for_identity(
+                str(tracking_dict["respond_contact_id"]), identity_key
+            )
+
+            if existing:
+                # AC-A2: retry of the same trigger message - the only case per-
+                # enquiry idempotency covers. Nothing refreshes, not even
+                # message_id: this is a no-op read of the ticket already opened.
+                self._log_reused_ticket_brand_mismatch(
+                    existing, tracking_dict.get("brand_code")
+                )
                 setattr(existing, "_already_active", True)
+                setattr(existing, "_in_working_hours", in_working_hours)
                 return existing
+            # No open row for THIS message: always a fresh ticket (AC-A1), even
+            # when the contact already holds other open tickets, and even when a
+            # PAST ticket for the same message id is resolved - that row is
+            # history now, never overwritten (per-enquiry identity, not a
+            # contact-level singleton).
+        else:
+            # No trigger-message identity on the payload at all: keep the legacy
+            # one-open-per-contact singleton so a bare call doesn't fan out.
+            existing = self.db.query(ConversationSLATracking).filter(
+                ConversationSLATracking.respond_contact_id == tracking_dict["respond_contact_id"],
+                conversation_tracking_scope(),
+            ).order_by(
+                ConversationSLATracking.is_resolved.asc(),  # open first
+                ConversationSLATracking.created_at.desc(),
+            ).first()
 
-            # Existing tracking is resolved — overwrite it for the new conversation.
-            # History is carried by event logs (kept: FK by tracking id), not by rows.
-            preserve_fields = {"id", "created_at", "respond_contact_id"}
-            for key, value in tracking_dict.items():
-                if key not in preserve_fields:
-                    setattr(existing, key, value)
+            if existing:
+                if not bool(getattr(existing, "is_resolved", False)):
+                    self._log_reused_ticket_brand_mismatch(
+                        existing, tracking_dict.get("brand_code")
+                    )
+                    setattr(existing, "_already_active", True)
+                    setattr(existing, "_in_working_hours", in_working_hours)
+                    return existing
 
-            self.db.commit()
-            self.db.refresh(existing)
-            self._write_assign_event_log(existing, covered_for_id=coverage_covered_for_id)
-            self._notify_assignment_on_create(existing)
-            self._fan_out_assignment_coverage(existing)
-            setattr(existing, "_overwrote_resolved", True)
-            return existing
+                # Existing tracking is resolved - overwrite it for the new
+                # conversation. History is carried by event logs (kept: FK by
+                # tracking id), not by rows.
+                preserve_fields = {"id", "created_at", "respond_contact_id"}
+                for key, value in tracking_dict.items():
+                    if key not in preserve_fields:
+                        setattr(existing, key, value)
+
+                self.db.commit()
+                self.db.refresh(existing)
+                self._write_assign_event_log(existing, covered_for_id=coverage_covered_for_id)
+                self._notify_assignment_on_create(existing)
+                self._fan_out_assignment_coverage(existing)
+                self._publish_conversation_event(
+                    existing,
+                    conversation_event_bus.EVENT_TICKET_CREATED,
+                    user_ids=[getattr(existing, "assigned_to_id", None)],
+                )
+                setattr(existing, "_overwrote_resolved", True)
+                setattr(existing, "_in_working_hours", in_working_hours)
+                return existing
 
         # Create new tracking record (set due_at_resolution explicitly so it is never omitted)
         tracking = ConversationSLATracking(**tracking_dict)
@@ -3723,11 +4173,43 @@ class ConversationSLATrackingService:
         if tracking_dict.get("due_at") is not None:
             setattr(tracking, "due_at", tracking_dict["due_at"])
         self.db.add(tracking)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            # The pre-query above is not a lock: two concurrent deliveries of the
+            # same trigger message both miss it, and the partial unique index on
+            # (respond_contact_id, source_message_id) rejects whichever INSERT
+            # lands second. That conflict IS the idempotency question asked
+            # again, so answer it the same way rather than 500-ing: n8n would
+            # retry straight back into the race, and meanwhile report a failed
+            # intervention for a ticket that exists. Any other integrity failure
+            # (a bad FK, say) has nothing to hand back and must still raise.
+            self.db.rollback()
+            winner = (
+                self._open_ticket_for_identity(
+                    str(tracking_dict["respond_contact_id"]), identity_key
+                )
+                if identity_key
+                else None
+            )
+            if winner is None:
+                raise
+            setattr(winner, "_already_active", True)
+            setattr(winner, "_in_working_hours", in_working_hours)
+            return winner
         self.db.refresh(tracking)
         self._write_assign_event_log(tracking, covered_for_id=coverage_covered_for_id)
         self._notify_assignment_on_create(tracking)
         self._fan_out_assignment_coverage(tracking)
+        # AC-K3: the assignee's pending-tasks widget shows this ticket now, not
+        # at the next poll. The idempotent-retry returns above deliberately do
+        # NOT reach here - nothing changed, so nothing needs refetching.
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_CREATED,
+            user_ids=[getattr(tracking, "assigned_to_id", None)],
+        )
+        setattr(tracking, "_in_working_hours", in_working_hours)
         return tracking
 
     def _write_assign_event_log(
@@ -3742,7 +4224,7 @@ class ConversationSLATrackingService:
         create hit cannot produce duplicate assign logs.
 
         Best-effort: the tracking row is already committed when this runs, so a
-        failure here must not fail the create — n8n would get a 500 for a create
+        failure here must not fail the create - n8n would get a 500 for a create
         that succeeded, and its retry would take the idempotent path which never
         backfills the log. Log a warning and continue instead.
         """
@@ -3794,7 +4276,7 @@ class ConversationSLATrackingService:
         n8n/Respond; the CRM now owns it so it fires regardless of the routing channel.
 
         In-app always; email/WhatsApp gated by the recipient's own assignment toggles
-        (notify_email_on_assignment / notify_whatsapp_on_assignment) — same matrix as
+        (notify_email_on_assignment / notify_whatsapp_on_assignment) - same matrix as
         reassign/escalate. Best-effort: the tracking row is already committed, so a
         failure here must never fail the create (n8n would get a 500 for a create that
         succeeded, and its retry takes the idempotent path which never re-notifies).
@@ -3803,7 +4285,7 @@ class ConversationSLATrackingService:
         ``occurrence`` overrides the dedup-key suffix (event_type ``assigned:<occ>``).
         Create/overwrite pass None → the key derives from the tier-clock start, so a
         repeat inbound at the same clock dedups. Manual reassign passes the per-action
-        change moment so re-assigning back to a prior assignee (A→B→A) still notifies —
+        change moment so re-assigning back to a prior assignee (A→B→A) still notifies -
         the tier clock does NOT restart on a same-team reassign, so a tier-start key
         would collide with the earlier A→ notification and silently drop the send."""
         import logging
@@ -3818,17 +4300,21 @@ class ConversationSLATrackingService:
             from app.services.form_sla_service import build_sla_whatsapp_data
 
             base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
-            detail = (
-                f"{base_url}/sla-management/conversation-sla-tracking/{tracking.id}"
-                if base_url
-                else ""
-            )
+            # UAC AC-G1: deep-link to the dashboard with the ticket targeted, not the
+            # standalone SLA detail page - the assignee answers from the "My Pending"
+            # drawer now, never Respond.io. The `(protected)` layout captures
+            # pathname+search on an unauthenticated hit and replays it after login
+            # (?callbackUrl=...), so the deep link survives sign-in.
+            detail = f"{base_url}/?ticket={tracking.id}" if base_url else ""
             ref = (self._resolve_my_pending_references([tracking]) or {}).get(
                 str(tracking.id)
             ) or "an SLA task"
 
             title = "An SLA task was assigned to you"
-            body = f"{ref} has been assigned to you."
+            # AC-G2: the clock statement sits BEFORE the link, so it survives a
+            # notification surface that truncates, and so WhatsApp's flattened
+            # single-line param reads "... assigned to you. Clock starts ...".
+            body = append_clock_line(f"{ref} has been assigned to you.", tracking)
             if detail:
                 body += f"\n\nOpen: {detail}"
             data = {
@@ -3864,7 +4350,7 @@ class ConversationSLATrackingService:
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
-        except Exception as e:  # noqa: BLE001 — best-effort; row already committed
+        except Exception as e:  # noqa: BLE001 - best-effort; row already committed
             log.warning(
                 "assignment notify failed for %s: %s", getattr(tracking, "id", "?"), e
             )
@@ -3875,7 +4361,7 @@ class ConversationSLATrackingService:
         create previously had no assignment notify at all, so coverage subscribers never
         heard about INITIAL assignments (only reassign/escalate/takeover fanned out).
         Mirrors _notify_reassignment's fan-out. The assignee notification itself stays
-        with n8n/Respond — we only add the coverage copies here. Never raises."""
+        with n8n/Respond - we only add the coverage copies here. Never raises."""
         import logging
 
         log = logging.getLogger(__name__)
@@ -3892,7 +4378,7 @@ class ConversationSLATrackingService:
             base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
             # Deep link to the dashboard "My pending tasks" → My Team, with the colleague's
             # task highlighted so the coverer can take it over (?team_task=<id>). NOT the
-            # detail page — the action they need (takeover) lives in the My Team widget.
+            # detail page - the action they need (takeover) lives in the My Team widget.
             team_link = f"{base_url}/?team_task={tracking.id}" if base_url else ""
             ref = (self._resolve_my_pending_references([tracking]) or {}).get(
                 str(tracking.id)
@@ -3905,12 +4391,16 @@ class ConversationSLATrackingService:
             # subscriber. Word it that way (auto-assign uses the normal "assigned to you"
             # notification, since the coverer IS the assignee there).
             cover_title = f"SLA task assigned to {covered_name}"
-            cover_body = f"{ref} has been assigned to {covered_name}."
+            # AC-G2: a coverer decides whether to take over from the deadline, so
+            # they get the same clock statement the assignee got.
+            cover_body = append_clock_line(
+                f"{ref} has been assigned to {covered_name}.", tracking
+            )
             cover_body += f"\n\nYou're receiving this because you cover for {covered_name}."
             if team_link:
                 cover_body += f"\n\nTake over: {team_link}"
             # Distinct event_type PER assignment occurrence so a re-assignment of the SAME
-            # (reused) conversation tracker after a resolve re-notifies coverers — the
+            # (reused) conversation tracker after a resolve re-notifies coverers - the
             # dedup key is (user, source_type, source_id, event_type) and the tracker id is
             # reused across conversations. Key off the assignment's start time (reset on
             # each new conversation). The email-key resolver strips the numeric suffix.
@@ -3945,15 +4435,104 @@ class ConversationSLATrackingService:
                 exc_info=True,
             )
 
-    def update_tracking(self, tracking_id: str, tracking_data: ConversationSLATrackingUpdate):
-        """Update a tracking record."""
+    def update_tracking(
+        self,
+        tracking_id: str,
+        tracking_data: ConversationSLATrackingUpdate,
+        *,
+        resolve_origin: str = "user",
+    ):
+        """Update a tracking record.
+
+        ``resolve_origin`` says WHO decided this resolve, and exists for exactly
+        one reason: the AC-M3 close-convo webhook must never answer n8n's own
+        resolve. A Respond-side close makes n8n resolve the ticket through
+        ``PUT /{tracking_id}`` with the API-key principal; firing our
+        close-convo webhook back at n8n from there makes n8n send the customer a
+        SECOND closing message. ``"api_key"`` suppresses that webhook (n8n
+        already knows - it closed the conversation); ``"user"`` (the default, and
+        what the widget's Resolve uses) fires it.
+
+        Deliberately NOT applied to the RQ Respond-close job: that is the
+        transport tidy-up (mark the conversation closed, idempotent), not a
+        message to the contact, so it keeps running on every resolve.
+        """
         from datetime import datetime, timezone
         from decimal import Decimal, ROUND_HALF_UP
         from app.models.user import User
-        
+
         tracking = self.get_tracking(tracking_id)
-        
+
+        # Snapshot the owner BEFORE anything is applied: resolving a
+        # conversation ticket deliberately UNSETS assigned_to_id (so n8n stops
+        # looking at the row), and the person whose pending list the ticket is
+        # leaving is exactly who needs to be told it left (S4.2, AC-K3).
+        assignee_before_update = getattr(tracking, "assigned_to_id", None)
+
         update_data = tracking_data.model_dump(exclude_unset=True)
+
+        # AC-E3 guard, enforced HERE (the shared update path both PUT
+        # /{tracking_id} and PUT/POST /integration/{tracking_id} call) rather
+        # than duplicated per-route: the sibling /integration/{tracking_id}
+        # route has no auth dependency and used to stamp is_responded (plus
+        # write a "response" event log) with no ambiguity check at all.
+        #
+        # Resolve the payload's `responded_by` (respond_user_id / email /
+        # users.id) to the internal user id BEFORE checking ambiguity: it
+        # identifies the ACTUAL replying user, which can differ from this
+        # tracking's own assignee (the n8n fallback resolves `tracking` via a
+        # separate contact-level "preferred" lookup) - see
+        # is_ambiguous_fallback_response for why that distinction matters.
+        # AC-I3: a duplicate respond is idempotent, not a refusal. Resolve has
+        # short-circuited on `_already_resolved` for a while; respond raised a
+        # 400 instead, and that asymmetry produced 53 refusals across 19 contacts
+        # on production data (one contact hit 17 times). Under multi-open tickets
+        # the 400 is actively harmful: it aborts n8n's Respond-app-reply fallback
+        # before the genuinely unanswered sibling is stamped. Strip only the
+        # responded-family fields (same shape as the AC-E3 ambiguity guard below,
+        # FINDING 5) so a resolve / assignment riding in the same payload still
+        # applies, and hand the caller a marker to branch on.
+        already_responded_skipped = False
+        if _coerce_flag(update_data.get("is_responded")) and bool(
+            getattr(tracking, "is_responded", False)
+        ):
+            already_responded_skipped = True
+            for _field in ("is_responded", "responded_at", "responded_by", "response_time"):
+                update_data.pop(_field, None)
+
+        ambiguous_responded_skipped = False
+        if bool(update_data.get("is_responded")) and not bool(
+            getattr(tracking, "is_responded", False)
+        ):
+            _raw_responded_by = update_data.get("responded_by")
+            _resolved_responded_by = None
+            if _raw_responded_by is not None and str(_raw_responded_by).strip():
+                _responded_by_value = str(_raw_responded_by).strip()
+                _responded_by_user = self.db.query(User).filter(
+                    (User.respond_user_id == _responded_by_value)
+                    | (User.id == _responded_by_value)
+                    | (User.email == _responded_by_value)
+                ).first()
+                if not _responded_by_user:
+                    raise handle_validation_error(
+                        f"User not found for responded_by (respond_user_id): {_responded_by_value}"
+                    )
+                _resolved_responded_by = _responded_by_user.id
+                # Reuse the already-resolved id below instead of re-querying it.
+                update_data["responded_by"] = _resolved_responded_by
+
+            if self.is_ambiguous_fallback_response(
+                tracking, responded_by=_resolved_responded_by
+            ):
+                # Strip ONLY the responded-family fields - the rest of the
+                # payload (assignment, tier, resolve, ...) still applies
+                # below, in this SAME call, instead of the whole update being
+                # silently discarded (the caller-visible marker is set on
+                # `tracking` just before the final return, once every other
+                # field this call touched has actually been applied).
+                ambiguous_responded_skipped = True
+                for _field in ("is_responded", "responded_at", "responded_by", "response_time"):
+                    update_data.pop(_field, None)
 
         # Resolve agent_code → agent_id FK if caller passed a code string
         raw_agent_code = update_data.pop("agent_code", None)
@@ -3969,7 +4548,7 @@ class ConversationSLATrackingService:
                 )
             update_data["agent_id"] = str(_agent.id)
         elif "agent_code" in tracking_data.model_fields_set and raw_agent_code is None:
-            # Explicitly set to null — clear the FK
+            # Explicitly set to null - clear the FK
             update_data["agent_id"] = None
 
         # Explicitly clear assignee when assigned_to is None (keep in sync with Respond.io)
@@ -3993,10 +4572,8 @@ class ConversationSLATrackingService:
             update_data["assigned_to_id"] = user.id
         
         # Coerce flags to bool for consistent handling (e.g. JSON "true", 1, or string "true")
-        is_responded = update_data.get("is_responded")
-        is_responded = is_responded is True or (isinstance(is_responded, str) and is_responded.lower() in ("true", "1")) or is_responded == 1
-        is_resolved = update_data.get("is_resolved")
-        is_resolved = is_resolved is True or (isinstance(is_resolved, str) and is_resolved.lower() in ("true", "1")) or is_resolved == 1
+        is_responded = _coerce_flag(update_data.get("is_responded"))
+        is_resolved = _coerce_flag(update_data.get("is_resolved"))
         # If client sent resolved_by or resolved_at without is_resolved, treat as marking resolved
         if not is_resolved and (update_data.get("resolved_by") or ("resolved_at" in update_data and update_data.get("resolved_at") is not None)):
             is_resolved = True
@@ -4008,10 +4585,10 @@ class ConversationSLATrackingService:
             setattr(tracking, "_already_resolved", True)
             return tracking
 
-        # Smart handling for is_responded (same as responded_at / responded_by)
+        # Smart handling for is_responded (same as responded_at / responded_by).
+        # An already-responded tracking never reaches here: the AC-I3 short-circuit
+        # above popped the responded-family fields out of update_data.
         if is_responded:
-            if bool(getattr(tracking, "is_responded", False)):
-                raise handle_validation_error("Conversation is already responded.")
             _resp_by = update_data.get("responded_by")
             if _resp_by is None or (isinstance(_resp_by, str) and not str(_resp_by).strip()):
                 _aid = self._resolve_tracking_assignee_user_id(tracking)
@@ -4061,6 +4638,10 @@ class ConversationSLATrackingService:
         
         # Smart handling for is_resolved (same pattern: resolved_at, resolution_duration, resolved_by as user UUID)
         resolved_in_this_request = False
+        # AC-M3: the close webhook names the team as the contact-facing fallback
+        # when the resolver has no Respond mapping. Snapshot it BEFORE the resolve
+        # blanks agent_id / team_set_code below - after the commit it is gone.
+        close_team_label: Optional[str] = None
         if is_resolved:
             # Short-circuit above already returned for already-resolved case.
             resolved_in_this_request = True
@@ -4079,6 +4660,9 @@ class ConversationSLATrackingService:
                 getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES
             )
             if not _is_form_tracker:
+                close_team_label = (self._ticket_team_labels([tracking]) or {}).get(
+                    str(tracking.id)
+                )
                 update_data["assigned_to"] = None
                 update_data["assigned_to_id"] = None
                 update_data["agent_id"] = None
@@ -4143,7 +4727,7 @@ class ConversationSLATrackingService:
         # Force NULL for routing / external ids on resolve. Some session edge cases (e.g. after a prior
         # commit in the same request) can leave ORM-only clears from not flushing; a direct UPDATE
         # matches DB state (used by test-overrides "Mark as resolved" and all other resolve paths).
-        # Skip for form trackers — they keep agent / team / assignee for audit.
+        # Skip for form trackers - they keep agent / team / assignee for audit.
         from app.services.form_sla_service import FORM_SLA_TYPES as _FORM_TYPES
 
         if resolved_in_this_request and (
@@ -4159,7 +4743,7 @@ class ConversationSLATrackingService:
         self.db.refresh(tracking)
 
         # Resolving is the strongest "I'm on it" signal: void any pending takeover on
-        # this tracking (implicit veto, AC-VOID-1). Best-effort — never raises.
+        # this tracking (implicit veto, AC-VOID-1). Best-effort - never raises.
         if resolved_in_this_request:
             from app.services.sla_takeover_service import SlaTakeoverService
 
@@ -4167,15 +4751,120 @@ class ConversationSLATrackingService:
 
         # Best-effort: a resolved CONVERSATION SLA closes the matching Respond.io
         # conversation (Resolve = Respond close, per product decision). Form trackers
-        # are excluded — their Respond conversation lifecycle is owned elsewhere.
+        # are excluded - their Respond conversation lifecycle is owned elsewhere.
         # Post-commit side effect: must never raise (the resolve already succeeded);
         # the retry path is idempotent and would not re-attempt the close otherwise.
+        #
+        # AC-C3/AC-F1 (multi-open consumer audit): a contact can now hold several
+        # open tickets against ONE shared Respond conversation. Closing that shared
+        # conversation because ONE ticket resolved would sever transport for the
+        # sibling ticket's unfinished work - a real regression this predates only
+        # because there used to be at most one open ticket per contact. Only close
+        # Respond when this was the contact's LAST open conversation-scope ticket;
+        # skip (byte-identical to "do nothing") while any sibling remains open. Full
+        # retirement of this side effect even for the single-ticket case (the literal
+        # reading of AC-C3: "no Respond API call is made" on ANY ticket resolve) is an
+        # open product question for the dedicated ticket-resolve build - not applied
+        # here; flagged for an orchestrator decision.
         if resolved_in_this_request and (
             getattr(tracking, "source_entity_type", None) not in _FORM_TYPES
         ):
-            self._close_respond_conversation_best_effort(tracking)
+            if not self._has_other_open_conversation_siblings(tracking):
+                self._close_respond_conversation_best_effort(tracking)
+                # AC-M3: and tell n8n directly, so respond-close-convo runs with
+                # a real resolver identity instead of inferring one from an API
+                # close. Additive to the RQ job above, which stays as the
+                # transport tidy-up.
+                #
+                # AC-M3 hardening: ONLY for a CRM-origin (user) resolve. An
+                # API-key resolve came FROM n8n's respond-close-convo lane after
+                # a Respond-side close, and answering it would have n8n send the
+                # customer a second closing message - the loop.
+                if resolve_origin != "api_key":
+                    self._notify_close_convo_webhook_best_effort(tracking, close_team_label)
 
+        # FINDING 5: caller-visible marker, set only once every other field
+        # this call touched (assignment, tier, resolve, ...) has been applied
+        # and committed above - routes read it to report
+        # `ambiguous_responded_skipped` without re-deriving it.
+        if ambiguous_responded_skipped:
+            setattr(tracking, "_ambiguous_responded_skipped", True)
+        # AC-I3: same contract as `_already_resolved` - a transient marker the
+        # route reads and exposes as a response field. It dies on re-query, so
+        # routes must read it BEFORE calling get_tracking() again.
+        if already_responded_skipped:
+            setattr(tracking, "_already_responded", True)
+
+        # AC-K3: the shared write path for resolve, respond and assignment
+        # changes - one poke covers every route that funnels through here.
+        # Both owners: a resolve clears the assignee, an assignment change
+        # replaces them, and either way two pending lists can be stale.
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_UPDATED,
+            user_ids=[assignee_before_update, getattr(tracking, "assigned_to_id", None)],
+        )
         return tracking
+
+    def _has_other_open_conversation_siblings(
+        self, tracking: ConversationSLATracking
+    ) -> bool:
+        """True when another OPEN conversation-scope tracking exists for the same
+        contact (AC-F1: multi-open tickets). Used to gate the Respond-close side
+        effect on resolve - see the caller's comment."""
+        contact_id = getattr(tracking, "respond_contact_id", None)
+        if not contact_id:
+            return False
+        return (
+            self.db.query(ConversationSLATracking.id)
+            .filter(
+                ConversationSLATracking.respond_contact_id == contact_id,
+                ConversationSLATracking.id != tracking.id,
+                ConversationSLATracking.is_resolved.is_(False),
+                conversation_tracking_scope(),
+            )
+            .first()
+            is not None
+        )
+
+    def _notify_close_convo_webhook_best_effort(
+        self, tracking: ConversationSLATracking, team_name: Optional[str] = None
+    ) -> None:
+        """Fire the direct ``respond-close-convo`` webhook for a resolved ticket
+        (UAC AC-M3). Same gate as the RQ close above: only when this was the
+        contact's LAST open conversation-scope ticket.
+
+        Post-commit side effect - the notify function already swallows its own
+        failures, and this wrapper catches anything it cannot (an import error,
+        a dead session) so a resolve that succeeded never reports a 500."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+        try:
+            from app.services.crm_close_convo_webhook import notify_ticket_resolved_close
+
+            notify_ticket_resolved_close(
+                self.db,
+                tracking_id=str(tracking.id),
+                respond_contact_id=(
+                    str(tracking.respond_contact_id)
+                    if getattr(tracking, "respond_contact_id", None)
+                    else None
+                ),
+                resolved_by_user_id=(
+                    str(tracking.resolved_by)
+                    if getattr(tracking, "resolved_by", None)
+                    else None
+                ),
+                resolved_at=getattr(tracking, "resolved_at", None),
+                team_name=team_name,
+            )
+        except Exception as exc:  # noqa: BLE001 - the resolve already committed
+            logger.warning(
+                "Resolve: respond-close-convo webhook failed for tracking %s: %s",
+                getattr(tracking, "id", None),
+                exc,
+            )
 
     def _close_respond_conversation_best_effort(
         self, tracking: ConversationSLATracking
@@ -4183,8 +4872,8 @@ class ConversationSLATrackingService:
         """Enqueue the Respond.io conversation close for a resolved conversation SLA.
 
         The actual close + its Respond outbox row (success AND failure, with the
-        Respond HTTP status/body on 4xx/5xx) run on the ``respond_io`` worker queue
-        — decoupled from the request so a Respond failure never blocks the resolve,
+        Respond HTTP status/body on 4xx/5xx) run on the ``respond_io`` worker queue,
+        decoupled from the request so a Respond failure never blocks the resolve,
         and so a prod failure is diagnosable via ``integration_logs``. Enqueue itself
         is best-effort (never raises; the resolve already committed)."""
         import logging
@@ -4200,7 +4889,7 @@ class ConversationSLATrackingService:
                 queue_name="respond_io",
                 job_timeout=60,
             )
-        except Exception as exc:  # noqa: BLE001 — enqueue is best-effort
+        except Exception as exc:  # noqa: BLE001 - enqueue is best-effort
             logger.warning(
                 "Resolve: failed to enqueue Respond.io close for tracking %s: %s",
                 getattr(tracking, "id", None),
@@ -4322,7 +5011,7 @@ class ConversationSLATrackingService:
 
         # Reopen (is_resolved explicitly False): recompute due dates from the (possibly just
         # overridden) current_tier_started_at so a previously-overdue row gets a clean clock.
-        # Skip when current_tier_started_at was supplied in this same request — its branch
+        # Skip when current_tier_started_at was supplied in this same request - its branch
         # above already recomputed due_at / due_at_resolution.
         if updates.get("is_resolved") is False and "current_tier_started_at" not in updates:
             started = _to_aware_utc(
@@ -4905,6 +5594,52 @@ class ConversationSLATrackingService:
             "responded_resolution_overdue_breakdown": responded_resolution_overdue_breakdown,
         }
 
+    def _publish_conversation_event(
+        self,
+        tracking: ConversationSLATracking,
+        event_type: str,
+        *,
+        user_ids: Iterable[Optional[str]] = (),
+    ) -> None:
+        """Poke the live-thread stream about this ticket (UAC AC-K3, slice S4.2).
+
+        Conversation scope ONLY: form-SLA stage rows share this table and belong
+        to the form detail pages, not to the ticket drawer or the conversation
+        worklist, so they never reach this channel (same discrimination as
+        ``conversation_tracking_scope``, applied on the row in hand).
+
+        One event per distinct user whose worklist changed - a reassign or an
+        escalation changes TWO pending lists, and poking only the new owner
+        leaves the old one showing a task they no longer hold. Each event also
+        carries the contact so an open drawer refetches.
+
+        Post-commit and best-effort in every direction: the row is already
+        saved, so a broker outage may cost liveness (the FE's slow poll takes
+        over) but must never surface as a failure for work that succeeded.
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        try:
+            if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+                return
+            contact_id = self._respond_io_identifier_for_tracking(tracking)
+            entity_id = str(getattr(tracking, "id", "") or "") or None
+            recipients = {str(u) for u in user_ids if u}
+            for user_id in sorted(recipients) or [None]:
+                conversation_event_bus.publish(
+                    event_type,
+                    contact_id=contact_id,
+                    user_id=user_id,
+                    entity_id=entity_id,
+                )
+        except Exception:  # noqa: BLE001 - the mutation already committed
+            _module_logger.warning(
+                "conversation event publish failed for tracking %s (%s).",
+                getattr(tracking, "id", "?"),
+                event_type,
+                exc_info=True,
+            )
+
     def _respond_io_identifier_for_tracking(self, tracking: ConversationSLATracking) -> Optional[str]:
         if tracking.contact and getattr(tracking.contact, "respond_io_id", None):
             s = str(tracking.contact.respond_io_id).strip()
@@ -4922,6 +5657,176 @@ class ConversationSLATrackingService:
 
         client = RespondClient()
         return client.list_messages(ident, limit=limit, cursor=cursor)
+
+    def _thread_contact_for_tracking(self, tracking: ConversationSLATracking):
+        """The contact descriptor the thread reads need, or None when unlinked."""
+        from app.services.conversation_thread_service import thread_contact_for
+
+        if not self._respond_io_identifier_for_tracking(tracking):
+            return None
+        return thread_contact_for(getattr(tracking, "contact", None))
+
+    # -- contact reference resolution --------------------------------------
+
+    def resolve_contact_by_ref(self, contact_ref: str) -> Optional[RespondContact]:
+        """A ``RespondContact`` from whatever identifier the caller holds.
+
+        Accepts a Respond.io contact id, a ``respond_contacts.id`` or a phone
+        number in any of the shapes the integration lookups already tolerate -
+        the SAME resolution order as ``resolve_internal_respond_contact_id``,
+        which this delegates to rather than re-deriving.
+        """
+        internal_id = self.resolve_internal_respond_contact_id(contact_ref)
+        if not internal_id:
+            return None
+        return self.db.query(RespondContact).filter(RespondContact.id == internal_id).first()
+
+    def require_contact(self, contact_ref: str) -> RespondContact:
+        contact = self.resolve_contact_by_ref(contact_ref)
+        if contact is None:
+            raise handle_not_found("Contact", str(contact_ref))
+        return contact
+
+    # -- thread reads, shared by the ticket-keyed and contact-keyed routes --
+
+    def _thread_page_for_contact(
+        self,
+        contact,
+        *,
+        before: Optional[str],
+        after: Optional[str],
+        around: Optional[str],
+        limit: int,
+    ) -> dict:
+        """The page read itself, given an already-authorised thread contact.
+
+        Both entry points (ticket-keyed for the drawer, contact-keyed for the
+        inbox) end here, so the response shape is one implementation and cannot
+        drift between the two surfaces. Authorisation happens BEFORE this - the
+        two surfaces have deliberately different gates (AC-N2).
+        """
+        from app.services import conversation_thread_service as thread_service
+        from app.services.integration_service import RespondClient
+
+        if contact is None:
+            return thread_service.empty_page(limit=limit, error="No Respond.io contact linked")
+        return thread_service.fetch_thread_page(
+            self.db,
+            contact,
+            before=before,
+            after=after,
+            around=around,
+            limit=limit,
+            # Per CONTACT, not the deployment default: a contact on any other
+            # Respond workspace 401s on the default key and the page silently
+            # degrades to the text-only local lane, which is exactly what
+            # AC-L7's lane order was revised to avoid.
+            client=RespondClient.for_identifier(self.db, contact.respond_io_id),
+        )
+
+    def _thread_search_for_contact(self, contact, *, q: str, limit: int) -> dict:
+        from app.services import conversation_thread_service as thread_service
+
+        if contact is None:
+            return thread_service.empty_search(q=q, error="No Respond.io contact linked")
+        return thread_service.search_thread(self.db, contact, q=q, limit=limit)
+
+    def fetch_contact_thread_page(
+        self,
+        contact_ref: str,
+        *,
+        before: Optional[str] = None,
+        after: Optional[str] = None,
+        around: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict:
+        """One scroll-back window of a contact's thread, keyed by the CONTACT
+        (AC-N3).
+
+        No ticket scope: the route already required
+        ``sla_management.conversations.view``, which is the whole point of the
+        inbox - reading a conversation is a permission, not an assignment.
+        """
+        from app.services.conversation_thread_service import thread_contact_for
+
+        contact = self.require_contact(contact_ref)
+        return self._thread_page_for_contact(
+            thread_contact_for(contact),
+            before=before,
+            after=after,
+            around=around,
+            limit=limit,
+        )
+
+    def search_contact_thread(self, contact_ref: str, *, q: str, limit: int = 100) -> dict:
+        """In-thread search keyed by the CONTACT (AC-N3)."""
+        from app.services.conversation_thread_service import thread_contact_for
+
+        contact = self.require_contact(contact_ref)
+        return self._thread_search_for_contact(thread_contact_for(contact), q=q, limit=limit)
+
+    def _ticket_tracking_in_scope(self, tracking_id: str, viewer_user_id: str):
+        """This conversation ticket, or a 404.
+
+        One 404 for three different refusals - no such row, a form-SLA stage
+        (read from the form record's own chat panel), and a viewer outside the
+        ticket's scope - because a 403 on the third would confirm the id to a
+        stranger. Same rule and same shape as ``get_ticket_detail`` and
+        ``TicketCommentService._tracking_in_scope``.
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        tracking = self.get_tracking(tracking_id, load_event_logs=False)
+        if not tracking or getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            raise handle_not_found("Conversation SLA tracking", tracking_id)
+        if not self.can_user_act_on_tracking(viewer_user_id, tracking):
+            raise handle_not_found("Conversation SLA tracking", tracking_id)
+        return tracking
+
+    def require_ticket_in_scope(self, tracking_id: str, viewer_user_id: str):
+        """Public name for the ticket-scope gate, for routes that need the gate
+        without a read attached (the media proxy)."""
+        return self._ticket_tracking_in_scope(tracking_id, viewer_user_id)
+
+    def fetch_conversation_thread_page(
+        self,
+        tracking_id: str,
+        *,
+        viewer_user_id: str,
+        before: Optional[str] = None,
+        after: Optional[str] = None,
+        around: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict:
+        """One scroll-back window of this tracking's contact thread (AC-L7).
+
+        Assignee-or-manager scoped like every sibling ticket read: this returns
+        a contact's WhatsApp conversation, so an unscoped version let any
+        authenticated user read any contact's thread from a guessed id. The
+        contact-keyed twin (``fetch_contact_thread_page``) shares the read but
+        NOT the gate - see AC-N2.
+        """
+        tracking = self._ticket_tracking_in_scope(tracking_id, viewer_user_id)
+        return self._thread_page_for_contact(
+            self._thread_contact_for_tracking(tracking),
+            before=before,
+            after=after,
+            around=around,
+            limit=limit,
+        )
+
+    def search_conversation_thread(
+        self, tracking_id: str, *, viewer_user_id: str, q: str, limit: int = 100
+    ) -> dict:
+        """In-thread message search for this tracking's contact (AC-L8).
+
+        Assignee-or-manager scoped: free text over a stranger's conversation is
+        the worse half of an unscoped thread read.
+        """
+        tracking = self._ticket_tracking_in_scope(tracking_id, viewer_user_id)
+        return self._thread_search_for_contact(
+            self._thread_contact_for_tracking(tracking), q=q, limit=limit
+        )
 
     def send_conversation_reply_for_tracking(
         self,
@@ -4988,3 +5893,982 @@ class ConversationSLATrackingService:
             assignee_respond_user_id=resolve_assignee_respond_user_id_from_tracking(self.db, tracking),
         )
         return response if isinstance(response, dict) else {}
+
+    def mark_ticket_responded(
+        self,
+        tracking: ConversationSLATracking,
+        *,
+        responded_by_user_id: Optional[str] = None,
+        reason: str = "Responded from the CRM.",
+        responded_at: Optional[datetime] = None,
+    ) -> ConversationSLATracking:
+        """Stamp is_responded/responded_at/responded_by/response_time on
+        ``tracking`` ONLY (UAC AC-E1) - a CRM-authoritative ticket-context send,
+        always unambiguous (the caller already picked this exact ticket in the
+        drawer). Unlike the n8n Respond-app-reply fallback (the ambiguity guard
+        in the ``PUT /{tracking_id}`` route, AC-E3), this never checks sibling
+        tickets. No-op when the ticket is already responded - only the FIRST
+        reply stops the response clock; later sends on the same ticket are
+        ordinary conversation, not a new "first response". "Already responded"
+        is decided by the WRITE, not by the read before it: the drawer send and
+        n8n's Respond-app-reply fallback are separate requests that can both see
+        an unanswered ticket, so the stamp is a conditional UPDATE and only the
+        request that actually changed the row writes the response event log.
+
+        ``responded_at`` lets a caller that knows WHEN the reply happened supply
+        it (the Respond-app-reply endpoint forwards n8n's `replied_at`), so the
+        response time reflects the reply rather than the moment the webhook was
+        processed. Defaults to now.
+        """
+        from decimal import Decimal, ROUND_HALF_UP
+
+        if bool(getattr(tracking, "is_responded", False)):
+            return tracking
+
+        responded_at = _to_aware_utc(responded_at) or _now_utc()
+        response_time = None
+        initiated_at = getattr(tracking, "initiated_at", None)
+        if isinstance(initiated_at, datetime):
+            initiated_at_utc = _to_aware_utc(initiated_at)
+            if initiated_at_utc is not None:
+                duration = (responded_at - initiated_at_utc).total_seconds() / 3600
+                response_time = Decimal(str(max(0, duration))).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+        responded_by = responded_by_user_id or self._resolve_tracking_assignee_user_id(tracking)
+
+        # The guard above is a read, and a read holds nothing: a concurrent
+        # reply passes it too, then overwrites this stamp and adds a second
+        # "response" event log for one enquiry. Let the database arbitrate -
+        # rowcount 0 means somebody else stopped the clock first, so this call
+        # is the no-op the docstring promises.
+        won = (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.id == tracking.id,
+                ConversationSLATracking.is_responded.is_(False),
+            )
+            .update(
+                {
+                    "is_responded": True,
+                    "responded_at": responded_at,
+                    "responded_by": responded_by,
+                    "response_time": response_time,
+                },
+                synchronize_session=False,
+            )
+        )
+        self.db.commit()
+        self.db.refresh(tracking)
+        if not won:
+            return tracking
+
+        alabel, aid = event_log_assignee_fields(self.db, responded_by)
+        self.create_event_log(
+            ConversationSLAEventLogCreate(
+                sla_tracking_id=str(tracking.id),
+                event_type="response",
+                from_tier=int(getattr(tracking, "current_tier", 0) or 0),
+                to_tier=int(getattr(tracking, "current_tier", 0) or 0),
+                assigned_to=alabel,
+                assigned_to_id=aid,
+                reason=reason,
+            )
+        )
+        # Only the request that actually stopped the clock pokes (the early
+        # return above covers the loser of the race and every later send): the
+        # response chip changed for this ticket, nothing else did.
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_UPDATED,
+            user_ids=[getattr(tracking, "assigned_to_id", None)],
+        )
+        return tracking
+
+    def mark_ticket_responded_by_id(
+        self,
+        tracking_id: str,
+        *,
+        responded_by_user_id: Optional[str] = None,
+        reason: str = "Responded from the CRM.",
+        expect_respond_io_id: Optional[str] = None,
+    ) -> Optional[ConversationSLATracking]:
+        """``mark_ticket_responded`` for a caller that holds only the ticket id.
+
+        Used by the manual-template worker send: the drawer's "Send template"
+        goes through the shared ``/conversation/template-message`` route, which
+        queues delivery, so the stamp happens in the worker AFTER the send
+        succeeded (an out-of-window template reply must stop the response clock
+        exactly like an in-window text reply - otherwise the ticket breaches
+        while visibly answered).
+
+        Returns the stamped tracking, or None when there is nothing to stamp.
+        Never raises for "not applicable":
+
+        - unknown id -> None (a stale queued job is not an error)
+        - form-SLA stage row -> None (different family; form SLA owns its own
+          clocks, see conversation_tracking_scope)
+        - ``expect_respond_io_id`` set and the ticket's contact is somebody else
+          -> None. The tracking id arrives from the client while the identifier
+          is resolved server-side from the entity, so this pins the stamp to the
+          contact who ACTUALLY received the template.
+        - already responded -> ``mark_ticket_responded`` no-ops (only the FIRST
+          reply stops the clock).
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        # Direct query, not get_tracking(): a stale queued job naming a deleted
+        # row must be a no-op, not a 404 that fails the RQ job.
+        tracking = (
+            self.db.query(ConversationSLATracking)
+            .filter(ConversationSLATracking.id == str(tracking_id))
+            .first()
+        )
+        if not tracking:
+            return None
+        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            return None
+        if expect_respond_io_id:
+            actual = self._respond_io_identifier_for_tracking(tracking)
+            if str(actual or "") != str(expect_respond_io_id):
+                return None
+        return self.mark_ticket_responded(
+            tracking, responded_by_user_id=responded_by_user_id, reason=reason
+        )
+
+    def apply_agent_reply(
+        self,
+        *,
+        contact_identifier: str,
+        replied_by: Optional[str] = None,
+        replied_at: Optional[datetime] = None,
+    ) -> dict:
+        """A staff member replied in the Respond app: stop the right ticket's
+        response clock, or say honestly why nothing was stamped (AC-I4).
+
+        This owns the REVISED AC-E3 rule (2026-08-13) in ONE place, keyed on the
+        CONTACT first and the replier second:
+
+          1. the contact has exactly ONE open unanswered ticket -> stamp it,
+             whoever replied. The response clock measures "did the contact get a
+             human response", not "did the assigned person type it": a ticket
+             raised on an already-assigned Respond conversation is owned by the
+             CRM round-robin pick (AC-E6) while the Respond conversation stays
+             with somebody else, so a replier-keyed rule found nothing and let
+             the ticket breach while a human was actively answering it.
+          2. 2+ open unanswered -> narrow by the replier. Stamp only when they
+             own exactly one; otherwise there is no basis to guess which enquiry
+             they answered, so change nothing ("ambiguous").
+          3. zero open unanswered -> "no_open_ticket". Also the idempotent
+             replay: a second delivery of the same reply finds the ticket
+             already answered and lands here rather than re-stamping.
+
+        Replaces the n8n `respond-send-user` raw SQL, which selected by
+        (arbitrary first policy, is_responded=false, assigned_to=replier) with NO
+        CONTACT PREDICATE and PUT once per row - so one reply to one contact
+        stamped every unanswered ticket that agent owned across ALL contacts.
+
+        Returns the caller-facing dict {matched, tracking_id, skipped_reason,
+        open_ticket_count}; never raises for "nothing to do".
+        """
+        result = {
+            "matched": False,
+            "tracking_id": None,
+            "skipped_reason": "no_open_ticket",
+            "open_ticket_count": 0,
+        }
+
+        internal_contact_id = self.resolve_internal_respond_contact_id(contact_identifier)
+        if not internal_contact_id:
+            # An unknown contact and a contact with nothing open are the same
+            # answer to the caller's question, and neither is an error.
+            return result
+
+        candidates = (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.respond_contact_id == internal_contact_id,
+                ConversationSLATracking.is_resolved.is_(False),
+                ConversationSLATracking.is_responded.is_(False),
+                conversation_tracking_scope(),
+            )
+            .order_by(ConversationSLATracking.created_at.asc())
+            .all()
+        )
+        result["open_ticket_count"] = len(candidates)
+        if not candidates:
+            return result
+
+        replier_user_id = self._resolve_replier_user_id(replied_by)
+
+        if len(candidates) == 1:
+            target = candidates[0]
+        else:
+            owned = [
+                t
+                for t in candidates
+                if replier_user_id
+                and str(getattr(t, "assigned_to_id", "") or "") == str(replier_user_id)
+            ]
+            if len(owned) != 1:
+                result["skipped_reason"] = "ambiguous"
+                return result
+            target = owned[0]
+
+        self.mark_ticket_responded(
+            target,
+            responded_by_user_id=replier_user_id,
+            reason="Replied from the Respond app.",
+            responded_at=replied_at,
+        )
+        result["matched"] = True
+        result["tracking_id"] = str(target.id)
+        result["skipped_reason"] = None
+        return result
+
+    def _resolve_replier_user_id(self, replied_by: Optional[str]) -> Optional[str]:
+        """Map a Respond user id / CRM users.id / email to the internal user id.
+
+        Returns None when it maps to nobody - a Respond user with no CRM account
+        is a real, recurring state and must NOT abort the reply signal (the
+        single-open-ticket branch stamps regardless of who replied, falling back
+        to the ticket's own assignee for attribution).
+        """
+        from app.models.user import User
+
+        value = str(replied_by or "").strip()
+        if not value:
+            return None
+        user = (
+            self.db.query(User)
+            .filter(
+                (User.respond_user_id == value)
+                | (User.id == value)
+                | (User.email == value)
+            )
+            .first()
+        )
+        return str(user.id) if user else None
+
+    def is_ambiguous_fallback_response(
+        self, tracking: ConversationSLATracking, responded_by: Optional[str] = None
+    ) -> bool:
+        """UAC AC-E3: true when the REPLYING user holds 2+ OPEN, UNANSWERED
+        conversation-scope tickets for the same contact - the n8n
+        Respond-app-reply fallback has no way to tell which enquiry they
+        actually answered, so it must change nothing (the CRM ticket-send
+        path, ``mark_ticket_responded``, is authoritative instead).
+
+        ``responded_by`` is the replying user's internal id when the caller
+        identified one (e.g. resolved from the payload in ``update_tracking``
+        before this call) - it takes priority over ``tracking``'s own
+        assignee. This matters: the n8n fallback resolves ``tracking`` itself
+        via a SEPARATE contact-level "preferred" lookup that can differ from
+        who actually replied, so keying purely on ``tracking.assigned_to_id``
+        can miss real ambiguity held by the true replier (FINDING 2a) - and
+        with neither an assignee, checking against nobody is meaningless, so
+        it is never ambiguous.
+
+        Only UNANSWERED siblings count: one already responded to (still open,
+        awaiting resolve) is no longer a candidate for "which ticket did this
+        NEW reply answer", so a lone still-unanswered ticket is never
+        ambiguous even with answered siblings around (FINDING 2b).
+
+        Form-SLA rows are never ambiguous (per-entity, not contact-shared).
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            return False
+        if bool(getattr(tracking, "is_responded", False)):
+            return False
+        contact_id = getattr(tracking, "respond_contact_id", None)
+        target_assignee_id = responded_by or getattr(tracking, "assigned_to_id", None)
+        if not contact_id or not target_assignee_id:
+            return False
+        sibling_count = (
+            self.db.query(ConversationSLATracking.id)
+            .filter(
+                ConversationSLATracking.respond_contact_id == contact_id,
+                ConversationSLATracking.assigned_to_id == target_assignee_id,
+                ConversationSLATracking.is_resolved.is_(False),
+                ConversationSLATracking.is_responded.is_(False),
+                conversation_tracking_scope(),
+            )
+            .count()
+        )
+        return sibling_count > 1
+
+    def _window_and_template(
+        self,
+        *,
+        identifier: Optional[str],
+        respond_contact_id: Optional[str],
+        sender_name: str,
+        entity_id: str,
+    ) -> dict:
+        """The composer's two facts: is the 24h window open, and what does the
+        out-of-window ``conversation_chat`` template look like filled in.
+
+        ONE core for both surfaces - the ticket drawer reads it off
+        ``get_ticket_detail`` (bundled so the drawer opens in one round trip)
+        and the Conversations inbox reads it off ``get_contact_window``, so the
+        two composers can never disagree about the window they are in. The
+        window resolution is a live Respond.io call (15s timeout), so callers
+        that are ``async def`` must run this in a threadpool.
+        """
+        from app.services.respond_chat_template_service import (
+            get_chat_template_preview,
+            get_window_state_for,
+        )
+
+        if not identifier:
+            return {
+                "window": {"open": False, "expires_at": None},
+                "chat_template": {"configured": False, "reason": "no_contact"},
+            }
+        window = get_window_state_for(
+            self.db, identifier=identifier, respond_contact_id=respond_contact_id
+        )
+        return {
+            "window": {"open": bool(window.get("open")), "expires_at": None},
+            "chat_template": get_chat_template_preview(
+                self.db,
+                identifier=identifier,
+                respond_contact_id=respond_contact_id,
+                chat_use_case="conversation_chat",
+                sender_name=sender_name,
+                entity_id=entity_id,
+                context_builder=None,
+            ),
+        }
+
+    def get_contact_window(self, contact_ref: str, *, sender_name: str) -> dict:
+        """Composer state for a CONTACT with no ticket in hand (UAC AC-N3).
+
+        Same ``{window, chat_template}`` pair the drawer reads off the ticket
+        detail, so the inbox composer can smart-send identically: render the
+        template inline with the message slot editable when the window is shut,
+        a plain textbox when it is open.
+        """
+        contact = self.require_contact(contact_ref)
+        return self._window_and_template(
+            identifier=str(getattr(contact, "respond_io_id", "") or "").strip() or None,
+            respond_contact_id=str(contact.id),
+            sender_name=sender_name,
+            entity_id=str(contact.id),
+        )
+
+    def get_ticket_detail(
+        self,
+        tracking_id: str,
+        *,
+        viewer_user_id: str,
+        sender_name: str,
+    ) -> dict:
+        """Drawer header + composer state for one intervention ticket (UAC AC-C1).
+
+        Assembles the window + out-of-window chat-template preview INLINE (the
+        same DB-only helpers the shared composer's standalone endpoints use) so
+        the drawer opens in one round trip instead of three. Raises
+        ``handle_not_found`` both for a missing tracking and for a viewer
+        outside its visibility scope (never leaks existence via a 403).
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        tracking = self.get_tracking(tracking_id, load_event_logs=False)
+        if not tracking or getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            raise handle_not_found("Conversation SLA tracking", tracking_id)
+        if not self.can_user_act_on_tracking(viewer_user_id, tracking):
+            raise handle_not_found("Conversation SLA tracking", tracking_id)
+
+        contact = getattr(tracking, "contact", None)
+        respond_contact_id = (
+            str(tracking.respond_contact_id)
+            if getattr(tracking, "respond_contact_id", None)
+            else None
+        )
+        identifier = self._respond_io_identifier_for_tracking(tracking)
+        is_resolved = bool(getattr(tracking, "is_resolved", False))
+        assigned_user = getattr(tracking, "assigned_user", None)
+        team_label = (self._ticket_team_labels([tracking]) or {}).get(str(tracking.id))
+
+        composer = self._window_and_template(
+            identifier=identifier,
+            respond_contact_id=respond_contact_id,
+            sender_name=sender_name,
+            entity_id=str(tracking.id),
+        )
+        window_out = composer["window"]
+        chat_template = composer["chat_template"]
+
+        can_send = bool(identifier) and not is_resolved
+        can_resolve = not is_resolved
+
+        return {
+            "id": str(tracking.id),
+            "contact_name": getattr(contact, "name", None),
+            "contact_phone": getattr(contact, "phone_number", None),
+            "respond_io_id": getattr(contact, "respond_io_id", None),
+            "source_message_id": getattr(tracking, "source_message_id", None),
+            "source_message_text": getattr(tracking, "source_message_text", None),
+            # No separate trigger-message timestamp is stored; initiated_at IS the
+            # moment the create request (fired by that message) reached the CRM.
+            "source_message_at": (
+                tracking.initiated_at.isoformat() if tracking.initiated_at else None
+            ),
+            "team_label": team_label,
+            "assignee_name": (
+                (assigned_user.name or assigned_user.email) if assigned_user else None
+            ),
+            "policy_name": tracking.policy.name if tracking.policy else None,
+            "initiated_at": (
+                tracking.initiated_at.isoformat() if tracking.initiated_at else None
+            ),
+            "current_tier": tracking.current_tier,
+            "escalated_at": (
+                tracking.escalated_at.isoformat() if tracking.escalated_at else None
+            ),
+            "escalation_reason": getattr(tracking, "escalation_reason", None),
+            "due_at": tracking.due_at.isoformat() if tracking.due_at else None,
+            "due_at_resolution": (
+                tracking.due_at_resolution.isoformat()
+                if tracking.due_at_resolution
+                else None
+            ),
+            "is_responded": bool(tracking.is_responded),
+            "responded_at": (
+                tracking.responded_at.isoformat() if tracking.responded_at else None
+            ),
+            # Same counter the worklist row reads: the drawer's chips mark an
+            # extended deadline too, so extending from the drawer shows there.
+            "extension_count": int(getattr(tracking, "extension_count", 0) or 0),
+            "is_resolved": is_resolved,
+            "resolved_at": (
+                tracking.resolved_at.isoformat() if tracking.resolved_at else None
+            ),
+            "can_send": can_send,
+            "can_resolve": can_resolve,
+            # Bounded by R1 (Respond.io OpenAPI): no sticker, no reply-to param.
+            "send_capabilities": ["text", "attachment"],
+            "window": window_out,
+            "chat_template": chat_template,
+        }
+
+    def send_ticket_message(
+        self,
+        tracking_id: str,
+        *,
+        text: str,
+        files: list,
+        reply_to_message_id: Optional[str],
+        reply_to_excerpt: Optional[str],
+        sender_user_id: Optional[str],
+        sender_name: str,
+    ) -> dict:
+        """CRM-native ticket reply (UAC AC-D1/D2/D3, AC-E1).
+
+        Synchronous - the drawer needs the actually-attempted payload back
+        immediately to render the delivered state. ``files`` is a list of
+        ``(content: bytes, filename: str, mime: str)`` tuples. Text-only sends
+        reuse ``send_chat_message_for`` VERBATIM (AC-D2, the same smart-send
+        machinery the complaint/stock-inquiry/purchase-request chat panels
+        already use - not forked). Attachments upload through CRM storage
+        first, then ``RespondClient.send_attachment`` (no template fallback
+        exists for media, R1 - a closed window is a hard refusal, not a
+        silent drop). ``text`` is expected to already carry the composer's
+        ">"-quote prefix when replying (R1); ``reply_to_*`` are audit-only and
+        are never sent to Respond. On success, stamps THIS ticket's response
+        clock only; sibling tickets for the same contact are untouched.
+
+        FE CONTRACT - multi-attachment sends (FINDING 3 code-review fix):
+        the window is resolved ONCE for the whole call (not re-checked per
+        file); a caption ships as its own text turn WITH/BEFORE the first
+        attachment attempt, so it is never lost to an unrelated later
+        attachment failure; attachments are then sent SEQUENTIALLY, stopping
+        at the FIRST failure (Respond delivers in order - nothing after a
+        failure is attempted, so a caller retrying does not resend files that
+        already landed). A per-file failure is NEVER raised as an exception -
+        the whole send always returns 200 with a structured result:
+
+            {
+              "sent_as": "attachment",
+              "rendered_text": str,
+              "flattened": False,
+              "window": {"open": bool, "expires_at": None},
+              "attachments": {
+                  "delivered": ["a.pdf", "b.pdf"],       # filenames, in order, that reached Respond
+                  "failed": {"filename": "c.pdf", "error": "..."} | None,
+              },
+            }
+
+        ``attachments`` is ``None`` on the text-only path. The response clock
+        (``mark_ticket_responded``) is stamped whenever ANYTHING reached the
+        contact - the caption, at least one attachment, or both - even when
+        ``attachments.failed`` is set. The FE is expected to render the
+        delivered files as sent and the failed one with a retry affordance
+        (not implemented yet - tracked separately from this fix).
+        """
+        from app.services.crm_chat_outbound_webhook import notify_human_ticket_send
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        tracking = self.get_tracking(tracking_id, load_event_logs=False)
+        if not tracking:
+            raise handle_not_found("Conversation SLA tracking", tracking_id)
+        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            raise handle_validation_error(
+                "This is a form-SLA stage; reply from the form record's chat panel instead."
+            )
+        if bool(getattr(tracking, "is_resolved", False)):
+            raise handle_validation_error("Cannot send a message on a resolved ticket.")
+        identifier = self._respond_io_identifier_for_tracking(tracking)
+        if not identifier:
+            raise handle_validation_error("No Respond.io contact linked; cannot send a message.")
+        respond_contact_id = (
+            str(tracking.respond_contact_id)
+            if getattr(tracking, "respond_contact_id", None)
+            else None
+        )
+
+        clean_text = (text or "").strip()
+        if not clean_text and not files:
+            raise handle_validation_error("Provide message text or at least one attachment.")
+
+        business_table = "conversation_sla_tracking"
+        business_id = str(tracking.id)
+
+        result = self._deliver_conversation_message(
+            identifier=identifier,
+            respond_contact_id=respond_contact_id,
+            business_table=business_table,
+            business_id=business_id,
+            text=text,
+            files=files,
+            sender_user_id=sender_user_id,
+            sender_name=sender_name,
+        )
+        anything_delivered = result.pop("_delivered")
+        first_respond_response = result.pop("_first_response")
+        sent_as = result["sent_as"]
+        rendered_text = result["rendered_text"]
+
+        # AC-E1: stamp THIS ticket's response clock only, and only if
+        # something ACTUALLY reached the contact (a total attachment failure
+        # with no caption stamps nothing). Best-effort - the message already
+        # reached the contact; a stamping bug must never turn a delivered
+        # send into a 500 for the assignee.
+        if anything_delivered:
+            try:
+                reason_bits = [f"sent_as={sent_as}"]
+                if reply_to_message_id:
+                    reason_bits.append(f"reply_to_message_id={reply_to_message_id}")
+                if reply_to_excerpt:
+                    reason_bits.append("quoted_reply=true")
+                self.mark_ticket_responded(
+                    tracking,
+                    responded_by_user_id=sender_user_id,
+                    reason=f"CRM reply ({', '.join(reason_bits)})",
+                )
+            except Exception:  # noqa: BLE001
+                _module_logger.warning(
+                    "send_ticket_message: response-clock stamp failed for %s",
+                    tracking_id,
+                    exc_info=True,
+                )
+
+            # AC-J1: tell n8n a HUMAN answered, so the bot stops replying to this
+            # contact (is_human_intervened + ht timeout lane), exactly as a manual
+            # reply from the Respond app does. Once per drawer send, whatever it
+            # carried; itself best-effort (notify_human_ticket_send never raises).
+            notify_human_ticket_send(
+                self.db,
+                tracking_id=business_id,
+                contact_respond_io_id=identifier,
+                message_text=rendered_text,
+                respond_api_response=first_respond_response,
+                sender_user_id=sender_user_id,
+            )
+
+        return result
+
+    def _deliver_conversation_message(
+        self,
+        *,
+        identifier: str,
+        respond_contact_id: Optional[str],
+        business_table: str,
+        business_id: str,
+        text: str,
+        files: list,
+        sender_user_id: Optional[str],
+        sender_name: str,
+    ) -> dict:
+        """Put a message (text and/or attachments) in front of a contact.
+
+        The delivery half of a CRM-native reply, with nothing ticket-specific
+        left in it: the ticket drawer (``send_ticket_message``) and the
+        Conversations inbox (``send_contact_message``) both come through here,
+        so the smart-send behaviour, the multi-attachment contract and the
+        Respond outbox rows are ONE implementation rather than two that drift.
+        Callers own their own authorisation, their own ``business_table`` /
+        ``business_id`` for the outbox, and whatever they do afterwards (a
+        response clock, a human-send signal).
+
+        The multi-attachment FE contract is documented on
+        ``send_ticket_message``; ``_delivered`` / ``_first_response`` are
+        internal and never leave the two callers.
+        """
+        from app.services.error_handler import AppException
+        from app.services.respond_chat_template_service import (
+            send_chat_attachment_for,
+            send_chat_message_for,
+            upload_chat_attachment,
+        )
+        from app.services.respond_messaging_service import get_window_state
+
+        clean_text = (text or "").strip()
+        if not clean_text and not files:
+            raise handle_validation_error("Provide message text or at least one attachment.")
+
+        attachments_result: Optional[dict] = None
+        anything_delivered = False
+        # Respond's acknowledgement for the FIRST message that actually landed.
+        # The human-send webhook carries its messageId so the direct lane and
+        # Respond's own outgoing-message trigger mirror the same id (AC-J5).
+        first_respond_response: Optional[dict] = None
+        if files:
+            # FINDING 3: resolve the window ONCE for the whole send (each
+            # resolution is a live Respond HTTP call, 15s timeout) instead of
+            # once per file, and pass it down so send_chat_attachment_for
+            # skips its own per-call lookup.
+            window = get_window_state(self.db, identifier, respond_contact_id=respond_contact_id)
+            window_state = {"open": window.get("open"), "last_incoming_at": window.get("last_incoming_at")}
+
+            # A caption ships as its own text turn WITH/BEFORE the first
+            # attachment - Respond's attachment message has no reliably-
+            # supported caption param (R1) - so it is never lost to a LATER
+            # attachment failing.
+            if clean_text:
+                caption_result = send_chat_message_for(
+                    self.db,
+                    identifier=identifier,
+                    respond_contact_id=respond_contact_id,
+                    text=clean_text,
+                    chat_use_case="conversation_chat",
+                    business_table=business_table,
+                    business_id=business_id,
+                    sender_name=sender_name,
+                    created_by=sender_user_id,
+                )
+                first_respond_response = caption_result.get("response")
+                anything_delivered = True
+
+            # Sequential, never all-or-nothing: a failure on file N must not
+            # undo files 1..N-1, which already reached the contact. Stop at
+            # the FIRST failure (Respond delivers in order; a caller retrying
+            # would otherwise resend files that already landed) and report
+            # exactly what got through instead of raising.
+            delivered: list[str] = []
+            failed: Optional[dict] = None
+            for content, filename, mime in files:
+                try:
+                    uploaded = upload_chat_attachment(
+                        business_table=business_table,
+                        business_id=business_id,
+                        content=content,
+                        filename=filename,
+                        mime=mime,
+                    )
+                    sent = send_chat_attachment_for(
+                        self.db,
+                        identifier=identifier,
+                        respond_contact_id=respond_contact_id,
+                        attachment_type=uploaded["kind"],
+                        url=uploaded["url"],
+                        business_table=business_table,
+                        business_id=business_id,
+                        created_by=sender_user_id,
+                        window=window,
+                    )
+                    if first_respond_response is None:
+                        response = sent.get("response")
+                        first_respond_response = (
+                            response if isinstance(response, dict) else None
+                        )
+                except AppException as e:
+                    # AppException.detail is always the {message, detail, code}
+                    # dict (see error_handler.AppException.__init__) - prefer
+                    # the underlying Respond error string (`detail`) over the
+                    # generic user-facing `message`.
+                    _detail = e.detail if isinstance(e.detail, dict) else {}
+                    error_message = _detail.get("detail") or _detail.get("message") or str(e)
+                    failed = {"filename": filename, "error": str(error_message)}
+                    break
+                except Exception as e:  # noqa: BLE001
+                    # The per-file contract cannot depend on the failure being
+                    # an AppException: the upload can die on a botocore
+                    # ClientError or a corrupt-image error, and letting that
+                    # escape is precisely what the contract forbids - the
+                    # caption and files 1..N-1 are already with the contact,
+                    # the response clock would never be stamped, and the
+                    # caller's retry would re-send what already landed.
+                    _module_logger.warning(
+                        "send_ticket_message: attachment %s failed for %s",
+                        filename,
+                        business_id,
+                        exc_info=True,
+                    )
+                    failed = {"filename": filename, "error": str(e) or e.__class__.__name__}
+                    break
+                delivered.append(filename)
+
+            if delivered:
+                anything_delivered = True
+            attachments_result = {"delivered": delivered, "failed": failed}
+            sent_as = "attachment"
+            rendered_text = clean_text or f"{len(files)} attachment(s) sent"
+            flattened = False
+        else:
+            result = send_chat_message_for(
+                self.db,
+                identifier=identifier,
+                respond_contact_id=respond_contact_id,
+                text=clean_text,
+                chat_use_case="conversation_chat",
+                business_table=business_table,
+                business_id=business_id,
+                sender_name=sender_name,
+                created_by=sender_user_id,
+            )
+            sent_as = result["sent_as"]
+            rendered_text = result["rendered_text"]
+            flattened = result["flattened"]
+            window_state = result["window_state"]
+            first_respond_response = result.get("response")
+            anything_delivered = True
+
+        return {
+            "sent_as": sent_as,
+            "rendered_text": rendered_text,
+            "flattened": flattened,
+            "window": {
+                "open": bool(window_state.get("open")),
+                "expires_at": None,
+            },
+            "attachments": attachments_result,
+            # Private to the two callers below and stripped before the route
+            # sees it: "did anything actually reach the contact" is what gates
+            # the response clock and the human-send signal, and the first
+            # acknowledgement carries the messageId that signal mirrors (AC-J5).
+            "_delivered": anything_delivered,
+            "_first_response": first_respond_response,
+        }
+
+    def my_open_tickets_for_contact(
+        self, respond_contact_id: str, user_id: Optional[str]
+    ) -> list:
+        """The caller's OPEN conversation-scope tickets for one contact.
+
+        ``conversation_tracking_scope()`` is mandatory: form-SLA stage rows
+        share this table, and a complaint stage assigned to the caller would
+        otherwise look like an enquiry to stamp a WhatsApp reply onto.
+        """
+        if not user_id:
+            return []
+        return (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.respond_contact_id == str(respond_contact_id),
+                ConversationSLATracking.assigned_to_id == str(user_id),
+                ConversationSLATracking.is_resolved.is_(False),
+                conversation_tracking_scope(),
+            )
+            .order_by(ConversationSLATracking.initiated_at.asc())
+            .all()
+        )
+
+    def send_contact_message(
+        self,
+        contact_ref: str,
+        *,
+        text: str,
+        files: list,
+        reply_to_message_id: Optional[str] = None,
+        reply_to_excerpt: Optional[str] = None,
+        sender_user_id: Optional[str],
+        sender_name: str,
+    ) -> dict:
+        """Reply to a CONTACT from the Conversations inbox (UAC AC-N2).
+
+        Stamped onto the sender's own OPEN conversation ticket for this contact
+        when they hold EXACTLY ONE - then it IS that ticket's first response,
+        indistinguishable from a drawer send, and it goes through
+        ``send_ticket_message`` so the response clock, the event log and the
+        human-send signal all behave identically. Zero or several: the message
+        still goes, but unstamped. Guessing which of two open enquiries a reply
+        answers would corrupt both clocks, and refusing to send would make the
+        inbox useless for exactly the colleague AC-N2 opened it for.
+
+        Either way the Respond outbox is written (by the shared send helpers)
+        and the AC-J human-intervention signal fires, so the bot stands down for
+        this contact whichever lane carried the message.
+
+        Response shape is the ticket send's, plus ``stamped_ticket_id`` (null on
+        the unstamped lane) so the caller can tell which one happened.
+
+        ``reply_to_*`` behave exactly as they do on the drawer send: audit-only,
+        never sent to Respond (it has no reply-to parameter - the ">" quote
+        prefix is composed by the caller and ``text`` goes verbatim). On the
+        stamped lane they land on that ticket's response event log; on the
+        unstamped lane there is no ticket to write them onto, so they are
+        accepted and dropped rather than refused - the alternative is a reply
+        the colleague cannot quote.
+        """
+        from app.services.crm_chat_outbound_webhook import notify_human_contact_send
+
+        contact = self.require_contact(contact_ref)
+        identifier = str(getattr(contact, "respond_io_id", "") or "").strip()
+        if not identifier:
+            raise handle_validation_error(
+                "No Respond.io contact linked; cannot send a message."
+            )
+
+        mine = self.my_open_tickets_for_contact(str(contact.id), sender_user_id)
+        if len(mine) == 1:
+            result = self.send_ticket_message(
+                str(mine[0].id),
+                text=text,
+                files=files,
+                reply_to_message_id=reply_to_message_id,
+                reply_to_excerpt=reply_to_excerpt,
+                sender_user_id=sender_user_id,
+                sender_name=sender_name,
+            )
+            result["stamped_ticket_id"] = str(mine[0].id)
+            return result
+
+        result = self._deliver_conversation_message(
+            identifier=identifier,
+            respond_contact_id=str(contact.id),
+            # The outbox row is keyed on the CONTACT, because no one ticket owns
+            # this send. `integration_log.business_id` is a uuid column and
+            # `respond_contacts.id` holds a uuid, so it fits.
+            business_table="respond_contacts",
+            business_id=str(contact.id),
+            text=text,
+            files=files,
+            sender_user_id=sender_user_id,
+            sender_name=sender_name,
+        )
+        delivered = result.pop("_delivered")
+        first_respond_response = result.pop("_first_response")
+        if delivered:
+            notify_human_contact_send(
+                self.db,
+                respond_contact_id=str(contact.id),
+                contact_respond_io_id=identifier,
+                message_text=result["rendered_text"],
+                respond_api_response=first_respond_response,
+                sender_user_id=sender_user_id,
+            )
+        result["stamped_ticket_id"] = None
+        return result
+
+    def send_contact_template_message(
+        self,
+        contact_ref: str,
+        *,
+        template_id: str,
+        params: dict,
+        sender_user_id: Optional[str],
+        sender_name: str,
+    ) -> dict:
+        """Send an approved template to a CONTACT from the inbox (UAC AC-N2).
+
+        The out-of-window half of ``send_contact_message``, and it stamps by the
+        same rule: exactly one open conversation ticket of the sender's for this
+        contact makes this that ticket's first response (response clock +
+        human-intervention signal, indistinguishable from the drawer's template
+        send); zero or several leaves it unstamped against the contact, because
+        guessing which enquiry a template answers would corrupt both clocks.
+
+        Delivery is synchronous through the shared
+        ``deliver_manual_template_now``: the operator gets the real outcome and
+        the Respond outbox row exists either way. The DB-only precheck runs
+        first so a bad template id or a missing parameter is an inline 404/400
+        rather than a delivered surprise.
+        """
+        from app.services.crm_chat_outbound_webhook import (
+            notify_human_contact_send,
+            notify_human_ticket_send,
+        )
+        from app.services.respond_chat_template_service import (
+            deliver_manual_template_now,
+            precheck_manual_template,
+        )
+
+        contact = self.require_contact(contact_ref)
+        identifier = str(getattr(contact, "respond_io_id", "") or "").strip()
+        if not identifier:
+            raise handle_validation_error(
+                "No Respond.io contact linked; cannot send a template."
+            )
+
+        pre = precheck_manual_template(self.db, template_id=template_id, params=params)
+
+        mine = self.my_open_tickets_for_contact(str(contact.id), sender_user_id)
+        stamped = mine[0] if len(mine) == 1 else None
+        business_table = "conversation_sla_tracking" if stamped else "respond_contacts"
+        business_id = str(stamped.id) if stamped else str(contact.id)
+
+        sent = deliver_manual_template_now(
+            self.db,
+            identifier=identifier,
+            template_id=template_id,
+            params=params,
+            business_table=business_table,
+            business_id=business_id,
+            sender_user_id=sender_user_id,
+        )
+        response = sent.get("response") if isinstance(sent, dict) else None
+
+        # Post-send side effects: the contact already has the message, so each
+        # one warns rather than raising (notify_human_* never raise by design).
+        if stamped is not None:
+            try:
+                self.mark_ticket_responded(
+                    stamped,
+                    responded_by_user_id=sender_user_id,
+                    reason="CRM reply (sent_as=template)",
+                )
+            except Exception:  # noqa: BLE001
+                _module_logger.warning(
+                    "send_contact_template_message: response-clock stamp failed for %s",
+                    stamped.id,
+                    exc_info=True,
+                )
+            notify_human_ticket_send(
+                self.db,
+                tracking_id=str(stamped.id),
+                contact_respond_io_id=identifier,
+                message_text=pre.get("rendered_body") or "",
+                respond_api_response=response if isinstance(response, dict) else None,
+                sender_user_id=sender_user_id,
+            )
+        else:
+            notify_human_contact_send(
+                self.db,
+                respond_contact_id=str(contact.id),
+                contact_respond_io_id=identifier,
+                message_text=pre.get("rendered_body") or "",
+                respond_api_response=response if isinstance(response, dict) else None,
+                sender_user_id=sender_user_id,
+            )
+
+        return {
+            "ok": True,
+            "queued": False,
+            "template_name": pre["template_name"],
+            "rendered_body": pre["rendered_body"],
+            "stamped_ticket_id": str(stamped.id) if stamped is not None else None,
+        }

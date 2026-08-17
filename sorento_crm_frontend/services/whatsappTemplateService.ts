@@ -443,14 +443,28 @@ export async function listApprovedTemplates(): Promise<WhatsAppTemplate[]> {
 export async function sendTemplateMessage(
   entityType: string,
   entityId: string,
-  body: { contact_id: string; template_id: string; params: Record<string, string> },
+  body: {
+    contact_id: string;
+    template_id: string;
+    params: Record<string, string>;
+    /**
+     * Intervention ticket this template answers. The backend stamps that
+     * ticket's response clock once the send succeeds, so an out-of-window
+     * template reply counts as a reply. Omitted on every other chat surface.
+     */
+    tracking_id?: string | null;
+  },
 ): Promise<{ ok: true }> {
   const res = await apiFetch(
     `${chatBase(entityType)}/${encodeURIComponent(entityId)}/conversation/template-message`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_id: body.template_id, params: body.params }),
+      body: JSON.stringify({
+        template_id: body.template_id,
+        params: body.params,
+        ...(body.tracking_id ? { tracking_id: body.tracking_id } : {}),
+      }),
     },
   );
   await jsonOrThrow(res, 'Failed to send template');

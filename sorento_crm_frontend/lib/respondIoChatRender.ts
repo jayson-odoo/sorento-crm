@@ -1,6 +1,7 @@
 /**
  * Helpers for rendering Respond.io messages in a WhatsApp-style chat list:
- * date grouping, read-receipt tier, selection-option extraction.
+ * date grouping, read-receipt tier, selection-option extraction, typed
+ * attachment placeholders, and the quoted-reply text convention.
  */
 
 export type RespondStatusEntry = { value?: string; timestamp?: number; message?: string };
@@ -24,6 +25,18 @@ export type RespondMessageRenderable = {
   } & Record<string, unknown>;
   status?: RespondStatusEntry[];
   sender?: { source?: string };
+  /**
+   * Inbound quote context (UAC AC-L6). Respond's `message.received` webhook and
+   * its message objects carry `replyTo` when the contact quoted an earlier
+   * message; the local `chat_histories` lane reconstructs the same shape from
+   * `reply_to_message_id` / `reply_to_message`. Outbound quoting has no API
+   * support at all, so this is inbound-only: a READ-side field.
+   */
+  replyTo?: {
+    messageId?: number | string | null;
+    traffic?: string;
+    message?: { type?: string; text?: string } & Record<string, unknown>;
+  } & Record<string, unknown> | null;
 };
 
 /** WhatsApp-like read receipt tiers derived from Respond.io status[] entries. */
@@ -80,6 +93,199 @@ export function extractSelectionOptions(item: RespondMessageRenderable): string[
     }
   }
   return out;
+}
+
+/** Media kinds Respond.io carries on a message, plus the fallbacks we render defensively. */
+export type MessageAttachmentKind =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'file'
+  | 'sticker'
+  | 'location'
+  | 'unknown';
+
+export interface MessageAttachmentDescriptor {
+  kind: MessageAttachmentKind;
+  /** Typed placeholder label, e.g. "Photo", "Document". Never empty. */
+  label: string;
+  url?: string;
+  fileName?: string;
+}
+
+const ATTACHMENT_LABELS: Record<MessageAttachmentKind, string> = {
+  image: 'Photo',
+  video: 'Video',
+  audio: 'Audio message',
+  file: 'Document',
+  sticker: 'Sticker',
+  location: 'Location',
+  unknown: 'Attachment',
+};
+
+function normalizeAttachmentKind(raw: unknown): MessageAttachmentKind {
+  const t = String(raw ?? '').toLowerCase();
+  if (t === 'image' || t === 'photo') return 'image';
+  if (t === 'video') return 'video';
+  if (t === 'audio' || t === 'voice') return 'audio';
+  if (t === 'file' || t === 'document') return 'file';
+  if (t === 'sticker') return 'sticker';
+  if (t === 'location') return 'location';
+  return 'unknown';
+}
+
+/**
+ * Filename carried by an attachment URL's last path segment.
+ *
+ * Respond.io's message payload has no fileName field on most shapes, so the URL
+ * is the only name channel we get - the same segment WhatsApp itself names the
+ * delivered document from (AC-D5, which is why our own uploads put the uuid in
+ * its own path segment and keep the clean filename last). Query string and
+ * fragment are dropped, percent-escapes decoded; anything unusable yields
+ * `undefined` so the caller falls back to the typed label.
+ *
+ * Respond-hosted media is named after a uuid or a content hash. That is not a
+ * filename to anybody, and rendering it would put a UUID in the UI, so a stem
+ * that is nothing but one is rejected in favour of "Photo" / "Document".
+ */
+const UUID_STEM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A hex run this long is a hash, never something a person typed. */
+const HEX_HASH_STEM = /^[0-9a-f]{16,}$/i;
+
+export function fileNameFromAttachmentUrl(url?: string): string | undefined {
+  const raw = (url ?? '').trim();
+  if (!raw) return undefined;
+  const last = raw.split(/[?#]/)[0].split('/').pop() ?? '';
+  if (!last) return undefined;
+  let decoded = last;
+  try {
+    decoded = decodeURIComponent(last);
+  } catch {
+    // Malformed escape - keep the raw segment rather than losing the name.
+  }
+  const name = decoded.trim();
+  if (!name) return undefined;
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  if (UUID_STEM.test(stem) || HEX_HASH_STEM.test(stem)) return undefined;
+  return name;
+}
+
+function toDescriptor(raw: unknown, fallbackKind?: unknown): MessageAttachmentDescriptor | null {
+  if (typeof raw === 'string') {
+    const url = raw.trim();
+    if (!url) return null;
+    const kind = normalizeAttachmentKind(fallbackKind);
+    return {
+      kind,
+      label: ATTACHMENT_LABELS[kind],
+      url,
+      fileName: fileNameFromAttachmentUrl(url),
+    };
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const kind = normalizeAttachmentKind(o.type ?? fallbackKind);
+  const url =
+    (typeof o.url === 'string' && o.url) ||
+    (typeof o.link === 'string' && o.link) ||
+    undefined;
+  const fileName =
+    (typeof o.fileName === 'string' && o.fileName) ||
+    (typeof o.filename === 'string' && o.filename) ||
+    (typeof o.name === 'string' && o.name) ||
+    fileNameFromAttachmentUrl(url) ||
+    undefined;
+  if (!url && !fileName && kind === 'unknown') return null;
+  return { kind, label: ATTACHMENT_LABELS[kind], url, fileName };
+}
+
+/**
+ * Typed descriptors for whatever non-text payload a message carries (image,
+ * video, audio, file, sticker, location, or an unrecognised type). Defensive
+ * across the shapes Respond.io v2 emits: `message.attachments[]`,
+ * `message.attachment` (object or array), or a bare `message.url` on a typed
+ * message. An unknown type still yields a placeholder, so the chat list never
+ * renders a blank bubble and never crashes on a shape we have not seen.
+ */
+export function describeMessageAttachments(
+  item: RespondMessageRenderable,
+): MessageAttachmentDescriptor[] {
+  const m = item.message as Record<string, unknown> | undefined;
+  if (!m) return [];
+  const out: MessageAttachmentDescriptor[] = [];
+  const push = (raw: unknown) => {
+    const d = toDescriptor(raw, m.type);
+    if (d) out.push(d);
+  };
+  if (Array.isArray(m.attachments)) m.attachments.forEach(push);
+  if (Array.isArray(m.attachment)) m.attachment.forEach(push);
+  else if (m.attachment) push(m.attachment);
+  if (out.length === 0) {
+    const kind = normalizeAttachmentKind(m.type);
+    if (kind !== 'unknown') {
+      push({ type: m.type, url: m.url ?? m.link, fileName: m.fileName ?? m.filename });
+    }
+  }
+  return out;
+}
+
+/** The "replying to" block above a bubble, when the message quotes an earlier one. */
+export type QuotedContext = {
+  /** Respond message id of the quoted message, as a string. Null when absent. */
+  messageId: string | null;
+  /** What to show in the block. Never empty - falls back to a typed placeholder. */
+  excerpt: string;
+  /** 'contact' | 'agent' when the quoted direction is known, else null. */
+  sender: 'contact' | 'agent' | null;
+};
+
+/** Longest quoted excerpt rendered in an inbound "replying to" block. */
+export const QUOTED_CONTEXT_MAX_CHARS = 180;
+
+/**
+ * The quoted context carried BY the message itself (UAC AC-L6).
+ *
+ * Inbound only. It reads Respond's structured `replyTo`, which is how a
+ * contact's quote-reply arrives - there is no ">" in it to parse, and parsing
+ * one would be wrong anyway (the contact's own words are never ours to
+ * rewrite). There is no outgoing counterpart: Respond's send API takes no
+ * reply-to, and the ">"-prefix emulation we once wrote was removed rather than
+ * left on screen looking like a real quote.
+ *
+ * A quoted media message has no text, so the excerpt falls back to a typed
+ * placeholder ("[image]") rather than rendering an empty block; a quote we hold
+ * no excerpt for at all reads "Quoted message", because "this replies to
+ * something" is still true and useful.
+ */
+export function describeQuotedContext(item: RespondMessageRenderable): QuotedContext | null {
+  const reply = item.replyTo;
+  if (!reply || typeof reply !== 'object') return null;
+
+  const rawId = reply.messageId;
+  const messageId =
+    rawId === null || rawId === undefined || String(rawId).trim() === ''
+      ? null
+      : String(rawId).trim();
+
+  const quotedMessage = (reply.message ?? {}) as { type?: string; text?: string };
+  const text = (quotedMessage.text ?? '').replace(/\s+/g, ' ').trim();
+  const kind = (quotedMessage.type ?? '').trim();
+  let excerpt = text;
+  if (!excerpt) excerpt = kind && kind !== 'text' ? `[${kind}]` : '';
+  if (!excerpt) excerpt = 'Quoted message';
+  if (excerpt.length > QUOTED_CONTEXT_MAX_CHARS) {
+    excerpt = `${excerpt.slice(0, QUOTED_CONTEXT_MAX_CHARS).trimEnd()}…`;
+  }
+
+  const traffic = (reply.traffic ?? '').toString().trim().toLowerCase();
+  const sender =
+    traffic === 'incoming' ? 'contact' : traffic === 'outgoing' ? 'agent' : null;
+
+  // Nothing identifiable at all (no id, no text, no type) is not a quote.
+  if (!messageId && !text && !kind) return null;
+
+  return { messageId, excerpt, sender };
 }
 
 /** Group messages by local date stamp (YYYY-MM-DD in browser tz) for date dividers. */

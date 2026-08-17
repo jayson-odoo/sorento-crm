@@ -1,5 +1,6 @@
 """SLA tracking API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Response
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
@@ -11,11 +12,12 @@ from pydantic import BaseModel, Field
 from app.dependencies import get_current_user_or_api_key, require_permission, get_current_user
 from app.services.sla_service import (
     ConversationSLATrackingService,
-    to_naive_datetime,
+    append_clock_line,
     compute_tracking_timings,
     event_log_assignee_fields,
 )
 from app.services.integration_service import IntegrationLogService
+from app.services.ticket_comment_service import TicketCommentService
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.sla import (
     ConversationSLATrackingCreate,
@@ -28,6 +30,7 @@ from app.schemas.sla import (
     ConversationSLATestOverrideRequest,
 )
 from app.schemas.integration import IntegrationLogCreate
+from app.schemas.ticket_comment import TicketCommentCreate, TicketCommentResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import (
     AppException,
@@ -45,8 +48,91 @@ from app.services.banner_person_service import (
 router = APIRouter()
 
 
+def _log_integration_best_effort(log_service, payload, **kwargs) -> None:
+    """Write an integration_log for work that is ALREADY committed.
+
+    Post-commit side effects are best-effort (PRINCIPLES.md): re-raising here
+    answers 500 for a create/stamp that actually succeeded, so n8n reports a
+    failed intervention and retries into the idempotent path - which never
+    backfills the missing log. Warn and carry on instead.
+    """
+    import logging
+
+    try:
+        log_service.create_integration_log(payload, **kwargs)
+    except Exception:  # noqa: BLE001 - the logged work already committed
+        logging.getLogger(__name__).warning(
+            "integration_log write failed for %s %s; the operation itself succeeded.",
+            getattr(payload, "business_table", "?"),
+            getattr(payload, "business_id", "?"),
+            exc_info=True,
+        )
+
+
+def _write_event_log_best_effort(service, payload) -> None:
+    """Write an SLA event log for a state change that is ALREADY committed.
+
+    Same rule as `_log_integration_best_effort`, and the same reason: the
+    responded / resolved stamp landed before this runs, so raising reports a
+    failure for work that succeeded - and the caller's retry takes the
+    already-responded / already-resolved short-circuit, which deliberately
+    writes no event log at all. Rolls back first: the failed insert leaves the
+    session unusable for the response the route still has to build.
+    """
+    import logging
+
+    try:
+        service.create_event_log(payload)
+    except Exception:  # noqa: BLE001 - the state change already committed
+        try:
+            service.db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logging.getLogger(__name__).warning(
+            "SLA %s event log failed for tracking %s; the state change itself stands.",
+            getattr(payload, "event_type", "?"),
+            getattr(payload, "sla_tracking_id", "?"),
+            exc_info=True,
+        )
+
+
 class SlaTrackingConversationReplyBody(BaseModel):
     message: str = Field(..., min_length=1)
+
+
+class TicketAIDraftBody(BaseModel):
+    """AI assist request (UAC AC-L5).
+
+    Everything is optional: the useful call is an empty body. The thread is read
+    server-side, so the browser never posts the conversation back to us.
+    """
+
+    instruction: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="What the agent wants the draft to do ('offer Tuesday delivery').",
+    )
+    tail: Optional[int] = Field(
+        default=None, ge=1, le=50, description="How many recent messages to ground on."
+    )
+
+
+def _resolved_by_param(value: Optional[str], current_user: dict) -> Optional[str]:
+    """Expand the ``resolved_by=me`` sentinel to the caller's users.id (AC-M2).
+
+    The widget's "Recently resolved" link is "what I resolved", and a UUID in a
+    URL the user can see is exactly what the no-UUIDs-in-the-UI rule forbids.
+    Anything else is passed through untouched (users.id / respond_user_id / email).
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if raw.lower() != "me":
+        return raw
+    uid = (current_user or {}).get("id")
+    # An api-key principal with no acting user has no "me": filter to nothing
+    # rather than silently widening to everyone's resolutions.
+    return str(uid).strip() if uid and str(uid).strip() else "__no_such_user__"
 
 
 def _sla_reply_respond_user_id(current_user: dict) -> str:
@@ -494,7 +580,7 @@ def _notify_conversation_sla_escalation(db, tracking, assignee: dict, reason: st
 
     Mirrors form-SLA escalation (`form_sla_service._notify_assignee`): in-app always,
     email/WhatsApp gated by the per-event escalation toggles. The "form_url" deep link
-    is the Respond inbox (or the SLA detail when no contact). Best-effort — never raises.
+    is the Respond inbox (or the SLA detail when no contact). Best-effort - never raises.
     """
     import logging
     from datetime import datetime, timezone, timedelta
@@ -529,9 +615,14 @@ def _notify_conversation_sla_escalation(db, tracking, assignee: dict, reason: st
         new_tier = int(getattr(tracking, "current_tier", 0) or 0)
 
         title = "Conversation SLA escalated to you"
-        body = f"A conversation SLA (tier {new_tier}) has been escalated to you. Reason: {reason}."
-        if respond_due:
-            body += f" Respond by {respond_due}."
+        # AC-G2: the same clock line as assignment / reassignment, in Malaysia
+        # time with the day and the zone. `_fmt_due` above still feeds the
+        # WhatsApp template's own due-date variables, which have their own
+        # format; the BODY the human reads uses the one shared builder.
+        body = append_clock_line(
+            f"A conversation SLA (tier {new_tier}) has been escalated to you. Reason: {reason}.",
+            tracking,
+        )
         if link:
             body += f"\n\nOpen: {link}"
 
@@ -582,7 +673,7 @@ def _notify_conversation_sla_escalation(db, tracking, assignee: dict, reason: st
             email_pref_attr="notify_email_on_escalation",
             whatsapp_pref_attr="notify_whatsapp_on_escalation",
         )
-    except Exception as e:  # noqa: BLE001 — best-effort, escalation already committed
+    except Exception as e:  # noqa: BLE001 - best-effort, escalation already committed
         log.warning("conversation SLA escalate notify failed for %s: %s", getattr(tracking, "id", "?"), e)
 
 
@@ -699,6 +790,23 @@ async def get_sla_tracking(
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
+    contact: Optional[str] = Query(
+        None,
+        description=(
+            "Filter to ONE contact's conversation tickets. Accepts the Respond.io "
+            "contact id, the CRM respond_contacts.id or a phone number (AC-M2)."
+        ),
+    ),
+    is_resolved: Optional[bool] = Query(
+        None, description="true = resolved only, false = open only, omitted = both (AC-M2)."
+    ),
+    resolved_by: Optional[str] = Query(
+        None,
+        description=(
+            "Filter to tickets resolved by one person: users.id, respond_user_id, "
+            "email, or the literal 'me' for the caller (AC-M2)."
+        ),
+    ),
     scope: str = Query("conversation", description="conversation (contact-keyed) or form (per-entity stage rows)"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -716,6 +824,9 @@ async def get_sla_tracking(
             sort_dir=dir or "desc",
             assigned_to=assigned_to,
             scope="form" if scope == "form" else "conversation",
+            contact=contact,
+            is_resolved=is_resolved,
+            resolved_by=_resolved_by_param(resolved_by, current_user),
         )
         return result
     except Exception as e:
@@ -739,6 +850,9 @@ async def get_sla_tracking_neighbours(
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
+    contact: Optional[str] = Query(None),
+    is_resolved: Optional[bool] = Query(None),
+    resolved_by: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -746,7 +860,7 @@ async def get_sla_tracking_neighbours(
     filtered+sorted list set.
 
     Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored; ``scope`` is fixed to conversation here — form SLA rows
+    irrelevant and ignored; ``scope`` is fixed to conversation here - form SLA rows
     have their own list/detail flow). Returns ``{total, index, prev_id, next_id}``
     with the 1-based ``index`` and circular wrap-around neighbours. If the record is
     not in the filtered set, falls back to the unfiltered, default-sorted conversation
@@ -762,6 +876,9 @@ async def get_sla_tracking_neighbours(
             sort_field=sort or "created_at",
             sort_dir=dir or "desc",
             assigned_to=assigned_to,
+            contact=contact,
+            is_resolved=is_resolved,
+            resolved_by=_resolved_by_param(resolved_by, current_user),
         )
     except HTTPException:
         raise
@@ -805,7 +922,7 @@ async def create_sla_tracking(
         # A deliberate 4xx (e.g. "Conversation is already responded.") is a refusal,
         # not an integration failure. `handle_validation_error` returns AppException,
         # NOT HTTPException, so without this arm it fell through to the generic
-        # handler below and was logged as status="failed" — which is why every
+        # handler below and was logged as status="failed" - which is why every
         # historical sla_management "failure" is one benign idempotency race.
         # The global handler in app/main.py still serialises it to the caller.
         raise
@@ -838,9 +955,14 @@ async def list_due_escalations_integration(
 
     Returns unresolved conversation-SLA rows past their response due time at tier 1 or 2
     (tier 3 has nowhere to escalate to; form-SLA rows are excluded by scope). Each item
-    includes `phone_number` and `respond_io_id` so the runner needs no DB access: feed
-    `respond_contact_id` + `policy_id` straight into POST /integration/escalate
-    (signal-only — omit current_tier), and `phone_number` into contact resolution.
+    includes `phone_number` and `respond_io_id` so the runner needs no DB access.
+
+    Feed `tracking_id` (plus `respond_contact_id`) straight into POST
+    /integration/escalate, signal-only (omit current_tier). This is ONE ITEM PER
+    ROW, so the id is the honest thing to escalate on: dropping it and sending
+    only the contact makes the server fall back to a most-recent-open pick, which
+    under multi-open tickets escalates a sibling that has not breached while the
+    one listed here stays at its tier (AC-I5).
     """
     try:
         service = ConversationSLATrackingService(db)
@@ -863,12 +985,19 @@ async def escalate_sla_tracking_integration(
     db: Session = Depends(get_db),
 ):
     """
-    Escalate a conversation SLA tracking by respond_contact_id and policy_id (for external systems).
+    Escalate a conversation SLA tracking (for external systems).
 
-    Preferred (signal-only) mode: omit body.current_tier — the server escalates to the row's
+    **Which ticket (AC-I5):** pass `tracking_id` and that exact row escalates - it is
+    validated against `respond_contact_id` and takes precedence over everything else.
+    Omit it and the server falls back to the contact-scoped path (most-recent-open for
+    the contact, then the legacy contact+policy exact match), kept for back-compat.
+    Under multi-open intervention tickets only the id is precise, and
+    GET /integration/due-escalations hands one out per breaching row.
+
+    Preferred (signal-only) mode: omit body.current_tier - the server escalates to the row's
     current tier + 1. When already at tier 3, no escalation happens and the response carries
     `escalated: false` with `from_tier = to_tier = 3` (n8n branches on the flag, e.g. keeps
-    reminding). Legacy mode: pass body.current_tier as an explicit target (1–3, must be greater
+    reminding). Legacy mode: pass body.current_tier as an explicit target (1 - 3, must be greater
     than the row's current tier; supports multi-step jumps, e.g. 1→3).
 
     Resolves the next assignee from the target tier's team under the tracking's stored
@@ -887,15 +1016,34 @@ async def escalate_sla_tracking_integration(
         if not internal_contact_id:
             raise handle_not_found("Respond contact", body.respond_contact_id)
 
-        # Source of truth = the open conversation tracking for this contact (one open
-        # per contact). Its stored policy_id is the agent-team-tied policy. body.policy_id
-        # is only a fallback — used when no open row is found (legacy exact-match lookup).
-        tracking = service.get_open_tracking_by_contact(internal_contact_id)
-        if not tracking and body.policy_id:
-            tracking = service.get_tracking_by_contact_and_policy(
-                internal_contact_id,
-                body.policy_id,
-            )
+        # AC-I5: an explicit tracking_id names the ticket and WINS. The scheduler
+        # gets one item PER ROW from GET /integration/due-escalations, so it always
+        # knows which ticket breached; re-resolving by contact here would let it
+        # escalate a different open sibling (bumping a ticket that is inside its
+        # SLA and notifying that assignee, while the breaching one stays at tier 1).
+        # The id is checked against the resolved contact so a mis-paired body can
+        # never escalate somebody else's ticket.
+        tracking = None
+        if body.tracking_id:
+            tracking = service.get_tracking(str(body.tracking_id), load_event_logs=False)
+            if str(getattr(tracking, "respond_contact_id", "") or "") != str(
+                internal_contact_id
+            ):
+                raise handle_validation_error(
+                    "tracking_id does not belong to respond_contact_id "
+                    f"{body.respond_contact_id}."
+                )
+        else:
+            # Back-compat contact-scoped path. Source of truth = the open conversation
+            # tracking for this contact; its stored policy_id is the agent-team-tied
+            # policy. body.policy_id is only a fallback - used when no open row is
+            # found (legacy exact-match lookup).
+            tracking = service.get_open_tracking_by_contact(internal_contact_id)
+            if not tracking and body.policy_id:
+                tracking = service.get_tracking_by_contact_and_policy(
+                    internal_contact_id,
+                    body.policy_id,
+                )
         if not tracking:
             raise handle_not_found(
                 "Conversation SLA tracking",
@@ -980,6 +1128,14 @@ async def escalate_sla_tracking_integration(
 
         # Assignee is passed into the service so the escalation event log (written inside
         # escalate_tracking) records the NEW tier assignee, not the previous tier's.
+        # AC-F1: pass the id we already resolved above (via get_open_tracking_by_contact /
+        # get_tracking_by_contact_and_policy) so the mutation targets that EXACT row -
+        # never re-resolve by (contact, policy) here, which could now match a different
+        # open sibling ticket for the same contact/policy. The contact+policy resolution
+        # above stays a documented "most recent open" pick (known interim limitation for
+        # this contact-only n8n signal path; a contact with 2+ open tickets on the same
+        # policy has only its most-recently-created one escalated per call - closed by a
+        # future per-ticket n8n contract, S3.2).
         tracking = service.escalate_tracking(
             respond_contact_id=internal_contact_id,
             policy_id=effective_policy_id,
@@ -991,6 +1147,7 @@ async def escalate_sla_tracking_integration(
                 if assignee.get("respond_user_id") is not None
                 else None
             ),
+            tracking_id=str(getattr(tracking, "id")),
         )
         tracking_id_str = str(getattr(tracking, "id"))
 
@@ -1007,7 +1164,7 @@ async def escalate_sla_tracking_integration(
             ),
             request_payload_dict=body.model_dump(),
         )
-        # Notify the new-tier assignee through our existing notification path —
+        # Notify the new-tier assignee through our existing notification path -
         # in-app always, email/WhatsApp gated by the per-event escalation toggles
         # (same as the UI escalate route + form-SLA). n8n does NOT send its own
         # escalation notification, so the backend owns it for ALL escalations.
@@ -1169,26 +1326,33 @@ async def escalate_conversation_sla_tracking(
         company_id=_tracking_company_id(tracking),
         brand_code=getattr(tracking, "brand_code", None),
     )
+    # AC-F1: escalate the EXACT row this route was called for (tracking_id is the URL
+    # param). Without this, escalate_tracking's internal (respond_contact_id, policy_id)
+    # resolution would silently pick whichever open ticket for this contact+policy was
+    # created most recently - which can be a DIFFERENT ticket than the one in the URL
+    # when the contact holds 2+ open tickets on the same policy. Fixed here, not just
+    # documented, because this is a manual admin action, not an interim n8n contract.
     tracking = service.escalate_tracking(
         respond_contact_id=str(contact_id),
         policy_id=str(getattr(tracking, "policy_id")),
         current_tier=target_tier,
         escalation_reason=f"manual: {reason}",
         assigned_to_id=str(assignee["id"]),
+        tracking_id=str(tracking_id),
         assigned_to_respond_user_id=(
             str(assignee["respond_user_id"])
             if assignee.get("respond_user_id") is not None
             else None
         ),
     )
-    # Notify the new assignee — same channels + per-event toggles as form-SLA
+    # Notify the new assignee - same channels + per-event toggles as form-SLA
     # escalation, so ALL escalations behave the same. Best-effort: the escalation
     # already committed. Kept out of escalate_tracking so both routes (UI here,
-    # n8n /integration/escalate) call it explicitly — n8n does NOT send its own.
+    # n8n /integration/escalate) call it explicitly - n8n does NOT send its own.
     _notify_conversation_sla_escalation(db, tracking, assignee, reason)
     # Escalation is a reassignment: push the new-tier owner to the Respond.io
     # conversation too (async + outbox-logged via the respond_io worker), mirroring
-    # reassign. Best-effort — the escalation already committed. (The n8n integration
+    # reassign. Best-effort - the escalation already committed. (The n8n integration
     # escalate owns its own Respond routing, so this lives in the UI route only.)
     service._push_respond_assignee(tracking, assignee.get("respond_user_id"))
     return build_conversation_sla_tracking_response(db, tracking)
@@ -1202,7 +1366,7 @@ async def resolve_sla_tracking(
     db: Session = Depends(get_db),
 ):
     """Mark a conversation SLA task as resolved (stops the clock, closes the Respond
-    conversation). UI counterpart of the My Pending "Resolve" button — permission +
+    conversation). UI counterpart of the My Pending "Resolve" button - permission +
     actor-scope gated. The legacy ``PUT /{id}`` remains for the n8n integration path
     (API key) and is NOT used by the widget."""
     service = ConversationSLATrackingService(db)
@@ -1215,6 +1379,152 @@ async def resolve_sla_tracking(
         str(tracking_id), ConversationSLATrackingUpdate(is_resolved=True)
     )
     return build_conversation_sla_tracking_response(db, updated)
+
+
+@router.get("/{tracking_id}/ticket")
+async def get_intervention_ticket(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Drawer header + composer state for one intervention ticket (UAC AC-C1).
+
+    Assignee-or-manager scoped, same as resolve/send. Bundles the 24h window
+    state and the out-of-window chat-template preview inline - NOT DB-only:
+    the window state is resolved via ``get_window_state_for`` ->
+    ``RespondClient.list_messages``, a real Respond.io HTTP call (15s
+    timeout) - so this ``async def`` route runs it via ``run_in_threadpool``
+    (mirrors the sibling ``POST .../ticket/send`` route) instead of blocking
+    the event loop for the duration of that call.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    service = ConversationSLATrackingService(db)
+    sender_name = (current_user.get("name") or "").strip() or "Customer Service"
+    return await run_in_threadpool(
+        service.get_ticket_detail,
+        tracking_id,
+        viewer_user_id=current_user["id"],
+        sender_name=sender_name,
+    )
+
+
+@router.post("/{tracking_id}/ai-draft")
+async def draft_intervention_ticket_reply(
+    tracking_id: str,
+    body: TicketAIDraftBody,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Draft a reply INTO the composer using the existing CRM AI assistant (AC-L5).
+
+    Never sends: the answer is text the assignee reads, edits and then sends
+    themselves, so this route touches no Respond path at all. The thread tail is
+    fetched server-side (one less contract surface than posting it up, and a
+    client cannot ask for a draft grounded on a conversation it is not looking
+    at). Assignee-or-manager scoped like every sibling ticket route - an
+    outsider gets a 404 BEFORE any model call, so a stranger cannot spend our
+    tokens by guessing ids.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from app.services import conversation_reply_draft_service as draft_service
+
+    service = ConversationSLATrackingService(db)
+    tracking = service.get_tracking(tracking_id, load_event_logs=False)
+    if not tracking:
+        raise handle_not_found("Conversation SLA tracking", tracking_id)
+    if not service.can_user_act_on_tracking(current_user["id"], tracking):
+        raise handle_not_found("Conversation SLA tracking", tracking_id)
+
+    result = await run_in_threadpool(
+        draft_service.draft_reply,
+        db,
+        tracking,
+        instruction=body.instruction,
+        tail=body.tail or draft_service.DEFAULT_TAIL,
+        user_id=current_user.get("id"),
+    )
+    return {
+        "draft": result.draft,
+        "model": result.model,
+        "grounded_on": result.grounded_on,
+        "elapsed_ms": result.elapsed_ms,
+    }
+
+
+@router.post("/{tracking_id}/ticket/send")
+async def send_intervention_ticket_message(
+    tracking_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """CRM-native reply from an intervention ticket drawer (UAC AC-D1/D2/D3, E1).
+
+    Synchronous - unlike the generic ``.../conversation/send-message`` smart-send
+    route (which queues delivery on the ``respond_io`` worker), the drawer needs
+    the actually-attempted payload back immediately to render the delivered
+    state and stamp its own response clock. Accepts JSON
+    (``{text, reply_to_message_id?, reply_to_excerpt?}``) when there are no
+    files, or ``multipart/form-data``
+    (``text, reply_to_message_id?, reply_to_excerpt?, files[]``) when there
+    are. ``text`` is expected pre-quoted by the composer (the ">" prefix, R1
+    quote-reply emulation) - sent verbatim; ``reply_to_*`` fields are
+    audit-only and are never sent to Respond.io. Assignee-or-manager scoped,
+    same as resolve/escalate.
+
+    A multi-file send never raises on a per-file failure - see the
+    ``attachments: {delivered, failed}`` FE contract documented on
+    ``ConversationSLATrackingService.send_ticket_message``'s docstring.
+    """
+    service = ConversationSLATrackingService(db)
+    tracking = service.get_tracking(tracking_id, load_event_logs=False)
+    if not tracking:
+        raise handle_not_found("Conversation SLA tracking", tracking_id)
+    if not service.can_user_act_on_tracking(current_user["id"], tracking):
+        raise handle_not_found("Conversation SLA tracking", tracking_id)
+
+    content_type = (request.headers.get("content-type") or "").lower()
+    files: list[tuple[bytes, str, str]] = []
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        text = str(form.get("text") or "")
+        reply_to_message_id = form.get("reply_to_message_id") or None
+        reply_to_excerpt = form.get("reply_to_excerpt") or None
+        for item in form.getlist("files"):
+            # StarletteUploadFile, NOT fastapi.UploadFile: request.form() yields
+            # the starlette class, and fastapi.UploadFile is a strict SUBCLASS
+            # of it - so an isinstance check against the FastAPI class NEVER
+            # matched, files stayed empty, and every attachment send silently
+            # degraded to a text-only send (the outbox logged {"type": "text"}).
+            if isinstance(item, StarletteUploadFile) and item.filename:
+                content = await item.read()
+                files.append((content, item.filename, item.content_type or ""))
+    else:
+        raw: dict = {}
+        try:
+            raw = await request.json()
+        except Exception:
+            raw = {}
+        text = str((raw or {}).get("text") or "")
+        reply_to_message_id = (raw or {}).get("reply_to_message_id")
+        reply_to_excerpt = (raw or {}).get("reply_to_excerpt")
+
+    sender_name = (current_user.get("name") or "").strip() or "Customer Service"
+
+    from starlette.concurrency import run_in_threadpool
+
+    return await run_in_threadpool(
+        service.send_ticket_message,
+        tracking_id,
+        text=text,
+        files=files,
+        reply_to_message_id=reply_to_message_id,
+        reply_to_excerpt=reply_to_excerpt,
+        sender_user_id=current_user.get("id"),
+        sender_name=sender_name,
+    )
 
 
 @router.post("/integration", status_code=status.HTTP_200_OK)
@@ -1238,7 +1548,7 @@ async def create_sla_tracking_integration(
         tracking_id_str = str(getattr(tracking, "id"))
         already_active = bool(getattr(tracking, "_already_active", False))
         # "Update" = create_tracking reused an existing row: idempotent hit on an
-        # active one, or overwrite of a resolved one. Markers come from the service —
+        # active one, or overwrite of a resolved one. Markers come from the service -
         # no duplicate pre-query of the singleton check here.
         is_update = already_active or bool(getattr(tracking, "_overwrote_resolved", False))
         if already_active:
@@ -1247,7 +1557,8 @@ async def create_sla_tracking_integration(
             integration_channel = "sla_tracking_update"
         else:
             integration_channel = "sla_tracking_creation"
-        log_service.create_integration_log(
+        _log_integration_best_effort(
+            log_service,
             IntegrationLogCreate(
                 integration_channel=integration_channel,
                 business_table="conversation_sla_tracking",
@@ -1273,11 +1584,21 @@ async def create_sla_tracking_integration(
             "tracking_id": tracking_id_str,
             "is_update": is_update,
             "already_active": already_active,
+            # AC-A2/AC-A4: n8n reads these on EVERY response - insert and retry
+            # alike - to keep the ticket's clocks/assignee and to pick the
+            # in-hours vs out-of-hours auto-reply copy. `in_working_hours` comes
+            # from the service marker; it is not a column.
+            "in_working_hours": getattr(tracking, "_in_working_hours", None),
+            "initiated_at": getattr(tracking, "initiated_at", None),
+            "due_at": getattr(tracking, "due_at", None),
+            "due_at_resolution": getattr(tracking, "due_at_resolution", None),
+            "assigned_to": getattr(tracking, "assigned_to", None),
+            "assigned_to_id": getattr(tracking, "assigned_to_id", None),
         }
     except HTTPException:
         raise
     except AppException:
-        # A deliberate refusal — "Respond contact not found for phone number: X" —
+        # A deliberate refusal - "Respond contact not found for phone number: X" -
         # is a 400 about the caller's input, not a server fault. `handle_validation_error`
         # returns AppException, NOT HTTPException, so the bare arm below re-wrapped it
         # into 500 / INTERNAL_ERROR and the real message survived only as a string
@@ -1301,7 +1622,7 @@ async def update_sla_tracking(
     """Update an SLA tracking record.
 
     Dual principal: the n8n integration calls this with an API key (bypasses the
-    per-action gate — it owns the SLA lifecycle). A human principal flipping
+    per-action gate - it owns the SLA lifecycle). A human principal flipping
     ``is_resolved`` here must hold the resolve slug, mirroring POST /{id}/resolve
     (defense-in-depth so the PUT path can't bypass the widget's Resolve gate).
     """
@@ -1322,8 +1643,33 @@ async def update_sla_tracking(
             )
     try:
         service = ConversationSLATrackingService(db)
-        tracking = service.update_tracking(tracking_id_str, tracking_data)
+
+        # AC-E3: the n8n Respond-app-reply fallback resolves a contact-level
+        # "preferred" tracking id (see external/conversation_sla_tracking.py) and
+        # PUTs is_responded=true here. The guard now lives in update_tracking
+        # (the shared path this route and PUT/POST /integration/{tracking_id}
+        # both call - FINDING 1) so it is enforced for every caller, not
+        # duplicated here. When ambiguous, ONLY the responded-family fields
+        # (is_responded/responded_at/responded_by/response_time) are dropped
+        # from the payload - the rest (assignment, tier, resolve, ...) still
+        # applies normally (FINDING 5): a caller sending is_responded alongside
+        # other fields must not have the whole update silently discarded.
+        # AC-M3 hardening: an API-key resolve here IS n8n's respond-close-convo
+        # lane reacting to a Respond-side close. Fire our close-convo webhook
+        # back at it and n8n sends the customer a second closing message, so the
+        # origin travels with the resolve and suppresses it.
+        tracking = service.update_tracking(
+            tracking_id_str,
+            tracking_data,
+            resolve_origin=(
+                "api_key" if current_user.get("auth_method") == "api_key" else "user"
+            ),
+        )
         already_resolved = bool(getattr(tracking, "_already_resolved", False))
+        ambiguous = bool(getattr(tracking, "_ambiguous_responded_skipped", False))
+        # AC-I3: a duplicate respond is idempotent, reported as a body field
+        # rather than the 400 it used to raise.
+        already_responded = bool(getattr(tracking, "_already_responded", False))
         tracking_id_result_str = str(getattr(tracking, "id"))
         external_reference = (
             str(getattr(getattr(tracking, "contact", None), "phone_number"))
@@ -1339,7 +1685,15 @@ async def update_sla_tracking(
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="PUT",
-                status="success" if not already_resolved else "skipped_already_resolved",
+                status=(
+                    "skipped_ambiguous_response"
+                    if ambiguous
+                    else (
+                        "skipped_already_responded"
+                        if already_responded
+                        else ("success" if not already_resolved else "skipped_already_resolved")
+                    )
+                ),
             ),
             request_payload_dict=tracking_data.model_dump(exclude_unset=True),
         )
@@ -1350,8 +1704,27 @@ async def update_sla_tracking(
         # Attach indicators so they flow through `from_attributes` serialization
         # of ConversationSLATrackingResponse. Header forwarding is unreliable
         # through the Next.js proxy, so the body is the source of truth.
+        # FINDING 5: an ambiguous response stamp no longer blanks the whole
+        # update - `updated_in_request` must say True when the payload also
+        # carried non-responded fields that DID apply, and only False when
+        # the ambiguous responded-family fields were the entire payload.
+        _responded_family_fields = {"is_responded", "responded_at", "responded_by", "response_time"}
+        _non_responded_fields_requested = bool(
+            set(tracking_data.model_fields_set) - _responded_family_fields
+        )
+        # AC-I3 rides the same rule: when the responded-family fields were the
+        # ENTIRE payload and they were dropped (ambiguous OR already responded),
+        # nothing applied.
+        _responded_family_dropped = ambiguous or already_responded
         setattr(fresh, "already_resolved", already_resolved)
-        setattr(fresh, "updated_in_request", not already_resolved)
+        setattr(fresh, "already_responded", already_responded)
+        setattr(
+            fresh,
+            "updated_in_request",
+            not already_resolved
+            and (not _responded_family_dropped or _non_responded_fields_requested),
+        )
+        setattr(fresh, "ambiguous_responded_skipped", ambiguous)
         return fresh
     except HTTPException:
         raise
@@ -1359,7 +1732,7 @@ async def update_sla_tracking(
         # A deliberate 4xx (e.g. "Conversation is already responded.") is a refusal,
         # not an integration failure. `handle_validation_error` returns AppException,
         # NOT HTTPException, so without this arm it fell through to the generic
-        # handler below and was logged as status="failed" — which is why every
+        # handler below and was logged as status="failed" - which is why every
         # historical sla_management "failure" is one benign idempotency race.
         # The global handler in app/main.py still serialises it to the caller.
         raise
@@ -1390,7 +1763,14 @@ async def sync_assignee_from_respond(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """Sync assignee from Respond.io: fetch contact by phone, match assignee.id to user respond_user_id, update assigned_to if different."""
+    """Sync assignee from Respond.io: fetch contact by phone, match assignee.id to user respond_user_id, update assigned_to if different.
+
+    AC-F2 (multi-open consumer audit): deprecated no-op for conversation-family
+    tickets - see ``ConversationSLATrackingService.sync_assignee_from_respond``.
+    Returns 200 with ``deprecated: true`` rather than erroring, so the existing UI
+    button keeps working (shows the deprecation message via the toast) without a
+    frontend change.
+    """
     try:
         service = ConversationSLATrackingService(db)
         result = service.sync_assignee_from_respond(str(tracking_id))
@@ -1466,7 +1846,7 @@ async def delete_sla_tracking(
         # A deliberate 4xx (e.g. "Conversation is already responded.") is a refusal,
         # not an integration failure. `handle_validation_error` returns AppException,
         # NOT HTTPException, so without this arm it fell through to the generic
-        # handler below and was logged as status="failed" — which is why every
+        # handler below and was logged as status="failed" - which is why every
         # historical sla_management "failure" is one benign idempotency race.
         # The global handler in app/main.py still serialises it to the caller.
         raise
@@ -1490,24 +1870,36 @@ async def delete_sla_tracking(
         raise handle_internal_error(str(e))
 
 
+def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize an inbound timestamp to aware UTC, matching the column convention.
+
+    These columns hold naive **UTC** (create_tracking stamps them from
+    `_now_utc()`, update_tracking runs every datetime field through the
+    service's own `_to_aware_utc`), so a naive value already means UTC and an
+    aware one converts to it. The route previously ran aware values through
+    `to_naive_datetime`, which produces naive **Malaysia** wall clock - storing
+    an n8n-reported reply eight hours after it happened.
+    """
+    if not isinstance(dt, datetime):
+        return dt
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _calculate_duration_hours(start_at, end_at) -> Decimal:
     """Calculate duration in hours with two-decimal precision.
-    
-    Handles both naive and timezone-aware datetimes.
-    Naive datetimes are treated as UTC+8 (local timezone).
+
+    Handles both naive and timezone-aware datetimes. Naive means UTC - that is
+    what the tracking columns store, so reading `initiated_at` as UTC+8 (as
+    this used to) inflated every duration computed here by eight hours.
     """
-    from datetime import timedelta
-    
-    # Convert naive datetimes to UTC+8 for calculation
-    if start_at.tzinfo is None:
-        start_at = start_at.replace(tzinfo=timezone(timedelta(hours=8)))
-    if end_at.tzinfo is None:
-        end_at = end_at.replace(tzinfo=timezone(timedelta(hours=8)))
-    
-    # Normalize both to UTC for calculation
-    start_at_utc = start_at.astimezone(timezone.utc)
-    end_at_utc = end_at.astimezone(timezone.utc)
-    
+    start_at_utc = _to_aware_utc(start_at)
+    end_at_utc = _to_aware_utc(end_at)
+    if start_at_utc is None or end_at_utc is None:
+        # No clock start to measure from (same fallback update_tracking uses).
+        return Decimal("0.00")
+
     hours = Decimal(str((end_at_utc - start_at_utc).total_seconds() / 3600))
     return hours.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -1521,7 +1913,18 @@ async def update_sla_tracking_status_integration(
     response: Response,
     db: Session = Depends(get_db)
 ):
-    """Update SLA tracking status fields from integration and log the request."""
+    """Update SLA tracking status fields from integration and log the request.
+
+    AC-E4 / AC-F1 (multi-open consumer audit): already ticket_id-scoped (the caller
+    supplies the exact tracking_id in the URL - there is no "resolve by contact"
+    variant), so it is NOT ambiguous under multi-open by itself. The audit risk is
+    entirely in HOW n8n picks the id: if a Respond "conversation closed" webhook
+    resolves a contact-keyed GET (e.g. the external preferred-tracking endpoint) and
+    feeds that id straight into `is_resolved=true` here, it can resolve the wrong
+    (or an arbitrary) open ticket for a contact holding several. Per AC-E4, resolution
+    driven purely by a Respond close event should stop once n8n moves to per-ticket
+    ids (S3.2) - kept working as-is until then (regression net 3).
+    """
     try:
         tracking_id_str = str(tracking_id)
         service = ConversationSLATrackingService(db)
@@ -1536,30 +1939,50 @@ async def update_sla_tracking_status_integration(
         update_dict.pop("resolution_duration", None)
         update_dict.pop("resolution_time", None)
 
-        # Convert timestamps to naive (no timezone) before storing
+        # Normalize timestamps to UTC before storing (the columns are naive UTC)
         if update_data.responded_at:
-            update_dict["responded_at"] = to_naive_datetime(update_data.responded_at) if isinstance(update_data.responded_at, datetime) and update_data.responded_at.tzinfo else update_data.responded_at
+            update_dict["responded_at"] = _to_aware_utc(update_data.responded_at)
             update_dict["response_time"] = _calculate_duration_hours(
                 tracking.initiated_at, update_dict["responded_at"]
             )
         if update_data.resolved_at:
-            update_dict["resolved_at"] = to_naive_datetime(update_data.resolved_at) if isinstance(update_data.resolved_at, datetime) and update_data.resolved_at.tzinfo else update_data.resolved_at
+            update_dict["resolved_at"] = _to_aware_utc(update_data.resolved_at)
             update_dict["resolution_duration"] = _calculate_duration_hours(
                 tracking.initiated_at, update_dict["resolved_at"]
             )
 
-        tracking = service.update_tracking(tracking_id_str, ConversationSLATrackingUpdate(**update_dict))
+        # This route has no auth dependency at all - it IS the n8n integration
+        # lane, so a resolve arriving here never fires the close-convo webhook
+        # (AC-M3 hardening; see update_tracking's `resolve_origin`).
+        tracking = service.update_tracking(
+            tracking_id_str,
+            ConversationSLATrackingUpdate(**update_dict),
+            resolve_origin="api_key",
+        )
         already_resolved = bool(getattr(tracking, "_already_resolved", False))
+        # FINDING 1: update_tracking is the shared path PUT /{tracking_id} also
+        # calls, so the AC-E3 ambiguity guard now applies here too - a stamp it
+        # skipped must not get a "response" event log written on top of it.
+        ambiguous_responded_skipped = bool(getattr(tracking, "_ambiguous_responded_skipped", False))
+        # AC-I3: a duplicate respond short-circuits in the service now (it used to
+        # raise 400). The stamp did not happen, so no "response" event log is owed.
+        already_responded = bool(getattr(tracking, "_already_responded", False))
         if already_resolved:
             response.headers["X-SLA-Already-Resolved"] = "true"
             response.headers["X-SLA-Updated"] = "false"
+        if already_responded:
+            response.headers["X-SLA-Already-Responded"] = "true"
 
         # Create event logs for responded/resolved when applicable
-        if update_data.is_responded and not already_resolved:
-            # Convert responded_at to UTC before creating event log
-            responded_at_utc = update_data.responded_at
-            if isinstance(responded_at_utc, datetime) and responded_at_utc.tzinfo:
-                responded_at_utc = responded_at_utc.astimezone(timezone.utc)
+        if (
+            update_data.is_responded
+            and not already_resolved
+            and not ambiguous_responded_skipped
+            and not already_responded
+        ):
+            # Aware UTC for the event log too: create_event_log reads a NAIVE
+            # datetime as Malaysia time, which would shift the logged instant.
+            responded_at_utc = _to_aware_utc(update_data.responded_at)
 
             responded_by_ref = (
                 str(getattr(tracking, "responded_by"))
@@ -1568,7 +1991,7 @@ async def update_sla_tracking_status_integration(
             )
             alabel, aid = event_log_assignee_fields(db, responded_by_ref)
 
-            service.create_event_log(ConversationSLAEventLogCreate(
+            _write_event_log_best_effort(service, ConversationSLAEventLogCreate(
                 sla_tracking_id=tracking_id_str,
                 event_type="response",
                 event_at=responded_at_utc,
@@ -1579,11 +2002,9 @@ async def update_sla_tracking_status_integration(
 
         if update_data.is_resolved and not already_resolved:
             # Use tracking.resolved_at (set by service if not sent) for event log
-            resolved_at_utc = update_data.resolved_at or getattr(tracking, "resolved_at", None)
-            if isinstance(resolved_at_utc, datetime) and resolved_at_utc.tzinfo:
-                resolved_at_utc = resolved_at_utc.astimezone(timezone.utc)
-            elif isinstance(resolved_at_utc, datetime) and not resolved_at_utc.tzinfo:
-                resolved_at_utc = resolved_at_utc.replace(tzinfo=timezone.utc)
+            resolved_at_utc = _to_aware_utc(
+                update_data.resolved_at or getattr(tracking, "resolved_at", None)
+            )
 
             resolved_by_ref = (
                 str(getattr(tracking, "resolved_by"))
@@ -1592,7 +2013,7 @@ async def update_sla_tracking_status_integration(
             )
             rlabel, rid = event_log_assignee_fields(db, resolved_by_ref)
 
-            service.create_event_log(ConversationSLAEventLogCreate(
+            _write_event_log_best_effort(service, ConversationSLAEventLogCreate(
                 sla_tracking_id=tracking_id_str,
                 event_type="resolution",
                 event_at=resolved_at_utc,
@@ -1608,7 +2029,8 @@ async def update_sla_tracking_status_integration(
             if getattr(getattr(tracking, "contact", None), "phone_number", None) is not None
             else tracking_id_result_str
         )
-        log_service.create_integration_log(
+        _log_integration_best_effort(
+            log_service,
             IntegrationLogCreate(
                 integration_channel="sla_tracking_update",
                 business_table="conversation_sla_tracking",
@@ -1617,7 +2039,15 @@ async def update_sla_tracking_status_integration(
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="PUT",
-                status="success" if not already_resolved else "skipped_already_resolved",
+                status=(
+                    "skipped_ambiguous_response"
+                    if ambiguous_responded_skipped
+                    else (
+                        "skipped_already_responded"
+                        if already_responded
+                        else ("success" if not already_resolved else "skipped_already_resolved")
+                    )
+                ),
             ),
             request_payload_dict=update_data.model_dump(exclude_unset=True)
         )
@@ -1628,9 +2058,26 @@ async def update_sla_tracking_status_integration(
                 "message": "Conversation is already resolved; no update applied.",
                 "tracking_id": tracking_id_result_str,
                 "already_resolved": True,
+                "already_responded": already_responded,
                 "updated": False,
             }
-        return {"status": "success", "message": "SLA tracking updated successfully.", "tracking_id": tracking_id_result_str}
+        if already_responded:
+            # AC-I3: 200 + marker, mirroring the already-resolved arm. n8n branches
+            # on `updated` and must never see a 4xx for a benign duplicate.
+            return {
+                "status": "skipped",
+                "message": "Conversation is already responded; response clocks untouched.",
+                "tracking_id": tracking_id_result_str,
+                "already_responded": True,
+                "updated": False,
+            }
+        return {
+            "status": "success",
+            "message": "SLA tracking updated successfully.",
+            "tracking_id": tracking_id_result_str,
+            "ambiguous_responded_skipped": ambiguous_responded_skipped,
+            "already_responded": False,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -1769,11 +2216,147 @@ async def get_sla_tracking_conversation(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """List Respond.io messages for the contact linked to this SLA tracking (respond_io_id on respond_contacts)."""
+    """List Respond.io messages for the contact linked to this SLA tracking (respond_io_id on respond_contacts).
+
+    The listing is a real Respond.io HTTP call (``RespondClient.list_messages``,
+    15s timeout) behind a synchronous service method, so this ``async def``
+    route hands it to ``run_in_threadpool`` rather than blocking the event loop
+    for its duration - same treatment as its siblings ``GET .../ticket`` and
+    ``POST .../ticket/send``. The drawer opens both, milliseconds apart.
+    """
+    from starlette.concurrency import run_in_threadpool
+
     try:
         service = ConversationSLATrackingService(db)
-        return service.fetch_respond_conversation_for_tracking(
-            str(tracking_id), limit=limit, cursor=cursor
+        return await run_in_threadpool(
+            service.fetch_respond_conversation_for_tracking,
+            str(tracking_id),
+            limit=limit,
+            cursor=cursor,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{tracking_id}/conversation/page")
+async def get_sla_tracking_conversation_page(
+    tracking_id: UUID,
+    before: Optional[str] = Query(
+        None, description="Message id to page OLDER than (exclusive)"
+    ),
+    after: Optional[str] = Query(
+        None, description="Message id to page NEWER than (exclusive)"
+    ),
+    around: Optional[str] = Query(
+        None, description="Message id to centre the window on (jump to a search match)"
+    ),
+    limit: int = Query(
+        50, ge=1, le=200, description="Messages per thread page (a chat window, not a grid page)"
+    ),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """One scroll-back window of the contact thread (UAC AC-L7).
+
+    Assignee-or-manager scoped like the sibling ``GET .../ticket``: this serves
+    a contact's WhatsApp conversation, so an outsider gets a 404 (never a 403,
+    which would confirm the ticket exists).
+
+    Items always come back **oldest-to-newest**, whichever direction was asked
+    for, so the caller never reverses. ``has_more_older`` is true whenever the
+    page came back full; the client keeps asking until it is false, which is the
+    true start of the conversation.
+
+    Read-only from the user's point of view: it never marks anything read and
+    never touches the conversation-window cache. It does opportunistically write
+    fetched Respond messages into ``chat_histories`` so in-thread search reaches
+    history that predates our ingest - best-effort, and a failure there does not
+    fail the read.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    cursors = [c for c in (before, after, around) if c]
+    if len(cursors) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Pass at most one of before, after, around.",
+        )
+
+    try:
+        service = ConversationSLATrackingService(db)
+        return await run_in_threadpool(
+            lambda: service.fetch_conversation_thread_page(
+                str(tracking_id),
+                viewer_user_id=current_user["id"],
+                before=before,
+                after=after,
+                around=around,
+                limit=limit,
+            )
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{tracking_id}/media")
+async def proxy_ticket_media(
+    tracking_id: UUID,
+    url: str = Query(..., description="Attachment URL on an allowlisted media host"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Viewer-scoped byte proxy for an attachment in THIS ticket's thread (AC-N4).
+
+    Scoped exactly like the sibling thread reads - an outsider gets a 404, never
+    a 403 - and the URL itself must be on the media allowlist
+    (``media_proxy_service``), so this can never be used as a general URL
+    fetcher. The contact-keyed twin lives under ``/conversations/{ref}/media``
+    and differs only in its gate.
+    """
+    from app.services import media_proxy_service
+
+    ConversationSLATrackingService(db).require_ticket_in_scope(
+        str(tracking_id), current_user["id"]
+    )
+    return await media_proxy_service.stream(url)
+
+
+@router.get("/{tracking_id}/conversation/search")
+async def search_sla_tracking_conversation(
+    tracking_id: UUID,
+    q: str = Query("", description="Free text searched inside this contact's messages"),
+    limit: int = Query(
+        100, ge=1, le=200, description="Search matches returned (a chat window, not a grid page)"
+    ),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """In-thread message search for this tracking's contact (UAC AC-L8).
+
+    ILIKE over the stored message body, newest-first and capped. Side-effect
+    free. Each hit carries the message id the thread jumps to via
+    ``GET .../conversation/page?around=<message_id>``. Assignee-or-manager
+    scoped like the page read - an outsider gets a 404, never a 403.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    try:
+        service = ConversationSLATrackingService(db)
+        return await run_in_threadpool(
+            lambda: service.search_conversation_thread(
+                str(tracking_id),
+                viewer_user_id=current_user["id"],
+                q=q,
+                limit=limit,
+            )
         )
     except HTTPException:
         raise
@@ -1810,6 +2393,50 @@ async def post_sla_tracking_conversation_reply(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{tracking_id}/comments", response_model=list[TicketCommentResponse])
+async def list_ticket_comments(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Internal comments on this ticket, oldest first (UAC AC-L1).
+
+    Assignee-or-manager scoped, same as resolve/escalate/send: an out-of-scope
+    viewer gets a 404, never a 403 (no existence leak). The list also carries
+    the CONTACT-scoped comments ingested from Respond's own inbox (AC-L3),
+    which belong to every open ticket for that contact rather than to one.
+    """
+    return TicketCommentService(db).list_for_tracking(
+        tracking_id, viewer_user_id=current_user["id"]
+    )
+
+
+@router.post(
+    "/{tracking_id}/comments",
+    response_model=TicketCommentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_ticket_comment(
+    tracking_id: str,
+    payload: TicketCommentCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Write an internal note on this ticket (UAC AC-L1).
+
+    NEVER reaches the contact: this path touches no Respond send route at all.
+    The only outbound call is the AC-L2 comment mirror, which runs post-commit,
+    best-effort, against Respond's internal comment endpoint. Mentioned users
+    get an in-app notification with a deep link back to the ticket.
+    """
+    return TicketCommentService(db).create_comment(
+        tracking_id,
+        author_user_id=current_user["id"],
+        body=payload.body,
+        mentioned_user_ids=payload.mentioned_user_ids,
+    )
+
+
 @router.get("/{tracking_id}", response_model=ConversationSLATrackingResponse)
 async def get_sla_tracking_record(
     tracking_id: UUID,
@@ -1831,7 +2458,7 @@ async def get_sla_tracking_record(
 def _resolve_sla_conversation_contact(db: Session, tracking_id: str):
     """(respond_io identifier, internal respond_contact_id) for a conversation SLA
     tracking. Identifier is the linked RespondContact's respond_io_id (not the
-    internal UUID) — see CLAUDE.md respond_contact_id ≠ respond_io_id."""
+    internal UUID) - see CLAUDE.md respond_contact_id ≠ respond_io_id."""
     tracking = (
         db.query(ConversationSLATracking)
         .filter(ConversationSLATracking.id == str(tracking_id))

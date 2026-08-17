@@ -1,9 +1,21 @@
 """High-volume chat history model populated by n8n."""
-from sqlalchemy import BigInteger, Column, DateTime, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Column, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 
 from app.database import Base
+
+# One row per Respond messageId per contact, for traffic that arrives after the
+# two-lane mirror went live (UAC AC-J5). Scoped to new rows because legacy rows
+# predate the contract and one environment holds a hand-seeded pair sharing an
+# id across directions - see alembic/versions/326_chat_history_message_dedupe.py
+# for the full reasoning. The literal MUST match the migration and the ingest's
+# ON CONFLICT clause, or the arbiter index stops being inferable and the dedupe
+# silently stops working.
+CHAT_HISTORY_DEDUPE_CUTOVER = "2026-08-14 00:00:00"
+CHAT_HISTORY_DEDUPE_PREDICATE = (
+    f"message_id IS NOT NULL AND created_at >= TIMESTAMP '{CHAT_HISTORY_DEDUPE_CUTOVER}'"
+)
 
 
 class ChatHistory(Base):
@@ -63,6 +75,16 @@ class ChatHistory(Base):
 
     __table_args__ = (
         Index("ix_chat_histories_channel_contact_sent_id", "channel", "contact_id", "sent_at", "id"),
+        # The Conversations inbox's "latest message per contact" DISTINCT ON
+        # (alembic 330). It does NOT filter on channel - an inbox row is the
+        # contact, whatever channel they last used - so the composite above,
+        # which leads on `channel`, cannot serve it.
+        Index(
+            "ix_chat_histories_contact_sent_desc",
+            "contact_id",
+            sent_at.desc(),
+            id.desc(),
+        ),
         Index("ix_chat_histories_channel_phone_sent", "channel", "phone_number", "sent_at"),
         Index("ix_chat_histories_channel_type_sent", "channel", "type", "sent_at"),
         Index(
@@ -76,5 +98,18 @@ class ChatHistory(Base):
             "contact_id",
             "reply_to_message_id",
             postgresql_where=reply_to_message_id.isnot(None),
+        ),
+        # NOTE: a pg_trgm GIN index on `message` also exists in migrated
+        # databases (alembic 327_chat_history_trgm) to serve the in-thread
+        # `ILIKE '%q%'` search. It is deliberately NOT declared here: it needs
+        # the pg_trgm extension, and `Base.metadata.create_all` (the test blank
+        # schema) would fail where the extension is absent. Nothing in the ORM
+        # references it - the planner picks it up on its own.
+        Index(
+            "uq_chat_histories_contact_message_dedupe",
+            "contact_id",
+            "message_id",
+            unique=True,
+            postgresql_where=text(CHAT_HISTORY_DEDUPE_PREDICATE),
         ),
     )

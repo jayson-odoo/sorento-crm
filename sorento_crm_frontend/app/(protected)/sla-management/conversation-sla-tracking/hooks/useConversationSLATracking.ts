@@ -1,6 +1,6 @@
+import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { buildDataGridParams } from '@/lib/api-client';
 import {
   useRecordNeighbours,
@@ -16,7 +16,10 @@ import {
   getConversationSLAEventLogs,
   syncAssigneeFromRespond,
   postConversationSLATestOverrides,
+  fetchSlaTrackingMedia,
   getSlaTrackingConversation,
+  getSlaTrackingConversationPage,
+  searchSlaTrackingConversation,
   postSlaTrackingConversationReply,
   CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH,
   type ConversationSLATestOverridesBody,
@@ -38,6 +41,12 @@ export function useConversationSLATrackingNeighbours(
   const params = buildDataGridParams(listParams, {
     policy_id: listParams.policy_id,
     assigned_to: listParams.assigned_to,
+    // AC-M2: the pager must walk the same pre-filtered history set the user
+    // landed on, or "next" silently leaves it.
+    contact: listParams.contact,
+    is_resolved:
+      listParams.is_resolved === undefined ? undefined : String(listParams.is_resolved),
+    resolved_by: listParams.resolved_by,
   });
   return useRecordNeighbours(
     CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH,
@@ -46,9 +55,23 @@ export function useConversationSLATrackingNeighbours(
   );
 }
 
-export function useConversationSLATracking(params: DataGridApiFetchParams & { policy_id?: string; status?: string; assigned_to?: string }) {
+export function useConversationSLATracking(params: ConversationSLATrackingListParams) {
   return useQuery({
-    queryKey: ['conversation-sla-tracking', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.policy_id, params.status, params.assigned_to],
+    queryKey: [
+      'conversation-sla-tracking',
+      params.pageIndex,
+      params.pageSize,
+      params.sorting,
+      params.searchQuery,
+      params.policy_id,
+      params.status,
+      params.assigned_to,
+      // AC-M2 deep-link filters: part of the key, or a "View history" landing
+      // renders the previously cached unfiltered page.
+      params.contact,
+      params.is_resolved,
+      params.resolved_by,
+    ],
     queryFn: () => getConversationSLATracking(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
@@ -143,9 +166,16 @@ export function useConversationSLATestOverrides(trackingId: string) {
   });
 }
 
+/**
+ * The shared contact thread. `refetchIntervalMs` opts a surface into polling so
+ * an open, idle chat shows the contact's next message without a manual refresh;
+ * it is opt-in because every poll is a live Respond.io call, and the surfaces
+ * that merely display the thread should not pay for one. Polling stops while
+ * the tab is in the background and whenever the query is disabled.
+ */
 export function useSlaTrackingConversation(
   trackingId: string | null,
-  options?: { limit?: number; cursor?: string; enabled?: boolean },
+  options?: { limit?: number; cursor?: string; enabled?: boolean; refetchIntervalMs?: number },
 ) {
   return useQuery({
     queryKey: ['sla-tracking-conversation', trackingId, options?.limit, options?.cursor],
@@ -156,7 +186,42 @@ export function useSlaTrackingConversation(
       }),
     enabled: !!trackingId && (options?.enabled !== false),
     staleTime: 30 * 1000,
+    refetchInterval: options?.refetchIntervalMs ?? false,
+    refetchIntervalInBackground: false,
   });
+}
+
+/**
+ * The two loaders `useConversationThread` needs for scroll-back and in-thread
+ * search (AC-L7 / AC-L8), memoised on the ticket id.
+ *
+ * A hook rather than two service imports in the component: the layering rule is
+ * UI -> hook -> service, and the thread hook re-runs its effects whenever a
+ * loader identity changes, so where the `useCallback` lives is behaviour, not
+ * tidiness.
+ */
+export function useSlaTrackingThreadLoaders(trackingId: string | null) {
+  const loadPage = useCallback(
+    (params: { before?: string; after?: string; around?: string; limit?: number }) =>
+      getSlaTrackingConversationPage(trackingId ?? '', params),
+    [trackingId],
+  );
+  const searchMessages = useCallback(
+    (query: string) => searchSlaTrackingConversation(trackingId ?? '', query),
+    [trackingId],
+  );
+  return { loadPage, searchMessages };
+}
+
+/**
+ * The chat-media byte loader for a ticket-scoped thread (UAC AC-N4), memoised
+ * on the ticket id so `RespondChatList` does not see a new callback each render.
+ */
+export function useSlaTrackingMediaProxy(trackingId: string | null) {
+  return useCallback(
+    (url: string) => fetchSlaTrackingMedia(trackingId ?? '', url),
+    [trackingId],
+  );
 }
 
 export function useSlaTrackingConversationReply(trackingId: string) {

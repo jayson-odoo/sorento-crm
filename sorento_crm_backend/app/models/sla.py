@@ -135,6 +135,16 @@ class ConversationSLATracking(Base):
     # members tagged for Mocha.
     brand_code = Column(Text, nullable=True)
     message_id = Column(BigInteger, nullable=True)  # External message id (e.g. n8n); cleared on resolve
+    # Identity of a conversation intervention ticket: the message that asked for a
+    # human. Text (not BigInteger) so the ticket layer stays channel-agnostic when
+    # the chat surface swaps off Respond.io. Backfilled from message_id by migration
+    # 321. NULL on form-SLA rows and on legacy rows that carried no trigger message.
+    source_message_id = Column(Text, nullable=True)
+    # The trigger message's own text (the enquiry) - the drawer's quoted header and
+    # the widget's row snippet both read this verbatim, never re-fetched from
+    # Respond.io. NULL on form-SLA rows and legacy tickets created before this
+    # field existed (backfill is not attempted - the original text is gone).
+    source_message_text = Column(Text, nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     resolution_duration = Column(Numeric(10, 2), nullable=True)
@@ -185,6 +195,27 @@ class ConversationSLATracking(Base):
             "source_entity_id",
         ),
         Index("ix_conversation_sla_tracking_handled_by_id", "handled_by_id"),
+        # One OPEN intervention ticket per (contact, triggering message). Replaces
+        # migration 180's one-open-row-per-contact singleton: a contact may now
+        # hold several open tickets, but an n8n retry of the same trigger message
+        # cannot open a second one. Contact-scoped (migration 323) because
+        # WhatsApp message ids are not guaranteed globally unique across
+        # different contacts/threads - a bare source_message_id key let two
+        # DIFFERENT contacts' colliding trigger messages fight over one row.
+        # Declared on the model as well as in the migration because test/CI
+        # schemas come from create_all, which never runs migration bodies.
+        # Form-SLA rows are outside the predicate - the two families share this
+        # table and must not constrain each other.
+        Index(
+            "uq_conversation_sla_tracking_open_contact_source_message",
+            "respond_contact_id",
+            "source_message_id",
+            unique=True,
+            postgresql_where=text(
+                "source_message_id IS NOT NULL AND is_resolved = false "
+                "AND (source_entity_type IS NULL OR source_entity_type = 'conversation')"
+            ),
+        ),
     )
 
 

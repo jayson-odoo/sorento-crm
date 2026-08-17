@@ -65,6 +65,10 @@ class IntegrationLogCreate(IntegrationLogBase):
     response_payload: Optional[str] = None
     error_code: Optional[str] = None
     error_message: Optional[str] = None
+    # "Not before this time" at creation. A direct-send lane that POSTs the row
+    # itself on a background thread sets it so the retry sweeper does not grab
+    # the same row in the gap between the commit and the thread starting.
+    next_retry_at: Optional[datetime] = None
 
 
 class IntegrationLogUpdate(BaseModel):

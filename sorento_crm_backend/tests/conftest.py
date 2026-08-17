@@ -215,6 +215,16 @@ def _reset_global_state():
     except Exception:
         pass
     try:
+        # The 24h-window lookup keeps a short per-identifier TTL cache. Tests
+        # reuse identifiers ("id:123", "437264483") across files with different
+        # mocked message lists, so a surviving entry would answer the next test
+        # with the previous one's window.
+        from app.services.respond_messaging_service import reset_window_cache
+
+        reset_window_cache()
+    except Exception:
+        pass
+    try:
         # The RBAC permission cache (`_rbac_cache`, 30s TTL) is a process global.
         # Tests reuse user ids (e.g. a superadmin seeded under a fixed id) across
         # files; a stale non-superadmin `role_slugs`/`perm` entry cached by an

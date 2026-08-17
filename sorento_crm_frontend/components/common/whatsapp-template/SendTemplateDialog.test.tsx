@@ -119,7 +119,35 @@ describe('SendTemplateDialog', () => {
       contact_id: 'contact-1',
       template_id: 'tpl-1',
       params: { '1': 'Ms Ang', '2': 'approved' },
+      // No intervention ticket on this surface: only the ticket drawer sets it.
+      tracking_id: null,
     });
+    await waitFor(() => expect(onSent).toHaveBeenCalled());
+  });
+
+  it('a sendAdapter takes over the send entirely (the contact-keyed inbox route)', async () => {
+    const sendAdapter = vi.fn().mockResolvedValue({ ok: true });
+    const onSent = vi.fn();
+    renderDialog({ sendAdapter, onSent });
+
+    fireEvent.click(await screen.findByTestId('template-option-update'));
+    fireEvent.change(screen.getByPlaceholderText('Value for {{1}}'), {
+      target: { value: 'Ms Ang' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Value for {{2}}'), {
+      target: { value: 'approved' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Send template$/i }));
+
+    await waitFor(() =>
+      expect(sendAdapter).toHaveBeenCalledWith({
+        template_id: 'tpl-1',
+        params: { '1': 'Ms Ang', '2': 'approved' },
+      }),
+    );
+    // The entity chat route is not a fallback here: it does not exist for a
+    // contact-keyed surface and calling it would 404 (or throw on chatBase).
+    expect(sendTemplateMessage).not.toHaveBeenCalled();
     await waitFor(() => expect(onSent).toHaveBeenCalled());
   });
 });

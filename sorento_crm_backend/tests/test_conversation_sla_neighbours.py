@@ -78,6 +78,9 @@ def db() -> Iterator[Session]:
         s.close()
 
 
+SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
+
+
 def _seed_policy(db: Session) -> SLAPolicy:
     existing = db.query(SLAPolicy).filter(SLAPolicy.code == POLICY_CODE).first()
     if existing:
@@ -87,6 +90,12 @@ def _seed_policy(db: Session) -> SLAPolicy:
         code=POLICY_CODE,
         name="NBR Conversation Policy",
         is_active=True,
+        # sla_policies.company_id is NOT NULL at the DB level (migration 320) even
+        # though the model still declares it nullable=True for callers with no
+        # company context; this test runs against the real (non-blank) schema so
+        # the constraint applies. Sorento is the incumbent company for all
+        # pre-multi-company data.
+        company_id=SORENTO_COMPANY_ID,
     )
     db.add(p)
     db.commit()

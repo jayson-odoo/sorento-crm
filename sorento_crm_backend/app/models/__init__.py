@@ -25,6 +25,8 @@ from app.models.complaint_master_data import ComplaintRootCause, ComplaintResolu
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
+from app.models.ticket_comment import ConversationTicketComment
+from app.models.message_snippet import MessageSnippet
 from app.models.resources import Attachment, AttachmentType
 from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
 from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
@@ -183,6 +185,8 @@ __all__ = [
     "SLAPolicyTier",
     "ConversationSLATracking",
     "ConversationSLAEventLog",
+    "ConversationTicketComment",
+    "MessageSnippet",
     "FormSLAConfig",
     "Attachment",
     "AttachmentType",
