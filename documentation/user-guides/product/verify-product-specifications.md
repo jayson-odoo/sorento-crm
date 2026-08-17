@@ -14,9 +14,9 @@ A progress line above the table reads **Verified N of M live codes** (discontinu
 
 Columns: **Code**, **Name**, **Class**, **Brand**, **Coverage** (values held / applicable keys), **Verification** (the state pill; hover it for who verified and what changed), and a per-row **Verify** / **Unverify** button.
 
-Hover the **Coverage** figure (or tab to it) to see the keys behind it: every key that applies to this product, the filled ones with their value, the blank ones marked *not set*. That is usually enough to judge a code without opening it.
+Hover the **Coverage** figure, tab to it, or tap it on a touch screen, to see the specs behind it: the keys that hold a value, with that value. How many are still missing is what the count itself tells you. That is usually enough to judge a code without opening it.
 
-* Default order puts **Needs re-verify** rows first, then **Unverified** grouped by class, with **Verified** last - the top of the list is always the work.
+* Default order is **class, then code**, and it does not change when you verify something - a row you have just stamped stays exactly where it was, with its pill flipped. Use the **Verification** filter to work through one state at a time.
 * **Search code or name** - press Enter to apply.
 * **Filters** (popover) - **Verification** state, **Class**, and an **Include discontinued** switch (off by default). Filters, sort, and page live in the URL, so a link to the list is a shareable slice.
 * Clicking a row opens that product's detail page on its **Specifications** tab. **Back** on that page returns you to this list exactly as you left it - same search, filters, sort, page and ticked rows - scrolled to the row you went in from, with that row showing whatever you did to it.

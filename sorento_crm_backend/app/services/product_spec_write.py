@@ -346,12 +346,20 @@ def lock_product_code(db: Session, product_code: str) -> list[str]:
 
     An earlier version keyed a `pg_advisory_xact_lock` on the code text instead. It
     closed the same race, but it locked a name rather than data, so a second SESSION
-    that could not see the caller's uncommitted rows still blocked on it - which is
-    exactly what the post-commit re-derive listener does, and under the tests' nested
-    transaction (where "commit" only releases a savepoint) it waited on a lock its own
-    caller would never release. Row locks are invisible to a session that cannot see
-    the rows, so that self-deadlock is gone while production serialisation, which is
-    always against COMMITTED product rows, is unchanged.
+    blocked on it whether or not it could see anything the caller had written - which
+    is what the post-commit re-derive listener is (it opens a fresh `SessionLocal`),
+    and under the tests' nested transaction (where "commit" only releases a savepoint)
+    it waited on a lock its own caller would never release.
+
+    Row locks narrow that, they do not abolish it. What is gone is the case where the
+    caller INSERTED the product rows inside its own transaction: a second session
+    cannot see a row that has not been committed, so there is nothing for it to block
+    on. A caller that UPDATED already-committed product rows still holds locks on rows
+    the fresh session CAN see, so under the rolled-back test fixture the `after_update`
+    re-derive can still queue behind a transaction that will never commit; a test in
+    that shape has to commit for real or drive derivation itself. Production is
+    unaffected either way - the `after_commit` hook runs after a real commit, and the
+    caller's locks are released by then.
 
     Held to the end of the transaction, so the caller's own commit releases it. Taken
     per code and never for a whole batch, which is what keeps `derive_all` bounded: its
@@ -406,13 +414,14 @@ def apply_spec_values(
     from app.services.product_spec_verification import invalidate_on_values_change
 
     with company_scope(db, None):
-        products = (
-            db.query(Product)
-            .filter(Product.product_code == product_code)
-            .order_by(Product.id)
-            .all()
-        )
-        if not products:
+        # Locked BEFORE the code's rows are read, and the id list IS the lock's: a list
+        # assembled first is a list assembled outside the lock, so a copy a concurrent
+        # write had just added would be written past here. Also before the spec-row
+        # lock below, and in the same order the verify guard takes them (products, then
+        # `product_specifications`): the FOR UPDATE on the spec rows alone cannot
+        # serialise a code that holds no spec row yet.
+        product_ids = lock_product_code(db, product_code)
+        if not product_ids:
             # Unconditional, and BEFORE the empty-batch return: an unknown code is an
             # unknown code whether or not the caller had anything to write, and a
             # 404-or-200 that turns on the length of the batch is a contract nobody can
@@ -426,15 +435,10 @@ def apply_spec_values(
         if not prepared:
             return {"product_code": product_code, "rows_written": 0, "spec_keys": []}
 
-        # Before the spec-row lock below, and in the same order the verify guard takes
-        # them (products, then `product_specifications`): the FOR UPDATE on the spec
-        # rows alone cannot serialise a code that holds no spec row yet.
-        lock_product_code(db, product_code)
-
         existing = {
             spec.product_id: spec
             for spec in db.query(ProductSpecifications)
-            .filter(ProductSpecifications.product_id.in_([p.id for p in products]))
+            .filter(ProductSpecifications.product_id.in_(product_ids))
             # Locked for the duration: two people editing different keys on one code
             # would otherwise both read the row, both write their whole `values` dict
             # back, and the second commit would erase the first with nothing recording
@@ -469,19 +473,20 @@ def apply_spec_values(
         before_values: dict = (
             dict(existing[min(existing)].values or {}) if existing else {}
         )
-        canonical_after_id = min(product.id for product in products)
+        # The helper returns the ids in product-id order, so the lowest is the first.
+        canonical_after_id = product_ids[0]
         after_values: dict = {}
-        for product in products:
-            spec = existing.get(product.id)
+        for product_id in product_ids:
+            spec = existing.get(product_id)
             if spec is None:
-                spec = ProductSpecifications(product_id=product.id)
+                spec = ProductSpecifications(product_id=product_id)
                 db.add(spec)
 
             values = dict(spec.values or {})
             provenance = dict(spec.provenance or {})
             for entry in prepared:
                 _apply(values, provenance, entry)
-            if product.id == canonical_after_id:
+            if product_id == canonical_after_id:
                 after_values = values
 
             # `derived_hash=None` is required, not tidiness: derivation's

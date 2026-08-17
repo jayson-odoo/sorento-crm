@@ -167,8 +167,10 @@ and how complete each code's coverage is - down to WHICH keys are filled and whi
    any of them**. The coverage figure opens on hover (or on tab-to-focus) into the keys behind it -
    every applicable key, filled ones with their value, blank ones named as blank - so "is 3 of 8
    the right 3?" is answered in the list rather than by a trip into the product (captain ruling
-   2026-08-17 hands-on test). Discontinued products are excluded by default with a toggle. The order is the work order: needs-re-verify first (ten-second diffs), then
-   never-verified, grouped by class so the reviewer holds one mental model at a time. Filters
+   2026-08-17 hands-on test). Discontinued products are excluded by default with a toggle. The
+   order is stable and does not depend on state: by class, then code, so the reviewer holds one
+   mental model at a time AND a row they have just verified stays exactly where it was rather than
+   sinking down the page (captain ruling 2026-08-17 hands-on test). Filters
    live in the URL so a person can own a slice and resume tomorrow.
 2. **Acting on one row, without leaving the list** - every row carries its own **Verify** button.
    A product that reads correctly at a glance is confirmed right there, one click, no navigation.
@@ -459,8 +461,9 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   is blocked by a flag any more.
 - **AC-D.6** `[BE]` GIVEN the worklist WHEN it is served THEN discontinued codes are **excluded by
   default** with an include toggle, cutting the list from 11,415 to **8,812** (M6), and the
-  progress line counts the same set it lists. Default order is needs-re-verify first, then
-  unverified **grouped by class then code**.
+  progress line counts the same set it lists. Default order is **state-independent - class then
+  code** (captain ruling 2026-08-17): verifying a row must not move it, so state narrows the list
+  as a filter and never ranks it.
 - **AC-D.7** `[BE]` GIVEN coverage WHEN it is computed THEN it is computed **inline in the
   worklist SQL** against the 52-row registry, not by calling `keys-for-product` per code - that
   endpoint returns the numerator, is one query per code, and sits behind a zero-grant permission.

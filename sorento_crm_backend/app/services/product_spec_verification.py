@@ -25,9 +25,9 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import Text, and_, case, column, func, literal, literal_column, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Numeric, Text, and_, case, func, literal, literal_column, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -285,8 +285,20 @@ def verify_code(
     over. Does not commit; the caller owns the transaction.
     """
     with company_scope(db, None):
-        products = db.query(Product).filter(Product.product_code == product_code).all()
-        if not products:
+        # A code with no spec row at all has nothing to lock FOR UPDATE, so two
+        # concurrent verifies of such a code would both pass the reads below. This
+        # locks the code's PRODUCT rows, which always exist, so the serialisation does
+        # not depend on a spec row existing. The writers take the SAME rows, from the
+        # same helper and in the same order, or a first write could still land between
+        # the reads below.
+        #
+        # FIRST, and the ids come from the lock itself. Reading the code's products and
+        # then locking would take the lock over a list assembled before it, so a copy a
+        # concurrent write had just added would be absent from the FOR UPDATE below and
+        # its spec row read unlocked. "Does this code exist" is the same question the
+        # lock already answered.
+        product_ids = lock_product_code(db, product_code)
+        if not product_ids:
             return {
                 "product_code": product_code,
                 "outcome": "not_found",
@@ -294,17 +306,9 @@ def verify_code(
                 "verification": dict(_EMPTY_BLOCK),
             }
 
-        # A code with no spec row at all has nothing to lock FOR UPDATE, so two
-        # concurrent verifies of such a code would both pass the reads below. This
-        # locks the code's PRODUCT rows, which always exist, so the serialisation does
-        # not depend on a spec row existing. The writers take the SAME rows, from the
-        # same helper and in the same order, or a first write could still land between
-        # the reads below.
-        lock_product_code(db, product_code)
-
         specs = (
             db.query(ProductSpecifications)
-            .filter(ProductSpecifications.product_id.in_([p.id for p in products]))
+            .filter(ProductSpecifications.product_id.in_(product_ids))
             .order_by(ProductSpecifications.product_id)
             .with_for_update()
             .all()
@@ -467,27 +471,6 @@ def unverify_codes_bulk(
 # --------------------------------------------------------------------------- #
 # the worklist
 # --------------------------------------------------------------------------- #
-def _have_expr():
-    """How many specs this product actually holds, counted in the row's own JSON.
-
-    A tombstoned key is not in `values` at all (the write path removes it), so it is
-    already excluded; the `->'value'` test drops a key whose entry says nothing.
-    """
-    empty_object = literal_column("'{}'::jsonb")
-    json_null = literal_column("'null'::jsonb")
-    entry = (
-        func.jsonb_each(func.coalesce(ProductSpecifications.values, empty_object))
-        .table_valued(column("key", Text), column("value", JSONB))
-        .alias("spec_entry")
-    )
-    return (
-        select(func.count())
-        .select_from(entry)
-        .where(func.jsonb_typeof(func.coalesce(entry.c.value["value"], json_null)) != "null")
-        .scalar_subquery()
-    )
-
-
 def _class_label_expr():
     """The class as every surface here reads it: what the specs say, else the category's.
 
@@ -503,10 +486,38 @@ def _class_label_expr():
 
 
 def _gate_value_expr(gate_key: str):
-    """What a registry gate compares against. `class` has a second source; nothing else does."""
+    """What a registry gate compares against. `class` has a second source; nothing else does.
+
+    A number is trimmed of its scale before it is compared, because the two readers of
+    a gate hold the same value in different spellings: jsonb keeps the digits it was
+    given (`2.50`), python's JSON reader does not (`2.5`). `trim_scale` here and
+    `Decimal(...).normalize()` in `_entry_text` land both on `2.5`, so the SQL
+    denominator and the itemised list under it cannot disagree about a numeric gate.
+    """
     if gate_key == "class":
         return _class_label_expr()
-    return ProductSpecifications.values[gate_key]["value"].astext
+    entry = ProductSpecifications.values[gate_key]["value"]
+    return case(
+        (
+            func.jsonb_typeof(entry) == "number",
+            func.trim_scale(entry.astext.cast(Numeric)).cast(Text),
+        ),
+        else_=entry.astext,
+    )
+
+
+def _gate_clauses(gates: Mapping[str, Sequence[str]]) -> list:
+    """One registry key's gates, as SQL. The ONE place a gate becomes a predicate.
+
+    Both the denominator and the numerator compile their CASE map through here, so
+    `sort=coverage` ranks a code on the same rule the row's figure was counted with.
+    Trimmed and lower-cased to match `_coverage_items`' `strip().lower()` on the python
+    side: a stored " Round " passed the tooltip's gate and failed the SQL one.
+    """
+    return [
+        func.lower(func.btrim(_gate_value_expr(gate_key))).in_(allowed)
+        for gate_key, allowed in gates.items()
+    ]
 
 
 def _active_registry_gates(db: Session) -> list[tuple[ProductSpecRegistry, dict[str, list[str]]]]:
@@ -550,10 +561,7 @@ def _applicable_expr(registry: list[tuple[ProductSpecRegistry, dict[str, list[st
     ungated = 0
     gated_cases = []
     for _row, gates in registry:
-        clauses = [
-            func.lower(_gate_value_expr(gate_key)).in_(allowed)
-            for gate_key, allowed in gates.items()
-        ]
+        clauses = _gate_clauses(gates)
         if not clauses:
             ungated += 1
             continue
@@ -565,15 +573,60 @@ def _applicable_expr(registry: list[tuple[ProductSpecRegistry, dict[str, list[st
     return expression
 
 
+def _have_expr(registry: list[tuple[ProductSpecRegistry, dict[str, list[str]]]]):
+    """How many APPLICABLE specs this product actually holds - the numerator, in SQL.
+
+    Only `sort=coverage` reads this; a page's rows count their own `have` off the
+    itemised list in `_hydrate_page`, so the figure and the list under it are one
+    computation. It exists so the ORDER agrees with the figure: counting every filled
+    entry, which is what this did, ranked a code by keys its class is never asked for
+    and put "8 of 50" above a list of seven.
+
+    One CASE per registry key: the same gates the denominator uses, plus "and the key
+    says something". A tombstoned key is not in `values` at all (the write path removes
+    it), so it is already excluded.
+
+    Costed, because 57 CASEs replace one `jsonb_each` subquery: on the prod-copy
+    database, all-companies scope (8,959 live codes), `sort=coverage` page 1 limit 25,
+    median of 5 runs after a warm-up, the whole call moves from 201 ms to 302 ms - the
+    default order, which never compiles this, measures 167 ms. Inside C7's 400 ms p95
+    either way, and the alternative was a sort that disagreed with the figure it sorted.
+    """
+    json_null = literal_column("'null'::jsonb")
+    expression = literal(0)
+    for row, gates in registry:
+        clauses = _gate_clauses(gates)
+        clauses.append(
+            func.jsonb_typeof(
+                func.coalesce(ProductSpecifications.values[row.spec_key]["value"], json_null)
+            )
+            != "null"
+        )
+        expression = expression + case((and_(*clauses), 1), else_=0)
+    return expression
+
+
 def _entry_text(entry) -> str | None:
-    """An entry's value as text, the way Postgres' `->>` renders it for the gate above."""
+    """An entry's value as text, the way `_gate_value_expr` renders it in SQL.
+
+    A number goes through the same scale trim Postgres' `trim_scale` applies there
+    (and `_canonical_value` applies to the hash), so 2.50 and 2.5 are one gate value on
+    both sides. `format(..., "f")` rather than a bare `normalize()`, which would render
+    407.0 as "4.07E+2".
+    """
     if not isinstance(entry, Mapping):
         return None
     value = entry.get("value")
     if value is None:
         return None
+    # bool BEFORE the numeric branch: bool is a subclass of int in Python.
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            return format(Decimal(str(value)).normalize(), "f")
+        except (InvalidOperation, ValueError):
+            return str(value)
     return str(value)
 
 
@@ -629,15 +682,6 @@ def _open_exceptions_expr():
     )
 
 
-def _state_rank(state_column):
-    """Needs-re-verify first, verified last (C6)."""
-    return case(
-        (state_column == STATE_NEEDS_REVERIFY, literal(0)),
-        (state_column == STATE_VERIFIED, literal(2)),
-        else_=literal(1),
-    )
-
-
 def worklist(
     db: Session,
     *,
@@ -667,9 +711,10 @@ def worklist(
 
     Three statements plus the ledger read, in this shape for a measured reason. The
     slim projection (code, class, state) answers the facet, the progress line, the
-    total AND the page's ordering; the coverage subquery, the 52-CASE applicable
-    expression, the open-exception count and the values a row's hash is taken over are
-    then fetched for the 25 codes on the page and nothing else.
+    total AND the page's ordering; the 57-CASE applicable expression, the open-exception
+    count, the stored values the coverage list and its figure are computed from, and the
+    values a row's hash is taken over are then fetched for the 25 codes on the page and
+    nothing else.
 
     Measured on the prod-copy database, Sorento scope, page 1, 8,820 live codes,
     `time.perf_counter` around the whole call, 3 runs after one warm-up:
@@ -698,6 +743,10 @@ def worklist(
     the 400 ms threshold.
     """
     class_label_expr = _class_label_expr()
+    # Read ONCE per request and handed to both readers: the numerator `sort=coverage`
+    # orders on, and the per-row key list `_hydrate_page` builds the figure and the
+    # tooltip from. Two readings could drift within one response.
+    registry = _active_registry_gates(db)
     latest = _latest_select(party).subquery("latest_verification")
     state_expr = func.coalesce(latest.c.state, literal(STATE_UNVERIFIED))
 
@@ -725,7 +774,7 @@ def worklist(
     if sort == SORT_COVERAGE:
         # The only ordering key that is not already slim. Added on demand rather than
         # always, so the default order pays nothing for a sort nobody asked for.
-        slim_columns.append(_have_expr().label("have"))
+        slim_columns.append(_have_expr(registry).label("have"))
 
     slim_candidates = (
         select(*slim_columns)
@@ -780,11 +829,14 @@ def worklist(
     elif sort == SORT_CODE:
         order_by = [_ordered(slim.c.product_code)]
     else:
-        # The default order is a narrative rather than a sort key ("what needs looking
-        # at, grouped so one class is reviewed at a time"), so `direction` does not
-        # reverse it.
+        # STATE-INDEPENDENT, by captain ruling 2026-08-17. Ranking by state first read
+        # well on paper ("what needs looking at, first") and worked badly in the hand:
+        # verifying a code from its Specifications tab and coming back re-sorted the
+        # row away from where the reviewer left it, so the row they had just acted on
+        # either sank down the page or left it. State is a FILTER here, not the sort.
+        # A narrative rather than a sort key ("one class reviewed at a time"), so
+        # `direction` does not reverse it.
         order_by = [
-            _state_rank(slim.c.state),
             slim.c.class_label.asc().nullslast(),
             slim.c.product_code.asc(),
         ]
@@ -796,7 +848,9 @@ def worklist(
     )
 
     return {
-        "data": _hydrate_page(db, page_codes, filters, class_label_expr, state_expr, latest, party),
+        "data": _hydrate_page(
+            db, page_codes, filters, class_label_expr, state_expr, latest, party, registry
+        ),
         "pagination": {"total": total, "page": page, "limit": limit},
         "summary": summary,
         "classes": classes,
@@ -840,6 +894,7 @@ def _hydrate_page(
     state_expr,
     latest,
     party: str,
+    registry: list[tuple[ProductSpecRegistry, dict[str, list[str]]]],
 ) -> list[dict]:
     """Everything a row shows, for the codes on this page and no others.
 
@@ -850,7 +905,6 @@ def _hydrate_page(
     if not page_codes:
         return []
 
-    registry = _active_registry_gates(db)
     inner = (
         select(
             Product.id.label("product_id"),
@@ -862,7 +916,6 @@ def _hydrate_page(
             # Labelled away from "values": `subquery.c.values` is the mapping's own
             # method, not a column, and shadowing it is a trap for the next reader.
             ProductSpecifications.values.label("spec_values"),
-            _have_expr().label("have"),
             _applicable_expr(registry).label("applicable"),
             _open_exceptions_expr().label("open_exceptions"),
             state_expr.label("state"),
@@ -891,6 +944,9 @@ def _hydrate_page(
         row = by_code.get(code)
         if row is None:
             continue
+        # The denominator itemised, so the reviewer can judge a code from the list
+        # without opening it (captain ruling 2026-08-17).
+        items = _coverage_items(registry, row["spec_values"], row["class_label"])
         data.append(
             {
                 "product_id": str(row["product_id"]),
@@ -900,13 +956,13 @@ def _hydrate_page(
                 "brand_name": row["brand_name"],
                 "is_discontinued": bool(row["is_discontinued"]),
                 "coverage": {
-                    "have": row["have"],
+                    # Counted off the list itself, not in SQL: the header read "8 of
+                    # 50" over a list of seven while `have` counted every filled entry
+                    # and the list only the applicable ones. One computation now, so
+                    # the figure cannot outrun what is under it.
+                    "have": sum(1 for item in items if item["value"] is not None),
                     "applicable": row["applicable"],
-                    # The denominator itemised, so the reviewer can judge a code from
-                    # the list without opening it (captain ruling 2026-08-17).
-                    "items": _coverage_items(
-                        registry, row["spec_values"], row["class_label"]
-                    ),
+                    "items": items,
                 },
                 "open_exceptions": row["open_exceptions"],
                 # NOT hashed from the row above: that is the in-scope copy, and the

@@ -842,20 +842,45 @@ def test_worklist_excludes_discontinued_codes_by_default_and_includes_them_on_re
     assert worklist_codes["discontinued"] in included_codes
 
 
-def test_worklist_default_order_is_needs_reverify_then_unverified_by_class_then_code_then_verified(
-    db, worklist_codes
-):
-    result = psv.worklist(db, page=1, limit=50)
-    codes = [row["product_code"] for row in result["data"]]
+def test_worklist_default_order_is_class_then_code_and_does_not_rank_by_state(db, worklist_codes):
+    """Captain ruling 2026-08-17: state is a FILTER here, never the sort.
 
-    assert codes[0] == worklist_codes["needs_reverify"]
-    assert codes[-1] == worklist_codes["verified"]
-    assert set(codes[1:-1]) == {worklist_codes["a1"], worklist_codes["a2"], worklist_codes["b1"]}
-    # a1 and a2 share a class_label ("Kitchen Sink"); grouped-by-class-then-code means
-    # a1 must sort before a2 regardless of where the "Bidet" row (b1) lands relative
-    # to that group - lexicographically deterministic since unique_code() keeps the
-    # differing "A1"/"A2" segment ahead of the random suffix.
-    assert codes.index(worklist_codes["a1"]) < codes.index(worklist_codes["a2"])
+    The order used to lead on state (needs-re-verify first, verified last), which read
+    well and worked badly: verifying a code and coming back re-sorted the row away from
+    where the reviewer had left it. Class then code, so the list is the same list
+    whatever anybody just stamped. Lexicographically deterministic - unique_code() keeps
+    the differing segment ahead of its random suffix, and "Bidet" sorts before
+    "Kitchen Sink".
+    """
+    result = psv.worklist(db, page=1, limit=50)
+
+    assert [row["product_code"] for row in result["data"]] == [
+        worklist_codes["b1"],  # Bidet
+        worklist_codes["a1"],  # Kitchen Sink, by code from here down
+        worklist_codes["a2"],
+        worklist_codes["needs_reverify"],
+        worklist_codes["verified"],
+    ]
+
+
+def test_worklist_row_keeps_its_place_after_it_is_verified(db, worklist_codes):
+    """The ruling's own scenario: verify a row, come back, and find it where it was."""
+    before = [row["product_code"] for row in psv.worklist(db, page=1, limit=50)["data"]]
+    target = worklist_codes["a1"]
+
+    psv.verify_code(
+        db,
+        target,
+        values_hash=psv.current_values_hash(db, target),
+        actor=_ACTOR,
+        party=psv.PARTY_INTERNAL,
+    )
+    db.commit()
+
+    after = psv.worklist(db, page=1, limit=50)["data"]
+    assert [row["product_code"] for row in after] == before, "the row must not sink"
+    verified = next(row for row in after if row["product_code"] == target)
+    assert verified["verification"]["state"] == psv.STATE_VERIFIED, "only the pill moves"
 
 
 def test_worklist_row_carries_coverage_open_exceptions_and_values_hash(db, worklist_codes):
@@ -924,6 +949,52 @@ def test_worklist_coverage_carries_the_itemised_keys_behind_the_have_over_applic
     )
     assert "wl_legacy" not in {item["spec_key"] for item in a1["items"]}, "inactive keys never apply"
     assert all(item["value"] is not None for item in a1["items"])
+
+
+def test_worklist_coverage_counts_only_applicable_keys_and_sorts_on_the_same_number(
+    db, worklist_codes
+):
+    """`have` is counted off the very list the tooltip shows, and so is the sort.
+
+    It used to count every filled entry in the row's JSON while `applicable` and the
+    itemised list counted only the keys the class asks for, so a code carrying keys its
+    gate excludes read "3 of 3" over a list of one - and `sort=coverage` ranked it as
+    the best-covered code on the page.
+    """
+    off_gate = _product(db, unique_code("WL-OFFGATE"), name="Off Gate Sink")
+    _spec(
+        db,
+        off_gate,
+        {
+            "wl_shape": {"value": "rectangular"},
+            # Stored, and NOT applicable: wl_diameter's gate wants round or square, and
+            # wl_legacy is not an active registry key at all.
+            "wl_diameter": {"value": 300},
+            "wl_legacy": {"value": "old"},
+        },
+    )
+    db.commit()
+
+    coverage = psv.worklist(db, page=1, limit=50, query=off_gate.product_code)["data"][0][
+        "coverage"
+    ]
+    listed = {item["spec_key"] for item in coverage["items"]}
+    assert listed == {"wl_material", "wl_mounting", "wl_shape"}
+    assert coverage["applicable"] == len(coverage["items"]), (
+        "the denominator and the list under it are one rule"
+    )
+    assert coverage["have"] == sum(1 for item in coverage["items"] if item["value"] is not None)
+    assert coverage["have"] == 1, "only wl_shape is both applicable and set"
+
+    ascending = psv.worklist(
+        db, page=1, limit=50, state="unverified", sort="coverage", direction="asc"
+    )
+    assert [row["product_code"] for row in ascending["data"]] == [
+        worklist_codes["b1"],  # have=0
+        off_gate.product_code,  # have=1, not the 3 filled entries it holds
+        worklist_codes["a2"],  # have=2
+        worklist_codes["a1"],  # have=3
+    ], "the order and the figure are the same number"
 
 
 def test_worklist_summary_counts_the_default_filtered_set_and_ignores_only_the_state_filter(

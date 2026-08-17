@@ -21,12 +21,34 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({
-    resetToDefaults: async () => {},
-    isLoading: false,
-  }),
-}));
+// `DataGrid` renders skeletons - and therefore no rows - until this answers, so the
+// mock can reproduce the real sequence a resumed list goes through: data first, rows
+// painted a beat later, and that second render happening inside the grid.
+// `answersAfterMs` > 0 holds the grid on skeletons for that long, past the point the
+// worklist data itself lands, which is the real sequence a resumed list goes through.
+const prefs = vi.hoisted(() => ({ answersAfterMs: 0 }));
+vi.mock(
+  '@/lib/listing-column-preferences/useListingColumnPreferences',
+  async () => {
+    const react = await import('react');
+    return {
+      useListingColumnPreferences: () => {
+        const [isLoading, setIsLoading] = react.useState(
+          prefs.answersAfterMs > 0,
+        );
+        react.useEffect(() => {
+          if (!isLoading) return;
+          const timer = setTimeout(
+            () => setIsLoading(false),
+            prefs.answersAfterMs,
+          );
+          return () => clearTimeout(timer);
+        }, [isLoading]);
+        return { resetToDefaults: async () => {}, isLoading };
+      },
+    };
+  },
+);
 
 const usePermissions = vi.fn();
 vi.mock('@/hooks/usePermissions', () => ({
@@ -118,6 +140,7 @@ function renderList() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  prefs.answersAfterMs = 0;
   nav.params = new URLSearchParams();
   usePermissions.mockReturnValue({
     permissionSet: new Set(['master_data.products.edit']),
@@ -365,6 +388,33 @@ describe('data state', () => {
     expect(
       screen.getByText('2 of 3 applicable keys hold a value'),
     ).toBeInTheDocument();
+  });
+
+  it('the Coverage cell opens on a tap, not only on hover', async () => {
+    // A touch device reports no hover and never focuses on tap, so the uncontrolled
+    // HoverCard gave a phone reviewer the count and nothing else.
+    mockWorklist([row('WC100', 'unverified')]);
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+
+    const trigger = screen.getByRole('button', {
+      name: 'Coverage: 2 of 3 applicable keys hold a value',
+    });
+    expect(trigger).toHaveAttribute(
+      'title',
+      '2 of 3 applicable keys hold a value',
+    );
+
+    fireEvent.click(trigger);
+
+    const list = await screen.findByRole('list');
+    expect(
+      within(list)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent),
+    ).toEqual(['Material: Ceramic', 'Height: 770 mm']);
+    // ... and the row itself did not navigate underneath it.
+    expect(nav.push).not.toHaveBeenCalled();
   });
 
   it('the Coverage cell says nothing is set rather than listing blanks', async () => {
@@ -727,6 +777,59 @@ describe('data state', () => {
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
     const target = scrollIntoView.mock.instances[0] as HTMLElement;
     expect(target.getAttribute('data-spec-code')).toBe('WC300');
+  });
+
+  it('`focus` still scrolls when the grid paints its rows a render late', async () => {
+    // The regression: the restore spent its one shot on the render where the data had
+    // arrived but the grid was still showing skeletons, so the reviewer came back to
+    // the top of the list rather than to the row they left from.
+    // The grid answers its column preferences AFTER the rows are in state, so there is
+    // a render with data and no row in the DOM - and the render that finally paints it
+    // happens inside the grid, where this component has nothing to re-run on.
+    prefs.answersAfterMs = 50;
+    nav.params = new URLSearchParams({ focus: 'WC300' });
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    mockWorklist();
+    renderList();
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    expect(
+      (scrollIntoView.mock.instances[0] as HTMLElement).getAttribute(
+        'data-spec-code',
+      ),
+    ).toBe('WC300');
+  });
+
+  it('changing a filter clears the selection and drops it from the URL', async () => {
+    // Same rule as changing page: a code the filtered list no longer shows must not
+    // ride a bulk action, and the URL must not carry it back on a refresh either. The
+    // selection is seeded from the URL with an off-page code, which is how it outlives
+    // a page in the first place - and, since it selects no visible row, the toolbar
+    // still shows the search box rather than the bulk strip.
+    nav.params = new URLSearchParams({ selected: 'WC999' });
+    mockWorklist();
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        nav.replace.mock.calls.some((call) =>
+          String(call[0]).includes('selected=WC999'),
+        ),
+      ).toBe(true),
+    );
+
+    const search = screen.getByPlaceholderText('Search code or name');
+    fireEvent.change(search, { target: { value: 'WC1' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    await waitFor(() => {
+      const lastUrl = String(
+        nav.replace.mock.calls[nav.replace.mock.calls.length - 1][0],
+      );
+      expect(lastUrl).toContain('query=WC1');
+      expect(lastUrl).not.toContain('selected=');
+    });
   });
 
   it('a mixed bulk verify: acted row flips pill in place, skipped row (values moved) stays selected', async () => {

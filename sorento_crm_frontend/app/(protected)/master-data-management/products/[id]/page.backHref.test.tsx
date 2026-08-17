@@ -74,15 +74,26 @@ describe('Back link', () => {
     nav.params = new URLSearchParams({ back: 'https://evil.test/steal' });
     await renderPage();
 
-    const link = screen.getByRole('link', { name: /Back to products/ });
-    expect(link.getAttribute('href')).not.toContain('evil.test/steal');
+    // The exact href, not merely "does not contain evil.test": the rejected value
+    // survives ONLY as an inert query param on our own products path, which is what
+    // an assertion has to say if it is to catch the link pointing off-site.
+    expect(
+      screen.getByRole('link', { name: /Back to products/ }),
+    ).toHaveAttribute(
+      'href',
+      '/master-data-management/products?back=https%3A%2F%2Fevil.test%2Fsteal',
+    );
   });
 
   it('ignores a protocol-relative `back`', async () => {
     nav.params = new URLSearchParams({ back: '//evil.test/steal' });
     await renderPage();
 
-    const link = screen.getByRole('link', { name: /Back to products/ });
-    expect(link.getAttribute('href')).not.toBe('//evil.test/steal');
+    expect(
+      screen.getByRole('link', { name: /Back to products/ }),
+    ).toHaveAttribute(
+      'href',
+      '/master-data-management/products?back=%2F%2Fevil.test%2Fsteal',
+    );
   });
 });

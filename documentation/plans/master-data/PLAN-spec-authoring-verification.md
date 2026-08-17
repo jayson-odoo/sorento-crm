@@ -303,6 +303,15 @@ code** - batching one class at a time is what makes each review fast, because th
 one mental model of what a Water Closet should carry. Coverage stays a displayed column and an
 explicit sort. This is a query param, so the captain can overrule it without a schema change.
 
+**Amendment - captain ruling 2026-08-17 (hands-on):** stable order, verified rows do not sink;
+state is a filter, not the sort. Ranking by state first read well and worked badly: verifying a
+product from its Specifications tab and returning to the worklist re-sorted the row away from
+where the reviewer had left it, so the row they had just acted on sank down the page or off it.
+The default order is now **class then code** with the same tie-breakers, state-independent, so a
+row only changes its pill. The `state` query param still narrows the list, and `sort=coverage` /
+`sort=code` are unchanged; the state-first order is gone rather than kept as an option, because
+nothing asked for it.
+
 ### C7 - the coverage query is not the risk it looked like
 
 Flagged going in as the single biggest unpriced risk. Measured with `EXPLAIN ANALYZE`: **113 ms

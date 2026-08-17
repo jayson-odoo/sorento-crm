@@ -137,8 +137,10 @@ function verificationTitle(block: VerificationBlock): string {
  * (`coverage.items`), so the cell answers "show me what is set": the count line
  * carries the gap, the list carries only the keys that hold a value - a wall of
  * "not set" rows is the same information the count already gave. Hovering opens it,
- * and so does tabbing to it - the same `HoverCard` the reorder grid uses for a cell
- * that has more to say than it can show.
+ * tabbing to it opens it, and so does TAPPING it - the same `HoverCard` the reorder
+ * grid uses for a cell that has more to say than it can show, held open here rather
+ * than left uncontrolled because a touch device has no hover and would otherwise get
+ * the count and nothing else.
  */
 function CoverageCell({ coverage }: { coverage: SpecVerificationCoverage }) {
   // A key "holds a value" only if it reads as something, so the filter runs on the
@@ -146,23 +148,33 @@ function CoverageCell({ coverage }: { coverage: SpecVerificationCoverage }) {
   const filled = (coverage.items ?? [])
     .map((item) => ({ ...item, text: readableEntry(item.value) }))
     .filter((item) => item.text);
+  const [open, setOpen] = useState(false);
+  const summary = `${coverage.have} of ${coverage.applicable} applicable keys hold a value`;
 
   return (
-    <HoverCard openDelay={120}>
+    <HoverCard open={open} onOpenChange={setOpen} openDelay={120}>
       <HoverCardTrigger asChild>
         <button
           type="button"
           className="text-sm tabular-nums underline decoration-dotted underline-offset-4"
-          // The row navigates on click; this cell answers in place instead.
-          onClick={(e) => e.stopPropagation()}
-          aria-label={`Coverage: ${coverage.have} of ${coverage.applicable} applicable keys hold a value`}
+          // The row navigates on click; this cell answers in place instead. The toggle
+          // is what makes it work under a finger: hover and focus still open it, and a
+          // second tap closes it.
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((wasOpen) => !wasOpen);
+          }}
+          aria-expanded={open}
+          aria-label={`Coverage: ${summary}`}
+          // The last resort, for a pointer that reports neither hover nor a usable tap.
+          title={summary}
         >
           {coverage.have} / {coverage.applicable}
         </button>
       </HoverCardTrigger>
       <HoverCardContent className="w-72 p-3" align="start">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">
-          {coverage.have} of {coverage.applicable} applicable keys hold a value
+          {summary}
         </div>
         {filled.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">Nothing set yet</p>
@@ -592,26 +604,49 @@ export default function SpecVerificationList() {
     manualFiltering: true,
   });
 
-  // Selection is page-scoped (AC-D.10), so it is dropped when the page CHANGES: a
-  // code the user can no longer see must not be carried into a bulk action. Guarded on
-  // the page actually moving rather than left to run on mount too, which would wipe the
-  // selection the URL just restored.
-  const pageKey = useRef(`${pageIndex}:${pageSize}`);
+  // Selection is page-scoped (AC-D.10), so it is dropped when the VISIBLE SET changes:
+  // a code the user can no longer see must not be carried into a bulk action. That is
+  // the page, and equally a filter - searching or switching state kept a tick on a row
+  // that had scrolled out of existence, and the toolbar then offered to verify it.
+  // Resetting empties `rowSelection`, so the effect above sheds `selected` from the URL
+  // in the same pass. Guarded on the key actually moving rather than left to run on
+  // mount too, which would wipe the selection the URL just restored.
+  const visibleSetKey = `${pageIndex}:${pageSize}:${searchQuery}:${stateFilter}:${classFilter}:${includeDiscontinued}`;
+  const pageKey = useRef(visibleSetKey);
   useEffect(() => {
-    if (pageKey.current === `${pageIndex}:${pageSize}`) return;
-    pageKey.current = `${pageIndex}:${pageSize}`;
+    if (pageKey.current === visibleSetKey) return;
+    pageKey.current = visibleSetKey;
     table.resetRowSelection();
-  }, [table, pageIndex, pageSize]);
+  }, [table, visibleSetKey]);
 
   // Put the reviewer back on the row they left from. Once, and only when the rows the
   // page was resumed with are on screen.
+  // NOT FOUND IS NOT DONE. Rows can be in state a render before the grid has painted
+  // them: `DataGrid` shows skeletons until the column preferences answer, and that
+  // render happens inside the grid, so there is no state HERE to key an effect on.
+  // Marking the attempt spent on that pass burnt the single shot the restore gets and
+  // left the reviewer at the top of the list instead of on the row they came back to.
+  // So the shot is only spent on a real node, and until then it retries for a second -
+  // the same "the target mounts later" problem `GuideTargetSpotlight` solves, at the
+  // small end of it.
   useEffect(() => {
-    if (!focusCode || focusDone.current || !rows.length) return;
-    focusDone.current = true;
-    const target = Array.from(
-      document.querySelectorAll('[data-spec-code]'),
-    ).find((el) => el.getAttribute('data-spec-code') === focusCode);
-    target?.scrollIntoView?.({ block: 'center' });
+    if (!focusCode || focusDone.current) return;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bringIntoView = () => {
+      const target = Array.from(
+        document.querySelectorAll('[data-spec-code]'),
+      ).find((el) => el.getAttribute('data-spec-code') === focusCode);
+      if (target) {
+        focusDone.current = true;
+        target.scrollIntoView?.({ block: 'center' });
+        return;
+      }
+      attempts += 1;
+      if (attempts < 10) timer = setTimeout(bringIntoView, 100);
+    };
+    bringIntoView();
+    return () => clearTimeout(timer);
   }, [focusCode, rows]);
 
   // Read off the table's own selected rows rather than the raw selection map. The map
