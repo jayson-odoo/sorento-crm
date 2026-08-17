@@ -19,6 +19,14 @@ dependencies (`require_permission`, not `_with_api_key` - see `apply_flyer_
 dimensions` for the precedent AC-A.7/L9 names) resolve through `get_current_
 user`, so that is the one overridden for the 401 case, not `_or_api_key`.
 
+Field names on the wire are snake_case, NOT the dealer kit's camelCase aliases.
+These payloads carry `spec_key` / `stored_value` / `data_type` rows straight into
+`components/spec-proposals`, which speaks snake_case, and the UAC names every
+field of these four routes in snake_case (AC-B.1, AC-B.2, AC-C.1); the PLAN records
+the deviation from the dealer kit's usual convention in section 5. A handful of
+assertions in this file were written camelCase before that was settled and were
+corrected here - a test defect, not a change of behaviour.
+
 C.1-C.7 (apply) build the batch and its proposal rows DIRECTLY rather than
 running the propose job first: apply operates on whatever rows are stored,
 regardless of how they got there, and seeding them directly keeps each test
@@ -354,9 +362,9 @@ def test_get_proposals_groups_rows_by_product_for_a_proposed_batch(api, db):
     groups = body["groups"]
     assert len(groups) == 1
     group = groups[0]
-    assert group["productCode"] == "ZZT-FLYRT-GET1"
+    assert group["product_code"] == "ZZT-FLYRT-GET1"
     proposal = group["proposals"][0]
-    assert proposal["specKey"] == "trap_type"
+    assert proposal["spec_key"] == "trap_type"
     assert proposal["value"] == "s_trap"
     assert proposal["kind"] == "new"
 
@@ -434,7 +442,7 @@ def test_apply_refuses_a_proposal_id_not_in_this_batch(api, db):
     body = response.json()
     assert body["applied"] == []
     refused = body["refused"][0]
-    assert refused["proposalId"] == foreign_id
+    assert refused["proposal_id"] == foreign_id
     assert refused["reason"] == "not_in_batch"
 
 
@@ -518,7 +526,7 @@ def test_apply_writes_a_new_row(api, db):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["refused"] == []
-    assert body["applied"][0]["specKey"] == "trap_type"
+    assert body["applied"][0]["spec_key"] == "trap_type"
     assert _spec_of(db, product.id).values["trap_type"]["value"] == "s_trap"
 
 
@@ -617,14 +625,14 @@ def test_apply_refuses_one_products_rows_when_its_write_raises_but_still_200s(ap
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert [row["specKey"] for row in body["applied"]] == ["trap_type"]
-    assert body["applied"][0]["productCode"] == "ZZT-FLYRT-C4-GOOD"
-    assert body["refused"][0]["productCode"] == "ZZT-FLYRT-C4-BAD"
+    assert [row["spec_key"] for row in body["applied"]] == ["trap_type"]
+    assert body["applied"][0]["product_code"] == "ZZT-FLYRT-C4-GOOD"
+    assert body["refused"][0]["product_code"] == "ZZT-FLYRT-C4-BAD"
     assert _spec_of(db, good.id).values["trap_type"]["value"] == "s_trap"
 
 
 # --------------------------------------------------------------------------- #
-# AC-C.5 - stamps: row outcome/appliedAt/appliedBy, batch appliedAt/appliedBy/count
+# AC-C.5 - stamps: row outcome/applied_at/applied_by, batch applied_at/applied_by/count
 # --------------------------------------------------------------------------- #
 def test_apply_stamps_the_row_and_the_batch(api, db):
     client, allow = api

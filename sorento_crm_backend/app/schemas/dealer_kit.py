@@ -948,3 +948,139 @@ class EditionReviewOut(BaseModel):
     previous_edition_name: Optional[str] = Field(
         default=None, serialization_alias="previousEditionName"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Flyer -> product specification proposals (PR 5)
+#
+# **These are snake_case on the wire, unlike everything above.** The rows they carry
+# (`spec_key`, `stored_value`, `data_type`) go straight into
+# `components/spec-proposals`, which is the product-specification domain's shared
+# review component and speaks snake_case, as does every other spec endpoint. A
+# camelCase batch wrapping snake_case rows is two conventions in one response, and the
+# UAC names every field of these four routes in snake_case (AC-B.1, AC-B.2, AC-C.1).
+# The contract block at the top of the frontend's `flyerSpecProposalService.ts` is the
+# same shape, field for field.
+# --------------------------------------------------------------------------- #
+class FlyerSpecBatchOut(BaseModel):
+    """One proposal pass over one flyer reading, as a list row or a page header.
+
+    `id` is null exactly when `status` is `none`, which is what the per-reading GET
+    answers for a flyer nobody has proposed from - never a 404, because "not proposed
+    yet" is a state the screen has to render.
+
+    `filename` and `read_at` come off the reading, and the two `*_by_name` fields are
+    resolved to NAMES here: the list screen and the reading-page section have no second
+    call to get either, and no uuid reaches the UI (AC-B.3).
+    """
+
+    id: Optional[str] = None
+    reading_id: str
+    filename: str
+    # none | proposing | proposed | failed
+    status: str
+    error_message: Optional[str] = None
+
+    product_count: int = 0
+    proposal_count: int = 0
+    new_count: int = 0
+    change_count: int = 0
+    conflict_count: int = 0
+    unchanged_count: int = 0
+    suppressed_count: int = 0
+    applied_count: int = 0
+
+    read_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    applied_at: Optional[datetime] = None
+    created_by_name: Optional[str] = None
+    applied_by_name: Optional[str] = None
+
+
+class FlyerSpecProposalOut(BaseModel):
+    """One key the flyer states about one product, judged against what is stored.
+
+    `id` is on the wire because the apply payload names these and nothing else; every
+    other identifier here is human-readable.
+    """
+
+    id: str
+    spec_key: str
+    label: str
+    data_type: str
+    value: Any
+    unit: Optional[str] = None
+    evidence: str = ""
+    # new | change | conflict | unchanged | suppressed
+    kind: str
+    stored_value: Any = None
+    stored_unit: Optional[str] = None
+    stored_source: Optional[str] = None
+    # applied | already_matches | conflict_not_confirmed | product_spec_bad_value |
+    # product_not_found. Null until somebody has decided about this row.
+    outcome: Optional[str] = None
+    applied_at: Optional[datetime] = None
+
+
+class FlyerSpecProductGroupOut(BaseModel):
+    """Every proposal for one product, in the order the flyer prints it."""
+
+    product_id: str
+    product_code: str
+    product_name: str
+    pages: list[int] = Field(default_factory=list)
+    proposals: list[FlyerSpecProposalOut] = Field(default_factory=list)
+
+
+class FlyerSpecProposalsOut(FlyerSpecBatchOut):
+    """The batch, and its rows when it has any. Empty unless `status` is `proposed`."""
+
+    groups: list[FlyerSpecProductGroupOut] = Field(default_factory=list)
+
+
+class FlyerSpecApplyIn(BaseModel):
+    """Which stored proposals to write, and nothing about what they say.
+
+    Ids only, deliberately. The values are read off the stored proposals, which were
+    read off the flyer, so a caller cannot put a value of its own into the product
+    master through this route - it would otherwise be a "write anything to
+    product_specifications" endpoint reachable by anybody who can upload a PDF (L8).
+
+    `extra="forbid"`, so a body carrying `values` is refused rather than quietly
+    ignored: a client that sent one believes it is being honoured.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_ids: list[UUID] = Field(min_length=1, max_length=5000)
+
+
+class AppliedFlyerSpecOut(BaseModel):
+    """One row that is now on the product, named the way the reviewer ticked it."""
+
+    proposal_id: str
+    product_code: str
+    spec_key: str
+    value: Any
+
+
+class RefusedFlyerSpecOut(BaseModel):
+    """One row that was ticked and not written, and why, in words for a person."""
+
+    proposal_id: str
+    product_code: str
+    spec_key: str
+    reason: str
+    message: str
+
+
+class FlyerSpecApplyOut(BaseModel):
+    """Every row, applied or refused. No counts: the screen counts what it renders.
+
+    A count beside the list is a second answer that can disagree with the first, and
+    the two arrays are the whole answer (AC-C.1).
+    """
+
+    applied: list[AppliedFlyerSpecOut] = Field(default_factory=list)
+    refused: list[RefusedFlyerSpecOut] = Field(default_factory=list)

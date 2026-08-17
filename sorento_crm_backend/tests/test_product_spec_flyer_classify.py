@@ -37,10 +37,10 @@ from app.models.company import Company
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_spec import ProductSpecifications
 from app.services.product_class_signal import backfill_category_signals
-from app.services.product_spec_derivation import derive_for_code
+from app.services.product_spec_derivation import _DESCRIPTION_FIRST_KEYS, derive_for_code
 from app.services.product_spec_extract import classify_spec_proposal, extract_spec_proposals
 from app.services.product_spec_registry import seed_spec_registry
-from app.services.product_spec_write import AUTHORED_SOURCES, _DESCRIPTION_FIRST_KEYS
+from app.services.product_spec_write import AUTHORED_SOURCES
 from tests._pg_fixture import blank_session
 
 _REFS: dict = {}

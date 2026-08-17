@@ -216,9 +216,14 @@ def test_run_propose_stores_an_unchanged_row_rather_than_dropping_it(db):
 
 
 def test_run_propose_marks_a_differing_derived_value_as_change(db):
+    """`BLACK` in the description is load-bearing, not decoration.
+
+    It is what derives the stored `finish` the card then disagrees with; without it
+    nothing derives a finish at all and the card's `chrome` reads as `new`.
+    """
     from app.services.product_spec_flyer_ingest import run_propose
 
-    _product(db, "ZZT-FLYJOB-CHG1", "SORENTO CERAMIC ART BASIN ONLY ZZT-FLYJOB-CHG1")
+    _product(db, "ZZT-FLYJOB-CHG1", "SORENTO CERAMIC ART BASIN ONLY BLACK ZZT-FLYJOB-CHG1")
     db.commit()
     derive_for_code(db, "ZZT-FLYJOB-CHG1", commit=True)
     reading = _reading(db, cards=[_card("ZZT-FLYJOB-CHG1", "Chrome finish")])
@@ -343,7 +348,7 @@ def test_run_propose_drops_a_key_outside_the_products_class_scope(db):
 
 def test_run_propose_fills_the_batch_counts_and_stamps_finished(db):
     _product(db, "ZZT-FLYJOB-CNT-NEW", "SORENTO ONE PIECE WC ZZT-FLYJOB-CNT-NEW")
-    _product(db, "ZZT-FLYJOB-CNT-CHG", "SORENTO CERAMIC ART BASIN ONLY ZZT-FLYJOB-CNT-CHG")
+    _product(db, "ZZT-FLYJOB-CNT-CHG", "SORENTO CERAMIC ART BASIN ONLY BLACK ZZT-FLYJOB-CNT-CHG")
     db.commit()
     derive_for_code(db, "ZZT-FLYJOB-CNT-NEW", commit=True)
     derive_for_code(db, "ZZT-FLYJOB-CNT-CHG", commit=True)
@@ -420,7 +425,7 @@ def test_the_task_wrapper_runs_the_job_inline_on_the_test_session(db):
 def test_repropose_deletes_old_rows_and_recomputes_against_the_current_master(db):
     from app.services.product_spec_flyer_ingest import run_propose
 
-    _product(db, "ZZT-FLYJOB-REPRO", "SORENTO CERAMIC ART BASIN ONLY ZZT-FLYJOB-REPRO")
+    _product(db, "ZZT-FLYJOB-REPRO", "SORENTO CERAMIC ART BASIN ONLY BLACK ZZT-FLYJOB-REPRO")
     db.commit()
     derive_for_code(db, "ZZT-FLYJOB-REPRO", commit=True)
     reading = _reading(db, cards=[_card("ZZT-FLYJOB-REPRO", "Chrome finish")])

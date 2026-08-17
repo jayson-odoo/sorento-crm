@@ -3,8 +3,11 @@
 **Status:** DRAFT -> building. Written 2026-08-17 (branch `fm/flyer-ingestion-build`, based on
 the unmerged PR 4 branch `fm/spec-pr4-extraction-prompt` because `propose_from_text`, the shared
 `SpecProposalReview` component and the batch-apply route only exist there; rebase onto `main`
-once PR 4 merges). Phase 1 mock (S1): BUILT, browser verification outstanding. Phase 2: pending.
-Review: pending.
+once PR 4 merges). Phase 1 mock (S1): BUILT, browser verification outstanding.
+Phase 2 backend (S2): **BUILT** - classifier + registry-helper lift, `AUTHORED_SOURCES` flip,
+migration `368_flyer_spec_proposals`, both models, the ingest service, the RQ task and the four
+routes; the four red pytest files are green (52 tests) and `alembic heads` is a single head.
+Phase 2 frontend wiring (S3): pending. Review (S4): pending.
 **UAC:** `flyer-spec-ingestion-acceptance-criteria.md` (the contract; this plan fulfils it).
 **Design source:** `firstmate/data/flyer-spec-ingestion/report.md` §3, §5, §7 (read-only report,
 2026-08-16). **Parent plan:** `PLAN-spec-authoring-verification.md` (PR 4 amendment, AC-B.18).
@@ -163,6 +166,19 @@ client-side (a "Show more" button), selection survives across.
   stack was started for S1.
 - **S2 - Phase 2 backend, test-first (tester red, coder green):** classifier lift + registry
   helper lift + `AUTHORED_SOURCES` flip; migration + models; service; task; routes; schemas.
+  **BUILT.** Three lifts rather than the two this section named: `_assert_read` moved from
+  `flyer_readings.py` into `flyer_reading_service.assert_read` as well, because a third route
+  across two modules now refuses on the same condition and three copies of a refusal are three
+  sets of words that drift. The route module keeps a one-line alias, as it does for
+  `_value_for_registry`. Four test corrections, each a test defect rather than a behaviour
+  change: the classifier suite imported `_DESCRIPTION_FIRST_KEYS` from `product_spec_write`
+  (it lives in `product_spec_derivation`, and re-exporting it would close an import cycle);
+  the route suite asserted a few camelCase keys against snake_case bodies (section 5); three
+  service tests assumed `SORENTO CERAMIC ART BASIN ONLY` derives `finish = black`, which it
+  does not until the description says `BLACK`; and
+  `test_migration_367::test_367_is_the_single_alembic_head` pinned the head to 367, now
+  rewritten to assert one head with 367 on its path so it does not fail on every later
+  migration.
 - **S3 - Phase 2 FE wiring (coder) + vitest (tester):** swap mock, delete fixtures not used by
   tests, AC-D.8 tests, agent-browser evidence run written into §6 below.
 - **S4 - Review:** `reviewer` agent + `/code-review`, then an independent Codex review of the

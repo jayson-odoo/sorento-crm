@@ -41,12 +41,13 @@ logger = logging.getLogger(__name__)
 # test in the codebase: a bare equality against the single string below would silently
 # treat a supplier-submitted entry as machine-derived everywhere that test runs.
 # `supplier` has no writer in this milestone; it is reserved for the supplier portal.
-# `flyer` joins this set in the bulk flyer-ingestion slice after PRs 1-4, once the
-# promote migration (367) has re-stamped the legacy entries in every environment, and
-# not before (AC-F.7): derivation no longer writes `source='flyer'` (PR 4, AC-B.18),
-# but rows written before the promote still carry it, so an early flip would badge a
-# machine read as a person's own work.
-AUTHORED_SOURCES: frozenset[str] = frozenset({"human", "supplier"})
+# `flyer` joined this set in the bulk flyer-ingestion slice (AC-C.7), and it could not
+# have joined earlier: derivation used to write `source='flyer'` itself on every run, so
+# the flip would have badged a machine read as a person's own work. Migration 367
+# re-stamped every one of those legacy entries and derivation no longer reads a flyer at
+# all, so the only writer of `flyer` now is a person ticking a proposal off a flyer they
+# are looking at - which is authorship, and outranks what the rules read.
+AUTHORED_SOURCES: frozenset[str] = frozenset({"human", "supplier", "flyer"})
 
 DEFAULT_AUTHORED_SOURCE = "human"
 

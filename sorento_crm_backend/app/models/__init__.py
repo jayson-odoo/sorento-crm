@@ -5,7 +5,7 @@ from app.models.company import Company, UserCompany, RespondContactCompany
 from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess, UserListColumnConfig
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
-from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException
+from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecFlyerBatch, ProductSpecFlyerProposal
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.sales_agent import SalesAgent
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
