@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import {
   ColumnDef,
   PaginationState,
@@ -8,7 +9,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { PackageSearch, Search, Trash2, X } from 'lucide-react';
+import { ClipboardList, PackageSearch, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -20,19 +21,14 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import {
-  useAllocationMutations,
-  useSalesOrderAllocations,
-} from '../../../../_shared/hooks/useProjectAllocations';
+import { useSalesOrderAllocations } from '../../../../_shared/hooks/useProjectAllocations';
 import type {
   AllocationLineRow,
   AllocationState,
 } from '../../../../_shared/types/projectAllocation.types';
 import { ALLOCATION_STATE_LABEL } from '../../../../_shared/types/projectAllocation.types';
-import { InfoHint } from '../../../components/InfoHint';
 import { formatQty } from '../../../components/SalesOrderMoney';
 import { AllocationSourceDialog } from './AllocationSourceDialog';
 
@@ -54,28 +50,24 @@ const STATE_OPTIONS = [
 ];
 
 /**
- * Where every line on this order is coming from (AC-H1 to AC-H5).
+ * Where every line on this order is coming from (AC-H1 to AC-H5). A READ.
  *
  * One row per sales order line, sourced or not: "which of the 99 still has nowhere to come
  * from" is the question this screen exists to answer, so an unsourced line is never
  * filtered away. The confirmed source is what becomes the stock location on the order
  * inquiry, which is why the column reads the line's own stock location rather than
  * recomputing it here.
+ *
+ * Nothing is decided here any more. Stage 1C composes and confirms a sales order's supply
+ * in one transaction in Fulfilment Planning, so this panel is the evidence of that
+ * decision and points at the screen that took it.
  */
-export function AllocationPanel({
-  psoId,
-  canEdit,
-}: {
-  psoId: string;
-  canEdit: boolean;
-}) {
+export function AllocationPanel({ psoId }: { psoId: string }) {
   const allocations = useSalesOrderAllocations(psoId);
-  const { confirm, clear, claim } = useAllocationMutations(psoId);
 
   const [search, setSearch] = React.useState('');
   const [stateFilter, setStateFilter] = React.useState('all');
   const [sourcing, setSourcing] = React.useState<AllocationLineRow | null>(null);
-  const [clearing, setClearing] = React.useState<AllocationLineRow | null>(null);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -228,8 +220,10 @@ export function AllocationPanel({
         id: 'actions',
         header: '',
         enableHiding: false,
+        // A read, not a decision: the ranked sources behind a line are worth looking at
+        // from here, and composing the supply is Fulfilment Planning's job.
         cell: ({ row }) => (
-          <div className="flex justify-end gap-1">
+          <div className="flex justify-end">
             <Button
               type="button"
               variant="outline"
@@ -239,31 +233,16 @@ export function AllocationPanel({
                 setSourcing(row.original);
               }}
             >
-              {row.original.state === 'unallocated' ? 'Choose source' : 'Change'}
+              View sources
             </Button>
-            {canEdit && row.original.sources.length > 0 && (
-              <Button
-                type="button"
-                mode="icon"
-                variant="ghost"
-                size="sm"
-                aria-label="Clear the source"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setClearing(row.original);
-                }}
-              >
-                <Trash2 className="size-4" aria-hidden />
-              </Button>
-            )}
           </div>
         ),
-        size: 170,
-        minSize: 150,
+        size: 150,
+        minSize: 130,
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [canEdit],
+    [],
   );
 
   const table = useReactTable({
@@ -292,23 +271,31 @@ export function AllocationPanel({
       >
         <Card>
           <CardHeader className="block">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-medium">Allocation</p>
-              <InfoHint label="About allocation">
-                Each line proposes ranked sources with live figures. Stock held for another
-                project is requested from their CS rather than taken: until they accept,
-                the line keeps no stock location.
-              </InfoHint>
-              {unsourced > 0 && (
-                <Badge variant="secondary" appearance="light" size="sm">
-                  {`${unsourced} without a source`}
-                </Badge>
-              )}
-              {waiting > 0 && (
-                <Badge variant="warning" appearance="light" size="sm">
-                  {`${waiting} waiting on a claim`}
-                </Badge>
-              )}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <p className="text-sm font-medium">Allocation</p>
+                {unsourced > 0 && (
+                  <Badge variant="secondary" appearance="light" size="sm">
+                    {`${unsourced} without a source`}
+                  </Badge>
+                )}
+                {waiting > 0 && (
+                  <Badge variant="warning" appearance="light" size="sm">
+                    {`${waiting} waiting on a claim`}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Supply is composed in Fulfilment Planning.
+                </span>
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/project-sales/fulfilment-planning">
+                    <ClipboardList className="size-4" aria-hidden />
+                    Open Fulfilment Planning
+                  </Link>
+                </Button>
+              </div>
             </div>
             <DataGridListToolbar
               table={table}
@@ -400,35 +387,8 @@ export function AllocationPanel({
       </DataGrid>
 
       {sourcing && (
-        <AllocationSourceDialog
-          line={sourcing}
-          canEdit={canEdit}
-          submitting={confirm.isPending || claim.isPending}
-          onDone={() => setSourcing(null)}
-          onConfirm={(sources) =>
-            confirm.mutateAsync({ lineId: sourcing.line_id, body: { sources } })
-          }
-          onClaim={(body) => claim.mutateAsync({ lineId: sourcing.line_id, body })}
-        />
+        <AllocationSourceDialog line={sourcing} onDone={() => setSourcing(null)} />
       )}
-
-      <ConfirmDeleteDialog
-        open={Boolean(clearing)}
-        onOpenChange={(open) => !open && setClearing(null)}
-        title="Confirm delete"
-        description={
-          clearing
-            ? `Clear the source on line ${clearing.line_no}${
-                clearing.stock_location ? ` (${clearing.stock_location})` : ''
-              }? Any request still waiting on another project is withdrawn. This action cannot be undone.`
-            : ''
-        }
-        successMessage="Source cleared"
-        onDelete={async () => {
-          if (clearing) await clear.mutateAsync(clearing.line_id);
-        }}
-        onSuccess={() => setClearing(null)}
-      />
     </>
   );
 }

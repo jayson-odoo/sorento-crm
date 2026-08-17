@@ -1,15 +1,16 @@
 /**
- * P9 - the allocation worklist (AC-H1 to AC-H5).
+ * P9 - the allocation worklist (AC-H1 to AC-H5), read-only since Stage 1C.
  *
  * The question this screen exists to answer is "which of these lines still has nowhere to
  * come from", so an unsourced line is never filtered away and a line waiting on another
- * project reads as waiting rather than as sourced. The two facts pinned hardest here are
- * that a pending claim carries NO stock location (nothing moves on silence) and that
- * clearing a source asks before it deletes.
+ * project reads as waiting rather than as sourced. The facts pinned hardest here are that
+ * a pending claim carries NO stock location (nothing moves on silence) and that this
+ * panel decides nothing: supply is composed and confirmed for the whole sales order in
+ * Fulfilment Planning, so the panel offers the way there and no write of its own.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AllocationCandidateList,
@@ -49,19 +50,11 @@ vi.mock('sonner', () => ({
 
 const listSalesOrderAllocations = vi.fn();
 const listAllocationCandidates = vi.fn();
-const confirmAllocation = vi.fn();
-const clearAllocation = vi.fn();
-const raiseAllocationClaim = vi.fn();
 
 vi.mock('../../../../_shared/services/projectAllocationService', () => ({
   listSalesOrderAllocations: (...args: unknown[]) => listSalesOrderAllocations(...args),
   listAllocationCandidates: (...args: unknown[]) => listAllocationCandidates(...args),
-  confirmAllocation: (...args: unknown[]) => confirmAllocation(...args),
-  clearAllocation: (...args: unknown[]) => clearAllocation(...args),
-  raiseAllocationClaim: (...args: unknown[]) => raiseAllocationClaim(...args),
   listAllocationClaims: vi.fn(),
-  acceptAllocationClaim: vi.fn(),
-  refuseAllocationClaim: vi.fn(),
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -184,13 +177,13 @@ function envelope(rows: AllocationLineRow[]) {
   return { data: rows, total: rows.length, page: 1, limit: 100 };
 }
 
-function renderPanel(canEdit = true) {
+function renderPanel() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <AllocationPanel psoId="so-1" canEdit={canEdit} />
+      <AllocationPanel psoId="so-1" />
     </QueryClientProvider>,
   );
 }
@@ -208,7 +201,6 @@ beforeEach(() => {
   listingKeys.length = 0;
   listSalesOrderAllocations.mockResolvedValue(envelope([]));
   listAllocationCandidates.mockResolvedValue(CANDIDATES);
-  clearAllocation.mockResolvedValue(undefined);
 });
 
 describe('AllocationPanel', () => {
@@ -328,67 +320,48 @@ describe('AllocationPanel', () => {
     expect(screen.getByText('CB6633')).toBeInTheDocument();
   });
 
-  it('offers a source picker on an unsourced line and a change on a sourced one', async () => {
+  it('offers the same read-only sources view on every line, sourced or not', async () => {
     listSalesOrderAllocations.mockResolvedValue(envelope([line(), SOURCED]));
 
     renderPanel();
 
-    expect(await screen.findByRole('button', { name: 'Choose source' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Change' })).toBeInTheDocument();
+    expect(await screen.findAllByRole('button', { name: 'View sources' })).toHaveLength(2);
   });
 
-  it('asks the ranked sources for the line the picker was opened on', async () => {
+  it('asks the ranked sources for the line the view was opened on', async () => {
     listSalesOrderAllocations.mockResolvedValue(envelope([line()]));
 
     renderPanel();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Choose source' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'View sources' }));
 
     await waitFor(() => expect(listAllocationCandidates).toHaveBeenCalledWith('l1'));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
-  it('asks before it clears a source, and clears nothing until the answer is yes', async () => {
-    listSalesOrderAllocations.mockResolvedValue(envelope([SOURCED]));
+  it('decides nothing itself: no source is chosen, changed or cleared from here', async () => {
+    // Stage 1C retired the per-line writes. A button the backend no longer answers is
+    // worse than no button, so none of them survives.
+    listSalesOrderAllocations.mockResolvedValue(envelope([line(), SOURCED, WAITING]));
 
     renderPanel();
+    await screen.findByText('CB6633');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Clear the source' }));
-
-    const dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.getByText('Confirm delete')).toBeInTheDocument();
-    expect(
-      dialog.getByText(/Clear the source on line 2 \(BRW\)\?/),
-    ).toBeInTheDocument();
-    expect(dialog.getByText(/This action cannot be undone/)).toBeInTheDocument();
-    expect(clearAllocation).not.toHaveBeenCalled();
-
-    fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
-
-    await waitFor(() => expect(clearAllocation).toHaveBeenCalledWith('l2'));
-  });
-
-  it('clears nothing when the confirmation is cancelled', async () => {
-    listSalesOrderAllocations.mockResolvedValue(envelope([SOURCED]));
-
-    renderPanel();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Clear the source' }));
-    const dialog = within(await screen.findByRole('dialog'));
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(clearAllocation).not.toHaveBeenCalled();
-  });
-
-  it('withholds the clear action from a reader, but still lets them look', async () => {
-    listSalesOrderAllocations.mockResolvedValue(envelope([SOURCED]));
-
-    renderPanel(false);
-
-    expect(await screen.findByText('CB6633')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Choose source' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Change' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clear the source' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Change' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Request from/ })).not.toBeInTheDocument();
+  });
+
+  it('says where supply is composed, and offers the way there', async () => {
+    listSalesOrderAllocations.mockResolvedValue(envelope([SOURCED]));
+
+    renderPanel();
+
+    expect(await screen.findByText('Supply is composed in Fulfilment Planning.')).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /open fulfilment planning/i }),
+    ).toHaveAttribute('href', '/project-sales/fulfilment-planning');
   });
 
   it('pins its own listing key rather than falling back to the pathname', async () => {

@@ -1,11 +1,11 @@
 /**
- * P9 - the stock claims worklist (AC-H4).
+ * P9 - the stock claims list (AC-H4), audit history since Stage 1C.
  *
- * The list opens on what is waiting on ME, because a claim nobody answers is a line that
- * never ships. The two directions are different jobs and the screen has to keep them apart:
- * "waiting on me" is a decision to take, "I asked for" is a decision to chase. Releasing is
- * one click; refusing always goes through a dialog, because a refusal with no reason sends
- * the asking CS back to the phone call the claim replaced.
+ * A Borrow is now written already released, inside the confirmation of a sales order in
+ * Fulfilment Planning, by the CS actor who confirms it. So this screen records what moved
+ * and who moved it, and offers no answer to give: the accept and refuse routes behind those
+ * buttons are gone. The two directions stay different facts and the screen keeps them
+ * apart, because "nobody borrowed from us" is not "we borrowed from nobody".
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -44,18 +44,11 @@ vi.mock('sonner', () => ({
 }));
 
 const listAllocationClaims = vi.fn();
-const acceptAllocationClaim = vi.fn();
-const refuseAllocationClaim = vi.fn();
 
 vi.mock('../../_shared/services/projectAllocationService', () => ({
   listSalesOrderAllocations: vi.fn(),
   listAllocationCandidates: vi.fn(),
-  confirmAllocation: vi.fn(),
-  clearAllocation: vi.fn(),
-  raiseAllocationClaim: vi.fn(),
   listAllocationClaims: (...args: unknown[]) => listAllocationClaims(...args),
-  acceptAllocationClaim: (...args: unknown[]) => acceptAllocationClaim(...args),
-  refuseAllocationClaim: (...args: unknown[]) => refuseAllocationClaim(...args),
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -87,10 +80,11 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 
 import { StockClaimsClient } from './StockClaimsClient';
 
+/** The shape Stage 1C writes: released the moment the sales order was confirmed. */
 function claim(overrides: Partial<AllocationClaimRow> = {}): AllocationClaimRow {
   return {
     id: 'c1',
-    state: 'requested',
+    state: 'accepted',
     qty: '40',
     reason: null,
     from_project_id: 'p1',
@@ -110,8 +104,8 @@ function claim(overrides: Partial<AllocationClaimRow> = {}): AllocationClaimRow 
     line_no: 7,
     delivery_date: '2026-07-01',
     requested_by_name: 'Eling',
-    decided_by_name: null,
-    decided_at: null,
+    decided_by_name: 'Eling',
+    decided_at: '2026-07-20T02:00:00',
     created_at: '2026-07-20T02:00:00',
     ...overrides,
   };
@@ -140,9 +134,15 @@ function openFilters() {
   });
 }
 
-/** The two pickers in the popover carry the same control, told apart by their heading. */
+/**
+ * The two pickers in the popover carry the same control, told apart by their heading.
+ * The heading is the paragraph, not the grid's column header button of the same name.
+ */
 function filterUnder(heading: string): HTMLElement {
-  const group = screen.getByText(heading).parentElement;
+  const label = screen
+    .getAllByText(heading)
+    .find((node) => node.tagName === 'P');
+  const group = label?.parentElement;
   if (!group) throw new Error(`No filter group under ${heading}`);
   return within(group).getByRole('combobox');
 }
@@ -151,47 +151,35 @@ beforeEach(() => {
   vi.clearAllMocks();
   listingKeys.length = 0;
   listAllocationClaims.mockResolvedValue(envelope([]));
-  acceptAllocationClaim.mockResolvedValue(claim({ state: 'accepted' }));
-  refuseAllocationClaim.mockResolvedValue(claim({ state: 'refused', reason: 'Committed' }));
 });
 
+
 describe('StockClaimsClient', () => {
-  it('offers no answer on a claim this viewer may not answer', async () => {
-    // The outgoing view used to show Release and Refuse on the viewer's own request:
-    // buttons the server rejects. Gated on the server's own can_answer, so the filter
-    // cannot get it wrong, and "all" holds both directions at once.
-    listAllocationClaims.mockResolvedValue(
-      envelope([claim({ state: 'requested', can_answer: false })]),
-    );
-    renderClaims();
-
-    expect(await screen.findByText('PRJ-000042, Aisyah')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Release/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Refuse/i })).toBeNull();
-  });
-
-  it('shows skeleton rows while the claims load, not an empty inbox', () => {
+  it('shows skeleton rows while the history loads, not an empty list', () => {
     listAllocationClaims.mockReturnValue(new Promise(() => {}));
 
     const { container } = renderClaims();
 
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
-    expect(screen.queryByText('Nothing is waiting on you')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('No stock has been borrowed either way'),
+    ).not.toBeInTheDocument();
   });
 
-  it('says nothing is waiting, what would appear here, and where a claim starts', async () => {
+  it('says nothing has been borrowed, what would appear here, and where it starts', async () => {
     renderClaims();
 
-    expect(await screen.findByText('Nothing is waiting on you')).toBeInTheDocument();
+    expect(
+      await screen.findByText('No stock has been borrowed either way'),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Claims appear here when another project asks for stock one of yours is holding. Raise one from a sales order line under Allocation.',
+        'A row appears here when a Borrow is confirmed in Fulfilment Planning, on either side of it.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open the pipeline' })).toHaveAttribute(
-      'href',
-      '/project-sales/pipeline',
-    );
+    expect(
+      screen.getAllByRole('link', { name: /open fulfilment planning/i })[0],
+    ).toHaveAttribute('href', '/project-sales/fulfilment-planning');
   });
 
   it('states a load failure in words', async () => {
@@ -203,13 +191,13 @@ describe('StockClaimsClient', () => {
     expect(screen.getByText('The claims service is down')).toBeInTheDocument();
   });
 
-  it('opens on what is waiting on me, unanswered', async () => {
+  it('opens on the whole history, both directions and every outcome', async () => {
     renderClaims();
 
     await waitFor(() =>
       expect(listAllocationClaims).toHaveBeenCalledWith({
-        direction: 'incoming',
-        state: ['requested'],
+        direction: 'all',
+        state: undefined,
         page: 1,
         limit: 25,
       }),
@@ -218,16 +206,14 @@ describe('StockClaimsClient', () => {
 
   it('tells the two directions apart and asks the server for the one that is chosen', async () => {
     renderClaims();
-    await screen.findByText('Nothing is waiting on you');
+    await screen.findByText('No stock has been borrowed either way');
 
     openFilters();
-    const direction = await screen.findByText('Direction');
-    expect(direction).toBeInTheDocument();
+    expect(await screen.findByText('Direction')).toBeInTheDocument();
 
-    // Both sides of the relationship are offered, not just the inbox.
     const picker = filterUnder('Direction');
-    expect(within(picker).getByText('Waiting on me')).toBeInTheDocument();
-    expect(within(picker).getByText('I asked for')).toBeInTheDocument();
+    expect(within(picker).getByText('Lent by my projects')).toBeInTheDocument();
+    expect(within(picker).getByText('Borrowed by my projects')).toBeInTheDocument();
 
     fireEvent.change(picker, { target: { value: 'outgoing' } });
 
@@ -236,14 +222,17 @@ describe('StockClaimsClient', () => {
         expect.objectContaining({ direction: 'outgoing' }),
       ),
     );
+    expect(
+      await screen.findByText('Your projects have borrowed nothing'),
+    ).toBeInTheDocument();
   });
 
-  it('asks the server for answered claims when the answer filter moves off waiting', async () => {
+  it('asks the server for one outcome when the outcome filter is set', async () => {
     renderClaims();
-    await screen.findByText('Nothing is waiting on you');
+    await screen.findByText('No stock has been borrowed either way');
 
     openFilters();
-    fireEvent.change(filterUnder('Answer'), { target: { value: 'refused' } });
+    fireEvent.change(filterUnder('Outcome'), { target: { value: 'refused' } });
 
     await waitFor(() =>
       expect(listAllocationClaims).toHaveBeenCalledWith(
@@ -252,12 +241,19 @@ describe('StockClaimsClient', () => {
     );
   });
 
-  it('drops the state filter entirely rather than sending an empty answer', async () => {
+  it('drops the state filter entirely rather than sending an empty outcome', async () => {
     renderClaims();
-    await screen.findByText('Nothing is waiting on you');
+    await screen.findByText('No stock has been borrowed either way');
 
     openFilters();
-    fireEvent.change(filterUnder('Answer'), { target: { value: 'all' } });
+    fireEvent.change(filterUnder('Outcome'), { target: { value: 'accepted' } });
+    await waitFor(() =>
+      expect(listAllocationClaims).toHaveBeenCalledWith(
+        expect.objectContaining({ state: ['accepted'] }),
+      ),
+    );
+
+    fireEvent.change(filterUnder('Outcome'), { target: { value: 'all' } });
 
     await waitFor(() =>
       expect(listAllocationClaims).toHaveBeenCalledWith(
@@ -266,7 +262,7 @@ describe('StockClaimsClient', () => {
     );
   });
 
-  it('names who asked, who holds it, and what for', async () => {
+  it('names who borrowed, who held it, what for, and who released it', async () => {
     listAllocationClaims.mockResolvedValue(envelope([claim()]));
 
     renderClaims();
@@ -276,7 +272,31 @@ describe('StockClaimsClient', () => {
     expect(screen.getByText('SRT382-6')).toBeInTheDocument();
     expect(screen.getByText('WH-KL')).toBeInTheDocument();
     expect(screen.getByText('PSO-000123')).toBeInTheDocument();
+    expect(screen.getByText('Released')).toBeInTheDocument();
+    expect(screen.getByText(/^Eling on /)).toBeInTheDocument();
+  });
+
+  it('offers no answer on any row, whatever state it is in', async () => {
+    // The accept and refuse routes are gone: a Borrow is written already released by the
+    // CS actor who confirms the sales order, and a legacy row keeps the answer it got.
+    listAllocationClaims.mockResolvedValue(
+      envelope([
+        claim(),
+        claim({ id: 'c2', state: 'requested', decided_by_name: null, decided_at: null }),
+        claim({ id: 'c3', state: 'refused', reason: 'Committed to our own hand-over.' }),
+      ]),
+    );
+
+    renderClaims();
+
+    await screen.findByText('Released');
+    expect(screen.queryByRole('button', { name: 'Release' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Refuse' })).not.toBeInTheDocument();
+    // A row raised before Stage 1C and never answered says so rather than offering one.
     expect(screen.getByText('Waiting')).toBeInTheDocument();
+    expect(screen.getByText('Not decided')).toBeInTheDocument();
+    // The reason travels with the answer, so the borrowing CS reads it without a call.
+    expect(screen.getByText('Committed to our own hand-over.')).toBeInTheDocument();
   });
 
   it('shows a dash for an unknown value rather than a blank cell', async () => {
@@ -299,73 +319,6 @@ describe('StockClaimsClient', () => {
     expect(screen.getByText('No date')).toBeInTheDocument();
   });
 
-  it('releases the stock on one click, with no reason asked for', async () => {
-    listAllocationClaims.mockResolvedValue(envelope([claim()]));
-
-    renderClaims();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Release' }));
-
-    await waitFor(() => expect(acceptAllocationClaim).toHaveBeenCalledWith('c1'));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
-  it('opens the refusal dialog rather than refusing on the spot', async () => {
-    listAllocationClaims.mockResolvedValue(envelope([claim()]));
-
-    renderClaims();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Refuse' }));
-
-    const dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.getByText('Refuse this claim')).toBeInTheDocument();
-    expect(refuseAllocationClaim).not.toHaveBeenCalled();
-  });
-
-  it('sends the typed reason to the claim that was refused', async () => {
-    listAllocationClaims.mockResolvedValue(envelope([claim()]));
-
-    renderClaims();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Refuse' }));
-    const dialog = within(await screen.findByRole('dialog'));
-    fireEvent.change(dialog.getByLabelText('Why the stock cannot be released'), {
-      target: { value: 'Committed to our own hand-over in July.' },
-    });
-    fireEvent.click(dialog.getByRole('button', { name: 'Refuse' }));
-
-    await waitFor(() =>
-      expect(refuseAllocationClaim).toHaveBeenCalledWith(
-        'c1',
-        'Committed to our own hand-over in July.',
-      ),
-    );
-  });
-
-  it('offers no decision on a claim that was already answered, and says who answered', async () => {
-    listAllocationClaims.mockResolvedValue(
-      envelope([
-        claim({
-          state: 'refused',
-          reason: 'Committed to our own hand-over in July.',
-          decided_by_name: 'Aisyah',
-          decided_at: '2026-07-21T02:00:00',
-        }),
-      ]),
-    );
-
-    renderClaims();
-
-    expect(await screen.findByText('Answered by Aisyah')).toBeInTheDocument();
-    expect(screen.getByText('Refused')).toBeInTheDocument();
-    // The reason travels with the answer, so the asking CS reads it without a phone call.
-    expect(
-      screen.getByText('Committed to our own hand-over in July.'),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Release' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Refuse' })).not.toBeInTheDocument();
-  });
-
   it('narrows on a search over the projects, the product and the location', async () => {
     listAllocationClaims.mockResolvedValue(
       envelope([claim(), claim({ id: 'c2', product_code: 'CB6633', warehouse_code: 'WH-JB' })]),
@@ -380,6 +333,24 @@ describe('StockClaimsClient', () => {
 
     expect(screen.getByText('CB6633')).toBeInTheDocument();
     expect(screen.queryByText('SRT382-6')).not.toBeInTheDocument();
+  });
+
+  it('renders no UUID-looking id anywhere in the list', async () => {
+    listAllocationClaims.mockResolvedValue(
+      envelope([
+        claim({
+          id: 'f1e2d3c4-5678-4a90-b123-456789abcdef',
+          from_project_id: 'a1b2c3d4-5678-4a90-b123-456789abcdef',
+          to_project_id: 'b2c3d4e5-5678-4a90-b123-456789abcdef',
+          warehouse_id: 'c3d4e5f6-5678-4a90-b123-456789abcdef',
+        }),
+      ]),
+    );
+
+    const { container } = renderClaims();
+
+    await screen.findByText('SRT382-6');
+    expect(container.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
   });
 
   it('pins its own listing key rather than falling back to the pathname', async () => {

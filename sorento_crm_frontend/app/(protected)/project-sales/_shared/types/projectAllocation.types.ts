@@ -7,10 +7,24 @@
  * Ranked candidates are recomputed by the backend on every request and are never stored.
  * Nothing in this file is cached beyond a react-query lifetime for the same reason: a
  * stale on-hand from another project is precisely the number that must not be acted on.
+ *
+ * Every shape here is a RESPONSE. Stage 1C retired the per-line writes these once had
+ * request bodies for: supply is composed and confirmed for the whole sales order in one
+ * transaction from Fulfilment Planning, and a cross-project Borrow writes its claim row
+ * already accepted, so there is no claim state a reader may change.
  */
 
-/** Where a line's stock comes from. `order` carries no location: it has to be bought. */
-export type AllocationSourceType = 'brw' | 'own' | 'other_project' | 'order';
+/**
+ * Where a line's stock comes from. `order` carries no location: it has to be bought.
+ * `other_location` joined them in Stage 1C - free stock outside the Reserve pool,
+ * borrowed with no donor project to ask.
+ */
+export type AllocationSourceType =
+  | 'brw'
+  | 'own'
+  | 'other_project'
+  | 'other_location'
+  | 'order';
 
 /** unallocated -> pending_claim | refused | partial | confirmed. */
 export type AllocationState =
@@ -26,6 +40,7 @@ export const ALLOCATION_SOURCE_LABEL: Record<AllocationSourceType, string> = {
   brw: 'Master location',
   own: 'Available stock',
   other_project: 'Held for another project',
+  other_location: 'Free stock elsewhere',
   order: 'Order it',
 };
 
@@ -130,27 +145,8 @@ export interface AllocationLineRow {
   sources: AllocationSourceRow[];
 }
 
-export interface AllocationSourceInput {
-  source_type: AllocationSourceType;
-  warehouse_id?: string | null;
-  source_project_id?: string | null;
-  qty: string;
-}
-
-export interface AllocationConfirmBody {
-  sources: AllocationSourceInput[];
-}
-
-export interface AllocationClaimBody {
-  warehouse_id: string;
-  to_project_id: string;
-  qty: string;
-}
-
 export interface AllocationClaimRow {
   id: string;
-  /** Whether this viewer may answer it. Decided server-side, never from the filter. */
-  can_answer?: boolean;
   state: AllocationClaimState;
   qty: string;
   reason?: string | null;
