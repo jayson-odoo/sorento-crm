@@ -109,6 +109,10 @@ Tools covered by B (all in one PR): `crm_inventory_stock_balance_list`,
 - **AC-C5 [MCP]** The `_sanitize_tool_response` slimmers for orders / products /
   promotions / promotion-products / incoming keep `company_name` (and top-level
   `lookup_companies`) on their way to the presenter.
+- **AC-C6 [MCP]** `_sanitize_tool_response` drops the raw `company_id` UUID from the
+  rows (nested rows included) of exactly the eleven tools in B, and from no other tool
+  (`crm_resource_attachments_list` keeps its row `company_id`). Top-level
+  `lookup_companies` keeps its ids.
 
 ### D. Tests (journey 1, 2, 3)
 
@@ -119,7 +123,8 @@ Tools covered by B (all in one PR): `crm_inventory_stock_balance_list`,
   company, pinned two-company scope, own seeded data chain, Postgres only.
 - **AC-D2 [T]** MCP: `tests/test_presenters.py` covers AC-C1 to AC-C4 (row with and
   without `company_name`, empty intro with and without `lookup_companies`, byte-identical
-  proof) for stock and at least a smoke case per other presenter touched.
+  proof) for stock and at least a smoke case per other presenter touched;
+  `tests/test_multi_company_lookup_sanitizer.py` covers AC-C5 and AC-C6.
 - **AC-D3 [T]** Existing suites stay green (`pytest` in `sorento_crm_backend/`,
   `pytest` in `sorento_crm_mcp/`).
 

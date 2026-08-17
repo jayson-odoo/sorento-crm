@@ -67,6 +67,13 @@ def stamp_lookup_companies(
     """
 ```
 
+- A caller scoped to ONE company short-circuits before any query: the union cannot
+  exceed one, so there is nothing to find out.
+- Both queries run inside a SAVEPOINT (`db.begin_nested()`). Swallowing the exception
+  is only half of "never fatal": on Postgres a failed statement (a non-UUID product id)
+  aborts the whole transaction, so a bare try/except would leave the caller's session
+  on "current transaction is aborted". The savepoint rolls the failure back locally.
+
 - `rows` may be ORM instances (setattr `company_name`; `company_id` already there),
   plain dicts (set both keys), or Pydantic models that declare both fields (setattr).
 - `row_company_id` is an optional callable for rows whose company lives elsewhere than
@@ -147,11 +154,20 @@ The routes need no change: `ListResponse` declares the key, and the alternatives
   `_strip_promotions_list_row_ids`, `_slim_promotion_products_response`,
   `_slim_stock_nested_warehouse`, `_relabel_warehouse_keys`) keeps `company_name` on rows
   and `lookup_companies` at top level. Fix any allow-list that drops them.
+- `server.py` sanitizer, last step (`_strip_row_company_ids`): for EXACTLY the eleven
+  labelled tools (`_COMPANY_ID_STRIP_TOOLS`), drop `company_id` from the rows,
+  recursively (nested `product` / `promotion` / lines are ORM rows of their own). The
+  row schemas now fill `company_id` from the mixin via `from_attributes`, and no UUID
+  belongs in an agent-facing row; `company_name` is the readable form. Top-level
+  `lookup_companies` keeps its ids (n8n matches on them). The strip is scoped, not
+  global: `crm_resource_attachments_list` publishes its row `company_id` on purpose
+  (`_stamp_company`, `app/api/v1/resources/attachments.py`).
 
 ### 6. Tests (test-FIRST, Postgres only)
 
-Backend, `sorento_crm_backend/tests/test_multi_company_lookup_labels.py` (one file, or a
-small file per domain if it reads better), modelled on
+Backend, `sorento_crm_backend/tests/test_multi_company_lookup_*.py` (one file per
+domain: helper, stock, incoming, products, certificates, promotions, orders; shared
+seed chain in `tests/_mc_lookup_seed.py`), modelled on
 `tests/test_attachment_company_stamp_in_list.py`: `blank_session`, seeded Mocha
 (`00000000-0000-0000-0000-000000000002`), pinned two-company scope via the
 `apply_company_scope` override, own data chain per test. Cover UAC AC-B1/B2/B4 per tool,
@@ -159,6 +175,9 @@ AC-B3/B5 on stock + incoming list, AC-B6/B7 on the helper.
 
 MCP, `sorento_crm_mcp/tests/test_presenters.py`: AC-C1 to AC-C4; the byte-identical proof
 is `present_response(payload_with_null_keys) == present_response(payload_without_keys)`.
+`sorento_crm_mcp/tests/test_multi_company_lookup_sanitizer.py`: AC-C5 (slimmers keep
+`company_name` / `lookup_companies`; row `company_id` stripped for the eleven tools only,
+`crm_resource_attachments_list` keeps its own).
 
 ### 7. Deploy note (PR body)
 
