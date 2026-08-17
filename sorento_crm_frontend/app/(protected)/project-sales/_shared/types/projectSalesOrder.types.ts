@@ -10,6 +10,8 @@
  * them yet renders a stated absence rather than crashing.
  */
 
+import type { ReviewState } from './fulfilmentPlanning.types';
+
 export type SalesOrderStatus =
   | 'draft'
   | 'blocked'
@@ -69,6 +71,15 @@ export interface ProjectSalesOrderRow {
   /** Bumped by any write, including an ingest that adopts a document number. The
    *  divergence lookup keys on it so the amend gate re-evaluates. */
   updated_at?: string | null;
+
+  /**
+   * The whole order's one pre-confirmation state (Stage 1B, AC-A03), and how many
+   * exceptions stand between it and Needs CS review. Optional because they are derived
+   * rather than stored, so a backend that has not shipped the derivation yet simply
+   * renders no pill instead of an invented one.
+   */
+  review_state?: ReviewState;
+  exception_count?: number;
 
   /**
    * Not promised by the contract. When present it saves resolving the PO by its number;

@@ -120,9 +120,19 @@ ReconciliationSummary {
             candidate_count: number, reason: string }],
   exceptions: [{ line_no?: number, item_code?: string, kind: 'header' | 'missing' |
                  'ambiguous' | 'surplus', message: string }],
-  lines_total, lines_linked
+  lines_total, lines_linked,
+  reconciled_at?
 }
 ```
+
+An exception's `message` carries the reason ALONE. The screen prints the subject itself from
+`line_no` and `item_code` ("Line 2, SRT501-CP"), so a message that repeats the subject renders
+the same fact twice.
+
+`reconciled_at` was added to this shape on 17 August 2026, during Phase 1. Section 1 step 2
+puts "Reconciled at" in the sheet's header strip and the shape above carried no timestamp at
+all, so the sheet could not state it. Optional, because an order the engine has never run
+against has no such moment and says so rather than printing a date it does not have.
 
 `ProjectSalesOrderRow` and `ProjectSalesOrderDetail` (existing) gain `review_state` and
 `exception_count` so the project's SO list and the SO detail header read the same state.

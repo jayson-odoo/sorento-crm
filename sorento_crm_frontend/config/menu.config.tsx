@@ -749,6 +749,14 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        // Cross-project for the same reason the two entries above are: CS works the whole
+        // published order book down in one pass, and a reconciliation that only exists
+        // inside its own project is one nobody goes looking for.
+        title: 'Fulfilment Planning',
+        path: '/project-sales/fulfilment-planning',
+        permission: 'projects.projects.view',
+      },
+      {
         title: 'Forecast & Reports',
         path: '/project-sales/reports',
         permission: 'projects.projects.view',
@@ -1723,6 +1731,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         // visible to management rather than discovered (AC-N6).
         title: 'AutoCount Differences',
         path: '/project-sales/divergences',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project for the same reason the two entries above are: CS works the whole
+        // published order book down in one pass, and a reconciliation that only exists
+        // inside its own project is one nobody goes looking for.
+        title: 'Fulfilment Planning',
+        path: '/project-sales/fulfilment-planning',
         permission: 'projects.projects.view',
       },
       {
