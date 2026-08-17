@@ -19,6 +19,13 @@ const getProjectSalesOrder = vi.fn();
 const acknowledgeFinding = vi.fn();
 const publishSalesOrder = vi.fn();
 const regroupSalesOrder = vi.fn();
+const downloadSalesOrderImportFile = vi.fn();
+const saveBlobAs = vi.fn();
+const toastError = vi.fn();
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: (...args: unknown[]) => toastError(...args) },
+}));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -39,12 +46,18 @@ vi.mock('../../../../_shared/services/projectSalesOrderService', () => ({
   updateSalesOrderLine: vi.fn(),
   regroupSalesOrder: (...args: unknown[]) => regroupSalesOrder(...args),
   publishSalesOrder: (...args: unknown[]) => publishSalesOrder(...args),
+  downloadSalesOrderImportFile: (...args: unknown[]) => downloadSalesOrderImportFile(...args),
   previewAmendment: vi.fn(),
   createAmendment: vi.fn(),
   getAmendment: vi.fn(),
   publishAmendment: vi.fn(),
   listScheduleVersions: vi.fn(async () => []),
   listPoVersions: vi.fn(async () => []),
+}));
+
+vi.mock('../../../../_shared/services/fileDownload', () => ({
+  saveBlobAs: (...args: unknown[]) => saveBlobAs(...args),
+  filenameFromContentDisposition: vi.fn(() => null),
 }));
 
 const listDivergences = vi.fn();
@@ -345,9 +358,17 @@ describe('SalesOrderDetailClient', () => {
 
     await waitFor(() => expect(publishSalesOrder).toHaveBeenCalledWith('so-1'));
     expect(await screen.findByText('This sales order is SO397450.')).toBeInTheDocument();
-    expect(
-      screen.getByRole('link', { name: 'Download the import file' }),
-    ).toHaveAttribute('href', 'https://example.test/import.csv');
+
+    // Fetched through the service, not linked to: the url is a backend path and an anchor
+    // would resolve it against this origin.
+    downloadSalesOrderImportFile.mockResolvedValue({
+      blob: new Blob(['csv']),
+      filename: 'SO397450.csv',
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Download the import file' }));
+
+    await waitFor(() => expect(downloadSalesOrderImportFile).toHaveBeenCalledWith('so-1'));
+    expect(saveBlobAs.mock.calls[0][1]).toBe('SO397450.csv');
   });
 
   it('names the warnings that have no reason before an irreversible publish', async () => {
@@ -410,7 +431,67 @@ describe('SalesOrderDetailClient', () => {
     expect(await screen.findAllByText('SO397450')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: 'Publish' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Move lines' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Import file' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Import file' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Import file' })).toBeInTheDocument();
+  });
+
+  it('fetches the import file through the service and names it as the backend did', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        status: 'published',
+        autocount_doc_no: 'SO397450',
+        import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
+      }),
+    );
+    downloadSalesOrderImportFile.mockResolvedValue({
+      blob: new Blob(['csv']),
+      filename: 'SO397450.csv',
+    });
+
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Import file' }));
+
+    await waitFor(() => expect(downloadSalesOrderImportFile).toHaveBeenCalledWith('so-1'));
+    expect(saveBlobAs).toHaveBeenCalledTimes(1);
+    expect(saveBlobAs.mock.calls[0][1]).toBe('SO397450.csv');
+  });
+
+  it('falls back to the provisional reference when the response names no file', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        status: 'published',
+        import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
+      }),
+    );
+    downloadSalesOrderImportFile.mockResolvedValue({
+      blob: new Blob(['csv']),
+      filename: null,
+    });
+
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Import file' }));
+
+    await waitFor(() => expect(saveBlobAs).toHaveBeenCalledTimes(1));
+    expect(saveBlobAs.mock.calls[0][1]).toBe('PSO-000123.csv');
+  });
+
+  it('says why the import file could not be downloaded', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        status: 'published',
+        import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
+      }),
+    );
+    downloadSalesOrderImportFile.mockRejectedValue(new Error('That order was rebuilt'));
+
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Import file' }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('That order was rebuilt'));
+    expect(saveBlobAs).not.toHaveBeenCalled();
   });
 
   it('re-splits the lines and says once that the shape is remembered', async () => {

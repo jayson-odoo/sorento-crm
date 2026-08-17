@@ -20,9 +20,17 @@ import type {
 } from '../../../../../_shared/types/projectSalesOrder.types';
 
 const getSalesOrderWorksheet = vi.fn();
+const downloadSalesOrderImportFile = vi.fn();
+const saveBlobAs = vi.fn();
+const toastError = vi.fn();
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: (...args: unknown[]) => toastError(...args) },
+}));
+
+vi.mock('../../../../../_shared/services/fileDownload', () => ({
+  saveBlobAs: (...args: unknown[]) => saveBlobAs(...args),
+  filenameFromContentDisposition: vi.fn(() => null),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -39,6 +47,7 @@ vi.mock('../../../../../_shared/services/projectSalesOrderService', () => ({
   updateSalesOrderLine: vi.fn(),
   regroupSalesOrder: vi.fn(),
   publishSalesOrder: vi.fn(),
+  downloadSalesOrderImportFile: (...args: unknown[]) => downloadSalesOrderImportFile(...args),
   previewAmendment: vi.fn(),
   createAmendment: vi.fn(),
   getAmendment: vi.fn(),
@@ -186,11 +195,64 @@ describe('SalesOrderWorksheetClient', () => {
 
     const copy = await screen.findByRole('button', { name: /Copy for AutoCount/ });
     expect(copy).toBeEnabled();
-    const download = screen.getByRole('link', { name: /Download CSV/ });
-    expect(download).toHaveAttribute(
-      'href',
-      '/api/v1/project-sales/sales-orders/so-1/import-file',
-    );
+    // A button, not a link: the file is fetched through the api client, because
+    // `import_file_url` is a backend path that an anchor resolves against this origin.
+    expect(screen.queryByRole('link', { name: /Download CSV/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Download CSV/ })).toBeEnabled();
+  });
+
+  it('fetches the CSV through the service and saves it under the name the backend gave', async () => {
+    getSalesOrderWorksheet.mockResolvedValue(worksheet());
+    downloadSalesOrderImportFile.mockResolvedValue({
+      blob: new Blob(['csv']),
+      filename: 'SO376200.csv',
+    });
+
+    renderWorksheet();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Download CSV/ }));
+
+    await waitFor(() => expect(downloadSalesOrderImportFile).toHaveBeenCalledWith('so-1'));
+    expect(saveBlobAs).toHaveBeenCalledTimes(1);
+    expect(saveBlobAs.mock.calls[0][1]).toBe('SO376200.csv');
+  });
+
+  it('names the CSV after the provisional ref when the response names no file', async () => {
+    getSalesOrderWorksheet.mockResolvedValue(worksheet());
+    downloadSalesOrderImportFile.mockResolvedValue({
+      blob: new Blob(['csv']),
+      filename: null,
+    });
+
+    renderWorksheet();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Download CSV/ }));
+
+    await waitFor(() => expect(saveBlobAs).toHaveBeenCalledTimes(1));
+    expect(saveBlobAs.mock.calls[0][1]).toBe('PSO-000101.csv');
+  });
+
+  it('says why the CSV could not be downloaded rather than failing silently', async () => {
+    getSalesOrderWorksheet.mockResolvedValue(worksheet());
+    downloadSalesOrderImportFile.mockRejectedValue(new Error('That sales order was rebuilt'));
+
+    renderWorksheet();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Download CSV/ }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('That sales order was rebuilt'));
+    expect(saveBlobAs).not.toHaveBeenCalled();
+  });
+
+  it('refuses the export the server has not cleared, whatever the file url says', async () => {
+    getSalesOrderWorksheet.mockResolvedValue(worksheet({ can_export: false }));
+
+    renderWorksheet();
+
+    const download = await screen.findByRole('button', { name: /Download CSV/ });
+    expect(download).toBeDisabled();
+    expect(download).toHaveAttribute('title', 'This worksheet cannot be exported yet');
+    expect(downloadSalesOrderImportFile).not.toHaveBeenCalled();
   });
 
   it('refuses the export on a draft and says the publish is what is missing', async () => {

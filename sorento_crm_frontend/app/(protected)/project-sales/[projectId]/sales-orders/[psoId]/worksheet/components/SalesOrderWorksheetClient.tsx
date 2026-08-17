@@ -28,7 +28,10 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { useSalesOrderWorksheet } from '../../../../../_shared/hooks/useProjectSalesOrders';
+import {
+  useSalesOrderImportFile,
+  useSalesOrderWorksheet,
+} from '../../../../../_shared/hooks/useProjectSalesOrders';
 import type {
   ProjectSalesOrderFinding,
   SalesOrderWorksheet,
@@ -147,6 +150,7 @@ function WorksheetView({
     pageIndex: 0,
     pageSize: 50,
   });
+  const importFile = useSalesOrderImportFile(psoId);
 
   const lines = worksheet.lines ?? [];
   const findings = worksheet.findings ?? [];
@@ -365,19 +369,18 @@ function WorksheetView({
             <ClipboardCopy className="size-4" aria-hidden />
             Copy for AutoCount
           </Button>
-          {canExport && worksheet.import_file_url ? (
-            <Button asChild size="sm">
-              <a href={worksheet.import_file_url} download>
-                <Download className="size-4" aria-hidden />
-                Download CSV
-              </a>
-            </Button>
-          ) : (
-            <Button type="button" size="sm" disabled title={exportHint ?? 'No file yet'}>
-              <Download className="size-4" aria-hidden />
-              Download CSV
-            </Button>
-          )}
+          {/* Fetched through the api client, not followed as a link: `import_file_url` is a
+              backend path, so an anchor resolves it against this origin and 404s. */}
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => importFile.mutate(worksheet.provisional_ref)}
+            disabled={!canExport || importFile.isPending}
+            title={exportHint}
+          >
+            <Download className="size-4" aria-hidden />
+            Download CSV
+          </Button>
         </div>
       </div>
 

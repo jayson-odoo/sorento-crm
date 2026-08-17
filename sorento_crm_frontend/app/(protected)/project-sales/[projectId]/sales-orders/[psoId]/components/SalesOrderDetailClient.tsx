@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useProjectSalesOrder,
+  useSalesOrderImportFile,
   useSalesOrderMutations,
 } from '../../../../_shared/hooks/useProjectSalesOrders';
 import { useProject } from '../../../../_shared/hooks/useProjects';
@@ -52,6 +53,7 @@ export function SalesOrderDetailClient({
   const project = useProject(projectId);
   const salesOrder = useProjectSalesOrder(psoId);
   const { acknowledge, regroup, publish } = useSalesOrderMutations(projectId, psoId);
+  const importFile = useSalesOrderImportFile(psoId);
   // Called above the early returns, as every hook must be. Keyed on the order's
   // `updated_at` so an ingest or a publish refetches it: this is what disables the amend
   // button, and a stale answer either blocks a clean order or lets a wrong amendment past.
@@ -205,11 +207,15 @@ export function SalesOrderDetailClient({
             </Button>
           )}
           {so.import_file_url && (
-            <Button asChild variant="outline" size="sm">
-              <a href={so.import_file_url} download>
-                <Download className="size-4" aria-hidden />
-                Import file
-              </a>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => importFile.mutate(so.provisional_ref)}
+              disabled={importFile.isPending}
+            >
+              <Download className="size-4" aria-hidden />
+              Import file
             </Button>
           )}
         </div>
@@ -328,8 +334,10 @@ export function SalesOrderDetailClient({
           blocking={blocking}
           unacknowledgedWarnings={unacknowledgedWarnings}
           submitting={publish.isPending}
+          downloading={importFile.isPending}
           onDone={() => setPublishing(false)}
           onPublish={() => publish.mutateAsync()}
+          onDownloadImportFile={() => importFile.mutate(so.provisional_ref)}
         />
       )}
     </div>

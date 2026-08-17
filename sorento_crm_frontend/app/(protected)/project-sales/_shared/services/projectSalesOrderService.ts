@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { filenameFromContentDisposition } from './fileDownload';
 import type {
   AmendmentCreateBody,
   AmendmentCreated,
@@ -203,6 +204,29 @@ export async function getSalesOrderWorksheet(psoId: string): Promise<SalesOrderW
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the AutoCount worksheet'));
   return response.json();
+}
+
+/**
+ * The stage 1 AutoCount import file, fetched rather than linked to.
+ *
+ * `import_file_url` is a path on the BACKEND. Given to an anchor it resolves against the
+ * frontend origin, where nothing serves it, so the download 404s; the route also wants the
+ * bearer token, which a plain link does not carry. Generated per request exactly as the
+ * corrective file is: a stored copy goes stale the moment an amendment publishes.
+ *
+ * The filename is the one the backend stamped on the response; the caller supplies a
+ * fallback for a response that carries no `Content-Disposition`.
+ */
+export async function downloadSalesOrderImportFile(
+  psoId: string,
+): Promise<{ blob: Blob; filename: string | null }> {
+  const response = await apiFetch(`${BASE}/sales-orders/${psoId}/import-file`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to download the import file'));
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(response.headers.get('Content-Disposition')),
+  };
 }
 
 // -------------------------------------------------------------- P11: amendments

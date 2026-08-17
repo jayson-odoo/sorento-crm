@@ -32,14 +32,18 @@ export function SalesOrderPublishDialog({
   unacknowledgedWarnings,
   onDone,
   onPublish,
+  onDownloadImportFile,
   submitting,
+  downloading,
 }: {
   reference: string;
   blocking: ProjectSalesOrderFinding[];
   unacknowledgedWarnings: ProjectSalesOrderFinding[];
   onDone: () => void;
   onPublish: () => Promise<SalesOrderPublishResult>;
+  onDownloadImportFile: () => void;
   submitting: boolean;
+  downloading?: boolean;
 }) {
   const [result, setResult] = React.useState<SalesOrderPublishResult | null>(null);
 
@@ -93,11 +97,15 @@ export function SalesOrderPublishDialog({
                   {`This sales order is ${result.autocount_doc_no || result.provisional_ref}.`}
                 </p>
                 {result.import_file_url ? (
-                  <Button asChild variant="outline" size="sm">
-                    <a href={result.import_file_url} download>
-                      <Download className="size-4" aria-hidden />
-                      Download the import file
-                    </a>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onDownloadImportFile}
+                    disabled={downloading}
+                  >
+                    <Download className="size-4" aria-hidden />
+                    Download the import file
                   </Button>
                 ) : (
                   <p className="text-sm">

@@ -2,10 +2,12 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { saveBlobAs } from '../services/fileDownload';
 import {
   acknowledgeFinding,
   buildSalesOrders,
   createAmendment,
+  downloadSalesOrderImportFile,
   getAmendment,
   getProjectSalesOrder,
   getSalesOrderWorksheet,
@@ -170,6 +172,24 @@ export function useSalesOrderMutations(projectId: string, psoId: string) {
   });
 
   return { acknowledge, updateLine, regroup, publish };
+}
+
+/**
+ * The AutoCount import file for one order.
+ *
+ * A mutation rather than a query because it must only run when someone asks for the file,
+ * and it caches nothing: the backend generates it per request so it always matches the
+ * order as it stands. The variable is the reference the file is named after when the
+ * response carries no filename of its own.
+ */
+export function useSalesOrderImportFile(psoId: string) {
+  return useMutation({
+    mutationFn: async (reference: string) => {
+      const { blob, filename } = await downloadSalesOrderImportFile(psoId);
+      saveBlobAs(blob, filename ?? `${reference}.csv`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 }
 
 /**
