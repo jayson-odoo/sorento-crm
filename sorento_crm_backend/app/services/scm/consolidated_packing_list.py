@@ -13,6 +13,7 @@ Reads only: `build` never writes, and `to_xlsx` is a pure function of what `buil
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from typing import Any, Optional
 
@@ -91,8 +92,18 @@ def _shipment_or_404(db: Session, shipment_id: str) -> InboundShipment:
     return row
 
 
-def _latest_notices(db: Session, supplier_ids: set[str]) -> dict[str, SupplierNotice]:
-    """The most recent notice per supplier, on any channel.
+def _latest_notices(
+    db: Session, supplier_ids: set[str], shipment_date: Optional[date] = None
+) -> dict[str, SupplierNotice]:
+    """The notice per supplier this container is most likely to have been packed against.
+
+    A notice is sent to a SUPPLIER, not to a container: nothing on it names the container it
+    will end up in, so which notice a shipment answers can only be inferred. The inference is
+    the date - the latest notice sent on or before the day after this container sailed, which
+    is the last thing the factory could have been working from. Only when there is no such
+    notice (the container predates every notice we hold) does the latest overall stand in,
+    because comparing against a plan sent afterwards is still better than comparing against
+    nothing and saying so.
 
     One notice row exists PER CHANNEL, so "the latest" is by `created_at` across all of them:
     an email and a chat sent from the same approval say the same thing, and either is the
@@ -106,10 +117,28 @@ def _latest_notices(db: Session, supplier_ids: set[str]) -> dict[str, SupplierNo
         .order_by(SupplierNotice.created_at.desc())
         .all()
     )
+    # A day's grace: a plan approved the morning a container was booked was still the plan
+    # that container was packed to.
+    cutoff = shipment_date + timedelta(days=1) if shipment_date else None
     latest: dict[str, SupplierNotice] = {}
+    in_time: dict[str, SupplierNotice] = {}
     for row in rows:
-        latest.setdefault(str(row.supplier_id), row)
-    return latest
+        supplier_id = str(row.supplier_id)
+        latest.setdefault(supplier_id, row)
+        created = _as_date(row.created_at)
+        if cutoff is not None and created is not None and created <= cutoff:
+            in_time.setdefault(supplier_id, row)
+    return {sid: in_time.get(sid, row) for sid, row in latest.items()}
+
+
+def _as_date(value) -> Optional[date]:
+    if isinstance(value, datetime):
+        return value.date()
+    return value if isinstance(value, date) else None
+
+
+def _iso(value) -> Optional[str]:
+    return value.isoformat() if value is not None else None
 
 
 def _planned(db: Session, notice_ids: set[str]) -> dict[str, dict[str, dict[str, Any]]]:
@@ -151,8 +180,9 @@ def _planned(db: Session, notice_ids: set[str]) -> dict[str, dict[str, dict[str,
 def _discrepancies(planned_qty: Optional[float], qty: float, has_plan: bool) -> list[str]:
     """Where this line differs from what the factory was asked for, in words.
 
-    A factory that was never sent a plan is compared against nothing: marking every one of
-    its lines "Not on the loading plan" would read as a container full of mistakes.
+    A factory that was never sent a plan - or was sent one that asked for nothing to be
+    packed - is compared against nothing: marking every one of its lines "Not on the loading
+    plan" would read as a container full of mistakes.
     """
     if not has_plan:
         return []
@@ -195,7 +225,7 @@ def build(db: Session, shipment_id: str) -> dict:
         if supplier_ids
         else {}
     )
-    notices = _latest_notices(db, supplier_ids)
+    notices = _latest_notices(db, supplier_ids, _as_date(shipment.shipment_date))
     planned = _planned(db, {str(n.id) for n in notices.values()})
 
     grouped: dict[Optional[str], list[dict]] = {}
@@ -228,12 +258,18 @@ def build(db: Session, shipment_id: str) -> dict:
         plan_lines = planned.get(str(notice.id), {}) if notice else {}
         lines.sort(key=lambda l: (l["product_code"] or "", l["line_id"]))
 
+        # A notice that asked for nothing to be PACKED (all of its lines are `produce`,
+        # i.e. stock the factory still has to make) is not a pack plan, and comparing a
+        # container against it would mark every line "Not on the loading plan". The notice
+        # is still reported, so the screen can say which document was looked at.
+        has_plan = bool(plan_lines)
+
         shipped_ids = set()
         for line in lines:
             shipped_ids.add(line["product_id"])
             entry = plan_lines.get(line["product_id"])
             line["discrepancies"] = _discrepancies(
-                entry["qty"] if entry else None, float(line["qty"]), notice is not None
+                entry["qty"] if entry else None, float(line["qty"]), has_plan
             )
 
         not_packed = [
@@ -256,6 +292,11 @@ def build(db: Session, shipment_id: str) -> dict:
                 if notice and notice.loading_plan_id
                 else None,
                 "notice_id": str(notice.id) if notice else None,
+                # When the document this container was compared against was written and
+                # when it left, so a comparison that looks wrong can be traced to the
+                # notice it was made against without opening the database.
+                "notice_created_at": _iso(notice.created_at) if notice else None,
+                "notice_sent_at": _iso(notice.sent_at) if notice else None,
                 "lines": lines,
                 "not_packed": not_packed,
                 "subtotal": _totals(lines),

@@ -204,9 +204,9 @@ def test_validate_names_the_codes_it_could_not_match():
 
 def test_a_file_that_is_not_a_packing_list_is_refused_with_the_reason():
     with pg_session() as db:
-        World(db)
+        w = World(db)
         with pytest.raises(AppException) as e:
-            svc.apply(db, workbook([["a", "b"], ["c", "d"]]))
+            svc.apply(db, workbook([["a", "b"], ["c", "d"]]), supplier_id=str(w.supplier.id))
         assert e.value.status_code == 422
 
 

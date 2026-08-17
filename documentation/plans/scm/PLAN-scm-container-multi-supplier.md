@@ -1,6 +1,6 @@
 # PLAN: multi-supplier container and the consolidated Sorento packing list
 
-**Status:** in progress (2026-08-17)
+**Status:** implemented, PR #208 open (2026-08-17); browser evidence run not recorded (no agent stack slot in this lane; vitest-only, stated in PR)
 **Origin:** `scm-fulfilment-gap` report, section 3 step 4 and gap G4; captain decision
 `decision-container-identity-multi-supplier.md` (combine, never replace; identity model left to
 engineering).
@@ -49,20 +49,34 @@ Concretely:
   `uk_inbound_shipment_lines_shipment_product`.
 - **Replace rule in `InboundShipmentService.create_shipment` (update-in-place branch):**
   - the effective supplier of an incoming line is `line.supplier_id or payload.supplier_id`;
-  - if the payload states a supplier anywhere (header or any line), only existing lines whose
-    `supplier_id` is in the set of incoming effective suppliers are deleted before insert;
+  - if the payload states a supplier anywhere (header or any line), an existing line is deleted
+    before insert when EITHER its `supplier_id` is in the set of incoming effective suppliers, OR
+    it has no supplier at all and its `product_id` is among the incoming lines' products. The
+    second arm is what stops n8n's unattributed read of a container and the factory's later Excel
+    upload of the same goods standing as two rows and doubling the quantity. An unattributed line
+    for a product the upload says nothing about is a different item nobody has claimed, and stays;
   - if the payload states NO supplier at all (n8n PDF path, legacy callers) the behaviour is
     unchanged: every line is replaced. An upload that does not say whose it is speaks for the whole
     container, as it always did.
   - Merge-by-product within one payload becomes merge-by-(product, supplier).
-- Header `supplier_id`: after lines are written, if the shipment's lines carry exactly one distinct
-  non-null supplier, the header takes it; if more than one, the header goes NULL (a mixed container
-  has no single supplier); if none, it is left as it was. Derived, never lies.
+- Header `supplier_id`: TOTAL, and re-derived after every write that touches the lines
+  (`create_shipment` both branches, `update_shipment` when it replaces lines). No lines at all ->
+  whatever the payload stated (which may be nothing); exactly one distinct non-null supplier across
+  the lines -> that supplier; anything else (two or more, or every line unattributed) -> NULL.
+  Derived, never lies - in particular an n8n resend that names no supplier empties a header that
+  used to name one, instead of leaving a claim no line supports.
+- **`packing_list_service.apply` requires `supplier_id`,** and `POST /packing-lists/apply` returns
+  422 without it on the writing path (`validate_only=true` writes nothing and may omit it). A
+  packing list arrives from one factory; an upload that will not say which one is indistinguishable
+  from a statement about the whole container and would delete the other factories' lines.
 - Header `total_items_shipped` / `total_cartons`: unchanged (display already sums lines).
 - Known limit, stated in the PR: SPO allocation and GRN quantities are per `(shipment, product)`,
-  so if two suppliers ship the SAME product code in one container the per-line
-  `spo_allocated_quantity` / `quantity_received` refresh lands on the first line found. Not observed
-  in any real file; not fixed here.
+  so if two suppliers ship the SAME product code in one container, `refresh_shipment_line_statuses`
+  stamps the product's WHOLE allocated / received total onto EVERY line of that product - both
+  lines display the full allocation, and both can flip to `received` when only one shipped against
+  the order. (Where a single line has to be picked instead - the incoming-cost capture and the
+  external GRN lookup - the pick is now ordered by `created_at, id` so it is at least the same line
+  every time.) Not observed in any real file; not fixed here.
 
 Also on the line: `cbm` Numeric(12,4) nullable (reader already parses `cbm_total` / `cbm_per_unit`
 and threw it away; the consolidated list needs volume for the split) and `remarks` Text nullable
@@ -101,7 +115,14 @@ Backend only.
    group, or pass per-line supplier). Response `supplier_id` per line if the FE needs it; header
    `supplier_id` stays.
 7. `GET /inbound-shipments` (`fulfilment.py`): `supplier_id` filter = header match OR any line with
-   that supplier; each row gains `suppliers: [{supplier_id, supplier_code, supplier_name}]`.
+   that supplier; each row gains `suppliers: [{supplier_id, supplier_code, supplier_name}]`. That
+   OR is ONE shared helper, `procurement_service.shipment_supplier_predicate(supplier_id_or_ids)`,
+   used by every supplier filter over shipments - the packing-list list / neighbours query, both
+   `incoming_stock_service` listings and this route - because a filter that reads the header alone
+   hides a mixed container (header NULL) from both of the suppliers actually on it. Where a
+   shipment's supplier is SELECTED rather than filtered (`coverage_service`'s factory label,
+   `summary_order_service`'s last incoming cost) it reads
+   `coalesce(line.supplier_id, header.supplier_id)` for the same reason.
 8. Tests (pytest, `blank_session`, seed everything, marker prefixes):
    - **`tests/test_packing_list_multi_supplier.py`** - THE test: two `create_shipment` calls for one
      container, supplier A then supplier B, each with its own product; assert both suppliers' lines
@@ -129,6 +150,7 @@ Backend only.
     {
       "supplier_id": "...|null", "supplier_code": "400-K029|null", "supplier_name": "KAILU HARDWARE FACTORY|Unassigned",
       "loading_plan_id": "...|null", "notice_id": "...|null",
+      "notice_created_at": "2026-08-01T09:00:00|null", "notice_sent_at": "2026-08-01T09:30:00|null",
       "lines": [
         { "line_id": "...", "product_id": "...", "product_code": "SRTWT7443", "product_name": "...",
           "brand": "SORENTO|null", "company": "SORENTO|MOCHA",
@@ -157,8 +179,13 @@ Rules:
   as `loading_plan_service._catalogue_cbm`; do NOT import from there, copy the two-line formula and
   say why), else null. Subtotal / total / split cbm sum the non-null ones; `cbm_known_lines` count
   alongside so a partial figure is not read as a full one.
-- Discrepancies (derived, never asked): the latest `supplier_notices` row for that supplier
-  (`created_at desc`, any channel; its lines with `kind='pack'`, summed by `product_id`). For each
+- Discrepancies (derived, never asked): the `supplier_notices` row for that supplier this
+  container could have been packed to - notices are sent per SUPPLIER, not per container, so the
+  date is the only link: the latest with `created_at <= shipment_date + 1 day`, and only when there
+  is no such notice does the latest overall stand in. Any channel; its lines with `kind='pack'`,
+  summed by `product_id`. `notice_created_at` / `notice_sent_at` are reported so a comparison that
+  looks wrong can be traced to the document it was made against. A notice whose lines are ALL
+  `produce` has no pack plan in it: `notice_id` is still reported, and nothing is compared. For each
   shipped line: no plan line -> `"Not on the loading plan"`; planned != qty ->
   `"Loading plan asked {planned}, packed {qty} ({short|over} {abs diff})"`. Plan lines with no
   shipped line for that supplier -> `not_packed[]`. No notice for the supplier -> `notice_id: null`,

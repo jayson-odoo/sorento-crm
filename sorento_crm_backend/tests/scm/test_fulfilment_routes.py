@@ -454,3 +454,37 @@ def test_editing_a_size_requires_the_operator_permission(scm_app):
     r = TestClient(app).post("/api/v1/scm/container-sizes", json={"code": "ZZX", "cbm": 4})
 
     assert r.status_code == 403, r.text
+
+
+# --------------------------------------------------------------------------- #
+# the packing list: whose it is, is not optional
+# --------------------------------------------------------------------------- #
+
+
+def test_a_packing_list_upload_that_names_no_supplier_is_refused(scm_app):
+    # A container is filled by two or three factories and each sends its own list, so an
+    # upload that will not say which one speaks for the whole container - and would delete
+    # the other factories' lines. Refused before the file is read.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+
+    r = TestClient(app).post(
+        "/api/v1/scm/packing-lists/apply",
+        files={"file": ("packing.xlsx", _workbook([["X", "a", 1, 1, 0.2, ""]]), _XLSX)},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "supplier_id is required" in r.json()["detail"]
+
+
+def test_validate_only_may_omit_the_supplier_because_it_writes_nothing(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+
+    r = TestClient(app).post(
+        "/api/v1/scm/packing-lists/apply?validate_only=true",
+        files={"file": ("packing.xlsx", _workbook([["X", "a", 1, 1, 0.2, ""]]), _XLSX)},
+    )
+
+    assert r.status_code == 200, r.text
+    assert set(r.json()) == {"valid", "errors", "warnings", "summary"}

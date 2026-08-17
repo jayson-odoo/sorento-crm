@@ -12,7 +12,7 @@ import re
 import secrets
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, exists, false, func, select
 from sqlalchemy import inspect
 from decimal import Decimal, InvalidOperation
 from typing import Optional, List, Dict, Any
@@ -389,6 +389,44 @@ def compute_inbound_shipment_line_status(
     return "in_transit"
 
 
+def shipment_supplier_predicate(supplier_id):
+    """Containers this supplier is ON: the header names them, or any of their lines does.
+
+    A container filled by two factories has NO header supplier (a mixed container has no
+    single one), so a filter that reads the header alone hides that container from both of
+    the suppliers actually on it - exactly the containers the per-supplier line was added
+    for. One helper rather than the same OR written out at each call site, because a filter
+    that drifts from the others is a screen that quietly disagrees with its neighbour.
+
+    Takes one id or an iterable of them (the identifier resolver hands back a list).
+    """
+    ids = [str(supplier_id)] if isinstance(supplier_id, str) else [str(s) for s in supplier_id]
+    if not ids:
+        return false()
+    if len(ids) == 1:
+        header = InboundShipment.supplier_id == ids[0]
+        line = InboundShipmentLine.supplier_id == ids[0]
+    else:
+        header = InboundShipment.supplier_id.in_(ids)
+        line = InboundShipmentLine.supplier_id.in_(ids)
+    return or_(
+        header,
+        exists(
+            select(1)
+            .where(
+                InboundShipmentLine.shipment_id == InboundShipment.id,
+                line,
+            )
+            # Correlate to the shipment EXPLICITLY. Auto-correlation looks at whatever
+            # query this predicate is dropped into, and in the incoming listings - which
+            # already select from `inbound_shipment_lines` through a subquery - it
+            # correlated the lines table away too and left the EXISTS with no FROM at all
+            # ("returned no FROM clauses due to auto-correlation").
+            .correlate(InboundShipment)
+        ),
+    )
+
+
 def _effective_line_supplier(line_dict: dict, header_supplier_id: Optional[str]) -> Optional[str]:
     """Whose line this is: what the line says, else what the header says.
 
@@ -396,7 +434,30 @@ def _effective_line_supplier(line_dict: dict, header_supplier_id: Optional[str])
     header and every line on it belongs to that factory. A caller that knows better says
     so on the line and wins.
     """
-    return line_dict.get("supplier_id") or header_supplier_id or None
+    return line_dict.get("supplier_id") or header_supplier_id
+
+
+def _is_superseded_line(
+    line: InboundShipmentLine,
+    incoming_suppliers: set[Optional[str]],
+    incoming_products: set[str],
+) -> bool:
+    """Does this upload speak for a line that is already on the container?
+
+    Two ways it does. The obvious one is that the line belongs to a supplier this upload
+    names, so the upload is that supplier's corrected list and replaces it. The second is
+    an UNATTRIBUTED line for a product this upload carries: the n8n PDF path writes lines
+    with no supplier, and a later Excel upload of the same container from the factory that
+    actually packed them is the same goods described twice. Keeping both doubles the
+    quantity on the container, which is the number the whole screen is read for.
+
+    An unattributed line for a product this upload does NOT carry is a different item that
+    nobody has claimed yet, and it stays.
+    """
+    line_supplier = str(line.supplier_id) if line.supplier_id else None
+    if line_supplier is not None:
+        return line_supplier in incoming_suppliers
+    return None in incoming_suppliers or str(line.product_id) in incoming_products
 
 
 def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list[dict]:
@@ -597,7 +658,7 @@ class InboundShipmentService:
             if not supplier_ids:
                 # Supplier filter supplied but resolved to nothing -> empty set.
                 return q.filter(InboundShipment.id.is_(None)), True
-            filters.append(InboundShipment.supplier_id.in_(supplier_ids))
+            filters.append(shipment_supplier_predicate(supplier_ids))
 
         status_norm = (shipment_status or "").strip().lower()
         if status_norm and status_norm != "all":
@@ -936,24 +997,36 @@ class InboundShipmentService:
                 shipment.shipment_status = "in_transit"
         self.db.commit()
 
-    def _derive_header_supplier(self, shipment: InboundShipment) -> None:
+    def _derive_header_supplier(
+        self, shipment: InboundShipment, payload_supplier_id: Optional[str] = None
+    ) -> None:
         """The header's supplier is whatever its lines agree on, and nothing when they do not.
 
-        Derived rather than stated, so it never lies: one distinct supplier across the
-        lines is the container's supplier, two or more is a mixed container which has no
-        single one, and no supplier at all leaves the header as the caller set it (the
-        n8n PDF path names none and has nothing to derive from).
+        Derived rather than stated, so it never lies, and TOTAL - every case sets the header
+        rather than leaving a stale one behind:
+
+        * no lines at all -> whatever the payload said (which may be nothing). There is
+          nothing to derive from, so the caller's word is all there is.
+        * exactly one distinct non-null supplier across the lines -> that supplier.
+        * anything else (two or more, or every line unattributed) -> NULL. A mixed container
+          has no single supplier, and an unattributed container is not owned by whoever
+          happened to upload it last.
+
+        The last case is why this is total: an n8n resend that names no supplier onto a
+        container the header called Kailu used to leave "Kailu" on a header whose lines no
+        longer say so, and every supplier filter believed it.
         """
-        suppliers = {
-            str(line.supplier_id)
-            for line in self.db.query(InboundShipmentLine)
+        lines = (
+            self.db.query(InboundShipmentLine)
             .filter(InboundShipmentLine.shipment_id == shipment.id)
             .all()
-            if line.supplier_id
-        }
-        if len(suppliers) == 1:
+        )
+        suppliers = {str(line.supplier_id) for line in lines if line.supplier_id}
+        if not lines:
+            shipment.supplier_id = payload_supplier_id
+        elif len(suppliers) == 1:
             shipment.supplier_id = next(iter(suppliers))
-        elif len(suppliers) > 1:
+        else:
             shipment.supplier_id = None
 
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
@@ -1035,15 +1108,20 @@ class InboundShipmentService:
             merged_lines = _merge_shipment_lines(
                 shipment_data.shipment_lines, shipment_data.supplier_id
             )
-            incoming_suppliers = {d["supplier_id"] for d in merged_lines}
+            incoming_suppliers = {
+                str(d["supplier_id"]) if d["supplier_id"] else None for d in merged_lines
+            }
+            incoming_products = {str(d["product_id"]) for d in merged_lines}
             if not merged_lines and shipment_data.supplier_id:
                 # No lines at all: the upload clears what that supplier had on the container.
-                incoming_suppliers = {shipment_data.supplier_id}
+                incoming_suppliers = {str(shipment_data.supplier_id)}
             states_supplier = bool(shipment_data.supplier_id) or any(
                 (line.supplier_id or None) for line in (shipment_data.shipment_lines or [])
             )
             for line in existing.shipment_lines[:]:
-                if states_supplier and (line.supplier_id or None) not in incoming_suppliers:
+                if states_supplier and not _is_superseded_line(
+                    line, incoming_suppliers, incoming_products
+                ):
                     continue
                 self.db.delete(line)
             self.db.flush()
@@ -1051,7 +1129,7 @@ class InboundShipmentService:
                 line = InboundShipmentLine(**d, shipment_id=existing.id)
                 self.db.add(line)
             self.db.flush()
-            self._derive_header_supplier(existing)
+            self._derive_header_supplier(existing, shipment_data.supplier_id)
             self.db.commit()
             self.db.refresh(existing)
             self.refresh_shipment_line_statuses(existing.id)
@@ -1077,7 +1155,7 @@ class InboundShipmentService:
                 line = InboundShipmentLine(**d, shipment_id=shipment.id)
                 self.db.add(line)
             self.db.flush()
-            self._derive_header_supplier(shipment)
+            self._derive_header_supplier(shipment, shipment_data.supplier_id)
 
         self.db.commit()
         self.db.refresh(shipment)
@@ -1104,11 +1182,14 @@ class InboundShipmentService:
             for line in shipment.shipment_lines[:]:
                 self.db.delete(line)
             self.db.flush()
-            for d in _merge_shipment_lines(
-                shipment_data.shipment_lines, getattr(shipment, "supplier_id", None)
-            ):
+            header_supplier = getattr(shipment, "supplier_id", None)
+            for d in _merge_shipment_lines(shipment_data.shipment_lines, header_supplier):
                 line = InboundShipmentLine(**d, shipment_id=shipment.id)
                 self.db.add(line)
+            self.db.flush()
+            # The lines just changed, so the header has to be re-derived from them or it
+            # keeps naming a supplier that is no longer on the container.
+            self._derive_header_supplier(shipment, header_supplier)
 
         self.db.commit()
         self.db.refresh(shipment)
@@ -1645,6 +1726,10 @@ class SPOAllocationService:
                     InboundShipmentLine.shipment_id == allocation.inbound_shipment_id,
                     InboundShipmentLine.product_id == allocation.product_id,
                 )
+                # Two factories can ship the same product code in one container, so order
+                # before taking one: an arbitrary pick makes the cost land on a different
+                # line from one run to the next.
+                .order_by(InboundShipmentLine.created_at, InboundShipmentLine.id)
                 .first()
             )
             if line is None:

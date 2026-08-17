@@ -150,8 +150,21 @@ class World:
         self.db.flush()
         return row
 
-    def notice(self, supplier, lines, *, created_at: datetime, plan: bool = True):
-        """One notice with its `pack` lines, as the supplier received it."""
+    def notice(
+        self,
+        supplier,
+        lines,
+        *,
+        created_at: datetime,
+        plan: bool = True,
+        kind: str = "pack",
+        sent_at: datetime | None = None,
+    ):
+        """One notice with its lines, as the supplier received it.
+
+        `kind` is `pack` (goods the factory holds and was asked to load) unless a test wants
+        `produce` (goods it still has to make), which is not a pack plan at all.
+        """
         loading_plan = None
         if plan:
             loading_plan = LoadingPlan(
@@ -170,6 +183,7 @@ class World:
             channel="email",
             status="sent",
             created_at=created_at,
+            sent_at=sent_at,
         )
         self.db.add(row)
         self.db.flush()
@@ -182,7 +196,7 @@ class World:
                     item_code=product.product_code,
                     product_name=product.product_name,
                     qty=qty,
-                    kind="pack",
+                    kind=kind,
                     sort_order=i,
                 )
             )
@@ -403,6 +417,82 @@ def test_a_quantity_that_matches_the_plan_says_nothing(db):
     out = svc.build(db, str(w.shipment.id))
 
     assert _line(_factory(out, "A-KAILU"), "1TAP")["discrepancies"] == []
+
+
+def test_a_notice_that_only_asked_for_production_is_not_a_pack_plan(db):
+    """`produce` lines are stock the factory still has to make.
+
+    A notice made entirely of them asked for nothing to be loaded, so there is nothing for
+    this container to be short of - comparing against it would mark every line "Not on the
+    loading plan" and read as a container full of mistakes. The notice is still named, so
+    the screen can say which document was looked at.
+    """
+    w = World(db)
+    notice = w.notice(
+        w.kailu,
+        [(w.tap, 500), (w.never_packed, 100)],
+        created_at=datetime(2026, 8, 1, 9, 0, 0),
+        kind="produce",
+    )
+
+    out = svc.build(db, str(w.shipment.id))
+    kailu = _factory(out, "A-KAILU")
+
+    assert kailu["notice_id"] == str(notice.id)
+    assert all(l["discrepancies"] == [] for l in kailu["lines"])
+    assert kailu["not_packed"] == []
+
+
+def test_the_notice_compared_against_is_the_one_the_container_could_have_been_packed_to(db):
+    """A notice is sent to a supplier, not to a container, so the date is the only link.
+
+    The container sailed on 1 Aug. A plan approved in September is a plan for the NEXT
+    container, and comparing this one against it would invent a shortfall in every line.
+    """
+    w = World(db)
+    in_time = w.notice(w.kailu, [(w.tap, 500)], created_at=datetime(2026, 8, 1, 9, 0, 0))
+    w.notice(w.kailu, [(w.tap, 900)], created_at=datetime(2026, 9, 15, 9, 0, 0))
+
+    out = svc.build(db, str(w.shipment.id))
+    kailu = _factory(out, "A-KAILU")
+
+    assert kailu["notice_id"] == str(in_time.id)
+    assert _line(kailu, "1TAP")["discrepancies"] == [
+        "Loading plan asked 500, packed 490 (short 10)"
+    ]
+
+
+def test_a_container_older_than_every_notice_falls_back_to_the_latest(db):
+    """Better a comparison against a later plan, said out loud, than no comparison at all."""
+    w = World(db)
+    w.notice(w.kailu, [(w.tap, 900)], created_at=datetime(2026, 9, 1, 9, 0, 0))
+    latest = w.notice(w.kailu, [(w.tap, 800)], created_at=datetime(2026, 9, 15, 9, 0, 0))
+
+    out = svc.build(db, str(w.shipment.id))
+    kailu = _factory(out, "A-KAILU")
+
+    assert kailu["notice_id"] == str(latest.id)
+
+
+def test_the_factory_says_when_the_notice_it_was_compared_against_was_written_and_sent(db):
+    """A comparison that looks wrong has to be traceable to the document it was made against."""
+    w = World(db)
+    notice = w.notice(
+        w.kailu,
+        [(w.tap, 500)],
+        created_at=datetime(2026, 8, 1, 9, 0, 0),
+        sent_at=datetime(2026, 8, 1, 9, 30, 0),
+    )
+
+    out = svc.build(db, str(w.shipment.id))
+
+    kailu = _factory(out, "A-KAILU")
+    assert kailu["notice_created_at"] == notice.created_at.isoformat()
+    assert kailu["notice_sent_at"] == "2026-08-01T09:30:00"
+    # A factory with no notice states both as nothing rather than omitting the keys.
+    caizhou = _factory(out, "B-CAIZHOU")
+    assert caizhou["notice_created_at"] is None
+    assert caizhou["notice_sent_at"] is None
 
 
 # --------------------------------------------------------------------------- #

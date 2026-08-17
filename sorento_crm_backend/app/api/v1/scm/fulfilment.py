@@ -26,7 +26,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -480,7 +480,9 @@ async def preview_packing_list(
 @router.post("/packing-lists/apply")
 async def apply_packing_list(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
-    supplier_id: Optional[str] = Form(None),
+    supplier_id: Optional[str] = Form(
+        None, description="Whose packing list this is. Required unless validate_only."
+    ),
     shipment_date: Optional[str] = Form(None),
     validate_only: bool = Query(
         False,
@@ -489,7 +491,23 @@ async def apply_packing_list(
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """One inbound shipment per container block. Re-uploading the same file updates in place."""
+    """One inbound shipment per container block. Re-uploading the same file updates in place.
+
+    The supplier is required on the writing path and refused before the file is even read.
+    A packing list arrives from one factory, and an upload that will not say which one
+    cannot be told apart from the container's whole contents - so it would replace the
+    other factories' lines, which is the data loss the per-supplier line exists to end.
+    `validate_only` writes nothing and may therefore omit it.
+    """
+    supplier = (supplier_id or "").strip()
+    if not validate_only and not supplier:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "supplier_id is required: a packing list is uploaded as one supplier so it "
+                "can never replace another supplier's lines"
+            ),
+        )
     data = await read_upload(file)
     if validate_only:
         return packing_list_service.validate(db, data, source_ref=file.filename)
@@ -507,7 +525,7 @@ async def apply_packing_list(
     out = packing_list_service.apply(
         db,
         data,
-        supplier_id=supplier_id,
+        supplier_id=supplier,
         shipment_date=parsed_date,
         source_ref=file.filename,
         actor_id=current_user.get("id"),
@@ -529,23 +547,14 @@ def list_inbound_shipments(
     looked lost. A container is read once and decided later, often not in the same sitting.
     """
     from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
+    from app.services.procurement_service import shipment_supplier_predicate
 
     q = db.query(InboundShipment)
     if supplier_id:
-        # Header OR any line: a container that carries two factories has a NULL header
-        # supplier, so filtering on the header alone hid the mixed containers from both
-        # of the suppliers actually on them.
-        q = q.filter(
-            or_(
-                InboundShipment.supplier_id == supplier_id,
-                db.query(InboundShipmentLine)
-                .filter(
-                    InboundShipmentLine.shipment_id == InboundShipment.id,
-                    InboundShipmentLine.supplier_id == supplier_id,
-                )
-                .exists(),
-            )
-        )
+        # Header OR any line, shared with every other supplier filter: a container that
+        # carries two factories has a NULL header supplier, so filtering on the header
+        # alone hid the mixed containers from both of the suppliers actually on them.
+        q = q.filter(shipment_supplier_predicate(supplier_id))
     rows = q.order_by(InboundShipment.created_at.desc()).limit(limit).all()
 
     shipment_ids = [r.id for r in rows]

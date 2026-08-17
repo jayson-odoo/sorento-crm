@@ -183,7 +183,7 @@ def apply(
     db: Session,
     data: bytes,
     *,
-    supplier_id: Optional[str] = None,
+    supplier_id: str,
     shipment_date: Optional[date] = None,
     source_ref: Optional[str] = None,
     attachment_id: Optional[str] = None,
@@ -194,6 +194,10 @@ def apply(
     Idempotent because the shipment NAME is derived from the file rather than generated: the
     same file uploaded twice resolves to the same shipments and updates them in place, which is
     AC-G3 and is also what stops a nervous second click doubling a container.
+
+    `supplier_id` is REQUIRED. A packing list comes from one factory, and a container is
+    routinely filled by two or three of them; an upload that does not say whose it is speaks
+    for the whole container and would delete the other factories' lines.
     """
     parsed = _parse(db, data)
     if not parsed.ok:

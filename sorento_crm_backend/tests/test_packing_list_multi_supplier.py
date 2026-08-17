@@ -108,6 +108,7 @@ class World:
         self.db = db
         category = _category(db)
         uom = _uom(db)
+        self.category_id = category
         self.uom_id = uom
         self.kailu = _supplier(db, "KAILU")
         self.caizhou = _supplier(db, "CAIZHOU")
@@ -115,6 +116,9 @@ class World:
         self.sink = _product(db, "SINK", category_id=category, uom_id=uom)
         self.container = f"{MARKER}U{uuid.uuid4().hex[:7].upper()}"
         db.flush()
+
+    def product(self, code: str) -> Product:
+        return _product(self.db, code, category_id=self.category_id, uom_id=self.uom_id)
 
     def upload(self, *, supplier_id, lines, container=None):
         """One packing list for this container, as `create_shipment` receives it."""
@@ -211,9 +215,77 @@ def test_an_upload_that_names_no_supplier_still_replaces_everything(db):
     assert str(lines[0].product_id) == str(w.tap.id)
     assert lines[0].quantity_shipped == 7
     assert lines[0].supplier_id is None
-    # Nothing to derive from, so the header keeps what it had.
+    # Every line on the container is unattributed now, so the header names nobody. It is
+    # derived from the lines each time, never left holding the last supplier it saw.
     db.refresh(legacy)
     assert legacy.supplier_id is None
+
+
+def test_an_n8n_resend_clears_the_header_the_container_used_to_name(db):
+    """The header is DERIVED, and derivation is total: a supplier-less resend empties it.
+
+    A single-factory container names that factory on the header. The n8n PDF path then
+    re-reads the same container and names nobody, so what the header said is no longer
+    supported by any line on it - and every supplier filter that trusts the header would go
+    on showing the container as Kailu's.
+    """
+    w = World(db)
+    first = w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None)])
+    db.commit()
+    db.refresh(first)
+    assert str(first.supplier_id) == str(w.kailu.id)
+
+    resend = w.upload(supplier_id=None, lines=[(w.tap, 12, None)])
+    db.commit()
+
+    assert resend.id == first.id
+    db.refresh(resend)
+    assert resend.supplier_id is None
+    lines = w.lines(resend.id)
+    assert len(lines) == 1
+    assert lines[0].supplier_id is None
+    assert lines[0].quantity_shipped == 12
+
+
+def test_a_container_with_no_lines_takes_the_supplier_the_payload_stated(db):
+    """Nothing to derive from, so the caller's word is all there is."""
+    w = World(db)
+
+    shipment = w.upload(supplier_id=str(w.kailu.id), lines=[])
+    db.commit()
+
+    db.refresh(shipment)
+    assert str(shipment.supplier_id) == str(w.kailu.id)
+    assert w.lines(shipment.id) == []
+
+
+def test_a_factorys_upload_supersedes_the_unattributed_lines_for_its_own_products(db):
+    """The doubling case. n8n reads the PDF first, the factory's Excel arrives second.
+
+    n8n's read names no supplier, so its lines are unattributed. When Kailu then uploads the
+    same container's list as Kailu, the tap it carries is the SAME goods described twice -
+    two rows for one product would show 200 on a container that holds 100. The unattributed
+    line for a product Kailu's file says nothing about is a different item nobody has claimed
+    yet, and it survives untouched.
+    """
+    w = World(db)
+    mat = w.product("MAT")
+    first = w.upload(supplier_id=None, lines=[(w.tap, 100, None), (mat, 40, None)])
+    db.commit()
+
+    w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 100, None)])
+    db.commit()
+
+    lines = w.lines(first.id)
+    taps = [ln for ln in lines if str(ln.product_id) == str(w.tap.id)]
+    assert len(taps) == 1
+    assert taps[0].quantity_shipped == 100
+    assert str(taps[0].supplier_id) == str(w.kailu.id)
+
+    mats = [ln for ln in lines if str(ln.product_id) == str(mat.id)]
+    assert len(mats) == 1
+    assert mats[0].supplier_id is None
+    assert mats[0].quantity_shipped == 40
 
 
 def test_one_product_from_two_factories_in_one_payload_is_two_lines(db):

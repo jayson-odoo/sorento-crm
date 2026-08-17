@@ -141,7 +141,15 @@ def suggest(db: Session, shipment_id: str) -> dict:
     header_supplier = str(shipment.supplier_id) if shipment.supplier_id else None
 
     def supplier_of(ln: InboundShipmentLine) -> Optional[str]:
-        """Whose line this is. Its own supplier, else the container's."""
+        """Whose line this is. Its own supplier, else the container's.
+
+        The fallback is a no-op after every packing-list write and is kept for the one
+        case where it is not: the header is DERIVED from the lines (one distinct supplier
+        across them, otherwise NULL), so an unattributed line normally sits on a container
+        whose header is NULL too and the fallback returns None either way. Only a header
+        set by hand on an unattributed container makes it fire, and there the header is
+        the only statement of whose goods these are, so following it is right.
+        """
         return str(ln.supplier_id) if ln.supplier_id else header_supplier
 
     # One candidate query per supplier on this container, because the supplier is what

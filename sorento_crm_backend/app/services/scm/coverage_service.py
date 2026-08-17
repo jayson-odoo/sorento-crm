@@ -592,7 +592,14 @@ class CoverageService:
                 SPOAllocation.quantity_received.label("allocation_received"),
             )
             .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
-            .outerjoin(Supplier, Supplier.id == InboundShipment.supplier_id)
+            # Whose line this is, else whose container it is. A mixed container has no
+            # header supplier, so joining on the header alone left every line on it
+            # labelled with a blank factory.
+            .outerjoin(
+                Supplier,
+                Supplier.id
+                == func.coalesce(InboundShipmentLine.supplier_id, InboundShipment.supplier_id),
+            )
             .outerjoin(
                 SPOAllocation,
                 and_(
