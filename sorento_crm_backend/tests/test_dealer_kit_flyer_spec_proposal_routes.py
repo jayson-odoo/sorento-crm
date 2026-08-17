@@ -1,8 +1,28 @@
 """The four flyer-spec-proposal routes (S2, HTTP level).
 
-Plan: `documentation/plans/master-data/PLAN-flyer-spec-ingestion.md` section 3.4.
-UAC: `flyer-spec-ingestion-acceptance-criteria.md` AC-A.1, AC-A.5, AC-A.7, AC-B.1,
-AC-B.2, AC-C.1 through AC-C.7.
+Plan: `documentation/plans/master-data/PLAN-flyer-spec-ingestion.md` section 3.4
+and section 7 (captain amendment 2026-08-17). UAC:
+`flyer-spec-ingestion-acceptance-criteria.md` AC-A.1, AC-A.5, AC-A.7, AC-B.1,
+AC-B.2, AC-C.1 through AC-C.7 (C.2 amended), AC-F.1, AC-F.2, AC-F.5, AC-G.1
+through AC-G.3.
+
+Section F (added 2026-08-17, written RED against the still-refusing apply and
+the not-yet-existing PATCH route): AC-F.1 flips a ticked `conflict` row from
+refused to written (only `unchanged`/`suppressed` refuse now, superseding L7 in
+part - see `test_apply_writes_a_ticked_row_that_now_conflicts_with_an_authored_value`
+and its suppressed-still-refuses neighbour); AC-F.2 is the new
+`PATCH .../spec-proposals/{proposal_id}` in-place value edit (validated, stamped
+`edited_at`/`edited_by`, kind + batch counts recomputed); AC-F.5 is
+`allowed_values` on a closed-vocabulary row in the GET payload.
+
+Section G (added 2026-08-17b, captain amendment, written RED against the
+not-yet-existing `POST .../spec-proposals/rows` and `DELETE
+.../spec-proposals/{proposal_id}` and the not-yet-existing `origin` column):
+AC-G.1 is a manually-added proposal row (`origin='manual'`) with its five
+refusals; AC-G.2 is that a manual row applies with `source='human'` and fixed
+evidence, while a flyer-read row still applies `source='flyer'`; AC-G.3 is the
+hard-delete of a non-applied, non-`applied`-outcome row with the same
+permission pair as every other route in this file.
 
 Written red, against routes that did not exist yet, and green since S2 built
 `app/api/v1/dealer_kit/flyer_spec_proposals.py` and mounted it. What it covers:
@@ -70,6 +90,9 @@ _PROPOSE = "/api/v1/dealer-kit/flyer-readings/{}/spec-proposals"
 _GET_PROPOSALS = "/api/v1/dealer-kit/flyer-readings/{}/spec-proposals"
 _APPLY = "/api/v1/dealer-kit/flyer-readings/{}/spec-proposals/apply"
 _LIST_BATCHES = "/api/v1/dealer-kit/flyer-readings/spec-proposal-batches"
+_PATCH_PROPOSAL = "/api/v1/dealer-kit/flyer-readings/{}/spec-proposals/{}"
+_DELETE_PROPOSAL = _PATCH_PROPOSAL
+_ADD_ROW = "/api/v1/dealer-kit/flyer-readings/{}/spec-proposals/rows"
 
 
 @pytest.fixture
@@ -177,7 +200,16 @@ def _proposal(
     stored_unit=None,
     stored_source=None,
     pages=(1,),
+    origin: str | None = None,
 ) -> ProductSpecFlyerProposal:
+    kwargs: dict = {}
+    if origin is not None:
+        # AC-G.1/G.2: `origin` (`flyer` | `manual`) does not exist on the model
+        # yet - passed only by the section G tests, which is what makes THIS
+        # the failure a section-G test hits (a TypeError on an unexpected
+        # keyword, i.e. the missing `origin` column) rather than every other
+        # test in this file that never asks for one.
+        kwargs["origin"] = origin
     row = ProductSpecFlyerProposal(
         id=str(uuid.uuid4()),
         batch_id=batch.id,
@@ -192,6 +224,7 @@ def _proposal(
         stored_value=stored_value,
         stored_unit=stored_unit,
         stored_source=stored_source,
+        **kwargs,
     )
     db.add(row)
     db.flush()
@@ -496,7 +529,13 @@ def test_apply_refuses_a_row_that_now_already_matches_the_master(api, db):
     assert body["refused"][0]["reason"] == "already_matches"
 
 
-def test_apply_refuses_a_row_that_now_conflicts_with_an_authored_value(api, db):
+def test_apply_writes_a_ticked_row_that_now_conflicts_with_an_authored_value(api, db):
+    """AC-F.1 (captain amendment 2026-08-17, supersedes L7): a ticked `conflict`
+    row is WRITTEN, exactly like `change` - the tick plus the FE confirm dialog
+    naming the overwrite count IS the confirmation. Before the amendment this
+    same setup (an authored value disagreeing with the card) refused
+    `conflict_not_confirmed` with no write; that is now `apply_batch`'s answer
+    ONLY for `unchanged` (AC-C.2/AC-C.6) and `suppressed` (below)."""
     client, allow = api
     allow.update({_VIEW, _EDIT})
     product = _product(db, "ZZT-FLYRT-C2B", "SORENTO ONE PIECE WC ZZT-FLYRT-C2B")
@@ -522,9 +561,46 @@ def test_apply_refuses_a_row_that_now_conflicts_with_an_authored_value(api, db):
 
     assert response.status_code == 200, response.text
     body = response.json()
+    assert body["refused"] == []
+    assert body["applied"][0]["spec_key"] == "seat_material"
+    assert body["applied"][0]["value"] == "pp"
+    stored_spec = _spec_of(db, product.id)
+    assert stored_spec.values["seat_material"]["value"] == "pp"
+    assert stored_spec.provenance["seat_material"]["source"] == "flyer"
+
+
+def test_apply_still_refuses_a_ticked_suppressed_tombstone_as_conflict_not_confirmed(api, db):
+    """AC-F.1: only `unchanged` and `suppressed` refuse now. A tombstone (a person
+    said this product does NOT carry the key) must still refuse - the amendment
+    widens what a tick can overwrite, it does not let a tick resurrect a removed
+    specification."""
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-F1B", "SORENTO ONE PIECE WC ZZT-FLYRT-F1B")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-F1B", commit=True)
+    from app.services.product_spec_write import apply_spec_values
+
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-F1B", "*PP Seat Cover")])
+    batch = _batch(db, reading)
+    proposal = _proposal(db, batch, product, spec_key="seat_material", value="pp", kind="new")
+    db.commit()
+
+    apply_spec_values(
+        db,
+        "ZZT-FLYRT-F1B",
+        [{"spec_key": "seat_material", "op": "absent", "source": "human"}],
+        actor=_USER,
+    )
+    db.commit()
+
+    response = client.post(_APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
     assert body["applied"] == []
     assert body["refused"][0]["reason"] == "conflict_not_confirmed"
-    assert _spec_of(db, product.id).values["seat_material"]["value"] == "uf", "untouched"
+    assert "seat_material" not in (_spec_of(db, product.id).values or {}), "untouched"
 
 
 def test_apply_writes_a_new_row(api, db):
@@ -871,3 +947,618 @@ def test_apply_loads_the_rule_registry_once_for_a_two_product_apply(api, db, mon
     assert response.status_code == 200, response.text
     assert len(response.json()["applied"]) == 2
     assert len(loads) == 1, f"one load for the request, not one per product: {len(loads)}"
+
+
+# --------------------------------------------------------------------------- #
+# AC-F.2 - PATCH a proposal's value in place (captain amendment 2026-08-17)
+# --------------------------------------------------------------------------- #
+def test_patch_edits_the_value_recomputes_kind_and_refreshes_batch_counts(api, db):
+    """AC-F.2 happy path: the value is validated via `value_for_registry`, stored
+    on the row with `edited_at`/`edited_by`, the row's `kind` is recomputed
+    against the LIVE spec row (not the stale propose-time snapshot), and the
+    batch's per-kind counts move with it. Editing to a value equal to what is
+    stored flips the row to `unchanged`, which then refuses `already_matches` on
+    apply exactly as a pass that read it that way from the start would - the
+    edit changes what was proposed, never the idempotency guarantee (AC-C.6)."""
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(
+        db, "ZZT-FLYRT-F2A", "SORENTO CERAMIC ART BASIN ONLY BLACK ZZT-FLYRT-F2A"
+    )
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-F2A", commit=True)
+    assert _spec_of(db, product.id).values["finish"]["value"] == "black", "fixture assumption"
+
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-F2A", "Chrome finish")])
+    batch = _batch(
+        db, reading, status="proposed", proposal_count=1, product_count=1, change_count=1
+    )
+    proposal = _proposal(
+        db,
+        batch,
+        product,
+        spec_key="finish",
+        value="chrome",
+        kind="change",
+        stored_value="black",
+        stored_source="derived",
+    )
+    db.commit()
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, proposal.id), json={"value": "black"}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["value"] == "black"
+    assert body["kind"] == "unchanged"
+    assert body.get("edited") is True
+
+    db.expire_all()
+    stored = db.query(ProductSpecFlyerProposal).filter_by(id=proposal.id).one()
+    assert stored.value == "black"
+    assert stored.kind == "unchanged"
+    assert stored.edited_at is not None
+    assert stored.edited_by == _USER["id"]
+
+    stored_batch = db.query(ProductSpecFlyerBatch).filter_by(id=batch.id).one()
+    assert stored_batch.change_count == 0
+    assert stored_batch.unchanged_count == 1
+
+    get_response = client.get(_GET_PROPOSALS.format(reading.id))
+    assert get_response.status_code == 200, get_response.text
+    proposal_row = get_response.json()["groups"][0]["proposals"][0]
+    assert proposal_row["value"] == "black"
+    assert proposal_row["kind"] == "unchanged"
+    assert proposal_row.get("edited") is True
+
+    apply_response = client.post(
+        _APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]}
+    )
+    assert apply_response.status_code == 200, apply_response.text
+    apply_body = apply_response.json()
+    assert apply_body["applied"] == []
+    assert apply_body["refused"][0]["reason"] == "already_matches"
+
+
+def test_patch_refuses_400_for_a_value_outside_the_closed_vocabulary(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-F2B", "SORENTO ONE PIECE WC ZZT-FLYRT-F2B")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-F2B", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, proposal.id), json={"value": "vacuum"}
+    )
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert "vacuum" in body["message"]
+
+    db.expire_all()
+    assert (
+        db.query(ProductSpecFlyerProposal).filter_by(id=proposal.id).one().value == "s_trap"
+    ), "a refused edit must not touch the stored row"
+
+
+def test_patch_refuses_409_while_the_batch_is_not_proposed(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-F2C", "SORENTO ONE PIECE WC ZZT-FLYRT-F2C")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-F2C", "Washdown")])
+    batch = _batch(db, reading, status="proposing")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, proposal.id), json={"value": "p_trap"}
+    )
+
+    assert response.status_code == 409, response.text
+
+
+def test_patch_refuses_409_when_the_row_is_already_applied(api, db):
+    from datetime import datetime, timezone
+
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-F2D", "SORENTO ONE PIECE WC ZZT-FLYRT-F2D")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-F2D", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    proposal.outcome = "applied"
+    proposal.applied_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    proposal.applied_by = _USER["id"]
+    db.add(proposal)
+    db.commit()
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, proposal.id), json={"value": "p_trap"}
+    )
+
+    assert response.status_code == 409, response.text
+
+
+def test_patch_401s_without_a_principal(api, db):
+    from app.dependencies import get_current_user
+    from app.main import app
+    from fastapi import HTTPException
+
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-F2E", "SORENTO ONE PIECE WC ZZT-FLYRT-F2E")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-F2E", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    def _deny():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    app.dependency_overrides[get_current_user] = _deny
+    try:
+        response = client.patch(
+            _PATCH_PROPOSAL.format(reading.id, proposal.id), json={"value": "p_trap"}
+        )
+    finally:
+        app.dependency_overrides[get_current_user] = lambda: _USER
+
+    assert response.status_code == 401, response.text
+
+
+def test_patch_403_names_page_view_when_it_is_the_missing_permission(api, db):
+    client, allow = api
+    allow.add(_EDIT)  # products.edit present, page.view missing
+    product = _product(db, "ZZT-FLYRT-F2F", "SORENTO ONE PIECE WC ZZT-FLYRT-F2F")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-F2F", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, proposal.id), json={"value": "p_trap"}
+    )
+
+    assert response.status_code == 403, response.text
+    assert _VIEW in response.text
+    assert _EDIT not in response.text, "must name the FIRST missing permission, not both"
+
+
+def test_patch_403_names_products_edit_when_it_is_the_missing_permission(api, db):
+    client, allow = api
+    allow.add(_VIEW)  # page.view present, products.edit missing
+    product = _product(db, "ZZT-FLYRT-F2G", "SORENTO ONE PIECE WC ZZT-FLYRT-F2G")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-F2G", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.patch(
+        _PATCH_PROPOSAL.format(reading.id, proposal.id), json={"value": "p_trap"}
+    )
+
+    assert response.status_code == 403, response.text
+    assert _EDIT in response.text
+
+
+# --------------------------------------------------------------------------- #
+# AC-F.5 - GET carries allowed_values for a closed-vocabulary key
+# --------------------------------------------------------------------------- #
+def test_get_proposals_carries_allowed_values_for_closed_vocabulary_and_null_for_others(api, db):
+    """A closed-vocabulary key (`trap_type`, enum) carries the merged registry
+    vocabulary so the edit widget on the review page needs no second call
+    (AC-F.5); a numeric key (`dim_length`) carries none, because there is no
+    dropdown to populate."""
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-F5A", "SORENTO ONE PIECE WC ZZT-FLYRT-F5A")
+    reading = _reading(
+        db,
+        cards=[_card("ZZT-FLYRT-F5A", "Washdown. S-Trap outlet 250mm. D: L680xW375xH770mm")],
+    )
+    batch = _batch(
+        db, reading, status="proposed", proposal_count=2, product_count=1, new_count=2
+    )
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    _proposal(db, batch, product, spec_key="dim_length", value=680, unit="mm", kind="new")
+    db.commit()
+
+    response = client.get(_GET_PROPOSALS.format(reading.id))
+
+    assert response.status_code == 200, response.text
+    proposals = {row["spec_key"]: row for row in response.json()["groups"][0]["proposals"]}
+
+    trap = proposals["trap_type"]
+    assert trap["allowed_values"] == ["s_trap", "p_trap"]
+
+    dim = proposals["dim_length"]
+    assert dim.get("allowed_values") in (None, [])
+
+
+# --------------------------------------------------------------------------- #
+# AC-G.1 - POST a manual proposal row onto an existing product group
+# --------------------------------------------------------------------------- #
+def test_add_row_creates_a_manual_proposal_with_a_live_kind_and_refreshes_counts(api, db):
+    """AC-G.1 happy path: the row is created with `origin='manual'`, `kind`
+    computed live (not copied from anywhere - there is nothing to copy from),
+    `edited_by` stamped, and the batch's counts move with it. The product must
+    already have a row in this batch - the review page only offers "Add
+    specification" inside an existing product group (AC-G.4)."""
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G1A", "SORENTO ONE PIECE WC ZZT-FLYRT-G1A")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-G1A", commit=True)
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G1A", "Washdown")])
+    batch = _batch(
+        db, reading, status="proposed", proposal_count=1, product_count=1, new_count=1
+    )
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(
+        _ADD_ROW.format(reading.id),
+        json={"product_id": str(product.id), "spec_key": "seat_material", "value": "pp"},
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["spec_key"] == "seat_material"
+    assert body["value"] == "pp"
+    assert body["kind"] == "new"
+    assert body.get("origin") == "manual"
+
+    db.expire_all()
+    row = (
+        db.query(ProductSpecFlyerProposal)
+        .filter_by(batch_id=batch.id, product_id=product.id, spec_key="seat_material")
+        .one()
+    )
+    assert row.origin == "manual"
+    assert row.edited_by == _USER["id"]
+    assert row.kind == "new"
+
+    stored_batch = db.query(ProductSpecFlyerBatch).filter_by(id=batch.id).one()
+    assert stored_batch.proposal_count == 2
+    assert stored_batch.new_count == 2
+
+
+def test_add_row_refuses_409_while_the_batch_is_not_proposed(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G1B", "SORENTO ONE PIECE WC ZZT-FLYRT-G1B")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G1B", "Washdown")])
+    batch = _batch(db, reading, status="proposing")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(
+        _ADD_ROW.format(reading.id),
+        json={"product_id": str(product.id), "spec_key": "seat_material", "value": "pp"},
+    )
+
+    assert response.status_code == 409, response.text
+
+
+def test_add_row_refuses_404_for_a_key_the_registry_does_not_define(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G1C", "SORENTO ONE PIECE WC ZZT-FLYRT-G1C")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G1C", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(
+        _ADD_ROW.format(reading.id),
+        json={
+            "product_id": str(product.id),
+            "spec_key": "zzt_not_a_real_key",
+            "value": "anything",
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    # A missing ROUTE also 404s with no `code` at all ({"detail": "Not Found"}),
+    # so the status alone would pass before the route exists. Assert the body
+    # shape too, or this test is green for the wrong reason until the route is
+    # built and stays green for the wrong reason after it, if the real route
+    # answered some other way.
+    body = response.json()
+    assert body.get("code") == "flyer_spec_unknown_key"
+    assert "zzt_not_a_real_key" in body.get("message", "")
+
+
+def test_add_row_refuses_404_for_a_product_not_in_this_batch(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    in_batch = _product(db, "ZZT-FLYRT-G1D-IN", "SORENTO ONE PIECE WC ZZT-FLYRT-G1D-IN")
+    outside = _product(db, "ZZT-FLYRT-G1D-OUT", "SORENTO ONE PIECE WC ZZT-FLYRT-G1D-OUT")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G1D-IN", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, in_batch, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(
+        _ADD_ROW.format(reading.id),
+        json={"product_id": str(outside.id), "spec_key": "seat_material", "value": "pp"},
+    )
+
+    assert response.status_code == 404, response.text
+    # Same reason as above: pin the body's `code`, reusing the apply route's own
+    # `not_in_batch` (AC-C.1) rather than inventing a second name for one fact.
+    body = response.json()
+    assert body.get("code") == "not_in_batch"
+
+
+def test_add_row_refuses_400_for_a_value_outside_the_closed_vocabulary(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G1E", "SORENTO ONE PIECE WC ZZT-FLYRT-G1E")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-G1E", commit=True)
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G1E", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(
+        _ADD_ROW.format(reading.id),
+        json={"product_id": str(product.id), "spec_key": "seat_material", "value": "titanium"},
+    )
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert "titanium" in body["message"]
+
+
+def test_add_row_refuses_409_for_a_duplicate_product_spec_key_row(api, db):
+    """The row for (product, spec_key) already exists - the flyer proposed it, and
+    the answer is to edit that row (AC-F.2 PATCH), not add a second one."""
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G1F", "SORENTO ONE PIECE WC ZZT-FLYRT-G1F")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G1F", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(
+        _ADD_ROW.format(reading.id),
+        json={"product_id": str(product.id), "spec_key": "trap_type", "value": "p_trap"},
+    )
+
+    assert response.status_code == 409, response.text
+
+
+def test_add_row_401s_without_a_principal(api, db):
+    from app.dependencies import get_current_user
+    from app.main import app
+    from fastapi import HTTPException
+
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G1G", "SORENTO ONE PIECE WC ZZT-FLYRT-G1G")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G1G", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    def _deny():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    app.dependency_overrides[get_current_user] = _deny
+    try:
+        response = client.post(
+            _ADD_ROW.format(reading.id),
+            json={"product_id": str(product.id), "spec_key": "seat_material", "value": "pp"},
+        )
+    finally:
+        app.dependency_overrides[get_current_user] = lambda: _USER
+
+    assert response.status_code == 401, response.text
+
+
+def test_add_row_403_names_page_view_when_it_is_the_missing_permission(api, db):
+    client, allow = api
+    allow.add(_EDIT)  # products.edit present, page.view missing
+    product = _product(db, "ZZT-FLYRT-G1H", "SORENTO ONE PIECE WC ZZT-FLYRT-G1H")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G1H", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(
+        _ADD_ROW.format(reading.id),
+        json={"product_id": str(product.id), "spec_key": "seat_material", "value": "pp"},
+    )
+
+    assert response.status_code == 403, response.text
+    assert _VIEW in response.text
+    assert _EDIT not in response.text, "must name the FIRST missing permission, not both"
+
+
+def test_add_row_403_names_products_edit_when_it_is_the_missing_permission(api, db):
+    client, allow = api
+    allow.add(_VIEW)  # page.view present, products.edit missing
+    product = _product(db, "ZZT-FLYRT-G1I", "SORENTO ONE PIECE WC ZZT-FLYRT-G1I")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G1I", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.post(
+        _ADD_ROW.format(reading.id),
+        json={"product_id": str(product.id), "spec_key": "seat_material", "value": "pp"},
+    )
+
+    assert response.status_code == 403, response.text
+    assert _EDIT in response.text
+
+
+# --------------------------------------------------------------------------- #
+# AC-G.2 - a manual row applies source='human'; a flyer row still applies
+# source='flyer' in the SAME request
+# --------------------------------------------------------------------------- #
+def test_apply_writes_a_manual_row_as_human_and_a_flyer_row_as_flyer_in_one_request(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G2A", "SORENTO ONE PIECE WC ZZT-FLYRT-G2A")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-G2A", commit=True)
+
+    reading = _reading(
+        db, filename="ZZT-G2-Flyer.pdf", cards=[_card("ZZT-FLYRT-G2A", "Washdown. S-Trap outlet 250mm")]
+    )
+    batch = _batch(db, reading, status="proposed")
+    flyer_row = _proposal(
+        db, batch, product, spec_key="trap_type", value="s_trap", kind="new",
+        evidence="S-TRAP OUTLET", origin="flyer",
+    )
+    manual_row = _proposal(
+        db, batch, product, spec_key="seat_material", value="pp", kind="new", origin="manual"
+    )
+    db.commit()
+
+    response = client.post(
+        _APPLY.format(reading.id),
+        json={"proposal_ids": [str(flyer_row.id), str(manual_row.id)]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["refused"] == []
+
+    stored = _spec_of(db, product.id)
+    assert stored.provenance["trap_type"]["source"] == "flyer"
+    assert stored.provenance["trap_type"]["evidence"] == "flyer ZZT-G2-Flyer.pdf: S-TRAP OUTLET"
+    assert stored.provenance["seat_material"]["source"] == "human"
+    assert stored.provenance["seat_material"]["evidence"] == "set during flyer review"
+
+
+# --------------------------------------------------------------------------- #
+# AC-G.3 - DELETE a pending proposal row
+# --------------------------------------------------------------------------- #
+def test_delete_proposal_hard_deletes_a_pending_row_and_refreshes_counts(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G3A", "SORENTO ONE PIECE WC ZZT-FLYRT-G3A")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G3A", "Washdown")])
+    batch = _batch(
+        db, reading, status="proposed", proposal_count=2, product_count=1, new_count=2
+    )
+    keep = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    doomed = _proposal(db, batch, product, spec_key="seat_material", value="pp", kind="new")
+    db.commit()
+
+    response = client.delete(_DELETE_PROPOSAL.format(reading.id, doomed.id))
+
+    assert response.status_code == 200, response.text
+
+    db.expire_all()
+    assert (
+        db.query(ProductSpecFlyerProposal).filter_by(id=doomed.id).first() is None
+    ), "a dismissed row is HARD deleted, not tombstoned"
+    assert db.query(ProductSpecFlyerProposal).filter_by(id=keep.id).first() is not None
+
+    stored_batch = db.query(ProductSpecFlyerBatch).filter_by(id=batch.id).one()
+    assert stored_batch.proposal_count == 1
+    assert stored_batch.new_count == 1
+
+
+def test_delete_proposal_refuses_409_when_the_row_is_already_applied(api, db):
+    from datetime import datetime, timezone
+
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G3B", "SORENTO ONE PIECE WC ZZT-FLYRT-G3B")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G3B", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    proposal.outcome = "applied"
+    proposal.applied_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    proposal.applied_by = _USER["id"]
+    db.add(proposal)
+    db.commit()
+
+    response = client.delete(_DELETE_PROPOSAL.format(reading.id, proposal.id))
+
+    assert response.status_code == 409, response.text
+
+    db.expire_all()
+    assert (
+        db.query(ProductSpecFlyerProposal).filter_by(id=proposal.id).first() is not None
+    ), "an applied row is never deleted, hard or soft"
+
+
+def test_delete_proposal_refuses_409_while_the_batch_is_not_proposed(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G3C", "SORENTO ONE PIECE WC ZZT-FLYRT-G3C")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G3C", "Washdown")])
+    batch = _batch(db, reading, status="proposing")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.delete(_DELETE_PROPOSAL.format(reading.id, proposal.id))
+
+    assert response.status_code == 409, response.text
+
+
+def test_delete_proposal_401s_without_a_principal(api, db):
+    from app.dependencies import get_current_user
+    from app.main import app
+    from fastapi import HTTPException
+
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    product = _product(db, "ZZT-FLYRT-G3D", "SORENTO ONE PIECE WC ZZT-FLYRT-G3D")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G3D", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    def _deny():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    app.dependency_overrides[get_current_user] = _deny
+    try:
+        response = client.delete(_DELETE_PROPOSAL.format(reading.id, proposal.id))
+    finally:
+        app.dependency_overrides[get_current_user] = lambda: _USER
+
+    assert response.status_code == 401, response.text
+
+
+def test_delete_proposal_403_names_page_view_when_it_is_the_missing_permission(api, db):
+    client, allow = api
+    allow.add(_EDIT)  # products.edit present, page.view missing
+    product = _product(db, "ZZT-FLYRT-G3E", "SORENTO ONE PIECE WC ZZT-FLYRT-G3E")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G3E", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.delete(_DELETE_PROPOSAL.format(reading.id, proposal.id))
+
+    assert response.status_code == 403, response.text
+    assert _VIEW in response.text
+    assert _EDIT not in response.text, "must name the FIRST missing permission, not both"
+
+
+def test_delete_proposal_403_names_products_edit_when_it_is_the_missing_permission(api, db):
+    client, allow = api
+    allow.add(_VIEW)  # page.view present, products.edit missing
+    product = _product(db, "ZZT-FLYRT-G3F", "SORENTO ONE PIECE WC ZZT-FLYRT-G3F")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-G3F", "Washdown")])
+    batch = _batch(db, reading, status="proposed")
+    proposal = _proposal(db, batch, product, spec_key="trap_type", value="s_trap", kind="new")
+    db.commit()
+
+    response = client.delete(_DELETE_PROPOSAL.format(reading.id, proposal.id))
+
+    assert response.status_code == 403, response.text
+    assert _EDIT in response.text
