@@ -53,6 +53,60 @@ from app.services.product_spec_write import AUTHORED_SOURCES, _canonical_entry
 MAX_TEXT_LENGTH = 8000
 
 
+def classify_spec_proposal(
+    proposed_entry: dict,
+    stored_entry,
+    stored_stamp: dict | None,
+    key: str,
+) -> str:
+    """How one proposed value stands against what the product holds today.
+
+    ``"suppressed" | "unchanged" | "conflict" | "new" | "change"``, decided in that
+    order of precedence. Lifted out of ``extract_spec_proposals`` rather than copied
+    into the flyer batch, because the two surfaces MUST agree: a merchandiser reading
+    a pasted card and a merchandiser reading a flyer batch are being told the same
+    thing about the same product, and two copies of this table would disagree the
+    first time either moved.
+
+    ``proposed_entry`` and ``stored_entry`` are entries as ``values`` stores them
+    (``{"value": ..., "unit": ...}``), so the comparison is the write choke point's
+    own canonical one - 407 and "407" are the same value, and a re-ordered list of
+    features is not an edit anybody made. ``stored_stamp`` is the matching
+    ``provenance`` entry, which is where a tombstone lives.
+
+    The two callers differ only in what they do with the answer, never in the answer:
+    ``extract_spec_proposals`` folds ``suppressed`` into ``conflict`` and drops
+    ``unchanged``; the flyer batch stores every kind and renders the last two
+    read-only (AC-A.3).
+    """
+    stamp = stored_stamp or {}
+
+    # A tombstone is a person's statement that this product does NOT carry the key,
+    # so it holds provenance and no value. It is never a gap to fill.
+    if stamp.get("absent"):
+        return "suppressed"
+
+    if stored_entry is not None and _canonical_entry(proposed_entry) == _canonical_entry(
+        stored_entry
+    ):
+        return "unchanged"
+
+    if stamp.get("source") in AUTHORED_SOURCES:
+        return "conflict"
+
+    if stored_entry is None:
+        return "new"
+
+    if key in _DESCRIPTION_FIRST_KEYS:
+        # The lifted "the description beats the flyer for sizes" rule. It is no
+        # longer applied silently inside one derivation, because derivation no
+        # longer reads the flyer at all; it survives as a proposal that arrives
+        # unticked, which is the same precedence with a person in it.
+        return "conflict"
+
+    return "change"
+
+
 def extract_spec_proposals(
     db: Session, product: Product, text: str, *, user_id: str | None = None
 ) -> dict:
@@ -124,30 +178,17 @@ def extract_spec_proposals(
         if row.unit:
             proposed_entry["unit"] = row.unit
 
-        # A tombstone is a person's statement that this product does NOT carry the key,
-        # so it holds provenance and no value. It counts as a conflict, never as a gap.
-        tombstoned = bool(stored_stamp.get("absent"))
+        kind = classify_spec_proposal(proposed_entry, stored_entry, stored_stamp, key)
 
-        if (
-            not tombstoned
-            and stored_entry is not None
-            and _canonical_entry(proposed_entry) == _canonical_entry(stored_entry)
-        ):
+        # This surface has always dropped what the text merely restates, and has always
+        # shown a tombstone as a conflict rather than under a word of its own. Both are
+        # kept exactly as they were: the two extra kinds are vocabulary the STORED flyer
+        # batch needs, and a caller of this function must not start seeing them.
+        if kind == "unchanged":
             unchanged += 1
             continue
-
-        if tombstoned or stored_stamp.get("source") in AUTHORED_SOURCES:
+        if kind == "suppressed":
             kind = "conflict"
-        elif stored_entry is None:
-            kind = "new"
-        elif key in _DESCRIPTION_FIRST_KEYS:
-            # The lifted "the description beats the flyer for sizes" rule. It is no
-            # longer applied silently inside one derivation, because derivation no
-            # longer reads the flyer at all; it survives as a proposal that arrives
-            # unticked, which is the same precedence with a person in it.
-            kind = "conflict"
-        else:
-            kind = "change"
 
         proposals.append(
             {
