@@ -50,7 +50,10 @@ def test_list_members_by_agent_and_team_code(mock_access, client: TestClient):
     )
     assert r.status_code == 200
     assert r.json() == MEMBERS
-    svc.list_active_team_members_detail.assert_called_once_with("team-1")
+    # The roster call always carries both opt-in filters; None = no filter.
+    svc.list_active_team_members_detail.assert_called_once_with(
+        "team-1", None, brand_code=None
+    )
 
 
 @patch("app.api.v1.external.team_members.AccessAgentService")
@@ -61,7 +64,10 @@ def test_list_members_by_team_id_no_agent(mock_access, client: TestClient):
     r = client.get("/api/v1/external/team-members", params={"team_id": "team-9"})
     assert r.status_code == 200
     assert r.json() == MEMBERS
-    svc.list_active_team_members_detail.assert_called_once_with("team-9")
+    # The roster call always carries both opt-in filters; None = no filter.
+    svc.list_active_team_members_detail.assert_called_once_with(
+        "team-9", None, brand_code=None
+    )
     svc.get_agent_id_by_code.assert_not_called()
 
 
@@ -98,4 +104,7 @@ def test_tier_passed_through_for_multi_tier_team_code(mock_access, client: TestC
     svc.get_team_id_by_tier.assert_called_once_with(
         "agent-1", 2, team_set_code="project_sales", company_id="00000000-0000-0000-0000-000000000001"
     )
-    svc.list_active_team_members_detail.assert_called_once_with("team-tier2")
+    # The roster call always carries both opt-in filters; None = no filter.
+    svc.list_active_team_members_detail.assert_called_once_with(
+        "team-tier2", None, brand_code=None
+    )

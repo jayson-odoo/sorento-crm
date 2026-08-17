@@ -22,6 +22,7 @@ import {
 } from '../../product-specifications/services/productSpecService';
 import { useSpecExtraction } from './useSpecExtraction';
 import { APPLICABLE_KEY, DETAIL_KEY } from './useProductSpecTable';
+import { WORKLIST_KEY } from '../../spec-verification/hooks/useSpecVerification';
 
 const mockExtract = extractSpecProposals as unknown as ReturnType<typeof vi.fn>;
 const mockApply = applySpecProposals as unknown as ReturnType<typeof vi.fn>;
@@ -186,7 +187,7 @@ describe('apply success toast reports the specification count, not the row fan-o
 });
 
 describe('query invalidation on apply', () => {
-  it('invalidates both the detail key and the applicable-keys key', async () => {
+  it('invalidates the detail key, the applicable-keys key and the verification worklist', async () => {
     mockExtract.mockResolvedValue({
       product_code: 'SRT-WC-1001',
       engine: 'semantic',
@@ -214,6 +215,7 @@ describe('query invalidation on apply', () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: DETAIL_KEY('p-1') });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: APPLICABLE_KEY('SRT-WC-1001') });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: [WORKLIST_KEY] });
   });
 });
 

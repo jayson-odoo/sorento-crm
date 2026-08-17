@@ -48,6 +48,7 @@ from app.models.product_spec import (
 )
 from app.services.product_spec_write import (
     authored_keys,
+    lock_product_code,
     merge_authored_over,
     write_spec_row,
 )
@@ -1281,6 +1282,14 @@ def derive_for_code(
     if scopes_by_key is None:
         scopes_by_key = configured_scopes(db)
 
+    # The same lock the authored write and the verify guard take, before anything is
+    # read: a code with no spec row yet has no row to lock FOR UPDATE, so two writers
+    # racing to create the first one would otherwise both pass their reads. Locking the
+    # code's product rows covers that, and taking them first keeps the lock order the
+    # same everywhere. Released by the caller's commit, which for `derive_all` is its
+    # per-chunk one.
+    lock_product_code(db, product_code)
+
     rows = (
         db.query(Product, ProductCategory)
         # Brand is read per product now, so eager-load it: lazily this is an extra
@@ -1390,6 +1399,21 @@ def derive_for_code(
         exceptions.append(conflict)
 
     written = 0
+    # One before/after pair speaks for the whole code, and it must come from the copy
+    # the verify hash is defined on - `current_values_hash` reads the lowest product id
+    # that HAS a spec row - not from whichever copy iterates first: a fresh no-spec
+    # copy that sorts first would hand back an empty "before" and withdraw a stamp over
+    # canonical values that never changed. Read BEFORE `write_spec_row` replaces the
+    # column: a verification stamp has to be withdrawn against what it was actually
+    # made against. The skip-if-unchanged return above never reaches here, which is the
+    # point - a re-run that changes nothing must not withdraw anything (AC-D.3).
+    before_values: dict = (
+        dict(existing[min(existing)].values or {}) if existing else {}
+    )
+    # After the writes every copy holds a spec row, so the canonical copy is the lowest
+    # product id outright - the same row `current_values_hash` reads back afterwards.
+    canonical_after_id = min(spec.product_id for spec, _, _ in merged)
+    after_values: dict = {}
     for spec, values, provenance in merged:
         write_spec_row(
             spec,
@@ -1398,6 +1422,8 @@ def derive_for_code(
             has_exceptions=bool(exceptions),
             derived_hash=fingerprint,
         )
+        if spec.product_id == canonical_after_id:
+            after_values = values
         written += 1
 
     # Rebuild this code's open exceptions rather than appending, so a fixed input
@@ -1417,6 +1443,17 @@ def derive_for_code(
                 stored=flagged["stored"],
             )
         )
+
+    # Imported at call time: this module is imported by the write service, and this is
+    # the edge that would close the cycle.
+    from app.services.product_spec_verification import invalidate_on_values_change
+
+    invalidate_on_values_change(
+        db,
+        product_code,
+        before_values=before_values,
+        after_values=after_values,
+    )
 
     db.flush()
     if commit:

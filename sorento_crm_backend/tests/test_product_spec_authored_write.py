@@ -626,3 +626,15 @@ def test_apply_spec_values_locks_existing_rows_with_for_update(db):
         if "for update" in s.lower() and "product_specifications" in s.lower()
     ]
     assert locked, "the existing-rows read in apply_spec_values must take FOR UPDATE"
+
+    # And the code lock itself: `lock_product_code` locks the code's PRODUCT rows,
+    # which exist whether or not a spec row does. Asserted here rather than by name so
+    # a lock that quietly stopped being taken cannot pass.
+    code_locked = [
+        s
+        for s in statements
+        if "for update" in s.lower()
+        and " products" in s.lower()
+        and "product_specifications" not in s.lower()
+    ]
+    assert code_locked, "apply_spec_values must lock the code's product rows FOR UPDATE"
