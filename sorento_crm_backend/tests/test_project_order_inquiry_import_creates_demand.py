@@ -26,6 +26,7 @@ from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services import project_order_inquiry_import_service as svc
+from app.services.scm.demand_class import class_of
 from tests._pg_fixture import pg_session
 
 MARKER = "ZZTOID"
@@ -130,6 +131,11 @@ def test_a_sheet_row_becomes_a_sales_order_with_a_line(db, world):
     order = _order(db)
     assert order.source_system == svc.SOURCE_SYSTEM, "provenance is what the whole rule reads"
     assert order.order_date == date(2026, 7, 1)
+    # AC-E01: this is one of the two demand-class stamp points, and the stamp goes through
+    # the shared mapper rather than a second literal, so a change to what counts as project
+    # work cannot reach the outstanding import and miss this sheet.
+    assert order.order_type == "project"
+    assert order.demand_class == class_of("project")
 
     line = _lines(db, order)[0]
     assert float(line.qty_ordered) == 10.0
