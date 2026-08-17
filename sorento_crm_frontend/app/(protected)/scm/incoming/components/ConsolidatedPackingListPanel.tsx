@@ -225,7 +225,11 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
         <div className="flex flex-wrap items-center gap-1.5">
           <SubtotalChip label="qty" value={fmtInt(factory.subtotal.qty)} />
           <SubtotalChip label="ctn" value={fmtInt(factory.subtotal.cartons)} />
-          <SubtotalChip label="cbm" value={fmtDecimal(factory.subtotal.cbm, CBM_DP)} />
+          <SubtotalChip
+            label="cbm"
+            value={fmtDecimal(factory.subtotal.cbm, CBM_DP)}
+            hint={cbmHint(factory.subtotal)}
+          />
         </div>
       </div>
 
@@ -258,12 +262,46 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
   );
 }
 
-function SubtotalChip({ label, value }: { label: string; value: string }) {
+function SubtotalChip({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: CbmHint | null;
+}) {
   return (
-    <Badge variant="secondary" size="sm" className="font-normal tabular-nums">
+    <Badge
+      variant="secondary"
+      size="sm"
+      className="font-normal tabular-nums"
+      title={hint?.title}
+    >
       {value} {label}
+      {hint ? <span className="text-muted-foreground">{hint.text}</span> : null}
     </Badge>
   );
+}
+
+interface CbmHint {
+  text: string;
+  title: string;
+}
+
+/**
+ * Null when every line's volume is known, so the figure needs no qualification.
+ *
+ * A cbm sum over half the lines looks exactly like a cbm sum over all of them, and it is the
+ * number a container gets planned against. Said where the figure is, not in a legend.
+ */
+function cbmHint(totals: PackingListTotals): CbmHint | null {
+  const known = totals.cbm_known_lines;
+  if (known === undefined || known === null || known >= totals.lines) return null;
+  return {
+    text: ` (${known}/${totals.lines} lines)`,
+    title: `CBM known for ${known} of ${totals.lines} lines`,
+  };
 }
 
 /**
@@ -292,7 +330,7 @@ function PackingListFooter({
     <div className="rounded-lg border bg-muted/40 px-3 py-2" data-testid="packing-list-footer">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold">
         <span>Total</span>
-        <span className="tabular-nums">{figures(total)}</span>
+        <Figures totals={total} />
       </div>
       {rows.map((row) => (
         <div
@@ -300,15 +338,24 @@ function PackingListFooter({
           className="mt-1 flex flex-wrap items-center justify-between gap-2 text-2xs text-muted-foreground"
         >
           <span>{row.company}</span>
-          <span className="tabular-nums">{figures(row)}</span>
+          <Figures totals={row} />
         </div>
       ))}
     </div>
   );
 }
 
-function figures(t: PackingListTotals): string {
-  return `${fmtInt(t.qty)} qty · ${fmtInt(t.cartons)} ctn · ${fmtDecimal(t.cbm, CBM_DP)} cbm`;
+function Figures({ totals }: { totals: PackingListTotals }) {
+  const hint = cbmHint(totals);
+  return (
+    <span className="tabular-nums" title={hint?.title}>
+      {`${fmtInt(totals.qty)} qty · ${fmtInt(totals.cartons)} ctn · ${fmtDecimal(
+        totals.cbm,
+        CBM_DP,
+      )} cbm`}
+      {hint ? <span className="font-normal text-muted-foreground">{hint.text}</span> : null}
+    </span>
+  );
 }
 
 export default ConsolidatedPackingListPanel;

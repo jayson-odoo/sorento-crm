@@ -264,6 +264,47 @@ describe('ConsolidatedPackingListPanel', () => {
     expect(footer.getByText('0 qty · 0 ctn · 0.0000 cbm')).toBeInTheDocument();
   });
 
+  it('qualifies a cbm total the payload only knows part of', async () => {
+    // A sum over 2 of 3 lines looks exactly like a sum over all 3, and it is the figure the
+    // container gets planned against.
+    state.getList = vi.fn().mockResolvedValue(
+      packingList({
+        total: { lines: 3, qty: 1510, cartons: 171, cbm: 9.4123, cbm_known_lines: 2 },
+      }),
+    );
+    renderPanel();
+
+    const footer = within(await screen.findByTestId('packing-list-footer'));
+    expect(footer.getByText('1,510 qty · 171 ctn · 9.4123 cbm')).toBeInTheDocument();
+    expect(footer.getByText('(2/3 lines)')).toBeInTheDocument();
+    expect(footer.getByTitle('CBM known for 2 of 3 lines')).toBeInTheDocument();
+  });
+
+  it('leaves a cbm total unqualified when every line is measured', async () => {
+    state.getList = vi.fn().mockResolvedValue(
+      packingList({
+        total: { lines: 3, qty: 1510, cartons: 171, cbm: 9.4123, cbm_known_lines: 3 },
+        factories: [
+          {
+            supplier_id: 'sup-a',
+            supplier_code: '400-K029',
+            supplier_name: 'KAILU HARDWARE FACTORY',
+            loading_plan_id: 'lp-1',
+            notice_id: 'n-1',
+            lines: [KAILU_LINE, MOCHA_LINE],
+            not_packed: [],
+            subtotal: { lines: 2, qty: 1390, cartons: 141, cbm: 9.4123, cbm_known_lines: 2 },
+          },
+        ],
+      }),
+    );
+    renderPanel();
+
+    expect(await screen.findByText('9.4123 cbm')).toBeInTheDocument();
+    expect(screen.queryByText(/\d+\/\d+ lines/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/CBM known for/)).not.toBeInTheDocument();
+  });
+
   it('downloads the workbook for the container on screen', async () => {
     renderPanel();
     const button = await screen.findByRole('button', { name: /download/i });

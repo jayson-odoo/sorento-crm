@@ -534,6 +534,9 @@ export interface PackingListTotals {
   qty: number;
   cartons: number;
   cbm: number;
+  /** How many of `lines` the cbm sum actually knows a volume for. A partial figure read as
+   *  a full one is how a container gets planned against a volume nobody measured. */
+  cbm_known_lines?: number;
 }
 
 export interface PackingListSplitRow extends PackingListTotals {
