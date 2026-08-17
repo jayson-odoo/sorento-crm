@@ -7,6 +7,14 @@ on:
   pull_request:
     branches:
       - main
+  # Merge-queue entries: GitHub creates a temporary branch containing the
+  # candidate merge result (this PR merged onto main plus every entry queued
+  # ahead of it) and fires this event. Every validate/test job below runs for
+  # it because none of them filter on event name, so the queue gates on the
+  # exact same checks as a PR. This is what catches two individually-green
+  # branches that only break combined (duplicate alembic heads, a shared
+  # count assertion off by one).
+  merge_group:
   workflow_dispatch:
     inputs:
       deploy_all:
@@ -20,6 +28,56 @@ env:
   RELEASE_TAG: 1.0.1
 
 jobs:
+  # Fast pre-check: fail in under a minute when the alembic migration graph
+  # has more than one head, instead of consuming a 21-35 minute full-CI cycle
+  # (or a merge-queue slot) to discover the same thing. Two branches each
+  # merge main and add their own NNN_merge_* revision; each is green alone,
+  # and the second to land gives main two heads, at which point
+  # `alembic upgrade head` refuses and every database-touching job dies at
+  # bootstrap. This job parses the version files with the stdlib only (no pip
+  # install: alembic's env.py imports the whole app), builds the
+  # revision/down_revision graph, and fails unless exactly one head remains.
+  check-migration-heads:
+    name: Single alembic head (fast gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assert exactly one migration head
+        run: |
+          python3 - <<'PY'
+          import ast, pathlib, sys
+
+          versions = pathlib.Path("sorento_crm_backend/alembic/versions")
+          revs, downs = set(), set()
+          for f in sorted(versions.glob("*.py")):
+              tree = ast.parse(f.read_text())
+              for node in tree.body:
+                  if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                          and isinstance(node.targets[0], ast.Name):
+                      name, value = node.targets[0].id, node.value
+                  elif isinstance(node, ast.AnnAssign) \
+                          and isinstance(node.target, ast.Name) and node.value is not None:
+                      name, value = node.target.id, node.value
+                  else:
+                      continue
+                  if name not in ("revision", "down_revision"):
+                      continue
+                  val = ast.literal_eval(value)
+                  if name == "revision":
+                      revs.add(val)
+                  elif val is not None:
+                      downs.update([val] if isinstance(val, str) else val)
+          heads = sorted(revs - downs)
+          print(f"{len(revs)} revisions, {len(heads)} head(s): {heads}")
+          if len(heads) != 1:
+              sys.exit(
+                  "the migration graph must have exactly one head: merge main "
+                  "and add a merge revision joining these heads"
+              )
+          PY
+
   validate-backend:
     name: Validate backend imports
     runs-on: ubuntu-latest
@@ -652,6 +710,7 @@ jobs:
   build-and-deploy:
     needs:
       [
+        check-migration-heads,
         validate-backend,
         validate-mcp,
         validate-frontend,
@@ -659,6 +718,9 @@ jobs:
         test-backend-scm,
         test-dealer-kit-render,
       ]
+    # Deliberately NOT `merge_group`: a queue entry only validates the merge
+    # candidate. The deploy belongs to the `push` to main that lands after the
+    # queue merges it, so each change still deploys exactly once, from main.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
