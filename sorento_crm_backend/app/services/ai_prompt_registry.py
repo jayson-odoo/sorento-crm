@@ -400,6 +400,35 @@ def _scm_market_advisory_fallback() -> str:
     )
 
 
+def _conversation_reply_draft_fallback() -> str:
+    """System prompt for the ticket composer's AI assist (UAC AC-L5).
+
+    Bounded single-shot drafting - no tools, no retrieval, no compute. The
+    output goes into a STAFF MEMBER's input box for them to edit, never onto a
+    send path, which is what lets the prompt stay this small: the human is the
+    validator.
+    """
+    return (
+        "You draft a WhatsApp reply for a customer-service agent to review before "
+        "sending. You are writing AS the agent, to the customer.\n\n"
+        "You are given the customer's enquiry and the recent conversation. Write the "
+        "reply the agent should send next.\n\n"
+        "Rules:\n"
+        "- Reply in the language the customer is writing in.\n"
+        "- Short and plain: two or three sentences, WhatsApp register, no markdown, no "
+        "bullet lists, no subject line, no signature block.\n"
+        "- NEVER invent a fact: no dates, prices, stock levels, order numbers or "
+        "delivery promises that are not already in the conversation. When the answer "
+        "needs information you were not given, say the agent is checking and will come "
+        "back, rather than making something up.\n"
+        "- Do not apologise more than once, and never grovel.\n"
+        "- Do not restate the customer's whole message back to them.\n"
+        "- If the agent gave an instruction for this draft, follow it exactly.\n"
+        "- Output ONLY the message text. No preamble, no quotes around it, no "
+        "explanation of what you wrote."
+    )
+
+
 def _judge_fallback() -> str:
     return (
         "JUDGE (dormant — activates in M3b)\n"
@@ -639,6 +668,16 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_spec_understanding_fallback,
+    ),
+    # --- Ticket composer AI assist (UAC AC-L5): one bounded call, no tools.
+    #     The draft lands in a staff member's input box, never on a send path. ---
+    "conversation_reply_draft": PromptKeySpec(
+        name="conversation_reply_draft",
+        role="Ticket reply draft - draft a WhatsApp reply from the visible thread",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_conversation_reply_draft_fallback,
     ),
     "scm_market_advisory": PromptKeySpec(
         name="scm_market_advisory",

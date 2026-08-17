@@ -1,19 +1,39 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Send, Link2, LayoutTemplate, FileText, Info } from 'lucide-react';
+import {
+  Send,
+  Link2,
+  LayoutTemplate,
+  FileText,
+  Info,
+  Mic,
+  Paperclip,
+  Sparkles,
+  StickyNote,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import SendTemplateDialog from '@/components/common/whatsapp-template/SendTemplateDialog';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
+import { useMessageSnippetOptions } from '@/app/(protected)/sla-management/message-snippets/hooks/useMessageSnippets';
+import type { MessageSnippetOption } from '@/app/(protected)/sla-management/message-snippets/types/messageSnippet.types';
 import { useConversationWindowState } from './useConversationWindowState';
+import { formatElapsed, useVoiceRecorder } from './useVoiceRecorder';
+import EmojiPickerButton from './EmojiPickerButton';
+import SnippetPicker, { activeSlashFragment, filterSnippets } from './SnippetPicker';
 import {
   sendConversationMessage,
   getChatTemplatePreview,
   NoChatTemplateError,
+  type ChatTemplatePreview,
 } from '@/services/whatsappTemplateService';
 
 interface SharedConversationComposerProps {
@@ -34,6 +54,69 @@ interface SharedConversationComposerProps {
   onSent?: () => void;
   /** Shown when !canReply. Entity-specific copy; defaults to a generic message. */
   notAvailableMessage?: string;
+  /**
+   * Offer file attachments (image / video / audio / document). Off by default so
+   * existing surfaces are unchanged; the intervention-ticket drawer turns it on.
+   * Respond.io has no sticker type, so there is deliberately no sticker option.
+   */
+  attachmentsEnabled?: boolean;
+  /**
+   * Overrides the default send. Used where the send must be stamped with more
+   * than (entityType, entityId) - e.g. an intervention ticket carrying files.
+   */
+  sendAdapter?: (payload: {
+    text: string;
+    files: File[];
+  }) => Promise<{
+    sent_as: 'text' | 'template' | 'attachment';
+    /**
+     * Per-file outcome of a multi-attachment send. The backend delivers files
+     * in order and stops at the first failure, so `delivered` is the ordered
+     * prefix the contact actually received.
+     */
+    attachments?: {
+      delivered: string[];
+      failed: { filename: string; error: string } | null;
+    } | null;
+  }>;
+  /**
+   * Supplies the 24h window + out-of-window template instead of the composer
+   * fetching them, for callers that already loaded them with the record.
+   */
+  windowStateOverride?: { closed: boolean; template?: ChatTemplatePreview | null } | null;
+  /** Hide the "Send template" button (surfaces that resolve templates elsewhere). */
+  showTemplateButton?: boolean;
+  /**
+   * Intervention ticket the manual "Send template" dialog answers. Without it a
+   * template send is a reply the ticket never hears about, so the response clock
+   * keeps running and the ticket breaches while visibly answered.
+   */
+  templateSendTrackingId?: string | null;
+  /**
+   * Overrides the manual template send, for surfaces whose template route is
+   * not the entity chat one (the Conversations inbox is keyed by contact, and
+   * its send derives the ticket rather than being given one).
+   */
+  templateSendAdapter?: (input: {
+    template_id: string;
+    params: Record<string, string>;
+  }) => Promise<unknown>;
+  /**
+   * Offer the "/" snippet picker (UAC AC-L4). Off by default so the existing
+   * entity chat panels are untouched; the intervention-ticket drawer turns it
+   * on and supplies the ticket the `$variables` resolve against.
+   */
+  snippetsEnabled?: boolean;
+  snippetTrackingId?: string | null;
+  /** Offer the emoji picker (UAC AC-L5). */
+  emojiEnabled?: boolean;
+  /**
+   * AI assist (UAC AC-L5): drafts a reply INTO this input. Resolves with the
+   * draft text; rejects with an Error whose message is toasted. Anything
+   * already typed is passed as the instruction, so "offer Tuesday delivery"
+   * steers the draft instead of being lost. Absent = no button.
+   */
+  onAiAssist?: (input: { instruction?: string }) => Promise<string>;
 }
 
 /**
@@ -58,26 +141,48 @@ export default function SharedConversationComposer({
   replyComposePrefill,
   onSent,
   notAvailableMessage = 'Reply is only available when a Respond.io conversation is linked to this record.',
+  attachmentsEnabled = false,
+  sendAdapter,
+  windowStateOverride = null,
+  showTemplateButton = true,
+  templateSendTrackingId = null,
+  templateSendAdapter,
+  snippetsEnabled = false,
+  snippetTrackingId = null,
+  emojiEnabled = false,
+  onAiAssist,
 }: SharedConversationComposerProps) {
   const [replyText, setReplyText] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const [viewLinkLoading, setViewLinkLoading] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [sendError, setSendError] = useState<{ message: string; settingsUrl: string } | null>(null);
+  /** The staged file the last send could not deliver (marked on its chip). */
+  const [failedFileName, setFailedFileName] = useState<string | null>(null);
   const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const appliedPrefillKeyRef = useRef(0);
 
-  const { windowClosed } = useConversationWindowState(entityType, entityId, canReply);
+  const { windowClosed: fetchedWindowClosed } = useConversationWindowState(
+    entityType,
+    entityId,
+    canReply && !windowStateOverride,
+  );
+  const windowClosed = windowStateOverride ? windowStateOverride.closed : fetchedWindowClosed;
   const isEntity = mode === 'entity';
 
   // Out-of-window: fetch the form's chat template so we can render it inline with
   // a fill-in field. DB-only on the backend — no Respond call.
-  const { data: preview, isLoading: previewLoading } = useQuery({
+  const { data: fetchedPreview, isLoading: previewLoading } = useQuery({
     queryKey: ['chat-template-preview', entityType, entityId],
     queryFn: () => getChatTemplatePreview(entityType, entityId),
-    enabled: canReply && windowClosed,
+    enabled: canReply && windowClosed && !windowStateOverride,
     staleTime: 60_000,
   });
+  const preview = windowStateOverride
+    ? (windowStateOverride.template ?? { configured: false })
+    : fetchedPreview;
 
   const templateMode = windowClosed && !!preview?.configured;
   const noTemplateConfigured = windowClosed && preview !== undefined && !preview.configured;
@@ -90,20 +195,265 @@ export default function SharedConversationComposer({
     queueMicrotask(() => replyTextareaRef.current?.focus());
   }, [replyComposePrefill]);
 
+  // ---- Snippets, emoji, AI assist (UAC AC-L4 / AC-L5) ---------------------
+
+  // The "/..." fragment being typed, or null when the picker is closed. Opened
+  // by the button too, with an empty query.
+  const [slashFragment, setSlashFragment] = useState<{ start: number; query: string } | null>(
+    null,
+  );
+  // The same picker, opened from the toolbar button instead of a "/". Kept
+  // apart from the fragment because a button-opened pick inserts at the caret
+  // rather than replacing a typed "/query".
+  const [snippetMenuOpen, setSnippetMenuOpen] = useState(false);
+  const [snippetIndex, setSnippetIndex] = useState(0);
+  const [aiDrafting, setAiDrafting] = useState(false);
+
+  const snippetPickerOpen = snippetsEnabled && (slashFragment !== null || snippetMenuOpen);
+  const snippetsQuery = useMessageSnippetOptions(snippetTrackingId, snippetPickerOpen);
+  const snippetMatches = useMemo(
+    () => filterSnippets(snippetsQuery.data ?? [], slashFragment?.query ?? ''),
+    [snippetsQuery.data, slashFragment],
+  );
+
+  const closeSnippetPicker = () => {
+    setSlashFragment(null);
+    setSnippetMenuOpen(false);
+  };
+
+  useEffect(() => {
+    setSnippetIndex(0);
+  }, [slashFragment?.query]);
+
+  // A different conversation is a different draft: never leave a picker open
+  // over someone else's thread.
+  useEffect(() => {
+    setSlashFragment(null);
+    setSnippetMenuOpen(false);
+  }, [entityId]);
+
+  /** Write `text` where the caret is, and leave the caret after it. */
+  const insertAtCaret = (text: string) => {
+    const node = replyTextareaRef.current;
+    const start = node?.selectionStart ?? replyText.length;
+    const end = node?.selectionEnd ?? start;
+    const next = replyText.slice(0, start) + text + replyText.slice(end);
+    setReplyText(next);
+    if (sendError) setSendError(null);
+    const caret = start + text.length;
+    queueMicrotask(() => {
+      node?.focus();
+      node?.setSelectionRange?.(caret, caret);
+    });
+  };
+
+  /**
+   * Insert the snippet, replacing the "/query" that summoned it. The body is
+   * ALREADY resolved by the backend, and it stays editable afterwards - it is
+   * just text in the box now.
+   */
+  const insertSnippet = (snippet: MessageSnippetOption) => {
+    const fragment = slashFragment;
+    closeSnippetPicker();
+    const body = snippet.resolved_body || snippet.body;
+    if (!fragment) {
+      insertAtCaret(body);
+      return;
+    }
+    const node = replyTextareaRef.current;
+    const caret = node?.selectionStart ?? fragment.start + fragment.query.length + 1;
+    const next = replyText.slice(0, fragment.start) + body + replyText.slice(caret);
+    setReplyText(next);
+    if (sendError) setSendError(null);
+    const nextCaret = fragment.start + body.length;
+    queueMicrotask(() => {
+      node?.focus();
+      node?.setSelectionRange?.(nextCaret, nextCaret);
+    });
+  };
+
+  const runAiAssist = async () => {
+    if (!onAiAssist || aiDrafting) return;
+    const instruction = replyText.trim();
+    setAiDrafting(true);
+    try {
+      const draft = await onAiAssist(instruction ? { instruction } : {});
+      const text = (draft ?? '').trim();
+      if (!text) {
+        toast.error('The assistant returned an empty draft.');
+        return;
+      }
+      // The draft lands UNDER whatever was already typed, separated by a blank
+      // line. That text steered the draft, but it is the author's - deleting it
+      // to make room is not ours to do, and they can cut it in one gesture.
+      setReplyText(instruction ? `${instruction}\n\n${text}` : text);
+      if (sendError) setSendError(null);
+      queueMicrotask(() => replyTextareaRef.current?.focus());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to draft a reply');
+    } finally {
+      setAiDrafting(false);
+    }
+  };
+
   const onDraftChange = (value: string) => {
     setReplyText(value);
     if (sendError) setSendError(null);
   };
 
+  /** Typing handler for the message field: also drives the "/" picker. */
+  const onComposerInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    onDraftChange(value);
+    if (!snippetsEnabled) return;
+    // A picker opened from the BUTTON has no "/query" to track, so nothing ever
+    // closed it: it stayed over the box while a message was written, and Enter
+    // inserted a snippet instead of sending. Typing dismisses it; a "/" at the
+    // start of the input re-opens it through the fragment below.
+    if (snippetMenuOpen) setSnippetMenuOpen(false);
+    setSlashFragment(
+      activeSlashFragment(value, event.target.selectionStart ?? value.length),
+    );
+  };
+
+  /** Arrow/Enter/Escape while the picker is open belong to the picker. */
+  const onSnippetKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (!snippetPickerOpen) return false;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSnippetPicker();
+      return true;
+    }
+    if (snippetMatches.length === 0) return false;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setSnippetIndex((i) => (i + 1) % snippetMatches.length);
+      return true;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setSnippetIndex((i) => (i - 1 + snippetMatches.length) % snippetMatches.length);
+      return true;
+    }
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault();
+      insertSnippet(snippetMatches[snippetIndex]);
+      return true;
+    }
+    return false;
+  };
+
+  // ---- Staged image / audio previews ------------------------------------
+  // A pasted screenshot is unrecognisable as a filename ("image.png"), so the
+  // staged strip shows the picture itself, and a voice clip gets a player so it
+  // can be heard before it goes to the contact. A staged file has no URL of its
+  // own, so each gets an object URL. Minted in an EFFECT, never in render: a
+  // render that React discards (concurrent, StrictMode) would leak every URL it
+  // created, because no cleanup is ever committed for it.
+  const [stagedFileUrls, setStagedFileUrls] = useState<(string | null)[]>([]);
+  useEffect(() => {
+    const urls = files.map((file) =>
+      (file.type.startsWith('image/') || file.type.startsWith('audio/')) &&
+      typeof URL?.createObjectURL === 'function'
+        ? URL.createObjectURL(file)
+        : null,
+    );
+    setStagedFileUrls(urls);
+    return () => {
+      urls.forEach((url) => url && URL.revokeObjectURL?.(url));
+    };
+  }, [files]);
+  /** Which staged file the preview is open on (index into `files`), or null. */
+  const [previewFileIndex, setPreviewFileIndex] = useState<number | null>(null);
+  const stagedPreviewItems = useMemo(() => {
+    const out: { fileIndex: number; item: AttachmentPreviewItem }[] = [];
+    files.forEach((file, index) => {
+      const url = stagedFileUrls[index];
+      // Images only: a clip plays in its own chip, it has nothing to show in a
+      // lightbox.
+      if (!url || !file.type.startsWith('image/')) return;
+      out.push({ fileIndex: index, item: { id: `staged-${index}`, name: file.name, url } });
+    });
+    return out;
+  }, [files, stagedFileUrls]);
+  const previewStartIndex = Math.max(
+    0,
+    stagedPreviewItems.findIndex((entry) => entry.fileIndex === previewFileIndex),
+  );
+
+  const addFiles = (picked: FileList | File[] | null | undefined) => {
+    if (sending) return;
+    if (!picked?.length) return;
+    setFiles((prev) => [...prev, ...Array.from(picked)]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // ---- Voice message (UAC AC-L9) ----------------------------------------
+  // A clip is just another attachment: it lands in `files` through the SAME
+  // path the Attach button and paste use, so sending, the outbox, the failure
+  // handling and the thread bubble all work unchanged.
+  const voice = useVoiceRecorder({ onClip: (file) => addFiles([file]) });
+
+  // Switching contact mid-compose must not carry the draft across: a recording
+  // still running would stage its clip onto whoever is selected by the time it
+  // stops, which is a voice note delivered to the wrong person, and staged
+  // files/text belong to the contact they were written for.
+  const voiceCancelRef = useRef(voice.cancel);
+  voiceCancelRef.current = voice.cancel;
+  useEffect(() => {
+    voiceCancelRef.current();
+    setFiles([]);
+    setReplyText('');
+    setFailedFileName(null);
+  }, [entityId]);
+
+  const canSubmit =
+    (!!replyText.trim() || (attachmentsEnabled && files.length > 0)) && !voice.recording;
+
   const handleSend = async () => {
-    const text = replyText.trim();
-    if (!text || sending || !canReply) return;
+    const typed = replyText.trim();
+    if (!canSubmit || sending || !canReply) return;
+    // The exact files this send is carrying: the per-file outcome below is
+    // positional (the backend delivers in order and stops at the first
+    // failure), so it must be matched against THIS list, not later state.
+    const sentFiles = files;
+    const text = typed;
     setSending(true);
     setSendError(null);
+    setFailedFileName(null);
     try {
-      const result = await sendConversationMessage(entityType, entityId, text);
+      const result = sendAdapter
+        ? await sendAdapter({ text, files: sentFiles })
+        : await sendConversationMessage(entityType, entityId, text);
+      // Partial delivery: the text and the delivered files are gone for good
+      // (the contact has them), so only what did NOT reach them stays staged -
+      // otherwise a retry sends the same photo to the customer twice.
+      const failed = 'attachments' in result ? (result.attachments?.failed ?? null) : null;
+      const deliveredCount =
+        'attachments' in result ? (result.attachments?.delivered?.length ?? 0) : 0;
+      // Staged files but nothing reported delivered and nothing reported failed:
+      // the send silently degraded to text-only somewhere in the chain, and the
+      // contact never got the file. Treat it as a failure - clearing the chips
+      // here is what made the backend's multipart parsing bug invisible for so
+      // long. The text itself did go out, so only the files stay staged.
+      const attachmentsDropped = sentFiles.length > 0 && !failed && deliveredCount === 0;
       setReplyText('');
-      toast.success(result.sent_as === 'template' ? 'Delivered as a template message' : 'Message sent');
+      setFiles(failed ? sentFiles.slice(deliveredCount) : attachmentsDropped ? sentFiles : []);
+      setFailedFileName(failed?.filename ?? null);
+      if (attachmentsDropped) {
+        toast.error(
+          sentFiles.length === 1
+            ? `${sentFiles[0].name} was not sent. Try again.`
+            : 'The attachments were not sent. Try again.',
+        );
+      } else if (failed) {
+        toast.error(`${failed.filename} was not sent: ${failed.error}`);
+      } else if (!sendAdapter) {
+        // The adapter owns its own success feedback (it knows what it sent).
+        toast.success(
+          result.sent_as === 'template' ? 'Delivered as a template message' : 'Message sent',
+        );
+      }
       // Pulse a few more refetches so the outgoing message's delivery status
       // (clock → sent/delivered/read ticks) catches up as Respond posts receipts.
       onSent?.();
@@ -143,13 +493,225 @@ export default function SharedConversationComposer({
     <Button
       size="icon"
       className="shrink-0"
-      disabled={!replyText.trim() || sending}
+      disabled={!canSubmit || sending}
       onClick={handleSend}
       aria-label="Send"
     >
       <Send className="size-4" />
     </Button>
   );
+
+  /**
+   * Pasting into the message box (Cmd/Ctrl+V) stages whatever files the
+   * clipboard carries - a screenshot, a copied file - through the SAME path as
+   * the Attach button, which is what makes it behave like WhatsApp / Respond.
+   * Text pastes are untouched: the handler only intervenes when there are files.
+   */
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!attachmentsEnabled || sending) return;
+    const pasted = Array.from(event.clipboardData?.files ?? []);
+    if (pasted.length === 0) return;
+    event.preventDefault();
+    addFiles(pasted);
+  };
+
+  const removeStagedFile = (idx: number, notSent: boolean) => {
+    if (sending) return;
+    if (notSent) setFailedFileName(null);
+    setPreviewFileIndex(null);
+    setFiles((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const attachmentChips =
+    attachmentsEnabled && files.length > 0 ? (
+      <div className="flex flex-wrap items-start gap-1.5" data-testid="composer-attachments">
+        {files.map((file, idx) => {
+          const notSent = failedFileName === file.name;
+          const objectUrl = stagedFileUrls[idx];
+          const isAudio = file.type.startsWith('audio/');
+          if (objectUrl && isAudio) {
+            // A voice clip stages as a player: the whole point is hearing it
+            // before the contact does.
+            return (
+              <span
+                key={`${file.name}-${idx}`}
+                data-testid={notSent ? 'composer-attachment-failed' : 'composer-attachment'}
+                className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-xs${
+                  notSent ? ' border-destructive text-destructive' : ''
+                }`}
+                title={notSent ? `${file.name} - not sent` : file.name}
+              >
+                <Mic className="size-3 shrink-0" />
+                {/* A voice note has no caption track to offer. */}
+                <audio
+                  controls
+                  src={objectUrl}
+                  data-testid="composer-voice-playback"
+                  aria-label={`Play ${file.name}`}
+                  className="h-8 max-w-[220px]"
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="size-4 shrink-0"
+                  aria-label={`Remove ${file.name}`}
+                  disabled={sending}
+                  onClick={() => removeStagedFile(idx, notSent)}
+                >
+                  <X className="size-3" />
+                </Button>
+              </span>
+            );
+          }
+          const thumbUrl = objectUrl;
+          if (thumbUrl) {
+            // An image stages as a thumbnail; clicking it opens the SAME
+            // preview surface the thread bubbles use.
+            return (
+              <span
+                key={`${file.name}-${idx}`}
+                data-testid={notSent ? 'composer-attachment-failed' : 'composer-attachment'}
+                className={`relative inline-block size-14 overflow-hidden rounded-md border${
+                  notSent ? ' border-destructive' : ''
+                }`}
+                title={notSent ? `${file.name} - not sent` : file.name}
+              >
+                <button
+                  type="button"
+                  className="block size-full"
+                  aria-label={`Preview ${file.name}`}
+                  onClick={() => setPreviewFileIndex(idx)}
+                >
+                  {/* A local object URL: next/image needs configured hosts. */}
+                  <img src={thumbUrl} alt={file.name} className="size-full object-cover" />
+                  <span className="sr-only">{file.name}</span>
+                </button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="absolute end-0 top-0 size-5 rounded-none bg-background/80"
+                  aria-label={`Remove ${file.name}`}
+                  disabled={sending}
+                  onClick={() => removeStagedFile(idx, notSent)}
+                >
+                  <X className="size-3" />
+                </Button>
+              </span>
+            );
+          }
+          return (
+            <span
+              key={`${file.name}-${idx}`}
+              data-testid={notSent ? 'composer-attachment-failed' : 'composer-attachment'}
+              className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs${
+                notSent ? ' border-destructive text-destructive' : ''
+              }`}
+              title={notSent ? `${file.name} - not sent` : file.name}
+            >
+              <Paperclip className="size-3 shrink-0" />
+              <span className="truncate">{file.name}</span>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="size-4 shrink-0"
+                aria-label={`Remove ${file.name}`}
+                // Frozen while a send is in flight: the per-file outcome is
+                // positional against the list THIS send carried, so a removal
+                // accepted mid-flight is undone by the partial re-stage below
+                // and the file goes to the contact on the next Send.
+                disabled={sending}
+                onClick={() => removeStagedFile(idx, notSent)}
+              >
+                <X className="size-3" />
+              </Button>
+            </span>
+          );
+        })}
+      </div>
+    ) : null;
+
+  const attachButton = attachmentsEnabled ? (
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        data-testid="composer-file-input"
+        onChange={(e) => addFiles(e.target.files)}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={sending}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <Paperclip className="size-4 mr-1" />
+        Attach
+      </Button>
+    </>
+  ) : null;
+
+  /**
+   * Record a voice message (UAC AC-L9). Click to start, click to stop; the clip
+   * is staged as an attachment, so it only exists where files can be sent at
+   * all - and never in Comment mode, which cannot reach the contact.
+   */
+  const voiceButton = attachmentsEnabled ? (
+    voice.recording ? (
+      <div
+        data-testid="voice-recording"
+        className="inline-flex items-center gap-2 rounded-md border border-destructive/50 px-2 py-1"
+      >
+        <span className="size-2 shrink-0 animate-pulse rounded-full bg-destructive" />
+        <span className="text-xs tabular-nums" data-testid="voice-elapsed">
+          {formatElapsed(voice.seconds)}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-6"
+          data-testid="voice-stop"
+          onClick={() => voice.stop()}
+        >
+          Stop
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-5"
+          aria-label="Discard recording"
+          data-testid="voice-cancel"
+          onClick={() => voice.cancel()}
+        >
+          <X className="size-3" />
+        </Button>
+      </div>
+    ) : (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        data-testid="voice-record"
+        aria-label="Record voice message"
+        title={voice.reason ?? undefined}
+        disabled={sending || !voice.available}
+        onClick={async () => {
+          const problem = await voice.start();
+          if (problem) toast.error(problem);
+        }}
+      >
+        <Mic className="size-4 mr-1" />
+        Voice
+      </Button>
+    )
+  ) : null;
 
   // Split the template body into text + slot tokens so we can render the message
   // slot as an editable field and the rest as resolved, read-only text.
@@ -168,7 +730,9 @@ export default function SharedConversationComposer({
             data-testid="template-message-field"
             placeholder="Type your message…"
             value={replyText}
-            onChange={(e) => onDraftChange(e.target.value)}
+            onChange={onComposerInput}
+            onPaste={handlePaste}
+            onKeyDown={(e) => onSnippetKeyDown(e)}
             rows={2}
             disabled={sending}
             className="my-1 block w-full resize-none bg-background"
@@ -186,8 +750,30 @@ export default function SharedConversationComposer({
 
   return (
     <div className="space-y-2">
-      {/* ---- Out-of-window, template configured: inline template-fill ---- */}
-      {templateMode ? (
+      {attachmentChips}
+
+      {/* The message field and its typeaheads share one positioning context, so
+          the "/" picker floats above whichever field mode is rendered. */}
+      <div className="relative">
+        {snippetPickerOpen && (
+          <SnippetPicker
+            items={snippetMatches}
+            isLoading={snippetsQuery.isLoading}
+            error={
+              snippetsQuery.isError
+                ? snippetsQuery.error instanceof Error
+                  ? snippetsQuery.error.message
+                  : 'Failed to load snippets'
+                : null
+            }
+            activeIndex={snippetIndex}
+            onActiveIndexChange={setSnippetIndex}
+            onPick={insertSnippet}
+          />
+        )}
+
+        {/* ---- Out-of-window, template configured: inline template-fill ---- */}
+        {templateMode ? (
         <div className="space-y-2" data-testid="composer-template-mode">
           <div className="flex items-start gap-2 text-xs text-muted-foreground">
             <LayoutTemplate className="size-3.5 mt-0.5 shrink-0" />
@@ -224,8 +810,12 @@ export default function SharedConversationComposer({
             ref={replyTextareaRef}
             placeholder="Type your message..."
             value={replyText}
-            onChange={(e) => onDraftChange(e.target.value)}
+            onChange={onComposerInput}
+            onPaste={handlePaste}
             onKeyDown={(e) => {
+              // The picker owns the arrows and Enter while it is open, or
+              // choosing a snippet would send an unfinished message instead.
+              if (onSnippetKeyDown(e)) return;
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleSend();
@@ -237,21 +827,68 @@ export default function SharedConversationComposer({
           />
           {sendButton}
         </div>
-      )}
+        )}
+      </div>
 
       {/* Send-time no_chat_template fallback (rare race after preview said OK). */}
       {sendError && noTemplateNotice(sendError.settingsUrl, sendError.message)}
 
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant={windowClosed ? 'primary' : 'outline'}
-          size="sm"
-          onClick={() => setTemplateDialogOpen(true)}
-        >
-          <LayoutTemplate className="size-4 mr-1" />
-          Send template
-        </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {attachButton}
+        {voiceButton}
+
+        {snippetsEnabled && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={sending}
+            aria-label="Insert snippet"
+            data-testid="snippet-button"
+            onClick={() => {
+              if (snippetPickerOpen) {
+                closeSnippetPicker();
+                return;
+              }
+              setSlashFragment(null);
+              setSnippetMenuOpen(true);
+            }}
+          >
+            <StickyNote className="size-4 mr-1" />
+            Snippet
+          </Button>
+        )}
+
+        {emojiEnabled && (
+          <EmojiPickerButton disabled={sending} onSelect={(emoji) => insertAtCaret(emoji)} />
+        )}
+
+        {onAiAssist && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={sending || aiDrafting}
+            data-testid="ai-assist-button"
+            title="Draft a reply from this conversation"
+            onClick={() => void runAiAssist()}
+          >
+            <Sparkles className={`size-4 mr-1${aiDrafting ? ' animate-pulse' : ''}`} />
+            {aiDrafting ? 'Drafting…' : 'AI assist'}
+          </Button>
+        )}
+
+        {showTemplateButton && (
+          <Button
+            type="button"
+            variant={windowClosed ? 'primary' : 'outline'}
+            size="sm"
+            onClick={() => setTemplateDialogOpen(true)}
+          >
+            <LayoutTemplate className="size-4 mr-1" />
+            Send template
+          </Button>
+        )}
 
         {isEntity && useResponseText != null && useResponseText !== '' && (
           <Button
@@ -289,10 +926,24 @@ export default function SharedConversationComposer({
         )}
       </div>
 
+      {/* Staged images open the SAME preview surface the thread bubbles use -
+          no second lightbox. The item's url IS the local object URL, so no
+          byte-fetch is needed and none is passed. */}
+      <AttachmentPreviewModal
+        open={previewFileIndex !== null && stagedPreviewItems.length > 0}
+        onOpenChange={(next) => {
+          if (!next) setPreviewFileIndex(null);
+        }}
+        items={stagedPreviewItems.map((entry) => entry.item)}
+        startIndex={previewStartIndex}
+      />
+
       <SendTemplateDialog
         entityType={entityType}
         entityId={entityId}
         contactId={entityId}
+        trackingId={templateSendTrackingId}
+        sendAdapter={templateSendAdapter}
         open={templateDialogOpen}
         onOpenChange={setTemplateDialogOpen}
         onSent={() => {

@@ -30,6 +30,9 @@ PHONE = "+60999111000"
 POLICY_CODE = "REOPEN-CONV-POLICY"
 AGENT_CODE = "REOPEN-AGENT"
 TEAM_SET_CODE = "REOPEN_TEAM"
+# sla_policies.company_id is NOT NULL at the DB level (migration 320) on this
+# live test DB; Sorento is the incumbent company for all pre-multi-company data.
+SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +78,13 @@ def db() -> Iterator[Session]:
 
 
 def _seed(db: Session) -> ConversationSLATracking:
-    policy = SLAPolicy(id=str(uuid.uuid4()), code=POLICY_CODE, name="Reopen Policy", is_active=True)
+    policy = SLAPolicy(
+        id=str(uuid.uuid4()),
+        code=POLICY_CODE,
+        name="Reopen Policy",
+        is_active=True,
+        company_id=SORENTO_COMPANY_ID,
+    )
     db.add(policy)
     db.commit()
     db.add(

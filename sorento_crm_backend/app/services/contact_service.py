@@ -332,6 +332,9 @@ class ContactService:
                 {"code": str(a.code), "name": a.name, "sort_order": a.sort_order}
                 for a in access_types
             ],
+            # The outbound kill switch, so the contacts grid can show who is
+            # silenced. A manual dict builder drops anything it does not list.
+            "outbound_enabled": bool(getattr(contact, "outbound_enabled", True)),
             "created_at": contact.created_at,
             "updated_at": contact.updated_at,
             "created_by": contact.created_by,

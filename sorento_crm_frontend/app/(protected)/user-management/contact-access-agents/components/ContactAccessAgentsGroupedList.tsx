@@ -35,12 +35,19 @@ import {
 } from '@/components/ui/dialog';
 import { useAccessAgents } from '../../access-agents/hooks/useAccessAgents';
 import { useQueryClient } from '@tanstack/react-query';
+import ContactOutboundCell from '@/components/contacts/ContactOutboundCell';
+import ContactOutboundSummary from '@/components/contacts/ContactOutboundSummary';
+import { useRespondContactOutboundMutations } from '@/hooks/useRespondContactOutbound';
 
 // Grouped row type
 interface ContactGroup {
   id: string;
   respond_contact_phone: string;
   respond_contact_name?: string | null;
+  /** The contact behind the group. Null on legacy grants keyed by phone only. */
+  respond_contact_id?: string | null;
+  /** The contact's outbound kill switch. Null when no contact row is linked. */
+  outbound_enabled?: boolean | null;
   accessAgents: ContactAccessAgent[];
   isExpanded?: boolean;
 }
@@ -92,6 +99,10 @@ export default function ContactAccessAgentsGroupedList() {
           id: `group-${phone}`,
           respond_contact_phone: phone,
           respond_contact_name: item.respond_contact_name,
+          // One group is one contact, so the contact's outbound switch is 1:1
+          // with the group row. Every grant in the group reports the same value.
+          respond_contact_id: item.respond_contact_id ?? null,
+          outbound_enabled: item.outbound_enabled ?? null,
           accessAgents: [],
           isExpanded: expandedGroups.has(phone),
         });
@@ -108,6 +119,19 @@ export default function ContactAccessAgentsGroupedList() {
       return 0;
     });
   }, [data?.data, expandedGroups, sorting]);
+
+  const { setOne: setOutboundOne, setBulk: setOutboundBulk } =
+    useRespondContactOutboundMutations();
+  const outboundBusy = setOutboundOne.isPending || setOutboundBulk.isPending;
+
+  // One group is one contact, so counting groups already counts contacts.
+  const outboundCounts = useMemo(
+    () => ({
+      reachable: groupedData.filter((g) => g.outbound_enabled === true).length,
+      silenced: groupedData.filter((g) => g.outbound_enabled === false).length,
+    }),
+    [groupedData],
+  );
 
   const toggleGroup = (phone: string) => {
     setExpandedGroups((prev) => {
@@ -193,6 +217,23 @@ export default function ContactAccessAgentsGroupedList() {
         meta: { skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
+        id: 'outbound',
+        header: ({ column }) => <DataGridColumnHeader title="Outbound" column={column} />,
+        size: 210,
+        cell: ({ row }) => (
+          <ContactOutboundCell
+            enabled={row.original.outbound_enabled}
+            contactLabel={row.original.respond_contact_name || row.original.respond_contact_phone}
+            disabled={outboundBusy}
+            onChange={(enabled) => {
+              const contactId = row.original.respond_contact_id;
+              if (!contactId) return;
+              setOutboundOne.mutate({ contactId, enabled });
+            }}
+          />
+        ),
+      },
+      {
         id: 'actions',
         header: '',
         cell: ({ row }) => (
@@ -208,7 +249,7 @@ export default function ContactAccessAgentsGroupedList() {
         size: 120,
       },
     ],
-    [expandedGroups],
+    [expandedGroups, outboundBusy, setOutboundOne],
   );
 
   const table = useReactTable({
@@ -235,6 +276,12 @@ export default function ContactAccessAgentsGroupedList() {
         isRefreshing={isFetching && !isLoading}
       >
         <Card>
+          <CardHeader className="block">
+            <ContactOutboundSummary
+              reachable={outboundCounts.reachable}
+              silenced={outboundCounts.silenced}
+            />
+          </CardHeader>
           <CardHeader className="block">
             <DataGridListToolbar
               table={table}

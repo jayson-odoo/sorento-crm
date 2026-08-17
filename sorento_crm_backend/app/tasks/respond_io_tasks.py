@@ -303,14 +303,23 @@ def deliver_manual_template(
     business_table: str,
     business_id: str,
     crm_sender_user_id: Optional[str],
+    sla_tracking_id: Optional[str] = None,
 ) -> dict:
-    """Worker-side manual approved-template send by id + positional params."""
+    """Worker-side manual approved-template send by id + positional params.
+
+    ``sla_tracking_id`` (optional, defaulted so already-queued jobs keep
+    deserializing) names an intervention ticket to stamp once the send
+    SUCCEEDS: a "Send template" from the ticket drawer is a real reply, so it
+    must stop that ticket's response clock exactly like an in-window text send
+    (finding 4). Best-effort and idempotent - the contact already has the
+    message, so a stamping problem must never fail the job.
+    """
     from app.database import SessionLocal
     from app.services.respond_chat_template_service import send_manual_template_for
 
     db = SessionLocal()
     try:
-        return send_manual_template_for(
+        result = send_manual_template_for(
             db,
             identifier=identifier,
             template_id=template_id,
@@ -319,6 +328,23 @@ def deliver_manual_template(
             business_id=business_id,
             created_by=crm_sender_user_id,
         )
+        if sla_tracking_id:
+            try:
+                from app.services.sla_service import ConversationSLATrackingService
+
+                ConversationSLATrackingService(db).mark_ticket_responded_by_id(
+                    str(sla_tracking_id),
+                    responded_by_user_id=crm_sender_user_id,
+                    reason="CRM reply (sent_as=template)",
+                    expect_respond_io_id=identifier,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "deliver_manual_template: response-clock stamp failed for %s",
+                    sla_tracking_id,
+                    exc_info=True,
+                )
+        return result
     finally:
         db.close()
 

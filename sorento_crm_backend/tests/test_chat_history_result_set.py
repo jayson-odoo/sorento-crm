@@ -413,8 +413,60 @@ def test_referenced_state_scoped_to_contact(client, db):
     )
 
 
-def test_referenced_state_picks_latest_on_duplicate_message_id(client, db):
-    """`(contact_id, message_id)` is indexed but NOT unique — newest turn wins."""
+def test_referenced_state_picks_latest_on_legacy_duplicate_message_id(client, db):
+    """Newest turn wins where `(contact_id, message_id)` duplicates still exist.
+
+    The ingest no longer creates them: since the two-lane mirror went live it
+    upserts on that pair (UAC AC-J5, migration 326), so a re-post of the same
+    Respond message id resolves the one row. The uniqueness rule is scoped to
+    rows created from the cutover onward, though, so LEGACY duplicates remain
+    readable - and the reader's newest-wins tie-break still has to hold for
+    them. Seeded directly, dated before the cutover, because the ingest would
+    (correctly) refuse to produce this shape today.
+    """
+    _seed_contact(db)
+    legacy_created_at = datetime(2026, 6, 1, 9, 0, 0)
+    for turn, hint, sent_at in (
+        ("exec-old", "orders", datetime(2026, 6, 1, 8, 0, 0)),
+        ("exec-new", "promotion", datetime(2026, 6, 1, 8, 30, 0)),
+    ):
+        db.add(
+            ChatHistory(
+                channel="whatsapp",
+                contact_id=RESPOND_IO_ID,
+                phone_number="+60166753328",
+                message="quoted outgoing message",
+                sent_at=sent_at,
+                type="outgoing",
+                message_id=MESSAGE_ID,
+                turn_id=turn,
+                created_at=legacy_created_at,
+            )
+        )
+        db.add(
+            ChatHistory(
+                channel="whatsapp",
+                contact_id=RESPOND_IO_ID,
+                phone_number="+60166753328",
+                message="promo for stop valve",
+                sent_at=sent_at,
+                type="incoming",
+                turn_id=turn,
+                state_trace={"v": 1, "after": {**AFTER_STATE, "domain_hint": hint}},
+                created_at=legacy_created_at,
+            )
+        )
+    db.commit()
+
+    rs = get_referenced_state(
+        db, respond_io_id=RESPOND_IO_ID, message_id=MESSAGE_ID
+    )
+    assert rs is not None
+    assert rs["domain_hint"] == "promotion"
+
+
+def test_a_re_posted_message_id_no_longer_duplicates_the_row(client, db):
+    """The other half of the same rule: today the second lane is a no-op."""
     _seed_contact(db)
     _seed_quoted_turn(
         client,
@@ -430,11 +482,17 @@ def test_referenced_state_picks_latest_on_duplicate_message_id(client, db):
         state_trace={"v": 1, "after": {**AFTER_STATE, "domain_hint": "promotion"}},
         sent_at=1780759000000,
     )
-    rs = get_referenced_state(
-        db, respond_io_id=RESPOND_IO_ID, message_id=MESSAGE_ID
+
+    outgoing = (
+        db.query(ChatHistory)
+        .filter(
+            ChatHistory.contact_id == RESPOND_IO_ID,
+            ChatHistory.message_id == MESSAGE_ID,
+        )
+        .all()
     )
-    assert rs is not None
-    assert rs["domain_hint"] == "promotion"
+    assert len(outgoing) == 1, "one Respond message id is one row (AC-J5)"
+    assert outgoing[0].turn_id == "exec-old", "the first lane's turn stands"
 
 
 def test_referenced_state_projection_withholds_internal_keys(client, db):
