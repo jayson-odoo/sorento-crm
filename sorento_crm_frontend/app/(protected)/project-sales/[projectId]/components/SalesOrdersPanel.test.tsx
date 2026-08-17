@@ -303,4 +303,29 @@ describe('SalesOrdersPanel', () => {
     await screen.findByText('PSO-000123');
     expect(screen.queryByRole('button', { name: /Build drafts/ })).not.toBeInTheDocument();
   });
+
+  // ---------------------------------------------------------------- Stage 1B (AC-A03)
+
+  it('shows the review state pill once the backend has derived one', async () => {
+    listProjectSalesOrders.mockResolvedValue({
+      data: [row({ review_state: 'needs_cs_review' })],
+      total: 1,
+      page: 1,
+      limit: 25,
+    });
+
+    renderPanel();
+
+    expect(await screen.findByText('Needs CS review')).toBeInTheDocument();
+  });
+
+  it('renders no review state pill until the backend derives one', async () => {
+    listProjectSalesOrders.mockResolvedValue({ data: [row()], total: 1, page: 1, limit: 25 });
+
+    renderPanel();
+
+    await screen.findByText('PSO-000123');
+    expect(screen.queryByText('Needs CS review')).not.toBeInTheDocument();
+    expect(screen.queryByText('Awaiting reconciliation')).not.toBeInTheDocument();
+  });
 });

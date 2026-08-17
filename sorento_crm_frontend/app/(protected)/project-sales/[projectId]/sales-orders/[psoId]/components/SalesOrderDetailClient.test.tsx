@@ -616,4 +616,28 @@ describe('SalesOrderDetailClient', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/autocount disagrees/i)).not.toBeInTheDocument();
   });
+
+  // ---------------------------------------------------------------- Stage 1B (AC-A03)
+
+  it('shows the review state pill beside the status once the backend has derived one', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({ review_state: 'awaiting_reconciliation', exception_count: 2 }),
+    );
+
+    renderDetail();
+
+    expect(
+      await screen.findByText('Awaiting reconciliation · 2 exceptions'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders no review state pill until the backend derives one', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail());
+
+    renderDetail();
+
+    await screen.findAllByText('PSO-000123');
+    expect(screen.queryByText('Needs CS review')).not.toBeInTheDocument();
+    expect(screen.queryByText('Awaiting reconciliation')).not.toBeInTheDocument();
+  });
 });
