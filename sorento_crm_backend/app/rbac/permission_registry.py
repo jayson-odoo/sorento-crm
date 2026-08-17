@@ -61,6 +61,19 @@ PERMISSION_REGISTRY.append({
     "name": "Edit Contacts",
     "description": "Edit a respond contact, including its chatbot media access and monthly limits.",
 })
+# Onboarding intake / review / provisioning. `.approve` is deliberately its own
+# slug rather than riding `.edit`: approving is what creates real users with real
+# access, so who reviews and who signs off can be different people (the
+# Edition-approval convention).
+PERMISSION_REGISTRY.extend(_crud("user_management", "onboarding", "Onboarding Requests"))
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.onboarding.approve",
+    "name": "Approve Onboarding Requests",
+    "description": (
+        "Approve a reviewed onboarding request, which queues provisioning for every "
+        "approved person."
+    ),
+})
 PERMISSION_REGISTRY.append({
     "slug": "user_management.reference_data.view",
     "name": "View Reference Data",

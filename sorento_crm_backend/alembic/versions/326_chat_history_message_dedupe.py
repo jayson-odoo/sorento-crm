@@ -58,12 +58,41 @@ def upgrade() -> None:
         )
     ).scalar()
     if in_window_duplicates:
-        # Loud on purpose: the index below is about to fail, and the operator
-        # needs to know it is real duplicate traffic, not a broken migration.
+        # These are one WhatsApp message stored twice: same contact, same
+        # Respond messageId. The pair renders as two identical bubbles and is
+        # exactly what the index below exists to stop, so the redundant copies
+        # go and the OLDEST row of each set stays (lowest id: the one every
+        # existing reference and every reader already saw first).
+        #
+        # This runs in the migration's transaction, immediately before the
+        # index, so a writer cannot slip a fresh duplicate in between: the
+        # CREATE UNIQUE INDEX takes a lock that blocks writes to the table.
+        #
+        # Found the hard way: prod aborted this migration with
+        # "could not create unique index ... Key (contact_id, message_id)=... is
+        # duplicated", 20 rows, while every other environment had none. Warning
+        # and continuing left the deploy dead - the migration has to make the
+        # precondition true, not just report that it is false.
         print(
             f"[{revision}] {in_window_duplicates} duplicate chat_histories row(s) "
-            f"exist at or after {DEDUPE_CUTOVER}; the unique index will reject them."
+            f"at or after {DEDUPE_CUTOVER}; deleting the redundant copies, "
+            f"keeping the oldest row of each (contact_id, message_id)."
         )
+        deleted = conn.execute(
+            text(
+                f"""
+                DELETE FROM chat_histories older
+                USING chat_histories keeper
+                WHERE older.contact_id = keeper.contact_id
+                  AND older.message_id = keeper.message_id
+                  AND older.message_id IS NOT NULL
+                  AND older.created_at >= TIMESTAMP '{DEDUPE_CUTOVER}'
+                  AND keeper.created_at >= TIMESTAMP '{DEDUPE_CUTOVER}'
+                  AND older.id > keeper.id
+                """
+            )
+        ).rowcount
+        print(f"[{revision}] deleted {deleted} redundant chat_histories row(s).")
 
     op.execute(
         text(

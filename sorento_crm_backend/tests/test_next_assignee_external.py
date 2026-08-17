@@ -278,7 +278,9 @@ def test_current_assignee_in_body_ignored_uses_cursor_only(
     assert data["assignee_id"] == "user-1"
     assert data["is_working_hours"] is False
     assert data["status_flags"] == ["non_working_hours"]
-    mock_access.return_value.get_next_assignee.assert_called_once_with("agent-1", "team-1")
+    mock_access.return_value.get_next_assignee.assert_called_once_with(
+        "agent-1", "team-1", None, brand_code=None
+    )
     mock_access.return_value.get_next_assignee_after.assert_not_called()
 
 
@@ -352,7 +354,9 @@ def test_preferred_assignee_skips_round_robin(mock_cal, mock_sla, mock_access, c
     data = r.json()
     assert data["assignee_id"] == "user-2"
     assert data["assignee_respond_user_id"] == "555"
-    mock_access.return_value.get_member_assignee.assert_called_once_with("team-1", "user-2")
+    mock_access.return_value.get_member_assignee.assert_called_once_with(
+        "team-1", "user-2", brand_code=None
+    )
     mock_access.return_value.get_next_assignee.assert_not_called()
 
 
@@ -405,7 +409,9 @@ def test_blank_preferred_assignee_falls_back_to_round_robin(
     )
     assert r.status_code == 200
     assert r.json()["assignee_id"] == "user-1"
-    mock_access.return_value.get_next_assignee.assert_called_once_with("agent-1", "team-1")
+    mock_access.return_value.get_next_assignee.assert_called_once_with(
+        "agent-1", "team-1", None, brand_code=None
+    )
     mock_access.return_value.get_member_assignee.assert_not_called()
 
 

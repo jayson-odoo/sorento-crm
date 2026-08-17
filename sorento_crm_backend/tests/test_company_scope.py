@@ -354,7 +354,19 @@ def test_every_company_id_table_is_registered():
     # under every scope, while a company that adds a type of its own keeps it. Owned
     # without the shared flag would have hidden the seeds from every logged-in user
     # while an API-key caller still saw them.
-    assert len(owned) == 64, f"expected 64 owned tables, found {len(owned)}: {sorted(owned)}"
+    # Onboarding adds 3 owned tables under the same rule: a request is ONE company's
+    # intake batch (the requester is invited into that company, and the reviewer works
+    # a queue of her own company's requests), its people are that batch's named staff,
+    # and its templates are that company's own bundles of access. `onboarding_people`
+    # is owned rather than derived through its request because every per-person review
+    # write loads the person BY ID (`get_person`), so that id-keyed load is worth
+    # scoping in its own right, and the mixin also stamps the company at insert.
+    # Note what this does NOT replace: a cross-company write is already refused because
+    # each caller pairs that load with the scoped `get_request` (`_request_owning`,
+    # `_assert_reviewer_writable`), and the mixin cannot catch a SAME-company write
+    # aimed at another request's person, which is exactly what those ownership checks
+    # are for. Both are load-bearing; removing either is a real hole.
+    assert len(owned) == 67, f"expected 67 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

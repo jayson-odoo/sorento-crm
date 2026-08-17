@@ -174,6 +174,23 @@ EMAIL_EVENT_REGISTRY: list[EventDef] = [
         "Fallback event_key for legacy NotificationDelivery rows whose event_type does not "
         "map to a more specific registry entry.",
     ),
+    EventDef(
+        "onboarding_intake_link",
+        "Onboarding intake link",
+        "Sends a requester the link they submit their team's details through. "
+        "Priority 0: nothing else in the flow can start until they have it.",
+        priority=0,
+    ),
+    EventDef(
+        "onboarding_submitted",
+        "Onboarding submission received",
+        "Confirms to the requester that their batch reached the review queue.",
+    ),
+    EventDef(
+        "onboarding_completed",
+        "Onboarding batch complete",
+        "Tells the requester what was created, what already existed, and what failed.",
+    ),
 ]
 
 

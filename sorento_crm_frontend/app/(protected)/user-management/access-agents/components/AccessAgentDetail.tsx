@@ -8,14 +8,6 @@ import { useCompany } from '@/app/providers/CompanyProvider';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -27,6 +19,7 @@ import ContactAccessAgentsTable from './ContactAccessAgentsTable';
 import AgentFieldAccessCard from './AgentFieldAccessCard';
 import AccessAgentNavigation from './AccessAgentNavigation';
 import MemberMarketSegmentEditor from './MemberMarketSegmentEditor';
+import MemberBrandEditor from './MemberBrandEditor';
 import type { AgentTeamMemberInfo, AgentTeamAssignment } from '../services/accessAgentService';
 
 interface AccessAgentDetailProps {
@@ -403,26 +396,30 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                                     <div
                                       key={member.id}
                                       className={`
-                                        flex items-center justify-between p-2 rounded-md text-sm
+                                        flex flex-col gap-2 p-2 rounded-md text-sm
+                                        sm:flex-row sm:items-center sm:justify-between
                                         ${isNextInLine ? 'bg-primary/10 border border-primary/20' : ''}
                                         ${isLastAssigned && !isNextInLine ? 'bg-muted/50' : ''}
                                         ${excluded ? 'opacity-60' : ''}
                                       `}
                                     >
-                                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                                      <div className="flex items-center gap-2 min-w-0 sm:flex-1">
                                         <span className="text-xs text-muted-foreground w-6 shrink-0">
                                           {idx + 1}.
                                         </span>
-                                        <span className="font-medium truncate">{displayName}</span>
-                                        {member.email && member.email !== displayName && (
-                                          <span className="text-xs text-muted-foreground truncate">
-                                            ({member.email})
-                                          </span>
-                                        )}
+                                        <div className="flex flex-col min-w-0 flex-1 sm:flex-row sm:items-center sm:gap-2">
+                                          <span className="font-medium truncate">{displayName}</span>
+                                          {member.email && member.email !== displayName && (
+                                            <span className="text-xs text-muted-foreground truncate">
+                                              ({member.email})
+                                            </span>
+                                          )}
+                                        </div>
                                         <TeamMemberRespondIoButton member={member} />
                                       </div>
-                                      <div className="flex items-center gap-2 shrink-0">
+                                      <div className="flex flex-wrap items-center gap-2 pl-8 sm:pl-0 sm:shrink-0">
                                         <MemberMarketSegmentEditor teamId={a.team_id} userId={member.id} />
+                                        <MemberBrandEditor teamId={a.team_id} userId={member.id} />
                                         {excluded && (
                                           <Badge variant="outline" className="text-xs text-muted-foreground">
                                             Excluded from round robin

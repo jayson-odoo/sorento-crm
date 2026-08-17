@@ -22,7 +22,18 @@ const CATALOG = [
 
 function renderWithClient(ui: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  const result = render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return {
+    ...result,
+    rerender: (next: React.ReactElement) =>
+      result.rerender(<QueryClientProvider client={client}>{next}</QueryClientProvider>),
+  };
+}
+
+/** Opens the editor dialog, then the multiselect menu inside it. */
+function openPicker() {
+  fireEvent.click(screen.getByLabelText(/edit market segments/i));
+  fireEvent.click(document.querySelector('[data-slot="searchable-multi-select-trigger"]')!);
 }
 
 beforeEach(() => {
@@ -53,10 +64,52 @@ describe('MemberMarketSegmentEditor', () => {
   it('persists the selected segments on save', () => {
     useMemberMarketSegments.mockReturnValue({ data: ['retail'], isLoading: false });
     renderWithClient(<MemberMarketSegmentEditor teamId="t1" userId="u1" />);
-    fireEvent.click(screen.getByLabelText(/edit market segments/i));
-    fireEvent.click(screen.getByLabelText('Project'));
+    openPicker();
+    fireEvent.click(screen.getByRole('option', { name: 'Project' }));
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
     expect(setMutate).toHaveBeenCalledTimes(1);
     expect(setMutate.mock.calls[0][0]).toEqual(['retail', 'project']);
+  });
+
+  it('opens without looping when the query has not answered yet', () => {
+    // Both queries undefined: the old inline `= []` defaults handed the
+    // draft-reset effect a fresh array every render, so opening the dialog
+    // re-entered setDraft until React threw "Maximum update depth exceeded".
+    useMemberMarketSegments.mockReturnValue({ data: undefined, isLoading: false });
+    useMarketSegments.mockReturnValue({ data: undefined, isLoading: false });
+    renderWithClient(<MemberMarketSegmentEditor teamId="t1" userId="u1" />);
+    expect(() =>
+      fireEvent.click(screen.getByLabelText(/edit market segments/i)),
+    ).not.toThrow();
+    expect(screen.getByText('Market segments served')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(setMutate.mock.calls[0][0]).toEqual([]);
+  });
+
+  it('keeps the draft when a background refetch lands while the dialog is open', () => {
+    useMemberMarketSegments.mockReturnValue({ data: ['retail'], isLoading: false });
+    const { rerender } = renderWithClient(
+      <MemberMarketSegmentEditor teamId="t1" userId="u1" />,
+    );
+    openPicker();
+    fireEvent.click(screen.getByRole('option', { name: 'Project' }));
+    // A refetch resolves to a new array while the user is mid-edit.
+    useMemberMarketSegments.mockReturnValue({ data: ['retail'], isLoading: false });
+    rerender(<MemberMarketSegmentEditor teamId="t1" userId="u1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(setMutate.mock.calls[0][0]).toEqual(['retail', 'project']);
+  });
+
+  it('still lets a stale tag be cleared when the catalogue is empty', () => {
+    useMemberMarketSegments.mockReturnValue({ data: ['retail'], isLoading: false });
+    useMarketSegments.mockReturnValue({ data: [], isLoading: false });
+    renderWithClient(<MemberMarketSegmentEditor teamId="t1" userId="u1" />);
+    openPicker();
+    expect(screen.getByText(/no market segments configured/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'retail' }));
+    const save = screen.getByRole('button', { name: /^save$/i });
+    expect(save).not.toBeDisabled();
+    fireEvent.click(save);
+    expect(setMutate.mock.calls[0][0]).toEqual([]);
   });
 });

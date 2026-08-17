@@ -4,6 +4,16 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { MoreVertical, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -14,8 +24,10 @@ import {
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { readableEntry } from '@/lib/spec-readable';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
-import { AddSpecificationDialog, SpecTable } from '@/components/spec-table';
+import { AddSpecificationDialog, SpecTable, type SpecKeyDefinition } from '@/components/spec-table';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useProductSpecTable } from '../../hooks/useProductSpecTable';
 import SpecExtractPanel from './SpecExtractPanel';
@@ -24,6 +36,10 @@ import type {
   ProductSpecDetail,
   SpecDiagnosisReason,
 } from '../../../product-specifications/types/productSpec.types';
+import type {
+  VerificationBlock,
+  VerificationState,
+} from '../../../spec-verification/types/specVerification.types';
 
 /**
  * What this product's specifications are, and where each one came from.
@@ -38,16 +54,6 @@ import type {
  * it needs comes from `useProductSpecTable`, so this file holds no fetching of its own
  * and the two surfaces cannot drift apart.
  */
-
-const EXCEPTION_LABELS: Record<string, string> = {
-  shape_mismatch: 'Stored dimensions describe a round or square product',
-  column_conflict: 'Description disagrees with the stored dimensions',
-  implausible_dimension: 'Dimension too large to be real',
-  low_confidence: 'Derived below the review threshold',
-  // An authored value the rules now disagree with. Setting the right value is what
-  // answers it - there is deliberately no resolve action anywhere on this page (D9).
-  human_override_conflict: 'The rules read something else than the value set by hand',
-};
 
 /** Each silence gets its own sentence and its own fix. */
 function diagnosisCopy(
@@ -105,11 +111,108 @@ function diagnosisCopy(
   }
 }
 
+const VERIFICATION_LABEL: Record<VerificationState, string> = {
+  verified: 'Verified',
+  needs_reverify: 'Needs re-verify',
+  unverified: 'Unverified',
+};
+
+/**
+ * Whether a person has vouched for this product's specifications, and what moved since.
+ *
+ * Rendered whatever the state, next to the statuses in the header, because "nobody has
+ * checked this yet" is an answer somebody came for as much as "verified". The pill is
+ * the shared one, so a code reads the same here as it does in the worklist (AC-C.1).
+ */
+function VerificationStrip({
+  block,
+  registry,
+  canEdit,
+  busy,
+  onVerify,
+  onUnverify,
+}: {
+  block: VerificationBlock;
+  registry: SpecKeyDefinition[];
+  canEdit: boolean;
+  busy: boolean;
+  onVerify: () => void;
+  onUnverify: () => void;
+}) {
+  const stamp =
+    block.verified_by_name && block.verified_at
+      ? `by ${block.verified_by_name}, ${formatDateTimeInMalaysia(block.verified_at)}`
+      : null;
+  // A withdrawal, as opposed to values moving under the stamp. Both facts are kept, so
+  // the line names who took it back without losing who vouched for it (AC-D.20).
+  const withdrawnBy =
+    block.invalidated_reason === 'manual_unverify' && block.invalidated_by_name
+      ? `Withdrawn by ${block.invalidated_by_name}${
+          block.invalidated_at ? `, ${formatDateTimeInMalaysia(block.invalidated_at)}` : ''
+        }`
+      : null;
+  const changed = block.state === 'needs_reverify' ? block.invalidated_diff?.changed ?? [] : [];
+  const labelFor = (specKey: string) =>
+    registry.find((key) => key.spec_key === specKey)?.label ?? specKey;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md border p-3" data-spec-verification>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span
+            className={`${STATUS_PILL_BASE} ${statusPillClass(block.state)}`}
+            data-spec-verification-state
+          >
+            {VERIFICATION_LABEL[block.state]}
+          </span>
+          {stamp && <span className="text-sm text-muted-foreground">{stamp}</span>}
+        </div>
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-2">
+            {block.state === 'verified' ? (
+              <Button size="sm" variant="outline" disabled={busy} onClick={onUnverify}>
+                Unverify
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" disabled={busy} onClick={onVerify}>
+                Verify
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {withdrawnBy && <p className="text-sm text-muted-foreground">{withdrawnBy}</p>}
+
+      {changed.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">
+            What moved since it was verified
+          </div>
+          <ul className="flex flex-col gap-0.5">
+            {changed.map((entry) => (
+              <li key={entry.spec_key} className="text-sm break-words">
+                <span className="font-medium">{labelFor(entry.spec_key)}</span>: was{' '}
+                <span className="text-muted-foreground">
+                  {readableEntry(entry.was) || 'nothing'}
+                </span>
+                , now{' '}
+                <span className="font-medium">{readableEntry(entry.now) || 'nothing'}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ProductSpecificationsTab({ productId }: { productId: string }) {
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   /** A key just picked from the dialog, so the table opens its editor on that row. */
   const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [confirmingUnverify, setConfirmingUnverify] = useState(false);
   const spec = useProductSpecTable(productId);
   const { detail, rows, registry, applicableKeys, otherKeys, heldKeys, isLoading, error } = spec;
 
@@ -203,6 +306,17 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
+          {/* Rendered in every state, verified or not (AC-D.13). It sits first because
+              it is the question the worklist sent the reviewer here to answer. */}
+          <VerificationStrip
+            block={detail.verification}
+            registry={registry}
+            canEdit={canEdit}
+            busy={spec.verificationBusy}
+            onVerify={spec.verify}
+            onUnverify={() => setConfirmingUnverify(true)}
+          />
+
           {copy && (
             <Alert variant={copy.tone}>
               <AlertIcon />
@@ -285,49 +399,30 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
         onCheckSimilar={spec.checkSimilarKey}
       />
 
-      {/* Rendered whether or not there are any, per the never-hide-a-section mandate -
-          "nothing disagrees" is the answer a reviewer came for. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Needs a human ({detail.exceptions.length})</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {detail.exceptions.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">
-              Nothing on this product disagrees with itself.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {detail.exceptions.map((row) => (
-                <div
-                  key={row.id}
-                  className="flex flex-col gap-1 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">
-                      {registry.find((key) => key.spec_key === row.spec_key)?.label ??
-                        row.spec_key}
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {EXCEPTION_LABELS[row.reason] ?? row.reason}
-                    </div>
-                  </div>
-                  {/* No resolve button anywhere here, on purpose (D9). Correcting the
-                      value in the table above is what answers it, and a button that
-                      only marked it read would be a second source of truth about
-                      whether the catalogue is right. */}
-                  <div className="text-sm text-muted-foreground">
-                    The rules read{' '}
-                    <span className="font-medium text-foreground">
-                      {String((row.proposed as { value?: unknown })?.value ?? '')}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <AlertDialog open={confirmingUnverify} onOpenChange={setConfirmingUnverify}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm unverify</AlertDialogTitle>
+            <AlertDialogDescription>
+              This withdraws the verification for {detail.product_code}. It reads Unverified
+              again; the history keeps who vouched for it and who withdrew it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={spec.verificationBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                spec.unverify();
+                setConfirmingUnverify(false);
+              }}
+              disabled={spec.verificationBusy}
+            >
+              Unverify
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <p className="text-sm text-muted-foreground">
         To try a customer phrase against the whole catalog, use{' '}

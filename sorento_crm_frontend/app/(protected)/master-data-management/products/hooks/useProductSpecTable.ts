@@ -22,6 +22,20 @@ import {
   type ApplicableSpecKey,
 } from '../../product-specifications/services/productSpecService';
 import type { ProductSpecDetail } from '../../product-specifications/types/productSpec.types';
+import {
+  patchWorklistRows,
+  WORKLIST_KEY,
+} from '../../spec-verification/hooks/useSpecVerification';
+import {
+  SpecVerifyConflictError,
+  unverifySpec,
+  verifySpec,
+} from '../../spec-verification/services/specVerificationService';
+import type {
+  SpecVerificationWorklistResponse,
+  UnverifyBulkResult,
+  VerifyBulkResult,
+} from '../../spec-verification/types/specVerification.types';
 
 /**
  * Everything the Specifications tab needs, on react-query.
@@ -59,6 +73,12 @@ export interface UseProductSpecTableResult {
   isLoading: boolean;
   error: string | null;
   refetch: () => void;
+  /** Verify this code, echoing the hash the tab was rendered against (AC-D.4). */
+  verify: () => void;
+  /** Withdraw the stamp. The tab asks first (AC-D.25). */
+  unverify: () => void;
+  /** A verify or an unverify is in flight. */
+  verificationBusy: boolean;
   setValue: (specKey: string, value: SpecScalar) => Promise<void>;
   tombstone: (specKey: string) => Promise<void>;
   revert: (specKey: string) => Promise<void>;
@@ -130,6 +150,10 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     if (productCode) {
       queryClient.invalidateQueries({ queryKey: APPLICABLE_KEY(productCode) });
     }
+    // A value write moves the code's hash and withdraws any stamp made against it, so
+    // the worklist's row for this code is wrong the moment this returns - it is not
+    // only the verify/unverify buttons that change what that list shows.
+    queryClient.invalidateQueries({ queryKey: [WORKLIST_KEY] });
   }, [queryClient, productId, productCode]);
 
   const setValueMutation = useMutation({
@@ -170,6 +194,64 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     onError: (error: Error) => toast.error(error.message, { duration: 10_000 }),
   });
 
+  const invalidateVerification = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: DETAIL_KEY(productId) });
+    // The worklist renders the same stamp. Leaving it cached is how the list and the
+    // record end up disagreeing about a code somebody just acted on.
+    queryClient.invalidateQueries({ queryKey: [WORKLIST_KEY] });
+  }, [queryClient, productId]);
+
+  /**
+   * Flip the worklist's own row for this code, before the refetch lands.
+   *
+   * The reviewer came FROM that list and goes straight back to it; an invalidation
+   * alone leaves the row reading its old state until the query answers, which is
+   * exactly the moment they are looking at it (captain ruling 2026-08-17). Same
+   * patcher the list's own bulk actions use, so the row and the progress line move
+   * together.
+   */
+  const patchWorklistRow = useCallback(
+    (result: VerifyBulkResult | UnverifyBulkResult) => {
+      queryClient.setQueriesData<SpecVerificationWorklistResponse>(
+        { queryKey: [WORKLIST_KEY] },
+        (old) => patchWorklistRows(old, [result]),
+      );
+    },
+    [queryClient],
+  );
+
+  const verifyMutation = useMutation({
+    mutationFn: (valuesHash: string) =>
+      verifySpec({ product_code: productCode, values_hash: valuesHash }),
+    onSuccess: (result) => {
+      patchWorklistRow(result);
+      invalidateVerification();
+      toast.success('Verified');
+    },
+    onError: (error: Error) => {
+      if (error instanceof SpecVerifyConflictError) {
+        invalidateVerification();
+        toast.warning('This product changed while you were reviewing - reloaded', {
+          duration: 10_000,
+        });
+        return;
+      }
+      toast.error(error.message, { duration: 10_000 });
+    },
+  });
+
+  const unverifyMutation = useMutation({
+    mutationFn: () => unverifySpec({ product_code: productCode }),
+    onSuccess: (result) => {
+      patchWorklistRow(result);
+      invalidateVerification();
+      toast.success(
+        result.outcome === 'unverified' ? 'Verification withdrawn' : 'Nothing to withdraw',
+      );
+    },
+    onError: (error: Error) => toast.error(error.message, { duration: 10_000 }),
+  });
+
   const createKeyMutation = useMutation({
     mutationFn: (input: { spec_key: string; label: string; data_type: string }) =>
       createSpecKey({ ...input, allowed_values: [] }),
@@ -198,6 +280,9 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     refetch: () => {
       void detailQuery.refetch();
       void keysQuery.refetch();
+      // Re-deriving is a value write by another name, and it reaches this hook through
+      // `refetch` rather than through `invalidate`.
+      queryClient.invalidateQueries({ queryKey: [WORKLIST_KEY] });
     },
     setValue: async (specKey, value) => {
       await setValueMutation.mutateAsync({ specKey, value });
@@ -215,5 +300,8 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
       await createKeyMutation.mutateAsync(input);
     },
     checkSimilarKey: (label) => getSimilarSpecKey(label),
+    verify: () => verifyMutation.mutate(detailQuery.data?.values_hash ?? ''),
+    unverify: () => unverifyMutation.mutate(),
+    verificationBusy: verifyMutation.isPending || unverifyMutation.isPending,
   };
 }

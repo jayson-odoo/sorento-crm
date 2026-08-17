@@ -1,10 +1,11 @@
 """User management API routes."""
 from fastapi import APIRouter
-from app.api.v1.user_management import users, roles, permissions, access_agents, contacts, contact_access_types, contact_media_access, market_segments, system_logs, settings, teams, quick_access, impersonation, contact_impersonation
+from app.api.v1.user_management import users, roles, permissions, access_agents, contacts, contact_access_types, contact_media_access, market_segments, system_logs, settings, teams, quick_access, impersonation, contact_impersonation, onboarding
 
 router = APIRouter()
 
 router.include_router(users.router, prefix="/users", tags=["users"])
+router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 router.include_router(contact_access_types.router, prefix="/contact-access-types", tags=["contact-access-types"])
 router.include_router(market_segments.router, prefix="/market-segments", tags=["market-segments"])
 router.include_router(roles.router, prefix="/roles", tags=["roles"])
