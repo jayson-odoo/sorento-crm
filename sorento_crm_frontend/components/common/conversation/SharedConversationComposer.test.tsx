@@ -16,6 +16,7 @@ vi.mock('@/services/whatsappTemplateService', async () => {
     sendConversationMessage: vi.fn(),
     getChatTemplatePreview: vi.fn(),
     listApprovedTemplates: vi.fn().mockResolvedValue([]),
+    sendTemplateMessage: vi.fn(),
   };
 });
 
@@ -27,6 +28,8 @@ import {
   getWindowState,
   sendConversationMessage,
   getChatTemplatePreview,
+  listApprovedTemplates,
+  sendTemplateMessage,
   NoChatTemplateError,
 } from '@/services/whatsappTemplateService';
 import { toast } from 'sonner';
@@ -237,6 +240,236 @@ describe('SharedConversationComposer', () => {
     });
     expect(await screen.findByRole('button', { name: /attach view link/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /use response/i })).toBeInTheDocument();
+  });
+
+  // ------------------------------------------------ partial attachment failure
+
+  /** Stage `names` on the composer's hidden file input. */
+  function attach(names: string[]) {
+    const input = screen.getByTestId('composer-file-input') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: names.map((n) => new File(['x'], n, { type: 'application/pdf' })) },
+    });
+  }
+
+  it('FINDING 3: a partial multi-file send clears only the delivered files', async () => {
+    const sendAdapter = vi.fn().mockResolvedValue({
+      sent_as: 'attachment',
+      attachments: {
+        delivered: ['a.pdf'],
+        failed: { filename: 'b.pdf', error: 'Respond 500 unavailable' },
+      },
+    });
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    attach(['a.pdf', 'b.pdf', 'c.pdf']);
+    expect(screen.getByTestId('composer-attachments').textContent).toContain('a.pdf');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+    // a.pdf reached the contact -> gone. b.pdf failed and c.pdf was never
+    // attempted -> both stay staged so a retry cannot double-send a.pdf.
+    await waitFor(() => {
+      const staged = screen.getByTestId('composer-attachments').textContent ?? '';
+      expect(staged).not.toContain('a.pdf');
+      expect(staged).toContain('b.pdf');
+      expect(staged).toContain('c.pdf');
+    });
+    // The failed one is marked, and the toast names it.
+    expect(screen.getByTestId('composer-attachment-failed').textContent).toContain('b.pdf');
+    expect(toast.error).toHaveBeenCalledWith(
+      'b.pdf was not sent: Respond 500 unavailable',
+    );
+  });
+
+  it('FINDING 3: an all-delivered send clears every file and marks nothing failed', async () => {
+    const sendAdapter = vi.fn().mockResolvedValue({
+      sent_as: 'attachment',
+      attachments: { delivered: ['a.pdf', 'b.pdf'], failed: null },
+    });
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    attach(['a.pdf', 'b.pdf']);
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByTestId('composer-attachments')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('composer-attachment-failed')).not.toBeInTheDocument();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('a send that reports NO delivered attachment is an error, not a silent success', async () => {
+    // The backend degraded to a text-only send (its multipart parsing dropped
+    // the file) and still answered 200. Clearing the chips here is what made
+    // that invisible: the operator saw "Message sent" and the contact got
+    // nothing. Files stay staged; the text did go out, so the box clears.
+    const sendAdapter = vi.fn().mockResolvedValue({
+      sent_as: 'text',
+      rendered_text: 'here is the photo',
+      attachments: null,
+    });
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    attach(['photo.jpg']);
+    fireEvent.change(screen.getByPlaceholderText('Type your message...'), {
+      target: { value: 'here is the photo' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('photo.jpg was not sent. Try again.'),
+    );
+    expect(screen.getByTestId('composer-attachments').textContent).toContain('photo.jpg');
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('a text-only send with no files staged is unaffected by the dropped-attachment guard', async () => {
+    const sendAdapter = vi.fn().mockResolvedValue({
+      sent_as: 'text',
+      rendered_text: 'hello',
+      attachments: null,
+    });
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('Type your message...'), {
+      target: { value: 'hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('FINDING 3: a thrown send keeps every file staged (nothing reached the contact)', async () => {
+    const sendAdapter = vi.fn().mockRejectedValue(new Error('Network down'));
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    attach(['a.pdf', 'b.pdf']);
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Network down'));
+    const staged = screen.getByTestId('composer-attachments').textContent ?? '';
+    expect(staged).toContain('a.pdf');
+    expect(staged).toContain('b.pdf');
+  });
+
+  it('freezes the staged files while a send is in flight', async () => {
+    // The per-file outcome is POSITIONAL against the list the send carried, so
+    // a removal accepted mid-flight is silently undone when the partial result
+    // re-stages `sentFiles.slice(deliveredCount)` - the removed file comes back
+    // and the next Send delivers it to the contact after all.
+    let resolveSend: (v: unknown) => void = () => {};
+    const sendAdapter = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    attach(['a.pdf', 'b.pdf', 'c.pdf']);
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+
+    const removeC = screen.getByRole('button', { name: 'Remove c.pdf' });
+    expect(removeC).toBeDisabled();
+    expect(screen.getByRole('button', { name: /attach/i })).toBeDisabled();
+
+    fireEvent.click(removeC);
+    expect(screen.getByTestId('composer-attachments').textContent).toContain('c.pdf');
+
+    resolveSend({
+      sent_as: 'attachment',
+      attachments: {
+        delivered: ['a.pdf'],
+        failed: { filename: 'b.pdf', error: 'Respond 500 unavailable' },
+      },
+    });
+
+    await waitFor(() => {
+      const staged = screen.getByTestId('composer-attachments').textContent ?? '';
+      expect(staged).not.toContain('a.pdf');
+      expect(staged).toContain('b.pdf');
+      expect(staged).toContain('c.pdf');
+    });
+    // Removal is available again once the send settles.
+    expect(screen.getByRole('button', { name: 'Remove c.pdf' })).not.toBeDisabled();
+  });
+
+  // ------------------------------------------------- template send attribution
+
+  it('FINDING 4: a manual template send carries the ticket id so the clock stops', async () => {
+    (listApprovedTemplates as any).mockResolvedValue([
+      {
+        id: 'tpl-1',
+        name: 'conversation_follow_up',
+        language: 'en',
+        param_count: 0,
+        body_text: 'Hello from Sorento.',
+        status: 'approved',
+      },
+    ]);
+    (sendTemplateMessage as any).mockResolvedValue({ ok: true });
+
+    renderComposer({
+      entityType: 'conversation_sla',
+      entityId: 'tracking-1',
+      mode: 'conversation',
+      templateSendTrackingId: 'tracking-1',
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: /send template/i }));
+    fireEvent.click(await screen.findByTestId('template-option-conversation_follow_up'));
+    // Dialog footer submit (the toolbar button shares the label).
+    const submits = screen.getAllByRole('button', { name: /send template/i });
+    fireEvent.click(submits[submits.length - 1]);
+
+    await waitFor(() =>
+      expect(sendTemplateMessage).toHaveBeenCalledWith(
+        'conversation_sla',
+        'tracking-1',
+        expect.objectContaining({ template_id: 'tpl-1', tracking_id: 'tracking-1' }),
+      ),
+    );
+  });
+
+  it('other chat surfaces send no tracking id (unchanged behaviour)', async () => {
+    (listApprovedTemplates as any).mockResolvedValue([
+      {
+        id: 'tpl-1',
+        name: 'conversation_follow_up',
+        language: 'en',
+        param_count: 0,
+        body_text: 'Hello from Sorento.',
+        status: 'approved',
+      },
+    ]);
+    (sendTemplateMessage as any).mockResolvedValue({ ok: true });
+
+    renderComposer();
+
+    fireEvent.click(await screen.findByRole('button', { name: /send template/i }));
+    fireEvent.click(await screen.findByTestId('template-option-conversation_follow_up'));
+    const submits = screen.getAllByRole('button', { name: /send template/i });
+    fireEvent.click(submits[submits.length - 1]);
+
+    await waitFor(() =>
+      expect(sendTemplateMessage).toHaveBeenCalledWith(
+        'complaint',
+        'c1',
+        expect.objectContaining({ tracking_id: null }),
+      ),
+    );
   });
 
   it('when !canReply, renders the not-available message and no composer', () => {

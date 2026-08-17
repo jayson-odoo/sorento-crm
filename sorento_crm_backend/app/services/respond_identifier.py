@@ -42,6 +42,37 @@ def resolve_respond_io_id(db: Session, value: Optional[str]) -> Optional[str]:
     return rid or None
 
 
+def contact_for_identifier(db: Session, identifier: Optional[str]) -> Optional[RespondContact]:
+    """The RespondContact an OUTBOUND identifier addresses, or None.
+
+    An outbound identifier is whatever `RespondClient` was handed for the API
+    path: a bare `respond_io_id`, a prefixed `id:437264483` / `phone:+6012...`,
+    or a raw phone number. The prefix is stripped and the remainder is matched
+    against `respond_io_id` first, then `phone_number` - the same order the
+    workspace-credential resolver uses, because both answer the same question
+    ("which contact is this send for?") and must never disagree.
+
+    Returns None when nothing matches; a first-contact send has no row yet.
+    """
+    if not identifier:
+        return None
+    value = str(identifier).strip()
+    if not value:
+        return None
+    if ":" in value:
+        value = value.split(":", 1)[1]
+    if not value:
+        return None
+    contact = (
+        db.query(RespondContact).filter(RespondContact.respond_io_id == value).first()
+    )
+    if contact is None:
+        contact = (
+            db.query(RespondContact).filter(RespondContact.phone_number == value).first()
+        )
+    return contact
+
+
 def resolve_send_identifier(db: Session, value: Optional[str]) -> Optional[str]:
     """Return an identifier safe to pass to RespondClient.send_message / list_messages.
 

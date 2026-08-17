@@ -858,42 +858,15 @@ def test_a_contains_rule_matches_whole_words_only(db):
     assert _value(db, "ZZT-RULE-3", "shape") is None
 
 
-def test_the_flyer_fills_a_gap_the_description_left(db):
-    from app.models.product_spec import ProductFlyerText
-
-    _product(db, "ZZT-FLY-1", "SORENTO BASIN TAP ZZT-FLY-1", brand="brand")
-    db.add(
-        ProductFlyerText(
-            product_code="ZZT-FLY-1",
-            source_label="ZZT FLYER",
-            lines=["Brass Body", "Matt Black"],
-            text="Brass Body. Matt Black",
-        )
-    )
-    db.flush()
-
-    derive_for_code(db, "ZZT-FLY-1")
-
-    assert _value(db, "ZZT-FLY-1", "material") == "brass"
-    assert _provenance(db, "ZZT-FLY-1")["material"]["source"] == "flyer", "say where it came from"
-
-
-def test_the_description_beats_the_flyer(db):
-    """The master is the business's record; a leaflet is a leaflet."""
-    from app.models.product_spec import ProductFlyerText
-
-    _product(db, "ZZT-FLY-2", "SORENTO CERAMIC BASIN ZZT-FLY-2", brand="brand")
-    db.add(
-        ProductFlyerText(
-            product_code="ZZT-FLY-2", source_label="ZZT FLYER", lines=["Brass"], text="Brass"
-        )
-    )
-    db.flush()
-
-    derive_for_code(db, "ZZT-FLY-2")
-
-    assert _value(db, "ZZT-FLY-2", "material") == "ceramic"
-    assert _provenance(db, "ZZT-FLY-2")["material"]["source"] == "derived"
+# test_the_flyer_fills_a_gap_the_description_left (:861) is lifted onto
+# `propose_from_text` in tests/test_product_spec_propose_from_text.py - it tests the
+# pass itself, which survives the lift unchanged.
+#
+# test_the_description_beats_the_flyer (:881) is removed rather than lifted: it
+# pinned the flyer LOSING to the description inside one `derive_for_code` call, and
+# `derive_for_code` no longer takes flyer text as an input at all, so there is no
+# longer a contest between the two to test here. See the note above
+# test_the_code_suffix_still_answers_when_no_text_does for the rest of this cut.
 
 
 def test_editing_a_rule_re_derives_rather_than_reporting_skipped(db):
@@ -936,49 +909,35 @@ def test_a_broken_rule_does_not_stop_the_catalog_deriving(db):
 
 # --------------------------------------------------------------------------- #
 # source precedence: description, then flyer, then the code (#108)
+#
+# PR 4 (AC-B.18, captain amendment 2026-08-14): the flyer text pass is LIFTED out of
+# derivation into a pure `propose_from_text(text, code)` in
+# tests/test_product_spec_propose_from_text.py, not deleted. `derive_for_code` no
+# longer takes a `flyer_text` argument at all, so every test below that pitted the
+# flyer against the description INSIDE ONE DERIVATION CALL tested an ordering that no
+# longer exists here - `propose_from_text` never sees a description, so "the flyer
+# loses to the description" has no analogue to lift. Removed:
+#   - test_a_lower_rule_on_the_flyer_never_beats_a_higher_rule_on_the_description (:951)
+#   - test_a_size_in_the_description_is_not_overwritten_by_the_flyer (:1007)
+# and test_the_description_beats_the_flyer above (:881) for the same reason. The pass
+# itself (flyer text -> material/finish/dimensions/seat_material) is pinned in
+# tests/test_product_spec_propose_from_text.py instead.
+#
+# test_words_on_the_flyer_beat_a_letter_pair_in_the_code (:967),
+# test_the_flyer_supplies_dimensions_the_description_never_states (:994) and
+# test_the_seat_cover_material_is_read_from_the_flyer (:1019) are also removed from
+# here for the same reason (they used the now-gone `_flyer()`/`flyer_text` seam) and
+# are lifted onto `propose_from_text` verbatim in that file.
+#
+# test_the_seat_material_stays_off_products_that_have_no_seat (:1030) is removed too:
+# it used the same `_flyer()` helper, and the scope-gate it pinned (a class-gated key
+# dropped for the wrong class) is not something `propose_from_text` can reproduce on
+# its own - it never sees the PRODUCT's real class, only whatever a rule reads out of
+# the pasted text itself. That coverage now lives at the route level (AC-B.4, using
+# the product's actual stored class) in tests/test_product_spec_extract_route.py, plus
+# two `_apply_scope` pins on `propose_from_text` itself in
+# tests/test_product_spec_propose_from_text.py.
 # --------------------------------------------------------------------------- #
-def _flyer(db, code: str, text: str):
-    from app.models.product_spec import ProductFlyerText
-
-    db.add(
-        ProductFlyerText(
-            product_code=code, source_label="ZZT FLYER", lines=text.split(". "), text=text
-        )
-    )
-    db.flush()
-
-
-def test_a_lower_rule_on_the_flyer_never_beats_a_higher_rule_on_the_description(db):
-    """The real failure: SRTWC7614-RL stored as a P-trap while its own description says S-TRAP.
-
-    The P-TRAP rule sits above the S-TRAP rule, and the loop tried each rule against
-    both texts before moving on — so rule order silently outranked source order and the
-    catalogue contradicted itself.
-    """
-    _product(db, "ZZT-SRC-1", "SORENTO ONE PIECE WC (S-TRAP:250MM). ZZT-SRC-1")
-    _flyer(db, "ZZT-SRC-1", "Washdown With Rimless. P-Trap: Horizontal Outlet 180mm")
-
-    derive_for_code(db, "ZZT-SRC-1")
-
-    assert _value(db, "ZZT-SRC-1", "trap_type") == "s_trap"
-    assert _provenance(db, "ZZT-SRC-1")["trap_type"]["source"] == "derived"
-
-
-def test_words_on_the_flyer_beat_a_letter_pair_in_the_code(db):
-    """`-GY` is mapped to grey; the flyer for SRTWB1516-GY says "Golden Yellow" in words.
-
-    A code suffix is a convention, a printed word is a statement. This is what the
-    shipped finish rules always intended — words first, suffix as the fallback — and
-    could not express while one loop ran text and code rules together.
-    """
-    _product(db, "ZZT-SRC-2-GY", "SORENTO CERAMIC ART BASIN ONLY ZZT-SRC-2-GY")
-    _flyer(db, "ZZT-SRC-2-GY", "Art Basin. Golden Yellow")
-
-    derive_for_code(db, "ZZT-SRC-2-GY")
-
-    assert _value(db, "ZZT-SRC-2-GY", "finish") == "golden_yellow"
-
-
 def test_the_code_suffix_still_answers_when_no_text_does(db):
     # The other half: demoting the code must not disable it.
     _product(db, "ZZT-SRC-3-GY", "SORENTO CERAMIC ART BASIN ONLY ZZT-SRC-3-GY")
@@ -986,52 +945,3 @@ def test_the_code_suffix_still_answers_when_no_text_does(db):
     derive_for_code(db, "ZZT-SRC-3-GY")
 
     assert _value(db, "ZZT-SRC-3-GY", "finish") == "grey"
-
-
-# --------------------------------------------------------------------------- #
-# the flyer's labelled size, and what the seat is made of (#108)
-# --------------------------------------------------------------------------- #
-def test_the_flyer_supplies_dimensions_the_description_never_states(db):
-    """96 products carry no size at all while their flyer card prints one."""
-    _product(db, "ZZT-DIM-1", "SORENTO ONE PIECE WC ZZT-DIM-1")
-    _flyer(db, "ZZT-DIM-1", "Washdown. D: L680xW375xH770mm")
-
-    derive_for_code(db, "ZZT-DIM-1")
-
-    assert _value(db, "ZZT-DIM-1", "dim_length") == 680
-    assert _value(db, "ZZT-DIM-1", "dim_width") == 375
-    assert _value(db, "ZZT-DIM-1", "dim_height") == 770
-    assert _provenance(db, "ZZT-DIM-1")["dim_length"]["source"] == "flyer"
-
-
-def test_a_size_in_the_description_is_not_overwritten_by_the_flyer(db):
-    # The measurement block also cross-checks the stored columns and flags a round
-    # product whose length is really a diameter. A flyer must not quietly replace it.
-    _product(db, "ZZT-DIM-2", "SORENTO ONE PIECE WC (700X400X800MM) ZZT-DIM-2")
-    _flyer(db, "ZZT-DIM-2", "Washdown. D: L680xW375xH770mm")
-
-    derive_for_code(db, "ZZT-DIM-2")
-
-    assert _value(db, "ZZT-DIM-2", "dim_length") == 700
-    assert _provenance(db, "ZZT-DIM-2")["dim_length"]["source"] == "derived"
-
-
-def test_the_seat_cover_material_is_read_from_the_flyer(db):
-    """"water closet with PP seat cover" — only the flyer ever says which."""
-    _product(db, "ZZT-SEAT-1", "SORENTO ONE PIECE WC ZZT-SEAT-1")
-    _flyer(db, "ZZT-SEAT-1", "Washdown With Rimless. *PP Seat Cover")
-
-    derive_for_code(db, "ZZT-SEAT-1")
-
-    assert _value(db, "ZZT-SEAT-1", "seat_material") == "pp"
-    assert _provenance(db, "ZZT-SEAT-1")["seat_material"]["source"] == "flyer"
-
-
-def test_the_seat_material_stays_off_products_that_have_no_seat(db):
-    # Gated to Water Closet, so a tap whose flyer happens to say PP does not gain one.
-    _product(db, "ZZT-SEAT-2", "SORENTO BASIN TAP ZZT-SEAT-2")
-    _flyer(db, "ZZT-SEAT-2", "Basin Tap. *PP Seat Cover")
-
-    derive_for_code(db, "ZZT-SEAT-2")
-
-    assert _value(db, "ZZT-SEAT-2", "seat_material") is None

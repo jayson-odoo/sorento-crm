@@ -45,6 +45,7 @@ EXEMPTIONS: dict[str, str] = {
     "respond_contact_access_types": "JUNCTION (contact_id + access_type_code)",
     "respond_contact_market_segments": "JUNCTION (contact_id + segment_code)",
     "team_member_market_segments": "JUNCTION (team_member_id + segment_code)",
+    "team_member_brands": "JUNCTION (team_member_id + brand_code), mirrors team_member_market_segments",
     # Schema-qualified (ADR-0011): `projects.brands` is a junction, CORE `brands` is
     # not, and a bare "brands" key here would exempt the wrong table.
     "projects.brands": "JUNCTION (project_id + brand_id)",

@@ -5,6 +5,7 @@ from app.api.v1.public import (
     approval,
     catalogue,
     geo,
+    onboarding,
     portal,
     print as print_route,
     quotation_sign,
@@ -18,6 +19,10 @@ router.include_router(view.router, prefix="/view", tags=["public-view"])
 router.include_router(portal.router, prefix="/portal", tags=["public-portal"])
 router.include_router(
     quotation_sign.router, prefix="/quotation-sign", tags=["public-quotation-sign"]
+)
+# Onboarding intake, gated by the per-request token: /api/v1/public/onboarding/*
+router.include_router(
+    onboarding.router, prefix="/onboarding", tags=["public-onboarding"]
 )
 router.include_router(ai_extract.router, prefix="/portal", tags=["public-portal-ai-extract"])
 router.include_router(

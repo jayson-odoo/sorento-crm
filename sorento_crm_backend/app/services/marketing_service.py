@@ -47,6 +47,7 @@ from app.schemas.marketing import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error, handle_validation_error
 from app.services.contact_access_type_service import ContactAccessTypeService
+from app.services.company_scope import stamp_lookup_companies
 from app.services.embedding_events import publish_embedding_event
 from app.services.identifier_resolver import resolve_identifier
 from app.services.uuid_path_param import validate_uuid_path
@@ -651,12 +652,14 @@ class PromotionService:
         entity_buckets = _resolve_or_empty(self.db, entities)
         if entity_buckets is not None and not entity_buckets.has_resolved_filter:
             from app.schemas.common import PaginationResponse
-            return {
+            payload = {
                 "data": [],
                 "pagination": PaginationResponse(total=0, page=page, limit=limit),
                 "empty": True,
                 "resolved_entities": entity_buckets.as_echo(),
             }
+            stamp_lookup_companies(self.db, payload, [], product_ids=product_ids)
+            return payload
         entity_promotion_ids: Optional[list[str]] = None
         if entity_buckets is not None and entity_buckets.promotion_ids:
             entity_promotion_ids = list(entity_buckets.promotion_ids)
@@ -744,6 +747,9 @@ class PromotionService:
             "empty": total == 0,
             "fallback_used": fallback_used,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(self.db, payload, promotions, product_ids=product_ids)
         if serving_policy:
             payload["serving_policy_applied"] = True
         if entity_buckets is not None:
@@ -1334,12 +1340,16 @@ class PromotionProductService:
         _entity_buckets = _resolve_or_empty(self.db, entities)
         if _entity_buckets is not None and not _entity_buckets.has_resolved_filter:
             from app.schemas.common import PaginationResponse
-            return {
+            payload = {
                 "data": [],
                 "pagination": PaginationResponse(total=0, page=page, limit=limit),
                 "empty": True,
                 "resolved_entities": _entity_buckets.as_echo(),
             }
+            stamp_lookup_companies(
+                self.db, payload, [], product_ids=product_ids_filter
+            )
+            return payload
         if _entity_buckets is not None and _entity_buckets.promotion_ids:
             promotion_ids = list({*(promotion_ids or []), *_entity_buckets.promotion_ids})
 
@@ -1359,21 +1369,29 @@ class PromotionProductService:
                 if resolved:
                     resolved_bulk.append(resolved)
             if not resolved_bulk:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=product_ids_filter
+                )
+                return payload
             q = q.filter(PromotionProduct.promotion_id.in_(resolved_bulk))
             logger.debug("Filtering by promotion_ids count=%s", len(resolved_bulk))
         elif promotion_id:
             resolved_pid = _resolve_promotion_id_for_filter(self.db, promotion_id)
             if not resolved_pid:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=product_ids_filter
+                )
+                return payload
             logger.debug(f"Filtering by resolved promotion_id: {resolved_pid}")
             q = q.filter(PromotionProduct.promotion_id == resolved_pid)
 
@@ -1390,11 +1408,15 @@ class PromotionProductService:
             code_fields=("category_code", "category_name"),
         )
         if category_uuids is not None and not category_uuids:
-            return {
+            payload = {
                 "data": [],
                 "pagination": {"total": 0, "page": page, "limit": limit},
                 "empty": True,
             }
+            stamp_lookup_companies(
+                self.db, payload, [], product_ids=product_ids_filter
+            )
+            return payload
         brand_uuids = resolve_identifier(
             self.db,
             brand_id,
@@ -1402,11 +1424,15 @@ class PromotionProductService:
             code_fields=("brand_code", "brand_name"),
         )
         if brand_uuids is not None and not brand_uuids:
-            return {
+            payload = {
                 "data": [],
                 "pagination": {"total": 0, "page": page, "limit": limit},
                 "empty": True,
             }
+            stamp_lookup_companies(
+                self.db, payload, [], product_ids=product_ids_filter
+            )
+            return payload
 
         needs_product_join = (
             bool(query)
@@ -1606,6 +1632,11 @@ class PromotionProductService:
             "empty": total == 0,
             "fallback_used": fallback_used,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(
+            self.db, payload, products, product_ids=product_ids_filter
+        )
         if serving_policy:
             payload["serving_policy_applied"] = True
         if _entity_buckets is not None:

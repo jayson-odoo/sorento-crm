@@ -419,9 +419,9 @@ class TestPerRouteGates:
         # tests/test_settings_app_config_gate.py, where the settings singleton is
         # seeded with non-null sensitive values so its 200 body and its
         # /app-config sibling can be asserted together. (The structural sweep
-        # below covers 38 gated routes in total - the other 12 are the
+        # below covers 42 gated routes in total - the other 16 are the 12
         # users/roles/permissions reads that were already gated before this work
-        # and have their own tests.)
+        # and the 4 onboarding reads, both of which have their own tests.)
         assert len(self.specs) == 25, "one entry per gated route except GET /settings/"
 
     def test_denied_without_permission(self, api):
@@ -600,7 +600,7 @@ def _is_gated(route) -> bool:
 class TestStructuralCoverage:
     def test_there_are_user_management_get_routes_to_check(self):
         # UAC4.2's whole point breaks if this is vacuously empty. 45 is the real
-        # count now the sweep covers the whole package - 38 gated + 7 exceptions.
+        # count now the sweep covers the whole package - 39 gated + 7 exceptions.
         # (It was 27 under the old seven-name scope: 13 gated + 13 exceptions
         # when written, then 24 gated + 3 exceptions once Q1, Q2 and Q3 were
         # decided, Q2 also adding /settings/app-config.)
@@ -620,24 +620,30 @@ class TestStructuralCoverage:
             f"or add it to _EXCEPTION_ALLOWLIST with a reason; see {_PLAN_PATH}"
         )
 
-    def test_gated_routes_match_the_thirty_eight_mounted_in_the_package(self):
+    def test_gated_routes_match_the_set_mounted_in_the_package(self):
         """Every gated GET in the package, as an exact set rather than a count:
         a route that loses its gate fails here even if another route gains one.
 
-        Two groups. The 26 this PR series is responsible for - the plan's audit
+        Three groups. The 26 this PR series is responsible for - the plan's audit
         table (13), the Q1/Q2/Q3 decisions (8 contacts GETs + the settings blob +
-        2 reference catalogs) and the 2 system-logs reads - and the 12 in
+        2 reference catalogs) and the 2 system-logs reads - the 12 in
         `users.py` / `roles.py` / `permissions.py` that were already correctly
-        gated before any of it. Those 12 are new to this assertion only because
-        the sweep now covers the whole package; nothing about them changed.
+        gated before any of it, and the 4 onboarding reads (the review queue, its
+        neighbours, one request, and the access templates). Those 12 are new to
+        this assertion only because the sweep now covers the whole package;
+        nothing about them changed.
+
+        Adding a gated GET to the package is expected to fail here once: name it
+        below so the gate is stated rather than counted.
         """
         gated_paths = {r.path for r in _mounted_get_routes() if _is_gated(r)}
-        assert len(gated_paths) == 38
+        assert len(gated_paths) == 42
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",
             "/api/v1/user-management/teams/{team_id}/members",
             "/api/v1/user-management/teams/{team_id}/members/{user_id}/market-segments",
+            "/api/v1/user-management/teams/{team_id}/members/{user_id}/brands",
             "/api/v1/user-management/access-agents/",
             "/api/v1/user-management/access-agents/contact-access",
             "/api/v1/user-management/access-agents/neighbours",
@@ -681,6 +687,14 @@ class TestStructuralCoverage:
             "/api/v1/user-management/permissions/",
             "/api/v1/user-management/permissions/select",
             "/api/v1/user-management/permissions/{permission_id}",
+            # Onboarding review. Reads carry `.view`; `neighbours` is listed in its
+            # own right because it is declared before `{request_id}` so the router
+            # cannot swallow it as an id, and a gate lost there would leak the
+            # queue's shape.
+            "/api/v1/user-management/onboarding/requests",
+            "/api/v1/user-management/onboarding/requests/neighbours",
+            "/api/v1/user-management/onboarding/requests/{request_id}",
+            "/api/v1/user-management/onboarding/templates",
         }
 
     def test_allowlist_paths_are_actually_mounted_and_ungated(self):

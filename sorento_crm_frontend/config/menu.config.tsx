@@ -4,7 +4,6 @@ import {
   Badge,
   Bell,
   Bitcoin,
-  Bolt,
   Book,
   BookOpen,
   Briefcase,
@@ -15,7 +14,6 @@ import {
   CheckCircle,
   Clock,
   Code,
-  Codepen,
   Coffee,
   File as DocumentIcon,
   Euro,
@@ -44,7 +42,6 @@ import {
   Package,
   Users as PeopleIcon,
   Plug,
-  ScrollText,
   Settings,
   Share2,
   Shield,
@@ -53,9 +50,7 @@ import {
   ShoppingCart,
   SquareMousePointer,
   Star,
-  Theater,
   TrendingUp,
-  Truck,
   UserCheck,
   UserCircle,
   Users,
@@ -307,6 +302,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'user_management.users.view',
       },
       {
+        title: 'Onboarding Requests',
+        path: '/user-management/onboarding-requests',
+        permission: 'user_management.onboarding.view',
+      },
+      {
         title: 'Roles',
         path: '/user-management/roles',
         permission: 'user_management.roles.view',
@@ -522,6 +522,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sla-management/sla-policies',
       },
       {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
+      },
+      {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
@@ -540,6 +545,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
       },
       {
         title: 'KPI Dashboard',
@@ -581,6 +591,11 @@ export const MENU_SIDEBAR: MenuConfig = [
     {
       title: 'Product Specifications',
       path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Spec Verification',
+      path: '/master-data-management/spec-verification',
       permission: 'master_data.products.view',
     },
     {
@@ -967,6 +982,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Respond.io Workspaces',
         path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
+        title: 'Respond.io Contacts',
+        path: '/system-management/respond-contacts',
         permission: 'system.respond_workspaces.view',
       },
       {
@@ -1379,6 +1399,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/users',
       },
       {
+        title: 'Onboarding Requests',
+        path: '/user-management/onboarding-requests',
+      },
+      {
         title: 'Roles',
         path: '/user-management/roles',
       },
@@ -1475,6 +1499,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/sla-management/sla-policies',
       },
       {
+        title: 'Conversations',
+        path: '/sla-management/conversations',
+        permission: 'sla_management.conversations.view',
+      },
+      {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
@@ -1493,6 +1522,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'Message Snippets',
+        path: '/sla-management/message-snippets',
+        permission: 'sla_management.message_snippets.view',
       },
       {
         title: 'KPI Dashboard',
@@ -1534,6 +1568,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     {
       title: 'Product Specifications',
       path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Spec Verification',
+      path: '/master-data-management/spec-verification',
       permission: 'master_data.products.view',
     },
     {
@@ -1920,6 +1959,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Respond.io Workspaces',
         path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
+        title: 'Respond.io Contacts',
+        path: '/system-management/respond-contacts',
         permission: 'system.respond_workspaces.view',
       },
     ],

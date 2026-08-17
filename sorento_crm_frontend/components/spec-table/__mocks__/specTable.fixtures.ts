@@ -6,6 +6,9 @@
  * real catalogue holds and each was got wrong at least once by something upstream:
  *
  *  - a derived value, a flyer value, a category value and an authored one
+ *  - a value PROMOTED from the flyer, which is authored now and carries
+ *    `migrated_from: 'flyer'` so a person can tell why something they never typed
+ *    reads "Set by hand"
  *  - a removed key, which exists ONLY in `provenance` and must produce NO row -
  *    the tombstone is the server's, so re-derivation will not refill it
  *  - an open `human_override_conflict`
@@ -56,6 +59,13 @@ export const MOCK_REGISTRY: SpecKeyDefinition[] = [
     allowed_values: [],
   },
   {
+    spec_key: 'flush_type',
+    label: 'Flush type',
+    data_type: 'text',
+    unit: null,
+    allowed_values: ['washdown', 'siphonic'],
+  },
+  {
     spec_key: 'shape',
     label: 'Shape',
     data_type: 'text',
@@ -99,6 +109,7 @@ export const MOCK_VALUES: Record<string, StoredSpecValue> = {
   dim_length: { value: 680, unit: 'mm' },
   dim_height: { value: 770, unit: 'mm' },
   is_smart: { value: true },
+  flush_type: { value: 'washdown' },
   shape: { value: 'square' },
   class: { value: 'water_closet' },
   model_note: { value: 'Second batch, revised trap' },
@@ -125,6 +136,14 @@ export const MOCK_PROVENANCE: Record<string, StoredSpecProvenance> = {
     evidence: 'Washdown With Rimless. D: L680xW375xH770mm. *PP Seat Cover',
   },
   is_smart: { source: 'derived', confidence: 0.7, evidence: 'AUTO INDUCTION TOILET' },
+  // Promoted by the flyer migration: authored now, and the evidence keeps the words
+  // it was read from behind the "flyer: " prefix the migration wrote.
+  flush_type: {
+    source: 'human',
+    confidence: 0.8,
+    evidence: 'flyer: Washdown With Rimless',
+    migrated_from: 'flyer',
+  },
   // Authored, and derivation now reads something else: the conflict below.
   shape: { source: 'human', confidence: 1, evidence: 'set by merchandiser@sorento.com.my' },
   class: { source: 'category', confidence: 0.5, evidence: 'SRT-WC' },

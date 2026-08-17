@@ -12,9 +12,11 @@ teaching the scope resolver to resolve by phone - would make every untagged cont
 unroutable. See the UAC's D6 / AC-A6.
 
 Resolution order (AC-A1), first hit wins:
-    1. an explicit ``company_code`` in the request body (override, D3)
-    2. the contact's single ``respond_contact_companies`` row
-    3. the default company (Sorento)
+    1. an explicit ``company_id`` in the request body (n8n already resolved the
+       product, so it knows; a malformed or unknown id is ignored, never an error)
+    2. an explicit ``company_code`` in the request body (override, D3)
+    3. the contact's single ``respond_contact_companies`` row
+    4. the default company (Sorento)
 
 A contact in MORE than one company resolves to no company at step 2 and falls to the
 default, flagged ``ambiguous`` - never an arbitrary pick (AC-A3).
@@ -22,6 +24,7 @@ default, flagged ``ambiguous`` - never an arbitrary pick (AC-A3).
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import NamedTuple, Optional
 
 from sqlalchemy.orm import Session
@@ -42,6 +45,25 @@ class RoutingCompany(NamedTuple):
     company_code: Optional[str]
     source: str  # "body" | "contact" | "default"
     ambiguous: bool = False
+
+
+def _company_by_id(db: Session, company_id: str) -> Optional[Company]:
+    """The company with this id, or None when the id is unknown or malformed.
+
+    The uuid is validated in Python BEFORE the query on purpose: handing Postgres a
+    non-uuid string raises, and a raised error aborts the caller's whole transaction
+    - so a typo in an n8n field would take out the request rather than falling
+    through to the next resolution step.
+    """
+    wanted = (company_id or "").strip()
+    if not wanted:
+        return None
+    try:
+        uuid.UUID(wanted)
+    except (AttributeError, TypeError, ValueError):
+        logger.info("routing-company: malformed company_id=%r -> ignored", wanted)
+        return None
+    return db.query(Company).filter(Company.id == wanted).first()
 
 
 def _company_by_code(db: Session, code: str) -> Optional[Company]:
@@ -160,6 +182,7 @@ def company_for_contact(
 def resolve_routing_company(
     db: Session,
     *,
+    company_id: Optional[str] = None,
     company_code: Optional[str] = None,
     contact_id: Optional[str] = None,
     space_id: Optional[str] = None,
@@ -167,10 +190,27 @@ def resolve_routing_company(
 ) -> RoutingCompany:
     """Resolve the company an assignment should route to. Never raises (AC-J1).
 
-    Every failure - unknown code, unknown contact, untagged contact, a database
-    error - degrades to the default company so routing continues.
+    Precedence: an explicit ``company_id`` > an explicit ``company_code`` > the
+    contact > the default. n8n's spine already resolved the product and therefore
+    knows the company id, so letting it say so directly saves a lookup that can
+    disagree; both explicit forms report ``source="body"``.
+
+    Every failure - unknown id, unknown code, unknown contact, untagged contact, a
+    database error - degrades to the default company so routing continues.
     """
     try:
+        company = _company_by_id(db, company_id)
+        if company is not None:
+            return RoutingCompany(
+                company_id=str(company.id),
+                company_code=str(company.code),
+                source="body",
+            )
+        if (company_id or "").strip():
+            logger.info(
+                "routing-company: unknown company_id=%r -> falling through", company_id
+            )
+
         wanted_code = (company_code or "").strip()
         if wanted_code:
             company = _company_by_code(db, wanted_code)

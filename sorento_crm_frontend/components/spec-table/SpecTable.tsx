@@ -237,7 +237,11 @@ export function SpecTable({
         enableSorting: false,
         meta: { headerTitle: 'Source' },
         cell: ({ row }) => (
-          <SpecSourceBadge source={row.original.source} evidence={row.original.evidence} />
+          <SpecSourceBadge
+            source={row.original.source}
+            evidence={row.original.evidence}
+            migratedFrom={row.original.migratedFrom}
+          />
         ),
       },
       {

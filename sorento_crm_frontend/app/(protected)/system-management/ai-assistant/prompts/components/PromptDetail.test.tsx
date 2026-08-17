@@ -2,9 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PromptDetail } from './PromptDetail';
-import type { PromptVersionDetail, PromptVersionsResponse } from '../../services/aiPromptsService';
+import type {
+  PromptKeySummary,
+  PromptVersionDetail,
+  PromptVersionsResponse,
+} from '../../services/aiPromptsService';
 
 const usePromptVersions = vi.fn();
+const usePromptKeys = vi.fn();
 const usePromptVersion = vi.fn();
 const useSaveVersion = vi.fn();
 const useSetLabel = vi.fn();
@@ -17,9 +22,10 @@ vi.mock('../../hooks/useAIAssistantPrompts', () => ({
   useSaveVersion: () => useSaveVersion(),
   useSetLabel: () => useSetLabel(),
   useDryRun: () => useDryRun(),
-  // The "Runs on" card lives in the sidebar and reads the key list for this agent's
-  // model. Not the subject of these tests; stubbed so it renders inert.
-  usePromptKeys: () => ({ data: [] }),
+  // The key list is read twice on this screen: by the "Runs on" card for the agent's
+  // model, and here for `dry_runnable`, which is a property of the KEY and is absent
+  // from the versions response.
+  usePromptKeys: () => usePromptKeys(),
   useSetAgentModel: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock('@/hooks/usePermissions', () => ({
@@ -55,6 +61,23 @@ const BASE: PromptVersionDetail = {
   labels: ['production'],
 };
 
+/** The key list row for `router`, as the prompts list serves it. */
+const KEY_ROW: PromptKeySummary = {
+  name: 'router',
+  role: 'Intent / routing',
+  active: true,
+  activates_in: null,
+  variables: ['current_date'],
+  dry_runnable: true,
+  production_version: 2,
+  staging_version: null,
+  latest_version: 2,
+  updated_at: '2026-07-03T09:00:00',
+  updated_by_name: 'Jay',
+  provider: null,
+  model: null,
+};
+
 const saveMutate = vi.fn();
 const labelMutate = vi.fn();
 
@@ -68,13 +91,20 @@ function renderDetail() {
 }
 
 beforeEach(() => {
-  [usePromptVersions, usePromptVersion, useSaveVersion, useSetLabel, useDryRun, useHasPermission].forEach((m) =>
-    m.mockReset(),
-  );
+  [
+    usePromptVersions,
+    usePromptVersion,
+    usePromptKeys,
+    useSaveVersion,
+    useSetLabel,
+    useDryRun,
+    useHasPermission,
+  ].forEach((m) => m.mockReset());
   saveMutate.mockReset();
   labelMutate.mockReset();
   useHasPermission.mockReturnValue(true);
   usePromptVersions.mockReturnValue({ data: META, isLoading: false, isError: false });
+  usePromptKeys.mockReturnValue({ data: [KEY_ROW], isLoading: false, isError: false });
   usePromptVersion.mockReturnValue({ data: BASE, isLoading: false, isError: false });
   useSaveVersion.mockReturnValue({ mutate: saveMutate, isPending: false });
   useSetLabel.mockReturnValue({ mutate: labelMutate, isPending: false });
@@ -125,6 +155,46 @@ describe('PromptDetail', () => {
     fireEvent.click(screen.getByTestId('publish-production-1'));
     expect(screen.getByText('Publish router v1 to production?')).toBeInTheDocument();
     expect(screen.getByText(/changes the live assistant immediately/i)).toBeInTheDocument();
+  });
+
+  it('offers the dry-run for an active key that the assistant turn actually reads', () => {
+    renderDetail();
+    expect(screen.getByTestId('dry-run-input')).toBeInTheDocument();
+    expect(screen.queryByTestId('dry-run-disabled')).not.toBeInTheDocument();
+  });
+
+  it('disables the dry-run for a key outside the assistant pipeline, and says why', () => {
+    usePromptKeys.mockReturnValue({
+      data: [{ ...KEY_ROW, dry_runnable: false }],
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    expect(screen.queryByTestId('dry-run-input')).not.toBeInTheDocument();
+    expect(screen.getByTestId('dry-run-disabled')).toHaveTextContent(
+      /not part of the assistant pipeline/i,
+    );
+  });
+
+  it('keeps the dormant reason when a dormant key is also not dry-runnable', () => {
+    usePromptVersions.mockReturnValue({
+      data: { ...META, active: false, activates_in: 'M2.5' },
+      isLoading: false,
+      isError: false,
+    });
+    usePromptKeys.mockReturnValue({
+      data: [{ ...KEY_ROW, active: false, dry_runnable: false }],
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    expect(screen.getByTestId('dry-run-disabled')).toHaveTextContent(/Dormant key/i);
+  });
+
+  it('leaves the dry-run offered while the key list is still loading', () => {
+    usePromptKeys.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    renderDetail();
+    expect(screen.getByTestId('dry-run-input')).toBeInTheDocument();
   });
 
   it('shows an AlertDialog (not window.confirm) when switching versions with unsaved edits', () => {

@@ -46,6 +46,14 @@ export type SearchableMultiSelectProps = {
   selectedOptions?: SearchableMultiSelectOption[];
   /** Trigger size — shared with Radix SelectTrigger. Default `md`. */
   size?: SelectTriggerSize;
+  /**
+   * Size the menu to its options and WRAP a long label instead of truncating it.
+   * Same contract as `SearchableSelect.wrapOptions`, kept in step so the two
+   * halves of one standard cannot behave differently.
+   */
+  wrapOptions?: boolean;
+  /** Forwarded to the trigger so a <Label htmlFor> can point at it, as SearchableSelect does. */
+  id?: string;
   placeholder?: string;
   emptyMessage?: string;
   disabled?: boolean;
@@ -79,6 +87,8 @@ export function SearchableMultiSelect({
   fetchOptions,
   selectedOptions,
   size,
+  wrapOptions = false,
+  id,
   placeholder = 'Select...',
   emptyMessage = 'No results found.',
   disabled = false,
@@ -229,6 +239,7 @@ export function SearchableMultiSelect({
         <button
           type="button"
           disabled={isDisabled}
+          id={id}
           data-slot="searchable-multi-select-trigger"
           // Radix SelectTrigger exposes role=combobox; keep parity so callers and tests
           // can find the trigger by role, and screen readers announce expanded state.
@@ -242,11 +253,16 @@ export function SearchableMultiSelect({
           )}
         >
           {renderTriggerLabel ? (
-            <span className="flex-1 text-left">{renderTriggerLabel(chosen)}</span>
+            <span className="min-w-0 flex-1 text-left">{renderTriggerLabel(chosen)}</span>
           ) : chosen.length === 0 ? (
             <span className="flex-1 truncate text-left text-muted-foreground">{placeholder}</span>
           ) : (
-            <span className="flex flex-1 flex-wrap gap-1">
+            // `min-w-0` is what actually makes the chips wrap inside the
+            // trigger: a flex child refuses to shrink below its content without
+            // it, so in a narrow control the chips ran past the border - and
+            // each chip's remove X went with them, landing over whatever sat
+            // beside the field.
+            <span className="flex min-w-0 flex-1 flex-wrap gap-1">
               {chosen.map((opt) => (
                 <span
                   key={opt.value}
@@ -279,11 +295,15 @@ export function SearchableMultiSelect({
       <PopoverContent className={cn(
             // Cap to the space Radix measured, or a long list makes the menu taller than
             // the viewport and the search box gets pushed off-screen on short windows.
-            //
-            // Same floor as SearchableSelect: the menu follows its trigger but never goes
-            // below 16rem, so a narrow cell cannot squeeze the list to one word per line.
-            // The two halves of this standard are kept identical on purpose.
-            'w-[max(var(--radix-popper-anchor-width),16rem)] max-w-(--radix-popper-available-width) max-h-(--radix-popper-available-height) flex flex-col p-0',
+            'max-h-(--radix-popper-available-height) flex flex-col p-0',
+            wrapOptions
+              ? // Grow to the widest option, never past the viewport, and never
+                // narrower than the control it hangs off.
+                'w-auto min-w-(--radix-popper-anchor-width) max-w-[min(28rem,calc(100vw-2rem))]'
+              : // Same floor as SearchableSelect: the menu follows its trigger but never
+                // goes below 16rem, so a narrow cell cannot squeeze the list to one word
+                // per line. The two halves of this standard are kept identical on purpose.
+                'w-[max(var(--radix-popper-anchor-width),16rem)] max-w-(--radix-popper-available-width)',
             className,
           )} align="start">
         <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">
@@ -303,7 +323,10 @@ export function SearchableMultiSelect({
               </button>
             </div>
           ) : null}
-          <CommandList className="min-h-0 flex-1 overflow-y-auto">
+          {/* The list is a listbox where more than one row can be chosen at
+              once. Saying so is what tells a reader that a tick on one row does
+              not cancel the tick on another. */}
+          <CommandList aria-multiselectable className="min-h-0 flex-1 overflow-y-auto">
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" /> Searching...
@@ -322,18 +345,39 @@ export function SearchableMultiSelect({
                       // sharing a label would otherwise collide in cmdk's keyboard nav.
                       value={opt.value}
                       disabled={opt.disabled}
+                      // Whether this option is CHOSEN. It has to be an attribute
+                      // and not only the tick below, because the tick is a bare
+                      // icon with no text: to anything reading the page rather
+                      // than looking at it - a screen reader, or a browser agent
+                      // reading the accessibility tree - the chosen rows were
+                      // indistinguishable from the unchosen ones.
+                      //
+                      // It cannot be `aria-selected`, which is the ARIA state for
+                      // exactly this, because cmdk owns that attribute on its
+                      // rows and puts it on the KEYBOARD-HIGHLIGHTED row instead.
+                      // The highlight follows the last row you touched, so a
+                      // reader saw "selected" jump from option to option on every
+                      // click and reported a working multi-select as a single
+                      // select. `aria-checked` is a supported state on
+                      // `role="option"` and is the one this component controls.
+                      aria-checked={isSelected}
                       onSelect={() => toggle(opt.value)}
                       className="flex items-start gap-2"
                     >
-                      <div className="mt-0.5 flex size-4 items-center justify-center rounded-sm border border-input">
+                      <div
+                        aria-hidden
+                        className="mt-0.5 flex size-4 items-center justify-center rounded-sm border border-input"
+                      >
                         {isSelected ? <Check className="size-3" /> : null}
                       </div>
                       {renderOption ? (
                         renderOption(opt)
                       ) : (
-                      <div className="flex flex-1 flex-col">
+                      <div className="flex flex-1 flex-col min-w-0">
                         <div className="flex items-center gap-2">
-                          <span>{opt.label}</span>
+                          <span className={wrapOptions ? 'break-words' : undefined}>
+                            {opt.label}
+                          </span>
                           {opt.badgeText ? (
                             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900">
                               {opt.badgeText}
@@ -341,7 +385,13 @@ export function SearchableMultiSelect({
                           ) : null}
                         </div>
                         {opt.description ? (
-                          <span className="truncate text-xs text-muted-foreground" title={opt.description}>
+                          <span
+                            className={cn(
+                              'text-xs text-muted-foreground',
+                              wrapOptions ? 'break-words' : 'truncate',
+                            )}
+                            title={opt.description}
+                          >
                             {opt.description}
                           </span>
                         ) : null}

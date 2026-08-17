@@ -130,13 +130,12 @@ class ProductSpecRegistry(Base):
 class ProductFlyerText(Base):
     """What the printed flyer says about a product code.
 
-    A second text source for derivation, and a much richer one for the things marketing
-    prints but nobody typed into the master: material, finish, and features like a
-    drainer or an overflow. Keyed on the CODE for the same reason derivation is - one
-    card describes the model, and the model exists once per company.
-
-    Stored rather than read from the flyer record on demand because derivation runs over
-    the whole catalog and must not depend on the dealer-kit schema being present.
+    RETIRED AS AN INPUT (PR 4, AC-B.18): derivation no longer reads this table, and a
+    flyer reaches specs only as reviewed proposals from pasted text. The table stays
+    until the later deploy that drops it (RUNBOOK-flyer-promote.md, step 6), so a
+    rollback still has the text. It was a second text source for derivation, keyed on
+    the CODE for the same reason derivation is - one card describes the model, and the
+    model exists once per company.
     """
 
     __tablename__ = "product_flyer_text"
@@ -308,4 +307,69 @@ class ProductFindabilityResult(Base):
     __table_args__ = (
         Index("ix_findability_results_run", "run_id"),
         Index("ix_findability_results_boundary", "boundary"),
+    )
+
+
+class ProductSpecVerification(Base):
+    """Who vouched for a code's specs, and who or what took that back.
+
+    Keyed on `product_code` for the same reason derivation is: the model exists once
+    per company and a person confirming its specs is confirming the model, not one
+    company's copy of it. Deliberately NOT company-scoped, matching every other spec
+    table (AC-D.1).
+
+    Append-only in the sense that matters: a verification is one row, stamped once,
+    and it is never deleted or re-pointed. Withdrawing it fills the `invalidated_*`
+    fields on that same row, so the row still answers both halves of the question -
+    who vouched for this, and who (or what) took it back. Re-verifying afterwards
+    inserts a NEW row and leaves the withdrawn one exactly as it was.
+
+    `verified_by_user_id` is text with no FK on purpose: a deleted user must not take
+    the history of what they verified with them.
+
+    The state a screen shows is DERIVED from these rows (AC-D.2) and never stored: no
+    rows reads unverified, an active row reads verified, a latest row invalidated by
+    hand reads unverified, and any other invalidation reads needs-re-verify with the
+    diff that caused it. Nothing re-hashes values to decide a pill.
+    """
+
+    __tablename__ = "product_spec_verifications"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    product_code = Column(String(100), nullable=False)
+    # `internal` today. `supplier` arrives with the supplier portal in milestone 2, and
+    # the partial unique index below is per party so the two stamps coexist on one code
+    # without either being able to overwrite the other.
+    party = Column(String(16), nullable=False, server_default="internal", default="internal")
+    supplier_id = Column(UUID(as_uuid=False), nullable=True)
+    verified_by_user_id = Column(Text, nullable=True)
+    # Stamped rather than joined: a no-FK text id cannot be joined for a display name,
+    # and the repo forbids UUIDs in the UI.
+    verified_by_name = Column(Text, nullable=True)
+    verified_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    values_hash = Column(String(64), nullable=False)
+    invalidated_at = Column(DateTime(timezone=False), nullable=True)
+    # values_changed - a write moved the values out from under the stamp.
+    # manual_unverify - a person withdrew it.
+    invalidated_reason = Column(String(32), nullable=True)
+    # {"changed": [{"spec_key", "was", "now"}]} for values_changed, null for a manual
+    # withdrawal: a withdrawal has no diff, and rendering one with an empty diff would
+    # misrepresent it as a re-check.
+    invalidated_diff = Column(JSONB, nullable=True)
+    # Both null means the system did it.
+    invalidated_by_user_id = Column(Text, nullable=True)
+    invalidated_by_name = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        # One live stamp per code per party. The partial index is what makes a
+        # concurrent double-verify land as one row rather than two.
+        Index(
+            "uq_product_spec_verifications_active",
+            "product_code",
+            "party",
+            unique=True,
+            postgresql_where=text("invalidated_at IS NULL"),
+        ),
+        Index("ix_product_spec_verifications_code", "product_code"),
     )

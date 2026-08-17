@@ -42,9 +42,10 @@ logger = logging.getLogger(__name__)
 # treat a supplier-submitted entry as machine-derived everywhere that test runs.
 # `supplier` has no writer in this milestone; it is reserved for the supplier portal.
 # `flyer` joins this set in the bulk flyer-ingestion slice after PRs 1-4, once the
-# promote migration has re-stamped the legacy entries, and not before (AC-F.7):
-# derivation writes `source='flyer'` itself on every run today, so an early flip would
-# badge a machine read as a person's own work.
+# promote migration (367) has re-stamped the legacy entries in every environment, and
+# not before (AC-F.7): derivation no longer writes `source='flyer'` (PR 4, AC-B.18),
+# but rows written before the promote still carry it, so an early flip would badge a
+# machine read as a person's own work.
 AUTHORED_SOURCES: frozenset[str] = frozenset({"human", "supplier"})
 
 DEFAULT_AUTHORED_SOURCE = "human"
@@ -328,6 +329,61 @@ def _apply(values: dict, provenance: dict, entry: dict) -> None:
     provenance[key] = stamp
 
 
+def lock_product_code(db: Session, product_code: str) -> list[str]:
+    """Serialise every writer, and the verify guard, on ONE product code.
+
+    `FOR UPDATE` on the code's spec ROWS is not enough on its own: a code with no spec
+    row yet has nothing to lock, so two concurrent first-writes, or a first-write
+    racing a verify, both pass their reads and the second lands on top of the first
+    with nothing recording that it happened. A product row, on the other hand, always
+    exists for a code anyone can write - that is what makes the code real - so locking
+    the code's `products` rows serialises the writers whether or not a spec row does.
+
+    Read all-companies and ordered by product id, and every caller (`verify_code`,
+    `apply_spec_values`, `derive_for_code`) takes the SAME rows in the SAME order,
+    products first and `product_specifications` second, so the lock order is consistent
+    and two writers on overlapping codes cannot deadlock each other.
+
+    An earlier version keyed a `pg_advisory_xact_lock` on the code text instead. It
+    closed the same race, but it locked a name rather than data, so a second SESSION
+    blocked on it whether or not it could see anything the caller had written - which
+    is what the post-commit re-derive listener is (it opens a fresh `SessionLocal`),
+    and under the tests' nested transaction (where "commit" only releases a savepoint)
+    it waited on a lock its own caller would never release.
+
+    Row locks narrow that, they do not abolish it. What is gone is the case where the
+    caller INSERTED the product rows inside its own transaction: a second session
+    cannot see a row that has not been committed, so there is nothing for it to block
+    on. A caller that UPDATED already-committed product rows still holds locks on rows
+    the fresh session CAN see, so under the rolled-back test fixture the `after_update`
+    re-derive can still queue behind a transaction that will never commit; a test in
+    that shape has to commit for real or drive derivation itself. Production is
+    unaffected either way - the `after_commit` hook runs after a real commit, and the
+    caller's locks are released by then.
+
+    Held to the end of the transaction, so the caller's own commit releases it. Taken
+    per code and never for a whole batch, which is what keeps `derive_all` bounded: its
+    per-chunk commit releases every code it has taken so far. Re-entrant, so
+    `apply_spec_values` calling `derive_for_code` inside its own lock is fine.
+
+    Defined here because this module is already the one writer of `spec.values`, and
+    the verification service imports it from here so there is exactly one definition.
+
+    Returns the locked product ids. The race itself is not unit-testable (it needs two
+    concurrent transactions); what the tests pin is that a code with no spec row still
+    writes normally under it.
+    """
+    with company_scope(db, None):
+        return [
+            row[0]
+            for row in db.query(Product.id)
+            .filter(Product.product_code == product_code)
+            .order_by(Product.id)
+            .with_for_update()
+            .all()
+        ]
+
+
 def apply_spec_values(
     db: Session,
     product_code: str,
@@ -352,12 +408,20 @@ def apply_spec_values(
     prepared = [_prepare(entry, actor) for entry in entries]
 
     # Imported at call time: derivation imports this module, and this is the one edge
-    # that would close the cycle.
+    # that would close the cycle. Verification imports the hash from here, so it is on
+    # the same footing.
     from app.services.product_spec_derivation import derive_for_code
+    from app.services.product_spec_verification import invalidate_on_values_change
 
     with company_scope(db, None):
-        products = db.query(Product).filter(Product.product_code == product_code).all()
-        if not products:
+        # Locked BEFORE the code's rows are read, and the id list IS the lock's: a list
+        # assembled first is a list assembled outside the lock, so a copy a concurrent
+        # write had just added would be written past here. Also before the spec-row
+        # lock below, and in the same order the verify guard takes them (products, then
+        # `product_specifications`): the FOR UPDATE on the spec rows alone cannot
+        # serialise a code that holds no spec row yet.
+        product_ids = lock_product_code(db, product_code)
+        if not product_ids:
             # Unconditional, and BEFORE the empty-batch return: an unknown code is an
             # unknown code whether or not the caller had anything to write, and a
             # 404-or-200 that turns on the length of the batch is a contract nobody can
@@ -374,12 +438,13 @@ def apply_spec_values(
         existing = {
             spec.product_id: spec
             for spec in db.query(ProductSpecifications)
-            .filter(ProductSpecifications.product_id.in_([p.id for p in products]))
+            .filter(ProductSpecifications.product_id.in_(product_ids))
             # Locked for the duration: two people editing different keys on one code
             # would otherwise both read the row, both write their whole `values` dict
             # back, and the second commit would erase the first with nothing recording
             # that it happened. PR 3's verify guard reads the same rows in the same
             # transaction and needs the same lock.
+            .order_by(ProductSpecifications.product_id)
             .with_for_update()
             .all()
         }
@@ -396,16 +461,33 @@ def apply_spec_values(
         )
 
         rows_written = 0
-        for product in products:
-            spec = existing.get(product.id)
+        # One before/after pair speaks for the whole code, and it must come from the
+        # copy the verify hash is defined on - `current_values_hash` reads the lowest
+        # product id that HAS a spec row - not from whichever copy iterates first: a
+        # fresh no-spec copy would hand back an empty "before" and withdraw a stamp
+        # over canonical values that never changed. Captured around the write rather
+        # than re-read afterwards: `write_spec_row` replaces the column, and a
+        # verification stamp has to be withdrawn against what it was actually made
+        # against. After the writes every copy holds a spec row, so the canonical
+        # "after" copy is the lowest product id outright.
+        before_values: dict = (
+            dict(existing[min(existing)].values or {}) if existing else {}
+        )
+        # The helper returns the ids in product-id order, so the lowest is the first.
+        canonical_after_id = product_ids[0]
+        after_values: dict = {}
+        for product_id in product_ids:
+            spec = existing.get(product_id)
             if spec is None:
-                spec = ProductSpecifications(product_id=product.id)
+                spec = ProductSpecifications(product_id=product_id)
                 db.add(spec)
 
             values = dict(spec.values or {})
             provenance = dict(spec.provenance or {})
             for entry in prepared:
                 _apply(values, provenance, entry)
+            if product_id == canonical_after_id:
+                after_values = values
 
             # `derived_hash=None` is required, not tidiness: derivation's
             # skip-if-unchanged path would otherwise suppress the conflict computation
@@ -420,6 +502,14 @@ def apply_spec_values(
             rows_written += 1
 
         db.flush()
+        # A stamp is made against a set of values, so a person changing one withdraws
+        # it - in the same transaction as the write, not on the next catalogue run.
+        invalidate_on_values_change(
+            db,
+            product_code,
+            before_values=before_values,
+            after_values=after_values,
+        )
         # In the caller's transaction, so a conflict surfaces in the same click.
         derive_for_code(db, product_code, commit=False)
 

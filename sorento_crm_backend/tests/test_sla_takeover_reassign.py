@@ -478,3 +478,40 @@ def test_non_admin_picker_still_scoped_to_their_teams(db):
     ids = {u["id"] for u in ConversationSLATrackingService(db).list_visible_users(me)}
     assert peer in ids
     assert outsider not in ids
+
+
+def test_the_picker_says_who_is_respond_linked(db):
+    """A reply sent by an unlinked user carries no real Respond sender identity,
+    so the reassign dialog badges and filters on this (UAC AC-N7). Same notion
+    of "linked" the send path uses: a mapping that is present AND is not a CRM
+    users.id parked in the column."""
+    me = _user(db, "cs-agent")
+    linked = _user(db, "cs-linked", respond_user_id="900123")
+    unlinked = _user(db, "cs-unlinked")
+    mislinked = _user(db, "cs-mislinked", respond_user_id=str(uuid.uuid4()))
+    mine = _team(db, "Mine")
+    for uid in (me, linked, unlinked, mislinked):
+        _member(db, mine, uid)
+
+    rows = {u["id"]: u for u in ConversationSLATrackingService(db).list_visible_users(me)}
+    assert rows[linked]["respond_linked"] is True
+    assert rows[unlinked]["respond_linked"] is False
+    # A CRM uuid in respond_user_id is not a Respond user id - n8n evaluates it
+    # against Respond's own users and would never match.
+    assert rows[mislinked]["respond_linked"] is False
+
+
+def test_the_admin_picker_says_who_is_respond_linked_too(db):
+    """The admin branch builds its own row list; it must not be the one that
+    forgets the flag."""
+    admin = _user(db, "admin-user")
+    linked = _user(db, "purchasing-linked", respond_user_id="900456")
+    unlinked = _user(db, "purchasing-unlinked")
+    other = _team(db, "Purchasing")
+    _member(db, other, linked)
+    _member(db, other, unlinked)
+    _make_admin(db, admin)
+
+    rows = {u["id"]: u for u in ConversationSLATrackingService(db).list_visible_users(admin)}
+    assert rows[linked]["respond_linked"] is True
+    assert rows[unlinked]["respond_linked"] is False

@@ -15,21 +15,37 @@ from sqlalchemy.orm import Session
 from app.models.access import RespondContact
 from app.models.user import User
 from app.schemas.integration import IntegrationLogCreate
-from app.services.integration_service import IntegrationLogService
-from app.services.n8n_webhook_settings import get_n8n_crm_chat_outbound_webhook_url
+from app.services.integration_service import IntegrationLogService, direct_send_retry_hold
+from app.services.n8n_webhook_settings import (
+    crm_webhook_auth_headers,
+    get_n8n_crm_chat_outbound_webhook_url,
+)
 
 logger = logging.getLogger(__name__)
 
+# Every human ticket-drawer send is logged and mirrored against the ticket itself,
+# never the form entity that happens to host the chat panel.
+HUMAN_TICKET_BUSINESS_TABLE = "conversation_sla_tracking"
+
 
 def send_crm_chat_outbound_webhook_for_log(log_id: str) -> None:
-    """POST the integration log payload to the configured webhook (own DB session)."""
+    """POST the integration log payload to the configured webhook (own DB session).
+
+    The AC-J6 shared secret is resolved HERE, per send, and travels on the HTTP
+    request only - it is never written to the log row, so no one with log-view
+    permission can read it and a rotation leaves no readable history. A manual
+    resubmit comes back through this same function and therefore sends the
+    CURRENT secret, not the one that was in force when the row was written.
+    """
     try:
         from app.database import SessionLocal
 
         bg_db = SessionLocal()
         try:
             bg_service = IntegrationLogService(bg_db)
-            bg_service.send_webhook_for_log(log_id)
+            bg_service.send_webhook_for_log(
+                log_id, extra_headers=crm_webhook_auth_headers() or None
+            )
         finally:
             bg_db.close()
     except Exception as e:
@@ -273,7 +289,13 @@ def enqueue_crm_chat_outbound_webhook(
             endpoint=url,
             http_method="POST",
             status="pending",
+            # No auth header here on purpose: the AC-J6 secret is resolved at send
+            # time (send_webhook_for_log, from the row's channel) so it never sits
+            # at rest in a table operators can read.
             created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
+            # This row is about to be POSTed by the thread below - hold it back
+            # from the retry sweeper until that has had its turn.
+            next_retry_at=direct_send_retry_hold(),
         ),
         request_payload_dict=payload_list,
     )
@@ -283,3 +305,154 @@ def enqueue_crm_chat_outbound_webhook(
         send_crm_chat_outbound_webhook_for_log(log_id)
 
     threading.Thread(target=send_async, daemon=True).start()
+
+
+def usable_respond_user_id(user: Any) -> Optional[str]:
+    """This user's REAL Respond user id, or None.
+
+    The one definition of "Respond-linked" in the codebase: present, and not a
+    CRM ``users.id`` UUID parked in the column. Used by the send path (whose
+    signal n8n evaluates against Respond's own users) AND by the reassign
+    picker's ``respond_linked`` badge, so the badge cannot promise a linkage the
+    send would then find unusable.
+    """
+    respond_id = str(getattr(user, "respond_user_id", None) or "").strip() if user else ""
+    if not respond_id or _is_crm_user_uuid(respond_id):
+        return None
+    return respond_id
+
+
+def resolve_sender_respond_user_id(
+    db: Session, crm_sender_user_id: Optional[str]
+) -> Optional[str]:
+    """Respond user id mapped to the CRM staff member who pressed Send.
+
+    None when the staff member has no mapping, or when the mapping was filled
+    with a CRM ``users.id`` UUID - which is not a Respond user id and must never
+    reach n8n (it evaluates ``user.id.toString()`` against Respond's own users).
+    """
+    if not crm_sender_user_id or not str(crm_sender_user_id).strip():
+        return None
+    user = db.query(User).filter(User.id == str(crm_sender_user_id).strip()).first()
+    return usable_respond_user_id(user)
+
+
+def _notify_human_send(
+    db: Session,
+    *,
+    business_table: str,
+    business_id: str,
+    contact_respond_io_id: str,
+    message_text: str,
+    respond_api_response: Optional[dict],
+    sender_user_id: Optional[str],
+    subject: str,
+) -> bool:
+    """The human-intervention signal itself, independent of what it hangs off.
+
+    Shared by the ticket-keyed and contact-keyed senders so the payload n8n
+    receives (``source: "User"`` + a REAL Respond user id) is one
+    implementation. ``subject`` only names the thing in the log lines.
+    """
+    try:
+        respond_user_id = resolve_sender_respond_user_id(db, sender_user_id)
+        if not respond_user_id:
+            logger.warning(
+                "respond-send-user webhook skipped for %s: sender %s has no "
+                "mapped Respond user id",
+                subject,
+                sender_user_id,
+            )
+            return False
+        enqueue_crm_chat_outbound_webhook(
+            db,
+            business_table=business_table,
+            business_id=str(business_id),
+            contact_respond_io_id=str(contact_respond_io_id),
+            message_text=message_text or "",
+            respond_api_response=(
+                respond_api_response if isinstance(respond_api_response, dict) else None
+            ),
+            space_id=None,
+            crm_sender_user_id=str(sender_user_id) if sender_user_id else None,
+            # The acting agent on a human send is the SENDER, not necessarily the
+            # ticket's assignee (a colleague can answer). Pin it on both inputs so
+            # the payload cannot fall back to anything else.
+            respond_user_id_fallback=respond_user_id,
+            assignee_respond_user_id=respond_user_id,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - the contact already has the message
+        logger.warning("respond-send-user webhook failed for %s", subject, exc_info=True)
+        return False
+
+
+def notify_human_contact_send(
+    db: Session,
+    *,
+    respond_contact_id: str,
+    contact_respond_io_id: str,
+    message_text: str,
+    respond_api_response: Optional[dict],
+    sender_user_id: Optional[str],
+) -> bool:
+    """The AC-J signal for an UNSTAMPED human send (UAC AC-N2).
+
+    A reply sent from the Conversations inbox when the sender holds no single
+    open ticket for that contact still has to stop the bot: from the contact's
+    side a human answered, whatever the CRM did or did not stamp. The only
+    difference from the ticket lane is what the outbox row is keyed on -
+    ``respond_contacts`` and the contact's own id, because there is no one
+    ticket that owns the send (and ``integration_log.business_id`` is a uuid
+    column, which ``respond_contacts.id`` satisfies).
+    """
+    return _notify_human_send(
+        db,
+        business_table="respond_contacts",
+        business_id=str(respond_contact_id),
+        contact_respond_io_id=contact_respond_io_id,
+        message_text=message_text,
+        respond_api_response=respond_api_response,
+        sender_user_id=sender_user_id,
+        subject=f"contact {respond_contact_id}",
+    )
+
+
+def notify_human_ticket_send(
+    db: Session,
+    *,
+    tracking_id: str,
+    contact_respond_io_id: str,
+    message_text: str,
+    respond_api_response: Optional[dict],
+    sender_user_id: Optional[str],
+) -> bool:
+    """Signal n8n that a HUMAN replied from a ticket drawer (UAC AC-J1/J2/J3).
+
+    A CRM API send and a bot send are indistinguishable in Respond's own webhook
+    payload (both ``source: "Developer API"``, ``user: null``), so the
+    Respond-trigger route can never carry this signal. ``respond-send-user``
+    already has a second, plain-webhook trigger with a ``source == "User"`` gate;
+    this is the CRM half of it - the drawer send path just never wired in. n8n
+    uses it to set ``is_human_intervened`` and arm the ht timeout lane, exactly
+    as a manual reply from the Respond app does.
+
+    Called ONCE per drawer send (one staff action = one intervention signal),
+    only from the human ticket paths - never from bot flows, notification tasks
+    or the shared chat-panel send, which carry no human-reply meaning.
+
+    Best-effort post-commit: the message has ALREADY reached the contact, so
+    every failure here is caught and warned. Returns True when the webhook was
+    handed off, False when it was skipped (AC-J3: an unmapped sender is skipped
+    rather than sent with a null/fake ``user.id``, which throws inside n8n).
+    """
+    return _notify_human_send(
+        db,
+        business_table=HUMAN_TICKET_BUSINESS_TABLE,
+        business_id=str(tracking_id),
+        contact_respond_io_id=contact_respond_io_id,
+        message_text=message_text,
+        respond_api_response=respond_api_response,
+        sender_user_id=sender_user_id,
+        subject=f"ticket {tracking_id}",
+    )

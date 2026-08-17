@@ -197,6 +197,31 @@ team_member_market_segments = Table(
 )
 
 
+# Many-to-many: a team membership serves zero+ BRANDS. Empty = the member serves
+# every brand (untagged member = serves all), exactly like the segment table above -
+# same matching rule, second axis. Brand is orthogonal to company: Cabana and Mocha
+# are brands INSIDE the Sorento company, so the company column cannot carry them.
+#
+# `brand_code` is deliberately NOT an FK to `brands.brand_code`: deleting a brand
+# would then silently untag its members, turning specialists into serve-all and
+# changing routing without anybody asking for it. Unknown codes are validated at
+# save time instead (see `team_member_brand_service`).
+team_member_brands = Table(
+    "team_member_brands",
+    Base.metadata,
+    Column(
+        "team_member_id",
+        UUID(as_uuid=False),
+        ForeignKey("team_members.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("brand_code", Text, primary_key=True),
+    Column("created_at", DateTime(timezone=False), server_default=func.now(), nullable=False),
+    Index("ix_team_member_brands_team_member_id", "team_member_id"),
+    Index("ix_team_member_brands_brand_code", "brand_code"),
+)
+
+
 class RespondContact(Base):
     __tablename__ = "respond_contacts"
 
@@ -220,6 +245,12 @@ class RespondContact(Base):
     requires_registered_project = Column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
+    # Per-contact outbound kill switch. False silences every outbound Respond.io
+    # send to this contact (text, attachment, template) at the client boundary;
+    # reads are untouched. Defaults ON, so a new or migrated row behaves exactly
+    # as it did before the switch existed. Flipped in bulk or per contact by
+    # scripts/set_contact_outbound.py.
+    outbound_enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)

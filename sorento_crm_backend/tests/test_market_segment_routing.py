@@ -383,20 +383,27 @@ def test_contact_segment_assignment_endpoints(client, db, monkeypatch):
     assert r.status_code == 200 and r.json()["codes"] == []
 
 
-def test_member_segment_assignment_endpoints(client, db, monkeypatch):
-    # GET .../teams/{team_id}/members/{user_id}/market-segments now requires
-    # user_management.teams.view (PLAN-user-management-read-gates.md row 4). The
-    # sibling PUT is out of scope for that PR (writes are not gated) and stays on
-    # get_current_user, so only the permission check needs stubbing here. Scoped to
-    # this test via the function-scoped monkeypatch fixture, not the shared `client`
-    # fixture, so it does not mask the pre-existing external-router failures below.
+def _grant(monkeypatch, *slugs: str) -> None:
+    """Hold exactly these permission slugs, and nothing else.
+
+    Scoped per test via the function-scoped monkeypatch fixture, not the shared
+    `client` fixture, so it does not mask the pre-existing external-router failures
+    elsewhere in this file.
+    """
     from app.services.user_service import UserPermissionService
 
     monkeypatch.setattr(
         UserPermissionService,
         "check_user_has_permission",
-        lambda self, uid, slug: slug == "user_management.teams.view",
+        lambda self, uid, slug: slug in set(slugs),
     )
+
+
+def test_member_segment_assignment_endpoints(client, db, monkeypatch):
+    # GET .../teams/{team_id}/members/{user_id}/market-segments requires
+    # user_management.teams.view (PLAN-user-management-read-gates.md row 4); the
+    # sibling PUT requires user_management.teams.edit.
+    _grant(monkeypatch, "user_management.teams.view", "user_management.teams.edit")
 
     _, team_id, m = _scenario(db, {"A": []})
     uid = m["A"]
@@ -404,3 +411,18 @@ def test_member_segment_assignment_endpoints(client, db, monkeypatch):
     assert r.status_code == 200 and r.json()["codes"] == []
     r = client.put(f"/api/v1/user-management/teams/{team_id}/members/{uid}/market-segments", json={"codes": ["retail"]})
     assert r.status_code == 200 and r.json()["codes"] == ["retail"]
+
+
+def test_member_assignment_writes_need_the_edit_permission(client, db, monkeypatch):
+    """A member's segments and brands decide who a conversation reaches, so a
+    view-only role must not be able to re-route the team."""
+    _grant(monkeypatch, "user_management.teams.view")
+
+    _, team_id, m = _scenario(db, {"A": []})
+    uid = m["A"]
+    base = f"/api/v1/user-management/teams/{team_id}/members/{uid}"
+
+    assert client.get(f"{base}/market-segments").status_code == 200
+    assert client.get(f"{base}/brands").status_code == 200
+    assert client.put(f"{base}/market-segments", json={"codes": ["retail"]}).status_code == 403
+    assert client.put(f"{base}/brands", json={"codes": []}).status_code == 403

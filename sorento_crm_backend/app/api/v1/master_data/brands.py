@@ -64,7 +64,9 @@ async def get_brands_select(
                 )
             )
         
-        brands = q.limit(100).all()
+        # Alphabetical, so every consumer of the dropdown gets a stable, scannable
+        # list instead of physical row order.
+        brands = q.order_by(Brand.brand_name).limit(100).all()
         return brands
     except Exception as e:
         raise handle_internal_error(str(e))

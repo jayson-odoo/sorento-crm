@@ -18,6 +18,8 @@ export interface RespondContact {
   /** AC-F4: their sponsorship form demands a registered project. */
   requires_registered_project?: boolean;
   access_types?: RespondContactAccessType[];
+  /** Outbound WhatsApp kill switch. Flipped via the shared outbound endpoints, not a contact update. */
+  outbound_enabled?: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
