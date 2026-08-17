@@ -63,7 +63,8 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   // nothing to do. Painting both sky made the queue answer neither.
   link_sent: 'bg-violet-100 text-violet-800',
   in_review: 'bg-amber-100 text-amber-800',
-  processing: 'bg-indigo-100 text-indigo-800',
+  // `processing` is deliberately absent: the entry above already means "accepted
+  // and still running", which is exactly what a queued provisioning job is.
   completed: 'bg-emerald-100 text-emerald-800',
   // Finished, but not cleanly: amber for the same reason a partial import is
   // amber - somebody still has to look at it.
