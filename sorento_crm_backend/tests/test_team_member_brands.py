@@ -3,6 +3,10 @@
 Mirrors the market-segment assignment tests: the tags are keyed by (team, user),
 replaced wholesale, stored lower-case, and an unknown brand code is refused so a
 typo cannot silently create a tag nobody routes to.
+
+The seeded brands carry UPPER-CASE codes on purpose: that is the shape production
+holds (MOCHA, CABANA), and a fixture seeding them lower-case hides a validator that
+only matches an exact-case code.
 """
 from __future__ import annotations
 
@@ -26,7 +30,7 @@ SORENTO = "00000000-0000-0000-0000-000000000001"
 def world():
     with blank_session() as db:
         set_company_scope(db, frozenset({SORENTO}))
-        for code, name in (("zzt_mocha", "ZZT Mocha"), ("zzt_cabana", "ZZT Cabana")):
+        for code, name in (("ZZT_MOCHA", "ZZT Mocha"), ("ZZT_CABANA", "ZZT Cabana")):
             db.add(
                 Brand(
                     id=str(uuid.uuid4()),
@@ -109,6 +113,9 @@ def test_an_unknown_brand_code_is_refused(world):
         )
 
     assert "not_a_brand" in str(exc.value.detail)
+    # Only the typo is named - the real brand validates despite the seeded code
+    # being upper-case.
+    assert "zzt_mocha" not in str(exc.value.detail)
     # Nothing was written: validation runs before the replace.
     assert world["svc"].get_member_brand_codes_by_team_user(
         world["team_id"], world["user_id"]

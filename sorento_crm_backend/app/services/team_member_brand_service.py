@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.access import TeamMember, team_member_brands
@@ -63,6 +64,11 @@ class TeamMemberBrandService:
         the Sorento company must still validate when the same code exists under
         another one, and the alternative (silently accepting anything) turns a typo
         into a member who quietly serves a brand that will never be asked for.
+
+        The comparison is case-INSENSITIVE on both sides. ``brands.brand_code`` is
+        free text an admin typed, and production holds it upper-case (MOCHA,
+        CABANA), while the routing handle is normalised lower-case - matching the
+        raw column against the normalised input rejects every real brand.
         """
         wanted = sorted({normalise_brand_code(c) for c in (codes or [])} - {None})
         if not wanted:
@@ -71,7 +77,7 @@ class TeamMemberBrandService:
             found = {
                 normalise_brand_code(r[0])
                 for r in self.db.query(Brand.brand_code)
-                .filter(Brand.brand_code.in_(wanted))
+                .filter(func.lower(Brand.brand_code).in_(wanted))
                 .all()
             }
         missing = [c for c in wanted if c not in found]
