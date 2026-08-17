@@ -34,6 +34,10 @@ vi.mock('@/components/spec-table', () => ({
   AddSpecificationDialog: () => null,
 }));
 
+// The extraction panel is its own feature with its own suite (SpecExtractPanel.test);
+// it fetches through react-query, which this test deliberately does not provide.
+vi.mock('./SpecExtractPanel', () => ({ default: () => null }));
+
 const usePermissions = vi.fn();
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => usePermissions(),
@@ -62,7 +66,6 @@ function baseDetail(verification: VerificationBlock): ProductSpecDetail {
     },
     exceptions: [],
     source_text: 'WC100 round sink',
-    flyer_text: null,
     verification,
     values_hash: 'hash-1',
   } as ProductSpecDetail;

@@ -14,7 +14,7 @@ Not company-scoped, matching every other spec table: a code's specs are a proper
 the model, and so is a person's confirmation of them.
 
 Revision ID: 369_product_spec_verifications
-Revises: 366_merge_363_365
+Revises: 367_promote_flyer_provenance
 Create Date: 2026-08-16
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "369_product_spec_verifications"
-down_revision = "366_merge_363_365"
+down_revision = "367_promote_flyer_provenance"
 branch_labels = None
 depends_on = None
 
