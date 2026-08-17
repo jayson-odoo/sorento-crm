@@ -37,7 +37,8 @@ export default function SpecExtractPanel({
   /** Component state only. Nothing reads it back and nothing stores it. */
   const [text, setText] = useState('');
   const extraction = useSpecExtraction(productId, productCode);
-  const { result, proposals, selectedKeys, isExtracting, isApplying, error } = extraction;
+  const { result, proposals, selectedKeys, isExtracting, isApplying, error } =
+    extraction;
 
   // Nothing here is readable without the write: the panel IS the control, so a user
   // who cannot write gets no affordance that would 403 at submit - the same rule the
@@ -92,7 +93,10 @@ export default function SpecExtractPanel({
           {/* One short line, not a warning: the answer is still an answer, it was
               just read by the rules alone. */}
           {result.engine === 'deterministic' && (
-            <p className="text-sm text-muted-foreground" data-spec-extract-degraded>
+            <p
+              className="text-sm text-muted-foreground"
+              data-spec-extract-degraded
+            >
               Read by the rules only - no model was reachable.
             </p>
           )}

@@ -64,7 +64,9 @@ export function useSpecExtraction(
       // with itself, but a conflict would overwrite a value a person vouched for, and
       // a default that does that is a default nobody reviewed.
       setSelectedKeys(
-        answer.proposals.filter((row) => row.kind !== 'conflict').map((row) => row.spec_key),
+        answer.proposals
+          .filter((row) => row.kind !== 'conflict')
+          .map((row) => row.spec_key),
       );
       setError(null);
     },
@@ -78,12 +80,15 @@ export function useSpecExtraction(
   });
 
   const applyMutation = useMutation({
-    mutationFn: (entries: SpecProposalEntry[]) => applySpecProposals(productId, entries),
+    mutationFn: (entries: SpecProposalEntry[]) =>
+      applySpecProposals(productId, entries),
     onSuccess: (answer) => {
       queryClient.invalidateQueries({ queryKey: DETAIL_KEY(productId) });
       // The picker's held/not-held split moves with every write.
       if (productCode) {
-        queryClient.invalidateQueries({ queryKey: APPLICABLE_KEY(productCode) });
+        queryClient.invalidateQueries({
+          queryKey: APPLICABLE_KEY(productCode),
+        });
       }
       // `spec_keys`, never `rows_written`: the write fans out to every company copy
       // of the code, so two accepted specifications on a two-company code report four
@@ -95,7 +100,8 @@ export function useSpecExtraction(
       });
       discard();
     },
-    onError: (failure: Error) => toast.error(failure.message, { duration: 10_000 }),
+    onError: (failure: Error) =>
+      toast.error(failure.message, { duration: 10_000 }),
   });
 
   return {

@@ -130,13 +130,12 @@ class ProductSpecRegistry(Base):
 class ProductFlyerText(Base):
     """What the printed flyer says about a product code.
 
-    A second text source for derivation, and a much richer one for the things marketing
-    prints but nobody typed into the master: material, finish, and features like a
-    drainer or an overflow. Keyed on the CODE for the same reason derivation is - one
-    card describes the model, and the model exists once per company.
-
-    Stored rather than read from the flyer record on demand because derivation runs over
-    the whole catalog and must not depend on the dealer-kit schema being present.
+    RETIRED AS AN INPUT (PR 4, AC-B.18): derivation no longer reads this table, and a
+    flyer reaches specs only as reviewed proposals from pasted text. The table stays
+    until the later deploy that drops it (RUNBOOK-flyer-promote.md, step 6), so a
+    rollback still has the text. It was a second text source for derivation, keyed on
+    the CODE for the same reason derivation is - one card describes the model, and the
+    model exists once per company.
     """
 
     __tablename__ = "product_flyer_text"

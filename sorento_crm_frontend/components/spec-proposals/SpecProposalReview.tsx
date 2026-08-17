@@ -17,7 +17,11 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
 import { readable, readableValue } from '@/lib/spec-readable';
-import type { SpecProposal, SpecProposalKind, SpecProposalReviewProps } from './types';
+import type {
+  SpecProposal,
+  SpecProposalKind,
+  SpecProposalReviewProps,
+} from './types';
 
 /**
  * What a piece of text says about a product, beside what the product already holds.
@@ -56,7 +60,10 @@ const KIND_PILL_KEY: Record<SpecProposalKind, string> = {
 
 /** Exactly the copy the contract names. The value is the sentence, not a legend. */
 export function proposalBadgeText(proposal: SpecProposal): string {
-  const stored = readableValue(proposal.stored_value, proposal.stored_unit ?? undefined);
+  const stored = readableValue(
+    proposal.stored_value,
+    proposal.stored_unit ?? undefined,
+  );
   switch (proposal.kind) {
     case 'change':
       return `Changes ${stored} to ${readableValue(proposal.value, proposal.unit ?? undefined)}`;
@@ -86,12 +93,19 @@ export function SpecProposalReview({
   );
 
   const handleSelectionChange = useCallback(
-    (updater: RowSelectionState | ((old: RowSelectionState) => RowSelectionState)) => {
-      const next = typeof updater === 'function' ? updater(rowSelection) : updater;
+    (
+      updater:
+        | RowSelectionState
+        | ((old: RowSelectionState) => RowSelectionState),
+    ) => {
+      const next =
+        typeof updater === 'function' ? updater(rowSelection) : updater;
       // Reported in the order the rows are read, not in click order: the caller turns
       // this straight into the batch it writes, and a batch that reorders itself
       // between two identical reviews is a diff nobody can check.
-      onSelectionChange(proposals.map((row) => row.spec_key).filter((key) => next[key]));
+      onSelectionChange(
+        proposals.map((row) => row.spec_key).filter((key) => next[key]),
+      );
     },
     [proposals, rowSelection, onSelectionChange],
   );
@@ -101,7 +115,9 @@ export function SpecProposalReview({
       buildSelectColumn<SpecProposal>({ enableRow: () => !disabled }),
       {
         accessorKey: 'label',
-        header: ({ column }) => <DataGridColumnHeader title="Specification" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Specification" column={column} />
+        ),
         size: 180,
         minSize: 120,
         enableSorting: false,
@@ -117,15 +133,24 @@ export function SpecProposalReview({
       },
       {
         id: 'value',
-        header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Value" column={column} />
+        ),
         size: 170,
         minSize: 110,
         enableSorting: false,
         meta: { headerTitle: 'Value' },
         cell: ({ row }) => {
-          const value = readableValue(row.original.value, row.original.unit ?? undefined);
+          const value = readableValue(
+            row.original.value,
+            row.original.unit ?? undefined,
+          );
           return (
-            <span className="truncate text-sm" title={value} data-spec-proposal-value={row.original.spec_key}>
+            <span
+              className="truncate text-sm"
+              title={value}
+              data-spec-proposal-value={row.original.spec_key}
+            >
               {value}
             </span>
           );
@@ -133,7 +158,12 @@ export function SpecProposalReview({
       },
       {
         id: 'kind',
-        header: ({ column }) => <DataGridColumnHeader title="Against what is stored" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Against what is stored"
+            column={column}
+          />
+        ),
         size: 260,
         minSize: 150,
         enableSorting: false,
@@ -160,7 +190,9 @@ export function SpecProposalReview({
       },
       {
         id: 'evidence',
-        header: ({ column }) => <DataGridColumnHeader title="Read from" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Read from" column={column} />
+        ),
         size: 300,
         minSize: 160,
         enableSorting: false,
@@ -206,7 +238,10 @@ export function SpecProposalReview({
       // so a saved width per user would be a config row nothing ever reads again.
       listingKey=""
       emptyMessage={
-        <div className="py-8 text-center text-sm text-muted-foreground" data-spec-proposals-empty>
+        <div
+          className="py-8 text-center text-sm text-muted-foreground"
+          data-spec-proposals-empty
+        >
           Nothing to review.
         </div>
       }
