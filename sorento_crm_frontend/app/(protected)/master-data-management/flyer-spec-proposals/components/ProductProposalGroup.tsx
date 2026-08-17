@@ -1,11 +1,26 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { SpecProposalReview } from '@/components/spec-proposals';
-import type { SpecProposalKind } from '@/components/spec-proposals';
+import type {
+  SpecProposalKind,
+  SpecProposalValue,
+} from '@/components/spec-proposals';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { readable, readableValue } from '@/lib/spec-readable';
 import { cn } from '@/lib/utils';
@@ -13,7 +28,14 @@ import { cn } from '@/lib/utils';
 import type {
   FlyerSpecOutcome,
   FlyerSpecProductGroup,
+  FlyerSpecProposal,
 } from '../services/flyerSpecProposalService';
+import { AddProposalRowDialog } from './AddProposalRowDialog';
+import {
+  ProposalValueEditor,
+  fromDraft,
+  toDraft,
+} from './ProposalValueEditor';
 
 /**
  * One product's share of a flyer batch.
@@ -30,6 +52,12 @@ import type {
  * PROPOSAL ID (L8), and a key is unique per product within a batch, so the
  * translation is exact and lives here rather than in the shared component.
  *
+ * **The group is where the whole act happens** (UAC section G): a value the
+ * reader got wrong is corrected in the cell it is read in, a key the flyer
+ * states in a way no rule caught is added, and a row that belongs to the
+ * neighbouring card is dismissed. All three change PROPOSALS - the apply is
+ * still the one write, and it still names ids.
+ *
  * Rows that have been through an apply do not come back to the table. There is
  * nothing left to decide about them, and a tick that cannot be applied reads as
  * a broken control - so they move to a plain list underneath carrying what
@@ -37,16 +65,27 @@ import type {
  */
 
 /**
- * What a BULK apply may tick, which is less than the shared component allows.
+ * What a BULK apply may tick.
  *
- * A conflict is a value a person set, and a tick that replaces one is a decision
- * about that product, made by somebody looking at it (L6/L7). Reviewing this
- * batch is reading a flyer, not reading two hundred products, so the row is
- * shown with what it disagrees with and the per-product Specifications tab is
- * where it is answered. `unchanged` and `suppressed` are refused by the shared
- * component whatever is passed.
+ * `conflict` is in here as of the captain's amendment (AC-F.4, superseding
+ * L6/L7 in part): a conflict is a value a person set, and ticking one plus a
+ * confirm dialog that names how many of them are about to be replaced IS the
+ * confirmation. Before the amendment this list was `['new', 'change']` and a
+ * conflict could only be answered on the product's own Specifications tab,
+ * which meant leaving the flyer for every one of them.
+ *
+ * `unchanged` and `suppressed` stay out, and the shared component refuses them
+ * whatever is passed: the first would write what is already there, and the
+ * second would overturn a removal somebody made on purpose.
  */
-const BULK_SELECTABLE_KINDS: readonly SpecProposalKind[] = ['new', 'change'];
+const BULK_SELECTABLE_KINDS: readonly SpecProposalKind[] = [
+  'new',
+  'change',
+  'conflict',
+];
+
+/** The two kinds that offer no in-place edit: there is nothing to write either way. */
+const NOT_EDITABLE: readonly SpecProposalKind[] = ['unchanged', 'suppressed'];
 
 /** What each outcome is called on screen. No reason code ever reaches a reader. */
 export const OUTCOME_LABEL: Record<FlyerSpecOutcome, string> = {
@@ -97,6 +136,19 @@ export interface ProductProposalGroupProps {
   onSelectionChange: (idsForThisProduct: string[]) => void;
   /** True while the batch is being written: rows stay readable, ticks freeze. */
   disabled?: boolean;
+  /**
+   * Store a corrected value on one row. Resolving closes the editor; rejecting
+   * leaves it open with what the reviewer typed, because the sentence the server
+   * refused with is about the value they are still holding.
+   */
+  onEditValue?: (proposalId: string, value: SpecProposalValue) => Promise<unknown>;
+  /** Take one row off the batch. Omitted when the reader may not write. */
+  onDismiss?: (proposalId: string) => Promise<unknown>;
+  /** Add a key the flyer stated in a way no rule caught, to THIS product. */
+  onAddRow?: (input: {
+    spec_key: string;
+    value: SpecProposalValue;
+  }) => Promise<unknown>;
 }
 
 export function ProductProposalGroup({
@@ -104,7 +156,17 @@ export function ProductProposalGroup({
   selectedIds,
   onSelectionChange,
   disabled = false,
+  onEditValue,
+  onDismiss,
+  onAddRow,
 }: ProductProposalGroupProps) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [dismissing, setDismissing] = useState<FlyerSpecProposal | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [addSaving, setAddSaving] = useState(false);
+
   const pending = useMemo(
     () => group.proposals.filter((row) => row.outcome === null),
     [group.proposals],
@@ -127,8 +189,11 @@ export function ProductProposalGroup({
     [pending, selectedIds],
   );
 
-  const idByKey = useMemo(
-    () => new Map(pending.map((row) => [row.spec_key, row.id])),
+  // Keyed by spec_key because that is the only identity the SHARED component
+  // knows a row by - it is deliberately id-free, so both the selection
+  // translation and the render-prop callbacks come back here without a cast.
+  const pendingByKey = useMemo(
+    () => new Map(pending.map((row) => [row.spec_key, row])),
     [pending],
   );
 
@@ -140,6 +205,29 @@ export function ProductProposalGroup({
 
   const toggleAll = (next: boolean) => {
     onSelectionChange(next ? selectable.map((row) => row.id) : []);
+  };
+
+  const startEdit = (row: FlyerSpecProposal) => {
+    setEditingId(row.id);
+    setDraft(toDraft(row.value));
+  };
+
+  const saveEdit = async () => {
+    if (!editingId || !onEditValue) return;
+    const row = pending.find((entry) => entry.id === editingId);
+    if (!row) return;
+    const value = fromDraft(draft, row.data_type);
+    if (value === null) return;
+    setBusyId(editingId);
+    try {
+      await onEditValue(editingId, value);
+      setEditingId(null);
+    } catch {
+      // The hook has already said what went wrong. The editor stays open on the
+      // value the reviewer typed, because that is what the message is about.
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
@@ -164,23 +252,40 @@ export function ProductProposalGroup({
           </p>
         </div>
 
-        {/* The select-all for THIS product, and there is no select-all above it:
-            a batch can name two hundred products, and one control that ticks
-            every change across all of them is a control nobody reviewed. */}
-        {selectable.length > 0 && (
-          <label className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
-            <Checkbox
-              checked={allTicked ? true : someTicked ? 'indeterminate' : false}
+        <div className="flex shrink-0 flex-wrap items-center gap-3">
+          {/* The select-all for THIS product, and there is no select-all above it:
+              a batch can name two hundred products, and one control that ticks
+              every change across all of them is a control nobody reviewed. */}
+          {selectable.length > 0 && (
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Checkbox
+                checked={
+                  allTicked ? true : someTicked ? 'indeterminate' : false
+                }
+                disabled={disabled}
+                onCheckedChange={(value) => toggleAll(!!value)}
+                aria-label={`Select every applicable row for ${group.product_code}`}
+                data-flyer-spec-select-all={group.product_code}
+              />
+              <span>
+                {tickedCount} of {selectable.length} ticked
+              </span>
+            </label>
+          )}
+
+          {onAddRow && (
+            <Button
+              variant="outline"
+              size="sm"
               disabled={disabled}
-              onCheckedChange={(value) => toggleAll(!!value)}
-              aria-label={`Select every applicable row for ${group.product_code}`}
-              data-flyer-spec-select-all={group.product_code}
-            />
-            <span>
-              {tickedCount} of {selectable.length} ticked
-            </span>
-          </label>
-        )}
+              onClick={() => setAdding(true)}
+              data-flyer-spec-add={group.product_code}
+            >
+              <Plus className="size-4" />
+              Add specification
+            </Button>
+          )}
+        </div>
       </div>
 
       {pending.length > 0 ? (
@@ -190,12 +295,65 @@ export function ProductProposalGroup({
           onSelectionChange={(keys) =>
             onSelectionChange(
               keys
-                .map((key) => idByKey.get(key))
+                .map((key) => pendingByKey.get(key)?.id)
                 .filter((id): id is string => Boolean(id)),
             )
           }
           selectableKinds={BULK_SELECTABLE_KINDS}
           disabled={disabled}
+          renderValue={(proposal, read) => {
+            const row = pendingByKey.get(proposal.spec_key);
+            if (!row || row.id !== editingId) return read;
+            return (
+              <ProposalValueEditor
+                label={row.label || readable(row.spec_key)}
+                dataType={row.data_type}
+                unit={row.unit}
+                allowedValues={row.allowed_values}
+                draft={draft}
+                onDraftChange={setDraft}
+                onSave={() => void saveEdit()}
+                onCancel={() => setEditingId(null)}
+                busy={busyId === row.id}
+              />
+            );
+          }}
+          rowActions={
+            onEditValue || onDismiss
+              ? (proposal) => {
+                  const row = pendingByKey.get(proposal.spec_key);
+                  if (!row) return null;
+                  return (
+                    <>
+                      {onEditValue && !NOT_EDITABLE.includes(row.kind) && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-8"
+                          disabled={disabled || editingId === row.id}
+                          aria-label={`Edit ${row.label || readable(row.spec_key)}`}
+                          onClick={() => startEdit(row)}
+                        >
+                          <Pencil className="size-4" />
+                        </Button>
+                      )}
+                      {onDismiss && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-8 text-muted-foreground hover:text-destructive"
+                          disabled={disabled}
+                          aria-label={`Dismiss ${row.label || readable(row.spec_key)}`}
+                          onClick={() => setDismissing(row)}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      )}
+                    </>
+                  );
+                }
+              : undefined
+          }
         />
       ) : (
         <p
@@ -229,6 +387,58 @@ export function ProductProposalGroup({
             ))}
           </ul>
         </div>
+      )}
+
+      <AlertDialog
+        open={dismissing !== null}
+        onOpenChange={(open) => !open && setDismissing(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Dismiss this proposal?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It will not be applied. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {dismissing && (
+            <p className="text-sm text-muted-foreground">
+              {dismissing.label || readable(dismissing.spec_key)}{' '}
+              {readableValue(dismissing.value, dismissing.unit ?? undefined)}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="fsp-dismiss-confirm"
+              onClick={() => {
+                const row = dismissing;
+                setDismissing(null);
+                if (row && onDismiss) void onDismiss(row.id).catch(() => {});
+              }}
+            >
+              Dismiss
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {onAddRow && (
+        <AddProposalRowDialog
+          open={adding}
+          onOpenChange={setAdding}
+          productCode={group.product_code}
+          productName={group.product_name}
+          existingKeys={group.proposals.map((row) => row.spec_key)}
+          saving={addSaving}
+          onAdd={(input) => {
+            setAddSaving(true);
+            void onAddRow(input)
+              .then(() => setAdding(false))
+              .catch(() => {})
+              .finally(() => setAddSaving(false));
+          }}
+        />
       )}
     </section>
   );

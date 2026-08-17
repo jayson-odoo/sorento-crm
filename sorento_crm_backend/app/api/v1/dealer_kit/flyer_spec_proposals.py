@@ -1,8 +1,12 @@
 """Propose product specifications from a flyer, review them, apply what was ticked.
 
-Four routes, all under the dealer kit because the flyer is the dealer kit's object -
+Seven routes, all under the dealer kit because the flyer is the dealer kit's object -
 they sit beside `dimensions/apply`, which is the same shape of act: read the Kit, write
-the master.
+the master. Four of them are the propose-read-apply loop; the other three are what makes
+the review screen the whole act rather than a staging post - correct a value the reader
+misread, add a key it never caught, dismiss a row that belongs to the neighbouring card
+(UAC sections F and G). All three write PROPOSALS. The apply is still the only way onto
+the product master, and it still names ids only.
 
 **Two permissions, and neither on its own**, declared in the order
 `dealer_kit.page.view` then `master_data.products.edit` (L9, the precedent
@@ -25,7 +29,8 @@ the request was understood and the BODY says what happened to each row. A 4xx he
 throw away the per-row detail that makes partial success readable.
 
 Plan: `documentation/plans/master-data/PLAN-flyer-spec-ingestion.md` section 3.4.
-UAC: `flyer-spec-ingestion-acceptance-criteria.md` AC-A.1, A.5, A.7, B.1, B.2, C.1-C.7.
+UAC: `flyer-spec-ingestion-acceptance-criteria.md` AC-A.1, A.5, A.7, B.1, B.2, C.1-C.7,
+F.1, F.2, F.5, G.1-G.3.
 """
 from __future__ import annotations
 
@@ -43,7 +48,9 @@ from app.schemas.dealer_kit import (
     FlyerSpecApplyOut,
     FlyerSpecBatchOut,
     FlyerSpecProductGroupOut,
+    FlyerSpecProposalEditIn,
     FlyerSpecProposalOut,
+    FlyerSpecProposalRowIn,
     FlyerSpecProposalsOut,
     RefusedFlyerSpecOut,
 )
@@ -110,6 +117,30 @@ def _summary(
         created_by_name=names.get(str(batch.created_by)) if batch.created_by else None,
         applied_by_name=names.get(str(batch.applied_by)) if batch.applied_by else None,
     )
+
+
+def _settled_batch(db: Session, reading_id: str):
+    """`(reading, batch)` for a batch there is something to do to, or the refusal.
+
+    Every act that names a row of a batch - apply, edit, add, dismiss - needs the same
+    two facts first and refuses on the same two conditions, in the same words: nobody
+    has proposed from this flyer (404), or a pass is running / did not finish so its
+    rows are not the rows the caller is looking at (409). One helper because four
+    copies of a refusal are four sets of words that drift.
+    """
+    record = svc.get_reading(db, reading_id)
+    batch = ingest.batch_for(db, record)
+    if batch is None:
+        raise AppException(
+            status_code=404,
+            message=(
+                "Nobody has proposed specifications from this flyer yet, so there is "
+                "nothing to review."
+            ),
+            code="FLYER_SPEC_NO_BATCH",
+        )
+    ingest.assert_proposed(batch)
+    return record, batch
 
 
 @router.get(
@@ -229,34 +260,7 @@ def apply_flyer_spec_proposals(
     exception is a batch that is not `proposed` - mid-re-propose or failed - which is
     409 `FLYER_SPEC_NOT_PROPOSED`, because its rows are not the rows the caller ticked.
     """
-    record = svc.get_reading(db, reading_id)
-    batch = ingest.batch_for(db, record)
-    if batch is None:
-        raise AppException(
-            status_code=404,
-            message=(
-                "Nobody has proposed specifications from this flyer yet, so there is "
-                "nothing to apply."
-            ),
-            code="FLYER_SPEC_NO_BATCH",
-        )
-
-    if batch.status != ingest.PROPOSED:
-        # A batch mid-re-propose holds the OLD ids for a moment and then holds none of
-        # them, so an apply landing in that window either writes rows from a pass that
-        # has been superseded or comes back every-row-`not_in_batch` with no reason a
-        # reader can act on. Say which state it is in instead.
-        raise AppException(
-            status_code=409,
-            message=(
-                "This flyer is being read for specifications again. Wait for it to "
-                "finish, then apply what it proposes."
-                if batch.status == ingest.PROPOSING
-                else "The last pass over this flyer did not finish, so there is "
-                "nothing to apply. Propose from it again."
-            ),
-            code="FLYER_SPEC_NOT_PROPOSED",
-        )
+    record, batch = _settled_batch(db, reading_id)
 
     result = ingest.apply_batch(
         db,
@@ -285,4 +289,98 @@ def apply_flyer_spec_proposals(
             )
             for entry in result.refused
         ],
+    )
+
+
+@router.patch(
+    "/flyer-readings/{reading_id}/spec-proposals/{proposal_id}",
+    response_model=FlyerSpecProposalOut,
+)
+def edit_flyer_spec_proposal(
+    reading_id: str,
+    proposal_id: str,
+    payload: FlyerSpecProposalEditIn,
+    db: Session = Depends(get_db),
+    _reader: dict = Depends(_READ_THE_FLYER),
+    user: dict = Depends(_WRITE_THE_MASTER),
+):
+    """Correct what the reader made of a card, in place (AC-F.2).
+
+    A reader that gets one value wrong is not a reason to leave the review screen, open
+    the product, type it there and come back - that round trip is what stops a
+    merchandiser using the screen at all. So the correction is stored on the PROPOSAL,
+    validated against the registry exactly as the write choke point would validate it,
+    and the apply still names ids only.
+
+    The answer is the whole row back, because its `kind` may have changed: correcting a
+    value to what the product already holds turns it `unchanged`, and the screen must
+    stop offering to write it.
+    """
+    _record, batch = _settled_batch(db, reading_id)
+    row = ingest.proposal_in(db, batch, proposal_id)
+    return FlyerSpecProposalOut(
+        **ingest.edit_proposal(db, batch, row, value=payload.value, user=user)
+    )
+
+
+@router.delete(
+    "/flyer-readings/{reading_id}/spec-proposals/{proposal_id}",
+    response_model=FlyerSpecBatchOut,
+)
+def dismiss_flyer_spec_proposal(
+    reading_id: str,
+    proposal_id: str,
+    db: Session = Depends(get_db),
+    _reader: dict = Depends(_READ_THE_FLYER),
+    _writer: dict = Depends(_WRITE_THE_MASTER),
+):
+    """Take a proposal off the batch (AC-G.3).
+
+    A HARD delete: the row is a proposal nobody accepted, and a dismissed-but-present
+    one is exactly the sort of state a reviewer has to re-decide about every visit. A
+    row that was already written is refused 409 - what is on the product is changed on
+    the product's own Specifications tab.
+
+    It answers with the batch summary rather than nothing, so the screen's counts move
+    with the row it just removed.
+    """
+    record, batch = _settled_batch(db, reading_id)
+    row = ingest.proposal_in(db, batch, proposal_id)
+    ingest.delete_proposal(db, batch, row)
+    names = ingest.user_names(db, [batch.created_by, batch.applied_by])
+    return _summary(batch, record, names)
+
+
+@router.post(
+    "/flyer-readings/{reading_id}/spec-proposals/rows",
+    response_model=FlyerSpecProposalOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_flyer_spec_proposal_row(
+    reading_id: str,
+    payload: FlyerSpecProposalRowIn,
+    db: Session = Depends(get_db),
+    _reader: dict = Depends(_READ_THE_FLYER),
+    user: dict = Depends(_WRITE_THE_MASTER),
+):
+    """Add a specification the flyer states in a way no rule caught (AC-G.1).
+
+    The product must already be in this batch and the key must be one the registry
+    defines AND one this product's class can carry - the same scope gate the propose
+    pass applies, so a reviewer cannot hand-place a key the pass would have dropped.
+
+    The row is `manual`, which is the one thing that makes it apply as `human` with
+    "set during flyer review" as its evidence: a person typed it, and badging it `Flyer`
+    would be a claim about a document that never said it (AC-G.2).
+    """
+    _record, batch = _settled_batch(db, reading_id)
+    return FlyerSpecProposalOut(
+        **ingest.add_proposal_row(
+            db,
+            batch,
+            product_id=payload.product_id,
+            spec_key=payload.spec_key,
+            value=payload.value,
+            user=user,
+        )
     )

@@ -14,6 +14,10 @@ tests). The agent-browser evidence run (section 6) was attempted once 2026-08-17
 shared-machine resource exhaustion (login succeeded, sidebar navigation could not complete); a
 second attempt the same day **completed** - AC-E.1 and AC-E.2 are verified, full walk, network
 calls, console checks and screenshots in section 6. Review (S4): pending.
+Captain amendments F and G (S5): **BUILT** - conflicts apply on tick, values edit in place, rows
+are added and dismissed, the page searches; three columns folded into migration 370, three new
+routes, two data-driven props on the shared review component. See section 7c for what shipped and
+where it deviates.
 **UAC:** `flyer-spec-ingestion-acceptance-criteria.md` (the contract; this plan fulfils it).
 **Design source:** `firstmate/data/flyer-spec-ingestion/report.md` §3, §5, §7 (read-only report,
 2026-08-16). **Parent plan:** `PLAN-spec-authoring-verification.md` (PR 4 amendment, AC-B.18).
@@ -463,3 +467,66 @@ read, search, never visit the product page. UAC section G. Design: POST rows / D
 batch (manual rows carry origin='manual', apply as source='human'); client-side search over
 product groups; reuse the registry key picker rules from the product tab (applicable keys only).
 NOT the spec verification list (PR 3) - separate surface, shared write choke point.
+
+### 7c. What the two amendments actually shipped (S5), and where it deviates
+
+**Backend.** `origin` (`flyer` | `manual`, NOT NULL DEFAULT `flyer`), `edited_at` and `edited_by`
+are FOLDED into migration `370_flyer_spec_proposals` (unmerged, so no new revision and no head
+change - still a single head, 370). They are in the CREATE TABLE and again as
+`ADD COLUMN IF NOT EXISTS` ALTERs, because the migration is idempotent by design and a database
+that already ran the earlier shape of it holds the table without them. `edited` is derived
+(`edited_at IS NOT NULL`), never a second column that can disagree with its own timestamp.
+
+`apply_batch` now refuses only `unchanged` (`already_matches`) and `suppressed`
+(`conflict_not_confirmed`); a `conflict` is written (AC-F.1). Three new service functions -
+`edit_proposal`, `add_proposal_row`, `delete_proposal` - each validate through
+`value_for_registry`, recompute `kind` against the LIVE spec row with the same shared
+`classify_spec_proposal`, and recount the batch off its rows (`refresh_counts`) rather than
+adjusting a counter. Three new routes carry the same permission pair, in the same order, as the
+other four.
+
+**Frontend.** The shared `SpecProposalReview` gained exactly two data-driven props -
+`renderValue(proposal, defaultCell)` and `rowActions(proposal)` - plus two optional fields on
+`SpecProposal` (`allowed_values`, `edited`). It still owns no editing state, imports no service
+and knows nothing about a product: the flyer surface holds which row is open and hands back the
+default cell for every row it is not editing, which is what keeps the READ rendering in one
+place. The editor widget (`ProposalValueEditor`) and the key picker (`AddProposalRowDialog`) live
+in the flyer surface. `BULK_SELECTABLE_KINDS` is now `['new', 'change', 'conflict']`.
+
+**Deviations from the UAC, each deliberate:**
+
+1. **`flyer_spec_key_not_applicable` (400)** on `POST .../rows`. AC-G.1 names four refusals and
+   says the key must be "applicable to the product's class" without naming the refusal for it.
+   The gate is `product_spec_extract._in_scope` - literally the one the propose pass runs - and a
+   key it drops is refused 400 with that code. Not a 404: the key exists, it just does not belong
+   on this product, and answering "unknown key" would send the reader to the registry.
+2. **`DELETE` answers 200 with the batch summary**, which the UAC left open. The counts have just
+   moved and the screen renders them; returning nothing would have made the caller refetch to
+   learn what it already caused.
+3. **The `conflict_not_confirmed` sentence changed.** It read "This disagrees with a value
+   somebody set, or with a specification they removed"; only the tombstone half can still happen,
+   so it now reads "Somebody removed this specification from this product." A refusal whose words
+   describe a case that can no longer occur is worse than no words.
+4. **One set of words for "this batch is not `proposed`".** `assert_proposed` in the service, and
+   a `_settled_batch` helper in the route module that resolves the reading, the batch and both
+   refusals. The apply route's own inline copy is gone; its 404 sentence now ends "nothing to
+   review" rather than "nothing to apply", because four acts share it.
+5. **Two vitest cases changed rather than added**, both citing AC-F.4 in the diff: the group's
+   select-all now ticks three rows (was two, excluding the conflict), and the row-checkbox test
+   now asserts the conflict is ENABLED and the `unchanged` row is the disabled one. The shared
+   component's "disables the conflict checkbox when selectableKinds is [new, change]" was renamed
+   to say what it tests (a caller leaving `conflict` out) rather than naming the flyer surface,
+   which no longer passes that list.
+
+**Operational note:** a developer database that already ran migration 370 is STAMPED at it, so the
+folded ALTERs do not re-run there. This worktree's shared dev database had the three columns
+applied by hand with exactly the statements above. A fresh database, and production, get them from
+the migration.
+
+**Counts at hand-off:** pytest 163 green over
+`test_dealer_kit_flyer_spec_proposal_routes` (50), `test_product_spec_flyer_ingest_service`,
+`test_product_spec_flyer_classify`, `test_product_spec_flyer_authored_source`,
+`test_product_spec_write`, `test_product_spec_batch_apply_route` and
+`test_dealer_kit_flyer_dimensions`; vitest 212 green over 13 files across
+`flyer-spec-proposals`, `components/spec-proposals` and `dealer-kit/flyer-readings`.
+`alembic heads` is one head, `370_flyer_spec_proposals`.

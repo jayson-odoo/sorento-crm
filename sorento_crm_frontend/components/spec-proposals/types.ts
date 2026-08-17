@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 /**
  * The shapes the proposal review is handed, and the shape it hands back.
  *
@@ -78,6 +80,15 @@ export interface SpecProposal {
   stored_unit: string | null;
   /** derived | flyer | code | category | human | supplier, or null when unstamped. */
   stored_source: string | null;
+  /**
+   * The key's vocabulary, when it has a closed one. Carried as DATA so an
+   * in-place editor can render its dropdown without a call of its own, and
+   * absent (rather than empty) when the key takes free text - "there is no
+   * list" and "the list is empty" are different instructions to a widget.
+   */
+  allowed_values?: string[] | null;
+  /** True once a person has corrected this row's value before applying it. */
+  edited?: boolean;
 }
 
 export interface SpecProposalReviewProps {
@@ -91,10 +102,25 @@ export interface SpecProposalReviewProps {
    * Which kinds this surface may tick. `DEFAULT_SELECTABLE_KINDS` when omitted.
    *
    * A prop rather than a second component, and never a rule this file decides
-   * alone: the flyer batch passes `['new', 'change']` because a bulk apply must
-   * not overwrite a value a person vouched for (UAC L6/L7), while the per-
-   * product panel keeps conflicts tickable. `unchanged` and `suppressed` are
-   * refused whatever is passed - there is nothing to write for either.
+   * alone. `unchanged` and `suppressed` are refused whatever is passed - there
+   * is nothing to write for either.
    */
   selectableKinds?: readonly SpecProposalKind[];
+  /**
+   * The Value cell, when the surface wants its own.
+   *
+   * Handed the default cell so the caller can return it unchanged for every row
+   * it is not editing, which is what keeps the read rendering in ONE place: an
+   * in-place editor is a swap of one row's cell, not a second way of showing a
+   * value. This component owns no editing state of its own - the caller holds
+   * which row is open, and this stays product-blind and service-free.
+   */
+  renderValue?: (proposal: SpecProposal, defaultCell: ReactNode) => ReactNode;
+  /**
+   * A trailing actions column, when the surface has row actions (edit, dismiss).
+   *
+   * The column exists only when this is given, so the surfaces that have no row
+   * actions render exactly the table they rendered before.
+   */
+  rowActions?: (proposal: SpecProposal) => ReactNode;
 }

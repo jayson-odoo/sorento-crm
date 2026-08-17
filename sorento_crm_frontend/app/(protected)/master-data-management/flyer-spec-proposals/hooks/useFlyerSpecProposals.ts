@@ -4,14 +4,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import {
+  addFlyerSpecProposalRow,
   applyFlyerSpecProposals,
+  dismissFlyerSpecProposal,
+  editFlyerSpecProposal,
   getFlyerSpecProposals,
   listFlyerSpecBatches,
   proposeFlyerSpecs,
   type FlyerSpecApplyResult,
   type FlyerSpecBatch,
+  type FlyerSpecProposal,
   type FlyerSpecProposals,
 } from '../services/flyerSpecProposalService';
+import type { SpecProposal } from '@/components/spec-proposals';
+import { getApplicableSpecKeys } from '../../product-specifications/services/productSpecService';
+import { APPLICABLE_KEY } from '../../products/hooks/useProductSpecTable';
 
 export const FLYER_SPEC_BATCHES_QUERY_KEY = 'flyer-spec-proposal-batches';
 export const FLYER_SPEC_PROPOSALS_QUERY_KEY = 'flyer-spec-proposals';
@@ -148,5 +155,106 @@ export function useApplyFlyerSpecProposals(readingId: string) {
     onError: (error) => {
       toast.error(error.message || 'Could not apply these specifications');
     },
+  });
+}
+
+/**
+ * Every act that changes ONE row of the batch invalidates the same two keys.
+ *
+ * The row's `kind` and the batch's counts are both server-computed, and both
+ * appear on this screen: an edit that flipped a row to `unchanged` while the
+ * header still said "3 change" would be the screen disagreeing with itself.
+ */
+function useRowMutationInvalidation(readingId: string) {
+  const queryClient = useQueryClient();
+  return () => {
+    queryClient.invalidateQueries({
+      queryKey: [FLYER_SPEC_PROPOSALS_QUERY_KEY, readingId],
+    });
+    queryClient.invalidateQueries({
+      queryKey: [FLYER_SPEC_BATCHES_QUERY_KEY],
+    });
+  };
+}
+
+/**
+ * Correct one proposal's value in place (AC-F.2).
+ *
+ * No success toast. The corrected value, its new pill and its "edited" mark are
+ * the answer, and they are already on screen - a toast over a cell somebody is
+ * looking at is noise on a screen where a reviewer may correct twenty rows.
+ */
+export function useEditFlyerSpecProposal(readingId: string) {
+  const invalidate = useRowMutationInvalidation(readingId);
+
+  return useMutation<
+    FlyerSpecProposal,
+    Error,
+    { proposalId: string; value: SpecProposal['value'] }
+  >({
+    mutationFn: ({ proposalId, value }) =>
+      editFlyerSpecProposal(readingId, proposalId, value),
+    onSuccess: invalidate,
+    onError: (error) => {
+      toast.error(error.message || 'Could not save that value');
+    },
+  });
+}
+
+/** Add a specification the flyer stated in a way no rule caught (AC-G.1). */
+export function useAddFlyerSpecProposalRow(readingId: string) {
+  const invalidate = useRowMutationInvalidation(readingId);
+
+  return useMutation<
+    FlyerSpecProposal,
+    Error,
+    { product_id: string; spec_key: string; value: SpecProposal['value'] }
+  >({
+    mutationFn: (input) => addFlyerSpecProposalRow(readingId, input),
+    onSuccess: (row) => {
+      invalidate();
+      toast.success(`${row.label} added to this flyer's proposals`);
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Could not add that specification');
+    },
+  });
+}
+
+/** Take a proposal off the batch for good (AC-G.3). */
+export function useDismissFlyerSpecProposal(readingId: string) {
+  const invalidate = useRowMutationInvalidation(readingId);
+
+  return useMutation<FlyerSpecBatch, Error, string>({
+    mutationFn: (proposalId) =>
+      dismissFlyerSpecProposal(readingId, proposalId),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Proposal dismissed');
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Could not dismiss that proposal');
+    },
+  });
+}
+
+/**
+ * Which keys this product may carry, for the add-a-specification picker.
+ *
+ * The SAME call and the SAME query key the product's Specifications tab uses, so
+ * a merchandiser who opens the picker here and then on the product is offered one
+ * answer rather than two, and the cache is shared. Applicability is decided
+ * server-side by derivation's own `applies_when` gate - the browser must not be
+ * the one deciding, or the rule drifts the first time somebody edits it.
+ *
+ * `enabled` is the dialog being open: 25 product groups on screen would otherwise
+ * be 25 requests for lists nobody asked to see.
+ */
+export function useApplicableSpecKeysQuery(productCode: string, enabled: boolean) {
+  return useQuery({
+    queryKey: APPLICABLE_KEY(productCode),
+    queryFn: () => getApplicableSpecKeys(productCode),
+    enabled: enabled && Boolean(productCode),
+    staleTime: 60_000,
   });
 }

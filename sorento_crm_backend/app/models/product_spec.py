@@ -436,6 +436,18 @@ class ProductSpecFlyerProposal(Base):
     stored_unit = Column(String(32), nullable=True)
     stored_source = Column(String(32), nullable=True)
 
+    # flyer | manual. Who put this row here: the pass that read the paper, or a
+    # person who added the key the flyer missed while reviewing it. It decides the
+    # SOURCE the value is written under (AC-G.2) - a machine read stays `flyer`,
+    # a person's typing is `human` - so it is a column rather than a guess made
+    # from whether `edited_at` is set.
+    origin = Column(String(16), nullable=False, server_default=text("'flyer'"))
+    # When a person last changed this row's value on the review screen, and who.
+    # `edited` on the wire is derived from `edited_at`, so there is one fact here
+    # rather than a flag that can disagree with its own timestamp.
+    edited_at = Column(DateTime(timezone=False), nullable=True)
+    edited_by = Column(UUID(as_uuid=False), nullable=True)
+
     # applied | already_matches | conflict_not_confirmed | product_spec_bad_value |
     # product_not_found. NULL until somebody has decided about this row.
     outcome = Column(String(32), nullable=True)
@@ -449,6 +461,10 @@ class ProductSpecFlyerProposal(Base):
         # tell from the first.
         UniqueConstraint(
             "batch_id", "product_id", "spec_key", name="uq_product_spec_flyer_proposal"
+        ),
+        CheckConstraint(
+            "origin IN ('flyer', 'manual')",
+            name="ck_product_spec_flyer_proposals_origin",
         ),
         Index("ix_product_spec_flyer_proposals_batch", "batch_id"),
     )

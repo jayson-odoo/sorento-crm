@@ -104,6 +104,8 @@ export function SpecProposalReview({
   onSelectionChange,
   disabled = false,
   selectableKinds = DEFAULT_SELECTABLE_KINDS,
+  renderValue,
+  rowActions,
 }: SpecProposalReviewProps) {
   const canSelect = useCallback(
     (kind: SpecProposalKind) =>
@@ -174,15 +176,29 @@ export function SpecProposalReview({
             row.original.value,
             row.original.unit ?? undefined,
           );
-          return (
-            <span
-              className="truncate text-sm"
-              title={value}
-              data-spec-proposal-value={row.original.spec_key}
-            >
-              {value}
+          const read = (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span
+                className="truncate text-sm"
+                title={value}
+                data-spec-proposal-value={row.original.spec_key}
+              >
+                {value}
+              </span>
+              {/* A corrected value is not the value the text stated, and the
+                  reader has to be able to tell which rows they changed before
+                  they apply forty of them. */}
+              {row.original.edited && (
+                <span
+                  className="shrink-0 text-[11px] text-muted-foreground"
+                  data-spec-proposal-edited={row.original.spec_key}
+                >
+                  edited
+                </span>
+              )}
             </span>
           );
+          return renderValue ? renderValue(row.original, read) : read;
         },
       },
       {
@@ -238,8 +254,26 @@ export function SpecProposalReview({
           </span>
         ),
       },
+      ...(rowActions
+        ? [
+            {
+              id: 'actions',
+              header: '',
+              size: 96,
+              minSize: 72,
+              enableSorting: false,
+              enableResizing: false,
+              meta: { headerTitle: 'Actions' },
+              cell: ({ row }) => (
+                <div className="flex items-center justify-end gap-1">
+                  {rowActions(row.original)}
+                </div>
+              ),
+            } as ColumnDef<SpecProposal>,
+          ]
+        : []),
     ],
-    [canSelect],
+    [canSelect, renderValue, rowActions],
   );
 
   const table = useReactTable({

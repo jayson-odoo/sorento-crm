@@ -13,7 +13,7 @@
  * answers under jsdom - mocked before the import that pulls it in.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
@@ -23,11 +23,19 @@ const {
   useFlyerSpecProposalsQuery,
   useProposeFlyerSpecs,
   useApplyFlyerSpecProposals,
+  useEditFlyerSpecProposal,
+  useAddFlyerSpecProposalRow,
+  useDismissFlyerSpecProposal,
+  useApplicableSpecKeysQuery,
   hasPermission,
 } = vi.hoisted(() => ({
   useFlyerSpecProposalsQuery: vi.fn(),
   useProposeFlyerSpecs: vi.fn(),
   useApplyFlyerSpecProposals: vi.fn(),
+  useEditFlyerSpecProposal: vi.fn(),
+  useAddFlyerSpecProposalRow: vi.fn(),
+  useDismissFlyerSpecProposal: vi.fn(),
+  useApplicableSpecKeysQuery: vi.fn(),
   hasPermission: vi.fn(),
 }));
 
@@ -35,6 +43,10 @@ vi.mock('../hooks/useFlyerSpecProposals', () => ({
   useFlyerSpecProposalsQuery,
   useProposeFlyerSpecs,
   useApplyFlyerSpecProposals,
+  useEditFlyerSpecProposal,
+  useAddFlyerSpecProposalRow,
+  useDismissFlyerSpecProposal,
+  useApplicableSpecKeysQuery,
 }));
 
 vi.mock('@/hooks/usePermissions', () => ({
@@ -64,6 +76,9 @@ function proposalRow(overrides: Partial<FlyerSpecProposal>): FlyerSpecProposal {
     stored_value: null,
     stored_unit: null,
     stored_source: null,
+    allowed_values: null,
+    origin: 'flyer',
+    edited: false,
     outcome: null,
     applied_at: null,
     ...overrides,
@@ -107,6 +122,7 @@ const MIXED_GROUP: FlyerSpecProductGroup = {
       id: 'p-change',
       spec_key: 'dim_height',
       label: 'Height',
+      data_type: 'numeric',
       kind: 'change',
       value: 770,
       unit: 'mm',
@@ -171,6 +187,9 @@ function countedBatch(groups: FlyerSpecProductGroup[]): FlyerSpecProposals {
 }
 
 const propose = { mutate: vi.fn(), isPending: false };
+const editValue = { mutateAsync: vi.fn(), isPending: false };
+const addRow = { mutateAsync: vi.fn(), isPending: false };
+const dismiss = { mutateAsync: vi.fn(), isPending: false };
 let applyResult: FlyerSpecApplyResult = { applied: [], refused: [] };
 const apply = {
   mutate: vi.fn(
@@ -212,6 +231,16 @@ beforeEach(() => {
   applyResult = { applied: [], refused: [] };
   useProposeFlyerSpecs.mockReturnValue(propose);
   useApplyFlyerSpecProposals.mockReturnValue(apply);
+  editValue.mutateAsync = vi.fn().mockResolvedValue(undefined);
+  addRow.mutateAsync = vi.fn().mockResolvedValue(undefined);
+  dismiss.mutateAsync = vi.fn().mockResolvedValue(undefined);
+  useEditFlyerSpecProposal.mockReturnValue(editValue);
+  useAddFlyerSpecProposalRow.mockReturnValue(addRow);
+  useDismissFlyerSpecProposal.mockReturnValue(dismiss);
+  useApplicableSpecKeysQuery.mockReturnValue({
+    data: { code: '', keys: [] },
+    isLoading: false,
+  });
 });
 
 describe('FlyerSpecReviewScreen, loading and error (AC-D.5)', () => {
@@ -297,8 +326,9 @@ describe('FlyerSpecReviewScreen, default selection (AC-D.3)', () => {
 
     renderScreen();
 
-    // seat_material (new) + dim_length (new) = 2. Change/conflict/unchanged/
-    // suppressed are not in the default selection.
+    // seat_material (new) + dim_length (new) = 2. Change and conflict are
+    // tickable (AC-F.4) but never ticked by default; unchanged and suppressed
+    // are neither.
     expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent('2 ticked');
 
     const newCell = screen.getAllByText('New')[0];
@@ -359,6 +389,46 @@ describe('FlyerSpecReviewScreen, the change-confirmation dialog (AC-D.4)', () =>
     const dialog = screen.getByRole('alertdialog');
     expect(dialog).toHaveTextContent('Replace 1 master value?');
     expect(apply.mutate).not.toHaveBeenCalled();
+  });
+
+  it('names BOTH counts when a conflict is ticked - K replaced, D of them set by a person (AC-F.4)', () => {
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    renderScreen();
+
+    const changeRow = screen
+      .getByText('Changes 750 mm to 770 mm')
+      .closest('tr') as HTMLElement;
+    fireEvent.click(within(changeRow).getByLabelText('Select row'));
+    const conflictRow = screen
+      .getByText('Conflicts with your value Chrome')
+      .closest('tr') as HTMLElement;
+    fireEvent.click(within(conflictRow).getByLabelText('Select row'));
+
+    fireEvent.click(screen.getByTestId('fsp-apply'));
+
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveTextContent(
+      'Replace 2 master values, 1 of them set by a person?',
+    );
+  });
+
+  it('applies the ticked conflict once confirmed - a tick IS the confirmation (AC-F.1, AC-F.4)', () => {
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    renderScreen();
+
+    const conflictRow = screen
+      .getByText('Conflicts with your value Chrome')
+      .closest('tr') as HTMLElement;
+    fireEvent.click(within(conflictRow).getByLabelText('Select row'));
+    fireEvent.click(screen.getByTestId('fsp-apply'));
+    fireEvent.click(screen.getByTestId('fsp-confirm'));
+
+    expect(apply.mutate).toHaveBeenCalledWith(
+      expect.arrayContaining(['p-new', 'p-conflict']),
+      expect.anything(),
+    );
   });
 
   it('applies once the dialog is confirmed', () => {
@@ -537,5 +607,115 @@ describe('FlyerSpecReviewScreen, a re-propose (AC-A.5, AC-D.3)', () => {
 
     // The previous apply described rows that no longer exist.
     expect(screen.queryByTestId('fsp-result')).toBeNull();
+  });
+});
+
+describe('FlyerSpecReviewScreen, the search box (AC-G.5)', () => {
+  it('offers no search when the batch holds a single product', () => {
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    renderScreen();
+
+    expect(screen.queryByTestId('fsp-search')).toBeNull();
+  });
+
+  it('filters the product groups by code, by name and by specification label', () => {
+    setQuery({ data: countedBatch([MIXED_GROUP, SECOND_GROUP]) });
+
+    renderScreen();
+
+    const search = screen.getByTestId('fsp-search');
+
+    fireEvent.change(search, { target: { value: 'SRTBT' } });
+    expect(screen.queryByText('SRTWC8066')).toBeNull();
+    expect(screen.getByText('SRTBT1700')).toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: 'wall hung' } });
+    expect(screen.getByText('SRTWC8066')).toBeInTheDocument();
+    expect(screen.queryByText('SRTBT1700')).toBeNull();
+
+    // The specification label, which is the third thing a reviewer knows about
+    // the row they are hunting for.
+    fireEvent.change(search, { target: { value: 'Length' } });
+    expect(screen.getByText('SRTBT1700')).toBeInTheDocument();
+    expect(screen.queryByText('SRTWC8066')).toBeNull();
+  });
+
+  it('keeps the selection of hidden rows intact, and applies them (AC-G.5)', () => {
+    setQuery({ data: countedBatch([MIXED_GROUP, SECOND_GROUP]) });
+
+    renderScreen();
+
+    // Both `new` rows are ticked by default, one per product.
+    expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent('2 ticked');
+
+    fireEvent.change(screen.getByTestId('fsp-search'), {
+      target: { value: 'SRTBT' },
+    });
+
+    expect(screen.getByTestId('fsp-selection-count')).toHaveTextContent('2 ticked');
+
+    fireEvent.click(screen.getByTestId('fsp-apply'));
+
+    expect(apply.mutate).toHaveBeenCalledWith(
+      expect.arrayContaining(['p-new', 'p-new-2']),
+      expect.anything(),
+    );
+  });
+
+  it('says so when nothing matches, and says the ticks are still ticked', () => {
+    setQuery({ data: countedBatch([MIXED_GROUP, SECOND_GROUP]) });
+
+    renderScreen();
+
+    fireEvent.change(screen.getByTestId('fsp-search'), {
+      target: { value: 'zzz-nothing' },
+    });
+
+    expect(screen.getByTestId('fsp-search-empty')).toHaveTextContent(
+      'Ticked rows are still ticked',
+    );
+  });
+});
+
+describe('FlyerSpecReviewScreen, the row acts reach the hooks (AC-F.3, AC-G.4)', () => {
+  it('sends a corrected value to the edit hook, naming the proposal id', async () => {
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    renderScreen();
+
+    fireEvent.click(screen.getByLabelText('Edit Height'));
+    const input = screen.getByLabelText('Height');
+    fireEvent.change(input, { target: { value: '780' } });
+    fireEvent.click(screen.getByLabelText('Save Height'));
+
+    await waitFor(() =>
+      expect(editValue.mutateAsync).toHaveBeenCalledWith({
+        proposalId: 'p-change',
+        value: 780,
+      }),
+    );
+  });
+
+  it('sends a dismissal to the dismiss hook once confirmed', () => {
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    renderScreen();
+
+    fireEvent.click(screen.getByLabelText('Dismiss Seat cover material'));
+    fireEvent.click(screen.getByTestId('fsp-dismiss-confirm'));
+
+    expect(dismiss.mutateAsync).toHaveBeenCalledWith('p-new');
+  });
+
+  it('offers neither act to a reader who may not write the master', () => {
+    hasPermission.mockReturnValue(false);
+    setQuery({ data: countedBatch([MIXED_GROUP]) });
+
+    renderScreen();
+
+    expect(screen.queryByLabelText('Edit Height')).toBeNull();
+    expect(screen.queryByLabelText('Dismiss Seat cover material')).toBeNull();
+    expect(screen.queryByText('Add specification')).toBeNull();
   });
 });

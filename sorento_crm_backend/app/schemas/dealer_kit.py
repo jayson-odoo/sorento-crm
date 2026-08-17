@@ -1017,6 +1017,16 @@ class FlyerSpecProposalOut(BaseModel):
     stored_value: Any = None
     stored_unit: Optional[str] = None
     stored_source: Optional[str] = None
+    # The key's vocabulary when it has a closed one, so the in-place edit widget can
+    # render its dropdown without a second call per row (AC-F.5). Null - not an empty
+    # list - for a key with no closed vocabulary: "there is no list" and "the list is
+    # empty" are different instructions to a widget.
+    allowed_values: Optional[list[Any]] = None
+    # flyer | manual. Who put the row here, which is what decides whether the value is
+    # written as `flyer` or as `human` (AC-G.2).
+    origin: str = "flyer"
+    # True once somebody has corrected this row's value on the review screen (AC-F.2).
+    edited: bool = False
     # applied | already_matches | conflict_not_confirmed | product_spec_bad_value |
     # product_not_found. Null until somebody has decided about this row.
     outcome: Optional[str] = None
@@ -1060,6 +1070,35 @@ class FlyerSpecApplyIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     proposal_ids: list[UUID] = Field(min_length=1)
+
+
+class FlyerSpecProposalEditIn(BaseModel):
+    """A corrected value for one proposal, and nothing else (AC-F.2).
+
+    `extra="forbid"` for the same reason the apply body forbids extras: a client that
+    sent a `kind` or a `source` believes it is choosing one, and it is not - the kind is
+    recomputed against the live spec row and the source comes from the row's origin.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: Any
+
+
+class FlyerSpecProposalRowIn(BaseModel):
+    """A specification the flyer did not print, added to a product it did (AC-G.1).
+
+    The product is named by id because the screen already holds it from the GET, and
+    the key by slug because that is what the registry is keyed on. There is no `kind`
+    and no `origin` on the wire: the first is computed against the live spec row and the
+    second is `manual` by the fact of this route being the one that was called.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str
+    spec_key: str
+    value: Any
 
 
 class AppliedFlyerSpecOut(BaseModel):

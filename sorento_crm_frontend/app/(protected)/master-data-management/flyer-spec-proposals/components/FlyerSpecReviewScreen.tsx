@@ -9,6 +9,7 @@ import {
   FileText,
   Loader2,
   ScanLine,
+  Search,
 } from 'lucide-react';
 
 import {
@@ -23,13 +24,17 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { readable, readableValue } from '@/lib/spec-readable';
 
 import {
+  useAddFlyerSpecProposalRow,
   useApplyFlyerSpecProposals,
+  useDismissFlyerSpecProposal,
+  useEditFlyerSpecProposal,
   useFlyerSpecProposalsQuery,
   useProposeFlyerSpecs,
 } from '../hooks/useFlyerSpecProposals';
@@ -48,13 +53,18 @@ import {
 /**
  * The batch, product by product, and the one control that writes it.
  *
- * Everything on this screen is shaped by one rule: a bulk apply must never be
- * able to overwrite something a person decided. So `new` rows arrive ticked -
- * the master says nothing, and gap-filling is the whole point of reading a
- * flyer - `change` rows arrive unticked, and `conflict` / `unchanged` /
- * `suppressed` cannot be ticked at all. The server re-checks every one of them
- * against the live spec row before it writes (AC-C.2), so this screen is a
- * convenience over that rule rather than the rule itself.
+ * `new` rows arrive ticked - the master says nothing, and gap-filling is the
+ * whole point of reading a flyer. `change` AND `conflict` rows arrive unticked
+ * but tickable (AC-F.4): ticking a conflict, plus a dialog that names how many
+ * values a person set are about to be replaced, IS the confirmation. `unchanged`
+ * and `suppressed` cannot be ticked at all - there is nothing to write for the
+ * first and a removal to overturn in the second. The server re-checks every one
+ * of them against the live spec row before it writes (AC-C.2), so this screen is
+ * a convenience over that rule rather than the rule itself.
+ *
+ * It is also where the whole act happens: a value is corrected in place, a key
+ * the flyer stated in a way no rule caught is added, and a row belonging to the
+ * neighbouring card is dismissed, without visiting a single product page.
  *
  * There is no select-all across products. A flyer can name two hundred of them,
  * and a single tick that queues four hundred writes is a decision nobody made.
@@ -88,10 +98,14 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
     useFlyerSpecProposalsQuery(readingId);
   const propose = useProposeFlyerSpecs(readingId);
   const apply = useApplyFlyerSpecProposals(readingId);
+  const editValue = useEditFlyerSpecProposal(readingId);
+  const addRow = useAddFlyerSpecProposalRow(readingId);
+  const dismiss = useDismissFlyerSpecProposal(readingId);
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [shown, setShown] = useState(PRODUCTS_PER_PAGE);
   const [confirming, setConfirming] = useState(false);
+  const [search, setSearch] = useState('');
   const [result, setResult] = useState<FlyerSpecApplyResult | null>(null);
   // Which PASS the ticks below belong to, which is not the same thing as which
   // batch. A reading has exactly one batch row (`flyer_reading_id` is unique and
@@ -130,9 +144,48 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
   }, [data]);
 
   const selectedIds = useMemo(() => [...selected], [selected]);
-  const changeCount = selectedIds.filter(
-    (id) => rowsById.get(id)?.kind === 'change',
-  ).length;
+  const replacing = selectedIds
+    .map((id) => rowsById.get(id))
+    .filter(
+      (row): row is FlyerSpecProposal =>
+        row?.kind === 'change' || row?.kind === 'conflict',
+    );
+  // Every ticked row that overwrites something, and the subset of those that
+  // overwrite a PERSON. Two numbers because they are two different sizes of
+  // decision, and a dialog that named only the total would hide the one that
+  // matters (AC-F.4).
+  const replaceCount = replacing.length;
+  const authoredCount = replacing.filter((row) => row.kind === 'conflict').length;
+
+  /**
+   * The groups the search box leaves on screen.
+   *
+   * Product code, product name and specification label, because those are the
+   * three things a reviewer holding the paper knows about the row they are
+   * looking for. Client-side: the whole batch is already here, and a round trip
+   * per keystroke would be slower than the filter it replaces.
+   *
+   * **The selection is untouched by it.** Hiding a row is not unticking it - a
+   * reviewer who ticks forty rows, searches for the one they want to check and
+   * then presses Apply must write the forty, not the one (AC-G.5).
+   */
+  const visibleGroups = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return data?.groups ?? [];
+    return (data?.groups ?? []).filter((group) => {
+      if (
+        group.product_code.toLowerCase().includes(query) ||
+        group.product_name.toLowerCase().includes(query)
+      ) {
+        return true;
+      }
+      return group.proposals.some(
+        (row) =>
+          (row.label || '').toLowerCase().includes(query) ||
+          row.spec_key.toLowerCase().includes(query),
+      );
+    });
+  }, [data?.groups, search]);
 
   const write = () => {
     setConfirming(false);
@@ -333,8 +386,22 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
             </p>
           )}
 
+          {data.groups.length > 1 && (
+            <div className="relative w-full sm:max-w-sm">
+              <Search className="pointer-events-none absolute inset-y-0 start-3 my-auto size-4 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search product or specification"
+                aria-label="Search product or specification"
+                className="ps-9"
+                data-testid="fsp-search"
+              />
+            </div>
+          )}
+
           <div className="flex flex-col gap-4">
-            {data.groups.slice(0, shown).map((group) => (
+            {visibleGroups.slice(0, shown).map((group) => (
               <ProductProposalGroup
                 key={group.product_id}
                 group={group}
@@ -350,11 +417,41 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
                     return next;
                   });
                 }}
+                onEditValue={
+                  canWriteMaster
+                    ? (proposalId, value) =>
+                        editValue.mutateAsync({ proposalId, value })
+                    : undefined
+                }
+                onDismiss={
+                  canWriteMaster
+                    ? (proposalId) => dismiss.mutateAsync(proposalId)
+                    : undefined
+                }
+                onAddRow={
+                  canWriteMaster
+                    ? (input) =>
+                        addRow.mutateAsync({
+                          product_id: group.product_id,
+                          ...input,
+                        })
+                    : undefined
+                }
               />
             ))}
           </div>
 
-          {data.groups.length > shown && (
+          {visibleGroups.length === 0 && (
+            <p
+              className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground"
+              data-testid="fsp-search-empty"
+            >
+              No product or specification here matches &ldquo;{search}&rdquo;.
+              Ticked rows are still ticked.
+            </p>
+          )}
+
+          {visibleGroups.length > shown && (
             <Button
               variant="outline"
               size="sm"
@@ -362,7 +459,7 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
               onClick={() => setShown((current) => current + PRODUCTS_PER_PAGE)}
               data-testid="fsp-show-more"
             >
-              Show more products ({data.groups.length - shown} left)
+              Show more products ({visibleGroups.length - shown} left)
             </Button>
           )}
 
@@ -378,7 +475,7 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
               >
                 {selected.size === 0
                   ? 'Nothing ticked'
-                  : `${selected.size} ticked${changeCount > 0 ? `, ${changeCount} replacing a value the master holds` : ''}`}
+                  : `${selected.size} ticked${replaceCount > 0 ? `, ${replaceCount} replacing a value the master holds` : ''}`}
               </p>
               <Button
                 size="sm"
@@ -389,7 +486,7 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
                   // Only a replacement needs confirming. A selection of gaps
                   // destroys nothing, and a dialog over it is a click that
                   // teaches people to click through dialogs.
-                  if (changeCount > 0) setConfirming(true);
+                  if (replaceCount > 0) setConfirming(true);
                   else write();
                 }}
               >
@@ -406,12 +503,20 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
         <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Replace {changeCount} master value{changeCount === 1 ? '' : 's'}?
+              Replace {replaceCount} master value
+              {replaceCount === 1 ? '' : 's'}
+              {authoredCount > 0
+                ? `, ${authoredCount} of them set by a person?`
+                : '?'}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {selected.size} row{selected.size === 1 ? '' : 's'} will be
-              written as flyer values. {changeCount} of them replace what the
-              product master holds today. This action cannot be undone.
+              written. {replaceCount} of them replace what the product master
+              holds today
+              {authoredCount > 0
+                ? `, and ${authoredCount} replace a value somebody set by hand`
+                : ''}
+              . This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -419,10 +524,7 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
             className="flex flex-col gap-2 text-sm"
             data-testid="fsp-replacing"
           >
-            {selectedIds
-              .map((id) => rowsById.get(id))
-              .filter((row): row is FlyerSpecProposal => row?.kind === 'change')
-              .map((row) => (
+            {replacing.map((row) => (
                 <li key={row.id} className="flex flex-col">
                   <span className="text-foreground">
                     {row.label || readable(row.spec_key)}
@@ -435,7 +537,7 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
                     becomes {readableValue(row.value, row.unit ?? undefined)}
                   </span>
                 </li>
-              ))}
+            ))}
           </ul>
 
           <AlertDialogFooter>

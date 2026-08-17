@@ -61,11 +61,42 @@
  *        its own into the product master. A body carrying `values` is a 422.
  *        Every selected row is re-classified against the LIVE spec row before it
  *        is written (AC-C.2), so a batch proposed yesterday cannot overwrite what
- *        somebody set this morning: `unchanged` -> `already_matches`, `conflict`
- *        or `suppressed` -> `conflict_not_confirmed`, and only `new` / `change`
- *        are written, as `source: 'flyer'` with the printed words as evidence.
+ *        somebody set this morning: `unchanged` -> `already_matches`,
+ *        `suppressed` -> `conflict_not_confirmed`, and `new` / `change` /
+ *        `conflict` are written (AC-F.1: a ticked conflict IS the confirmation,
+ *        which is why the dialog names the count first). A row the flyer stated
+ *        writes as `source: 'flyer'` with the printed words as evidence; a row a
+ *        person added writes as `source: 'human'` with "set during flyer review"
+ *        (AC-G.2).
  *        200 with refusals, never a 4xx for a refused row - a refusal is an
  *        answer, and the caller must read `refused`.
+ *
+ *   PATCH /flyer-readings/{reading_id}/spec-proposals/{proposal_id}
+ *        body { value }   (`extra="forbid"`)
+ *     -> 200 FlyerSpecProposal, the whole row back (AC-F.2). The value is
+ *        validated against the registry, stored on the PROPOSAL with an edit
+ *        stamp, and the row's `kind` is recomputed against the LIVE spec row -
+ *        so correcting a value to what the product already holds turns the row
+ *        `unchanged` and the screen stops offering to write it. The apply still
+ *        names ids only (L8).
+ *        400 product_spec_bad_value - the registry's own words.
+ *        409 FLYER_SPEC_NOT_PROPOSED / FLYER_SPEC_ALREADY_APPLIED.
+ *
+ *   POST /flyer-readings/{reading_id}/spec-proposals/rows
+ *        body { product_id, spec_key, value }   (`extra="forbid"`)
+ *     -> 201 FlyerSpecProposal with `origin: 'manual'` and `kind` computed live
+ *        (AC-G.1). The product must already be in this batch and the key must be
+ *        one the registry defines AND one this product's class can carry - the
+ *        same scope gate the propose pass applies.
+ *        404 flyer_spec_unknown_key / not_in_batch.
+ *        400 product_spec_bad_value / flyer_spec_key_not_applicable.
+ *        409 flyer_spec_duplicate_row - the flyer already proposed this key for
+ *        this product, and editing that row is the answer.
+ *
+ *   DELETE /flyer-readings/{reading_id}/spec-proposals/{proposal_id}
+ *     -> 200 FlyerSpecBatch, the summary with its counts already moved (AC-G.3).
+ *        A HARD delete of a proposal nobody accepted. 409 when the row has
+ *        already been written - that value is changed on the product itself.
  */
 
 import { apiFetch } from '@/lib/api';
@@ -91,6 +122,9 @@ export type FlyerSpecOutcome =
   | 'product_spec_bad_value'
   | 'product_not_found'
   | 'not_in_batch';
+
+/** Who put a proposal row on the batch. The paper, or a person reviewing it. */
+export type FlyerSpecOrigin = 'flyer' | 'manual';
 
 /** One proposal pass over one flyer reading. */
 export interface FlyerSpecBatch {
@@ -131,6 +165,14 @@ export interface FlyerSpecBatch {
  */
 export interface FlyerSpecProposal extends SpecProposal {
   id: string;
+  /**
+   * `flyer` when the pass read it off the paper, `manual` when a person added it
+   * on the review screen. It decides the SOURCE the value is written under, so
+   * it is carried rather than inferred from the edit stamp (AC-G.2).
+   */
+  origin: FlyerSpecOrigin;
+  /** True once somebody has corrected this row's value in place (AC-F.2). */
+  edited: boolean;
   /** Null until this row has been through an apply. */
   outcome: FlyerSpecOutcome | null;
   applied_at: string | null;
@@ -298,4 +340,81 @@ export async function applyFlyerSpecProposals(
     // refused" is exactly the silence this endpoint exists to break.
     refused: wire.refused ?? [],
   };
+}
+
+/**
+ * Correct one proposal's value before it is applied (AC-F.2).
+ *
+ * The value goes to the PROPOSAL, never to the product: the apply is still the
+ * only write, and it still names ids. The whole row comes back because its
+ * `kind` may have moved - a value corrected to what the product already holds is
+ * `unchanged`, and the screen must stop offering to write it.
+ */
+export async function editFlyerSpecProposal(
+  readingId: string,
+  proposalId: string,
+  value: SpecProposal['value'],
+): Promise<FlyerSpecProposal> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(readingId)}/spec-proposals/${encodeURIComponent(proposalId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not save that value'),
+    );
+  }
+  return (await response.json()) as FlyerSpecProposal;
+}
+
+/**
+ * Add a specification the flyer states in a way no rule caught (AC-G.1).
+ *
+ * The product has to be one this batch already names. Adding a key to a product
+ * the flyer never mentioned is a job for that product's own Specifications tab.
+ */
+export async function addFlyerSpecProposalRow(
+  readingId: string,
+  input: { product_id: string; spec_key: string; value: SpecProposal['value'] },
+): Promise<FlyerSpecProposal> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(readingId)}/spec-proposals/rows`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not add that specification'),
+    );
+  }
+  return (await response.json()) as FlyerSpecProposal;
+}
+
+/**
+ * Take a proposal off the batch (AC-G.3).
+ *
+ * A hard delete of something nobody accepted. The batch summary comes back so
+ * the counts move with the row.
+ */
+export async function dismissFlyerSpecProposal(
+  readingId: string,
+  proposalId: string,
+): Promise<FlyerSpecBatch> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(readingId)}/spec-proposals/${encodeURIComponent(proposalId)}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not dismiss that proposal'),
+    );
+  }
+  return toBatch(await response.json(), readingId);
 }

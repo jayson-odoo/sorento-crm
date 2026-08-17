@@ -60,7 +60,11 @@ from app.services.product_spec_derivation import (
     propose_from_text,
 )
 from app.services.product_spec_extract import _in_scope, classify_spec_proposal
-from app.services.product_spec_registry import active_registry, value_for_registry
+from app.services.product_spec_registry import (
+    active_registry,
+    merged_allowed_values,
+    value_for_registry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +80,18 @@ FAILED = "failed"
 APPLIED = "applied"
 BAD_VALUE = "product_spec_bad_value"
 NOT_IN_BATCH = "not_in_batch"
+
+# Who put a proposal row here. The pass that read the paper, or a person who added the
+# key the flyer never printed while reviewing it (AC-G.1). It is the one thing that
+# decides which source the value is written under.
+ORIGIN_FLYER = "flyer"
+ORIGIN_MANUAL = "manual"
+
+# A manually added row is a person's statement, so it is written as one - the same
+# source the Specifications tab writes, with words that say where it was typed rather
+# than pretending a flyer printed it (AC-G.2).
+MANUAL_SOURCE = "human"
+MANUAL_EVIDENCE = "set during flyer review"
 
 # A ceiling on one apply. The real flyer prints 998 codes; at a handful of keys each
 # this clears the largest honest selection several times over while still refusing a
@@ -607,23 +623,7 @@ def grouped_proposals(db: Session, batch: ProductSpecFlyerBatch) -> list[dict]:
             }
             groups[row.product_id] = group
         registry_row = index.get(row.spec_key)
-        group["proposals"].append(
-            {
-                "id": row.id,
-                "spec_key": row.spec_key,
-                "label": (registry_row.label if registry_row else None) or row.spec_key,
-                "data_type": (registry_row.data_type if registry_row else None) or "enum",
-                "value": row.value,
-                "unit": row.unit,
-                "evidence": row.evidence or "",
-                "kind": row.kind,
-                "stored_value": row.stored_value,
-                "stored_unit": row.stored_unit,
-                "stored_source": row.stored_source,
-                "outcome": row.outcome,
-                "applied_at": row.applied_at,
-            }
-        )
+        group["proposals"].append(_proposal_payload(row, registry_row))
 
     return sorted(
         groups.values(),
@@ -632,6 +632,43 @@ def grouped_proposals(db: Session, batch: ProductSpecFlyerBatch) -> list[dict]:
             group["product_code"],
         ),
     )
+
+
+def _proposal_payload(
+    row: ProductSpecFlyerProposal, registry_row: Optional[ProductSpecRegistry]
+) -> dict:
+    """One row, as the review screen reads it. The ONE builder for a proposal.
+
+    Everything the screen needs about a row is here, including what the EDIT widget
+    needs: the key's type, and its vocabulary when it has a closed one (AC-F.5). A
+    dropdown that had to fetch its own options would be one call per row on a page that
+    can hold hundreds, and the same fields have to reach the GET and the PATCH answer -
+    two builders is how a field ends up on one screen and not the other.
+
+    `allowed_values` is null rather than `[]` for a key with no closed vocabulary,
+    because "there is no list" and "the list is empty" are different instructions to a
+    widget: the first says render an input, the second says render a dropdown with
+    nothing in it.
+    """
+    allowed = merged_allowed_values(registry_row) if registry_row is not None else []
+    return {
+        "id": row.id,
+        "spec_key": row.spec_key,
+        "label": (registry_row.label if registry_row else None) or row.spec_key,
+        "data_type": (registry_row.data_type if registry_row else None) or "enum",
+        "value": row.value,
+        "unit": row.unit,
+        "evidence": row.evidence or "",
+        "kind": row.kind,
+        "stored_value": row.stored_value,
+        "stored_unit": row.stored_unit,
+        "stored_source": row.stored_source,
+        "allowed_values": allowed or None,
+        "origin": row.origin or ORIGIN_FLYER,
+        "edited": row.edited_at is not None,
+        "outcome": row.outcome,
+        "applied_at": row.applied_at,
+    }
 
 
 def user_names(db: Session, user_ids: list[Optional[str]]) -> dict[str, str]:
@@ -648,6 +685,323 @@ def user_names(db: Session, user_ids: list[Optional[str]]) -> dict[str, str]:
         user.id: (user.name or user.email or "")
         for user in db.query(User).filter(User.id.in_(wanted)).all()
     }
+
+
+# --------------------------------------------------------------------------- #
+# changing the batch by hand: edit a value, add a key, dismiss a row
+#
+# The review screen is the whole act (UAC section G): a reviewer holding the paper
+# corrects what the reader misread, adds the key it printed in a way no rule catches,
+# and dismisses what belongs to the neighbouring card - without leaving the page for
+# five product Specifications tabs. All three write PROPOSALS, never spec values: the
+# apply is still the only way onto the master, and it still names ids only (L8).
+# --------------------------------------------------------------------------- #
+def assert_proposed(batch: ProductSpecFlyerBatch) -> None:
+    """Refuse anything but a settled batch, saying which unsettled state it is in.
+
+    Shared by the apply and by all three of the acts below, because they refuse on the
+    same fact: a batch mid-re-propose holds the OLD rows for a moment and then holds
+    none of them, so an id named against it is either about to be superseded or about
+    to vanish, and "not found" is not the reason.
+    """
+    if batch.status == PROPOSED:
+        return
+    raise AppException(
+        status_code=409,
+        message=(
+            "This flyer is being read for specifications again. Wait for it to "
+            "finish, then review what it proposes."
+            if batch.status == PROPOSING
+            else "The last pass over this flyer did not finish, so there is nothing "
+            "to review. Propose from it again."
+        ),
+        code="FLYER_SPEC_NOT_PROPOSED",
+    )
+
+
+def _assert_pending(row: ProductSpecFlyerProposal) -> None:
+    """Refuse a row that is already on the product.
+
+    Editing or dismissing a written value on THIS screen would leave the master saying
+    one thing and the batch another, and the batch is the weaker record - it is deleted
+    by the next propose. The product's own Specifications tab is where a written value
+    is changed, and it is the one place that re-derives and re-stamps provenance.
+    """
+    if row.outcome == APPLIED:
+        raise AppException(
+            status_code=409,
+            message=(
+                "This proposal has already been written to the product. Change it on "
+                "the product's own Specifications tab."
+            ),
+            code="FLYER_SPEC_ALREADY_APPLIED",
+        )
+
+
+def proposal_in(
+    db: Session, batch: ProductSpecFlyerBatch, proposal_id: str
+) -> ProductSpecFlyerProposal:
+    """One row of THIS batch, or 404. Scoped by batch so an id from another cannot land."""
+    row = (
+        db.query(ProductSpecFlyerProposal)
+        .filter(
+            ProductSpecFlyerProposal.batch_id == batch.id,
+            ProductSpecFlyerProposal.id == str(proposal_id),
+        )
+        .first()
+    )
+    if row is None:
+        raise AppException(
+            status_code=404,
+            message=_REFUSAL_WORDS[NOT_IN_BATCH],
+            code=NOT_IN_BATCH,
+        )
+    return row
+
+
+def _live_spec(db: Session, product_id: str) -> tuple[dict, dict]:
+    """What the product holds RIGHT NOW: `(values, provenance)`.
+
+    Read fresh on every one of these acts rather than trusting the row's propose-time
+    snapshot, because the whole point of recomputing `kind` here is that the master may
+    have moved since the pass ran.
+    """
+    spec = _stored(db, [product_id]).get(product_id)
+    return (
+        dict((spec.values if spec else None) or {}),
+        dict((spec.provenance if spec else None) or {}),
+    )
+
+
+def _kind_against_live(
+    registry_row: ProductSpecRegistry, value: Any, stored_values: dict, stored_provenance: dict
+) -> str:
+    """The shared classifier, fed the same entry shape the pass feeds it."""
+    proposed_entry: dict = {"value": value}
+    if registry_row.unit:
+        proposed_entry["unit"] = registry_row.unit
+    return classify_spec_proposal(
+        proposed_entry,
+        stored_values.get(registry_row.spec_key),
+        stored_provenance.get(registry_row.spec_key) or {},
+        registry_row.spec_key,
+    )
+
+
+def _registry_row(db: Session, spec_key: str) -> ProductSpecRegistry:
+    """The registry's row for a key, or 404 naming the key that is not one."""
+    row = next(
+        (entry for entry in active_registry(db) if entry.spec_key == spec_key), None
+    )
+    if row is None:
+        raise AppException(
+            status_code=404,
+            message=(
+                f"{spec_key} is not a specification this system holds. Add it to the "
+                f"specification registry first."
+            ),
+            code="flyer_spec_unknown_key",
+        )
+    return row
+
+
+def refresh_counts(db: Session, batch: ProductSpecFlyerBatch) -> None:
+    """Recount the batch off its rows.
+
+    Counted rather than adjusted by hand on each act, because an increment is a second
+    copy of the truth: one missed decrement and the list screen says a batch holds
+    twelve proposals that the review screen shows eleven of, with nothing on either
+    saying which is right.
+    """
+    rows = (
+        db.query(ProductSpecFlyerProposal)
+        .filter(ProductSpecFlyerProposal.batch_id == batch.id)
+        .all()
+    )
+    counts = {kind: 0 for kind in ("new", "change", "conflict", "unchanged", "suppressed")}
+    for row in rows:
+        if row.kind in counts:
+            counts[row.kind] += 1
+
+    batch.product_count = len({row.product_id for row in rows})
+    batch.proposal_count = len(rows)
+    batch.new_count = counts["new"]
+    batch.change_count = counts["change"]
+    batch.conflict_count = counts["conflict"]
+    batch.unchanged_count = counts["unchanged"]
+    batch.suppressed_count = counts["suppressed"]
+    batch.applied_count = sum(1 for row in rows if row.outcome == APPLIED)
+    db.add(batch)
+
+
+def edit_proposal(
+    db: Session,
+    batch: ProductSpecFlyerBatch,
+    row: ProductSpecFlyerProposal,
+    *,
+    value: Any,
+    user: Optional[dict] = None,
+) -> dict:
+    """Store a corrected value on a proposal, and say what it means now (AC-F.2).
+
+    The reader gets a value wrong often enough that the alternative - untick it, open
+    the product, type it there, come back - is what makes a reviewer stop using the
+    screen. So the correction is stored on the ROW, validated against the registry
+    exactly as the write choke point would validate it, and the apply still names ids
+    only: nothing about this widens what the apply payload may carry (L8).
+
+    `kind` is recomputed against the LIVE spec row, so correcting a value to what the
+    product already holds turns the row `unchanged` and it refuses on apply - the edit
+    changes what was proposed, never the idempotency guarantee (AC-C.6).
+
+    An edited FLYER row stays `origin='flyer'`: the reading is still where the key came
+    from, and that a person touched it is on `edited_at`.
+    """
+    assert_proposed(batch)
+    _assert_pending(row)
+
+    registry_row = _registry_row(db, row.spec_key)
+    coerced = value_for_registry(registry_row, value, _reject)
+
+    stored_values, stored_provenance = _live_spec(db, row.product_id)
+
+    row.value = coerced
+    row.unit = registry_row.unit or None
+    row.kind = _kind_against_live(registry_row, coerced, stored_values, stored_provenance)
+    row.stored_value = _entry_field(stored_values.get(row.spec_key), "value")
+    row.stored_unit = _entry_field(stored_values.get(row.spec_key), "unit")
+    row.stored_source = (stored_provenance.get(row.spec_key) or {}).get("source") or None
+    row.edited_at = _now()
+    row.edited_by = (user or {}).get("id")
+    db.add(row)
+
+    db.flush()
+    refresh_counts(db, batch)
+    db.commit()
+    db.refresh(row)
+    return _proposal_payload(row, registry_row)
+
+
+def add_proposal_row(
+    db: Session,
+    batch: ProductSpecFlyerBatch,
+    *,
+    product_id: str,
+    spec_key: str,
+    value: Any,
+    user: Optional[dict] = None,
+) -> dict:
+    """Add a key the flyer never printed, to a product the flyer names (AC-G.1).
+
+    The product must already be IN the batch: the screen offers this inside a product
+    group, and a review of one flyer is not the place to start editing a product it
+    never mentioned.
+
+    The key must be one the registry defines AND one this product's class can carry,
+    judged by derivation's own scope gate - the same gate the propose pass applies, so
+    a reviewer cannot hand-place a bowl count on a toilet seat that the pass would have
+    dropped.
+
+    `origin='manual'`, which is what makes it apply as `human` rather than `flyer`
+    (AC-G.2), and a duplicate is refused rather than silently updated: the row the
+    flyer proposed is already there, and editing IT is a different act with a different
+    answer (AC-F.2).
+    """
+    assert_proposed(batch)
+
+    siblings = (
+        db.query(ProductSpecFlyerProposal)
+        .filter(
+            ProductSpecFlyerProposal.batch_id == batch.id,
+            ProductSpecFlyerProposal.product_id == str(product_id),
+        )
+        .all()
+    )
+    if not siblings:
+        raise AppException(
+            status_code=404,
+            message=(
+                "That product is not part of this flyer's batch, so there is nothing "
+                "to add a specification to."
+            ),
+            code=NOT_IN_BATCH,
+        )
+
+    key = (spec_key or "").strip()
+    registry_row = _registry_row(db, key)
+
+    if any(row.spec_key == key for row in siblings):
+        raise AppException(
+            status_code=409,
+            message=(
+                f"The flyer already proposed {registry_row.label} for this product. "
+                f"Edit that row instead of adding a second one."
+            ),
+            code="flyer_spec_duplicate_row",
+        )
+
+    stored_values, stored_provenance = _live_spec(db, str(product_id))
+    kept = _in_scope(
+        [{"key": key, "value": value}], stored_values, stored_provenance, configured_scopes(db)
+    )
+    if not kept:
+        raise AppException(
+            status_code=400,
+            message=(
+                f"{registry_row.label} does not apply to this product. Its class does "
+                f"not carry that specification."
+            ),
+            code="flyer_spec_key_not_applicable",
+        )
+
+    coerced = value_for_registry(registry_row, value, _reject)
+    stamped_at = _now()
+    row = ProductSpecFlyerProposal(
+        id=str(uuid.uuid4()),
+        batch_id=batch.id,
+        product_id=str(product_id),
+        product_code=siblings[0].product_code,
+        # The pages the flyer printed this product on. The key is not on the paper,
+        # but the PRODUCT is, and the group is ordered and displayed by page.
+        pages=list(siblings[0].pages or []),
+        spec_key=key,
+        value=coerced,
+        unit=registry_row.unit or None,
+        evidence="",
+        kind=_kind_against_live(registry_row, coerced, stored_values, stored_provenance),
+        stored_value=_entry_field(stored_values.get(key), "value"),
+        stored_unit=_entry_field(stored_values.get(key), "unit"),
+        stored_source=(stored_provenance.get(key) or {}).get("source") or None,
+        origin=ORIGIN_MANUAL,
+        edited_at=stamped_at,
+        edited_by=(user or {}).get("id"),
+    )
+    db.add(row)
+
+    db.flush()
+    refresh_counts(db, batch)
+    db.commit()
+    db.refresh(row)
+    return _proposal_payload(row, registry_row)
+
+
+def delete_proposal(
+    db: Session, batch: ProductSpecFlyerBatch, row: ProductSpecFlyerProposal
+) -> None:
+    """Take a proposal off the batch for good (AC-G.3).
+
+    A HARD delete, not a tombstone: the row is a proposal nobody accepted, so there is
+    nothing about it worth keeping, and a dismissed-but-present row is exactly the kind
+    of state a reviewer has to re-decide about on every visit. What was APPLIED is on
+    the spec provenance and is refused here (`_assert_pending`).
+    """
+    assert_proposed(batch)
+    _assert_pending(row)
+
+    db.delete(row)
+    db.flush()
+    refresh_counts(db, batch)
+    db.commit()
 
 
 # --------------------------------------------------------------------------- #
@@ -687,8 +1041,8 @@ class ApplyResult:
 _REFUSAL_WORDS = {
     ALREADY_MATCHES: "The product master already holds this value.",
     CONFLICT_NOT_CONFIRMED: (
-        "This disagrees with a value somebody set, or with a specification they "
-        "removed. Change it on the product's own Specifications tab."
+        "Somebody removed this specification from this product. Put it back on the "
+        "product's own Specifications tab first."
     ),
     NOT_IN_BATCH: "That proposal is not part of this flyer's batch.",
 }
@@ -716,8 +1070,18 @@ def apply_batch(
     Every row is re-classified against the live spec row before anything is written,
     because the master may have moved since the pass ran: a row that now matches is
     refused `already_matches` with no write at all (which is what makes re-applying the
-    same flyer cost nothing, AC-C.6), and one that now disagrees with a value a person
-    set is refused `conflict_not_confirmed` (L7 - bulk never overwrites authorship).
+    same flyer cost nothing, AC-C.6), and a tombstoned key is refused
+    `conflict_not_confirmed` - a tick may overwrite a value, it may not resurrect a
+    specification somebody removed.
+
+    A `conflict` row is WRITTEN (AC-F.1, the captain's amendment superseding L7 in
+    part): ticking it, and confirming a dialog that names how many values a person set
+    are about to be replaced, IS the confirmation. Only `unchanged` and `suppressed`
+    refuse now.
+
+    A row a person added or typed applies as `source='human'` with fixed evidence
+    (AC-G.2): the value did not come off the paper, so badging it `Flyer` would be a
+    claim about a flyer that never said it.
 
     One call per product and one commit for the request: per-key calls would produce one
     fan-out, one rendered-sentence rebuild and one re-derivation PER KEY for what the
@@ -818,7 +1182,11 @@ def apply_batch(
                     _refuse(row, ALREADY_MATCHES, _REFUSAL_WORDS[ALREADY_MATCHES], stamped_at)
                 )
                 continue
-            if kind in ("conflict", "suppressed"):
+            if kind == "suppressed":
+                # The only kind a tick cannot carry. A tombstone is somebody saying
+                # this product does NOT have the key, and putting a value back would
+                # be answering a statement with a guess. `conflict` falls through and
+                # is written: see the docstring (AC-F.1).
                 refused.append(
                     _refuse(
                         row,
@@ -846,7 +1214,7 @@ def apply_batch(
                     # key, and a card that could smuggle its own would store 250 cm
                     # under a millimetre measurement.
                     "unit": registry_row.unit or None,
-                    "source": "flyer",
+                    "source": _source_of(row),
                     "evidence": _evidence(record, row),
                 }
             )
@@ -942,14 +1310,33 @@ def _refuse(
     )
 
 
+def _source_of(row: ProductSpecFlyerProposal) -> str:
+    """`flyer` for what the paper said, `human` for what a person typed (AC-G.2).
+
+    The row a merchandiser ADDED on the review screen never appeared on any flyer, so
+    badging it `Flyer` would be a claim about a document that does not support it. The
+    two are equally authored - both win over derivation - so this changes what the badge
+    says and nothing about what the value does.
+
+    An EDITED flyer row stays `flyer`: the reading is still where the key came from, and
+    the correction is on the row's own `edited_at`.
+    """
+    return MANUAL_SOURCE if (row.origin or ORIGIN_FLYER) == ORIGIN_MANUAL else "flyer"
+
+
 def _evidence(record: FlyerReadingRecord, row: ProductSpecFlyerProposal) -> str:
-    """`flyer <filename>: <the printed words>`.
+    """`flyer <filename>: <the printed words>`, or the fixed words for a manual row.
 
     The filename is in it because a value badged `Flyer` a year later must say WHICH
     flyer, and the printed words are in it because that is what makes the badge honest.
     A card that stated the value without any words to quote collapses to the filename
     rather than leaving a dangling colon.
+
+    A manual row has no printed words to quote - that is the whole reason somebody typed
+    it - so it carries where it was typed instead (AC-G.2).
     """
+    if (row.origin or ORIGIN_FLYER) == ORIGIN_MANUAL:
+        return MANUAL_EVIDENCE
     printed = (row.evidence or "").strip()
     label = f"flyer {record.filename}"
     return f"{label}: {printed}" if printed else label

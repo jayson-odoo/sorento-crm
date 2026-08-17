@@ -299,14 +299,22 @@ tombstoned, and which keys apply to the product's class. None of it is asked for
   key is in the registry and applicable to the product's class, and no row for
   (product, spec_key) exists in the batch THEN a proposal row is created with `kind` computed
   live, `origin='manual'`, `edited_by` stamped, value validated via `value_for_registry`;
-  counts refresh. Refusals: 409 not proposed, 404 unknown key / product not in batch,
-  400 bad value, 409 duplicate row ("the flyer already proposed this - edit that row").
+  counts refresh. Refusals: 409 not proposed, 404 unknown key (`flyer_spec_unknown_key`) /
+  product not in batch (`not_in_batch`), 400 bad value (`product_spec_bad_value`), 409 duplicate
+  row (`flyer_spec_duplicate_row`, "the flyer already proposed this - edit that row"), and
+  **400 `flyer_spec_key_not_applicable`** when the key is real but this product's class cannot
+  carry it - named here 2026-08-17 during the build, because the line asked for the gate without
+  saying how it refuses. Not a 404: the key exists, so "unknown key" would send the reader to the
+  registry to add something already there.
 - **AC-G.2** `[BE]` GIVEN apply THEN a `manual` row writes with **`source='human'`** and
   evidence `"set during flyer review"` (a person typed it; a machine read stays `flyer`).
   All other apply mechanics identical.
 - **AC-G.3** `[BE]` GIVEN `DELETE /dealer-kit/flyer-readings/{id}/spec-proposals/{proposal_id}`
   WHEN the row is not `applied` and the batch is `proposed` THEN the row is hard-deleted and
-  counts refresh; 409 otherwise. Same permission pair.
+  counts refresh; 409 otherwise. Same permission pair. It answers 200 with the BATCH SUMMARY
+  (added 2026-08-17 during the build, which this line left open): the counts have just moved and
+  the screen renders them, so returning nothing would make the caller refetch to learn what it
+  caused.
 - **AC-G.4** `[FE]` GIVEN each product group WHEN it renders pending rows THEN it offers "Add
   specification" (key picker limited to applicable registry keys not already in the group,
   then the registry-typed value input) and per-row "Dismiss" behind a confirm dialog

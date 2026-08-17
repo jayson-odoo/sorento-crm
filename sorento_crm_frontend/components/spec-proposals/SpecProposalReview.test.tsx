@@ -269,7 +269,12 @@ describe('conflict tickability is decided by selectableKinds, not by the row (AC
     expect(checkboxes[3]).toBeEnabled();
   });
 
-  it('disables the conflict checkbox when selectableKinds is [new, change] - the flyer bulk apply (AC-D.2, L6/L7)', () => {
+  // Named after the RULE, not after a surface: the flyer batch passed
+  // `['new', 'change']` until the captain's amendment (AC-F.4) made a ticked
+  // conflict the confirmation, and it now passes `['new', 'change', 'conflict']`.
+  // What this asserts is unchanged and is the point of the prop - a caller that
+  // leaves `conflict` out gets a disabled checkbox for it.
+  it('disables the conflict checkbox when a caller leaves conflict out of selectableKinds (AC-D.2)', () => {
     renderReview({ selectableKinds: ['new', 'change'] });
 
     const checkboxes = screen.getAllByLabelText('Select row');
@@ -315,5 +320,63 @@ describe('select-all skips non-selectable rows (AC-D.8)', () => {
     );
     expect(called).not.toContain(UNCHANGED_ROW.spec_key);
     expect(called).not.toContain(SUPPRESSED_ROW.spec_key);
+  });
+});
+
+describe('the two data-driven props a surface with row acts needs (AC-F.3, AC-G.4)', () => {
+  it('marks a row the caller says was edited, and leaves the others unmarked', () => {
+    renderReview({
+      proposals: [
+        { ...MOCK_PROPOSALS[0], edited: true },
+        { ...MOCK_PROPOSALS[1] },
+      ],
+      selectedKeys: [],
+    });
+
+    const marks = screen.getAllByText('edited');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).toHaveAttribute(
+      'data-spec-proposal-edited',
+      MOCK_PROPOSALS[0].spec_key,
+    );
+  });
+
+  it('renders a caller-supplied Value cell in place of the default when renderValue is given', () => {
+    renderReview({
+      proposals: [MOCK_PROPOSALS[0], MOCK_PROPOSALS[1]],
+      selectedKeys: [],
+      renderValue: (proposal, read) =>
+        proposal.spec_key === MOCK_PROPOSALS[0].spec_key ? (
+          <span>MY EDITOR</span>
+        ) : (
+          read
+        ),
+    });
+
+    expect(screen.getByText('MY EDITOR')).toBeInTheDocument();
+    // The row the caller handed back untouched still renders the shared cell.
+    expect(
+      screen.getByText(
+        (_, node) =>
+          node?.getAttribute('data-spec-proposal-value') ===
+          MOCK_PROPOSALS[1].spec_key,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('adds an actions column only when rowActions is given', () => {
+    const { unmount } = renderReview({
+      proposals: [MOCK_PROPOSALS[0]],
+      selectedKeys: [],
+    });
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    unmount();
+
+    renderReview({
+      proposals: [MOCK_PROPOSALS[0]],
+      selectedKeys: [],
+      rowActions: () => <button type="button">Dismiss</button>,
+    });
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
   });
 });

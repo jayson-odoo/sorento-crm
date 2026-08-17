@@ -25,6 +25,13 @@ proposal about a product that no longer exists is not an answer to anything. Not
 that was APPLIED is lost with them - an applied value is on `product_specifications`,
 written through the choke point, with the printed words as its evidence.
 
+A proposal row also carries `origin` (`flyer` | `manual`) and `edited_at` / `edited_by`,
+because the review screen is where the whole act happens: a person can correct a value
+the reader got wrong and add a key the flyer never printed. `origin` is what decides the
+source the value is written under - a machine read applies as `flyer`, a person's typing
+as `human` - and the two `edited_*` columns are what let the screen mark a row somebody
+touched.
+
 Every statement is idempotent (IF NOT EXISTS / a `pg_constraint` probe) so this is a
 no-op on a database where it has already been applied by hand.
 
@@ -134,6 +141,9 @@ def upgrade() -> None:
             stored_value   jsonb,
             stored_unit    varchar(32),
             stored_source  varchar(32),
+            origin         varchar(16) NOT NULL DEFAULT 'flyer',
+            edited_at      timestamp without time zone,
+            edited_by      uuid,
             outcome        varchar(32),
             applied_at     timestamp without time zone,
             applied_by     uuid,
@@ -141,10 +151,31 @@ def upgrade() -> None:
         )
         """
     )
+    # The three columns the review screen's own acts need (UAC section F and G):
+    # `origin` says whether the paper or a person put the row there, which decides
+    # the source the value is written under, and the two `edited_*` columns say a
+    # person changed the value before applying it. Added with their own ALTERs as
+    # well as in the CREATE above because this migration is idempotent by design and
+    # a database that already ran the earlier shape of it holds the table without
+    # them.
+    op.execute(f"ALTER TABLE {_PROPOSALS} ADD COLUMN IF NOT EXISTS origin varchar(16)")
+    op.execute(f"UPDATE {_PROPOSALS} SET origin = 'flyer' WHERE origin IS NULL")
+    op.execute(f"ALTER TABLE {_PROPOSALS} ALTER COLUMN origin SET DEFAULT 'flyer'")
+    op.execute(f"ALTER TABLE {_PROPOSALS} ALTER COLUMN origin SET NOT NULL")
+    op.execute(
+        f"ALTER TABLE {_PROPOSALS} ADD COLUMN IF NOT EXISTS edited_at "
+        f"timestamp without time zone"
+    )
+    op.execute(f"ALTER TABLE {_PROPOSALS} ADD COLUMN IF NOT EXISTS edited_by uuid")
     _add_constraint(
         _PROPOSALS,
         "ck_product_spec_flyer_proposals_kind",
         "CHECK (kind IN ('new', 'change', 'conflict', 'unchanged', 'suppressed'))",
+    )
+    _add_constraint(
+        _PROPOSALS,
+        "ck_product_spec_flyer_proposals_origin",
+        "CHECK (origin IN ('flyer', 'manual'))",
     )
     _add_constraint(
         _PROPOSALS,
