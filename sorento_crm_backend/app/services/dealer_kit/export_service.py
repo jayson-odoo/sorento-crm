@@ -19,6 +19,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.access import ContactAccessType
 from app.models.dealer_kit import ExportRequest, PageLabel, PageVersion
 from app.models.download import DownloadStatus, UserDownload
 from app.services.dealer_kit import page_service
@@ -137,42 +138,42 @@ def get_request(db: Session, download_id: str) -> ExportRequest:
     return row
 
 
-#: What each export audience is entitled to see. `access_codes` is the one knob
-#: that decides whether a promotion applies to a reader (ADR 0008) and which
-#: imagery they may see, so an audience that maps to nothing produces a document
-#: priced and illustrated for nobody in particular.
-#:
-#: Staff map to no codes because they do not need any: a staff export is an
-#: INTERNAL COPY of the brochure, and an internal copy carries the brochure's own
-#: offers whoever they were aimed at. A copy that silently showed list prices
-#: would be printed, read, and quoted from, and the number would disagree with
-#: the page the customer is looking at.
-#: Keyed on AUDIENCES above. Note the asymmetry, which is easy to get wrong: the
-#: audience is "consumer" while the access code it grants is "end_user". Keying
-#: this map on "end_user" matched no real audience at all, and a consumer export
-#: only behaved because empty codes fall back to the public code downstream.
-_AUDIENCE_ACCESS_CODES = {
-    "dealer": frozenset({"dealer"}),
-    "consumer": frozenset({"end_user"}),
-    "staff": frozenset(),
-}
+def _access_codes_for(db: Session, audience: str) -> frozenset[str]:
+    """What this audience may see. `access_codes` decides which promotions apply
+    (ADR 0008) and which imagery is permitted.
+
+    Staff get none and need none: a staff export is an INTERNAL COPY, which
+    carries the brochure's own offers whoever they were aimed at. "consumer"
+    grants `end_user` - the audience and the code have different names.
+
+    "dealer" is every ACTIVE dealer-tier code, not just `dealer`: that bare code
+    means the SORENTO dealer, while CABANA and MOCHA gate their brands on
+    `cabana_dealer` / `mocha_dealer`, so matching only the bare code drops every
+    non-Sorento tile from a document a dealer was promised the catalogue in.
+    """
+    if audience == "consumer":
+        return frozenset({"end_user"})
+    if audience != "dealer":
+        # Staff, and any audience nobody has taught this function about, which
+        # must not default into seeing trade prices.
+        return frozenset()
+    codes = db.query(ContactAccessType.code).filter(ContactAccessType.is_active.is_(True)).all()
+    return frozenset(
+        code for (code,) in codes if code == "dealer" or code.endswith("_dealer")
+    )
 
 
-def viewer_for(request: ExportRequest) -> ViewerContext:
+def viewer_for(db: Session, request: ExportRequest) -> ViewerContext:
     """The viewer a render must use. Derived only from the snapshot.
 
     The audience used to set `is_staff` alone, leaving `access_codes` empty, so a
     PDF requested for DEALERS came out priced and illustrated for a consumer. The
     export screen gives no hint of that; the dealer opening the file does.
-
-    An unrecognised audience gets nothing rather than the most generous reading:
-    a new audience nobody has taught this function about must not default into
-    seeing trade prices.
     """
     is_staff = request.audience == "staff"
     return ViewerContext(
         is_staff=is_staff,
-        access_codes=_AUDIENCE_ACCESS_CODES.get(request.audience, frozenset()),
+        access_codes=_access_codes_for(db, request.audience),
         show_invoice_price=bool(request.show_invoice_price),
         # The office copy is the brochure. A dealer or consumer export is a
         # document for that audience and is gated like one.
@@ -194,6 +195,6 @@ def render_inputs(db: Session, download_id: str) -> dict:
         "version_id": version.id,
         "version": version.version,
         "doc": version.doc,
-        "viewer": viewer_for(request),
+        "viewer": viewer_for(db, request),
         "audience": request.audience,
     }

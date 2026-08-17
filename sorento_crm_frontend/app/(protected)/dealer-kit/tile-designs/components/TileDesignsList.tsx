@@ -9,7 +9,7 @@ import {
   type ColumnDef,
   type PaginationState,
 } from '@tanstack/react-table';
-import { AlertCircle, LayoutTemplate, Pencil, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, LayoutTemplate, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +20,7 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -39,6 +40,7 @@ import type { TileTemplate } from '@/lib/dealer-kit/types';
  * is a separate thing rather than settings on a block.
  */
 export function TileDesignsList() {
+  const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<TileTemplate | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState<TileTemplate | null>(null);
@@ -52,7 +54,12 @@ export function TileDesignsList() {
     queryFn: listTileTemplates,
   });
 
-  const rows = useMemo(() => data ?? [], [data]);
+  const rows = useMemo(() => {
+    const all = data ?? [];
+    const needle = search.trim().toLowerCase();
+    if (!needle) return all;
+    return all.filter((row) => row.name.toLowerCase().includes(needle));
+  }, [data, search]);
 
   const columns = useMemo<ColumnDef<TileTemplate>[]>(
     () => [
@@ -165,29 +172,17 @@ export function TileDesignsList() {
       emptyMessage={
         <div className="py-8 text-center">
           <LayoutTemplate className="mx-auto size-6 text-muted-foreground" />
-          <p className="mt-3 text-sm font-medium text-foreground">No tile designs yet</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            A tile design decides what each product card shows. Create one, then bind it to a
-            products block on any page.
+          <p className="mt-3 text-sm font-medium text-foreground">
+            {search.trim() ? 'No tile designs match that search' : 'No tile designs yet'}
           </p>
-          <Button
-            className="mt-4"
-            size="sm"
-            onClick={() => {
-              setEditing(null);
-              setDialogOpen(true);
-            }}
-          >
-            <Plus className="size-4" />
-            New design
-          </Button>
-        </div>
-      }
-    >
-      <Card>
-        <CardHeader className="block py-5">
-          <div className="flex justify-end">
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+            {search.trim()
+              ? 'Try a different name.'
+              : 'A tile design decides what each product card shows. Create one, then bind it to a products block on any page.'}
+          </p>
+          {!search.trim() && (
             <Button
+              className="mt-4"
               size="sm"
               onClick={() => {
                 setEditing(null);
@@ -197,7 +192,32 @@ export function TileDesignsList() {
               <Plus className="size-4" />
               New design
             </Button>
+          )}
+        </div>
+      }
+    >
+      <Card>
+        <CardHeader className="flex-wrap gap-2 py-5">
+          <div className="relative w-full sm:max-w-xs">
+            <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="ps-9"
+              placeholder="Search tile designs"
+              aria-label="Search tile designs"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
           </div>
+          <Button
+            size="sm"
+            onClick={() => {
+              setEditing(null);
+              setDialogOpen(true);
+            }}
+          >
+            <Plus className="size-4" />
+            New design
+          </Button>
         </CardHeader>
 
         <CardTable>

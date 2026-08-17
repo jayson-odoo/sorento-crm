@@ -4,6 +4,7 @@ import weakref
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect
 from sqlalchemy.orm.attributes import get_history
+from sqlalchemy.orm.base import PASSIVE_NO_FETCH
 from typing import Optional, Any
 from datetime import datetime, date
 from decimal import Decimal
@@ -60,6 +61,35 @@ def _entity_id_str(obj: Any) -> str:
         return str(v) if v is not None else ""
     parts = [str(getattr(obj, c.key, None) or "") for c in pk_cols]
     return "_".join(parts) if all(p for p in parts) else ""
+
+
+def _dirty_has_real_changes(obj: Any, columns: Optional[list[str]] = None) -> bool:
+    """Whether at least one audited column of a `session.dirty` object actually
+    changed value - the noise guard for UPDATE rows.
+
+    Deliberately NOT ``old_values == new_values`` off ``_old_new_from_dirty``'s
+    output: those dicts fall back to the CURRENT (new) value for "old" whenever
+    SQLAlchemy's default ``active_history=False`` didn't capture the prior
+    value (e.g. the attribute was expired - the common case right after an
+    earlier commit in the same session, before anything re-reads it). In that
+    case old_values and new_values come back identical FOR A COLUMN THAT DID
+    CHANGE, so comparing the dicts would wrongly treat a real change as a
+    no-op and drop its audit row. ``History.has_changes()`` does not have that
+    blind spot: it is True whenever SQLAlchemy recorded an add/delete for the
+    key at all, regardless of whether the pre-image value was ever loaded.
+
+    ``passive=PASSIVE_NO_FETCH`` keeps the guard from emitting SQL inside
+    ``before_flush``: an expired or deferred column would otherwise lazy-load
+    mid-flush. An untouched expired column correctly reports no history, and an
+    assigned one still reports its `added` entry, because SQLAlchemy records
+    that at SET time without needing a fetch.
+    """
+    insp = inspect(obj)
+    mapper = insp.mapper
+    keys = columns if columns is not None else [c.key for c in mapper.column_attrs]
+    return any(
+        get_history(obj, key, passive=PASSIVE_NO_FETCH).has_changes() for key in keys
+    )
 
 
 def _old_new_from_dirty(obj: Any, columns: Optional[list[str]] = None) -> tuple[dict, dict]:
@@ -371,9 +401,18 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         if _should_skip(entity_type, entity_id):
             continue
         cols = getattr(cls, "__audit_columns__", None)
-        old_values, new_values = _old_new_from_dirty(obj, columns=cols)
-        if not old_values and not new_values:
+        # Noise guard: SQLAlchemy's default `session.dirty` membership does NOT
+        # imply an AUDITED column actually changed value - reassigning a
+        # column to the value it already holds, or a flush triggered by a
+        # dirty column outside `__audit_columns__`, still lands the object
+        # here. Checked via real per-column history (see
+        # `_dirty_has_real_changes`), not by comparing `_old_new_from_dirty`'s
+        # output dicts - those can read as equal for a column that DID change
+        # (the `active_history=False` blind spot documented there), and a
+        # dict-equality guard would wrongly drop that row.
+        if not _dirty_has_real_changes(obj, columns=cols):
             continue
+        old_values, new_values = _old_new_from_dirty(obj, columns=cols)
         pending.append((entity_type, entity_id, "UPDATE", old_values, new_values, getattr(obj, "company_id", None)))
     for obj in session.deleted:
         if not _is_audited(obj):
@@ -443,7 +482,8 @@ def register_audit_listeners() -> None:
     Idempotent: the listeners are global on ``Session``, so registering twice
     would write every audit row twice. Production calls this once at startup,
     but a test process can reach it from both the app's startup event and a
-    fixture, and a doubled history is worse than none.
+    fixture (a TestClient context manager re-runs the startup event each time),
+    and a doubled history is worse than none.
     """
     global _listeners_registered
     if _listeners_registered:

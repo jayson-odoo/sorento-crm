@@ -89,9 +89,16 @@ Convention: **Given / When / Then**. An AC passes only when the Then is observed
 
 - **AC-G1** `[BE]` Given a saved page doc, Then it contains **no prices and no access decisions** — only bindings. (Inspect the JSON: a price string in a saved doc is a defect.)
 - **AC-G2** `[E2E]` Given the same published page, When viewed by a staff user, a `dealer` access-level principal, and an `end_user` principal, Then each sees the price appropriate to their audience per the existing `access_levels` rules — from one document.
-- **AC-G3** `[E2E]` Given a product whose `access_levels` exclude the viewer, Then it is absent from the rendered collection for that viewer — not rendered-then-hidden client-side.
+- **AC-G3** `[E2E]` Given a product whose brand's `access_levels` exclude the viewer (`Product` carries no access level of its own), Then it is absent from the rendered collection for that viewer — not rendered-then-hidden client-side.
+  Corrected 2026-08-15: the brand filter is enforced in `collection_service.resolve_tiles_bulk`, which every collection/tile render goes through, including the public catalogue and PDF paths. `bundle_service.resolve_bundle` and `selection_service._resolve_lines` do **not** yet apply it. Not currently a public leak (`CatalogueRenderer` has no bundle-rendering branch, so a bundle is not reachable from a public render today), but it is open scope, recorded here rather than claimed as met for those two paths.
 - **AC-G4** `[E2E]` Given a discontinued or inactive product inside a bound collection, Then it is excluded from render (rule documented in the plan) rather than rendering as a dead tile.
-- **AC-G5** `[FE]` Given the public render, Then it is server-rendered (no client-side layout pass) and the page body never scrolls horizontally at 375px.
+- **AC-G5** `[FE]` Given the public render, Then `app/(public)/c/[company]/[slug]/page.tsx` and
+  the print route fetch the published payload client-side (`'use client'` + `useEffect`, not
+  server-rendered) and set `data-dk-print-ready` on the DOM once layout has settled, so the PDF
+  worker's headless Chromium waits on that explicit signal rather than a fixed timeout. The page
+  body never scrolls horizontally at 375px.
+  Corrected 2026-08-14: this AC previously claimed server-rendering with no client-side layout
+  pass, which does not match the shipped architecture.
 - **AC-G6** `[E2E]` Given the page-level **show invoice price** toggle, Then invoice price renders only when the toggle is on **AND** the viewer's access permits it — the two gates are ANDed, and turning the toggle on can never expose invoice price to a viewer whose access forbids it (assert with toggle on + consumer principal → absent).
 - **AC-G7** `[BE]` Given the toggle is off, Then invoice price is absent from the **server response**, not merely hidden in the DOM — no price a viewer may not see is ever serialised to them.
 
@@ -99,7 +106,16 @@ Convention: **Given / When / Then**. An AC passes only when the Then is observed
 
 - **AC-H1** `[BE]` Given a page, Then its print profile stores `{pageSize, orientation, margins, cover, headerFooter{left,right,pageNumbers}}` and per-section `printMode` (`include` | `exclude` | `breakBefore`), plus per-block `hideInPrint`.
 - **AC-H2** `[FE]` Given block types button / CTA / filter / add-to-selection, Then `hideInPrint` defaults to true; content blocks default to false.
-- **AC-H3** `[FE]` Given the editor, When the user opens **Print Preview**, Then the page renders at true paper geometry as stacked pages with visible boundaries and page numbers — using **the same print route the PDF worker renders**.
+- **AC-H3** `[FE]` Given the editor, When the user opens **Print Preview**, Then the page renders
+  at true paper geometry as stacked pages with visible boundaries and page numbers, via
+  `PaperCanvas` + `BlockPreview` (the editor's own placeholder renderer) - **not** the print route
+  the PDF worker renders, which instead renders `CatalogueRenderer`. This is a real parity risk:
+  two renderers stand in for what the design promised would be one, and a block that renders
+  correctly in Print Preview is not guaranteed to render identically in the exported PDF, or vice
+  versa. Converging `PaperCanvas` onto `CatalogueRenderer` is open backlog, a decision not yet
+  scheduled - see the self-review report `documentation/reports/DEALER-KIT-SELF-REVIEW-2026-08-14.md`.
+  Corrected 2026-08-14: this AC previously asserted the two paths share one route, which is not
+  what shipped.
 - **AC-H4** `[FE]` Given Print Preview, When the user changes page size or orientation, Then pagination re-flows live and break positions update.
 - **AC-H5** `[FE]` Given Print Preview, When the user sets `breakBefore` on a section, Then that section starts a new page in the preview **and** in the exported PDF — the two agree.
 - **AC-H6** `[FE]` Given the editing canvas (not preview), Then it shows **no** page-break indicators (it is not at paper width and must not imply accuracy it lacks).
@@ -132,7 +148,16 @@ Convention: **Given / When / Then**. An AC passes only when the Then is observed
 > AC-L6's diff has nothing to diff until L4/L5 have a mechanism.
 
 - **AC-L1** `[BE]` Given `dealer_kit.edition`, Then its status is one of `draft` / `pending_approval` / `approved` / `rejected` / `done`, driven by the **core status engine** — not a bespoke enum column with hand-written transition checks.
-- **AC-L2** `[BE]` Given the transition table, Then exactly these are permitted and all others 403: `draft→pending_approval` (Designer) · `pending_approval→approved` (Approver) · `pending_approval→rejected` (Approver) · `rejected→pending_approval` (Designer) · `approved→done` (Designer) · `done→draft` (Approver).
+- **AC-L2** `[BE]` Given the transition table, Then exactly these are permitted and all others 403: `draft→pending_approval` (Designer) · `pending_approval→approved` (Approver) · `pending_approval→rejected` (Approver) · `rejected→draft` (Designer) · `approved→done` (Designer) · `approved→pending_approval` (any edit to an approved Edition).
+  Updated 2026-08-14 to match what shipped: the graph was settled with the user on 2026-08-03
+  (`PLAN-edition-approval.md`, "Settled by the user" section) and differs from the edges
+  originally named here in two ways. `rejected` goes back to `draft`, not to `pending_approval` -
+  a rejection is a state with a reason attached, and the Designer's only move from there is to
+  rework the draft, not resubmit unchanged. `done→draft` (AC-L8) was withdrawn: `done` is
+  terminal, and revising a live catalogue duplicates it into a new Edition (AC-L9) rather than
+  reopening the finished one. In its place, `approved→pending_approval` fires on any edit to an
+  approved Edition (AC-L4/L5's stricter shipped form). See `tests/test_dealer_kit_edition_graph.py:123-134`
+  and `PLAN-edition-approval.md:141`.
 - **AC-L3** `[E2E]` Given a Designer without `edition.approve`, When they attempt `pending_approval→approved`, Then the action is absent in the UI and returns 403 — including on their own Edition.
 - **AC-L4** `[BE]` Given an Edition in `approved`, When any field **other than a price** is edited, Then the Edition drops automatically to `pending_approval` and the change is recorded — an approved Edition can never ship silently altered.
 - **AC-L5** `[BE]` Given an Edition in `approved`, When only price fields are edited, Then it stays `approved` and both the approved version id and the eventual done version id are stored on the Edition.

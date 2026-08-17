@@ -837,7 +837,7 @@ _OFFER_TEXT = "MYR 4,231.00"
         # `if "dealer" in viewer.access_codes: return True`, the dealer row still
         # PASSES - a dealer-only offer reaching a dealer is the answer it wanted -
         # and only this row fails, on the dealer copy carrying a price restricted
-        # to end users. A transposed `_AUDIENCE_ACCESS_CODES` is a different
+        # to end users. A transposed `audience_access_codes` map is a different
         # fault and the dealer row does catch that one on its own.
         (["end_user"], "consumer", "dealer"),
     ],

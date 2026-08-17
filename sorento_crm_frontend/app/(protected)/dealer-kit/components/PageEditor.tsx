@@ -13,7 +13,6 @@ import {
   Printer,
   RotateCcw,
   Smartphone,
-  Square,
   Tablet,
   Type,
 } from 'lucide-react';
@@ -88,7 +87,9 @@ const PALETTE: { type: BlockType; label: string; icon: typeof Type }[] = [
   { type: 'image', label: 'Image', icon: ImageIcon },
   { type: 'collection', label: 'Products', icon: LayoutGrid },
   { type: 'bundle', label: 'Bundle', icon: Package },
-  { type: 'artboard', label: 'Artboard', icon: Square },
+  // Artboard pulled from the palette until the sub-canvas exists (AC-C10) - the
+  // BlockType, factory case and BlockPreview placeholder stay so documents that
+  // already carry an artboard block (seeded or saved earlier) keep rendering.
 ];
 
 function newBlock(type: BlockType): Block {

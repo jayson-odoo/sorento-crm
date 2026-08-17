@@ -59,7 +59,15 @@ export const ENTITY_TYPES = [
   'notification',
   'impersonation_session',
   'contact_impersonation_session',
+  'dealer_kit_edition',
 ] as const;
+
+// Human-readable labels where the stored entity_type isn't self-explanatory
+// as-is (e.g. an underscore-joined table/domain name). Falls back to the
+// stored value for entries not listed here.
+const ENTITY_TYPE_LABELS: Partial<Record<(typeof ENTITY_TYPES)[number], string>> = {
+  dealer_kit_edition: 'Dealer Kit Edition',
+};
 
 function actionBadgeVariant(
   action: string,
@@ -346,7 +354,7 @@ export default function AuditLogsList() {
                         onChange={(v) => setEntityType(v === ENTITY_TYPE_ALL ? '' : v)}
                         options={[
                           { value: ENTITY_TYPE_ALL, label: 'All entity types' },
-                          ...ENTITY_TYPES.map((t) => ({ value: t, label: t })),
+                          ...ENTITY_TYPES.map((t) => ({ value: t, label: ENTITY_TYPE_LABELS[t] ?? t })),
                         ]}
                         placeholder="All entity types"
                         triggerClassName="w-full"
