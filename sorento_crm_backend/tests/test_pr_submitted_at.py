@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from app.models.access import RespondContact
 from app.models.procurement import PurchaseRequestHeader
 from app.models.portal import PortalToken
 import app.services.form_sla_service as form_sla_service_mod
@@ -46,10 +47,21 @@ def _neutralize_side_effects(monkeypatch):
 
 
 def _seed(db, kind="sponsorship_form"):
+    # The contact the token names is seeded, not assumed. A sponsorship submit reads it
+    # (the project requirement is a per-contact flag), so a token pointing at a row that
+    # is not there is a 404 before any date is stamped - and "borrow whatever contact the
+    # database happens to hold" is the shape that passes locally and fails on CI's empty
+    # database.
+    contact_id = str(uuid.uuid4())
+    contact = RespondContact(
+        id=contact_id,
+        phone_number="+6019" + uuid.uuid4().hex[:7],
+        name="ZZT portal submitter",
+    )
     token = PortalToken(
         id=str(uuid.uuid4()),
         token="tok_" + uuid.uuid4().hex,
-        contact_id="contact-1",
+        contact_id=contact_id,
         space_id="space-1",
         expires_at=datetime.utcnow() + timedelta(days=1),
     )
@@ -58,11 +70,11 @@ def _seed(db, kind="sponsorship_form"):
         request_type=kind,
         status="draft",
         source="portal",
-        contact_id="contact-1",
+        contact_id=contact_id,
         space_id="space-1",
         portal_draft_at=datetime.utcnow(),
     )
-    db.add_all([token, header])
+    db.add_all([contact, token, header])
     db.commit()
     return token, header
 

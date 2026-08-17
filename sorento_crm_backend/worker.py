@@ -2,9 +2,9 @@
 """RQ worker + APScheduler combined.
 
 Single process owns both queue draining (`imports`, `respond_io`, `catalogue_render`,
-`flyer_read`) and cron ticks fired by `app.scheduler.task_scheduler`. Compose runs
-exactly one `worker` service so jobs and ticks are never duplicated across
-blue/green API containers.
+`project_docs`, `media`, `flyer_read`) and cron ticks fired by
+`app.scheduler.task_scheduler`. Compose runs exactly one `worker` service so jobs
+and ticks are never duplicated across blue/green API containers.
 
 Set `ENABLE_SCHEDULER=true` in the worker container; API containers leave it false.
 """
@@ -111,13 +111,18 @@ if __name__ == '__main__':
     # blocks every Excel upload behind it. `flyer_read` is separate for the same
     # reason and is listed LAST: a 20 to 60 second PyMuPDF extraction should not
     # sit in front of every Excel import, and RQ drains queues in list order.
-    # `project_docs` (the quotation document pass) is separate on the same
-    # grounds and sits after the two fast queues.
+    # `project_docs` (quotation PDF and Excel rendering) sits between them for the
+    # same reason: slower than an import, faster than a flyer read.
     #
     # PRODUCTION: the compose file on the server is hand-edited and gitignored.
     # If it pins WORKER_QUEUES explicitly, `flyer_read` and `project_docs` have
     # to be added there or those jobs enqueue and never run. If it does not pin
     # it, this default is picked up on the next deploy.
+    #
+    # 'media' drains the chatbot media extraction jobs. The /external/media
+    # endpoint enqueues and then AWAITS the job, so a worker that is not draining
+    # this queue does not merely delay the work - every media turn waits out
+    # media_sync_wait_seconds and returns `pending`.
     #
     # WORKER_QUEUES makes the list overridable, matching the project-sales
     # checkout. Every worktree on this machine points at the SAME Redis db 0, so
@@ -128,7 +133,7 @@ if __name__ == '__main__':
         q.strip()
         for q in os.getenv(
             'WORKER_QUEUES',
-            'imports,respond_io,project_docs,catalogue_render,flyer_read',
+            'imports,respond_io,catalogue_render,project_docs,media,flyer_read',
         ).split(',')
         if q.strip()
     ]

@@ -3689,8 +3689,12 @@ def process_sales_history_import(db_job_id: str, file_data: bytes, filename: str
 
 def process_order_inquiry_import(db_job_id: str, file_data: bytes, filename: str,
                                  user_id: str):
-    """Import the Order Inquiry sheet: project demand, stock locations, and PO claims."""
-    # Project Sales owns the Order Inquiry importer (ADR 0010); the claim resolver stays SCM's.
+    """Import the Order Inquiry sheet: project demand, stock locations, and PO claims.
+
+    The importer is owned by Project Sales (ADR 0010), so it is read from
+    `app/services/project_order_inquiry_import_service.py` rather than from `app.services.scm`.
+    The job type, the queue and the route that enqueues it are unchanged.
+    """
     from app.services import project_order_inquiry_import_service as order_inquiry_service
     from app.services.scm import order_link_service
 

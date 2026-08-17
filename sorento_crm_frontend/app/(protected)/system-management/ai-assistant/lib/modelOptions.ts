@@ -22,9 +22,20 @@ export const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> =
     { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
     { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
   ],
+  gemini: [
+    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+  ],
 };
 
 export const PROVIDER_OPTIONS = [
   { value: 'openai', label: 'OpenAI' },
   { value: 'anthropic', label: 'Anthropic' },
+  { value: 'gemini', label: 'Google Gemini' },
 ];
+
+/** The provider's display name, for grouping a mixed model list. */
+export function providerLabel(provider: string): string {
+  return PROVIDER_OPTIONS.find((opt) => opt.value === provider)?.label ?? provider;
+}

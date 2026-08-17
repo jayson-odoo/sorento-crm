@@ -331,16 +331,17 @@ export function SearchableSelect({
         className={cn(
             // Cap to the space Radix measured, or a long list makes the menu taller than
             // the viewport and the search box gets pushed off-screen on short windows.
+            //
+            // Either way the menu never goes below 16rem: a narrow cell (a UOM column is
+            // 110px) made a legible list unreadable, one squeezed word per line, and the
+            // column cannot be widened to suit its dropdown.
             'max-h-(--radix-popper-available-height) flex flex-col p-0',
             wrapOptions
               ? // Grow to the widest option, never past the viewport, and never
                 // narrower than the control it hangs off.
-                'w-auto min-w-(--radix-popper-anchor-width) max-w-[min(28rem,calc(100vw-2rem))]'
-              : // The menu follows its trigger's width but never goes below 16rem: a narrow
-                // cell (a UOM column is 110px) made a legible list unreadable, one squeezed
-                // word per line, and the column cannot be widened to suit its dropdown.
-                // Capped at the space Radix measured so widening it can never push the menu
-                // off a 375px screen.
+                'w-auto min-w-[max(var(--radix-popper-anchor-width),16rem)] max-w-[min(28rem,calc(100vw-2rem))]'
+              : // Follow the trigger's width, capped at the space Radix measured so the
+                // 16rem floor can never push the menu off a 375px screen.
                 'w-[max(var(--radix-popper-anchor-width),16rem)] max-w-(--radix-popper-available-width)',
             className,
           )}

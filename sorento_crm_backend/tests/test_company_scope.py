@@ -369,6 +369,10 @@ def test_every_company_id_table_is_registered():
     # under every scope, while a company that adds a type of its own keeps it. Owned
     # without the shared flag would have hidden the seeds from every logged-in user
     # while an API-key caller still saw them.
+    # `product_spec_flyer_batches` is owned: a proposal batch is ONE company's pass over
+    # its own flyer, and it copies the company off the reading it was started from. Its
+    # proposal rows are not owned - they hang off the scoped batch, so scoping them too
+    # would filter them twice (the `selection_line` rule above).
     # Onboarding adds 3 owned tables under the same rule: a request is ONE company's
     # intake batch (the requester is invited into that company, and the reviewer works
     # a queue of her own company's requests), its people are that batch's named staff,
@@ -388,10 +392,10 @@ def test_every_company_id_table_is_registered():
     # company's decision, read by the PO worklist, and the mixin stamps the company at
     # insert so a split written under one scope can never be read under another.
     #
-    # The number is the union of both lineages at this merge: main's 67 plus the 41 the
-    # project-sales branch brought (which were audited table by table on that branch),
+    # The number is the union of both lineages at this merge: main's 68 plus the 41 the
+    # project-sales branch brought (which were audited table by table at its own merge),
     # plus the 2 front-planning Stage 2 tables above.
-    expected_owned = 110
+    expected_owned = 111
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

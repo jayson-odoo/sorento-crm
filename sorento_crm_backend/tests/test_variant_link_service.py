@@ -18,8 +18,9 @@ Plus the product GET-by-id variant/base serialization contract
 The pure ``boundary_ok`` truth table is DB-free. The reconcile / adopt / delete
 tests build a throwaway product family in live Postgres (synthetic ``ZZVLINK*``
 codes that can't collide with the real catalog) and clean it up; they skip when
-the DB is unreachable. The API-contract tests read real backfilled families and
-skip when those codes aren't present.
+the DB is unreachable. The API-contract tests seed their OWN ``ZZVLINK*`` pair
+through the same fixture rather than borrowing a live backfilled row, so they
+run on an empty database and can't race a concurrent test file's rows.
 """
 from __future__ import annotations
 
@@ -103,14 +104,48 @@ def db():
 
 
 _TEST_PREFIX = "ZZVLINK"
+# The company every product row defaults to (migration 306's column DEFAULT).
+_SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
+_CAT_CODE = _TEST_PREFIX + "-CAT"
+_UOM_CODE = _TEST_PREFIX + "-UOM"
 
 
 def _ref_ids(db):
-    """A real category_id + base_uom_id to satisfy the NOT-NULL FKs."""
-    cat = db.execute(text("SELECT id FROM product_categories LIMIT 1")).scalar()
-    uom = db.execute(text("SELECT id FROM units_of_measure LIMIT 1")).scalar()
-    if not cat or not uom:
-        pytest.skip("no category / uom rows to satisfy product FKs")
+    """Get-or-create the ZZVLINK category + uom the NOT-NULL product FKs need.
+
+    Seeded here rather than borrowed off the live tables: a freshly bootstrapped
+    database (CI) has no rows in either, so borrowing meant skipping the whole
+    DB half of this file, and a borrowed row can be deleted mid-test by a
+    concurrently running test file. Idempotent on the two marker codes; the
+    ``family`` fixture removes both rows again once the products are gone.
+    """
+    cat = db.execute(
+        text("SELECT id FROM product_categories WHERE category_code = :c"),
+        {"c": _CAT_CODE},
+    ).scalar()
+    if not cat:
+        cat = str(uuid.uuid4())
+        db.execute(
+            text(
+                "INSERT INTO product_categories (id, category_code, category_name) "
+                "VALUES (:id, :code, :name)"
+            ),
+            {"id": cat, "code": _CAT_CODE, "name": "ZZVLINK Test Category"},
+        )
+        db.commit()
+    uom = db.execute(
+        text("SELECT id FROM units_of_measure WHERE uom_code = :c"), {"c": _UOM_CODE}
+    ).scalar()
+    if not uom:
+        uom = str(uuid.uuid4())
+        db.execute(
+            text(
+                "INSERT INTO units_of_measure (id, uom_code, uom_name) "
+                "VALUES (:id, :code, :name)"
+            ),
+            {"id": uom, "code": _UOM_CODE, "name": "ZZVLINK Each"},
+        )
+        db.commit()
     return cat, uom
 
 
@@ -145,6 +180,14 @@ def family(db):
         db.execute(
             text("DELETE FROM products WHERE product_code LIKE :p"),
             {"p": _TEST_PREFIX + "%"},
+        )
+        # FK order: the products referencing them are gone by now.
+        db.execute(
+            text("DELETE FROM product_categories WHERE category_code = :c"),
+            {"c": _CAT_CODE},
+        )
+        db.execute(
+            text("DELETE FROM units_of_measure WHERE uom_code = :c"), {"c": _UOM_CODE}
         )
         db.commit()
 
@@ -333,24 +376,30 @@ def _svc(db):
     return ProductService(db)
 
 
-def _find_variant_and_base(db):
-    """A real (variant, its parent base) pair from the backfilled graph."""
-    row = db.execute(
-        text(
-            "SELECT v.id, v.product_code, b.id, b.product_code "
-            "FROM products v JOIN products b ON v.variant_of_id = b.id "
-            "WHERE b.variant_of_id IS NULL LIMIT 1"
-        )
-    ).first()
-    if not row:
-        pytest.skip("no backfilled variant/base pair present")
-    return row  # (variant_id, variant_code, base_id, base_code)
+def _seed_variant_and_base(db, family, marker):
+    """Seed a throwaway ``ZZVLINK<marker>`` base + one linked variant.
+
+    Links via ``reconcile_variant_links`` (the adopt-orphans path the AC-V1 tests
+    exercise) rather than a hand-written UPDATE, so the pair the API contract is
+    asserted against is built by the service under test. Returns the same tuple
+    shape the API tests consume: (variant_id, variant_code, base_id, base_code).
+    """
+    base_code = _TEST_PREFIX + marker
+    variant_code = _TEST_PREFIX + marker + "-BL"
+    base_id = family["mk"](base_code)
+    variant_id = family["mk"](variant_code)
+    db.commit()
+    reconcile_variant_links(db, base_id)  # adopts the orphan child + commits
+    assert _parent_of(db, variant_id) == base_id
+    return variant_id, variant_code, base_id, base_code
 
 
-def test_api_variant_contract(db):
+def test_api_variant_contract(db, family):
     from app.schemas.product import ProductResponse
 
-    variant_id, variant_code, base_id, base_code = _find_variant_and_base(db)
+    variant_id, variant_code, base_id, base_code = _seed_variant_and_base(
+        db, family, "900"
+    )
 
     v = _svc(db).get_product(variant_id)
     vr = ProductResponse.model_validate(v)
@@ -370,20 +419,27 @@ def test_api_variant_contract(db):
         assert c.product_code and c.product_code != str(c.id)
 
 
-def test_api_list_row_is_variant_cheap_no_extra_attrs(db):
+def test_api_list_row_is_variant_cheap_no_extra_attrs(db, family):
     """A plain ORM row (as LIST returns it, no _variant_* stashed attrs) still
     serializes is_variant from the column — and does NOT emit variant_of /
     variants (no N+1 on list)."""
     from sqlalchemy.orm import Session as _Session
 
+    from app.models.base import set_company_scope
     from app.models.product import Product
     from app.schemas.product import ProductResponse
 
-    variant_id, _, _, _ = _find_variant_and_base(db)
+    variant_id, _, _, _ = _seed_variant_and_base(db, family, "910")
     # Fresh session so the module-session identity map (which a prior
     # get_product test stashed _variant_of_ref onto) can't leak into this row —
     # this mirrors a LIST query that never calls _populate_variant_graph.
     fresh = _Session(bind=db.get_bind())
+    # A brand-new session's FIRST ORM statement runs before conftest's
+    # `after_begin` listener has defaulted the company scope, so the
+    # multi-company filter would fail closed (`AND false`) and return no row. A
+    # real LIST request always has its scope resolved by this point, so setting
+    # it here mirrors production instead of weakening the test.
+    set_company_scope(fresh, frozenset({_SORENTO_COMPANY_ID}))
     try:
         row = fresh.query(Product).filter(Product.id == variant_id).first()
         assert not hasattr(row, "_variant_of_ref")
@@ -395,15 +451,13 @@ def test_api_list_row_is_variant_cheap_no_extra_attrs(db):
         fresh.close()
 
 
-def test_api_base_row_is_variant_false(db):
+def test_api_base_row_is_variant_false(db, family):
     from app.models.product import Product
     from app.schemas.product import ProductResponse
 
-    base_id = db.execute(
-        text("SELECT id FROM products WHERE variant_of_id IS NULL LIMIT 1")
-    ).scalar()
-    if not base_id:
-        pytest.skip("no base product present")
+    base_id = family["mk"](_TEST_PREFIX + "920")
+    db.commit()
     row = db.query(Product).filter(Product.id == base_id).first()
+    assert row is not None and row.variant_of_id is None
     r = ProductResponse.model_validate(row)
     assert r.is_variant is False

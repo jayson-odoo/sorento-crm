@@ -419,9 +419,11 @@ class TestPerRouteGates:
         # tests/test_settings_app_config_gate.py, where the settings singleton is
         # seeded with non-null sensitive values so its 200 body and its
         # /app-config sibling can be asserted together. (The structural sweep
-        # below covers 42 gated routes in total - the other 16 are the 12
-        # users/roles/permissions reads that were already gated before this work
-        # and the 4 onboarding reads, both of which have their own tests.)
+        # below covers 44 gated routes in total - the other 18 are the 12
+        # users/roles/permissions reads that were already gated before this work,
+        # the 4 onboarding reads, the teams member-brands read from the
+        # brand-aware escalation PR (#197) and the contact media-access read from
+        # the chatbot media PR, all of which have their own tests.)
         assert len(self.specs) == 25, "one entry per gated route except GET /settings/"
 
     def test_denied_without_permission(self, api):
@@ -624,20 +626,24 @@ class TestStructuralCoverage:
         """Every gated GET in the package, as an exact set rather than a count:
         a route that loses its gate fails here even if another route gains one.
 
-        Three groups. The 26 this PR series is responsible for - the plan's audit
+        Five groups. The 26 this PR series is responsible for - the plan's audit
         table (13), the Q1/Q2/Q3 decisions (8 contacts GETs + the settings blob +
         2 reference catalogs) and the 2 system-logs reads - the 12 in
         `users.py` / `roles.py` / `permissions.py` that were already correctly
-        gated before any of it, and the 4 onboarding reads (the review queue, its
-        neighbours, one request, and the access templates). Those 12 are new to
-        this assertion only because the sweep now covers the whole package;
-        nothing about them changed.
+        gated before any of it, the 4 onboarding reads (the review queue, its
+        neighbours, one request, and the access templates), the member-level
+        brands read on teams (`/teams/{team_id}/members/{user_id}/brands`), added
+        by the brand-aware escalation routing PR (#197) alongside its
+        market-segments sibling, and the per-contact media-access read
+        (`/contacts/{contact_id}/media-access`) from the chatbot media PR. Those
+        12 are new to this assertion only because the sweep now covers the whole
+        package; nothing about them changed.
 
         Adding a gated GET to the package is expected to fail here once: name it
         below so the gate is stated rather than counted.
         """
         gated_paths = {r.path for r in _mounted_get_routes() if _is_gated(r)}
-        assert len(gated_paths) == 42
+        assert len(gated_paths) == 44
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",
@@ -662,6 +668,14 @@ class TestStructuralCoverage:
             "/api/v1/user-management/contacts/{contact_id}/attachment-types",
             "/api/v1/user-management/contacts/{contact_id}/cs-routing",
             "/api/v1/user-management/contacts/{contact_id}/market-segments",
+            # --- The chatbot media PR, and deliberately NOT on the `contacts.view`
+            # its path siblings above take: reading a contact's media gates is
+            # reading who may send the bot images and voice notes and how much of
+            # it, which is the same authority as changing it, so the gate is
+            # `user_management.contacts.edit` (UAC S1-06, no new admin-only role).
+            # Its 403/200 pair lives in tests/test_media_access_contact_route.py
+            # alongside the PUT sibling it shares a service with.
+            "/api/v1/user-management/contacts/{contact_id}/media-access",
             # --- Q2 decided: user_management.settings.view (the narrow
             # /settings/app-config projection stays open - see the allowlist)
             "/api/v1/user-management/settings/",

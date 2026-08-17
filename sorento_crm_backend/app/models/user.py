@@ -386,6 +386,50 @@ class SystemSetting(Base):
     portal_revisions_enabled = Column(Boolean, nullable=False, server_default="true", default=True)
     portal_max_revisions = Column(Integer, nullable=False, server_default="2", default=2)
 
+    # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Every number
+    # the endpoint enforces is an operator-editable column, not a constant in code -
+    # the captain's requirement, and the reason the settings surface exists at all.
+    # Same rule as the two blocks above: each of these must ALSO appear in the
+    # settings GET dict AND in SystemSettingUpdate, or it never reaches the frontend.
+    media_image_monthly_limit = Column(Integer, nullable=False, server_default="50", default=50)
+    media_voice_monthly_limit = Column(Integer, nullable=False, server_default="100", default=100)
+    media_voice_max_seconds = Column(Integer, nullable=False, server_default="120", default=120)
+    media_burst_limit = Column(Integer, nullable=False, server_default="5", default=5)
+    media_burst_window_seconds = Column(Integer, nullable=False, server_default="60", default=60)
+    media_warn_threshold_percent = Column(Integer, nullable=False, server_default="80", default=80)
+    # NULL falls back to the AIAssistantConfig row, matching _resolve_provider.
+    media_image_provider = Column(Text, nullable=True)
+    media_image_model = Column(Text, nullable=True)
+    # NULL means degradation is IMPOSSIBLE, so the monthly quota becomes a hard
+    # refusal (`denied_quota`) instead of an accepted-but-degraded extraction.
+    # Deliberately no default: a default would make an explicit NULL unwritable
+    # (SQLAlchemy cannot tell "set to None" from "unset" on a defaulted column),
+    # and shipping a paid model switched on by default is not a decision this
+    # feature gets to make on an operator's behalf.
+    media_image_degraded_model = Column(Text, nullable=True)
+    media_transcribe_model = Column(Text, nullable=False, server_default="whisper-1", default="whisper-1")
+    # Voice's own degraded tier, and it ships NULL and UNSEEDED on purpose. The
+    # image tiers were measured (PLAN section 14.1) so migration 358 seeds them;
+    # no cheaper transcription model has been measured, so none is claimed here.
+    # A NULL degraded model means the monthly voice quota is a hard refusal -
+    # which is honest, where degrading to the same model and then telling the
+    # contact their accuracy has dropped would not be.
+    media_voice_degraded_model = Column(Text, nullable=True)
+    # pinned | hints | auto. `pinned`/`en` reproduces today's behaviour exactly.
+    media_language_mode = Column(String(16), nullable=False, server_default="pinned", default="pinned")
+    media_language_pinned = Column(String(16), nullable=False, server_default="en", default="en")
+    media_language_hints = Column(Text, nullable=False, server_default="en,ms,zh", default="en,ms,zh")
+    # How long the endpoint awaits the worker before returning `pending`. This is
+    # the value that bounds the dispatcher's lock. Range 5-90, enforced in the
+    # backend validator, not only in the settings form.
+    media_sync_wait_seconds = Column(Integer, nullable=False, server_default="30", default=30)
+    # The worker's own hard ceiling. Range 5-110, and must be >= the sync wait so a
+    # job that outlives the wait still finishes and stays retrievable rather than
+    # being killed mid-flight. 110 keeps a maximally misconfigured pair inside the
+    # dispatcher's 120 second lock TTL.
+    media_extraction_timeout_seconds = Column(Integer, nullable=False, server_default="45", default=45)
+    media_max_entities = Column(Integer, nullable=False, server_default="10", default=10)
+
 
 class UserQuickAccess(Base):
     """Per-user quick access (pinned menu items and attachment folders) for sidebar."""

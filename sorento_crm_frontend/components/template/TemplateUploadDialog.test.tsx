@@ -24,8 +24,11 @@ async function runTest(result: ValidateImportResult) {
       accept=".xlsx,.xls"
     />,
   );
-  const input = document.querySelector<HTMLInputElement>('#file-upload');
-  if (!input) throw new Error('file input not rendered');
+  // The file picker lives inside the shared FileDropzone, reached by the accessible
+  // name the dialog gives it. Nothing else about the zone is asserted here - that is
+  // FileDropzone's own suite - only that a picked file reaches the Test handler.
+  const input = screen.getByLabelText('Excel file') as HTMLInputElement;
+  // The dropzone filters on the extension, so the name has to be a real .xlsx.
   const file = new File(['x'], 'items.xlsx', { type: 'application/vnd.ms-excel' });
   fireEvent.change(input, { target: { files: [file] } });
   fireEvent.click(screen.getByRole('button', { name: /test/i }));

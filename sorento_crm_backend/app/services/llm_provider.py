@@ -1,14 +1,10 @@
-"""LLM provider abstraction (OpenAI, Anthropic, Gemini).
+"""LLM provider abstraction (OpenAI + Anthropic + Google Gemini).
 
 Goal: keep the agent loop and reformulator/embedder pieces in
 ``ai_assistant_service`` provider-agnostic. Each provider exposes the same
 ``chat`` / ``embed`` / ``test_connection`` surface and returns a normalized
 ``ChatResult`` whose ``raw`` field carries enough provider-native data to
 iterate tool calls in the agent loop.
-
-Gemini is the exception to "same surface, same capabilities": it is here for
-document extraction only, and raises rather than pretends on tool calling and
-embeddings. See ``GeminiProvider``.
 """
 from __future__ import annotations
 
@@ -46,13 +42,107 @@ class ImagePart:
     """Single image attached to the last user message in a multimodal call.
 
     ``mime`` must be a content type the active provider accepts
-    (``image/png``, ``image/jpeg``, ``image/webp``). ``data_b64`` is raw
+    (``image/png``, ``image/jpeg``, ``image/webp``; Gemini additionally takes
+    ``image/heic`` and ``image/heif``). ``data_b64`` is raw
     base64 with no ``data:`` prefix — each provider's ``chat`` adapter
     wraps it in the native shape.
     """
 
     mime: str
     data_b64: str
+
+
+# Last-resort model per provider, for a caller that has no configured model to
+# use. Each is that provider's cheap-but-capable general model, and every caller
+# that needs one reads it through `default_model_for` so registering a fourth
+# provider is a single edit here rather than a hunt for two-branch conditionals
+# ("gpt-4o if openai else claude") that silently hand the new provider another
+# vendor's model id.
+DEFAULT_MODELS: dict[str, str] = {
+    "openai": "gpt-4o",
+    "anthropic": "claude-sonnet-4-6",
+    "gemini": "gemini-2.5-flash",
+}
+
+
+def default_model_for(provider_name: Optional[str]) -> str:
+    """The fallback model for ``provider_name``.
+
+    An unknown name still returns something so the caller can build its error
+    with a concrete model in hand; the ``get_provider`` call that follows is
+    what actually refuses it with a ``ValueError``.
+    """
+    key = (provider_name or "").strip().lower()
+    return DEFAULT_MODELS.get(key, DEFAULT_MODELS["anthropic"])
+
+
+def resolve_model(cfg: Any, provider_name: str, explicit: Optional[str] = None) -> str:
+    """The model to run on ``provider_name``: ``explicit`` first, else the
+    assistant row's model, but only when that row is configured for the same
+    provider, else the provider's default.
+
+    Model ids are vendor-specific. A lane pointed at Gemini with no model of its
+    own must not inherit the assistant's ``gpt-4o`` and post it to Google, which
+    404s in a way that reads like an outage rather than a configuration gap.
+    Names are normalized the same way ``resolve_api_key`` normalizes them.
+    """
+    if explicit:
+        return str(explicit)
+    provider_key = (provider_name or "").strip().lower()
+    cfg_provider = (
+        (getattr(cfg, "provider", None) or "") if cfg is not None else ""
+    ).strip().lower()
+    cfg_model = (getattr(cfg, "model", None) if cfg is not None else None) or ""
+    if cfg_model and cfg_provider == provider_key:
+        return str(cfg_model)
+    return default_model_for(provider_key)
+
+
+def resolve_api_key(cfg: Any, provider_name: str) -> str:
+    """The key to send to ``provider_name``, given the AI assistant config row.
+
+    One resolver for every caller, because the same mistake was made twice: a
+    per-agent provider is operator-settable, so the provider a call runs on is
+    often NOT the one the assistant row is configured for, and the generic
+    ``api_key_ciphertext`` column then holds somebody else's key. Posting an
+    OpenAI key to Google produces a 400 that reads like a Gemini outage rather
+    than "no key configured", so the generic column counts only when the
+    assistant itself runs on the provider being asked for.
+
+    Order per provider: the provider-specific column, then the generic column
+    when it belongs to this provider, then the environment key. An empty string
+    means no key is configured, which is the caller's cue to say so.
+
+    Names are normalized exactly as ``get_provider`` and ``default_model_for``
+    normalize them, so a stored ``"Gemini"`` cannot resolve an OpenAI key here
+    and then be handed to a Gemini client.
+    """
+    from app.config import settings as app_settings
+
+    provider_name = (provider_name or "").strip().lower()
+
+    def column(name: str) -> str:
+        return (getattr(cfg, name, None) if cfg is not None else "") or ""
+
+    cfg_provider = (
+        (getattr(cfg, "provider", None) or "") if cfg is not None else ""
+    ).strip().lower()
+    generic = column("api_key_ciphertext") if cfg_provider == provider_name else ""
+    if provider_name == "anthropic":
+        return (
+            column("anthropic_api_key_ciphertext")
+            or generic
+            or app_settings.anthropic_api_key
+            or ""
+        )
+    if provider_name == "gemini":
+        return (
+            column("gemini_api_key_ciphertext")
+            or generic
+            or app_settings.gemini_api_key
+            or ""
+        )
+    return generic or app_settings.openai_api_key or ""
 
 
 class LLMProvider(Protocol):
@@ -325,7 +415,10 @@ class OpenAIProvider:
 
 
 def _split_system_messages(messages: list[dict]) -> tuple[str, list[dict]]:
-    """Anthropic carries the system prompt as a separate parameter.
+    """Anthropic and Gemini both carry the system prompt out of band.
+
+    Anthropic wants a ``system`` parameter, Gemini a ``systemInstruction``
+    block; either way it is not a member of the message list.
 
     We concatenate any ``system`` entries from the OpenAI-style list and
     return ``(system_text, non_system_messages)``. Tool/assistant messages
@@ -600,85 +693,352 @@ class AnthropicProvider:
 
 
 # ---------------------------------------------------------------------------
-# Gemini
+# Google Gemini
 # ---------------------------------------------------------------------------
 
-_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+# The REST surface rather than the `google-genai` SDK: `httpx` is already a
+# dependency of this service, the generateContent shape is stable, and one less
+# vendor SDK is one less import that can fail in the worker.
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+# Generous, because the vision lane sends a full-page image and the caller
+# (the media worker) already bounds the whole extraction with its own join.
+GEMINI_TIMEOUT_SECONDS = 120.0
+
+GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+
+# `gemini-embedding-001` is natively 3072-dimensional and supports Matryoshka
+# truncation to a smaller size. A truncated vector is no longer unit-length,
+# and cosine distance assumes it is, so anything below the native size is
+# re-normalized here (Google's own guidance for every reduced output size).
+GEMINI_EMBEDDING_NATIVE_DIMS = 3072
+
+# Thinking budget, in tokens, for a `pro` model. 2.5 Pro cannot have thinking
+# switched off and rejects anything below 128, so it gets a small fixed budget
+# rather than a zero.
+GEMINI_PRO_THINKING_BUDGET = 1024
 
 
-def _gemini_post(url: str, payload: dict, *, api_key: str, timeout: int = 180) -> dict:
-    """Single transport seam for the Gemini REST call.
+def _gemini_thinking_budget(model: Optional[str]) -> Optional[int]:
+    """How many tokens this model may spend thinking before it answers.
 
-    A module-level function rather than a method so tests can substitute it
-    without a fake SDK, and so the key stays out of the URL: Google accepts
-    ``x-goog-api-key``, and a key in the query string ends up in every log
-    line and proxy record that ever sees the request.
+    `None` means the model has no thinking to budget and `thinkingConfig` must
+    be left off the request altogether: Google introduced thinking budgets with
+    the 2.5 family, and 2.0 and older reject the field with a 400. The model box
+    on the media settings page is free text, so an operator typing
+    `gemini-2.0-flash` would otherwise fail every call.
+
+    From 2.5 up, thinking is on by default and its tokens are spent out of
+    `maxOutputTokens`. Left alone, a tight budget (the vision lane sends 2048)
+    can be consumed entirely by thinking and come back as a candidate with no
+    parts at all - `finishReason=MAX_TOKENS` with nothing to parse.
+
+    `flash` and `flash-lite` accept a zero budget, which is what this lane
+    wants: the work is reading a photo into a fixed JSON shape, not reasoning.
+    A model id with no readable version is treated as pre-2.5, because omitting
+    the field costs at worst a shorter answer while sending it to a model that
+    does not take it costs the whole call.
     """
-    import urllib.error
-    import urllib.request
-
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode())
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode()[:500]
-        # Two failures are the operator's to fix, not the document's, and both used to
-        # reach the screen as a wall of JSON that read like the file was unreadable.
-        # Say what is actually wrong and who can act on it.
-        if exc.code == 429:
-            reason = (
-                "the billing cap has been reached"
-                if "spending cap" in detail or "spend" in detail
-                else "the rate limit has been reached"
-            )
-            raise RuntimeError(
-                f"The document reader is unavailable because {reason}. The document is "
-                "stored and nothing is lost. Raise the cap in Google AI Studio, then "
-                "upload it again."
-            ) from None
-        if exc.code in (401, 403):
-            raise RuntimeError(
-                "The document reader rejected our key. The document is stored and "
-                "nothing is lost. Check GEMINI_API_KEY, then upload it again."
-            ) from None
-        raise RuntimeError(f"HTTP {exc.code}: {detail}") from None
+    name = (model or "").lower()
+    version = re.search(r"gemini-(\d+)(?:\.(\d+))?", name)
+    if version is None:
+        return None
+    if (int(version.group(1)), int(version.group(2) or 0)) < (2, 5):
+        return None
+    return 0 if "flash" in name else GEMINI_PRO_THINKING_BUDGET
 
 
-def _convert_messages_to_gemini(messages: list[dict]) -> tuple[Optional[dict], list[dict]]:
-    """Split off the system instruction and map roles onto Gemini's names.
+# Gemini's schema dialect is a strict subset of JSON Schema (OpenAPI 3.0). An
+# unknown key is a 400, not an ignored hint - and the schemas in this repo are
+# written for OpenAI strict mode, which REQUIRES `additionalProperties: false`
+# and spells a nullable as `["string", "null"]`. Both are rejected verbatim, so
+# a schema is translated rather than passed through.
+_GEMINI_SCHEMA_KEYS = {
+    "anyOf",
+    "description",
+    "enum",
+    "format",
+    "items",
+    "maxItems",
+    "maximum",
+    "minItems",
+    "minimum",
+    "nullable",
+    "properties",
+    "propertyOrdering",
+    "required",
+    "title",
+    "type",
+}
 
-    Gemini calls the assistant ``model`` and carries the system prompt in a
-    separate ``systemInstruction`` field, same shape of problem as Anthropic.
+
+def _gemini_schema(schema: Any) -> Any:
+    """Translate a JSON Schema into Gemini's OpenAPI subset."""
+    if isinstance(schema, list):
+        return [_gemini_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    out: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key not in _GEMINI_SCHEMA_KEYS:
+            # `additionalProperties`, `$schema`, `default`, `examples`, ...
+            continue
+        if key == "type" and isinstance(value, list):
+            concrete = [item for item in value if item != "null"]
+            out["type"] = concrete[0] if concrete else "string"
+            if len(concrete) != len(value):
+                out["nullable"] = True
+            continue
+        if key == "enum" and isinstance(value, list):
+            # `Schema.enum` is a proto `repeated string`, so the null branch an
+            # OpenAI strict schema spells as a literal `None` member is a 400
+            # rather than an ignored hint. It carries the same meaning as the
+            # `["string","null"]` type union above, and is translated the same
+            # way: dropped from the list, recorded as `nullable`.
+            members = [item for item in value if item is not None and item != "null"]
+            out["enum"] = members
+            if len(members) != len(value):
+                out["nullable"] = True
+            continue
+        if key == "properties" and isinstance(value, dict):
+            out["properties"] = {
+                name: _gemini_schema(prop) for name, prop in value.items()
+            }
+            continue
+        if key in ("items", "anyOf"):
+            out[key] = _gemini_schema(value)
+            continue
+        out[key] = value
+    return out
+
+
+def _convert_tools_to_gemini(tools: list[dict]) -> list[dict]:
+    """Convert OpenAI-style ``[{type,function:{name,description,parameters}}]``
+    to Gemini's ``[{functionDeclarations: [...]}]``.
+
+    Gemini takes ONE tools entry holding every declaration, not one entry per
+    tool, so the return is a single-element list (or empty, when nothing
+    convertible was passed).
     """
-    system_text, rest = _split_system_messages(messages)
+    declarations: list[dict] = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        nested = tool.get("function")
+        fn = nested if isinstance(nested, dict) else tool
+        name = fn.get("name")
+        if not name:
+            continue
+        declaration: dict[str, Any] = {
+            "name": name,
+            "description": fn.get("description") or "",
+        }
+        raw_params = fn.get("parameters")
+        parameters = _gemini_schema(raw_params) if isinstance(raw_params, dict) else {}
+        # Gemini rejects an OBJECT schema whose `properties` is empty with a 400,
+        # so a parameterless tool carries no `parameters` at all.
+        if parameters.get("properties"):
+            declaration["parameters"] = parameters
+        declarations.append(declaration)
+    if not declarations:
+        return []
+    return [{"functionDeclarations": declarations}]
+
+
+def _gemini_text_parts(content: Any) -> list[dict]:
+    """The ``parts`` for a plain (non tool-call) message."""
+    if isinstance(content, str):
+        return [{"text": content}]
+    if isinstance(content, list):
+        parts: list[dict] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append({"text": block})
+            elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append({"text": block["text"]})
+        return parts or [{"text": ""}]
+    return [{"text": json.dumps(content) if content is not None else ""}]
+
+
+def _convert_messages_to_gemini(messages: list[dict]) -> list[dict]:
+    """Convert OpenAI-style messages to Gemini ``contents``.
+
+    Role mapping is ``assistant -> model`` and everything else ``-> user``;
+    Gemini has no third role, so a tool result rides back as a ``user`` turn
+    carrying a ``functionResponse`` part - the same trick the Anthropic adapter
+    uses for ``tool_result``.
+
+    Gemini keys a function response by NAME, not by call id, so the id -> name
+    mapping is carried forward from the assistant turn that made the call. A
+    tool message whose id was never announced falls back to its own ``name``
+    field and finally to the id itself, so a malformed history still produces a
+    well-formed request instead of raising.
+    """
     contents: list[dict] = []
-    for message in rest:
-        role = "model" if message.get("role") == "assistant" else "user"
-        contents.append({"role": role, "parts": [{"text": str(message.get("content") or "")}]})
-    instruction = {"parts": [{"text": system_text}]} if system_text else None
-    return instruction, contents
+    call_names: dict[str, str] = {}
+
+    for msg in messages:
+        role = msg.get("role")
+
+        if role == "tool":
+            call_id = msg.get("tool_call_id") or msg.get("tool_use_id") or ""
+            name = msg.get("name") or call_names.get(call_id) or call_id
+            raw = msg.get("content")
+            if isinstance(raw, str):
+                try:
+                    payload = json.loads(raw)
+                except Exception:
+                    payload = {"result": raw}
+            else:
+                payload = raw
+            if not isinstance(payload, dict):
+                # Gemini requires an object here; a bare list or scalar is a 400.
+                payload = {"result": payload}
+            contents.append(
+                {
+                    "role": "user",
+                    "parts": [
+                        {"functionResponse": {"name": name, "response": payload}}
+                    ],
+                }
+            )
+            continue
+
+        if role == "assistant":
+            parts: list[dict] = []
+            text = msg.get("content")
+            if isinstance(text, str) and text.strip():
+                parts.append({"text": text})
+            for call in msg.get("tool_calls") or []:
+                fn = (call.get("function") or {}) if isinstance(call, dict) else {}
+                name = fn.get("name") or ""
+                args_raw = fn.get("arguments") or "{}"
+                try:
+                    parsed = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
+                except Exception:
+                    parsed = {}
+                if not isinstance(parsed, dict):
+                    parsed = {}
+                call_id = call.get("id") if isinstance(call, dict) else None
+                if call_id:
+                    call_names[str(call_id)] = name
+                parts.append({"functionCall": {"name": name, "args": parsed}})
+            if not parts:
+                parts = [{"text": ""}]
+            contents.append({"role": "model", "parts": parts})
+            continue
+
+        contents.append({"role": "user", "parts": _gemini_text_parts(msg.get("content"))})
+
+    return contents
+
+
+def _is_tool_result_turn(content: dict) -> bool:
+    """A ``user`` turn that is really a tool result, not something a human said."""
+    return any(
+        isinstance(part, dict) and "functionResponse" in part
+        for part in (content.get("parts") or [])
+    )
+
+
+def _attach_images_gemini(contents: list[dict], images: list[ImagePart]) -> list[dict]:
+    """Append ``images`` to the final user turn as ``inlineData`` parts.
+
+    Same placement rule as ``_attach_images_openai``: last user message, or a
+    new one when the conversation has none yet - except that Gemini has no
+    ``tool`` role, so a converted tool result also rides back as ``role: user``
+    (``_convert_messages_to_gemini``). Dropping an image into one of those turns
+    would mix an ``inlineData`` part into a ``functionResponse`` turn, so the
+    scan skips them and a fresh user turn is synthesized when the tail of the
+    conversation is nothing but tool results.
+    """
+    if not images:
+        return contents
+    out = [dict(c) for c in contents]
+    last_user_idx = -1
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") == "user" and not _is_tool_result_turn(out[i]):
+            last_user_idx = i
+            break
+    if last_user_idx == -1:
+        out.append({"role": "user", "parts": []})
+        last_user_idx = len(out) - 1
+
+    turn = out[last_user_idx]
+    parts = list(turn.get("parts") or [])
+    for img in images:
+        parts.append({"inlineData": {"mimeType": img.mime, "data": img.data_b64}})
+    turn["parts"] = parts
+    out[last_user_idx] = turn
+    return out
+
+
+def _gemini_error_message(response: Any) -> str:
+    """Gemini's own words for a failed call, never a generic message."""
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001 - fall back to the raw text
+        return (getattr(response, "text", "") or "").strip()[:500]
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"])
+        if isinstance(error, str) and error:
+            return error
+    return str(body)[:500]
 
 
 class GeminiProvider:
-    """Google Gemini via REST, for document extraction.
-
-    Deliberately narrow: ``chat`` with optional images and forced JSON, which
-    is the whole job (reading a scanned PO or a delivery-schedule matrix).
-    Tool calling and embeddings raise instead of pretending, so the agent loop
-    can never be handed a provider that quietly ignores its tools.
-    """
+    """Google Gemini over the Generative Language REST API."""
 
     name = "gemini"
 
     def __init__(self, api_key: str, default_model: str = "gemini-2.5-flash") -> None:
         self.api_key = api_key
         self.default_model = default_model
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Optional[dict] = None,
+        params: Optional[dict] = None,
+    ) -> dict:
+        """The single HTTP seam, so tests can record a response without a network."""
+        import httpx
+
+        if not self.api_key:
+            raise RuntimeError("No Gemini API key is configured.")
+        try:
+            response = httpx.request(
+                method,
+                f"{GEMINI_API_BASE}/{path}",
+                headers={
+                    "x-goog-api-key": self.api_key,
+                    "Content-Type": "application/json",
+                },
+                json=json_body,
+                params=params,
+                timeout=GEMINI_TIMEOUT_SECONDS,
+            )
+        except httpx.HTTPError as exc:  # network-level failure
+            raise RuntimeError(f"Gemini request failed: {exc}") from exc
+
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Gemini call failed ({response.status_code}): "
+                f"{_gemini_error_message(response)}"
+            )
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise RuntimeError("Gemini returned a non-JSON response.") from exc
+        if not isinstance(body, dict):
+            raise RuntimeError("Gemini returned an unexpected response shape.")
+        return body
 
     def chat(
         self,
@@ -693,76 +1053,173 @@ class GeminiProvider:
         json_schema: Optional[dict] = None,
         json_schema_name: Optional[str] = None,
     ) -> ChatResult:
+        system_text, rest = _split_system_messages(messages)
+        contents = _convert_messages_to_gemini(rest)
+        if images:
+            contents = _attach_images_gemini(contents, images)
+
+        model_name = model or self.default_model
+
+        payload: dict[str, Any] = {"contents": contents}
+        if system_text:
+            payload["systemInstruction"] = {"parts": [{"text": system_text}]}
         if tools:
-            raise NotImplementedError(
-                "GeminiProvider does not implement tool calling; use openai or anthropic"
+            declarations = _convert_tools_to_gemini(tools)
+            if declarations:
+                payload["tools"] = declarations
+
+        wants_json = json_schema is not None or (
+            bool(response_format) and response_format.get("type") == "json_object"
+        )
+        if payload.get("tools") and wants_json:
+            # Gemini refuses `responseMimeType: application/json` alongside
+            # function declarations with a 400. Raising here rather than quietly
+            # dropping the mime type is deliberate: a caller that asked for both
+            # is holding a contradiction, and silently answering in prose would
+            # surface much later as a JSON parse failure with no clue why.
+            raise ValueError(
+                "Gemini cannot combine function calling with JSON response mode. "
+                "Pass either `tools` or a JSON `response_format`/`json_schema`, "
+                "not both."
             )
 
-        instruction, contents = _convert_messages_to_gemini(messages)
-        if images:
-            if not contents:
-                contents = [{"role": "user", "parts": []}]
-            for image in images:
-                contents[-1]["parts"].append(
-                    {"inline_data": {"mime_type": image.mime, "data": image.data_b64}}
-                )
-
         generation: dict[str, Any] = {"temperature": temperature}
+        # Thinking is on by default from 2.5 and is billed against
+        # `maxOutputTokens`, so the budget is set explicitly and ADDED to what
+        # the caller asked for - the caller's number is its answer budget, not
+        # a pool the model gets to think out of. A model with no thinking to
+        # budget (2.0 and older) gets no `thinkingConfig` and the caller's
+        # `max_tokens` unchanged, because the field itself is a 400 there.
+        thinking_budget = _gemini_thinking_budget(model_name)
+        if thinking_budget is not None:
+            generation["thinkingConfig"] = {"thinkingBudget": thinking_budget}
         if max_tokens is not None:
-            generation["maxOutputTokens"] = max_tokens
+            generation["maxOutputTokens"] = max_tokens + (thinking_budget or 0)
+        # Structured output is native here: `responseSchema` constrains decoding
+        # the same way OpenAI's strict json_schema does, so `content` comes back
+        # as a schema-valid JSON string and the caller parses it identically.
+        # `json_schema_name` has no Gemini counterpart - the schema is unnamed.
         if json_schema is not None:
             generation["responseMimeType"] = "application/json"
-            generation["responseSchema"] = json_schema
-        elif (response_format or {}).get("type") in {"json_object", "json_schema"}:
+            generation["responseSchema"] = _gemini_schema(json_schema)
+        elif response_format and response_format.get("type") == "json_object":
             generation["responseMimeType"] = "application/json"
+        payload["generationConfig"] = generation
 
-        payload: dict[str, Any] = {"contents": contents, "generationConfig": generation}
-        if instruction:
-            payload["systemInstruction"] = instruction
-
-        url = f"{_GEMINI_BASE}/models/{model or self.default_model}:generateContent"
-        body = _gemini_post(url, payload, api_key=self.api_key)
+        body = self._request(
+            "POST", f"models/{model_name}:generateContent", json_body=payload
+        )
 
         candidates = body.get("candidates") or []
         if not candidates:
-            reason = (body.get("promptFeedback") or {}).get("blockReason") or "no candidate"
-            raise RuntimeError(f"Gemini returned no candidate: {reason}")
+            # A safety block returns 200 with no candidate at all. Raise rather
+            # than emit an empty string the caller would treat as a real answer.
+            reason = (body.get("promptFeedback") or {}).get("blockReason")
+            raise RuntimeError(
+                f"Gemini returned no candidates (blockReason={reason or 'unknown'})."
+            )
+        candidate = candidates[0] if isinstance(candidates[0], dict) else {}
+        parts = (candidate.get("content") or {}).get("parts") or []
 
-        candidate = candidates[0]
-        finish = candidate.get("finishReason")
-        # A truncated document is worse than a failed one: half a PO looks like
-        # a complete PO with lines missing, and nothing downstream can tell.
-        if finish and finish not in {"STOP", "MAX_TOKENS"}:
-            raise RuntimeError(f"Gemini stopped early: {finish}")
-        if finish == "MAX_TOKENS":
-            raise RuntimeError("Gemini stopped early: MAX_TOKENS (response truncated)")
+        text_chunks: list[str] = []
+        normalized_calls: list[dict] = []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            if isinstance(part.get("text"), str):
+                text_chunks.append(part["text"])
+                continue
+            call = part.get("functionCall")
+            if isinstance(call, dict) and call.get("name"):
+                args = call.get("args")
+                # Gemini returns no call id. The agent loop needs one to pair a
+                # tool result back to its call, so it is synthesized from the
+                # ordinal and the name: stable for a given response, and unique
+                # within the turn even when a tool is called twice.
+                normalized_calls.append(
+                    {
+                        "id": f"gemini_{len(normalized_calls)}_{call['name']}",
+                        "name": str(call["name"]),
+                        "arguments": args if isinstance(args, dict) else {},
+                    }
+                )
 
-        content = "".join(
-            part.get("text", "") for part in (candidate.get("content") or {}).get("parts") or []
-        )
+        if not text_chunks and not normalized_calls:
+            raise RuntimeError(
+                "Gemini returned an empty candidate "
+                f"(finishReason={candidate.get('finishReason') or 'unknown'})."
+            )
+
         usage = body.get("usageMetadata") or {}
         prompt_tokens = int(usage.get("promptTokenCount") or 0)
-        completion_tokens = int(usage.get("candidatesTokenCount") or 0)
+        # Reasoning is reported separately as `thoughtsTokenCount` but is
+        # billed as output and IS inside `totalTokenCount`. Counting only
+        # `candidatesTokenCount` would leave prompt + completion short of the
+        # total on every thinking model, and under-report the spend the usage
+        # dashboard shows.
+        completion_tokens = int(usage.get("candidatesTokenCount") or 0) + int(
+            usage.get("thoughtsTokenCount") or 0
+        )
+        total_tokens = int(
+            usage.get("totalTokenCount") or (prompt_tokens + completion_tokens)
+        )
 
         return ChatResult(
-            content=content,
+            content="".join(text_chunks),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            total_tokens=int(usage.get("totalTokenCount") or prompt_tokens + completion_tokens),
-            tool_calls=[],
+            total_tokens=total_tokens,
+            tool_calls=normalized_calls,
             raw=body,
         )
 
     def embed(self, text: str) -> list[float]:
-        raise NotImplementedError("GeminiProvider is extraction-only; embeddings live elsewhere")
+        """Embed via ``embedContent``, sized to the pgvector column.
+
+        ``outputDimensionality`` is asked for explicitly because the column the
+        pipeline writes into is ``settings.embedding_dimensions`` wide and the
+        model's native size is larger; a mismatch is an insert error, not a
+        quality question.
+        """
+        from app.config import settings
+
+        dimensions = int(settings.embedding_dimensions or 0)
+        request: dict[str, Any] = {
+            "model": f"models/{GEMINI_EMBEDDING_MODEL}",
+            "content": {"parts": [{"text": text}]},
+        }
+        if dimensions and dimensions != GEMINI_EMBEDDING_NATIVE_DIMS:
+            request["outputDimensionality"] = dimensions
+
+        body = self._request(
+            "POST", f"models/{GEMINI_EMBEDDING_MODEL}:embedContent", json_body=request
+        )
+        values = (body.get("embedding") or {}).get("values") or []
+        if not values:
+            raise RuntimeError("Gemini embedContent returned no vector.")
+        vector = [float(v) for v in values]
+        if len(vector) != GEMINI_EMBEDDING_NATIVE_DIMS:
+            magnitude = sum(v * v for v in vector) ** 0.5
+            if magnitude:
+                vector = [v / magnitude for v in vector]
+        return vector
 
     def test_connection(self) -> tuple[bool, str, int]:
+        """List one model: authenticated, free, and no thinking-token trap.
+
+        A one-token generate is the probe the other two adapters use, but a
+        Gemini 2.5 model spends its first tokens thinking and returns a
+        candidate with no parts at ``maxOutputTokens: 1`` - which would report
+        a perfectly good key as broken.
+        """
         started = time.perf_counter()
         try:
-            self.chat([{"role": "user", "content": "hi"}], temperature=0, max_tokens=1)
-            return True, "OK", int((time.perf_counter() - started) * 1000)
+            self._request("GET", "models", params={"pageSize": 1})
+            elapsed = int((time.perf_counter() - started) * 1000)
+            return True, "OK", elapsed
         except Exception as exc:  # noqa: BLE001
-            return False, str(exc), int((time.perf_counter() - started) * 1000)
+            elapsed = int((time.perf_counter() - started) * 1000)
+            return False, str(exc), elapsed
 
 
 # ---------------------------------------------------------------------------

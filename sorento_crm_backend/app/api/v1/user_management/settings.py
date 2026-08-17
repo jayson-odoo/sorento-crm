@@ -104,6 +104,37 @@ class SystemSettingUpdate(BaseModel):
     # anything but the two grains is a 422 before it can reach the column. Same rule as
     # the blocks above - it must appear HERE and in the GET dict, because both are manual.
     plan_grain: Optional[Literal["product", "location"]] = None
+    # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Same rule
+    # again - every one of these must ALSO appear in the GET dict below.
+    #
+    # The two wait bounds are enforced HERE, not only in the settings form: a
+    # number that only the UI refuses is not a constraint. The 110 ceiling exists
+    # so even a maximally misconfigured pair cannot exceed the dispatcher's 120
+    # second lock TTL, and the >= relationship between them is checked below so a
+    # job that outlives the sync wait still finishes rather than being killed
+    # mid-flight.
+    media_image_monthly_limit: Optional[int] = Field(None, ge=0, le=100000)
+    media_voice_monthly_limit: Optional[int] = Field(None, ge=0, le=100000)
+    media_voice_max_seconds: Optional[int] = Field(None, ge=1, le=3600)
+    media_burst_limit: Optional[int] = Field(None, ge=1, le=1000)
+    media_burst_window_seconds: Optional[int] = Field(None, ge=1, le=3600)
+    media_warn_threshold_percent: Optional[int] = Field(None, ge=1, le=100)
+    media_image_provider: Optional[str] = None
+    media_image_model: Optional[str] = None
+    media_image_degraded_model: Optional[str] = None
+    media_transcribe_model: Optional[str] = None
+    # Voice's own degraded tier. NULL means the voice quota is a hard refusal
+    # rather than a degrade - image was measured and is seeded, voice was not.
+    media_voice_degraded_model: Optional[str] = None
+    # Three modes and no others: `language_strategy()` builds a different request
+    # shape per mode and silently treats anything unrecognised as `pinned`, so a
+    # typo would look like the setting had been ignored rather than refused.
+    media_language_mode: Optional[str] = Field(None, pattern="^(pinned|hints|auto)$")
+    media_language_pinned: Optional[str] = None
+    media_language_hints: Optional[str] = None
+    media_sync_wait_seconds: Optional[int] = Field(None, ge=5, le=90)
+    media_extraction_timeout_seconds: Optional[int] = Field(None, ge=5, le=110)
+    media_max_entities: Optional[int] = Field(None, ge=1, le=100)
 
 
 class SmtpTestResult(BaseModel):
@@ -245,6 +276,27 @@ async def get_settings(
                 # Rollout default (plan 5.1): a row saved before the column existed reads
                 # as Product rather than as "no policy", which has no meaning here.
                 "plan_grain": (getattr(settings, "plan_grain", None) or "product") if settings else None,
+                # Chatbot media. NULL is meaningful for the three model columns:
+                # provider/model inherit the AIAssistantConfig row, and a NULL
+                # degraded model means the monthly quota is a hard stop rather
+                # than an accepted-but-degraded read.
+                "media_image_monthly_limit": getattr(settings, "media_image_monthly_limit", 50) if settings else None,
+                "media_voice_monthly_limit": getattr(settings, "media_voice_monthly_limit", 100) if settings else None,
+                "media_voice_max_seconds": getattr(settings, "media_voice_max_seconds", 120) if settings else None,
+                "media_burst_limit": getattr(settings, "media_burst_limit", 5) if settings else None,
+                "media_burst_window_seconds": getattr(settings, "media_burst_window_seconds", 60) if settings else None,
+                "media_warn_threshold_percent": getattr(settings, "media_warn_threshold_percent", 80) if settings else None,
+                "media_image_provider": getattr(settings, "media_image_provider", None) if settings else None,
+                "media_image_model": getattr(settings, "media_image_model", None) if settings else None,
+                "media_image_degraded_model": getattr(settings, "media_image_degraded_model", None) if settings else None,
+                "media_transcribe_model": getattr(settings, "media_transcribe_model", "whisper-1") if settings else None,
+                "media_voice_degraded_model": getattr(settings, "media_voice_degraded_model", None) if settings else None,
+                "media_language_mode": getattr(settings, "media_language_mode", "pinned") if settings else None,
+                "media_language_pinned": getattr(settings, "media_language_pinned", "en") if settings else None,
+                "media_language_hints": getattr(settings, "media_language_hints", "en,ms,zh") if settings else None,
+                "media_sync_wait_seconds": getattr(settings, "media_sync_wait_seconds", 30) if settings else None,
+                "media_extraction_timeout_seconds": getattr(settings, "media_extraction_timeout_seconds", 45) if settings else None,
+                "media_max_entities": getattr(settings, "media_max_entities", 10) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -367,6 +419,45 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 detail=(
                     "The project clash blocking threshold must be at or above the "
                     "surfacing threshold."
+                ),
+            )
+
+    # Chatbot media: a model id belongs to the provider it was picked from, so a
+    # provider change that does not also name the models clears them rather than
+    # sending the previous provider's ids to the new provider. The FE does the
+    # same clear-on-change; this is the backstop for a direct PUT, where a kept
+    # stale degraded model would fail only for over-quota contacts - the hardest
+    # failure to attribute.
+    if "media_image_provider" in update_data:
+        new_provider = (update_data["media_image_provider"] or "").strip() or None
+        update_data["media_image_provider"] = new_provider
+        old_provider = (
+            getattr(settings, "media_image_provider", None) or ""
+        ).strip() or None
+        if new_provider != old_provider:
+            for model_col in ("media_image_model", "media_image_degraded_model"):
+                if model_col not in update_data:
+                    update_data[model_col] = None
+
+    # Chatbot media: the pair has to hold together, and the per-field ge/le on
+    # SystemSettingUpdate cannot express a relationship between two fields. An
+    # extraction ceiling below the synchronous wait would kill a job mid-flight at
+    # exactly the moment the endpoint degrades to `pending` - the result would be
+    # neither returned inline nor retrievable afterwards (PLAN 2.4 / UAC S3-01d).
+    if "media_sync_wait_seconds" in update_data or "media_extraction_timeout_seconds" in update_data:
+        wait = update_data.get(
+            "media_sync_wait_seconds", getattr(settings, "media_sync_wait_seconds", 30)
+        )
+        ceiling = update_data.get(
+            "media_extraction_timeout_seconds",
+            getattr(settings, "media_extraction_timeout_seconds", 45),
+        )
+        if wait is not None and ceiling is not None and int(ceiling) < int(wait):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Extraction timeout must be at least the synchronous wait, "
+                    "or a job that outlives the wait is killed instead of degrading."
                 ),
             )
 

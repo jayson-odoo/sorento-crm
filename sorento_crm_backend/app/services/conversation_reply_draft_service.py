@@ -28,11 +28,10 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.ai_assistant import AIAssistantUsageLog
 from app.services.ai_prompt_registry import agent_model, get_prompt
 from app.services.error_handler import AppException
-from app.services.llm_provider import get_provider
+from app.services.llm_provider import get_provider, resolve_api_key, resolve_model
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +73,13 @@ def _resolve_provider(db: Session):
     `product_spec_understanding._resolve_provider` does: drafting a customer
     reply is a different job from reading a spec sentence, so it gets its own
     row rather than sharing one setting with everything.
+
+    The agent's provider is operator-settable, so it is often NOT the one the
+    assistant row is configured for; the key and model therefore come from the
+    shared `resolve_api_key` / `resolve_model` pair, which only hand over the
+    generic columns when they belong to the provider being asked for. Reading
+    them unconditionally posted the OpenAI key and a Claude model id to Google
+    whenever this agent was pointed at Gemini.
     """
     from app.models.ai_assistant import AIAssistantConfig
 
@@ -82,12 +88,10 @@ def _resolve_provider(db: Session):
     )
     agent_provider, agent_model_name = agent_model(db, AGENT_NAME)
     provider_name = agent_provider or (cfg.provider if cfg else "openai") or "openai"
-    model_name = agent_model_name or (cfg.model if cfg else "") or ""
-    api_key = (cfg.api_key_ciphertext if cfg else "") or settings.openai_api_key or ""
+    model_name = resolve_model(cfg, provider_name, agent_model_name)
+    api_key = resolve_api_key(cfg, provider_name)
     if not api_key:
         return None, provider_name, model_name
-    if not model_name:
-        model_name = "gpt-4o" if provider_name == "openai" else "claude-sonnet-4-6"
     try:
         return get_provider(provider_name, api_key, model=model_name), provider_name, model_name
     except ValueError:
