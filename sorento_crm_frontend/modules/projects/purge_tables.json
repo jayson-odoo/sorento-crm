@@ -10,6 +10,7 @@
     "projects.so_draft_findings",
     "projects.so_line_allocations",
     "projects.allocation_claims",
+    "projects.so_supply_decisions",
     "projects.sales_order_lines",
     "projects.sales_orders",
     "projects.delivery_schedule_cells",

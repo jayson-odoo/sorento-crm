@@ -67,6 +67,7 @@ from app.models.project_so import (
     SOAmendment,
     SODraftFinding,
     SOLineAllocation,
+    SOSupplyDecision,
 )
 from app.models.projects import (
     PriceFloorRule,
@@ -116,6 +117,9 @@ PURGE_ORDER: List[Type] = [
     # so_line_allocations.claim_id points at a claim: allocations first, claims after.
     SOLineAllocation,
     AllocationClaim,
+    # order_inquiry_rows.supply_decision_id and so_line_allocations.decision_id both point
+    # here, so the decision outlives the components it grouped by one step.
+    SOSupplyDecision,
     ProjectSalesOrderLine,
     # RESTRICT on project_sales_orders.project_id: this MUST precede Project.
     ProjectSalesOrder,
