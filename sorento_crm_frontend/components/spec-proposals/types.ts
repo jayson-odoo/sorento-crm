@@ -26,9 +26,38 @@ export type SpecProposalValue = SpecProposalScalar | SpecProposalScalar[];
  * Computed SERVER-SIDE and carried here as data (AC-B.3), never re-decided in the
  * browser: milestone 2's supplier review reads the same field off a different
  * endpoint, and two copies of the rule would disagree the first time either moved.
- * A proposal equal to the stored value is not a kind at all - it never arrives.
+ *
+ * The first three are decisions waiting to be made; the last two are answers
+ * already given, and they are here because the flyer batch (AC-D.2) SHOWS them.
+ * Pasted-text extraction drops an `unchanged` proposal on the floor and never
+ * sends one, which is right for a box somebody just typed into. A flyer batch is
+ * read once and applied more than once, so "this flyer says nothing new about
+ * this product" and "somebody removed this spec from this product" are the two
+ * answers a reviewer most needs to see - and the second apply of the same batch
+ * is only evidence of anything if the rows it refused are on screen.
+ *
+ * `unchanged` and `suppressed` are never selectable: there is nothing to write.
  */
-export type SpecProposalKind = 'new' | 'change' | 'conflict';
+export type SpecProposalKind = 'new' | 'change' | 'conflict' | 'unchanged' | 'suppressed';
+
+/**
+ * Which kinds may be ticked when the caller says nothing.
+ *
+ * Everything that HAS a value to write. `unchanged` and `suppressed` are absent
+ * on every surface - the first would write what is already there and the second
+ * would overturn a removal - so they are the floor rather than a default.
+ *
+ * `conflict` is in here because a caller looking at ONE product may overrule the
+ * person who set the value: that is the pasted-text panel, where somebody is
+ * reading one card against one product and can see exactly what they are
+ * replacing. A bulk apply over two hundred products narrows this - see
+ * `selectableKinds` below - because nobody read two hundred conflicts.
+ */
+export const DEFAULT_SELECTABLE_KINDS: readonly SpecProposalKind[] = [
+  'new',
+  'change',
+  'conflict',
+];
 
 /** One key the text says something about, judged against what is stored. */
 export interface SpecProposal {
@@ -41,7 +70,10 @@ export interface SpecProposal {
   /** The exact words the value was read from. */
   evidence: string;
   kind: SpecProposalKind;
-  /** What the product holds now. Null on a `new` proposal, by definition. */
+  /**
+   * What the product holds now. Null on a `new` proposal, by definition, and on
+   * a `suppressed` one - a tombstone is the absence of a value, not a value.
+   */
   stored_value: SpecProposalValue | null;
   stored_unit: string | null;
   /** derived | flyer | code | category | human | supplier, or null when unstamped. */
@@ -55,4 +87,14 @@ export interface SpecProposalReviewProps {
   onSelectionChange: (keys: string[]) => void;
   /** True while the caller is writing: the rows stay readable, the ticks freeze. */
   disabled?: boolean;
+  /**
+   * Which kinds this surface may tick. `DEFAULT_SELECTABLE_KINDS` when omitted.
+   *
+   * A prop rather than a second component, and never a rule this file decides
+   * alone: the flyer batch passes `['new', 'change']` because a bulk apply must
+   * not overwrite a value a person vouched for (UAC L6/L7), while the per-
+   * product panel keeps conflicts tickable. `unchanged` and `suppressed` are
+   * refused whatever is passed - there is nothing to write for either.
+   */
+  selectableKinds?: readonly SpecProposalKind[];
 }

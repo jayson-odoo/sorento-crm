@@ -3,7 +3,8 @@
 **Status:** DRAFT -> building. Written 2026-08-17 (branch `fm/flyer-ingestion-build`, based on
 the unmerged PR 4 branch `fm/spec-pr4-extraction-prompt` because `propose_from_text`, the shared
 `SpecProposalReview` component and the batch-apply route only exist there; rebase onto `main`
-once PR 4 merges). Phase 1 mock: pending. Phase 2: pending. Review: pending.
+once PR 4 merges). Phase 1 mock (S1): BUILT, browser verification outstanding. Phase 2: pending.
+Review: pending.
 **UAC:** `flyer-spec-ingestion-acceptance-criteria.md` (the contract; this plan fulfils it).
 **Design source:** `firstmate/data/flyer-spec-ingestion/report.md` §3, §5, §7 (read-only report,
 2026-08-16). **Parent plan:** `PLAN-spec-authoring-verification.md` (PR 4 amendment, AC-B.18).
@@ -114,9 +115,16 @@ worker config. Worker restart needed locally after adding it (RQ has no reload).
 | `GET /flyer-readings/{reading_id}/spec-proposals` | `FlyerSpecProposalsOut` = batch (or `status: "none"`) + `groups` |
 | `POST /flyer-readings/{reading_id}/spec-proposals/apply` | 200 `FlyerSpecApplyOut` (`applied`, `refused`) |
 
-Schemas in `app/schemas/dealer_kit.py` (camelCase serialization aliases like the neighbours).
-Body `FlyerSpecApplyIn { proposal_ids: list[UUID] (min 1, max 5000) }` - `extra="forbid"` so a
-`values` field is 422.
+Schemas in `app/schemas/dealer_kit.py`, **snake_case field names, NOT the dealer kit's camelCase
+aliases** (amended in Phase 1, see §5). Body `FlyerSpecApplyIn { proposal_ids: list[UUID] (min 1,
+max 5000) }` - `extra="forbid"` so a `values` field is 422.
+
+The batch summary carries three fields this section did not originally name, because the list page
+(AC-D.6) and the reading-page section (AC-D.1) have no second call to get them from: `filename`
+and `read_at` off the reading, and `created_by_name` / `applied_by_name` resolved to NAMES rather
+than ids (AC-B.3). `status` additionally takes the value `none` on the per-reading GET only.
+The Phase 1 contract block at the top of `flyerSpecProposalService.ts` is the exact shape; Phase 2
+is held to it.
 
 ### 3.5 `AUTHORED_SOURCES` flip
 
@@ -138,7 +146,8 @@ Contract block at the top of
 | List page | `.../flyer-spec-proposals/page.tsx` + `components/FlyerSpecBatchesList.tsx` (DataGrid, mirrors `brands/components/BrandsList.tsx` shape) |
 | Review page | `.../flyer-spec-proposals/[readingId]/page.tsx` + `components/FlyerSpecReviewScreen.tsx` (header, product groups, sticky apply bar, `AlertDialog` for changes, `ApplyResult` table) + `components/ProductProposalGroup.tsx` (code, name, pages, per-product select-all, `SpecProposalReview`) |
 | Reading page section | `app/(protected)/dealer-kit/flyer-readings/components/SpecProposalSection.tsx`, rendered from `MatchReportSections.tsx` beside `DimensionReviewSection` |
-| Shared component | `components/spec-proposals/types.ts` kind union + `SpecProposalReview.tsx` (non-selectable rows for the two new kinds, pill mapping) |
+| Shared component | `components/spec-proposals/types.ts` kind union + `selectableKinds` prop + `SpecProposalReview.tsx` (pill mapping, per-row selectability) |
+| Counts sentence | `.../flyer-spec-proposals/lib/countsSentence.ts` - one sentence, read by BOTH the reading-page section and the review header |
 | Nav | `config/menu.config.tsx` - `Flyer Spec Proposals` under Product Management in `MENU_SIDEBAR` AND `MENU_MEGA`, `permission: 'master_data.products.edit'` |
 
 Selection: page state `Set<proposalId>` initialised to all `new` ids on first `proposed` load;
@@ -148,8 +157,10 @@ client-side (a "Show more" button), selection survives across.
 ## 4. Phases and slices
 
 - **S1 - Phase 1 (FE mock, coder):** everything in 3.6 against fixtures; the service returns the
-  fixtures behind a `USE_MOCK` const; verified by agent-browser via sidebar clicks
-  (Dealer Kit -> Flyers -> a reading; Master Data -> Flyer Spec Proposals) at 375 and 1280.
+  fixtures behind a `USE_MOCK` const. BUILT. The agent-browser walk (sidebar clicks:
+  Dealer Kit -> Flyers -> a reading; Master Data -> Product Management -> Flyer Spec Proposals) at
+  375 and 1280 is **still owed** - it was scheduled to a later slice by the orchestrator and no
+  stack was started for S1.
 - **S2 - Phase 2 backend, test-first (tester red, coder green):** classifier lift + registry
   helper lift + `AUTHORED_SOURCES` flip; migration + models; service; task; routes; schemas.
 - **S3 - Phase 2 FE wiring (coder) + vitest (tester):** swap mock, delete fixtures not used by
@@ -170,6 +181,39 @@ client-side (a "Show more" button), selection survives across.
   concern (report §5.7 row 1) and orthogonal to proposing.
 - The bundle-card guard (report §3.5) is not built: reviewed proposals plus per-row evidence
   contain it (UAC AC-E.3).
+
+### Amended during Phase 1 (S1), with the reason
+
+- **snake_case bodies, not the dealer kit's camelCase aliases** (§3.4 as written). These payloads
+  carry `spec_key` / `stored_value` / `data_type` rows straight into `components/spec-proposals`,
+  which is a product-specification component and speaks snake_case, as does every other spec
+  endpoint. A camelCase batch wrapping snake_case rows is two conventions in one response, and the
+  UAC names every field of these four routes in snake_case (AC-B.1, AC-B.2, AC-C.1).
+- **`conflict` selectability is a PROP on the shared component, not a rule inside it.** §3.6 said
+  the shared component gets "non-selectable rows for the two new kinds"; making non-selectability a
+  property of the kind alone also froze `conflict`, which the pasted-text panel (PR 4) deliberately
+  lets a person tick while looking at ONE product - its own test caught it. So
+  `SpecProposalReview` takes `selectableKinds`, defaulting to `['new','change','conflict']` (PR 4
+  unchanged), and the flyer surface passes `['new','change']` (L6/L7). `unchanged` and `suppressed`
+  are refused whatever is passed - there is no value to write for either.
+- **Applied and refused rows leave the table** rather than rendering as disabled rows inside it
+  (AC-D.4 "applied rows render disabled with an `Applied` mark"). A stored proposal keeps its
+  `outcome`, so after an apply those rows move to an "Already decided" strip under the same product
+  card carrying an outcome pill each. Same information, and no tick that cannot do anything - which
+  is the rule the sizes section already follows. It also needs no per-row prop on the shared
+  component.
+- **The apply response has no `applied_count` / `refused_count`.** AC-C.1 names the two arrays and
+  nothing else, and the screen counts what it renders, so the counts cannot disagree with the list.
+- **`MatchReportSections` gains an optional `readingStatus`** (default `done`) so the section can
+  say "Read the flyer first" (AC-D.1) rather than offer a button that cannot work. Optional because
+  the only caller renders that component after the read is done and the existing tests pass no such
+  prop.
+- **The Phase 1 mock is a small in-memory STORE**, not four frozen fixtures: none -> proposing ->
+  proposed and the second apply of an applied batch (AC-C.6) are the states that matter most here,
+  and a frozen fixture can show the ends but none of the moves. Five seeded readings
+  (`flyer-mixed`, `flyer-empty`, `flyer-failed`, `flyer-proposing`, `flyer-none`, matched by suffix
+  too) make every state reachable from the list, and pressing Propose on any real reading walks the
+  transition. Deleted in S3.
 
 ## 6. Evidence run (S3) - to be filled by the tester
 

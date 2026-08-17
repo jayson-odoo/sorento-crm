@@ -17,6 +17,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
 import { readable, readableValue } from '@/lib/spec-readable';
+import { DEFAULT_SELECTABLE_KINDS } from './types';
 import type {
   SpecProposal,
   SpecProposalKind,
@@ -56,6 +57,11 @@ const KIND_PILL_KEY: Record<SpecProposalKind, string> = {
   new: 'submitted',
   change: 'pending',
   conflict: 'rejected',
+  // The two that ask nothing of the reader take the two quietest colours in the
+  // palette, so a batch of forty rows reads as "these six need a decision" at a
+  // glance rather than as forty things to work through.
+  unchanged: 'derived',
+  suppressed: 'voided',
 };
 
 /** Exactly the copy the contract names. The value is the sentence, not a legend. */
@@ -75,17 +81,38 @@ export function proposalBadgeText(proposal: SpecProposal): string {
       return stored
         ? `Conflicts with your value ${stored}`
         : 'Conflicts with your removal of this spec';
+    case 'unchanged':
+      // Not "Unchanged", which reads as something that failed to change. The
+      // product already says this, which is why the row cannot be ticked.
+      return 'Already stored';
+    case 'suppressed':
+      return 'Removed from this product';
     default:
       return 'New';
   }
 }
+
+/** The two kinds no surface may tick. There is no value to write for either. */
+const NEVER_SELECTABLE: readonly SpecProposalKind[] = [
+  'unchanged',
+  'suppressed',
+];
 
 export function SpecProposalReview({
   proposals,
   selectedKeys,
   onSelectionChange,
   disabled = false,
+  selectableKinds = DEFAULT_SELECTABLE_KINDS,
 }: SpecProposalReviewProps) {
+  const canSelect = useCallback(
+    (kind: SpecProposalKind) =>
+      !disabled &&
+      !NEVER_SELECTABLE.includes(kind) &&
+      selectableKinds.includes(kind),
+    [disabled, selectableKinds],
+  );
+
   /** The caller's array as react-table wants it. Keys, so a refetch keeps the ticks. */
   const rowSelection = useMemo<RowSelectionState>(
     () => Object.fromEntries(selectedKeys.map((key) => [key, true])),
@@ -112,7 +139,9 @@ export function SpecProposalReview({
 
   const columns = useMemo<ColumnDef<SpecProposal>[]>(
     () => [
-      buildSelectColumn<SpecProposal>({ enableRow: () => !disabled }),
+      buildSelectColumn<SpecProposal>({
+        enableRow: (row) => canSelect(row.original.kind),
+      }),
       {
         accessorKey: 'label',
         header: ({ column }) => (
@@ -210,7 +239,7 @@ export function SpecProposalReview({
         ),
       },
     ],
-    [disabled],
+    [canSelect],
   );
 
   const table = useReactTable({
@@ -219,7 +248,11 @@ export function SpecProposalReview({
     getRowId: (row) => row.spec_key,
     state: { rowSelection },
     onRowSelectionChange: handleSelectionChange,
-    enableRowSelection: !disabled,
+    // A function, not the boolean it was: react-table reads per-row selectability
+    // off the TABLE option (the one on the column definition is decoration), and
+    // this is also what keeps the header tick from selecting a row nothing can be
+    // written for.
+    enableRowSelection: (row) => canSelect(row.original.kind),
     getCoreRowModel: getCoreRowModel(),
     // One text proposes a handful of keys at most. Paging that would be a control the
     // reader has to operate to see a list that already fits.

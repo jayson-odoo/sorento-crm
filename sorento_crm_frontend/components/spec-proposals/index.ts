@@ -5,6 +5,7 @@
  * under `(protected)`.
  */
 export { SpecProposalReview, proposalBadgeText } from './SpecProposalReview';
+export { DEFAULT_SELECTABLE_KINDS } from './types';
 export type {
   SpecProposal,
   SpecProposalKind,
