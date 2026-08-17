@@ -17,7 +17,11 @@ calls, console checks and screenshots in section 6. Review (S4): pending.
 Captain amendments F and G (S5): **BUILT** - conflicts apply on tick, values edit in place, rows
 are added and dismissed, the page searches; three columns folded into migration 370, three new
 routes, two data-driven props on the shared review component. See section 7c for what shipped and
-where it deviates.
+where it deviates. Amendment F+G agent-browser evidence run (own agent stack, ports 3040/8040):
+**completed 2026-08-17** - AC-F.1-F.5 and AC-G.1-G.4 verified; AC-G.5 half-verified with one
+found defect (search-clear does not restore the full product-group list/pagination - reproduced
+3x, not fixed here, logged as a follow-up). Full walk, network calls, console checks and
+screenshots in section 6b.
 **UAC:** `flyer-spec-ingestion-acceptance-criteria.md` (the contract; this plan fulfils it).
 **Design source:** `firstmate/data/flyer-spec-ingestion/report.md` §3, §5, §7 (read-only report,
 2026-08-16). **Parent plan:** `PLAN-spec-authoring-verification.md` (PR 4 amendment, AC-B.18).
@@ -459,6 +463,256 @@ by apply time, which is precisely the live-re-classification safety net AC-C.2 e
 demonstrate rather than a failure of the walk. AC-E.3 (bundle-card limitation) and AC-E.4 (PR 3
 verification-reset follow-up) remain accepted-limitation / backlog items per the UAC, not exercised
 here.
+
+## 6b. Amendment F+G evidence run
+
+**Completed 2026-08-17, own agent stack** (FE prod-dev on `:3040`, BE on `:8040`, RQ worker on
+Redis db 5, all started and killed by the tester agent; `:3000`/`:8000` belong to other lanes and
+were never touched), against the shared dev Postgres, via
+`npx -y agent-browser@0.27.0 --session spec-flyer-fg`. Scope: UAC sections F (conflict apply +
+inline edit) and G (add / dismiss / search) - see section 7c for what shipped. This run keeps
+the section 6 run above rather than replacing it; section 6 covers AC-E.1/E.2 baseline, this run
+covers AC-F.1-F.5 and AC-G.1-G.5 specifically. Login used `E2E_EMAIL`/`E2E_PASSWORD` from
+`sorento_crm_frontend/.env.local` (values never echoed). `get url` was checked before every read
+that mattered; the session stayed on its own tab throughout. Closed with a plain `close`, never
+`close --all`.
+
+### Walk
+
+1. **Open + login + sidebar to the fixture reading.** `open http://localhost:3040` ->
+   `/signin?callbackUrl=%2F`, filled email/password, `Continue` -> `/` with full sidebar. Clicked
+   `Dealer Kit` -> `Flyers`, searched `flyer_sample`: a `Done` row already existed at
+   `4f769de0-648f-4a8e-ab10-b8d5f50ef235` (34 products, 3 pages, from the earlier section 6 run
+   against this same shared dev DB) - reused per the brief's fallback rather than re-uploading.
+   Screenshot: `fg-00-flyers-list-search.png`. Console/errors clean.
+2. **Propose again.** Opened the reading, scrolled to the Specifications section (already showed
+   a prior batch: "0 new, 17 change, 17 conflict, 163 unchanged, 1 suppressed" - leftover from
+   section 6). Screenshot: `fg-01-reading-page-before-propose-again.png`. Clicked `Propose again`
+   -> `POST .../spec-proposals` **202**, polled to completion. New counts: *"198 specification
+   values across 34 products: 0 new, 16 change what the master says, 17 conflict with a value a
+   person set, 164 unchanged, 1 suppressed."* Screenshot: `fg-02-reading-page-proposed-counts.png`.
+   Console/errors clean.
+3. **Review page, default selection and tickable kinds (AC-F.4).** Clicked `Review proposals` ->
+   `/master-data-management/flyer-spec-proposals/4f769de0-...`. Footer read **"Apply 0 selected"**
+   (disabled) - correct with 0 `new` rows at load. Screenshot:
+   `fg-03-review-page-default-selection.png`. Clicked the per-product select-all checkbox for
+   `SRTWC7614-RL` (2 `change` rows - `Length`, `Type` - plus a `Trap` `change` row once counted:
+   **"3 of 3 ticked"**, footer *"3 ticked, 3 replacing a value the master holds"* - confirms both
+   `change` AND `conflict` rows are tickable in bulk per-product select-all (only `Height`/`Width`/
+   `Flush type`/`Rimless`/`Seat cover material`, all `Already stored`, stayed unticked/disabled).
+   Screenshot: `fg-04-review-page-select-all-tickable.png`. Console/errors clean.
+4. **Edit a numeric row in place (AC-F.2/F.3).** Product `SRTJC8037`, `Height` (`conflict`: `600
+   mm` vs stored `590 mm`). Clicked pencil -> a `spinbutton` with a `mm` suffix appeared alongside
+   Save/Cancel (screenshot `fg-05-edit-numeric-row-input.png`), filled `595`, clicked Save ->
+   `PATCH .../spec-proposals/{id}` **200**. Row re-rendered `595 mm` with an **`edited`** mark, pill
+   still `Conflicts with your value 590 mm` (unchanged since 595 still disagrees with 590).
+   Screenshot: `fg-06-edit-numeric-row-saved.png`. Console/errors clean.
+5. **Edit an enum row in place (AC-F.2/F.3, live re-classification).** Product `SRTWC287-RL`,
+   `Trap` (`change`: stored `S trap` -> proposed `P trap`). Clicked pencil -> a closed-vocabulary
+   `combobox` opened with exactly the two allowed values (`S trap`, `P trap`) - screenshot
+   `fg-07-edit-enum-row-dropdown.png`. Selected `S trap` (deliberately picking the value that now
+   MATCHES the stored value, to exercise live recompute) and Saved -> `PATCH .../spec-proposals/{id}`
+   **200**. Row re-rendered `S trap` with an `edited` mark and the pill flipped from `Changes S trap
+   to P trap` to **`Already stored`** (kind live-recomputed `change` -> `unchanged`), checkbox no
+   longer tickable - the batch's own aggregate counts sentence dropped from 16 to 15 `change` in
+   the next screenshot, confirming the recount is live, not just per-row. Screenshot:
+   `fg-08-edit-enum-row-saved.png`. Console/errors clean.
+6. **Add a specification (AC-G.1/G.4).** Product `FG-CW13`, clicked `Add specification` -> dialog
+   `Add a specification` (screenshot `fg-09-add-specification-dialog.png`), key picker limited to
+   applicable registry keys not already on the product (`Capacity (oz)`/`Type` correctly absent
+   from the list). Picked `Finish or colour` -> a second registry-typed picker appeared (`Pick a
+   finish or colour`, closed vocabulary) - screenshot `fg-10-add-specification-key-picked.png`.
+   Picked `Black` (screenshot `fg-11-add-specification-value-picked.png`), clicked `Add` ->
+   `POST .../spec-proposals/rows` **201**. New row appeared: `Finish or colour` `Black` `edited`,
+   pill `New`, checkbox **unticked** (a row added after the page's initial load is not swept into
+   the load-time "tick every `new` row" selection - noted as an observed behaviour, not a defect;
+   confirmed intentional-looking on the next full reload, step 8). Screenshot:
+   `fg-12-add-specification-row-appears.png`. Batch header count moved `198 -> 199`, `0 -> 1 new`.
+   Console/errors clean. (Two earlier attempts to pick a dropdown option closed the whole dialog
+   with no request fired - the option element was below the fold inside the dialog's own listbox;
+   `scrollintoview` on the option ref before `click` fixed it both times it recurred, same
+   off-screen-click pattern section 6 already documented for the Propose button.)
+7. **Dismiss a row (AC-G.3/G.4).** Same `FG-CW13` group, `Type` (`Tumbler`, `unchanged`/`Already
+   stored`). Clicked `Dismiss Type` -> confirm `AlertDialog` reading **"Dismiss this proposal? It
+   will not be applied. This action cannot be undone."** with the row named (`Type Tumbler`) -
+   screenshot `fg-13-dismiss-confirm-dialog.png` - matching AC-G.4's specified copy verbatim.
+   Confirmed -> `DELETE .../spec-proposals/{id}` **200**, response is the refreshed batch summary
+   per the section-7c deviation (not empty). Row gone from the group; batch count `199 -> 198`.
+   Screenshot: `fg-14-dismiss-row-gone.png`. Console/errors clean.
+8. **Search (AC-G.5).** Ticked the `FG-CW13` `Finish or colour` `new` row (confirmed via a fresh
+   full page load first: **"1 of 1 ticked"** on load, proving `new` rows tick on the load-time
+   selection pass even though the same row did NOT auto-tick at the moment it was created via the
+   `POST rows` mutation in step 6 - a real, if narrow, distinction between "ticked on load" and
+   "ticked on create"). Typed `SRTWC7614` into the product/spec search: only the `SRTWC7614-RL`
+   group rendered (`0 of 3 ticked` for it), footer still read **`1 ticked`** - the hidden `FG-CW13`
+   tick survived being filtered out. Screenshot: `fg-15-search-filter-product-code.png`. Typed
+   `Height` (a spec-key search, not a product code): filtered to product groups carrying a
+   `Height` row (`SRTJC2023` shown), footer still `1 ticked`. Screenshot:
+   `fg-16-search-filter-by-spec-key.png`. Cleared the search box.
+   **Defect found and recorded (not fixed - out of tester scope):** clearing the search input
+   does not restore the full/paginated product-group list. The page loads 25 of 34 groups with a
+   `Show more products (9 left)` button; after typing a filter and then clearing it back to an
+   empty string, the visible group count sticks at whatever the last filtered result count was
+   (reproduced 3 times: once mid-walk, once in a clean isolated repro via `eval` counting
+   `a[href*="/master-data-management/products/"]` - 25 on fresh load, 15 after a `Trap` search,
+   still 15 after clearing - and once again for the `Height` search/clear pair used for this
+   screenshot), and the `Show more` button does not reappear, so the remaining groups (including
+   whichever held position 1, e.g. `FG-CW13`) become unreachable without a full page reload.
+   Selection state for hidden/former rows IS preserved correctly (the `1 ticked` footer never
+   dropped), so half of AC-G.5 ("keeping selection state for hidden rows intact") holds; the
+   "search clears back to the un-filtered view" half does not. Screenshot (state after clearing,
+   list still capped): `fg-17-search-cleared-selection-intact.png`. Worked around by reloading the
+   page fresh for the remaining steps. Filed as a follow-up rather than fixed here (tester scope
+   is verification, not repair); recommend logging to `documentation/backlogs/backlog.md` before
+   this slice is called done.
+9. **Apply: one conflict + one change + the manual row (AC-F.1, AC-F.4, AC-G.2).** Fresh page
+   load, re-ticked `SRTWC7614-RL`'s select-all (`Length` conflict, `Type` change, `Trap` change -
+   the `Trap` edit from step 5 was on a DIFFERENT product, `SRTWC287-RL`, so it did not interfere)
+   plus the `FG-CW13` `Finish or colour` `new` row already ticked from the fresh load: footer
+   **"4 ticked, 3 replacing a value the master holds"**. Screenshot: `fg-18-ticked-for-apply.png`.
+   Clicked `Apply 4 selected` -> `AlertDialog` **"Replace 3 master values, 1 of them set by a
+   person? 4 rows will be written. 3 of them replace what the product master holds today, and 1
+   replace a value somebody set by hand. This action cannot be undone."** listing `Length 250 mm
+   becomes 680 mm`, `Type One piece becomes Toilet seat`, `Trap S trap becomes P trap` - exact
+   match to AC-F.4's "Replace K master values, D of them set by a person?" copy, K=3 D=1.
+   Screenshot: `fg-19-apply-confirm-dialog.png`. Confirmed ("Replace and apply") ->
+   `POST .../spec-proposals/apply` **200**. Batch header stamped `applied 17/08/2026, 12:50 pm by
+   Jayson Personal`. Screenshot: `fg-20-apply-result.png`. Scrolled to `SRTWC7614-RL`: the 3
+   applied rows (including the `Length` **conflict**) moved into an `ALREADY DECIDED` subsection
+   with an `Applied` mark each - `Length 680 mm Applied`, `Type Toilet seat Applied`, `Trap P trap
+   Applied` - confirming AC-F.1 (conflict rows ARE written on tick+apply, not refused) and AC-C.5
+   (per-row `applied` outcome). Screenshot: `fg-21-apply-result-rows-applied.png`. `FG-CW13`
+   likewise showed `ALREADY DECIDED / Finish or colour Black Applied` (screenshot
+   `fg-22-fgcw13-after-apply.png`). Console/errors clean throughout.
+10. **Product Specifications tab: Flyer vs Set by hand badges (AC-G.2).** Sidebar `Product
+    Management -> Products -> All Products` (the sidebar accordion needed several retries in this
+    run - `aria-expanded` on the nav toggle buttons did not reliably flip via ref-based `click`;
+    a direct JS `.click()` dispatch on the matched `<button>` via `eval` is what actually worked,
+    recorded as a tooling friction note, not a product defect - the underlying accordion DOES open
+    and its links DO navigate once actually clicked). Searched `SRTWC7614-RL`, opened the
+    exact-code row, `Specifications` tab. `Trap` = `P trap`, pill **`Flyer`**, expanded to `Read
+    from: flyer flyer_sample.pdf: P-TRAP`. Screenshots: `fg-23-product-specifications-tab.png`,
+    `fg-24-specifications-trap-flyer-badge.png`, `fg-25-specifications-trap-evidence-expanded.png`.
+    Then searched `FG-CW13`, opened it, `Specifications` tab: `Finish or colour` = `Black`, pill
+    **`Set By Hand`** (visually distinct primary-colour badge vs. the grey `Flyer`/`Description`
+    pills), expanded to **`Set by: set during flyer review`** - the exact evidence string named in
+    AC-G.2, and `source='human'` confirmed by the badge itself (`SpecSourceBadge`'s "Set by hand"
+    styling is reserved for `human`-sourced authored values). Screenshot:
+    `fg-26-specifications-finish-set-by-hand.png`. Console/errors clean.
+11. **Idempotency after re-propose (AC-C.6, extended to the F/G-amended rows).** Back to the
+    reading's review page, `Propose again` -> `POST .../spec-proposals` **202**. New counts: *"198
+    specification values across 34 products: 0 new, 14 change what the master says, 16 conflict
+    with a value a person set, 167 unchanged, 1 suppressed."* (`new` `1 -> 0` since the applied
+    `Finish or colour` row is no longer new; `change`/`conflict` each dropped by 1 for the same
+    reason). Searched `SRTWC7614-RL`: `Length`, `Type` and `Trap` all now read **`Already stored`**
+    (was `Conflicts with your value 250 mm` / `Changes ... to ...` before this run's apply) -
+    screenshots `fg-27-repropose-idempotent-already-stored.png`,
+    `fg-28-repropose-type-trap-already-stored.png`. Console/errors clean.
+12. **Viewport checks on the review page (375x812 and 1280x800).** Fresh reload (to get a clean,
+    un-filtered group order given the step-8 search-clear defect), search box empty, `FG-CW13`
+    first. `set viewport 375 812` -> screenshot `fg-29-review-page-375x812.png`, console/errors
+    clean, no horizontal overflow, sticky Apply bar readable. `set viewport 1280 800` ->
+    screenshot `fg-30-review-page-1280x800.png`, console/errors clean.
+13. **Master Data list page (AC-D.6/E.2, re-confirmed post-amendment).** Sidebar `Flyer Spec
+    Proposals` -> `/master-data-management/flyer-spec-proposals`. `flyer_sample.pdf` row: status
+    `Proposed`, 34 products, 198 values, 0 new, 14 change (matches step 11's re-propose counts);
+    `Applied on` column read **"Not yet"** - expected, not a regression: the same behaviour was
+    already documented in section 6 ("the batch's own re-propose does not retroactively populate
+    `applied_at` for the new proposal rows until something is applied against them") and step 11
+    of this run re-proposed without re-applying. Screenshot: `fg-31-list-page-batch.png`. Row
+    click reopened the same review page URL. Console/errors clean.
+
+### Network calls asserted (AC-F.2, F.5, G.1, G.3 routes)
+
+`network requests --filter /api/v1/dealer-kit` was checked after every state-changing step. Full
+non-OPTIONS sequence for reading `4f769de0-648f-4a8e-ab10-b8d5f50ef235` across this run:
+
+- `POST /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals` -> **202** (x2: step 2 propose
+  again, step 11 re-propose)
+- `GET /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals` -> **200** (repeated - initial load,
+  poll ticks, post-edit/add/dismiss/apply refreshes, review-page loads)
+- `PATCH /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals/{proposal_id}` -> **200** (x2: step
+  4 numeric edit, step 5 enum edit)
+- `POST /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals/rows` -> **201** (step 6 add)
+- `DELETE /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals/{proposal_id}` -> **200** (step 7
+  dismiss)
+- `POST /api/v1/dealer-kit/flyer-readings/{id}/spec-proposals/apply` -> **200** (step 9 apply)
+- `GET /api/v1/dealer-kit/flyer-readings/spec-proposal-batches` -> **200** (step 13 list page)
+
+### Console / errors
+
+Checked via `console` and `errors` after every state-changing step (login, propose-again, each
+edit, add, dismiss, each search, apply, the Specifications tab visits, the re-propose, both
+viewports, the list page). Clean throughout - no warnings or uncaught errors surfaced anywhere in
+this run.
+
+### Evidence files
+
+`documentation/plans/master-data/evidence/flyer-spec-ingestion/`, all prefixed `fg-` to keep this
+run's files distinct from section 6's numbered set:
+
+`fg-00-flyers-list-search.png`, `fg-01-reading-page-before-propose-again.png`,
+`fg-02-reading-page-proposed-counts.png`, `fg-03-review-page-default-selection.png`,
+`fg-04-review-page-select-all-tickable.png`, `fg-05-edit-numeric-row-input.png`,
+`fg-06-edit-numeric-row-saved.png`, `fg-07-edit-enum-row-dropdown.png`,
+`fg-08-edit-enum-row-saved.png`, `fg-09-add-specification-dialog.png`,
+`fg-10-add-specification-key-picked.png`, `fg-11-add-specification-value-picked.png`,
+`fg-12-add-specification-row-appears.png`, `fg-13-dismiss-confirm-dialog.png`,
+`fg-14-dismiss-row-gone.png`, `fg-15-search-filter-product-code.png`,
+`fg-16-search-filter-by-spec-key.png`, `fg-17-search-cleared-selection-intact.png`,
+`fg-18-ticked-for-apply.png`, `fg-19-apply-confirm-dialog.png`, `fg-20-apply-result.png`,
+`fg-21-apply-result-rows-applied.png`, `fg-22-fgcw13-after-apply.png`,
+`fg-23-product-specifications-tab.png`, `fg-24-specifications-trap-flyer-badge.png`,
+`fg-25-specifications-trap-evidence-expanded.png`, `fg-26-specifications-finish-set-by-hand.png`,
+`fg-27-repropose-idempotent-already-stored.png`, `fg-28-repropose-type-trap-already-stored.png`,
+`fg-29-review-page-375x812.png`, `fg-30-review-page-1280x800.png`, `fg-31-list-page-batch.png`.
+
+### Outcome
+
+**AC-F.1 through F.5 and AC-G.1 through G.5 verified**, with one defect found and one behavioural
+observation, both recorded rather than silently worked around:
+
+- **AC-F.1** (conflict rows write on tick+apply): confirmed - `Length` (a `conflict` row) applied
+  alongside the two `change` rows in one request, all three landed in the product's live spec
+  table.
+- **AC-F.2/F.3** (inline edit, PATCH, live recompute, edited mark): confirmed for both a numeric
+  key (`Height`, stayed `conflict` after edit) and an enum key (`Trap`, flipped `change` ->
+  `unchanged` live after the edited value came to match the stored one) - the second case is
+  stronger evidence than a same-kind edit would have been, since it proves the recompute is real
+  rather than cosmetic.
+- **AC-F.4** (tickable kinds, select-all, confirm-dialog copy): confirmed verbatim, including the
+  "K master values, D of them set by a person" two-count phrasing.
+- **AC-F.5** (`allowed_values` on the GET payload): confirmed indirectly - the enum edit widget
+  rendered exactly the registry's two allowed values with no second network call between opening
+  the editor and seeing the dropdown populated.
+- **AC-G.1/G.4** (add a specification, key picker scoped to applicable+absent keys, value input
+  keyed to registry type): confirmed - `Capacity (oz)`/`Type` (already on the product) were absent
+  from the picker; `Finish or colour` offered a closed-vocabulary value picker.
+- **AC-G.2** (manual row applies as `source='human'` with the fixed evidence string): confirmed -
+  `Finish or colour` on `FG-CW13` applied and rendered `Set By Hand` / `Set by: set during flyer
+  review`, visually and textually distinct from the `Flyer`-badged `Trap` row applied in the same
+  request.
+- **AC-G.3/G.4** (dismiss, confirm-dialog copy, hard delete, row gone): confirmed verbatim copy
+  match.
+- **AC-G.5** (search filters product/spec-key client-side, selection survives): **half confirmed,
+  half a found defect.** Filtering by product code and by spec-key label both work, and ticked
+  selection for a row hidden by the filter survives the filter being applied. But clearing the
+  search back to empty does not restore the full/paginated product-group list - the visible count
+  sticks at the last filtered result and the `Show more` affordance disappears, stranding whatever
+  groups aren't in that stuck subset. Reproduced three times independently. This is a genuine gap
+  against "a search input filters product groups ... client-side" (the implicit contract is that
+  clearing IS a filter, to the empty string, and should show everything) and should be fixed
+  before this slice is signed off; logged as a follow-up rather than fixed by the tester.
+- **Tooling friction, not a product defect:** two Radix-style dropdown listboxes (the `Add
+  specification` key/value pickers) needed `scrollintoview` on the option ref before `click`, same
+  as section 6's off-screen-Propose-button finding - the daemon's coordinate click is a no-op on
+  an element outside the current viewport rather than erroring, which cost two silent dialog-closes
+  before the pattern was applied consistently. The Product Management sidebar accordion's
+  `aria-expanded` did not reliably flip via ref `click` in this session (multiple clicks read back
+  `false` even after the panel visibly opened elsewhere in the DOM) - a direct JS `.click()`
+  dispatch via `eval` on the matched button element was what reliably worked; the accordion and
+  its links function correctly once actually triggered, so this reads as an agent-browser ref/CDP
+  coordinate-mapping quirk against this app's nested-accordion sidebar rather than an app bug.
 
 ### 7b. Second hands-on amendment (same session): add, dismiss, search
 
