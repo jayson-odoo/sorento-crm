@@ -171,4 +171,24 @@ describe('IncomingContainersView - what a container row says', () => {
 
     expect(await screen.findByText('No container number yet')).toBeInTheDocument();
   });
+
+  it('says a container has no shipment number rather than printing nothing', async () => {
+    // A blank second line reads as a row that failed to load, and the missing shipment
+    // number is exactly what someone chasing an SPO needs to be told.
+    state.shipments = [shipment({ shipment_number: null, suppliers: [] })];
+    renderView();
+
+    expect(await screen.findByText('FSCU8103365')).toBeInTheDocument();
+    expect(screen.getByText('No shipment number')).toBeInTheDocument();
+  });
+
+  it('names a container that has neither number, so the row can still be picked', async () => {
+    state.shipments = [
+      shipment({ container_no: null, shipment_number: null, suppliers: [] }),
+    ];
+    renderView();
+
+    expect(await screen.findByText('Unnumbered container')).toBeInTheDocument();
+    expect(screen.getByText('No container number yet')).toBeInTheDocument();
+  });
 });

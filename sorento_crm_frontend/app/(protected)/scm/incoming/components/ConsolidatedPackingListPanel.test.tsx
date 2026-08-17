@@ -114,6 +114,7 @@ function packingList(over: Partial<ConsolidatedPackingList> = {}): ConsolidatedP
         supplier_name: 'KAILU HARDWARE FACTORY',
         loading_plan_id: 'lp-1',
         notice_id: 'n-1',
+        has_pack_plan: true,
         notice_created_at: '2026-07-28T09:00:00',
         notice_sent_at: '2026-07-30T11:20:00',
         lines: [KAILU_LINE, MOCHA_LINE],
@@ -133,6 +134,7 @@ function packingList(over: Partial<ConsolidatedPackingList> = {}): ConsolidatedP
         supplier_name: 'CAIZHOU SANITARY',
         loading_plan_id: null,
         notice_id: null,
+        has_pack_plan: false,
         notice_created_at: null,
         notice_sent_at: null,
         lines: [CAIZHOU_LINE],
@@ -247,17 +249,31 @@ describe('ConsolidatedPackingListPanel', () => {
   it('says which loading plan a factory is being compared against', async () => {
     renderPanel();
 
-    // The sent date, not the raised date: what the supplier packed against is what they got.
-    expect(await screen.findByText('vs plan of 30/07/2026')).toBeInTheDocument();
+    // The RAISED date, because that is the date the server picked the plan by. The sent
+    // date can fall after the container, and the chip would then name a plan the
+    // comparison was not made against.
+    expect(await screen.findByText('vs plan of 28/07/2026')).toBeInTheDocument();
   });
 
-  it('falls back to when the plan was raised if it was never marked sent', async () => {
+  it('falls back to when the plan was sent if it carries no raised date', async () => {
     const list = packingList();
-    list.factories[0].notice_sent_at = null;
+    list.factories[0].notice_created_at = null;
     state.getList = vi.fn().mockResolvedValue(list);
     renderPanel();
 
-    expect(await screen.findByText('vs plan of 28/07/2026')).toBeInTheDocument();
+    expect(await screen.findByText('vs plan of 30/07/2026')).toBeInTheDocument();
+  });
+
+  it('does not claim a comparison against a plan that only asked for production', async () => {
+    // The notice exists, so "no plan sent" would be wrong; it holds no packing quantity,
+    // so "vs plan of ..." would claim a comparison that was never made.
+    const list = packingList();
+    list.factories[0].has_pack_plan = false;
+    state.getList = vi.fn().mockResolvedValue(list);
+    renderPanel();
+
+    expect(await screen.findByText('plan asked for production only')).toBeInTheDocument();
+    expect(screen.queryByText(/vs plan of/)).not.toBeInTheDocument();
   });
 
   it('says a factory was never sent a plan, rather than leaving its remarks unexplained',
@@ -319,6 +335,7 @@ describe('ConsolidatedPackingListPanel', () => {
             supplier_name: 'KAILU HARDWARE FACTORY',
             loading_plan_id: 'lp-1',
             notice_id: 'n-1',
+            has_pack_plan: true,
             notice_created_at: '2026-07-28T09:00:00',
             notice_sent_at: '2026-07-30T11:20:00',
             lines: [KAILU_LINE, MOCHA_LINE],

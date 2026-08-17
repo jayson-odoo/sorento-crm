@@ -274,13 +274,23 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
  *
  * A discrepancy only means anything next to the plan it was measured from, and a factory that
  * was never sent one has an empty remarks column for a different reason than a factory that
- * packed its plan exactly.
+ * packed its plan exactly. A third reason: the plan it was sent asked for production only, so
+ * it holds no packing quantity and nothing was compared even though a plan exists.
+ *
+ * The date is when the plan was RAISED, not when it was sent, because that is the date the
+ * server picked the plan by - a sent date can fall after the container and would make the
+ * chip disagree with the comparison it labels.
  */
 function NoticeChip({ factory }: { factory: PackingListFactory }) {
-  const sent = factory.notice_sent_at ?? factory.notice_created_at;
+  const raised = factory.notice_created_at ?? factory.notice_sent_at;
+  const label = !factory.notice_id
+    ? 'no plan sent'
+    : factory.has_pack_plan
+      ? `vs plan of ${fmtDate(raised)}`
+      : 'plan asked for production only';
   return (
     <Badge variant="secondary" size="sm" className="font-normal text-muted-foreground">
-      {factory.notice_id ? `vs plan of ${fmtDate(sent)}` : 'no plan sent'}
+      {label}
     </Badge>
   );
 }

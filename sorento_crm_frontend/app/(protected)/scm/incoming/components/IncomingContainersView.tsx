@@ -99,7 +99,9 @@ export function IncomingContainersView() {
             >
               <div className="min-w-0">
                 <div className="truncate text-xs font-medium">
-                  {s.container_no || s.shipment_number}
+                  {/* A read that named neither still has to be clickable and tellable
+                      apart from the next one - a blank row reads as a broken screen. */}
+                  {s.container_no || s.shipment_number || 'Unnumbered container'}
                 </div>
                 <div className="truncate text-2xs text-muted-foreground">{subLine(s)}</div>
               </div>
@@ -146,7 +148,12 @@ function subLine(s: IncomingShipment): string {
     s.container_no && s.shipment_number && s.shipment_number !== s.container_no
       ? s.shipment_number
       : null;
-  if (!names) return s.container_no ? (s.shipment_number ?? '') : 'No container number yet';
+  // Never an empty line: with no factory known, whichever number is missing is what the
+  // row has left to say, and saying nothing looks like the row failed to load.
+  if (!names) {
+    if (!s.container_no) return 'No container number yet';
+    return s.shipment_number ?? 'No shipment number';
+  }
   return number ? `${number} · ${names}` : names;
 }
 

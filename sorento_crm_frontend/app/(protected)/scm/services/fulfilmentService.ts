@@ -550,6 +550,14 @@ export interface PackingListFactory {
   loading_plan_id: string | null;
   /** Null when the supplier was never sent a loading plan, so nothing can be compared. */
   notice_id: string | null;
+  /**
+   * Whether that plan actually asked for a packing quantity.
+   *
+   * A notice whose lines are all `produce` is a production instruction, not a loading plan:
+   * it exists, but there is nothing in it to compare a shipment against. Without this the
+   * screen would claim a comparison it never made.
+   */
+  has_pack_plan: boolean;
   /** When that plan was raised, and when it actually reached the supplier. A shipment is
    *  compared against a plan of a particular date, and an old plan is worth seeing. */
   notice_created_at: string | null;
