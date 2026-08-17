@@ -346,6 +346,27 @@ export interface ReorderRecommendation {
   rank_factors: RankFactor[];
   /** M7 - the market signal that moved this rank (opt-in runs only); null otherwise. */
   market_signal?: string | null;
+
+  // --- Stage 2 front planning: the frozen demand-channel split (AC-F07) ---------
+  // Demand is split by channel; SUPPLY IS NOT. `on_hand`, `incoming_spo`,
+  // `outstanding_po` and `reorder_level` above stay single shared facts of the
+  // product-location and gain no channel dimension, because counting the same stock
+  // once per channel would double the supply the plan believes it has.
+  /** Confirmed unplaced Project Buy at this location. Firm: never netted again. */
+  project_need?: number | null;
+  /** Retail-class need after normal netting. */
+  retail_need?: number | null;
+  /**
+   * Demand whose SO carries no persisted class. Visible, and EXCLUDED from the
+   * actionable need in both grains until it is classified (AC-F05 / AC-E06).
+   */
+  unclassified_need?: number | null;
+  /**
+   * True when this run is decided at the Product grain, or is legacy, so the
+   * per-location row is a read and drill row rather than a decision surface
+   * (AC-F02 / AC-F09). The per-location view is never retired by Product grain.
+   */
+  decisions_read_only?: boolean;
 }
 
 /** Roll-up counts + cash impact for the completed run. */

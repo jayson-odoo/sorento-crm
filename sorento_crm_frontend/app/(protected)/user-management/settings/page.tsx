@@ -37,6 +37,12 @@ import {
   getUsersForApproverSelect,
   type UserForSelect,
 } from '@/app/(protected)/procurement-management/purchase-requests/services/purchaseRequestService';
+import {
+  USE_PLAN_GRAIN_MOCKS,
+  mockPlanGrain,
+  rememberPlanGrain,
+  type PlanGrainSetting,
+} from './lib/planGrainMockStore';
 
 type SupplierSelectRow = {
   id: string;
@@ -224,6 +230,11 @@ export default function Page() {
     defaultProductStandardLeadTimeDays: settings?.defaultProductStandardLeadTimeDays ?? 90,
     takeoverCooldownSeconds: settings?.takeoverCooldownSeconds ?? 60,
     formSlaGraceSeconds: settings?.formSlaGraceSeconds ?? 0,
+    // Phase 1: the blob does not carry `plan_grain` yet, so the mock store answers
+    // for it. Phase 2 (S2-BE-2) deletes the store and this reads the saved value.
+    planGrain: USE_PLAN_GRAIN_MOCKS
+      ? mockPlanGrain(settings?.planGrain)
+      : (settings?.planGrain ?? 'product'),
     purchaseRequestDefaultApproverUserId:
       settings?.purchaseRequestDefaultApproverUserId &&
       settings.purchaseRequestDefaultApproverUserId.length > 0
@@ -274,6 +285,9 @@ export default function Page() {
       defaultProductStandardLeadTimeDays: settings.defaultProductStandardLeadTimeDays ?? 90,
       takeoverCooldownSeconds: settings.takeoverCooldownSeconds ?? 60,
       formSlaGraceSeconds: settings.formSlaGraceSeconds ?? 0,
+      planGrain: USE_PLAN_GRAIN_MOCKS
+        ? mockPlanGrain(settings.planGrain)
+        : (settings.planGrain ?? 'product'),
       purchaseRequestDefaultApproverUserId:
         settings.purchaseRequestDefaultApproverUserId &&
         settings.purchaseRequestDefaultApproverUserId.length > 0
@@ -308,6 +322,7 @@ export default function Page() {
         default_product_standard_lead_time_days: values.defaultProductStandardLeadTimeDays,
         takeover_cooldown_seconds: values.takeoverCooldownSeconds,
         form_sla_grace_seconds: values.formSlaGraceSeconds,
+        plan_grain: values.planGrain,
         purchase_request_default_approver_user_id:
           values.purchaseRequestDefaultApproverUserId === NO_DEFAULT_APPROVER_VALUE
             ? null
@@ -317,6 +332,13 @@ export default function Page() {
             ? null
             : values.sponsorshipFormDefaultApproverUserId,
       };
+
+      if (USE_PLAN_GRAIN_MOCKS) {
+        // Phase 1: the column does not exist, so the choice is remembered here and
+        // the field is not sent. Phase 2 removes this block and the body carries it.
+        rememberPlanGrain(values.planGrain as PlanGrainSetting);
+        delete body.plan_grain;
+      }
 
       const response = await apiFetch('/api/user-management/settings/general', {
         method: 'POST',
@@ -866,6 +888,31 @@ export default function Page() {
                     does not set its own. During the wait nothing is written and nobody is
                     notified, so the person who clicked can take it back. 0 disables the wait
                     everywhere except stages that override it.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="planGrain"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Plan grain</FormLabel>
+                  <FormControl>
+                    <SearchableSelect
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Product"
+                      options={[
+                        { value: 'product', label: 'Product' },
+                        { value: 'location', label: 'Location' },
+                      ]}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Applies to runs created afterwards.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

@@ -78,7 +78,7 @@ export function positionAfterBuy(row: OrderSummaryRow, chosenQty: number): numbe
     row.qty_in_transit +
     chosenQty -
     row.project_demand -
-    row.dealer_outstanding
+    row.retail_outstanding
   );
 }
 

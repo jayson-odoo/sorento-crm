@@ -53,6 +53,7 @@ const hooks = vi.hoisted(() => ({
   useOrderSummary: vi.fn(),
   useRecordOrderDecision: vi.fn(),
   useOrderSummaryDemand: vi.fn(),
+  useOrderSummaryLocations: vi.fn(),
   useOrderSummarySuppliers: vi.fn(),
   orderSummaryKey: () => ['scm', 'reorder', 'order-summary'],
 }));
@@ -94,6 +95,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   hooks.useRecordOrderDecision.mockReturnValue({ mutate, isPending: false });
   hooks.useOrderSummaryDemand.mockReturnValue(state());
+  hooks.useOrderSummaryLocations.mockReturnValue(state());
   hooks.useOrderSummarySuppliers.mockReturnValue(state());
 });
 
@@ -164,7 +166,7 @@ describe('SummaryOrderReportView - the row carries only what is needed (AC-C2.1 
     expect(row).not.toHaveTextContent('SO-2025-1188');
     // The icon is there to open them.
     expect(
-      within(row).getByRole('button', { name: /Dealer outstanding for B2155-NL-BLUE, 4 lines/i }),
+      within(row).getByRole('button', { name: /Retail outstanding for B2155-NL-BLUE, 4 lines/i }),
     ).toBeInTheDocument();
     expect(
       within(row).getByRole('button', { name: /Project demand for B2155-NL-BLUE, 3 lines/i }),

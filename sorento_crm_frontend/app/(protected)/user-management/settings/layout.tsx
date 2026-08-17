@@ -52,6 +52,8 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
         : 60,
     formSlaGraceSeconds:
       typeof raw.form_sla_grace_seconds === 'number' ? raw.form_sla_grace_seconds : 0,
+    // A new settings column reaches the FE only if it is in this manual mapper too.
+    planGrain: raw.plan_grain === 'location' ? 'location' : 'product',
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,
     purchaseRequestDefaultApproverName:
@@ -148,6 +150,7 @@ function createDefaultSettings(): SystemSetting {
     defaultProductStandardLeadTimeDays: 90,
     takeoverCooldownSeconds: 60,
     formSlaGraceSeconds: 0,
+    planGrain: 'product',
     purchaseRequestDefaultApproverUserId: null,
     purchaseRequestDefaultApproverName: null,
     purchaseRequestDefaultApproverEmail: null,

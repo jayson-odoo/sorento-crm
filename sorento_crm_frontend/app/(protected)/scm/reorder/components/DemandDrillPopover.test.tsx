@@ -8,7 +8,7 @@
  *    preventing information fatigue is a requirement, not a preference.
  *  - Project demand decomposes into project, SO number, quantity and required
  *    date (AC-C2.3).
- *  - Dealer outstanding decomposes into dealer, SO number, quantity and DAYS
+ *  - Retail outstanding decomposes into dealer, SO number, quantity and DAYS
  *    OUTSTANDING, worst-first (AC-C2.4). The 2-unit line that has waited 214 days
  *    renders ABOVE the 96-unit line raised in May, which is the entire reason the
  *    column exists.
@@ -44,7 +44,7 @@ import { SUMMARY_ORDER_FIXTURES } from '../lib/summaryOrderMockStore';
 import { DemandDrillPopover } from './DemandDrillPopover';
 
 const PROJECT = SUMMARY_ORDER_FIXTURES.demand('B2155-NL-BLUE', 'project');
-const DEALER = SUMMARY_ORDER_FIXTURES.demand('B2155-NL-BLUE', 'dealer');
+const DEALER = SUMMARY_ORDER_FIXTURES.demand('B2155-NL-BLUE', 'retail');
 
 function state(over: Record<string, unknown> = {}) {
   return { data: undefined, isLoading: false, isError: false, error: null, refetch: vi.fn(), ...over };
@@ -59,7 +59,7 @@ function renderDrill(
     <DemandDrillPopover
       productCode="B2155-NL-BLUE"
       productName="Basin 2155 Nano-Lite Blue"
-      kind="dealer"
+      kind="retail"
       totalQty={186}
       lineCount={4}
       runId="run-2026-w32"
@@ -80,10 +80,10 @@ beforeEach(() => {
 describe('DemandDrillPopover - the aggregate stays behind an icon (AC-C2.2a)', () => {
   it('renders the total on the row and NOTHING else until the icon is opened', () => {
     renderDrill(state({ data: DEALER }));
-    expect(screen.getByTestId('demand-total-dealer')).toHaveTextContent('186');
+    expect(screen.getByTestId('demand-total-retail')).toHaveTextContent('186');
     // No contributing line is on the row.
     expect(screen.queryByText('Kedai Perabot Seri Muda')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('dealer-lines')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('retail-lines')).not.toBeInTheDocument();
   });
 
   it('does not fetch the lines until the icon is opened', () => {
@@ -91,14 +91,14 @@ describe('DemandDrillPopover - the aggregate stays behind an icon (AC-C2.2a)', (
     // The last argument is the query's `enabled` flag, which is the open state.
     expect(hooks.useOrderSummaryDemand).toHaveBeenLastCalledWith(
       'B2155-NL-BLUE',
-      'dealer',
+      'retail',
       'run-2026-w32',
       false,
     );
     openDrill();
     expect(hooks.useOrderSummaryDemand).toHaveBeenLastCalledWith(
       'B2155-NL-BLUE',
-      'dealer',
+      'retail',
       'run-2026-w32',
       true,
     );
@@ -106,7 +106,7 @@ describe('DemandDrillPopover - the aggregate stays behind an icon (AC-C2.2a)', (
 
   it('renders no icon when nothing contributes, rather than an icon that opens nothing', () => {
     renderDrill(state({ data: DEALER }), { lineCount: 0, totalQty: 0 });
-    expect(screen.getByTestId('demand-total-dealer')).toHaveTextContent('0');
+    expect(screen.getByTestId('demand-total-retail')).toHaveTextContent('0');
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });
@@ -128,11 +128,11 @@ describe('DemandDrillPopover - states', () => {
 
   it('says nothing is outstanding rather than rendering an empty list', () => {
     renderDrill(
-      state({ data: { ...DEALER, dealer_lines: [], total_qty: 0 } }),
+      state({ data: { ...DEALER, retail_lines: [], dealer_lines: [], total_qty: 0 } }),
       { totalQty: 0 },
     );
     openDrill();
-    expect(screen.getByText('No dealer order is outstanding on this item.')).toBeInTheDocument();
+    expect(screen.getByText('No retail order is outstanding on this item.')).toBeInTheDocument();
   });
 });
 
@@ -154,11 +154,11 @@ describe('DemandDrillPopover - project demand (AC-C2.3)', () => {
   });
 });
 
-describe('DemandDrillPopover - dealer ageing, worst-first (AC-C2.4)', () => {
+describe('DemandDrillPopover - retail ageing, worst-first (AC-C2.4)', () => {
   it('shows days outstanding for every line', () => {
     renderDrill(state({ data: DEALER }));
     openDrill();
-    const lines = screen.getByTestId('dealer-lines');
+    const lines = screen.getByTestId('retail-lines');
     expect(within(lines).getByText('214 days')).toBeInTheDocument();
     expect(within(lines).getByText('91 days')).toBeInTheDocument();
     expect(within(lines).getByText('33 days')).toBeInTheDocument();
@@ -168,18 +168,18 @@ describe('DemandDrillPopover - dealer ageing, worst-first (AC-C2.4)', () => {
   it('renders the 2-unit line that waited 214 days ABOVE the 96-unit line raised in May', () => {
     renderDrill(state({ data: DEALER }));
     openDrill();
-    const rendered = screen.getByTestId('dealer-lines').textContent ?? '';
+    const rendered = screen.getByTestId('retail-lines').textContent ?? '';
     expect(rendered.indexOf('Kedai Perabot Seri Muda')).toBeLessThan(
       rendered.indexOf('Hup Seng Hardware'),
     );
     // And the order is the SERVER's - the component does not re-sort.
-    expect(DEALER.dealer_lines.map((l) => l.days_outstanding)).toEqual([214, 91, 33, 8]);
+    expect(DEALER.retail_lines.map((l) => l.days_outstanding)).toEqual([214, 91, 33, 8]);
   });
 
   it('names the dealer and the sales order, never an internal id', () => {
     renderDrill(state({ data: DEALER }));
     openDrill();
-    const lines = screen.getByTestId('dealer-lines');
+    const lines = screen.getByTestId('retail-lines');
     expect(within(lines).getByText('Kedai Perabot Seri Muda')).toBeInTheDocument();
     expect(within(lines).getByText(/SO-2025-1188/)).toBeInTheDocument();
     expect(lines.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);

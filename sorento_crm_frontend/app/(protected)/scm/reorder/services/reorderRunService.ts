@@ -32,6 +32,29 @@
  *        }
  *      }
  *
+ * 2b) STAGE 2 additions to the run and recommendation shapes (front planning)
+ *
+ *    The run record (create, poll, today, history) carries:
+ *      decision_grain: 'product' | 'location' | null   stamped ONCE at creation from
+ *                                                      the admin plan-grain policy
+ *                                                      setting; never changed by a
+ *                                                      later edit of that setting, and
+ *                                                      NULL only on a legacy run
+ *      front_planning_contract_version: number | null  `1` on a front-planning run,
+ *                                                      NULL on a legacy one. Decision
+ *                                                      writes are rejected when it is
+ *                                                      NULL, and when the write's grain
+ *                                                      differs from `decision_grain`
+ *                                                      (AC-F01 / AC-F09 / AC-F10).
+ *
+ *    Each recommendation row carries its frozen demand-channel split:
+ *      project_need, retail_need, unclassified_need: number | null   (NULL on legacy)
+ *      decisions_read_only: boolean                  true when the run is decided at
+ *                                                    the other grain, so the location
+ *                                                    row is a read and drill row
+ *    Shared supply - stock, incoming SPO, PO, reorder level - stays a SINGLE value per
+ *    product-location and gains no channel dimension (AC-F07).
+ *
  * 3) Paginated recommendations for a completed run  (DataGrid)
  *    GET /api/v1/scm/reorder-runs/{run_id}/recommendations
  *        ?page&limit&sort&dir&query&type=buy|disposition|exception
@@ -65,6 +88,8 @@ import type { PriceHistoryPayload } from '../lib/priceAdvice';
 import type { PurchaseTrendPayload } from '../lib/purchaseTrend';
 import type { TrajectoryPayload } from '../lib/trajectory';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { withChannelNeeds, withRunGrain } from '../lib/frontPlanningMockStore';
+import type { PlanGrain } from '../lib/planGrain';
 import type {
   BuyScope,
   CreateReorderRunRequest,
@@ -165,6 +190,15 @@ export interface ReorderRunHistoryItem {
   run_id: string;
   status: ReorderRunStatus;
   buy_scope: BuyScope;
+  /**
+   * The grain this run was STAMPED with at creation, from the admin plan-grain
+   * policy setting (AC-F01). It never changes for the run, so a past run opened
+   * later still reads the grain its decisions were taken at, whatever the policy
+   * says today. NULL on a legacy run.
+   */
+  decision_grain?: PlanGrain | null;
+  /** `1` on a front-planning run, NULL on a legacy one (AC-F10). */
+  front_planning_contract_version?: number | null;
   warehouse_codes: string[];
   warehouse_count: number;
   /** Naive-UTC ISO strings - format with `formatDateTimeInMalaysia` (raw string). */
@@ -196,7 +230,9 @@ export async function getTodayRun(): Promise<TodayRun | null> {
   const res = await apiFetch('/api/v1/scm/reorder-runs/today');
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load today’s plan'));
   const body = (await res.json()) as TodayRun | null;
-  return body ?? null;
+  // Phase 1 only: the run does not carry its stamped grain yet (AC-F01). Phase 2
+  // (S2-BE-2) removes the overlay and the two fields arrive on the payload.
+  return withRunGrain(body ?? null);
 }
 
 /** Open demand the plan cannot net, because the sales-order line names no warehouse.
@@ -353,7 +389,11 @@ export async function getRecommendations(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/recommendations?${params}`,
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load recommendations'));
-  return (await res.json()) as RecommendationPage;
+  const page = (await res.json()) as RecommendationPage;
+  // Phase 1 only: the frozen location facts do not carry their demand-channel split
+  // yet, so the mock store adds it here. Phase 2 (S2-BE-3) removes this line and the
+  // fields arrive on the payload (AC-F07).
+  return { ...page, data: withChannelNeeds(page.data) };
 }
 
 /**
@@ -470,7 +510,13 @@ export async function listReorderRuns(
   });
   const res = await apiFetch(`/api/v1/scm/reorder-runs?${params}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load run history'));
-  return (await res.json()) as ReorderRunHistoryPage;
+  const body = (await res.json()) as ReorderRunHistoryPage;
+  // Phase 1 only, as in `getTodayRun`: a history run carries its OWN stamped grain,
+  // so opening a past run must not relabel it with today's policy (AC-F10).
+  return {
+    ...body,
+    data: body.data.map((run) => withRunGrain(run) as ReorderRunHistoryItem),
+  };
 }
 
 // ── M4 cash co-pilot ────────────────────────────────────────────────────────

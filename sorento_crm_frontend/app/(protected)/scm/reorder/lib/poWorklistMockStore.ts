@@ -30,6 +30,7 @@
  *   - `SRT367-GM`      no lead time recorded anywhere, so place-by is null even though
  *                      need-by is not.
  */
+import { frontPlanningScenario, runGrainFields } from './frontPlanningMockStore';
 import type {
   KeyedStatus,
   KeyedStatusInput,
@@ -39,7 +40,7 @@ import type {
 } from '../types/poWorklist.types';
 
 /** Flip to false in Phase 2. The real branch in the service is already written. */
-export const USE_PO_WORKLIST_MOCKS = false;
+export const USE_PO_WORKLIST_MOCKS = true;
 
 /** How long the mock takes to "fetch", so the loading skeleton is actually visible. */
 const MOCK_LATENCY_MS = 400;
@@ -75,6 +76,12 @@ const ROWS: PoWorklistRow[] = [
     keyed_status: 'keyed',
     keyed_by: 'Joey',
     keyed_at: `${AS_OF}T10:02:00`,
+    uom_decimal_places: 0,
+    // The product decision's split back to locations (AC-F08). Sums to 224.
+    location_allocations: [
+      { warehouse_code: 'BRW', warehouse_name: 'Bandar Baru Warehouse', allocated_qty: 160 },
+      { warehouse_code: 'JB', warehouse_name: 'Johor Bahru Branch', allocated_qty: 64 },
+    ],
   },
   {
     product_code: 'C-FH24',
@@ -121,6 +128,11 @@ const ROWS: PoWorklistRow[] = [
     keyed_status: 'not_keyed',
     keyed_by: null,
     keyed_at: null,
+    uom_decimal_places: 0,
+    location_allocations: [
+      { warehouse_code: 'BRW', warehouse_name: 'Bandar Baru Warehouse', allocated_qty: 700 },
+      { warehouse_code: 'IPH', warehouse_name: 'Ipoh Branch', allocated_qty: 208 },
+    ],
   },
   {
     product_code: 'SRTWT7408',
@@ -206,11 +218,50 @@ function delay<T>(value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), MOCK_LATENCY_MS));
 }
 
+/**
+ * The worklist reads ONE grain, the run's own (AC-F09).
+ *
+ * Under `product` the rows are the product decisions and each carries its split
+ * back to locations. Under `location` the same decisions arrive as per-location
+ * recommendation rows instead - one row per location, named by warehouse - and no
+ * split, because the location IS the row. Neither shape carries a channel key.
+ */
+function scenarioRows(): PoWorklistRow[] {
+  const rows = ROWS.map((r) => ({ ...r, ...(state.get(r.product_code) ?? {}) }));
+  const grain = runGrainFields().decision_grain;
+  if (frontPlanningScenario() === 'legacy') {
+    return rows.map((r) => ({ ...r, location_allocations: null }));
+  }
+  if (grain !== 'location') return rows;
+  return rows.flatMap((r) => {
+    const split = r.location_allocations ?? [];
+    if (split.length === 0) {
+      return [
+        {
+          ...r,
+          warehouse_code: 'BRW',
+          warehouse_name: 'Bandar Baru Warehouse',
+          location_allocations: null,
+        },
+      ];
+    }
+    return split.map((a) => ({
+      ...r,
+      chosen_qty: a.allocated_qty,
+      suggested_qty: a.allocated_qty,
+      warehouse_code: a.warehouse_code,
+      warehouse_name: a.warehouse_name,
+      location_allocations: null,
+    }));
+  });
+}
+
 export function mockPoWorklist(): Promise<PoWorklist> {
   return delay({
     run_id: RUN_ID,
     as_of: AS_OF,
-    rows: ROWS.map((r) => ({ ...r, ...(state.get(r.product_code) ?? {}) })),
+    decision_grain: runGrainFields().decision_grain,
+    rows: scenarioRows(),
   });
 }
 

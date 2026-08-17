@@ -36,6 +36,15 @@ export interface SystemSetting {
   /** Global default undo grace window for form-SLA actions, in seconds. */
   formSlaGraceSeconds?: number;
 
+  /**
+   * SCM front planning: which grain new plans are DECIDED at (AC-F01).
+   *
+   * Admin policy, not a per-run selector. It is stamped onto each run when the run
+   * is created, so changing it affects runs created afterwards and never relabels
+   * or unlocks an existing one.
+   */
+  planGrain?: 'product' | 'location';
+
   /** System default approver for procurement "Send for approval" (skips chooser when set). */
   purchaseRequestDefaultApproverUserId?: string | null;
   purchaseRequestDefaultApproverName?: string | null;

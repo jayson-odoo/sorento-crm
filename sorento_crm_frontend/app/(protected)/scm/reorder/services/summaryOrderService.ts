@@ -37,6 +37,18 @@
  *    `generated_at` are null for a run that froze no rows, because inventing today's
  *    date would label a book that was never built.
  *
+ *    Stage 2 adds to the same response and changes no key: the report carries the
+ *    run's stamped `decision_grain` and `is_legacy` (AC-F01 / AC-F10), and each row
+ *    carries `project_buy_qty`, `retail_replenishment_qty`, `unclassified_demand_qty`,
+ *    `earliest_project_need_date`, `uom_decimal_places`, `channel_calculation_basis`,
+ *    `location_allocations`, and `retail_outstanding` (+ its line count) as the API
+ *    name of the stored `dealer_outstanding` column (AC-E03). One row per product,
+ *    still: channel is analysis inside the row, never part of row identity.
+ *
+ *    On a LEGACY run - one created before the front-planning contract - every one of
+ *    those channel fields is null and `is_legacy` is true. They are NOT inferred and
+ *    NOT backfilled (AC-F10), and the decision route refuses the run entirely.
+ *
  *    The report is returned WHOLE and the client paginates, because the sheet it
  *    replaces is read as one book. If the row count makes that untenable (roughly
  *    3,100 products carry a recommendation today), add `page` / `limit` here and
@@ -52,19 +64,42 @@
  * 2) The lines behind one aggregate, fetched lazily when its icon is opened
  *
  *      GET /api/v1/scm/order-summary/{product_code}/demand
- *          ?kind=project|dealer      required
+ *          ?kind=project|retail|unclassified   required
+ *                                    (`dealer` accepted as an alias of `retail`)
  *          &run_id=<opaque>          optional; same run as the report
  *
  *      -> 200  OrderSummaryDemandDrill
  *      Auth: `scm.dashboard.view`.
  *
- *    **The server owns the ordering.** `kind=dealer` returns lines sorted
+ *    **The server owns the ordering.** `kind=retail` returns lines sorted
  *    worst-first by `days_outstanding` (AC-C2.4); `kind=project` by
- *    `required_date`, nulls last. The client never re-sorts, so the ageing a
- *    person reads is the ageing the server computed.
+ *    `required_date`, nulls last; `kind=unclassified` by `ordered_date`, oldest
+ *    first. The client never re-sorts, so the ageing a person reads is the ageing
+ *    the server computed.
+ *
+ *    Project lines carry `line_no`, `warehouse_code` and a HUMAN `decision_ref`
+ *    ("Rev 2 / INQ-2026-0188") so Purchasing can trace a Buy back to the decision
+ *    that produced it without a UUID crossing the wire (AC-D06 / AC-E07).
  *
  *    `total_qty` must equal the row's aggregate. The row figure is derived from
  *    these lines and never retyped by a person (AC-C2.3).
+ *
+ * 2b) The member locations behind one product row (AC-F08)
+ *
+ *      GET /api/v1/scm/order-summary/{product_code}/locations
+ *          ?run_id=<opaque>          optional; same run as the report
+ *
+ *      -> 200  OrderSummaryLocations
+ *      Auth: `scm.dashboard.view`.
+ *
+ *    One row per member location, carrying its Project / Retail / Unclassified
+ *    demand split beside the SHARED supply of that product-location - stock,
+ *    incoming SPO, PO, reorder level - which is counted ONCE and carries no
+ *    channel dimension (AC-F07). `allocated_qty` is that location's share of the
+ *    chosen quantity, and the shares sum EXACTLY to `chosen_qty` (AC-F12).
+ *
+ *    On a legacy run every channel figure is null and `is_legacy` is true; the
+ *    breakdown is not inferred or backfilled (AC-F10).
  *
  * 3) The supplier candidates for one product
  *
@@ -94,6 +129,22 @@
  *    rather than an untraceable override (AC-C2.8). `decided_by` is a human name;
  *    no user id crosses the wire.
  *
+ *    Two refusals are Stage 2's, and they are DIFFERENT statuses because they are
+ *    fixed in different places:
+ *
+ *      422  `chosen_qty` carries more fractional digits than the row's FROZEN
+ *           `uom_decimal_places` permits (AC-F12). Fixed by typing a coarser
+ *           quantity - `2.5 EA` is refused, `2.5 kg` at 3 places is accepted.
+ *      409  the run's stamped `decision_grain` is not `product`, or the run is
+ *           legacy (AC-F09 / AC-F10). Fixed by deciding on the grain that owns
+ *           the run, or by creating a new run. Not fixable by editing the field,
+ *           which is why the screen disables the control rather than letting the
+ *           write fail.
+ *
+ *    The response carries `location_allocations`: the allocator rerun's split of
+ *    the accepted quantity back to the frozen location inputs, in the UOM's integer
+ *    minor units, summing exactly to `chosen_qty` (AC-F12). No rescaling formula.
+ *
  * -- ERROR SHAPE -------------------------------------------------------------
  * Every failure is the standard `AppException` envelope the global handler in
  * `app/main.py` serialises (`{ detail | message | error }`, correct HTTP status).
@@ -107,6 +158,7 @@ import {
   USE_SUMMARY_ORDER_MOCKS,
   mockOrderSummary,
   mockOrderSummaryDemand,
+  mockOrderSummaryLocations,
   mockOrderSummarySuppliers,
   mockRecordOrderDecision,
 } from '../lib/summaryOrderMockStore';
@@ -115,6 +167,7 @@ import type {
   OrderSummaryDecisionResult,
   OrderSummaryDemandDrill,
   OrderSummaryDemandKind,
+  OrderSummaryLocations,
   OrderSummaryReport,
   OrderSummarySuppliers,
 } from '../types/summaryOrder.types';
@@ -153,6 +206,22 @@ export async function getOrderSummaryDemand(
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the contributing lines'));
   return (await res.json()) as OrderSummaryDemandDrill;
+}
+
+/** The member locations behind one product row (AC-F08). */
+export async function getOrderSummaryLocations(
+  productCode: string,
+  runId?: string | null,
+): Promise<OrderSummaryLocations> {
+  if (USE_SUMMARY_ORDER_MOCKS) return mockOrderSummaryLocations(productCode);
+  const params = new URLSearchParams();
+  if (runId) params.set('run_id', runId);
+  const qs = params.toString();
+  const res = await apiFetch(
+    `/api/v1/scm/order-summary/${encodeURIComponent(productCode)}/locations${qs ? `?${qs}` : ''}`,
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the member locations'));
+  return (await res.json()) as OrderSummaryLocations;
 }
 
 /** The supplier candidates for one product (AC-C2.5 / AC-C2.6). */

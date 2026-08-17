@@ -233,6 +233,18 @@ export default function UOMDetailPage({
                     <p className="font-medium">{uom.conversion_factor}</p>
                   </div>
                 )}
+                {/* Always rendered: 0 is a real answer (whole units only), and a
+                    section that disappears on 0 reads as a missing value. */}
+                <div>
+                  <p className="text-sm text-muted-foreground">Decimal Places</p>
+                  <p className="font-medium">
+                    {uom.decimal_places === null || uom.decimal_places === undefined
+                      ? 'Not set'
+                      : uom.decimal_places === 0
+                        ? '0 (whole units only)'
+                        : uom.decimal_places}
+                  </p>
+                </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Created</p>
                   <p className="font-medium text-sm">

@@ -25,10 +25,16 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
 import { computedAtLabel, dayLabel } from '../lib/coverageTimeline';
+import { decisionLockReason, isLegacyRun, planGrainLabel } from '../lib/planGrain';
+import { decimalPlacesOf, fmtQty } from '../lib/qtyPrecision';
 import { useOrderSummary, useRecordOrderDecision } from '../hooks/useSummaryOrder';
-import type { OrderSummaryRow } from '../types/summaryOrder.types';
+import type {
+  OrderSummaryDecisionResult,
+  OrderSummaryRow,
+} from '../types/summaryOrder.types';
 import { DemandDrillPopover } from './DemandDrillPopover';
 import { OrderDecisionSheet } from './OrderDecisionSheet';
+import { ProductLocationsPopover } from './ProductLocationsPopover';
 
 /**
  * The Summary Order Report (UAC Group C2 + C3).
@@ -48,9 +54,60 @@ import { OrderDecisionSheet } from './OrderDecisionSheet';
  * suggested quantity sits immediately beside the chosen one (AC-C2.8), so a
  * larger number is visibly a decision rather than a silent override.
  *
+ * Stage 2 keeps that shape and changes nothing about row identity: still ONE row
+ * per product (AC-E03). What it adds is the channel reading INSIDE the row - SO
+ * demand stacks Project, Retail and Unclassified, and the suggestion stacks firm
+ * Project Buy, netted Retail replenishment and the once-rounded total - plus a
+ * Locations drill, because a product-wide row cannot answer "where" on its own.
+ *
+ * The header states the run's stamped **Plan grain**, which is a fact about the
+ * run and not a control: plan grain is admin policy (plan section 5.1), so there
+ * is no selector here and none in the planning modal. When the run is decided at
+ * the other grain, or predates the contract, the decision controls are disabled
+ * and say which screen owns the decision instead of failing on save.
+ *
  * Phase 1 serves `lib/summaryOrderMockStore`; Phase 2 flips the flag in
  * `services/summaryOrderService.ts` and this component is untouched.
  */
+
+/** One stacked reading inside the SO or Suggested cell. Null is UNAVAILABLE. */
+function Reading({
+  label,
+  value,
+  dp,
+  emphasis,
+  hint,
+  children,
+}: {
+  label: string;
+  value: number | null;
+  dp: number;
+  /** The row's own total, which is the figure a buyer reads first. */
+  emphasis?: boolean;
+  hint?: string;
+  /** The drill, when this reading opens to its contributing lines. */
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex w-full items-baseline justify-between gap-2">
+      <span className="shrink-0 text-2xs text-muted-foreground" title={hint}>
+        {label}
+      </span>
+      {children ?? (
+        <span
+          className={cn('tabular-nums', emphasis && 'font-semibold')}
+          title={value === null ? 'Unavailable on a legacy plan' : hint}
+        >
+          {value === null ? (
+            <span className="text-2xs text-muted-foreground">Unavailable</span>
+          ) : (
+            fmtQty(value, dp)
+          )}
+        </span>
+      )}
+    </div>
+  );
+}
 
 /**
  * This grid shares `/scm/reorder` with the buy co-pilot and the allocation list,
@@ -80,9 +137,26 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
   const [sorting, setSorting] = useState<SortingState>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [deciding, setDeciding] = useState<OrderSummaryRow | null>(null);
+  /** The server's refusal, rendered IN the sheet rather than only toasted away. */
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+  /** The decision just recorded, so its location split is visible immediately. */
+  const [justSaved, setJustSaved] = useState<OrderSummaryDecisionResult | null>(null);
 
   const rows = useMemo<OrderSummaryRow[]>(() => data?.rows ?? [], [data]);
   const reportRunId = data?.run_id ?? runId ?? null;
+
+  /**
+   * The run's STAMPED grain (AC-F01). Read off the report, not off the current
+   * policy setting: an existing run keeps the grain it was created with, and
+   * changing the policy afterwards must not relabel it.
+   */
+  const runGrain = data
+    ? {
+        decision_grain: data.decision_grain,
+        front_planning_contract_version: data.is_legacy ? null : 1,
+      }
+    : null;
+  const lockReason = decisionLockReason(runGrain, 'product');
 
   const columns = useMemo<ColumnDef<OrderSummaryRow>[]>(
     () => [
@@ -108,69 +182,115 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
       {
         accessorKey: 'on_hand',
         header: ({ column }) => <DataGridColumnHeader title="On hand" column={column} />,
-        cell: ({ row }) => fmtInt(row.original.on_hand),
+        cell: ({ row }) =>
+          fmtQty(row.original.on_hand, decimalPlacesOf(row.original.uom_decimal_places)),
         size: 110,
         meta: { headerTitle: 'On hand', ...numMeta },
       },
       {
-        accessorKey: 'project_demand',
-        header: ({ column }) => <DataGridColumnHeader title="Project demand" column={column} />,
-        cell: ({ row }) => (
-          <DemandDrillPopover
-            productCode={row.original.product_code}
-            productName={row.original.product_name}
-            kind="project"
-            totalQty={row.original.project_demand}
-            lineCount={row.original.project_demand_line_count}
-            runId={reportRunId}
-          />
-        ),
-        size: 160,
-        meta: { headerTitle: 'Project demand', ...numMeta },
+        // ONE column, three readings (AC-E03). Channel is analysis INSIDE the row,
+        // never row identity, so a product that sells to both sides is still one
+        // row and each side is still separately traceable to its own SO lines.
+        id: 'so_demand',
+        accessorFn: (row) => row.project_demand + row.retail_outstanding,
+        header: ({ column }) => <DataGridColumnHeader title="SO demand" column={column} />,
+        cell: ({ row }) => {
+          const r = row.original;
+          const dp = decimalPlacesOf(r.uom_decimal_places);
+          return (
+            <div className="flex w-full flex-col gap-0.5">
+              <Reading label="Project" value={r.project_demand} dp={dp} hint="Open Project-class SO quantity">
+                <DemandDrillPopover
+                  productCode={r.product_code}
+                  productName={r.product_name}
+                  kind="project"
+                  totalQty={r.project_demand}
+                  lineCount={r.project_demand_line_count}
+                  runId={reportRunId}
+                  decimalPlaces={dp}
+                />
+              </Reading>
+              <Reading label="Retail" value={r.retail_outstanding} dp={dp} hint="Open Retail-class SO quantity">
+                <span className="flex items-center gap-1">
+                  <DemandDrillPopover
+                    productCode={r.product_code}
+                    productName={r.product_name}
+                    kind="retail"
+                    totalQty={r.retail_outstanding}
+                    lineCount={r.retail_outstanding_line_count}
+                    runId={reportRunId}
+                    decimalPlaces={dp}
+                  />
+                </span>
+              </Reading>
+              {/* Excluded from the actionable suggestion until somebody classifies
+                  it (AC-E06), and NOT a third demand class - an exception. */}
+              <Reading
+                label="Unclass."
+                value={r.unclassified_demand_qty}
+                dp={dp}
+                hint="Demand whose sales order carries no demand class"
+              >
+                {r.unclassified_demand_qty === null ? undefined : (
+                  <DemandDrillPopover
+                    productCode={r.product_code}
+                    productName={r.product_name}
+                    kind="unclassified"
+                    totalQty={r.unclassified_demand_qty}
+                    lineCount={r.unclassified_line_count}
+                    runId={reportRunId}
+                    decimalPlaces={dp}
+                  />
+                )}
+              </Reading>
+              {r.max_days_outstanding !== null ? (
+                <span
+                  className={cn(
+                    'text-end text-2xs tabular-nums',
+                    r.max_days_outstanding >= 180 ? 'text-scm-stockout' : 'text-muted-foreground',
+                  )}
+                >
+                  worst {fmtInt(r.max_days_outstanding)} days
+                </span>
+              ) : null}
+            </div>
+          );
+        },
+        size: 210,
+        meta: { headerTitle: 'SO demand', ...numMeta },
       },
       {
-        accessorKey: 'dealer_outstanding',
-        header: ({ column }) => <DataGridColumnHeader title="Dealer outstanding" column={column} />,
+        // Where the product-wide row's figures actually sit. Under Product policy
+        // this is a read and drill view of the same frozen facts (AC-F02 / AC-F08).
+        id: 'locations',
+        header: ({ column }) => <DataGridColumnHeader title="Locations" column={column} />,
         cell: ({ row }) => (
-          <div className="flex flex-col items-end gap-0.5">
-            <DemandDrillPopover
-              productCode={row.original.product_code}
-              productName={row.original.product_name}
-              kind="dealer"
-              totalQty={row.original.dealer_outstanding}
-              lineCount={row.original.dealer_outstanding_line_count}
-              runId={reportRunId}
-            />
-            {row.original.max_days_outstanding !== null ? (
-              <span
-                className={cn(
-                  'text-2xs tabular-nums',
-                  row.original.max_days_outstanding >= 180
-                    ? 'text-scm-stockout'
-                    : 'text-muted-foreground',
-                )}
-              >
-                worst {fmtInt(row.original.max_days_outstanding)} days
-              </span>
-            ) : null}
-          </div>
+          <ProductLocationsPopover
+            productCode={row.original.product_code}
+            productName={row.original.product_name}
+            runId={reportRunId}
+            decimalPlaces={decimalPlacesOf(row.original.uom_decimal_places)}
+          />
         ),
-        size: 180,
-        meta: { headerTitle: 'Dealer outstanding', ...numMeta },
+        size: 120,
+        enableSorting: false,
+        meta: { headerTitle: 'Locations' },
       },
       {
         // Separate from in transit on purpose (AC-C2.2): this half can still be
         // re-dated or cancelled, so it is the half a decider can act on.
         accessorKey: 'qty_on_order',
         header: ({ column }) => <DataGridColumnHeader title="Ordered" column={column} />,
-        cell: ({ row }) => fmtInt(row.original.qty_on_order),
+        cell: ({ row }) =>
+          fmtQty(row.original.qty_on_order, decimalPlacesOf(row.original.uom_decimal_places)),
         size: 120,
         meta: { headerTitle: 'Ordered', ...numMeta },
       },
       {
         accessorKey: 'qty_in_transit',
         header: ({ column }) => <DataGridColumnHeader title="Incoming" column={column} />,
-        cell: ({ row }) => fmtInt(row.original.qty_in_transit),
+        cell: ({ row }) =>
+          fmtQty(row.original.qty_in_transit, decimalPlacesOf(row.original.uom_decimal_places)),
         size: 120,
         meta: { headerTitle: 'Incoming', ...numMeta },
       },
@@ -191,7 +311,7 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
             className={cn(row.original.shortfall > 0 && 'font-medium text-scm-stockout')}
             title="The dated gap against committed orders"
           >
-            {fmtInt(row.original.shortfall)}
+            {fmtQty(row.original.shortfall, decimalPlacesOf(row.original.uom_decimal_places))}
           </span>
         ),
         size: 140,
@@ -202,12 +322,61 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
         header: ({ column }) => (
           <DataGridColumnHeader title="Suggested (policy)" column={column} />
         ),
-        cell: ({ row }) => (
-          <span title="What the reorder policy proposes against forecast demand, not against the orders on the book">
-            {fmtInt(row.original.suggested_qty)}
-          </span>
-        ),
-        size: 150,
+        // The two channels that make up the suggestion, and the ONE total the
+        // supplier's MOQ and multiple were applied to (AC-E06 / AC-F11). Project
+        // Buy is firm - the Retail reorder level cannot suppress it (AC-E05) - and
+        // sits beside the SO column's Project reading as the second of the row's
+        // two Project measures.
+        cell: ({ row }) => {
+          const r = row.original;
+          const dp = decimalPlacesOf(r.uom_decimal_places);
+          return (
+            <div className="flex w-full flex-col gap-0.5">
+              <Reading
+                label="Project Buy"
+                value={r.project_buy_qty}
+                dp={dp}
+                hint="Confirmed unplaced Buy. Firm: Retail netting never reduces it"
+              />
+              <Reading
+                label="Retail"
+                value={r.retail_replenishment_qty}
+                dp={dp}
+                hint="Netted Retail replenishment across locations"
+              >
+                {r.retail_replenishment_qty === null ? undefined : (
+                  // The Retail suggestion opens to the evidence it was netted from:
+                  // per-location stock, velocity, incoming, reorder level and the
+                  // allocation (AC-E07). The SO column's Retail reading opens to the
+                  // ORDER lines instead - two different questions, two drills.
+                  <ProductLocationsPopover
+                    productCode={r.product_code}
+                    productName={r.product_name}
+                    runId={reportRunId}
+                    decimalPlaces={dp}
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Retail replenishment evidence for ${r.product_code}`}
+                      className="rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {fmtQty(r.retail_replenishment_qty, dp)}
+                    </button>
+                  </ProductLocationsPopover>
+                )}
+              </Reading>
+              <Reading
+                label="Total"
+                value={r.suggested_qty}
+                dp={dp}
+                emphasis
+                hint="Rounded once at the supplier MOQ and order multiple, for the whole product"
+              />
+            </div>
+          );
+        },
+        size: 190,
         meta: { headerTitle: 'Suggested (policy)', ...numMeta },
       },
       {
@@ -215,6 +384,21 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
         header: ({ column }) => <DataGridColumnHeader title="Order qty" column={column} />,
         cell: ({ row }) => {
           const r = row.original;
+          const dp = decimalPlacesOf(r.uom_decimal_places);
+          // The run is decided at the other grain, or predates the contract. The
+          // control is disabled and names the screen that owns the decision, rather
+          // than accepting a quantity the server will refuse (AC-F09 / AC-F10).
+          if (lockReason) {
+            return (
+              <span
+                className="tabular-nums text-muted-foreground"
+                data-testid={`chosen-qty-locked-${r.product_code}`}
+                title={lockReason}
+              >
+                {r.chosen_qty === null ? EM_DASH : fmtQty(r.chosen_qty, dp)}
+              </span>
+            );
+          }
           if (r.chosen_qty === null) {
             return (
               <Button
@@ -245,7 +429,7 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
                   : undefined
               }
             >
-              {fmtInt(r.chosen_qty)}
+              {fmtQty(r.chosen_qty, dp)}
             </button>
           );
         },
@@ -258,6 +442,17 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
         header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
         cell: ({ row }) => {
           const r = row.original;
+          if (lockReason) {
+            return r.chosen_supplier_name ? (
+              <span className="truncate text-muted-foreground" title={lockReason}>
+                {r.chosen_supplier_name}
+              </span>
+            ) : (
+              <span className="text-muted-foreground" title={lockReason}>
+                {EM_DASH}
+              </span>
+            );
+          }
           return (
             <button
               type="button"
@@ -284,7 +479,7 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
         meta: { headerTitle: 'Supplier' },
       },
     ],
-    [reportRunId],
+    [reportRunId, lockReason],
   );
 
   const table = useReactTable({
@@ -372,7 +567,21 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
               Back to plan
             </Button>
           ) : null}
-          <h3 className="text-base font-semibold">Summary order report</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold">Summary order report</h3>
+            {/* A FACT about the run, not a control: plan grain is admin policy and
+                this run stamped it at creation (AC-F01). */}
+            {data ? (
+              <Badge
+                variant={isLegacyRun(runGrain) ? 'secondary' : 'info'}
+                appearance="light"
+                size="sm"
+                data-testid="plan-grain-chip"
+              >
+                {planGrainLabel(runGrain)}
+              </Badge>
+            ) : null}
+          </div>
           <p className="text-2xs text-muted-foreground">
             {!data
               ? 'Loading'
@@ -380,6 +589,11 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
                 ? `As of ${dayLabel(data.as_of)} · computed ${computedAtLabel(data.generated_at)}`
                 : 'No plan has been frozen yet, so there is nothing to state a date for'}
           </p>
+          {lockReason ? (
+            <p className="text-2xs text-muted-foreground" data-testid="grain-lock-note">
+              {lockReason}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -436,20 +650,38 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
       <OrderDecisionSheet
         row={deciding}
         open={!!deciding}
-        onOpenChange={(o) => !o && setDeciding(null)}
+        onOpenChange={(o) => {
+          if (o) return;
+          setDeciding(null);
+          setDecisionError(null);
+          setJustSaved(null);
+        }}
         isSaving={decide.isPending}
+        lockReason={lockReason}
+        saveError={decisionError}
+        saved={justSaved}
         onSave={(input) => {
           if (!deciding) return;
           const productCode = deciding.product_code;
-          setDeciding(null);
-          decide.mutate({
-            productCode,
-            input: {
-              run_id: reportRunId ?? '',
-              chosen_qty: input.chosen_qty,
-              supplier_code: input.supplier_code,
+          setDecisionError(null);
+          setJustSaved(null);
+          decide.mutate(
+            {
+              productCode,
+              input: {
+                run_id: reportRunId ?? '',
+                chosen_qty: input.chosen_qty,
+                supplier_code: input.supplier_code,
+              },
             },
-          });
+            {
+              // The sheet STAYS OPEN on both outcomes: a refusal has to be readable
+              // where the quantity was typed, and a success has a location split
+              // worth seeing before the sheet goes away (AC-F08 / AC-F12).
+              onSuccess: (result) => setJustSaved(result),
+              onError: (e: Error) => setDecisionError(e.message),
+            },
+          );
         }}
       />
     </div>
