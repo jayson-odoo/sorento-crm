@@ -792,7 +792,9 @@ def reclaim_stranded_job(
 
     * `queued` past the synchronous wait plus a grace: the enqueue never landed
       (crash between the usage commit and the enqueue, or Redis lost the RQ
-      job). Enqueue again; the task is a no-op on a job that meanwhile finished.
+      job). Enqueue again, and re-stamp `created_at` so one window yields one
+      re-enqueue rather than one per retry; the task claims the row with a
+      compare-and-set, so a duplicate copy of the id is a no-op.
     * `running` past the extraction ceiling plus a grace: the work-horse died
       mid-extraction. Marked failed and the allowance is kept as spent - the
       provider may well have been called - so the contact gets a terminal answer
@@ -810,7 +812,11 @@ def reclaim_stranded_job(
         return (now - since.replace(tzinfo=None)).total_seconds()
 
     if job.status == "queued":
-        return _age(job.created_at) > settings.sync_wait_seconds + STRANDED_GRACE_SECONDS
+        if _age(job.created_at) <= settings.sync_wait_seconds + STRANDED_GRACE_SECONDS:
+            return False
+        job.created_at = now
+        db.flush()
+        return True
 
     if job.status == "running":
         if _age(job.started_at or job.created_at) > (
@@ -829,6 +835,7 @@ def reclaim_stranded_job(
         job.error = None
         job.result = None
         job.rq_job_id = None
+        job.created_at = now
         job.started_at = None
         job.completed_at = None
         usage.outcome = "accepted"

@@ -1020,3 +1020,60 @@ def test_a_job_whose_decision_carried_no_notices_still_reports_a_list():
             db.close()
     finally:
         _cleanup_chain(contact_id)
+
+
+# --------------------------------------------------------------------------- #
+# The task claims the row: a duplicate copy of the id never runs twice        #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_second_copy_of_a_running_job_does_not_run_the_extraction_again(monkeypatch):
+    """A stranded-job re-enqueue (or an RQ retry) can put a second copy of the
+    same id on the queue. Once one copy has claimed the row as `running`, the
+    other must be a no-op: no second provider call, no overwritten result."""
+    from app.models.media import MediaExtractionJob
+    from app.tasks import media_tasks
+
+    job_id, contact_id = _seed_job_row()
+    runs: list[str] = []
+    monkeypatch.setattr(
+        media_tasks, "run_media_extraction", lambda job: runs.append(job.id) or {"ok": True}
+    )
+    monkeypatch.setattr(media_tasks, "deliver_callback", lambda job: None)
+    try:
+        db = SessionLocal()
+        try:
+            db.query(MediaExtractionJob).filter(MediaExtractionJob.id == job_id).update(
+                {"status": "running", "started_at": media_tasks._utcnow()}
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        media_tasks.process_media_extraction(job_id)
+
+        assert runs == []
+        assert _fetch_job(job_id).status == "running"
+    finally:
+        _cleanup_chain(contact_id)
+
+
+def test_the_task_claims_a_queued_job_and_completes_it(monkeypatch):
+    from app.tasks import media_tasks
+
+    job_id, contact_id = _seed_job_row()
+    runs: list[str] = []
+    monkeypatch.setattr(
+        media_tasks, "run_media_extraction", lambda job: runs.append(job.id) or {"ok": True}
+    )
+    monkeypatch.setattr(media_tasks, "deliver_callback", lambda job: None)
+    try:
+        media_tasks.process_media_extraction(job_id)
+        media_tasks.process_media_extraction(job_id)
+
+        assert runs == [job_id]
+        job = _fetch_job(job_id)
+        assert job.status == "completed"
+        assert job.started_at is not None
+    finally:
+        _cleanup_chain(contact_id)

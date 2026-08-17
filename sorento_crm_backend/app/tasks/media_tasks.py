@@ -26,6 +26,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from sqlalchemy import update
+
 from app.database import SessionLocal
 from app.models.media import ContactMediaUsage, MediaExtractionJob
 from app.services.media_access_service import (
@@ -112,12 +114,24 @@ def _run_bounded(job: MediaExtractionJob, timeout_seconds: float) -> dict:
 def process_media_extraction(job_id: str) -> None:
     """The RQ entrypoint. Owns its own session, and never raises.
 
-    Re-running it on an already-terminal job is a no-op: an RQ retry must not
-    re-spend the extraction or re-notify the far end, which is the same guarantee
-    the route's idempotency probe gives from the other side of the queue.
+    The row is claimed with a compare-and-set (`queued` -> `running`), so a
+    second copy of the same job id - an RQ retry, or a stranded-job re-enqueue
+    racing the original on a second worker - finds nothing to claim and does
+    nothing: it must not re-spend the extraction or re-notify the far end, which
+    is the same guarantee the route's idempotency probe gives from the other
+    side of the queue.
     """
     db = SessionLocal()
     try:
+        claimed = db.execute(
+            update(MediaExtractionJob)
+            .where(
+                MediaExtractionJob.id == job_id,
+                MediaExtractionJob.status == "queued",
+            )
+            .values(status="running", started_at=_utcnow())
+        ).rowcount
+        db.commit()
         job = (
             db.query(MediaExtractionJob)
             .filter(MediaExtractionJob.id == job_id)
@@ -126,17 +140,13 @@ def process_media_extraction(job_id: str) -> None:
         if job is None:
             logger.warning("media extraction job %s not found", job_id)
             return
-        if job.status in TERMINAL_STATUSES:
+        if claimed != 1:
             logger.info(
                 "media extraction job %s already %s; nothing to do", job_id, job.status
             )
             return
 
         settings = resolve_media_settings(db)
-
-        job.status = "running"
-        job.started_at = _utcnow()
-        db.commit()
         # Load every column now, on this thread: the extraction runs on another
         # one and must never trigger a lazy refresh against a session it does not
         # own (the failure surfaces far from the cause, as a closed cursor).

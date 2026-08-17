@@ -1101,3 +1101,32 @@ def test_a_replay_never_re_runs_a_job_that_failed_after_the_provider_was_called(
 
         assert second.json()["status"] == "failed"
         assert len(calls) == 1
+
+
+def test_two_replays_past_the_window_re_enqueue_a_stranded_job_once(monkeypatch):
+    """The reclaim re-stamps the job, so an honest backlog longer than the
+    window costs one extra copy of the id on the queue, not one per n8n retry."""
+    from datetime import timedelta
+
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        calls = _counting_enqueue(monkeypatch)
+        contact = _contact(db, "stalq2")
+        _allow(db, contact, "image", monthly_limit=50)
+        payload = _body(respond_io_id=contact.respond_io_id, message_id="sq2-1")
+
+        client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        job = _job_for(db, contact.respond_io_id, "sq2-1")
+        stale = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+        job.created_at = stale
+        db.commit()
+
+        client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        third = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+
+        assert third.json()["idempotent_replay"] is True
+        assert calls == [job.id, job.id]
+        db.expire_all()
+        refreshed = _job_for(db, contact.respond_io_id, "sq2-1")
+        assert refreshed.status == "queued"
+        assert refreshed.created_at > stale
