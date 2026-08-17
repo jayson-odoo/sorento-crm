@@ -766,7 +766,9 @@ def _page_values_hashes(db: Session, page_codes: Sequence[str]) -> dict[str, str
     """The hash each row echoes back, read from the copy `current_values_hash` reads.
 
     The listing is company-scoped and de-duplicates to the lowest product id IN SCOPE;
-    `current_values_hash` and `verify_code` read the lowest product id of ALL companies.
+    `current_values_hash` and `verify_code` read the lowest product id of ALL companies
+    that HAS a spec row (a copy without one is skipped; only a code with no spec row on
+    any copy hashes the empty set).
     Those are usually the same row, and when they are not (a scoped re-derive can move
     one copy without the other) a row hashed from the scoped copy is refused by the
     verify guard for ever, with a "changed while you were reviewing" that no reload can
@@ -779,12 +781,14 @@ def _page_values_hashes(db: Session, page_codes: Sequence[str]) -> dict[str, str
         rows = db.execute(
             select(Product.product_code, ProductSpecifications.values)
             .select_from(Product)
-            .outerjoin(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+            .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
             .where(Product.product_code.in_(list(page_codes)))
             .distinct(Product.product_code)
             .order_by(Product.product_code, Product.id)
         ).all()
-    return {code: canonical_values_hash(values or {}) for code, values in rows}
+    hashes = {code: canonical_values_hash(values or {}) for code, values in rows}
+    empty = canonical_values_hash({})
+    return {code: hashes.get(code, empty) for code in page_codes}
 
 
 def _hydrate_page(

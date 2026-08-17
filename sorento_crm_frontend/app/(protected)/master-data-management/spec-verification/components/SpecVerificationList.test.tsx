@@ -289,6 +289,35 @@ describe('data state', () => {
     expect(screen.queryByText('Confirm verify')).not.toBeInTheDocument();
   });
 
+  it('a rejected per-row Verify surfaces as a toast, not an unhandled promise rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      mockWorklist();
+      renderList();
+      await waitFor(() => expect(screen.getByText('WC200')).toBeInTheDocument());
+      verifySpecBulk.mockRejectedValue(new Error('Failed to verify'));
+
+      const rowWC200 = screen.getByText('WC200').closest('tr') as HTMLElement;
+      fireEvent.click(within(rowWC200).getByRole('button', { name: 'Verify' }));
+
+      await waitFor(() => expect(verifySpecBulk).toHaveBeenCalled());
+      const { toast } = await import('sonner');
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to verify'));
+      // Flush any rejection that escaped the handler.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(unhandled).toEqual([]);
+      // The row was not patched: it still offers Verify.
+      expect(within(rowWC200).getByRole('button', { name: 'Verify' })).toBeInTheDocument();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('a row-level Unverify is confirmed first, with a count of one, and only then sent', async () => {
     // PRINCIPLES: confirm before every destructive OR detach action, never one-click.
     // Verify is not destructive and stays one-click; withdrawing a stamp is not.

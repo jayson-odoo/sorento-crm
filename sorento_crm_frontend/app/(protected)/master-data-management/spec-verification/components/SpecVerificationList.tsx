@@ -237,13 +237,23 @@ export default function SpecVerificationList() {
       .filter((row) => codes.includes(row.product_code))
       .map((row) => ({ product_code: row.product_code, values_hash: row.values_hash }));
     if (!items.length) return;
-    const response = await verify.mutateAsync(items);
+    let response;
+    try {
+      response = await verify.mutateAsync(items);
+    } catch {
+      return;
+    }
     settleSelection(codes, skippedVerifyCodes(response.results));
   };
 
   const runUnverify = async (codes: string[]) => {
     if (!codes.length) return;
-    const response = await unverify.mutateAsync(codes);
+    let response;
+    try {
+      response = await unverify.mutateAsync(codes);
+    } catch {
+      return;
+    }
     settleSelection(codes, skippedUnverifyCodes(response.results));
   };
 

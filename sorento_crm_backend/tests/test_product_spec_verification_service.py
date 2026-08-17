@@ -1011,6 +1011,32 @@ def test_worklist_hashes_the_copy_the_verify_guard_hashes(db):
     assert verified["outcome"] == "verified", "the hash the list showed must be verifiable"
 
 
+def test_worklist_skips_a_lowest_id_copy_that_has_no_spec_row_yet(db):
+    """A copy created before the next write fans out has no spec row of its own.
+
+    The guard hashes the lowest id that HAS a spec row; if the list hashed the lowest id
+    regardless, a code whose lowest-id copy is still bare would echo hash({}) and every
+    Verify from the list would be refused with values_changed until that copy caught up.
+    """
+    code = unique_code("WL-BARECOPY")
+    low_id, high_id = sorted(str(uuid.uuid4()) for _ in range(2))
+    with company_scope(db, None):
+        _product(db, code, name="Bare Copy", product_id=low_id, company_id=_REFS["company2"])
+        with_spec = _product(db, code, name="Bare Copy", product_id=high_id)
+        _spec(db, with_spec, {"wl_material": {"value": "ceramic"}})
+    db.commit()
+
+    result = psv.worklist(db, page=1, limit=50, query=code)
+    assert len(result["data"]) == 1
+    row = result["data"][0]
+    assert row["values_hash"] == psv.current_values_hash(db, code)
+    assert row["values_hash"] != psv.canonical_values_hash({})
+
+    verified = psv.verify_code(db, code, values_hash=row["values_hash"], actor=_ACTOR)
+    db.commit()
+    assert verified["outcome"] == "verified"
+
+
 def test_applicable_counts_a_key_gated_on_a_class_the_category_supplies(db):
     """A gate on `class` reads the same class the Class column shows.
 
