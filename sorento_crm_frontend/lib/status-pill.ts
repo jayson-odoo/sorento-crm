@@ -52,6 +52,24 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   // than a machine reading, so `manual` takes the affirmative colour.
   manual: 'bg-blue-100 text-blue-800',
   ai: 'bg-muted text-muted-foreground',
+  // Onboarding requests. `link_sent` rather than reusing `sent`: an onboarding
+  // link that went out is a WAIT (nobody has filled anything in yet), while
+  // outbound delivery's `sent` is a success, and the two must not share a
+  // colour. The onboarding surfaces map their `sent` status onto this code.
+  //
+  // Violet, deliberately NOT the sky that `submitted` wears. Those two carry
+  // the queue's whole reading: sky means the batch is back with us and wants a
+  // decision, violet means it is still out with the requester and there is
+  // nothing to do. Painting both sky made the queue answer neither.
+  link_sent: 'bg-violet-100 text-violet-800',
+  in_review: 'bg-amber-100 text-amber-800',
+  // `processing` is deliberately absent: the entry above already means "accepted
+  // and still running", which is exactly what a queued provisioning job is.
+  completed: 'bg-emerald-100 text-emerald-800',
+  // Finished, but not cleanly: amber for the same reason a partial import is
+  // amber - somebody still has to look at it.
+  partially_completed: 'bg-amber-100 text-amber-800',
+  cancelled: 'bg-gray-200 text-gray-600',
   // Product specifications. A spec row's status, plus whether the product can be
   // found by describing it. Every colour above is reused: a spec status is not a
   // new kind of state, it is the same three-way "machine said / person said /

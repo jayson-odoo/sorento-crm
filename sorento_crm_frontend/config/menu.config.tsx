@@ -302,6 +302,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'user_management.users.view',
       },
       {
+        title: 'Onboarding Requests',
+        path: '/user-management/onboarding-requests',
+        permission: 'user_management.onboarding.view',
+      },
+      {
         title: 'Roles',
         path: '/user-management/roles',
         permission: 'user_management.roles.view',
@@ -1318,6 +1323,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Administrative Users',
         path: '/user-management/users',
+      },
+      {
+        title: 'Onboarding Requests',
+        path: '/user-management/onboarding-requests',
       },
       {
         title: 'Roles',

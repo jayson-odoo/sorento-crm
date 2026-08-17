@@ -4,6 +4,7 @@ from app.api.v1.public import (
     ai_extract,
     approval,
     catalogue,
+    onboarding,
     portal,
     print as print_route,
     ticket_drafts,
@@ -14,6 +15,10 @@ router = APIRouter()
 router.include_router(approval.router, prefix="/approval", tags=["public-approval"])
 router.include_router(view.router, prefix="/view", tags=["public-view"])
 router.include_router(portal.router, prefix="/portal", tags=["public-portal"])
+# Onboarding intake, gated by the per-request token: /api/v1/public/onboarding/*
+router.include_router(
+    onboarding.router, prefix="/onboarding", tags=["public-onboarding"]
+)
 router.include_router(ai_extract.router, prefix="/portal", tags=["public-portal-ai-extract"])
 router.include_router(
     ticket_drafts.router, prefix="/ticket-drafts", tags=["public-ticket-drafts"]

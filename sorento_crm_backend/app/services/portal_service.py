@@ -36,6 +36,11 @@ from app.models.procurement import (
     StockInquiry,
 )
 from app.models.resources import AttachmentType
+from app.services.crockford import (
+    CROCKFORD_ALPHABET,
+    CROCKFORD_TOKEN_LEN,
+    crockford_token,
+)
 from app.services.document_number import display_document_number
 from app.services.error_handler import (
     AppException,
@@ -68,8 +73,12 @@ PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 # occasionally retyped from screenshots, so we trade ~14% entropy density vs
 # base64url for unambiguous chars. 48 chars × 5 bits = 240 bits - equivalent to
 # token_urlsafe(30).
-_CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-_CROCKFORD_TOKEN_LEN = 48
+#
+# The alphabet itself now lives in `app.services.crockford`, shared with the
+# onboarding intake token: two token families each carrying their own copy of
+# "the Crockford alphabet" is how one of them silently gains an `O`.
+_CROCKFORD_ALPHABET = CROCKFORD_ALPHABET
+_CROCKFORD_TOKEN_LEN = CROCKFORD_TOKEN_LEN
 # Contact slug: 10 chars × 5 bits = 50 bits - unguessable identity hint for the
 # stable URL /portal/c/{slug}. NOT a credential: knowing it only lets you
 # request an OTP that goes to the contact's own WhatsApp.
@@ -77,8 +86,7 @@ _PORTAL_SLUG_LEN = 10
 
 
 def _crockford_token(length: int = _CROCKFORD_TOKEN_LEN) -> str:
-    import secrets as _secrets
-    return "".join(_secrets.choice(_CROCKFORD_ALPHABET) for _ in range(length))
+    return crockford_token(length)
 
 
 def _utcnow() -> datetime:
