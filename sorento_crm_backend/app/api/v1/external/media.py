@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -334,6 +335,13 @@ def get_media_job(
     awaiting `/process` calls are sharing.
     """
     _ = current_user
+
+    # A non-UUID id (an unrendered n8n expression, "null") must be a 404, not a
+    # 500 out of the UUID column cast - "safe to poll" includes garbage input.
+    try:
+        uuid.UUID(str(job_id))
+    except ValueError:
+        raise handle_not_found("Media extraction job", job_id)
 
     job = (
         db.query(MediaExtractionJob).filter(MediaExtractionJob.id == job_id).first()

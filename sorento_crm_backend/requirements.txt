@@ -23,7 +23,7 @@ httpx>=0.25.0
 bcrypt>=4.1.0
 openpyxl>=3.1.2
 redis>=5.0.0
-rq>=1.15.0
+rq>=2.0
 pywebpush>=1.14.0
 pytest>=7.0.0
 # Parallel test execution. Used today only by the non-blocking

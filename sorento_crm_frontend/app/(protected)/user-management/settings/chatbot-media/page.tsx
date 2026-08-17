@@ -124,7 +124,7 @@ const NUMBER_BOUNDS = {
   imageMonthlyLimit: [0, 100000],
   voiceMonthlyLimit: [0, 100000],
   voiceMaxSeconds: [1, 3600],
-  burstLimit: [0, 1000],
+  burstLimit: [1, 1000],
   burstWindowSeconds: [1, 3600],
   warnThresholdPercent: [1, 100],
   syncWaitSeconds: [5, 90],
@@ -262,7 +262,7 @@ export default function ChatbotMediaSettingsPage() {
           <NumberField
             id="media-burst-limit"
             label="Items per burst window"
-            hint="0 turns pacing off, so no contact is ever asked to slow down."
+            hint="A contact past this many items in one window is asked to slow down."
             value={draft.burstLimit}
             error={numberError.burstLimit}
             onChange={(v) => set('burstLimit', v)}
@@ -374,6 +374,11 @@ export default function ChatbotMediaSettingsPage() {
             options={TRANSCRIBE_MODEL_OPTIONS}
             onChange={(v) => set('transcribeModel', v)}
             invalid={invalid.transcribeModel}
+            error={
+              invalid.transcribeModel
+                ? 'A transcription model is required before saving.'
+                : undefined
+            }
             required
           />
           {/*
@@ -413,9 +418,15 @@ export default function ChatbotMediaSettingsPage() {
               disabled={draft.languageMode !== 'pinned'}
               placeholder="Select a language"
             />
-            <p className="text-xs text-muted-foreground">
-              Used when the strategy is pinned.
-            </p>
+            {invalid.languagePinned ? (
+              <p className="text-xs text-destructive">
+                Select a language - the pinned strategy needs one before saving.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Used when the strategy is pinned.
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="media-language-hints">Hint languages</Label>
@@ -426,9 +437,16 @@ export default function ChatbotMediaSettingsPage() {
               disabled={draft.languageMode !== 'hints'}
               placeholder="Select languages"
             />
-            <p className="text-xs text-muted-foreground">
-              Used when the strategy is a hint list.
-            </p>
+            {invalid.languageHints ? (
+              <p className="text-xs text-destructive">
+                Add at least one language - the hint-list strategy needs one before
+                saving.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Used when the strategy is a hint list.
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -513,6 +531,7 @@ function ModelField({
   value,
   options,
   invalid,
+  error,
   required,
   emptyLabel,
   onChange,
@@ -523,6 +542,8 @@ function ModelField({
   value: string;
   options: SearchableSelectOption[];
   invalid?: boolean;
+  /** Shown in place of the hint, so a refused field says why before it is saved. */
+  error?: string;
   required?: boolean;
   /**
    * What the trigger reads while the value is empty. Defaults to "Inherit", which is
@@ -554,7 +575,11 @@ function ModelField({
         aria-invalid={invalid}
         onChange={(e) => onChange(e.target.value)}
       />
-      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      {error ? (
+        <p className="text-xs text-destructive">{error}</p>
+      ) : hint ? (
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      ) : null}
     </div>
   );
 }

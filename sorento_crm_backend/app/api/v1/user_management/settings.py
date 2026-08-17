@@ -108,7 +108,7 @@ class SystemSettingUpdate(BaseModel):
     media_image_monthly_limit: Optional[int] = Field(None, ge=0, le=100000)
     media_voice_monthly_limit: Optional[int] = Field(None, ge=0, le=100000)
     media_voice_max_seconds: Optional[int] = Field(None, ge=1, le=3600)
-    media_burst_limit: Optional[int] = Field(None, ge=0, le=1000)
+    media_burst_limit: Optional[int] = Field(None, ge=1, le=1000)
     media_burst_window_seconds: Optional[int] = Field(None, ge=1, le=3600)
     media_warn_threshold_percent: Optional[int] = Field(None, ge=1, le=100)
     media_image_provider: Optional[str] = None
@@ -371,6 +371,23 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             if t in FORM_SLA_TYPES and t not in seen:
                 seen.append(t)
         update_data["handling_lock_enabled_types"] = ",".join(seen)
+
+    # Chatbot media: a model id belongs to the provider it was picked from, so a
+    # provider change that does not also name the models clears them rather than
+    # sending the previous provider's ids to the new provider. The FE does the
+    # same clear-on-change; this is the backstop for a direct PUT, where a kept
+    # stale degraded model would fail only for over-quota contacts - the hardest
+    # failure to attribute.
+    if "media_image_provider" in update_data:
+        new_provider = (update_data["media_image_provider"] or "").strip() or None
+        update_data["media_image_provider"] = new_provider
+        old_provider = (
+            getattr(settings, "media_image_provider", None) or ""
+        ).strip() or None
+        if new_provider != old_provider:
+            for model_col in ("media_image_model", "media_image_degraded_model"):
+                if model_col not in update_data:
+                    update_data[model_col] = None
 
     # Chatbot media: the pair has to hold together, and the per-field ge/le on
     # SystemSettingUpdate cannot express a relationship between two fields. An

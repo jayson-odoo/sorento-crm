@@ -141,6 +141,8 @@ describe('ContactMediaAccessSection - S1-03 turning access off', () => {
 
     fireEvent.click(screen.getByLabelText(/enable photos/i));
 
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toBeInTheDocument();
     expect(await screen.findByText('Turn off photos?')).toBeInTheDocument();
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(putCalls()).toHaveLength(0);

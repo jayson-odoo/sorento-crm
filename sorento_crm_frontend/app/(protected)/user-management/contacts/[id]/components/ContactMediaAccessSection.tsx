@@ -115,8 +115,18 @@ export default function ContactMediaAccessSection({ contactId }: { contactId: st
         isSaving={update.isPending}
         onSave={(input) => {
           if (!editing) return;
+          // `editing` is a snapshot from pencil-click; the switch may have been
+          // flipped since. The gate the PUT carries is the one on screen now,
+          // or saving a limit would silently revert a just-made toggle.
+          const current = data.items.find((i) => i.modality === editing.modality);
           update.mutate(
-            { modality: editing.modality, input },
+            {
+              modality: editing.modality,
+              input: {
+                ...input,
+                is_allowed: current ? current.is_allowed : input.is_allowed,
+              },
+            },
             { onSuccess: () => setEditing(null) },
           );
         }}
@@ -212,6 +222,7 @@ function ModalityPanel({
             size="sm"
             className="h-7 w-7 p-0"
             aria-label={`Edit ${label.toLowerCase()} limits`}
+            disabled={isSaving}
             onClick={onEdit}
           >
             <Pencil className="h-3.5 w-3.5" />

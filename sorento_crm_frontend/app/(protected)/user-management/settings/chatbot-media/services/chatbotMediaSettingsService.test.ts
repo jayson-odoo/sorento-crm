@@ -10,7 +10,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const apiFetch = vi.fn();
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
-import { getChatbotMediaSettings } from './chatbotMediaSettingsService';
+import {
+  getChatbotMediaSettings,
+  saveChatbotMediaSettings,
+  type ChatbotMediaSettings,
+} from './chatbotMediaSettingsService';
 
 function ok(body: unknown) {
   return { ok: true, json: async () => body };
@@ -102,5 +106,74 @@ describe('getChatbotMediaSettings', () => {
 
     expect(settings.media_transcribe_model).toBe('whisper-1');
     expect(settings.media_image_provider).toBeNull();
+  });
+
+  it('reads from the settings endpoint', async () => {
+    apiFetch.mockResolvedValue(ok({ settings: {} }));
+
+    await getChatbotMediaSettings();
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/user-management/settings');
+  });
+});
+
+describe('saveChatbotMediaSettings', () => {
+  beforeEach(() => apiFetch.mockReset());
+
+  function input(overrides: Partial<ChatbotMediaSettings> = {}): ChatbotMediaSettings {
+    return {
+      media_image_monthly_limit: 50,
+      media_voice_monthly_limit: 100,
+      media_voice_max_seconds: 120,
+      media_burst_limit: 5,
+      media_burst_window_seconds: 60,
+      media_warn_threshold_percent: 80,
+      media_image_provider: null,
+      media_image_model: null,
+      media_image_degraded_model: null,
+      media_transcribe_model: 'whisper-1',
+      media_voice_degraded_model: null,
+      media_language_mode: 'pinned',
+      media_language_pinned: 'en',
+      media_language_hints: 'en,ms,zh',
+      media_sync_wait_seconds: 30,
+      media_extraction_timeout_seconds: 45,
+      media_max_entities: 10,
+      ...overrides,
+    };
+  }
+
+  it('POSTs the settings to the general endpoint', async () => {
+    apiFetch.mockResolvedValue(ok({ message: 'ok', data: ALL_NULL }));
+
+    await saveChatbotMediaSettings(input({ media_image_monthly_limit: 7 }));
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    const [url, options] = apiFetch.mock.calls[0] as [
+      string,
+      { method: string; body: string },
+    ];
+    expect(url).toBe('/api/user-management/settings/general');
+    expect(options.method).toBe('POST');
+    expect(JSON.parse(options.body).media_image_monthly_limit).toBe(7);
+  });
+
+  it('normalizes the write envelope (`data`), which differs from the read one (`settings`)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        message: 'ok',
+        data: {
+          ...ALL_NULL,
+          media_transcribe_model: 'whisper-large',
+          media_image_monthly_limit: 9,
+        },
+      }),
+    );
+
+    const saved = await saveChatbotMediaSettings(input());
+
+    expect(saved.media_transcribe_model).toBe('whisper-large');
+    expect(saved.media_image_monthly_limit).toBe(9);
+    expect(saved.media_voice_monthly_limit).toBe(100);
   });
 });

@@ -330,10 +330,12 @@ def mark_usage_outcome(
     do not. Only an `accepted` row is re-stamped - a refusal was already final
     and a second terminal write must not move it.
 
-    `notices` is the customer-facing text that outcome produced, written onto
-    the same row under the same guard because the callback and the polling
-    endpoint read it from there. Omitting it leaves whatever the insert wrote
-    alone, so an ordinary outcome flip never blanks an existing notice.
+    `notices` is the customer-facing text that outcome produced, APPENDED to
+    whatever the insert wrote (messages append rather than replace - the
+    customer-wording rule holds on the ledger row too, because a replay serves
+    the row verbatim and an accept-time warning must survive a later refusal).
+    Omitting it leaves the row's notices alone, so an ordinary outcome flip
+    never blanks an existing notice.
     """
     if usage_id is None:
         return
@@ -343,7 +345,7 @@ def mark_usage_outcome(
     if usage is not None and usage.outcome == "accepted":
         usage.outcome = outcome
         if notices is not None:
-            usage.notices = notices
+            usage.notices = list(usage.notices or []) + list(notices)
 
 
 # --------------------------------------------------------------------------- #
@@ -706,13 +708,15 @@ def decide_and_record(
     #    churn for no gain.
     used_after = used + 1
     threshold = _warn_threshold_count(limit, settings.warn_threshold_percent)
+    stamp_warned = False
+    stamp_degraded = False
     if (
         tier == "standard"
         and threshold
         and used_after >= threshold
         and limit_row.warned_period != period_key
     ):
-        limit_row.warned_period = period_key
+        stamp_warned = True
         notices.append(
             _notice(
                 "warn_80",
@@ -722,7 +726,7 @@ def decide_and_record(
             )
         )
     if tier == "degraded" and limit_row.degraded_notified_period != period_key:
-        limit_row.degraded_notified_period = period_key
+        stamp_degraded = True
         notices.append(
             _notice("degraded", wording.degraded(resets_on, request.modality))
         )
@@ -732,11 +736,20 @@ def decide_and_record(
     #    the notices on the metered fact is what lets a replay and the callback
     #    carry the same text this response does. The notices are part of what was
     #    decided, not a by-product of rendering it.
+    #
+    #    The once-per-period stamps land only after the insert is known to have
+    #    won: a message_id race loser that stamped first would consume the
+    #    period's single warn/degraded notice without ever delivering it, and
+    #    the first genuinely affected item after that would carry no message.
     usage, inserted = _record(
         db, request, contact, period_key, "accepted", tier=tier, notices=notices
     )
     if not inserted:
         return _replay(db, usage, settings, resets_on)
+    if stamp_warned:
+        limit_row.warned_period = period_key
+    if stamp_degraded:
+        limit_row.degraded_notified_period = period_key
 
     # 9. The job row. The caller enqueues it after the commit, so the worker
     #    cannot pick up a row that is not there yet.

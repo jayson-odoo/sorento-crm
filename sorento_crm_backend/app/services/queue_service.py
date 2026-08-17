@@ -34,7 +34,9 @@ _IMMEDIATE_DRAIN_QUEUES: Dict[str, int] = {"notifications": 5}
 # Safe for the RQ worker, which shares this connection for its BLPOP dequeue:
 # `Worker._set_connection` raises `socket_timeout` to the worker's own
 # connection_timeout whenever it finds a smaller one, so the blocking dequeue is
-# never cut short by the value below.
+# never cut short by the value below. That raise-if-smaller arm exists only in
+# RQ 2.x - under RQ 1.x the worker leaves a configured socket_timeout alone and
+# dies on the first idle BLPOP - which is why requirements.txt floors rq>=2.0.
 REDIS_SOCKET_TIMEOUT_SECONDS = 10
 REDIS_CONNECT_TIMEOUT_SECONDS = 5
 

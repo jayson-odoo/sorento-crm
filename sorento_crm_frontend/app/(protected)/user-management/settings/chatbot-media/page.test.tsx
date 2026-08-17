@@ -148,7 +148,7 @@ describe('ChatbotMediaSettingsPage numeric bounds', () => {
     { id: 'media-image-monthly-limit', min: 0, max: 100000, safeValid: 500 },
     { id: 'media-voice-monthly-limit', min: 0, max: 100000, safeValid: 500 },
     { id: 'media-voice-max-seconds', min: 1, max: 3600, safeValid: 200 },
-    { id: 'media-burst-limit', min: 0, max: 1000, safeValid: 20 },
+    { id: 'media-burst-limit', min: 1, max: 1000, safeValid: 20 },
     { id: 'media-burst-window', min: 1, max: 3600, safeValid: 90 },
     { id: 'media-warn-threshold', min: 1, max: 100, safeValid: 70 },
     // Chosen so it never trips the sync-wait/extraction-timeout cross-field rule
@@ -182,15 +182,15 @@ describe('ChatbotMediaSettingsPage numeric bounds', () => {
     },
   );
 
-  it('accepts burstLimit = 0 (0 turns pacing off)', () => {
+  it('rejects burstLimit = 0 (the limiter reads 0 as off, not as a lockdown)', () => {
     mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
     renderWithClient();
 
     const input = document.getElementById('media-burst-limit') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '0' } });
 
-    expect(screen.queryByText('Enter a whole number between 0 and 1000.')).not.toBeInTheDocument();
-    expect(saveButton()).toBeEnabled();
+    expect(screen.getByText('Enter a whole number between 1 and 1000.')).toBeInTheDocument();
+    expect(saveButton()).toBeDisabled();
   });
 
   it('rejects voiceMaxSeconds = 0 (a clip must be at least 1 second)', () => {

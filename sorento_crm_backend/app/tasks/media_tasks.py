@@ -154,17 +154,41 @@ def process_media_extraction(job_id: str) -> None:
 
         try:
             result = _run_bounded(job, settings.extraction_timeout_seconds)
-            job.status = "completed"
-            job.result = result
-            job.error = None
+            terminal_status = "completed"
+            terminal_result: Optional[dict] = result
+            terminal_error: Optional[str] = None
         except Exception as exc:  # noqa: BLE001 - every failure is a failed job
             logger.exception("media extraction job %s failed", job_id)
-            job.status = "failed"
-            job.result = None
-            job.error = str(exc) or exc.__class__.__name__
+            terminal_status = "failed"
+            terminal_result = None
+            terminal_error = str(exc) or exc.__class__.__name__
             _mark_usage_failed(db, job, exc)
-        job.completed_at = _utcnow()
+        # The terminal write is a compare-and-set just like the claim: a job the
+        # replay path already reclaimed as failed (its ledger row is stamped)
+        # must not flip back to completed and report success for an item metered
+        # as failed.
+        finalized = db.execute(
+            update(MediaExtractionJob)
+            .where(
+                MediaExtractionJob.id == job_id,
+                MediaExtractionJob.status == "running",
+            )
+            .values(
+                status=terminal_status,
+                result=terminal_result,
+                error=terminal_error,
+                completed_at=_utcnow(),
+            )
+        ).rowcount
         db.commit()
+        if finalized != 1:
+            logger.info(
+                "media extraction job %s was reclaimed while running; "
+                "leaving its terminal state alone",
+                job_id,
+            )
+            return
+        db.refresh(job)
 
         # Post-commit side effect: best-effort by construction. A callback that
         # cannot be delivered must never turn a job that actually succeeded into
@@ -181,8 +205,50 @@ def process_media_extraction(job_id: str) -> None:
     except Exception:  # noqa: BLE001 - an RQ task must not explode the worker
         logger.exception("media extraction task %s failed unexpectedly", job_id)
         db.rollback()
+        _fail_job_last_resort(job_id)
     finally:
         db.close()
+
+
+def _fail_job_last_resort(job_id: str) -> None:
+    """Terminal backstop for a crash between the claim commit and the result
+    commit (settings resolution, the refresh, the ledger stamp, the commit
+    itself). Without it the job sits at `running` durably: the polling consumer
+    sees `running` forever and no callback fires, because the replay-path
+    reclaim only runs on another POST /process. A fresh session because the
+    crashed one may be unusable; the compare-and-set leaves alone anything
+    another path already finished or reclaimed.
+    """
+    session = SessionLocal()
+    try:
+        job = (
+            session.query(MediaExtractionJob)
+            .filter(MediaExtractionJob.id == job_id)
+            .first()
+        )
+        failed = session.execute(
+            update(MediaExtractionJob)
+            .where(
+                MediaExtractionJob.id == job_id,
+                MediaExtractionJob.status == "running",
+            )
+            .values(
+                status="failed",
+                result=None,
+                error="The extraction task failed before it could record a result.",
+                completed_at=_utcnow(),
+            )
+        ).rowcount
+        if failed == 1 and job is not None:
+            mark_usage_outcome(session, job.usage_id, "failed")
+        session.commit()
+    except Exception:  # noqa: BLE001 - the backstop must not raise either
+        logger.exception(
+            "media extraction job %s: last-resort failed write did not land", job_id
+        )
+        session.rollback()
+    finally:
+        session.close()
 
 
 def _mark_usage_failed(db, job: MediaExtractionJob, exc: BaseException) -> None:
