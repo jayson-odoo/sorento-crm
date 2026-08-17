@@ -6,6 +6,7 @@ external caller) can disambiguate codes mid-turn. The resolver itself lives in
 """
 import logging
 import re
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -23,6 +24,7 @@ from app.dependencies import get_external_api_user
 from app.models.access import ContactAccessType
 from app.models.company import Company
 from app.models.marketing import Promotion, PromotionProduct
+from app.services import promotion_serving, promotion_window
 from app.models.product import Brand, Product
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_resolver import (
@@ -461,6 +463,41 @@ def _resolve_promotion_ids_for_token(
     return out
 
 
+def _apply_serving_policy_to_promo_matches(
+    db: Session, matches: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Drop promotion matches the serving policy withholds, and stamp the rest.
+
+    The resolver's own promotion probe finds rows by description text, which is
+    a different door into the same answer - so it gets the same policy as the
+    product walk and the name probe. Matches without a resolvable UUID are left
+    alone rather than silently dropped.
+    """
+    if not matches:
+        return matches
+    ids = [str(m.get("uuid")) for m in matches if m.get("uuid")]
+    if not ids:
+        return matches
+
+    today = _today()
+    verdict = promotion_serving.evaluate_candidates(db, ids, today)
+    kept: list[dict[str, Any]] = []
+    for match in matches:
+        key = str(match.get("uuid")) if match.get("uuid") else None
+        if key is None:
+            kept.append(match)
+            continue
+        if not verdict.is_served(key):
+            continue
+        promo_type = verdict.type_by_promotion.get(key)
+        display = match.setdefault("display", {})
+        display["promotion_type_code"] = getattr(promo_type, "type_code", None)
+        display["promotion_type_name"] = getattr(promo_type, "type_name", None)
+        display["expired_but_usable"] = verdict.is_expired_but_usable(key)
+        kept.append(match)
+    return kept
+
+
 def _build_promotion_resolutions(
     db: Session, promotion_ids: set[str]
 ) -> list[dict[str, Any]]:
@@ -474,25 +511,55 @@ def _build_promotion_resolutions(
     if not promotion_ids:
         return []
     rows = (
-        db.query(Promotion.id, Promotion.description, Promotion.is_active)
+        db.query(
+            Promotion.id,
+            Promotion.description,
+            Promotion.is_active,
+            Promotion.start_date,
+            Promotion.end_date,
+        )
         .filter(Promotion.id.in_(promotion_ids))
         .all()
     )
-    return [
-        {
-            "entity_type": "promotion",
-            "canonical_code": str(pid),
-            "uuid": str(pid),
-            "match_field": "description",
-            "match_tier": "domain_hint",
-            "similarity": None,
-            "display": {
-                "description": desc,
-                "is_active": bool(is_active),
-            },
-        }
-        for pid, desc, is_active in rows
-    ]
+    if not rows:
+        return []
+
+    # The same per-type serving policy the product walk applies. Naming a promo
+    # is not a licence to be told about one that cannot be honoured: without
+    # this, asking for "special promo" by name returned an expired special that
+    # the product route would have withheld, so one endpoint answered the same
+    # question two ways.
+    today = _today()
+    verdict = promotion_serving.evaluate_candidates(db, [str(r[0]) for r in rows], today)
+
+    resolutions: list[dict[str, Any]] = []
+    for pid, desc, is_active, start_date, end_date in rows:
+        key = str(pid)
+        if not verdict.is_served(key):
+            continue
+        promo_type = verdict.type_by_promotion.get(key)
+        live = promotion_window.is_live(is_active, start_date, end_date, today)
+        resolutions.append(
+            {
+                "entity_type": "promotion",
+                "canonical_code": key,
+                "uuid": key,
+                "match_field": "description",
+                "match_tier": "domain_hint",
+                "similarity": None,
+                "display": {
+                    "description": desc,
+                    "is_active": live,
+                    "start_date": start_date.isoformat() if start_date else None,
+                    "end_date": end_date.isoformat() if end_date else None,
+                    "promotion_type_code": getattr(promo_type, "type_code", None),
+                    "promotion_type_name": getattr(promo_type, "type_name", None),
+                    "is_expired": not live,
+                    "expired_but_usable": verdict.is_expired_but_usable(key),
+                },
+            }
+        )
+    return resolutions
 
 
 def _build_product_resolutions_from_promotions(
@@ -555,10 +622,18 @@ def _build_promotions_for_products(
     the token already resolved to product(s), this walks `promotion_products`
     backward so `domain_hint=promotion` can still answer "the promo for X".
 
-    Surfaces INACTIVE promos too, flagged `display.is_active`, so an expired promo
-    reads as "exists but expired" instead of a blank. When `allowed_access_codes`
-    is non-empty, filters by `Promotion.access_levels` intersection (mirrors the
-    description probe's gating).
+    Surfaces expired promos too when their TYPE still honours them, flagged
+    `display.expired_but_usable`, so the answer can read "found, ended on 31/07,
+    still applies" instead of a blank. The per-type serving policy
+    (`app/services/promotion_serving.py`) decides, so this resolver and the
+    promotions list cannot disagree about which promotion answers the question:
+    a live promotion always wins, a type with no live promotion may contribute
+    its latest expired one, and an expired `special` is never returned.
+
+    When `allowed_access_codes` is non-empty, filters by
+    `Promotion.access_levels` intersection (mirrors the description probe's
+    gating) BEFORE the policy runs, so a contact's own candidate set is what gets
+    ranked.
     """
     if not product_uuids:
         return []
@@ -568,6 +643,8 @@ def _build_promotions_for_products(
             Promotion.description,
             Promotion.is_active,
             Promotion.access_levels,
+            Promotion.start_date,
+            Promotion.end_date,
             Product.product_code,
         )
         .join(PromotionProduct, PromotionProduct.promotion_id == Promotion.id)
@@ -576,7 +653,7 @@ def _build_promotions_for_products(
         .all()
     )
     by_promo: dict[str, dict[str, Any]] = {}
-    for pid, desc, is_active, levels, code in rows:
+    for pid, desc, is_active, levels, start_date, end_date, code in rows:
         if allowed_access_codes:
             if not isinstance(levels, list) or not allowed_access_codes.intersection(levels):
                 continue
@@ -592,14 +669,41 @@ def _build_promotions_for_products(
                 "similarity": None,
                 "display": {
                     "description": desc,
-                    "is_active": bool(is_active),
+                    # The LIVE definition, not the raw column: the daily sync job
+                    # papers over a window that lapsed today, and until it ticks
+                    # the flag says active for a promotion that ended yesterday.
+                    "is_active": promotion_window.is_live(
+                        is_active, start_date, end_date, _today()
+                    ),
+                    "start_date": start_date.isoformat() if start_date else None,
+                    "end_date": end_date.isoformat() if end_date else None,
                     "products": [],
                 },
             },
         )
         if code not in entry["display"]["products"]:
             entry["display"]["products"].append(code)
-    return list(by_promo.values())
+
+    if not by_promo:
+        return []
+
+    today = _today()
+    verdict = promotion_serving.evaluate_candidates(db, list(by_promo.keys()), today)
+    served: list[dict[str, Any]] = []
+    for key, entry in by_promo.items():
+        if not verdict.is_served(key):
+            continue
+        promo_type = verdict.type_by_promotion.get(key)
+        entry["display"]["promotion_type_code"] = getattr(promo_type, "type_code", None)
+        entry["display"]["promotion_type_name"] = getattr(promo_type, "type_name", None)
+        entry["display"]["is_expired"] = not entry["display"]["is_active"]
+        entry["display"]["expired_but_usable"] = verdict.is_expired_but_usable(key)
+        served.append(entry)
+    return served
+
+
+def _today() -> date:
+    return datetime.utcnow().date()
 
 
 def _translate_access_names_to_codes(
@@ -786,9 +890,9 @@ def _expand_products_via_promotions(
                 m for m in existing
                 if m.get("entity_type") not in ("product", "promotion")
             ]
-            kept_existing_promos = [
-                m for m in existing if m.get("entity_type") == "promotion"
-            ]
+            kept_existing_promos = _apply_serving_policy_to_promo_matches(
+                db, [m for m in existing if m.get("entity_type") == "promotion"]
+            )
             # The resolved products are KEPT — a product SKU must still resolve
             # under domain_hint=promotion (the expander used to wipe them, so a
             # valid SKU returned empty just because it wasn't a promo name).
@@ -893,9 +997,9 @@ def _expand_products_via_promotions(
             m for m in existing_inter
             if m.get("entity_type") not in ("product", "promotion")
         ]
-        kept_existing_promos = [
-            m for m in existing_inter if m.get("entity_type") == "promotion"
-        ]
+        kept_existing_promos = _apply_serving_policy_to_promo_matches(
+            db, [m for m in existing_inter if m.get("entity_type") == "promotion"]
+        )
         # Keep resolved products (see OR-branch rationale) and walk membership.
         kept_products = [
             m for m in existing_inter if m.get("entity_type") == "product"

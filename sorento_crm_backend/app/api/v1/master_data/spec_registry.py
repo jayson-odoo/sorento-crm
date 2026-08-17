@@ -22,11 +22,15 @@ import json
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission_with_api_key
+from app.dependencies import (
+    require_any_permission_with_api_key,
+    require_permission_with_api_key,
+)
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
 from app.services import product_spec_rederive
 from app.services.error_handler import handle_internal_error, handle_not_found
@@ -34,8 +38,11 @@ from app.services.product_spec_registry import (
     SEARCH_POLICY_SEED,
     active_registry,
     default_match_window,
+    find_similar_key,
+    find_similar_value,
     merged_allowed_values,
     merged_synonyms,
+    normalise_vocabulary,
     seed_search_policy,
 )
 
@@ -229,6 +236,21 @@ def _reject(message: str, code: str):
     from app.services.error_handler import AppException
 
     return AppException(status_code=400, message=message, code=code)
+
+
+def _similar_refusal(message: str, match: dict) -> JSONResponse:
+    """A 422 carrying the match itself, as a TOP-LEVEL body.
+
+    Not the `AppException` envelope, because the client has to render the match - "that
+    is already Finish or colour, use it instead" - and an envelope carrying only a
+    string cannot say WHICH key. Mirrors the prompt-registry save-validation shape,
+    which returns its `unknown_tokens` the same way and for the same reason.
+
+    There is no way past it. A near-duplicate is refused, full stop: the collision is
+    two names for one thing, and a registry holding both answers half of every customer
+    question each, with nothing on any screen saying why.
+    """
+    return JSONResponse(status_code=422, content={"error": message, "match": match})
 
 
 def _validate_reachable(data_type: str, allowed_values, synonyms) -> None:
@@ -436,10 +458,70 @@ async def get_spec_coverage(
     return {"coverage": {key: n for key, n in rows}}
 
 
+@router.get("/applicable-keys")
+async def applicable_keys(
+    code: str,
+    # `products.view`, for the same reason `GET /spec-registry` runs on it 300 lines
+    # above: this is asked BY THE PRODUCT PAGE, on behalf of somebody editing a
+    # product, and gating it on a registry slug granted to zero roles would ship the
+    # add-a-specification picker 403'd to everybody. EITHER grant, so widening the
+    # door never moves it away from whoever was already standing in it.
+    current_user: dict = Depends(
+        require_any_permission_with_api_key(
+            ["master_data.products.view", "master_data.spec_registry.view"]
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    """Which spec keys this product MAY carry, and which it already holds.
+
+    Deliberately not `keys-for-product`, which answers from `spec.values` and therefore
+    returns the keys the product already holds - the numerator where the picker needs
+    the denominator (AC-A.7).
+
+    Computed server-side because milestone 2's pre-seeding calls the same logic, and a
+    second copy of the gate rules on the frontend would drift the first time somebody
+    edited `applies_when`.
+    """
+    from app.services.product_spec_registry import applicable_keys_for_code
+
+    return {"code": code, "keys": applicable_keys_for_code(db, code)}
+
+
+@router.get("/similar")
+async def similar_spec_key(
+    label: str,
+    current_user: dict = Depends(
+        require_any_permission_with_api_key(
+            ["master_data.products.view", "master_data.spec_registry.view"]
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    """The existing key a proposed label already means, or nothing when it is new.
+
+    Offered in the create dialog before it will submit (D7). The same comparison runs
+    inside `POST /spec-registry`, so this endpoint is the courtesy and that one is the
+    guard - a client that skips this is refused there rather than quietly splitting a
+    word in two.
+    """
+    from app.services.product_spec_registry import find_similar_key
+
+    return {"label": label, "match": find_similar_key(db, label)}
+
+
 @router.get("/keys-for-product")
 async def keys_for_product(
     code: str,
-    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
+    # Relaxed from `master_data.spec_registry.view` alone, which is granted to zero
+    # roles (M1), to EITHER grant. Same precedent and reasoning as `GET /spec-registry`
+    # and `/applicable-keys` above. Either, not instead: a relaxation that swapped one
+    # slug for the other would lock out the registry admin this screen belongs to.
+    current_user: dict = Depends(
+        require_any_permission_with_api_key(
+            ["master_data.products.view", "master_data.spec_registry.view"]
+        )
+    ),
     db: Session = Depends(get_db),
 ):
     """Which spec keys a given product code carries, and what each one says.
@@ -512,7 +594,14 @@ async def products_carrying_spec(
     q: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
-    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
+    # The second product-scoped registry read relaxed the same way (AC-A.13). It
+    # answers a question about PRODUCTS, asked by somebody who may already read every
+    # one of them.
+    current_user: dict = Depends(
+        require_any_permission_with_api_key(
+            ["master_data.products.view", "master_data.spec_registry.view"]
+        )
+    ),
     db: Session = Depends(get_db),
 ):
     """Which products actually carry this specification, and what each one says.
@@ -633,6 +722,20 @@ async def create_spec_key(
                 f"A spec key named '{payload.spec_key}' already exists.",
                 "spec_registry_duplicate",
             )
+
+        # The exact-key check above catches `finish` twice. It does not catch "Finish
+        # or colour" arriving beside `finish`, which is the collision that actually
+        # happens - and a registry holding both answers half of every customer
+        # question each, with nothing on any screen saying why. Enforced here rather
+        # than only in the dialog, because the dialog is one client (D11).
+        match = find_similar_key(db, payload.label)
+        if match is None:
+            match = find_similar_key(db, payload.spec_key)
+        if match:
+            return _similar_refusal(
+                f"\"{payload.label}\" already exists as {match['label']}.", match
+            )
+
         _validate_reachable(payload.data_type, payload.allowed_values, payload.user_synonyms)
 
         tolerance, decay = default_match_window(payload.unit)
@@ -661,11 +764,25 @@ async def create_spec_key(
         raise handle_internal_error(str(e))
 
 
+# Adding a word to a key's vocabulary is a merchandiser's job - Journey A step 3, done
+# from the product page while correcting a spec. Retuning `rank_weight` or rewriting the
+# derivation rules is calibration against an eval baseline, and it is not. One route
+# serves both, so the grant has to turn on the FIELDS in the payload.
+_VOCABULARY_ONLY_FIELDS = {"user_values"}
+
+
 @router.patch("/{spec_key}")
-async def update_spec_key(
+def update_spec_key(
     spec_key: str,
     payload: SpecKeyUpdate = Body(...),
-    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
+    # Either grant gets THROUGH the door; which fields the caller may actually change
+    # is decided below. Without the pair here, a merchandiser adding a word would be
+    # refused before the route could tell what they were asking for.
+    current_user: dict = Depends(
+        require_any_permission_with_api_key(
+            ["master_data.spec_registry.edit", "master_data.products.edit"]
+        )
+    ),
     db: Session = Depends(get_db),
 ):
     """Edit calibration and extend vocabulary. Seed-owned vocabulary stays seed-owned."""
@@ -675,6 +792,53 @@ async def update_spec_key(
             raise handle_not_found("Spec key", spec_key)
 
         fields = payload.model_dump(exclude_unset=True)
+
+        # The stricter grant is required as soon as ANYTHING outside the vocabulary
+        # fields is present - a mixed payload is held to the higher bar, or
+        # `user_values` becomes a passenger seat for `rank_weight`.
+        if set(fields) - _VOCABULARY_ONLY_FIELDS:
+            from fastapi import HTTPException
+
+            from app.services.user_service import UserPermissionService
+
+            if not UserPermissionService(db).check_user_has_permission(
+                current_user["id"], "master_data.spec_registry.edit"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Permission required: master_data.spec_registry.edit",
+                )
+
+        if "user_values" in fields:
+            # Server-side, mirroring the key guard (D11). The dialog runs the same
+            # comparison against data it already holds so the common case never round
+            # trips, but the dialog is a courtesy and this is the guard. PATCH replaces
+            # `user_values`, so a client re-sends every word the key already holds
+            # alongside the new one - a word must not collide with itself.
+            present = {str(v) for v in merged_allowed_values(row)} | {
+                str(v) for v in (row.user_values or [])
+            }
+            accepted: list[str] = []
+            for proposed in fields["user_values"] or []:
+                if proposed in present or proposed in accepted:
+                    continue
+                match = find_similar_value(row, proposed)
+                if match is None:
+                    needle = normalise_vocabulary(proposed)
+                    earlier = next(
+                        (v for v in accepted if normalise_vocabulary(v) == needle), None
+                    )
+                    if earlier is not None:
+                        match = {
+                            "value": earlier,
+                            "matched_on": "value",
+                            "matched_text": earlier,
+                        }
+                if match:
+                    return _similar_refusal(
+                        f"\"{proposed}\" is already {match['value']} on {row.label}.", match
+                    )
+                accepted.append(proposed)
 
         if "allowed_values" in fields:
             if (row.source or "seed") == "seed":
@@ -766,6 +930,111 @@ async def update_spec_key(
                 if not words.get(value) and not (row.synonyms or {}).get(value):
                     words[value] = [str(value).replace("_", " ")]
             row.user_synonyms = words
+
+        _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
+
+        db.commit()
+        db.refresh(row)
+        return _serialise(row)
+    except Exception as e:
+        if type(e).__name__ in {"AppException", "HTTPException"}:
+            raise
+        raise handle_internal_error(str(e))
+
+
+class SpecValueAdd(BaseModel):
+    """One word, and nothing else. The list is the server's to hold."""
+
+    value: str = Field(min_length=1, max_length=150)
+
+
+@router.post("/{spec_key}/values")
+def add_spec_value(
+    spec_key: str,
+    payload: SpecValueAdd = Body(...),
+    # The same either-grant the vocabulary-only PATCH field takes: adding a word from
+    # the product page is a merchandiser's job (Journey A step 3).
+    current_user: dict = Depends(
+        require_any_permission_with_api_key(
+            ["master_data.spec_registry.edit", "master_data.products.edit"]
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    """Append ONE word to a key's vocabulary, without the caller holding the list.
+
+    The PATCH above replaces `user_values`, which is right for the registry editor -
+    it shows the whole list and submits the whole list. It is wrong for a merchandiser
+    adding one word from a product page: that client rebuilds the list from a response
+    it fetched some time ago, so a word another person added in between is absent from
+    the payload and is deleted by a request that was only ever meant to add.
+
+    So the word arrives alone and the row is re-read under `FOR UPDATE`: two people
+    adding at once serialise instead of overwriting each other, and the near-duplicate
+    guard runs against the vocabulary as it is NOW rather than as the caller last saw
+    it. There is no acknowledgement bypass - a collision is refused, full stop.
+    """
+    try:
+        row = (
+            db.query(ProductSpecRegistry)
+            .filter_by(spec_key=spec_key)
+            .with_for_update()
+            .first()
+        )
+        if row is None:
+            raise handle_not_found("Spec key", spec_key)
+
+        proposed = payload.value.strip()
+        if not proposed:
+            raise _reject("A value needs a word.", "spec_registry_empty_value")
+
+        # Already there verbatim: the word IS in the vocabulary, which is what the
+        # caller asked for. Refusing it as a duplicate of itself would turn a double
+        # click into an error.
+        if proposed in {str(v) for v in merged_allowed_values(row)}:
+            return _serialise(row)
+
+        # A word an administrator TOOK AWAY. It is absent from the merged vocabulary, so
+        # neither check above sees it, and adding it back here would hand every holder
+        # of `products.edit` a silent override of a decision made on the key itself.
+        # Refusing is also the only honest answer: a value that stayed shipped-but-
+        # suppressed could not then be saved on the product, and the save would name the
+        # very action the user had just been told succeeded.
+        suppressed = next(
+            (
+                str(v)
+                for v in (row.suppressed_values or [])
+                if normalise_vocabulary(v) == normalise_vocabulary(proposed)
+            ),
+            None,
+        )
+        if suppressed is not None:
+            return _similar_refusal(
+                f"\"{proposed}\" was taken off {row.label}, so it is not one of its "
+                "values. An administrator can put it back on the specification's own "
+                "screen.",
+                {
+                    "value": suppressed,
+                    "matched_on": "suppressed_value",
+                    "matched_text": suppressed,
+                },
+            )
+
+        match = find_similar_value(row, proposed)
+        if match:
+            return _similar_refusal(
+                f"\"{proposed}\" is already {match['value']} on {row.label}.", match
+            )
+
+        row.user_values = [*(row.user_values or []), proposed]
+
+        # A value nobody can say is unsearchable, and a new one has no words yet. Give
+        # it its own name, readably - what the person adding "free_standing" meant.
+        if not (row.user_synonyms or {}).get(proposed) and not (row.synonyms or {}).get(proposed):
+            row.user_synonyms = {
+                **(row.user_synonyms or {}),
+                proposed: [proposed.replace("_", " ")],
+            }
 
         _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
 

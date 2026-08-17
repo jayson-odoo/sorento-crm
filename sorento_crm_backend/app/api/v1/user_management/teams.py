@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.services.user_service import TeamService
 from app.schemas.user import TeamCreate, TeamUpdate, TeamResponse, TeamMemberResponse
 from app.schemas.market_segment import MarketSegmentCodesUpdate
@@ -14,7 +14,7 @@ router = APIRouter()
 
 @router.get("/", response_model=list[TeamResponse])
 async def list_teams(
-      current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.teams.view")),
     db=Depends(get_db),
 ):
     """List all teams."""
@@ -28,7 +28,7 @@ async def list_teams(
 @router.get("/{team_id}", response_model=TeamResponse)
 async def get_team(
     team_id: str,
-      current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.teams.view")),
     db=Depends(get_db),
 ):
     """Get a team by ID."""
@@ -95,7 +95,7 @@ async def delete_team(
 @router.get("/{team_id}/members", response_model=list[TeamMemberResponse])
 async def list_team_members(
     team_id: str,
-      current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.teams.view")),
     db=Depends(get_db),
 ):
     """List members of a team."""
@@ -185,7 +185,7 @@ async def remove_team_member(
 async def get_team_member_market_segments(
     team_id: str,
     user_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.teams.view")),
     db=Depends(get_db),
 ):
     """List the market segments (retail / project) this member serves. Empty = serves all."""

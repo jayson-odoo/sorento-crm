@@ -33,7 +33,10 @@ from fastapi.testclient import TestClient
 # MUST be first app import - resolves a circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
+from app.services.dealer_kit import flyer_reading_service as svc  # noqa: E402
+
 from tests._fake_storage import patch_storage
+from tests._flyer_read import finish_reads, patch_flyer_read
 from tests._flyer_pdf import BANNER_RECT, cmyk_jpeg, flyer_pdf
 from tests._pg_fixture import blank_session, unique_code
 
@@ -84,6 +87,7 @@ def api(monkeypatch):
     with blank_session() as db:
         _seed_roles(db)
         storage = patch_storage(monkeypatch)
+        patch_flyer_read(monkeypatch, db)
 
         def _override_get_db():
             yield db
@@ -111,7 +115,11 @@ def _upload(client: TestClient, data: bytes, *, filename: str = "zzt-flyer.pdf")
         "/api/v1/dealer-kit/flyer-readings",
         files={"file": (filename, data, "application/pdf")},
     )
-    assert res.status_code == 201, res.text
+    # The read is a background job now: the POST answers 202 with the row in
+    # `processing`, and the extraction happens when the worker runs the job.
+    # `finish_reads` is that worker, on this test's own session.
+    assert res.status_code == 202, res.text
+    assert [job["status"] for job in finish_reads()] == ["done"]
     return res.json()["id"]
 
 
@@ -227,12 +235,26 @@ class TestStoredBytes:
         """A storage outage costs the backgrounds, never the reading.
 
         The reading is what the seed is built from; the banners are decoration
-        on top of it. Failing the upload would throw away a 36 page extraction
+        on top of it. Failing the read would throw away a 36 page extraction
         because a bucket was briefly unreachable.
+
+        The failure is aimed at the ASSET writes only, and it has to be aimed
+        now: since the read became a background job, the upload's own bytes are
+        parked in the same bucket first (`STAGING_PREFIX`) so the worker can
+        reach them. Breaking every PUT would break the staging too, which is a
+        different failure with a different answer - the request says so in words
+        and no reading is created at all - and it would leave this test asserting
+        that instead of what it is named for.
         """
         db, storage = api
 
-        def _explode(**_kwargs):
+        real_upload = storage.upload_file
+
+        def _explode(**kwargs):
+            if str(kwargs.get("file_path", "")).startswith(svc.STAGING_PREFIX):
+                # Parking the flyer for the worker still works. Only the asset
+                # library is out.
+                return real_upload(**kwargs)
             raise RuntimeError("bucket unreachable")
 
         monkeypatch.setattr(storage, "upload_file", _explode)
@@ -243,6 +265,7 @@ class TestStoredBytes:
         assert _assets(db) == []
         res_body = TestClient(app).get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}")
         assert res_body.status_code == 200
+        assert res_body.json()["status"] == "done"
 
 
 # --------------------------------------------------------------------------- #

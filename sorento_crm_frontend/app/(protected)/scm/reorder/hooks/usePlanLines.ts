@@ -26,6 +26,7 @@ import {
   type CoverSource,
   type TakenByWarehouse,
 } from '../lib/coverPlan';
+import { poolWarehouseIdOf } from '../lib/planLine';
 import { planTotals, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
 import type { ProductEconomics } from '../lib/productHealth';
 import {
@@ -240,12 +241,20 @@ export function usePlanLines(runId: string | null, enabled = true) {
     return out;
   }, [lines, decisions]);
 
-  /** The suggested action for a line, against the stock still unspoken for. */
+  /**
+   * The suggested action for a line, against the stock still unspoken for AND inside the
+   * scope the policy allows.
+   *
+   * The scope filter belongs here rather than on the endpoint because the pool is keyed by
+   * PRODUCT: two rows of the same product can sit in different pools, so one filtered map
+   * would be wrong for one of them.
+   */
+  const coverScope = cover.data?.cover_scope;
   const coverFor = useCallback(
     (line: PlanLine): CoverProposal => {
       if (!line.purchasable) return NO_COVER;
       const pid = line.product_id ?? '';
-      const free: CoverSource[] | undefined = cover.data?.[pid];
+      const free: CoverSource[] | undefined = cover.data?.sources[pid];
       const taken = takenByProduct[pid] ?? {};
       // Exclude what THIS line already took, or its own decision would shrink its own options.
       const own = decisions[line.id];
@@ -253,9 +262,12 @@ export function usePlanLines(runId: string | null, enabled = true) {
       for (const s of own?.stock?.sources ?? []) mine[s.warehouse_id] = s.qty;
       const net: Record<string, number> = { ...taken };
       for (const [w, q] of Object.entries(mine)) net[w] = (net[w] ?? 0) - q;
-      return coverForLine(line, free, net);
+      return coverForLine(line, free, net, {
+        scope: coverScope,
+        poolWarehouseId: poolWarehouseIdOf(line),
+      });
     },
-    [cover.data, takenByProduct, decisions],
+    [cover.data, coverScope, takenByProduct, decisions],
   );
 
   /**
@@ -368,6 +380,9 @@ export function usePlanLines(runId: string | null, enabled = true) {
     levelFor,
     poFor,
     purchaseTrendFor,
+    // How far back the ORDER trend's series reaches, off the payload rather than repeated
+    // as a literal on the screen that renders it.
+    trendSeriesMonths: trend.data?.series_months ?? 24,
     purchaseTrendWindowMonths: purchaseTrend.data?.window_months ?? 3,
     requestPurchaseTrend,
     hasPhotoFor,
@@ -382,7 +397,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
     amendLevel,
     levelSuggestions: levels.data?.suggestions ?? {},
     staleAfterDays: prices.data?.stale_after_days ?? 180,
-    coverSources: cover.data ?? {},
+    coverSources: cover.data?.sources ?? {},
     isLoading:
       buys.isLoading || covered.isLoading || needsLevel.isLoading || dispositions.isLoading,
     isError: buys.isError || covered.isError || needsLevel.isError || dispositions.isError,

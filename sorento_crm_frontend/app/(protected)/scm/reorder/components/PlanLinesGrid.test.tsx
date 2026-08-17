@@ -434,11 +434,13 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
     expect(screen.getAllByText('Buy 188').length).toBeGreaterThan(0);
   });
 
-  it('names the source when stock elsewhere covers it outright', () => {
-    // The live BRW-IB case: nothing on hand HERE, but BRW-BB is holding some. The mix and
-    // quantity are the button label; the source detail rides on the title.
+  it('keeps the button label short - the source moved to the hover table', () => {
+    // The live BRW-IB case: nothing on hand HERE, but BRW-BB is holding some. Round 2: the
+    // codes came OUT of the label (they grew with every location and pushed the buy figure
+    // past the truncation) and live in the accept hover's breakdown table instead.
     renderGrid([line({ order_qty: 1 })], {}, elsewhere);
-    expect(screen.getByRole('button', { name: /Stock 1 \(BRW-BB\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Accept for .*Stock 1$/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Stock 1 \(BRW-BB\)/)).not.toBeInTheDocument();
   });
 
   it('proposes the split as ONE button carrying both parts, never a sentence', () => {
@@ -447,8 +449,8 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
     // like a sentence" - the button's own label is the structure now (verb, quantity,
     // repeated per part), not a multi-line prose block.
     renderGrid([line({ order_qty: 188 })], {}, elsewhere);
-    const btn = screen.getByRole('button', { name: /Stock 6 \(BRW-BB, PJ-SR\)/ });
-    expect(btn).toHaveTextContent('Buy 182');
+    const btn = screen.getByRole('button', { name: /Accept for .*Stock 6 \+ Buy 182/ });
+    expect(btn).toHaveTextContent('Stock 6 + Buy 182');
   });
 
   it('says when the engine is superseding CS on a project line', () => {
@@ -489,7 +491,7 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
         stock: { qty: 5, sources: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 5 }] },
       },
     } as PlanDecisionMap, elsewhere);
-    expect(screen.getByText(/Stock 5 \(BRW-BB\)/)).toBeInTheDocument();
+    expect(screen.getByText('Stock 5')).toBeInTheDocument();
   });
 
   it('warns when the only cover crosses the dealer/project boundary', () => {

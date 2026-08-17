@@ -53,6 +53,7 @@ from tests.scm._outstanding_workbooks import (
     po_workbook,
     seed_catalogue,
     seed_suppliers,
+    workbook,
     PO_MINIMAL,
 )
 
@@ -95,7 +96,15 @@ def _u() -> str:
 
 @pytest.fixture()
 def db():
-    with pg_session() as s:
+    """The session this channel actually runs on: `autoflush=False`, as `SessionLocal` is.
+
+    Not a detail. Every get-or-create in the write path below - the claim especially -
+    checks the database for a row it has only `db.add`ed, and under autoflush that row is
+    already written by the time the check reads. The check then passes for the wrong reason
+    and the test proves nothing about the API, where the same file dies at flush on the
+    unique index it was supposed to be guarding.
+    """
+    with pg_session(autoflush=False) as s:
         set_company_scope(s, frozenset({SORENTO}))
         yield s
 
@@ -529,6 +538,90 @@ def test_a_second_upload_of_the_same_file_changes_nothing(db, catalogue, blank_b
     assert first["orders_created"] == len(PO_DOCS | SPO_DOCS)
     assert second["orders_created"] == 0
     assert len(_order(db, "202301-S0001").lines) == 3
+
+
+# --------------------------------------------------------------------------- #
+# the same pairing stated twice: normal data, one claim
+# --------------------------------------------------------------------------- #
+
+def _repeat_book(doc: str, item: str, so_number: str) -> bytes:
+    """A structured export naming ONE item twice on ONE document, from ONE sales order.
+
+    Exactly the shape the captain's own file carries - `(SO253918, 202302-S0001, CKS813)`
+    appears on two rows, two containers of the same item on the same purchase order against
+    the same sales order - and the shape that took the whole 27,192-row job down.
+
+    Written with the file's real header spellings rather than all 27 columns: the reader
+    detects this layout on `Doc No` + `Item Code` + `Qty` resolving in one row, so a
+    narrower book exercises the same path and cannot drift from the fixture.
+    """
+    return workbook(
+        [
+            (doc, date(2023, 2, 1), item, 20, "BRW", f"{MARKER} CREDITOR", so_number),
+            (doc, date(2023, 2, 1), item, 60, "BRW", f"{MARKER} CREDITOR", so_number),
+        ],
+        headers=("Doc No", "Doc Date", "Item Code", "Qty", "Location", "Creditor Name",
+                 "FromSODocList"),
+        title="PO SPO",
+    )
+
+
+@pytest.fixture()
+def repeated_pairing(db, catalogue):
+    """A document number and a sales order number nothing else in the database holds."""
+    stem = uuid.uuid4().hex[:8].upper()
+    doc = f"2302{stem[:2]}-S9{stem[2:5]}"
+    return {"doc": doc, "item": "CB4702", "so_number": f"SO9{stem}",
+            "book": _repeat_book(doc, "CB4702", f"SO9{stem}")}
+
+
+def _claims(db, so_number: str, doc: str, item_code: str) -> list[OrderLinkClaim]:
+    return (
+        db.query(OrderLinkClaim)
+        .filter(OrderLinkClaim.so_number == so_number,
+                OrderLinkClaim.po_number == doc,
+                OrderLinkClaim.item_code == item_code)
+        .all()
+    )
+
+
+def test_one_item_named_twice_on_a_document_claims_its_sales_order_once(db, repeated_pairing):
+    """Two lines of the same item on one purchase order, both from the same sales order.
+
+    This is ORDINARY data - two containers of one product bought on one document - and it
+    is not a row problem: both lines are written, and the pairing they both state is ONE
+    claim. `uq_scm_order_link_claim_identity` is on
+    `(company, so_number, po_number, coalesce(item_code, ''))`, so a second claim is not a
+    duplicate row to clean up later, it is a `UniqueViolation` at flush that fails the whole
+    job - 0 of 27,192 processed, with nothing on screen naming the two rows responsible.
+
+    The existence check alone cannot see it: `SessionLocal` runs `autoflush=False`, so the
+    claim written for the first line is still pending when the second line's check reads.
+    """
+    r = repeated_pairing
+
+    out = svc.apply(db, r["book"])
+    db.flush()
+
+    assert len(_claims(db, r["so_number"], r["doc"], r["item"])) == 1
+    assert len(_order(db, r["doc"]).lines) == 2, "the repeated line lost its second row"
+    assert out["lines_created"] == 2
+
+
+def test_a_re_upload_of_a_repeated_pairing_still_adds_no_claim(db, repeated_pairing):
+    """The per-run guard must not replace the database check, only stand beside it.
+
+    A second upload starts with an empty set and would write the pairing again if the
+    existence query were dropped - the same `UniqueViolation`, one job later.
+    """
+    r = repeated_pairing
+    svc.apply(db, r["book"])
+    db.flush()
+
+    svc.apply(db, r["book"])
+    db.flush()
+
+    assert len(_claims(db, r["so_number"], r["doc"], r["item"])) == 1
 
 
 # --------------------------------------------------------------------------- #

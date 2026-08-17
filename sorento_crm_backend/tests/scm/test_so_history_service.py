@@ -424,3 +424,108 @@ def test_preview_writes_nothing(db, chain):
     assert out["orders"] == 1 and out["lines"] == 1
     assert "orders_created" not in out
     assert db.query(SalesOrder).count() == before
+
+
+# --------------------------------------------------------------------------- #
+# who ordered it, and what they paid (AC-4.1 / AC-4.3)
+# --------------------------------------------------------------------------- #
+
+def test_the_debtor_code_is_kept_in_its_own_column(db, chain):
+    """The note has always carried it; a column is what a query can read.
+
+    The plan's demand and trend popovers fall back to `Debtor 300-R009` when the link
+    failed, and parsing that out of a free-text note is not something a screen should do.
+    """
+    svc.apply(db, _wb([_row(chain)]))
+    db.flush()
+
+    order, _ = _lines(db, chain["so"])
+    assert order.debtor_code == chain["cust"].customer_code.upper()
+    assert order.customer_id == str(chain["cust"].id), "the link itself is unchanged"
+    # The printed NAME still travels in the note: no column holds it.
+    assert chain["cust"].customer_name in (order.internal_note or "")
+
+
+def test_two_spellings_of_one_debtor_code_become_one_stored_code(db, chain):
+    """`300-r009` and `300-R009` are one debtor, so they must be one row on the plan's
+    "who bought it" and one drill behind it.
+
+    The outstanding book has always upper-cased the code it writes; this feed wrote it as
+    the file printed it, so the same debtor arrived as two rows whose quantities each told
+    half the story - and neither drill found the other half.
+    """
+    svc.apply(db, _wb([_row(chain, **{"Debtor Code": "300-r009"})]))
+    db.flush()
+    first = _lines(db, chain["so"])[0].debtor_code
+
+    svc.apply(db, _wb([_row(chain, **{"Debtor Code": "300-R009"})]))
+    db.flush()
+
+    assert first == "300-R009" == _lines(db, chain["so"])[0].debtor_code
+
+
+def test_an_order_whose_debtor_we_do_not_hold_still_keeps_the_code(db, chain):
+    svc.apply(db, _wb([_row(chain, **{"Debtor Code": f"{MARKER}-NOBODY"})]))
+    db.flush()
+
+    order, _ = _lines(db, chain["so"])
+    assert order.customer_id is None
+    assert order.debtor_code == f"{MARKER}-NOBODY"
+
+
+def test_the_unit_price_the_file_states_is_written(db, chain):
+    """> "sells RM 0.94?" - the reader has always parsed the price and the write dropped it,
+    so every price cell on the "who bought it" drill was blank."""
+    svc.apply(db, _wb([_row(chain, **{"Unit Price": 0.94})]))
+    db.flush()
+
+    _order, lines = _lines(db, chain["so"])
+    assert [float(ln.unit_price) for ln in lines] == [0.94]
+
+
+def test_a_line_the_file_prices_at_nothing_stays_absent_rather_than_zero(db, chain):
+    """A price we do not know is not 0.00, and the popover renders the difference."""
+    svc.apply(db, _wb([_row(chain, **{"Unit Price": None})]))
+    db.flush()
+
+    _order, lines = _lines(db, chain["so"])
+    assert lines[0].unit_price is None
+
+
+def test_re_uploading_the_same_price_is_still_no_change(db, chain):
+    """The house rule: same -> skip. A price compared as Decimal vs float must not read as
+    an update, or a re-upload of an unchanged book reports 64,526 of them."""
+    svc.apply(db, _wb([_row(chain)]))
+    db.flush()
+
+    out = svc.apply(db, _wb([_row(chain)]))
+
+    assert out["lines_updated"] == 0 and out["lines_unchanged"] == 1
+
+
+def test_a_third_decimal_in_the_file_does_not_report_a_change_every_week(db, chain):
+    """The column stores two decimals, so 0.945 comes back out of it as 0.95.
+
+    Compared as raw numbers the file and the database then disagree for ever: every
+    re-upload reports the line as updated and stamps `updated_at` on a row nothing changed.
+    The comparison is made at the precision the column actually holds.
+    """
+    svc.apply(db, _wb([_row(chain, **{"Unit Price": 0.945})]))
+    db.flush()
+
+    out = svc.apply(db, _wb([_row(chain, **{"Unit Price": 0.945})]))
+
+    assert (out["lines_updated"], out["lines_unchanged"]) == (0, 1)
+
+
+def test_a_price_that_moved_by_a_cent_is_still_an_update(db, chain):
+    """GUARD: comparing at 2 decimals must not become "close enough is the same"."""
+    svc.apply(db, _wb([_row(chain, **{"Unit Price": 0.94})]))
+    db.flush()
+
+    out = svc.apply(db, _wb([_row(chain, **{"Unit Price": 0.95})]))
+    db.flush()
+
+    assert out["lines_updated"] == 1
+    _order, lines = _lines(db, chain["so"])
+    assert [float(ln.unit_price) for ln in lines] == [0.95]

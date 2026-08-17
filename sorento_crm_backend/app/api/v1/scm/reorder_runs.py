@@ -45,6 +45,7 @@ from app.services.scm import demand_source_service
 from app.services.scm import unplanned_demand_service
 from app.services.scm import demand_breakdown_service
 from app.services.scm.money import BASE_CURRENCY
+from app.services.scm.reorder_policy import resolve_global_cover_scope
 
 router = APIRouter()
 
@@ -328,6 +329,12 @@ def list_cover_sources(
 
     Free means surplus - a location's on-hand less its OWN demand - so a location that is
     short of its own requirement offers nothing, however much it is holding.
+
+    The map is deliberately NOT pre-filtered by `cover_scope`. Scope is a per-ROW question
+    (may this row use another site's stock) and this map is per PRODUCT: two rows of the same
+    product can sit in different pools, so one filtered answer would be wrong for one of
+    them. Instead every source names its own pool and the response carries the policy value,
+    which is exactly what the caller needs to narrow the list per row.
     """
     svc.assert_run_visible(db, run_id)
     product_ids = [
@@ -350,11 +357,13 @@ def list_cover_sources(
                     "warehouse_code": s.warehouse_code,
                     "segment": s.segment,
                     "qty": s.qty,
+                    "pool_warehouse_id": s.pool_warehouse_id,
                 }
                 for s in sources
             ]
             for pid, sources in free.items()
-        }
+        },
+        "cover_scope": resolve_global_cover_scope(db),
     }
 
 
@@ -430,6 +439,42 @@ def get_trajectory(
     """
     svc.assert_run_visible(db, run_id)
     return trajectory_service.trajectory_for_run(db, run_id)
+
+
+@router.get("/reorder-runs/{run_id}/customer-orders")
+def get_customer_orders(
+    run_id: str,
+    product_id: str = Query(...),
+    segment: str = Query(...),
+    customer_key: str = Query(...),
+    limit: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The sales orders behind ONE customer on the trend popover (AC-4.1).
+
+    > "sells RM 0.94?"
+
+    The trend names who bought the product and how much; this is the evidence under one of
+    those names - order, date, quantity, unit price - over the same 24-month window, newest
+    first. `customer_key` is the customer id, `debtor:<code>` for an order whose debtor code
+    resolves to nobody we hold, or `none` for an order that names neither, so every row of
+    the trend can be opened rather than only the named ones.
+
+    Visibility of the run is not enough on its own: the service also requires (product,
+    side) to be a pair THIS run planned, so the endpoint answers about a row the caller
+    can already see rather than about any product they can name.
+    """
+    # The two sides a warehouse can carry, and the value an unsegmented one defaults to
+    # (`trajectory_service`). Rejected rather than passed through, so a typo comes back as
+    # a bad request instead of an empty list that reads as "this customer bought nothing".
+    if segment not in ("project", "dealer"):
+        raise AppException(status_code=422, message="Unknown segment.")
+    svc.assert_run_visible(db, run_id)
+    return trajectory_service.orders_for_customer(
+        db, run_id=run_id, product_id=product_id, segment=segment,
+        customer_key=customer_key, limit=limit,
+    )
 
 
 @router.get("/reorder-runs/{run_id}/po-book")
@@ -675,6 +720,7 @@ def list_recommendations(
                rr.currency, rr.rate_to_base, rr.rate_as_of, rr.status,
                p.product_code, p.product_name,
                w.warehouse_code, w.warehouse_name, w.segment,
+               COALESCE(w.pool_warehouse_id, w.id) AS pool_warehouse_id,
                su.supplier_code, su.supplier_name
         FROM scm.reorder_recommendation rr
         JOIN products p ON p.id = rr.product_id
@@ -765,6 +811,12 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         # how the row already carries the opaque `id` for the explain / detail fetch.
         "product_id": str(r["product_id"]) if r["product_id"] is not None else None,
         "warehouse_id": str(r["warehouse_id"]) if r["warehouse_id"] is not None else None,
+        # The pool this row's location belongs to (COALESCE(pool_warehouse_id, id) - a
+        # location with no pool IS its own pool), so the screen can narrow the shared
+        # per-product cover map to the sources THIS row is allowed to draw on. Null on a
+        # network row, which has no location and therefore no pool.
+        "pool_warehouse_id": (str(r["pool_warehouse_id"])
+                              if r["pool_warehouse_id"] is not None else None),
         "is_network": is_network,
         "allocation": allocation,
         # A ``covered`` row carries a quantity too: it is what buying anyway would cost

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.models.user import SystemSetting, User, UserRole
 from app.services.error_handler import handle_internal_error
 
@@ -134,9 +134,25 @@ class SmtpTestResult(BaseModel):
     message: str
 
 
+class AppConfigResponse(BaseModel):
+    """The non-sensitive slice of the system settings singleton.
+
+    Six fields, and the model is what makes "and nothing else" enforceable:
+    anything not declared here is dropped on serialization rather than leaking
+    because a dict builder grew a line. Do NOT extend it - see the route below.
+    """
+
+    currency: Optional[str] = None
+    currency_format: Optional[str] = None
+    purchase_request_default_approver_user_id: Optional[str] = None
+    purchase_request_default_approver_email: Optional[str] = None
+    sponsorship_form_default_approver_user_id: Optional[str] = None
+    sponsorship_form_default_approver_email: Optional[str] = None
+
+
 @router.get("/")
 async def get_settings(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.settings.view")),
     db: Session = Depends(get_db)
 ):
     """Get system settings and roles."""
@@ -262,6 +278,48 @@ async def get_settings(
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
         }
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+# Declared immediately after `GET /` and ahead of every other GET in this file so a
+# path-parameter route added later (e.g. `/{section}`) cannot shadow this static path.
+@router.get("/app-config", response_model=AppConfigResponse)
+async def get_app_config(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The narrow, non-sensitive projection of system settings that any authenticated
+    user may read.
+
+    It exists because `GET /settings/` is gated on `user_management.settings.view` -
+    that is where the full blob lives, and it stays there - while three consumers on
+    screens outside user-management legitimately need a handful of harmless fields:
+    `useCurrencyFormat` (currency format string), `use-excel-accept`, and
+    `PurchaseRequestDetail` (the configured default approver it falls back to when
+    sending an approval link, which is why the two approver EMAILS are here).
+
+    NOTHING SENSITIVE MAY EVER BE ADDED TO THIS ROUTE. Not SMTP config, not the n8n
+    webhook URLs (they are bearer-capability URLs), not the tenant roles list, not
+    `health_notify_role_ids` / `health_notify_user_ids`, not the AI trace config. If a
+    caller needs any of those, it needs `user_management.settings.view` and the full
+    blob - do not widen this projection. The approver NAMES are deliberately absent
+    too: nothing reads them.
+    """
+    try:
+        settings = db.query(SystemSetting).first()
+        pr_uid = getattr(settings, "purchase_request_default_approver_user_id", None) if settings else None
+        sf_uid = getattr(settings, "sponsorship_form_default_approver_user_id", None) if settings else None
+        user_pr = db.query(User).filter(User.id == pr_uid).first() if pr_uid else None
+        user_sf = db.query(User).filter(User.id == sf_uid).first() if sf_uid else None
+        return AppConfigResponse(
+            currency=settings.currency if settings else None,
+            currency_format=settings.currency_format if settings else None,
+            purchase_request_default_approver_user_id=pr_uid,
+            purchase_request_default_approver_email=user_pr.email if user_pr else None,
+            sponsorship_form_default_approver_user_id=sf_uid,
+            sponsorship_form_default_approver_email=user_sf.email if user_sf else None,
+        )
     except Exception as e:
         raise handle_internal_error(str(e))
 

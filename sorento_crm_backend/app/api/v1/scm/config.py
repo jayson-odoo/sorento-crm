@@ -19,6 +19,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.schemas.scm_dashboard import (
+    CoverScope,
+    CoverScopeUpdate,
     DeadStockDays,
     DeadStockDaysUpdate,
     PlanningMode,
@@ -30,6 +32,7 @@ from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     global_policy_row,
     mode_to_policy_type,
+    resolve_global_cover_scope,
     resolve_global_planning_mode,
     upsert_global_policy,
 )
@@ -103,6 +106,41 @@ def set_planning_mode(
     upsert_global_policy(db, policy_type=mode_to_policy_type(payload.mode))
     db.commit()
     return {"mode": payload.mode}
+
+
+# --------------------------------------------------------------------------- #
+# cover scope - where "use stock" may draw from before buying (AC-3.2)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/config/cover-scope", response_model=CoverScope)
+def get_cover_scope(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Where a plan row may cover a shortage from before it buys.
+
+    Read on the dashboard slug like its sibling settings: the plan screen is where the
+    consequence shows up, and the buyer reading "Stock 6 + Buy 182" is entitled to know which
+    locations were even eligible to supply that 6.
+    """
+    return {"cover_scope": resolve_global_cover_scope(db)}
+
+
+@router.put("/config/cover-scope", response_model=CoverScope)
+def set_cover_scope(
+    payload: CoverScopeUpdate,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Move the GLOBAL policy's `cover_scope`. Touches ONLY that column, exactly as the
+    planning-mode flip touches only `policy_type`.
+
+    Takes effect on the NEXT read of the plan, not the next run: the scope filters what the
+    screen OFFERS as cover, and never changes a quantity the engine froze."""
+    upsert_global_policy(db, cover_scope=payload.cover_scope)
+    db.commit()
+    return {"cover_scope": payload.cover_scope}
 
 
 # --------------------------------------------------------------------------- #

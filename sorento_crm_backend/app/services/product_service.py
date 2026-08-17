@@ -1,5 +1,6 @@
 """Product service for business logic."""
 from datetime import datetime
+import logging
 import re
 import uuid
 from sqlalchemy.orm import Session, joinedload
@@ -7,6 +8,8 @@ from sqlalchemy import or_, and_, func
 from typing import Any, Optional, List, Callable, Tuple, Iterable
 from decimal import Decimal
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
+
+logger = logging.getLogger(__name__)
 
 
 def _populate_field_attachments(db: Session, products: Iterable[Product]) -> None:
@@ -126,6 +129,84 @@ def is_discontinued_from_row(row: dict, description: Optional[str]) -> bool:
     return is_discontinued_from_description(description)
 
 
+#: Header spellings for the AutoCount reorder columns. Kept identical to the aliases
+#: migration 347 seeds for the SCM reorder-level upload, so one file cannot be read two
+#: ways by the two importers.
+_REORDER_LEVEL_HEADERS = (
+    "reorder_level", "Reorder Level", "Re-order Level", "ReorderLevel", "Min Level",
+)
+_REORDER_QTY_HEADERS = (
+    "reorder_quantity", "reorder_qty", "Reorder Qty", "Reorder Quantity",
+    "Re-order Qty", "ReorderQty",
+)
+
+
+class _Absent:
+    """The column is not on this row at all - distinct from a blank cell."""
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "<absent>"
+
+
+#: Three answers, never two. A NULL reorder level means nobody set one (the SCM engine
+#: emits the item as `needs_level`); a 0 is a real threshold it will plan against; and an
+#: absent column means the file does not speak about levels at all. Collapsing any pair of
+#: those is the whole class of bug this feature can produce.
+ABSENT = _Absent()
+
+
+class ReorderCellError(ValueError):
+    """A reorder cell that carries something that is not a number."""
+
+
+def reorder_cell(row: dict, headers: tuple[str, ...]):
+    """`ABSENT` when no such column on this row, None when blank, else the int."""
+    for key in headers:
+        if key not in row:
+            continue
+        value = row[key]
+        if value is None or str(value).strip() == "":
+            return None
+        try:
+            # AutoCount exports these as floats ("250.0"). A fractional value rounds
+            # rather than failing the row: a stocking threshold is not worth losing a
+            # product master update over.
+            return int(round(float(str(value).strip().replace(",", ""))))
+        except (TypeError, ValueError):
+            raise ReorderCellError(f"'{value}'")
+    return ABSENT
+
+
+def _blank_if_absent(cell):
+    """Collapse ABSENT to blank, for a file already known to carry the column.
+
+    Safe ONLY once `file_carries_reorder_column` has said yes. Before that, this is the
+    conflation the tri-state exists to prevent.
+    """
+    return None if cell is ABSENT else cell
+
+
+def file_carries_reorder_column(rows: list, headers: tuple[str, ...]) -> bool:
+    """Does this upload speak about the column at all?
+
+    Decided ONCE per file, not per row. The frontend parses the sheet with
+    `sheet_to_json`, which OMITS blank cells, so per row "the column is not in this file"
+    and "the cell is blank" are the same dict. Since a blank cell CLEARS a held value, a
+    file that carries the column but no values anywhere is indistinguishable from one that
+    never mentioned it - and is therefore treated as not mentioning it. The alternative is
+    that one such upload silently clears every reorder level in the system.
+    """
+    for row in rows:
+        try:
+            if reorder_cell(row, headers) not in (ABSENT, None):
+                return True
+        except ReorderCellError:
+            # A junk value still proves the column is present; the row itself is rejected
+            # later, where the error can be reported against its row number.
+            return True
+    return False
+
+
 from app.models.procurement import ProductSupplier, Supplier
 from app.models.resources import Attachment, AttachmentType
 from app.schemas.product import (
@@ -134,6 +215,7 @@ from app.schemas.product import (
     ProductAttachmentCreate, ProductAttachmentUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict, AppException
+from app.services.company_scope import stamp_lookup_companies
 from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
@@ -468,12 +550,14 @@ class ProductService:
                 ),
             )
             if not entity_buckets.product_codes:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                     "resolved_entities": entity_buckets.as_echo(),
                 }
+                stamp_lookup_companies(self.db, payload, [], product_ids=product_ids)
+                return payload
 
         q = self._build_list_query(
             query=query,
@@ -505,6 +589,7 @@ class ProductService:
                 "pagination": {"total": 0, "page": page, "limit": limit},
                 "empty": True,
             }
+            stamp_lookup_companies(self.db, payload, [], product_ids=product_ids)
             if entity_buckets is not None:
                 payload["resolved_entities"] = entity_buckets.as_echo()
             self._attach_product_alternatives(payload, query)
@@ -539,6 +624,9 @@ class ProductService:
             },
             "empty": total == 0
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(self.db, payload, products, product_ids=product_ids)
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
         if total == 0:
@@ -1298,7 +1386,7 @@ class ProductService:
     ) -> dict:
         """
         Bulk import products from Excel-style rows.
-        Expects each row: product_code, product_name?, description?, item_group?, item_brand?, list_price?, is_active?, uom?
+        Expects each row: product_code, product_name?, description?, item_group?, item_brand?, list_price?, is_active?, uom?, reorder_level?, reorder_quantity?
         item_group is matched to category (code or name); item_brand to brand (code or name);
         the optional uom column to a unit of measure (code or name).
         A value that matches nothing is CREATED (code = name = the raw value) so a
@@ -1402,6 +1490,17 @@ class ProductService:
         products_with_lead_time = self._fetch_product_ids_with_configured_lead_time(
             [p.id for p in existing_by_code.values()]
         )
+
+        # Whether this upload speaks about the reorder columns AT ALL, decided once for the
+        # whole file. A blank cell clears a held value, so a file that never mentions the
+        # column must not be read as "every level is blank". See file_carries_reorder_column.
+        has_level_col = file_carries_reorder_column(products_data, _REORDER_LEVEL_HEADERS)
+        has_qty_col = file_carries_reorder_column(products_data, _REORDER_QTY_HEADERS)
+        # code -> (level, qty), for the SCM hand-off after the loop. Only rows that named a
+        # level go in: a blank clears the item master but must not touch a planning level a
+        # person may own (there is no value in a blank for them to disagree with).
+        reorder_for_scm: dict[str, tuple[int, Optional[int]]] = {}
+        cleared_codes: set[str] = set()
 
         # Cache default supplier + lead-time once (was N× per row inside _ensure_default_supplier_lead_time).
         default_supplier = self._resolve_default_supplier_for_new_product()
@@ -1517,6 +1616,45 @@ class ProductService:
                 parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(description)
                 discontinued = is_discontinued_from_row(row, description)
 
+                # `None` = blank cell = clear it; a value (including 0) = set it. Only read
+                # when the file carries the column at all - otherwise both stay ABSENT and
+                # nothing below touches the held value.
+                reorder_level = ABSENT
+                reorder_qty = ABSENT
+                try:
+                    if has_level_col:
+                        # ABSENT collapses to None HERE, and only here. The frontend's
+                        # `sheet_to_json` omits blank cells, so on a file that carries the
+                        # column a row with no key IS a blank cell - the commonest form of
+                        # blank there is, not an edge case. The file-level question was
+                        # already answered by `has_level_col`.
+                        reorder_level = _blank_if_absent(
+                            reorder_cell(row, _REORDER_LEVEL_HEADERS)
+                        )
+                    if has_qty_col:
+                        reorder_qty = _blank_if_absent(
+                            reorder_cell(row, _REORDER_QTY_HEADERS)
+                        )
+                except ReorderCellError as bad_cell:
+                    msg = f"Reorder level / quantity must be a number, got {bad_cell}"
+                    errors.append(f"Row {idx} ({product_code}): {msg}")
+                    outcome.skip(
+                        row=idx,
+                        code=_oc.INVALID_QUANTITY,
+                        message=msg,
+                        value=product_code,
+                        identity=_row_identity(row, product_code),
+                    )
+                    continue
+
+                if isinstance(reorder_level, int):
+                    reorder_for_scm[product_code] = (
+                        reorder_level,
+                        reorder_qty if isinstance(reorder_qty, int) else None,
+                    )
+                elif reorder_level is None:
+                    cleared_codes.add(product_code)
+
                 existing = existing_by_code.get(product_code)
                 if existing:
                     # is_discontinued True->False: reset the notify watermark so a later
@@ -1543,13 +1681,37 @@ class ProductService:
                         existing.dimensions_width = parsed_w
                     if parsed_h is not None:
                         existing.dimensions_height = parsed_h
+                    # Unlike UOM three lines up, a blank DOES overwrite here. The
+                    # difference is ownership: a file with no UOM column is not talking
+                    # about UOM, while a blank cell in a reorder column the file DOES
+                    # carry is AutoCount saying the level is gone. `has_level_col` is what
+                    # keeps those two apart, per file rather than per row.
+                    # A clear is only a clear when there was something to lose - read the
+                    # held value BEFORE assigning.
+                    cleared_a_level = (
+                        has_level_col
+                        and reorder_level is None
+                        and existing.reorder_level is not None
+                    )
+                    if has_level_col:
+                        existing.reorder_level = reorder_level
+                    if has_qty_col:
+                        existing.reorder_quantity = reorder_qty
                     if existing.id not in products_with_lead_time:
                         link_default_supplier(existing.id)
                         products_with_lead_time.add(existing.id)
                     updated += 1
+                    # One outcome entry per row, always: a second entry for the clear would
+                    # push `processed_rows` past `total_rows`. The code carries the news
+                    # instead, so the job page can group and find them.
                     outcome.updated(
                         row=idx,
-                        message=f"Product updated: {product_code}",
+                        code=_oc.REORDER_LEVEL_CLEARED if cleared_a_level else _oc.UPDATED,
+                        message=(
+                            f"Product updated, reorder level cleared: {product_code}"
+                            if cleared_a_level
+                            else f"Product updated: {product_code}"
+                        ),
                         value=product_code,
                         identity=_row_identity(row, product_code),
                         entity_type="product",
@@ -1571,6 +1733,8 @@ class ProductService:
                         dimensions_length=parsed_l,
                         dimensions_width=parsed_w,
                         dimensions_height=parsed_h,
+                        reorder_level=reorder_level if has_level_col else None,
+                        reorder_quantity=reorder_qty if has_qty_col else None,
                         created_by=user_id,
                     )
                     self.db.add(product)
@@ -1606,6 +1770,13 @@ class ProductService:
                         on_progress(idx, created + updated, len(errors), 0)
 
         self.db.commit()
+
+        # The same upload feeds the planning table, so the item master and the plan cannot
+        # disagree about a number that has one owner. Best-effort AFTER the product commit:
+        # the products ARE saved by now, and turning a successful import into a 500 over a
+        # secondary write would strand the caller on a retry that re-does the first half.
+        scm_result = self._apply_reorder_levels_to_scm(reorder_for_scm, user_id)
+
         # Report 100% progress BEFORE embedding fan-out so the UI doesn't appear stuck
         # while we batch-write embedding queue rows + enqueue RQ jobs.
         if on_progress:
@@ -1625,7 +1796,71 @@ class ProductService:
             "created_categories": ref_counts["categories"],
             "created_brands": ref_counts["brands"],
             "created_uoms": ref_counts["uoms"],
+            "levels_applied": len(reorder_for_scm),
+            "levels_cleared": len(cleared_codes),
+            "level_conflicts": scm_result.get("conflicts", 0),
+            "level_conflict_warnings": scm_result.get("warnings", []),
         }
+
+    def _apply_reorder_levels_to_scm(
+        self, reorder_for_scm: dict, user_id: str
+    ) -> dict:
+        """Hand the levels this file stated to the service that owns the planning table.
+
+        Delegated rather than restated: the rule that a level a PERSON set is never
+        silently overwritten lives in `reorder_level_import_service`, and two copies of it
+        would drift. Only rows that NAMED a level are passed - a blank clears the item
+        master (AutoCount owns that number) but must not touch a planning level somebody
+        may own, because a blank carries no value for them to disagree with.
+        """
+        if not reorder_for_scm:
+            return {}
+        try:
+            from app.services.scm import reorder_level_import_service as _rl
+            from app.services.scm.reorder_level_reader import LevelReadResult, LevelRow
+
+            codes = list(reorder_for_scm.keys())
+            rows = [
+                LevelRow(
+                    row_number=i,
+                    item_code=code,
+                    reorder_level=float(reorder_for_scm[code][0]),
+                    location=None,
+                    reorder_qty=(
+                        float(reorder_for_scm[code][1])
+                        if reorder_for_scm[code][1] is not None
+                        else None
+                    ),
+                )
+                for i, code in enumerate(codes, start=1)
+            ]
+            product_ids = {
+                code.upper(): str(p.id)
+                for code, p in self._fetch_existing_products_by_codes(codes).items()
+            }
+            outcome = _rl.apply_rows(
+                self.db,
+                LevelReadResult(rows=rows, total_rows=len(rows)),
+                actor=user_id,
+                product_ids=product_ids,
+            )
+            self.db.commit()
+            return {
+                "conflicts": outcome.get("conflicts", 0),
+                "warnings": [
+                    f"{c['item_code']}: planning reorder level {c['held_level']:g} was set "
+                    f"by hand and was kept; this file said {c['file_level']:g}."
+                    for c in outcome.get("conflict_rows", [])
+                ],
+            }
+        except Exception as exc:  # noqa: BLE001 - the products are already committed
+            self.db.rollback()
+            logger.warning(
+                "Product import wrote %s reorder levels to the item master but could not "
+                "apply them to scm.reorder_level: %s",
+                len(reorder_for_scm), exc, exc_info=True,
+            )
+            return {}
 
     def validate_products_import(self, products_data: List[dict]) -> dict:
         """
@@ -1719,6 +1954,9 @@ class ProductService:
             more = f" (+{len(values) - 20} more)" if len(values) > 20 else ""
             warnings.append(f"{len(values)} new {label} will be created: {shown}{more}")
 
+        level_preview = self._preview_reorder_levels(products_data, existing_by_code)
+        warnings.extend(level_preview["warnings"])
+
         return {
             "valid": len(errors) == 0,
             "errors": errors,
@@ -1731,8 +1969,78 @@ class ProductService:
                 "new_categories": len(new_refs["category"]),
                 "new_brands": len(new_refs["brand"]),
                 "new_uoms": len(new_refs["uom"]),
+                "levels_applied": level_preview["applied"],
+                "levels_cleared": level_preview["cleared"],
+                "level_conflicts": level_preview["conflicts"],
             },
         }
+
+    def _preview_reorder_levels(self, products_data: List[dict], existing_by_code: dict) -> dict:
+        """What the reorder columns would do, without writing anything.
+
+        Runs the SAME resolution the confirmed import runs, through the same service, so
+        Test and Confirm cannot report different numbers about the same file.
+        """
+        out = {"applied": 0, "cleared": 0, "conflicts": 0, "warnings": []}
+        if not file_carries_reorder_column(products_data, _REORDER_LEVEL_HEADERS):
+            return out
+
+        from app.services.scm import reorder_level_import_service as _rl
+        from app.services.scm.reorder_level_reader import LevelReadResult, LevelRow
+
+        rows: list = []
+        for row in products_data:
+            code = (
+                row.get("product_code") or row.get("Product Code") or row.get("Item Code") or ""
+            ).strip()
+            if not code:
+                continue
+            try:
+                # Same collapse as the import: on a file that carries the column, a row
+                # with no key is a blank cell, because the sheet parser drops blanks.
+                level = _blank_if_absent(reorder_cell(row, _REORDER_LEVEL_HEADERS))
+                qty = _blank_if_absent(reorder_cell(row, _REORDER_QTY_HEADERS))
+            except ReorderCellError:
+                # Reported as a row error by the loop above; not a level to preview.
+                continue
+            if isinstance(level, int):
+                out["applied"] += 1
+                rows.append(LevelRow(
+                    row_number=len(rows) + 1,
+                    item_code=code,
+                    reorder_level=float(level),
+                    location=None,
+                    reorder_qty=float(qty) if isinstance(qty, int) else None,
+                ))
+            elif level is None:
+                existing = existing_by_code.get(code)
+                if existing is not None and existing.reorder_level is not None:
+                    out["cleared"] += 1
+
+        out["warnings"].append(
+            f"{out['applied']} products will take a reorder level from this file."
+        )
+        if out["cleared"]:
+            out["warnings"].append(
+                f"{out['cleared']} products will have their reorder level cleared, because "
+                f"this file carries the column and leaves their cell blank."
+            )
+        if not rows:
+            return out
+
+        try:
+            preview = _rl.preview_rows(self.db, LevelReadResult(rows=rows, total_rows=len(rows)))
+        except Exception as exc:  # noqa: BLE001 - a preview must never block an upload
+            logger.warning("Could not preview reorder levels against the plan: %s", exc)
+            return out
+
+        out["conflicts"] = preview.get("conflicts", 0)
+        for c in preview.get("conflict_rows", []):
+            out["warnings"].append(
+                f"{c['item_code']}: planning reorder level {c['held_level']:g} was set by "
+                f"hand and will be kept; this file says {c['file_level']:g}."
+            )
+        return out
 
 
 class ProductCategoryService:
@@ -2261,13 +2569,18 @@ class ProductAttachmentService:
             resolve_or_empty,
         )
 
+        # Track which product(s) the caller scoped to, so an empty result can offer
+        # data-bearing variant/neighbour alternatives (§3.4 M5 entity-axis) and so
+        # EVERY exit, early returns included, can label per company.
+        _scoped_product_ids: set[str] = {str(pid) for pid in (product_ids or []) if pid}
+
         entity_buckets = resolve_or_empty(self.db, entities)
         if entity_buckets is not None and not entity_buckets.product_codes:
-            return empty_payload(entity_buckets, page=page, limit=limit)
-
-        # Track which product(s) the caller scoped to, so an empty result can offer
-        # data-bearing variant/neighbour alternatives (§3.4 M5 entity-axis).
-        _scoped_product_ids: set[str] = set()
+            payload = empty_payload(entity_buckets, page=page, limit=limit)
+            stamp_lookup_companies(
+                self.db, payload, [], product_ids=_scoped_product_ids
+            )
+            return payload
 
         q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
@@ -2294,11 +2607,15 @@ class ProductAttachmentService:
         if product_id:
             resolved_product_ids = self._resolve_product_identifiers(product_id)
             if not resolved_product_ids:
-                return {
+                payload = {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+                stamp_lookup_companies(
+                    self.db, payload, [], product_ids=_scoped_product_ids
+                )
+                return payload
             q = q.filter(ProductAttachment.product_id.in_(resolved_product_ids))
             _scoped_product_ids.update(str(pid) for pid in resolved_product_ids)
 
@@ -2307,7 +2624,6 @@ class ProductAttachmentService:
 
         if product_ids:
             q = q.filter(ProductAttachment.product_id.in_(product_ids))
-            _scoped_product_ids.update(str(pid) for pid in product_ids)
         if attachment_ids:
             q = q.filter(ProductAttachment.attachment_id.in_(attachment_ids))
         if attachment_type_ids:
@@ -2399,6 +2715,11 @@ class ProductAttachmentService:
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
+        # Per-company labelling when the lookup spans more than one company - on the
+        # empty path too, so an empty answer can name the companies searched.
+        stamp_lookup_companies(
+            self.db, payload, payload["data"], product_ids=_scoped_product_ids
+        )
         # Entity-axis relaxation (§3.4 M5): the product resolved but has no
         # (matching-type) attachment. Offer data-bearing variant/neighbour
         # products that DO have such an attachment. Only on the empty path — a

@@ -61,6 +61,36 @@ def _warehouses_by_code(db: Session, codes: set[str]) -> dict[str, str]:
     return {code: str(wid) for code, wid in rows}
 
 
+#: Rows per `IN (...)` when pre-loading. Big enough that a 12k-row file is a dozen
+#: queries, small enough that no single statement carries an unreasonable parameter list.
+_FETCH_BATCH = 1000
+
+
+def _existing_by_scope(
+    db: Session, product_ids: set[str]
+) -> dict[tuple[str, Optional[str]], ReorderLevel]:
+    """Every held level for these products, keyed by (product, location).
+
+    One query per batch instead of one per row. The per-row `.first()` this replaces cost
+    a round trip for each line of the file, which a 12k-row product upload turns into
+    minutes of an RQ worker doing nothing but waiting.
+    """
+    out: dict[tuple[str, Optional[str]], ReorderLevel] = {}
+    ids = list(product_ids)
+    for i in range(0, len(ids), _FETCH_BATCH):
+        rows = (
+            db.query(ReorderLevel)
+            .filter(ReorderLevel.product_id.in_(ids[i : i + _FETCH_BATCH]))
+            .all()
+        )
+        for r in rows:
+            key = (str(r.product_id), str(r.warehouse_id) if r.warehouse_id else None)
+            # A duplicate (product, location) pair should not exist; keeping the first
+            # match reproduces what the `.first()` this replaces would have returned.
+            out.setdefault(key, r)
+    return out
+
+
 def _same(a: Optional[float], b: Optional[float]) -> bool:
     if a is None and b is None:
         return True
@@ -75,14 +105,44 @@ def preview(db: Session, data: bytes) -> dict[str, Any]:
     Runs the same resolution `apply` runs and reports the counts without the writes, so
     the Test button and Confirm cannot disagree about the same file.
     """
-    outcome = _resolve(db, read_workbook(data, db=db))
+    return preview_rows(db, read_workbook(data, db=db))
+
+
+def preview_rows(
+    db: Session,
+    parsed: LevelReadResult,
+    *,
+    product_ids: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
+    """`preview` for rows that came from somewhere other than this reader.
+
+    The product import parses its own workbook on the frontend and arrives holding row
+    dicts, not bytes, so the parse and the reconciliation have to be separable. Nothing
+    below the parse knows or cares which reader produced the rows.
+    """
+    outcome = _resolve(db, parsed, product_ids=product_ids)
     outcome.pop("_writes", None)
     return outcome
 
 
 def apply(db: Session, data: bytes, *, actor: Optional[str] = None) -> dict[str, Any]:
     """Write the file. Does not commit; the route owns the transaction."""
-    outcome = _resolve(db, read_workbook(data, db=db))
+    return apply_rows(db, read_workbook(data, db=db), actor=actor)
+
+
+def apply_rows(
+    db: Session,
+    parsed: LevelReadResult,
+    *,
+    actor: Optional[str] = None,
+    product_ids: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
+    """`apply` for already-parsed rows. See `preview_rows` for why this seam exists.
+
+    `product_ids` is an UPPERCASED item code -> product id map the caller already holds;
+    passing it skips re-resolving codes this session has just looked up.
+    """
+    outcome = _resolve(db, parsed, product_ids=product_ids)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     for kind, row, level_row in outcome.pop("_writes"):
         if kind == "create":
@@ -109,7 +169,12 @@ def apply(db: Session, data: bytes, *, actor: Optional[str] = None) -> dict[str,
     return outcome
 
 
-def _resolve(db: Session, parsed: LevelReadResult) -> dict[str, Any]:
+def _resolve(
+    db: Session,
+    parsed: LevelReadResult,
+    *,
+    product_ids: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
     """Decide what every row means, once, for preview and apply alike."""
     out: dict[str, Any] = {
         "readable": parsed.ok,
@@ -136,8 +201,9 @@ def _resolve(db: Session, parsed: LevelReadResult) -> dict[str, Any]:
     if not parsed.ok:
         return out
 
-    products = _products_by_code(db, {r.item_code for r in parsed.rows})
+    products = product_ids or _products_by_code(db, {r.item_code for r in parsed.rows})
     warehouses = _warehouses_by_code(db, {r.location for r in parsed.rows if r.location})
+    existing_rows = _existing_by_scope(db, set(products.values()))
 
     for row in parsed.rows:
         pid = products.get(row.item_code.upper())
@@ -158,15 +224,7 @@ def _resolve(db: Session, parsed: LevelReadResult) -> dict[str, Any]:
                 )
                 continue
 
-        existing: Optional[ReorderLevel] = (
-            db.query(ReorderLevel)
-            .filter(
-                ReorderLevel.product_id == pid,
-                ReorderLevel.warehouse_id.is_(None) if wid is None
-                else ReorderLevel.warehouse_id == wid,
-            )
-            .first()
-        )
+        existing: Optional[ReorderLevel] = existing_rows.get((pid, wid))
         payload = {
             "product_id": pid,
             "warehouse_id": wid,

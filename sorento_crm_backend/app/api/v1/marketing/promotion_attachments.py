@@ -8,8 +8,13 @@ from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import PromotionAttachmentService
 from app.services.uuid_list_param import parse_uuid_list
-from app.schemas.marketing import PromotionAttachmentCreate, PromotionAttachmentUpdate, PromotionAttachmentResponse
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.marketing import (
+    PromotionAttachmentCreate,
+    PromotionAttachmentUpdate,
+    PromotionAttachmentResponse,
+    PromotionServingListResponse,
+)
+from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -21,7 +26,7 @@ def _promotion_attachment_to_response(pa: Any) -> dict:
     return data
 
 
-@router.get("/", response_model=ListResponse[PromotionAttachmentResponse])
+@router.get("/", response_model=PromotionServingListResponse[PromotionAttachmentResponse])
 async def get_promotion_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -56,6 +61,16 @@ async def get_promotion_attachments(
             "of active promotions (is_active and today within start/end), falling back "
             "to inactive-promotion attachments when a narrowing filter yields zero "
             "matches. false: inactive-promotion attachments only."
+        ),
+    ),
+    serving_policy: bool = Query(
+        False,
+        description=(
+            "Answer as the chatbot: gate attachments on the per-type promotion "
+            "policy of their PARENT promotion instead of the plain active gate. "
+            "Documents of an expired promotion whose type still honours it come "
+            "back with `expired_but_usable: true`; documents of an expired "
+            "special do not come back at all."
         ),
     ),
     access_levels: Optional[list[str]] = Query(
@@ -122,6 +137,7 @@ async def get_promotion_attachments(
             contact_access_codes=contact_codes,
             entities=normalize_entities_query_param(entities),
             active=active,
+            serving_policy=serving_policy,
         )
         result["data"] = [_promotion_attachment_to_response(pa) for pa in result["data"]]
         return result

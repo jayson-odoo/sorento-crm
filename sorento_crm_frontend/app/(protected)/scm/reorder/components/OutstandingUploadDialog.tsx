@@ -34,6 +34,7 @@ import {
 } from '../services/outstandingImportService';
 import { CountTile } from './UploadCountTile';
 import { fmtInt } from '../../lib/format';
+import { UploadReadingIndicator } from './UploadReadingIndicator';
 
 /**
  * SCM - the upload channel for the open order book, until AutoCount is integrated.
@@ -301,12 +302,7 @@ export function OutstandingUploadDialog({
             aria-label="Outstanding orders file"
           />
 
-          {previewing ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
-              Reading the file...
-            </div>
-          ) : null}
+          <UploadReadingIndicator reading={previewing} />
 
           {preview && !preview.ok ? (
             <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">

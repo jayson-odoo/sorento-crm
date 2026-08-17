@@ -28,6 +28,14 @@ from tests._pg_fixture import blank_session
 
 ENDPOINT = "/api/v1/master-data/spec-registry"
 _USER = {"id": str(uuid.uuid4()), "email": "specsearch@example.com"}
+_GRANTED = {
+    "master_data.products.view",
+    "master_data.products.edit",
+    "master_data.spec_registry.view",
+    "master_data.spec_registry.edit",
+    "master_data.spec_registry.add",
+    "master_data.spec_registry.delete",
+}
 
 
 @pytest.fixture
@@ -48,11 +56,20 @@ def client(db, monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: _USER
     app.dependency_overrides[get_current_user_or_api_key] = lambda: _USER
     app.dependency_overrides[apply_company_scope] = lambda: None
-    # The route is gated on master_data.products.view. The blank schema has no role
-    # grants, so grant it here rather than seeding an entire RBAC chain: this file is
-    # testing the registry, and a separate test covers the permission itself.
+    # The routes are gated on master_data.products.view / .edit or the spec_registry
+    # equivalents. The blank schema has no role grants, so grant them here rather than
+    # seeding an entire RBAC chain: this file is testing the registry, and a separate
+    # test covers the permissions themselves.
+    #
+    # Both lookups have to be stubbed. `require_permission_with_api_key` asks
+    # `check_user_has_permission`, but `require_any_permission_with_api_key` - which
+    # gates the reads and the PATCH, either grant being enough - reads the slug SET
+    # instead and never calls the singular check.
     monkeypatch.setattr(
         UserPermissionService, "check_user_has_permission", lambda self, uid, slug: True
+    )
+    monkeypatch.setattr(
+        UserPermissionService, "get_user_permission_slugs", lambda self, uid: set(_GRANTED)
     )
     try:
         yield TestClient(app)
@@ -76,6 +93,7 @@ def denied_client(db, monkeypatch):
     monkeypatch.setattr(
         UserPermissionService, "check_user_has_permission", lambda self, uid, slug: False
     )
+    monkeypatch.setattr(UserPermissionService, "get_user_permission_slugs", lambda self, uid: set())
     try:
         yield TestClient(app)
     finally:

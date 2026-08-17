@@ -18,6 +18,16 @@ Everything asserted here is something that decides whether they can trust it.
 * **A malformed ``promotionId`` never reaches the database.** That exact mistake
   produced a 500 in this feature once already.
 
+**The read is a background job.** The POST answers 202 with the row in
+``processing`` and the extraction happens on the worker
+(``documentation/plans/dealer-kit/PLAN-flyer-read-background-job.md``). So every
+test here that wants a report queues the read and then runs it inline on its own
+session - ``_read`` and ``_read_id``, over ``tests/_flyer_read.py`` - and reads
+the answer off the GET, which is where a designer reads it too. A file the
+extractor refuses is no longer a 400 on the POST: nothing has looked at the bytes
+by then. It is a ``failed`` row carrying the same words, which is the only place
+a refusal can be said once the request has gone.
+
 Postgres only, on a blank scratch schema. Every row is ZZT-scoped except the
 product codes, which have to be the ones actually printed on the fixture flyer -
 matching a printed code is the whole point, so a ZZT-prefixed code would match
@@ -36,6 +46,7 @@ from fastapi.testclient import TestClient
 from app.main import app  # noqa: E402
 
 from tests._fake_storage import patch_storage
+from tests._flyer_read import finish_reads, patch_flyer_read
 from tests._pg_fixture import blank_session, unique_code
 
 FIXTURE_PDF = Path(__file__).parent / "fixtures" / "dealer_kit" / "flyer_sample.pdf"
@@ -131,6 +142,10 @@ def api(monkeypatch):
     with blank_session() as db:
         _seed_roles(db)
         patch_storage(monkeypatch)
+        # The queued read runs inline, on THIS session, when a test asks for it.
+        # No Redis, no worker, and everything the job writes is visible to the
+        # next assertion.
+        patch_flyer_read(monkeypatch, db)
         here = {"company": _SORENTO}
 
         def _override_get_db():
@@ -175,6 +190,54 @@ def _upload(client: TestClient, *, filename: str = "zzt-flyer.pdf", data: bytes 
         files={"file": (filename, data if data is not None else _pdf_bytes(), "application/pdf")},
         params=params,
     )
+
+
+def _read_id(client: TestClient, **kwargs) -> str:
+    """Post a flyer, run the read the POST queued, and answer with its id.
+
+    The 202 body is checked here rather than in every caller: the id it carries
+    IS the id of the finished reading, which is what makes the row appear in the
+    list at once and the report link never change.
+    """
+    res = _upload(client, **kwargs)
+    assert res.status_code == 202, res.text
+    queued = res.json()
+    assert queued["status"] == "processing", queued
+    finish_reads()
+    return queued["id"]
+
+
+def _read(client: TestClient, *, promotion_id: str | None = None, **kwargs) -> dict:
+    """The same, answering with the detail body the review screen reads.
+
+    This is what the POST used to return. It is a GET now because the report is
+    a question asked of a reading, and there is no reading to ask until the job
+    has run.
+    """
+    reading_id = _read_id(client, **kwargs)
+    params = {"promotionId": promotion_id} if promotion_id is not None else {}
+    got = client.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}", params=params)
+    assert got.status_code == 200, got.text
+    return got.json()
+
+
+def _failed_read(client: TestClient, **kwargs) -> dict:
+    """A read the extractor refuses: 202, then a `failed` row saying why.
+
+    Deliberately asserts the 202 as well. "The POST refused it" and "the job
+    refused it" are the same outcome to a designer and completely different
+    contracts, and a test that only looked at the reason would still pass if the
+    request started blocking again.
+    """
+    res = _upload(client, **kwargs)
+    assert res.status_code == 202, res.text
+    reading_id = res.json()["id"]
+    assert [job["status"] for job in finish_reads()] == ["failed"]
+    got = client.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}")
+    assert got.status_code == 200, got.text
+    body = got.json()
+    assert body["status"] == "failed", body
+    return body
 
 
 def _product(db, code: str):
@@ -249,16 +312,37 @@ def _codes(entries) -> list[str]:
 # Upload
 # --------------------------------------------------------------------------- #
 class TestUpload:
-    def test_uploading_the_real_flyer_returns_a_report(self, api) -> None:
-        """The whole slice in one call: a PDF in, something to review out."""
+    def test_uploading_the_real_flyer_returns_a_row_at_once_then_a_report(
+        self, api
+    ) -> None:
+        """The whole slice, in the two steps a designer actually sees.
+
+        First the 202: the file is named, the row is `processing`, and the
+        dialog can close. Nothing has been read yet, so the counts are 0 rather
+        than a guess. Then the job runs and the SAME id carries the report.
+        """
         _db, _as, _scope = api
 
         with TestClient(app) as c:
             res = _upload(c, filename="zzt-a3-flyer.pdf")
 
-        assert res.status_code == 201, res.text
-        body = res.json()
-        assert body["id"]
+            assert res.status_code == 202, res.text
+            queued = res.json()
+            assert queued["id"]
+            assert queued["filename"] == "zzt-a3-flyer.pdf"
+            assert queued["status"] == "processing"
+            assert queued["errorMessage"] is None
+            assert queued["finishedAt"] is None
+            assert (queued["pageCount"], queued["codeCount"]) == (0, 0)
+
+            assert [job["status"] for job in finish_reads()] == ["done"]
+            got = c.get(f"/api/v1/dealer-kit/flyer-readings/{queued['id']}")
+
+        assert got.status_code == 200, got.text
+        body = got.json()
+        assert body["id"] == queued["id"]
+        assert body["status"] == "done"
+        assert body["finishedAt"]
         assert body["filename"] == "zzt-a3-flyer.pdf"
         assert body["pageCount"] == 3
         # Nothing in the master yet, so every printed code is a gap somebody has
@@ -271,7 +355,7 @@ class TestUpload:
         product = _product(db, PRINTED_CODE)
 
         with TestClient(app) as c:
-            report = _upload(c).json()["report"]
+            report = _read(c)["report"]
 
         entry = next(row for row in report["matched"] if row["code"] == PRINTED_CODE)
         assert entry["productId"] == product.id
@@ -292,7 +376,7 @@ class TestUpload:
         neighbour = _product(db, "SRTJC8042")  # the flyer prints SRTJC8041
 
         with TestClient(app) as c:
-            report = _upload(c).json()["report"]
+            report = _read(c)["report"]
 
         entry = next(row for row in report["unmatched"] if row["code"] == PRINTED_CODE)
         assert entry["suggestion"]["productCode"] == "SRTJC8042"
@@ -309,7 +393,7 @@ class TestUpload:
         product = _product(db, PRINTED_CODE)  # no dimensions on the master row
 
         with TestClient(app) as c:
-            report = _upload(c).json()["report"]
+            report = _read(c)["report"]
 
         entry = next(
             row for row in report["dimensionCandidates"] if row["code"] == PRINTED_CODE
@@ -326,16 +410,21 @@ class TestUpload:
     def test_a_file_that_is_not_a_pdf_is_refused_in_words(self, api) -> None:
         """A designer who picked the wrong file needs telling.
 
-        Not a 500, and not a 201 carrying an empty report - that reads as "your
-        flyer has no products on it" and sends them looking for the wrong bug.
+        The telling happens on the ROW now, because nothing looks at the bytes
+        until the job runs - but a `done` row carrying an empty report would
+        still be the wrong answer, since it reads as "your flyer has no products
+        on it" and sends them looking for the wrong bug. So: `failed`, in words.
         """
         _db, _as, _scope = api
 
         with TestClient(app) as c:
-            res = _upload(c, filename="zzt-notes.docx", data=b"PK\x03\x04 not a pdf at all")
+            body = _failed_read(
+                c, filename="zzt-notes.docx", data=b"PK\x03\x04 not a pdf at all"
+            )
 
-        assert res.status_code == 400, res.text
-        assert "pdf" in res.text.lower()
+        assert "pdf" in body["errorMessage"].lower(), body["errorMessage"]
+        assert body["finishedAt"]
+        assert body["report"]["unmatched"] == []
 
     def test_a_password_protected_flyer_is_told_it_is_the_password(self, api) -> None:
         """A locked PDF IS a PDF, so "export it as a PDF" is the wrong advice.
@@ -358,10 +447,9 @@ class TestUpload:
         )
 
         with TestClient(app) as c:
-            res = _upload(c, filename="zzt-locked.pdf", data=locked)
+            failed = _failed_read(c, filename="zzt-locked.pdf", data=locked)
 
-        assert res.status_code == 400, res.text
-        body = res.text.lower()
+        body = failed["errorMessage"].lower()
         assert "password" in body
         # The generic advice must NOT be what they are told, and PyMuPDF's
         # "document closed" must not reach a human at all.
@@ -369,17 +457,24 @@ class TestUpload:
         assert "document closed" not in body
 
     def test_an_empty_upload_is_refused_too(self, api) -> None:
+        """Nothing is a file too, and it fails where every other unreadable file
+        does: on the row, with a reason."""
         _db, _as, _scope = api
 
         with TestClient(app) as c:
-            res = _upload(c, filename="zzt-empty.pdf", data=b"")
+            body = _failed_read(c, filename="zzt-empty.pdf", data=b"")
 
-        assert res.status_code == 400, res.text
+        assert body["errorMessage"]
 
     def test_a_flyer_over_the_ceiling_is_refused_and_the_limit_is_named(
         self, api, monkeypatch
     ) -> None:
         """The ceiling is 50 MB; the real flyer is 20 MB.
+
+        The ONE refusal that still belongs to the request, and it has to: the
+        bytes are measured as they arrive, so the answer is known before there is
+        anything to queue. Refusing it on the row instead would mean staging 50 MB
+        first in order to say no to it.
 
         Exercised with the limit turned down rather than by posting 50 MB of
         zeroes: what is under test is that the check fires and says what the
@@ -404,7 +499,7 @@ class TestUpload:
 
         A designer exporting the same document without compression can double it
         and still get through, while the cap stays inside what one request can
-        read and extract without a worker.
+        read and stage in a second.
         """
         from app.services.dealer_kit import flyer_reading_service as svc
 
@@ -426,7 +521,7 @@ class TestTheReportIsDerived:
         db, _as, _scope = api
 
         with TestClient(app) as c:
-            reading_id = _upload(c).json()["id"]
+            reading_id = _read_id(c)
 
             before = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").json()
             assert PRINTED_CODE in _codes(before["report"]["unmatched"])
@@ -451,7 +546,7 @@ class TestTheReportIsDerived:
         db, _as, _scope = api
 
         with TestClient(app) as c:
-            reading_id = _upload(c).json()["id"]
+            reading_id = _read_id(c)
 
         from app.models.dealer_kit import FlyerReadingRecord
 
@@ -489,7 +584,7 @@ class TestTheReportIsDerived:
         from app.services.dealer_kit.flyer_reading_service import to_reading
 
         with TestClient(app) as c:
-            reading_id = _upload(c).json()["id"]
+            reading_id = _read_id(c)
 
         row = db.query(FlyerReadingRecord).filter(FlyerReadingRecord.id == reading_id).one()
         stored = to_reading(row)
@@ -515,7 +610,7 @@ class TestPromotion:
         promotion_id = _promotion(db, promoted)
 
         with TestClient(app) as c:
-            body = _upload(c, promotionId=promotion_id).json()
+            body = _read(c, promotion_id=promotion_id)
 
         report = body["report"]
         assert report["promotionId"] == promotion_id
@@ -528,7 +623,7 @@ class TestPromotion:
         _product(db, PRINTED_CODE)
 
         with TestClient(app) as c:
-            report = _upload(c).json()["report"]
+            report = _read(c)["report"]
 
         assert report["promotionId"] is None
         assert report["notPromoted"] == []
@@ -541,7 +636,7 @@ class TestPromotion:
         promotion_id = _promotion(db, product)
 
         with TestClient(app) as c:
-            reading_id = _upload(c).json()["id"]
+            reading_id = _read_id(c)
             plain = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").json()
             asked = c.get(
                 f"/api/v1/dealer-kit/flyer-readings/{reading_id}",
@@ -557,7 +652,13 @@ class TestPromotion:
         """422, not a 500 out of the driver.
 
         A malformed uuid landing in a WHERE clause is how this feature produced
-        its one 500, so the shape is refused at the edge on BOTH verbs.
+        its one 500, so the shape is refused at the edge on BOTH verbs - still on
+        the POST, even though its response no longer carries a report, because
+        the frontend still sends it there and the edge is where a malformed uuid
+        has to stop.
+
+        The reading these GET against is never read: the refusal happens before
+        anything looks at it, so running the job would only make the test slower.
         """
         _db, _as, _scope = api
 
@@ -585,7 +686,7 @@ class TestPromotion:
         _product(db, PRINTED_CODE)
 
         with TestClient(app) as c:
-            report = _upload(c, promotionId=str(uuid.uuid4())).json()["report"]
+            report = _read(c, promotion_id=str(uuid.uuid4()))["report"]
 
         assert _codes(report["notPromoted"]) == [PRINTED_CODE]
 
@@ -598,15 +699,38 @@ class TestLifecycle:
         _db, _as, _scope = api
 
         with TestClient(app) as c:
-            created = _upload(c, filename="zzt-read-back.pdf").json()
-            got = c.get(f"/api/v1/dealer-kit/flyer-readings/{created['id']}")
+            reading_id = _read_id(c, filename="zzt-read-back.pdf")
+            got = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}")
 
         assert got.status_code == 200, got.text
         body = got.json()
-        assert body["id"] == created["id"]
+        assert body["id"] == reading_id
         assert body["filename"] == "zzt-read-back.pdf"
         assert body["uploadedAt"]
         assert body["report"]["unmatched"]
+
+    def test_a_reading_can_be_opened_before_it_has_been_read(self, api) -> None:
+        """The review screen has to be able to open a row the job has not reached.
+
+        The link exists from the first second - that is the point of creating the
+        row at enqueue - so this GET must answer 200 with an EMPTY report rather
+        than a 404 or an error. The screen reads `status` and shows its waiting
+        state; nothing here needs a special case (AC-J3.5).
+        """
+        _db, _as, _scope = api
+
+        with TestClient(app) as c:
+            reading_id = _upload(c, filename="zzt-still-reading.pdf").json()["id"]
+            got = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}")
+
+        assert got.status_code == 200, got.text
+        body = got.json()
+        assert body["status"] == "processing"
+        assert body["finishedAt"] is None
+        assert body["pageCount"] == 0
+        assert body["report"]["matched"] == []
+        assert body["report"]["unmatched"] == []
+        assert body["headings"] == []
 
     def test_an_unknown_reading_is_404(self, api) -> None:
         _db, _as, _scope = api
@@ -628,7 +752,7 @@ class TestLifecycle:
         _db, _as, _scope = api
 
         with TestClient(app) as c:
-            reading_id = _upload(c).json()["id"]
+            reading_id = _read_id(c)
 
             assert c.delete(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").status_code == 204
             assert c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").status_code == 404
@@ -640,8 +764,13 @@ class TestLifecycle:
         db, _as, _scope = api
 
         with TestClient(app) as c:
-            first = _upload(c, filename="zzt-older.pdf").json()["id"]
-            second = _upload(c, filename="zzt-newer.pdf").json()["id"]
+            # Each read is FINISHED before the next is posted, and that is not
+            # incidental: both post the same fixture bytes, so while the first is
+            # still `processing` the second POST is the idempotent re-click and
+            # returns the SAME row (AC-J2.4). Leaving them unfinished made this
+            # test list one reading and compare it against itself.
+            first = _read_id(c, filename="zzt-older.pdf")
+            second = _read_id(c, filename="zzt-newer.pdf")
 
             # Postgres `now()` is TRANSACTION time, and this whole test runs in
             # one, so both rows would otherwise carry the same timestamp and the
@@ -671,12 +800,18 @@ class TestLifecycle:
         _db, _as, _scope = api
 
         with TestClient(app) as c:
-            _upload(c)
+            _read_id(c)
             row = c.get("/api/v1/dealer-kit/flyer-readings").json()[0]
 
         assert "report" not in row
         assert row["filename"]
         assert row["pageCount"] == 3
+        # The lifecycle DOES belong on the row: it is the screen a designer
+        # watches a read on, and a pill with no reason beside it is why a failed
+        # read gets re-uploaded unchanged.
+        assert row["status"] == "done"
+        assert row["errorMessage"] is None
+        assert row["finishedAt"]
 
 
 # --------------------------------------------------------------------------- #
@@ -691,7 +826,8 @@ class TestAccess:
 
         with TestClient(app) as c:
             created = _upload(c)
-            assert created.status_code == 201, created.text
+            assert created.status_code == 202, created.text
+            assert [job["status"] for job in finish_reads()] == ["done"]
             reading_id = created.json()["id"]
             assert c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").status_code == 200
             assert c.delete(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").status_code == 204
@@ -763,7 +899,7 @@ class TestHeadings:
         _db, _as, _scope = api
 
         with TestClient(app) as c:
-            body = _upload(c).json()
+            body = _read(c)
 
         headings = body["headings"]
         assert [entry["page"] for entry in headings] == [1, 2, 3]
@@ -780,7 +916,7 @@ class TestHeadings:
         _db, _as, _scope = api
 
         with TestClient(app) as c:
-            body = _upload(c).json()
+            body = _read(c)
 
         assert body["headings"][1]["text"] == MISREAD_HEADING
 
@@ -797,7 +933,7 @@ class TestHeadings:
         from app.models.dealer_kit import FlyerReadingRecord
 
         with TestClient(app) as c:
-            reading_id = _upload(c).json()["id"]
+            reading_id = _read_id(c)
 
             record = (
                 db.query(FlyerReadingRecord)
@@ -825,7 +961,7 @@ class TestHeadings:
         _db, _as, _scope = api
 
         with TestClient(app) as c:
-            _upload(c, filename="zzt-headings-list.pdf")
+            _read_id(c, filename="zzt-headings-list.pdf")
             rows = c.get("/api/v1/dealer-kit/flyer-readings").json()
 
         assert rows

@@ -25,6 +25,8 @@ const demand = (over: Record<string, unknown> = {}) => ({
       order_date: '2026-07-27',
       required_date: '2026-10-12',
       qty: 2,
+      customer_label: 'Vivo Homes Sdn Bhd',
+      unit_price: 94.5,
     },
   ],
   total: 1,
@@ -32,6 +34,8 @@ const demand = (over: Record<string, unknown> = {}) => ({
   committed_total: 2,
   unlocated_total: 0,
   locations: ['BRW-IB'],
+  scope: 'warehouse',
+  pool_code: null,
   ...over,
 });
 
@@ -72,7 +76,26 @@ describe('PlanDemandPopover', () => {
 
     expect(screen.getByText('SO414050')).toBeInTheDocument();
     expect(screen.getByText('BRW-IB')).toBeInTheDocument();
-    expect(screen.getByText(/sits at BRW-IB/)).toBeInTheDocument();
+    expect(screen.getByText('2 committed at BRW-IB')).toBeInTheDocument();
+  });
+
+  it('names the POOL when the plan netted the pool together', async () => {
+    // AC-1.2: the number is still the row's own, but it was built over the pool, and a
+    // list of siblings the buyer never ordered for has to say why it is there.
+    stub(
+      demand({
+        committed_total: 6683,
+        locations: ['BRW-BB', 'BRW-IB'],
+        scope: 'pool',
+        pool_code: 'BRW',
+      }),
+    );
+    render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+    await open();
+
+    expect(
+      screen.getByText('6,683 committed at BRW-BB, BRW-IB (pool BRW)'),
+    ).toBeInTheDocument();
   });
 
   it('says which part of it nobody located', async () => {
@@ -87,8 +110,36 @@ describe('PlanDemandPopover', () => {
     render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
     await open();
 
-    expect(screen.getByText(/419 named no location/)).toBeInTheDocument();
+    expect(
+      screen.getByText('420 committed at BRW-IB, No location, incl. 419 unlocated'),
+    ).toBeInTheDocument();
     expect(screen.getByText('No location')).toBeInTheDocument();
+  });
+
+  it('names who ordered each line, and what they pay', async () => {
+    stub(demand());
+    render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+    await open();
+
+    expect(screen.getByText('Vivo Homes Sdn Bhd')).toBeInTheDocument();
+    expect(screen.getByText('RM 94.50')).toBeInTheDocument();
+  });
+
+  it('keeps the honest fallbacks the backend sends, and shows no price when there is none', async () => {
+    // "Unnamed customer" is retired: a debtor code IS an attribution, and an order that
+    // names nobody is a fact about the order rather than a missing value.
+    stub(
+      demand({
+        lines: [
+          { ...demand().lines[0], customer_label: 'Debtor 300-R009', unit_price: null },
+        ],
+      }),
+    );
+    render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+    await open();
+
+    expect(screen.getByText('Debtor 300-R009')).toBeInTheDocument();
+    expect(screen.queryByText(/^RM /)).not.toBeInTheDocument();
   });
 
   it('distinguishes project from retail', async () => {

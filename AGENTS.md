@@ -317,6 +317,38 @@ silently overriding them. See `documentation/agents/domain.md`.
 Note this repo uses `documentation/`, not `docs/`. Anything referring to `docs/adr/` means
 `documentation/adr/`.
 
+## Running several worktrees at once
+
+Every lane runs its own frontend and backend on its own ports, all on `localhost`, and
+that is where the sharp edges are.
+
+- **NextAuth cookies are scoped by HOST, not by port**, so one lane's session cookie
+  collides with another's. `NEXTAUTH_COOKIE_SUFFIX` in `.env.local` is what keeps them
+  apart (see the suffixed-cookie entry in `CLAUDE.md` for the `getToken` half of this).
+- **Browser verification therefore needs its own browser session per lane.** Run
+  `agent-browser --session <lane-name> ...`; the shared default session carries whatever
+  cookies another lane left behind, and the symptom is a login that POSTs
+  `/api/auth/callback/credentials`, returns 200, and lands back on `/signin` with no
+  session token - which reads as wrong credentials rather than as a cookie collision.
+- **Check the ports before booting anything** (`lsof -i :PORT -sTCP:LISTEN`) and never
+  kill a process another lane owns.
+
+## Alembic across concurrent branches
+
+Two branches cut from the same head each pass review with one head and produce two after
+both merge, which fails `scripts/bootstrap_env` at `command.stamp(cfg, "head")` and takes
+out the whole CI run before any test executes. Re-check `alembic heads` immediately
+before opening a PR, and fix a fork with a merge revision, never by editing a landed one.
+Revision ids must stay <= 32 characters. Worked example and the full reasoning:
+`sorento_crm_backend/alembic/versions/360_merge_container_status_and_spec.py`.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.
+
 ## Assumptions
 
 - React 19 peer dependency conflicts are expected locally because the checked-in instructions and package state use `npm install --force`.

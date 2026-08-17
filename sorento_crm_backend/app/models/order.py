@@ -351,6 +351,12 @@ class SalesOrder(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     so_number = Column(String(100), unique=True, nullable=False)
     customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
+    # The debtor code the source document printed, kept whether or not it resolves to a
+    # customer. Both SO importers write it: an order whose code names nobody we hold is
+    # still attributable ("Debtor 300-R009"), and the day that customer is created the code
+    # is what makes the link fixable. Never a substitute for the FK - `customer_id` stays
+    # the link, this is the evidence behind it.
+    debtor_code = Column(String(64), nullable=True)
     # Who sold it, as the salesperson master (`sales_agents`), resolved from the agent code
     # the extract states. Nullable because most orders predate the column and no export is
     # required to carry an agent; `SET NULL` because deleting a salesperson must not delete
@@ -394,6 +400,7 @@ class SalesOrder(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_sales_orders_customer_id", "customer_id"),
+        Index("ix_sales_orders_debtor_code", "debtor_code"),
         Index("ix_sales_orders_so_number", "so_number"),
         Index("ix_sales_orders_status", "status"),
         Index("ix_sales_orders_sales_agent_id", "sales_agent_id"),
@@ -410,6 +417,12 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
     qty_ordered = Column(Numeric(15, 4), default=0, nullable=False)
     qty_delivered = Column(Numeric(15, 4), default=0, nullable=False)
+    # What the customer pays for this line. The column has always been on the table and
+    # was simply never mapped (same as `source_doc_no` / `internal_note` on the header
+    # above), so every read through the ORM dropped it and a schema built from the models
+    # did not carry it at all. Mapped now because the demand drill quotes it: "who ordered
+    # it and at what price" is the question the buyer opens that popover with.
+    unit_price = Column(Numeric(15, 2), nullable=True)
     priority = Column(String(20), nullable=True)  # inherit from header / override
     # When this line's quantity must be on hand. PER LINE, not per header: the order
     # inquiry the business works from states a delivery date per line and one SO routinely

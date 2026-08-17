@@ -56,6 +56,10 @@ LINE_CLOSED = "line_closed"
 #: A scheduled delivery this feed wrote that the sheet has stopped stating, so it was
 #: removed. Same reasoning as LINE_CLOSED, on the Order Inquiry side.
 LINE_WITHDRAWN = "line_withdrawn"
+#: A product whose reorder level the upload emptied, because the file carries the column
+#: and this item's cell was blank. Same family as LINE_CLOSED: the row WAS written, and
+#: "9,000 products updated" would bury the 642 that lost a number somebody may want back.
+REORDER_LEVEL_CLEARED = "reorder_level_cleared"
 
 # --- deliberate skips -----------------------------------------------------
 DUPLICATE_LINE = "duplicate_line"
@@ -133,6 +137,7 @@ LABELS: dict[str, str] = {
     ORDER_NOT_IN_MASTER: "Order not found in Master sheet",
     LINE_CLOSED: "Closed: no longer on the uploaded book",
     LINE_WITHDRAWN: "Withdrawn: this sheet no longer lists it",
+    REORDER_LEVEL_CLEARED: "Reorder level cleared: blank in the file",
     DUPLICATE_LINE: "Identical line already exists on this order",
     DUPLICATE_IN_FILE: "The same row appears earlier in this file",
     ALREADY_EXISTS: "Already exists",

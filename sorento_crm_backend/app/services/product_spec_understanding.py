@@ -39,6 +39,10 @@ from app.models.ai_assistant import AIAssistantUsageLog
 from app.models.product_spec import ProductSpecifications
 from app.services.ai_prompt_registry import agent_model, get_prompt
 from app.services.llm_provider import default_model_for, get_provider, resolve_api_key
+# The keys a product may hold more than one of. Imported rather than restated: the set
+# is derivation's, and a second copy would let an accepted proposal store a shape a
+# re-derivation of the same words would not.
+from app.services.product_spec_derivation import MULTI_VALUE_KEYS
 from app.services.product_spec_registry import (
     active_registry,
     merged_allowed_values,
@@ -80,6 +84,16 @@ _TEMPERATURE = 0.0
 # (its registry fallback) is what runs if the registry row is missing.
 AGENT_NAME = "spec_understanding"
 
+# The sibling agent: reading a statement ABOUT one product (a flyer card, a supplier
+# blurb) rather than a customer's enquiry. Its own prompt key because the two jobs pull
+# in opposite directions - understanding a customer means interpreting them, and reading
+# a supplier's copy means refusing to.
+EXTRACTOR_AGENT_NAME = "spec_extractor"
+
+# Longer than the enquiry budget: one flyer card can state a dozen specifications, and
+# this runs behind a button on a staff screen rather than on a WhatsApp reply.
+_EXTRACT_MAX_OUTPUT_TOKENS = 1500
+
 
 @dataclass
 class Understanding:
@@ -104,6 +118,21 @@ class Understanding:
     source: str = "deterministic"
     model: str | None = None
     elapsed_ms: int | None = None
+
+
+@dataclass
+class Extraction:
+    """What a pasted piece of text says about one product, as the registry's own terms.
+
+    `specs` are `{key, value, evidence}` and are already validated: a key or a value the
+    registry does not recognise never reaches this object. `source` is `semantic` only
+    when a model actually answered - anything else (no key, no provider, bad JSON, a
+    timeout) degrades to `deterministic`, where the caller's rule pass stands alone.
+    """
+
+    specs: list[dict] = field(default_factory=list)
+    source: str = "deterministic"
+    model: str | None = None
 
 
 # An open-vocabulary key has no closed list in the registry because its values come from
@@ -199,6 +228,23 @@ def _coerce(row, value: Any, open_values: list[str] | None = None) -> Any | None
     reaching a customer.
     """
     data_type = (row.data_type or "").lower()
+
+    if isinstance(value, (list, tuple)) and row.spec_key in MULTI_VALUE_KEYS:
+        # "Rose Gold + Matt Black" is one tap in two finishes, and both readings are
+        # true. `apply_rules` already produces the list and derivation stores it, so
+        # coercing the list element-wise and KEEPING its shape is what makes an
+        # accepted proposal store what a re-derivation of the same words would have.
+        # Stringified, the whole list matches nothing in the vocabulary and the reading
+        # is dropped on the floor - the text said something real and no screen shows it.
+        items: list = []
+        for item in value:
+            coerced = _coerce(row, item, open_values)
+            if coerced is not None and coerced not in items:
+                items.append(coerced)
+        if not items:
+            return None
+        # One tone is stored as the tone, exactly as `apply_rules` does it.
+        return items[0] if len(items) == 1 else items
 
     if data_type == "boolean":
         if isinstance(value, bool):
@@ -304,12 +350,18 @@ def _validate(
     return specs, exclusions, free_terms, notes
 
 
-def _resolve_provider(db: Session):
+def _resolve_provider(db: Session, agent_name: str = AGENT_NAME):
     """The provider and model THIS agent runs on. None when unconfigured.
 
     Per-agent, falling back to the global assistant config. Reading a misspelt customer
     sentence is not the same job as writing an explanatory paragraph, so the model is
-    set against the `spec_understanding` agent row rather than shared with everything.
+    set against the agent's own row rather than shared with everything.
+
+    `agent_name` is an argument rather than the module constant because two agents call
+    this: the enquiry reader and the extractor beneath it. Hardcoded, the extractor
+    read its own words (its system prompt IS asked for under `spec_extractor`) with
+    whatever model an admin had configured for the enquiry reader, and nothing on
+    either screen said so.
 
     The agent's provider is operator-settable, so it is often NOT the one the
     assistant row is configured for; the key therefore comes from the shared
@@ -324,7 +376,7 @@ def _resolve_provider(db: Session):
         .order_by(AIAssistantConfig.created_at.asc())
         .first()
     )
-    agent_provider, agent_model_name = agent_model(db, AGENT_NAME)
+    agent_provider, agent_model_name = agent_model(db, agent_name)
     provider_name = agent_provider or (cfg.provider if cfg else "openai") or "openai"
     model_name = agent_model_name or (cfg.model if cfg else "") or ""
     api_key = resolve_api_key(cfg, provider_name)
@@ -569,3 +621,107 @@ def understand_phrase(
         model=model_name,
         elapsed_ms=elapsed_ms,
     )
+
+
+def extract_specs_from_text(
+    db: Session,
+    text: str,
+    *,
+    vocabulary: tuple[list[dict], dict[str, Any], dict[str, list[str]]] | None = None,
+    allow_model: bool = True,
+    user_id: str | None = None,
+) -> Extraction:
+    """Read a statement about ONE product onto the registry. Writes no product data.
+
+    The sibling entry point AC-B.4 asks for: it shares `_vocabulary`, `_coerce` and
+    `_validated_pairs` with `understand_phrase`, so neither can propose vocabulary the
+    ranker has never heard of, and `understand_phrase` is NOT overloaded with a mode
+    flag - it carries a WhatsApp latency budget this does not.
+
+    Degrades rather than fails, exactly as the enquiry reader does: no provider, a
+    provider that raises, or a reply that is not JSON all return an empty
+    `Extraction` marked `deterministic`, and the caller's rule pass is what the user
+    gets (AC-B.5). `vocabulary` is accepted so a caller that already rendered the
+    registry does not pay for it twice - the open-vocabulary values behind it are a
+    DISTINCT per key.
+
+    The ONE thing it does write is an `AIAssistantUsageLog` row, and only when a model
+    actually answered: the same bookkeeping `understand_phrase` writes for
+    `spec_search`, under `feature="spec_extract"`, so a model call made from the
+    product page is billed and counted beside every other one. Best effort, exactly as
+    there - a failed insert is rolled back and warned about, never raised, because
+    losing the reading over its own bookkeeping would be the worse outcome. Nothing
+    about the product's specifications is touched (AC-B.1).
+    """
+    text = (text or "").strip()
+    if not text or not allow_model:
+        return Extraction()
+
+    provider, provider_name, model_name = _resolve_provider(db, EXTRACTOR_AGENT_NAME)
+    if provider is None:
+        return Extraction()
+
+    described, index, open_values = vocabulary if vocabulary is not None else _vocabulary(db)
+    messages = [
+        {"role": "system", "content": get_prompt(db, EXTRACTOR_AGENT_NAME).text},
+        {
+            "role": "user",
+            "content": (
+                "Specifications that exist:\n"
+                + json.dumps(described, ensure_ascii=False)
+                + "\n\nText about the product:\n"
+                + text
+            ),
+        },
+    ]
+
+    started = time.monotonic()
+    try:
+        result = provider.chat(
+            messages,
+            temperature=_TEMPERATURE,
+            max_tokens=_EXTRACT_MAX_OUTPUT_TOKENS,
+            response_format={"type": "json_object"},
+        )
+        payload = json.loads(result.content or "{}")
+    except Exception as exc:  # noqa: BLE001 - any provider failure degrades, never raises
+        logger.warning("spec extraction failed, using the rule pass alone: %s", exc)
+        return Extraction()
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+
+    items = (payload.get("specs") if isinstance(payload, dict) else None) or []
+    # The words the model read each value from, kept beside the validation rather than
+    # inside it: `_validated_pairs` is shared with the enquiry reader, which has no
+    # evidence to carry, and widening it for one caller would put an unused field on
+    # every customer sentence.
+    evidence_by_key = {
+        str(item.get("key") or "").strip(): str(item.get("evidence") or "").strip()
+        for item in items
+        if isinstance(item, dict)
+    }
+    specs = _validated_pairs(items, index, open_values, one_per_key=True)
+    for entry in specs:
+        entry["evidence"] = evidence_by_key.get(entry["key"], "")
+
+    try:
+        db.add(
+            AIAssistantUsageLog(
+                user_id=user_id,
+                feature="spec_extract",
+                provider=provider_name,
+                model=model_name,
+                prompt_tokens=int(result.prompt_tokens or 0),
+                completion_tokens=int(result.completion_tokens or 0),
+                total_tokens=int(result.total_tokens or 0),
+                tool_calls_count=0,
+                response_time_ms=elapsed_ms,
+                was_answered=bool(specs),
+            )
+        )
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 - never fail a reading over bookkeeping
+        logger.warning("spec extraction: usage log failed: %s", exc)
+        db.rollback()
+
+    return Extraction(specs=specs, source="semantic", model=model_name)
