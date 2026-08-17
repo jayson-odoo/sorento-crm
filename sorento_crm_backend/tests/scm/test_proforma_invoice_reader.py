@@ -304,7 +304,7 @@ def test_the_seeded_aliases_are_the_ones_this_suite_assumes():
         Path(__file__).resolve().parents[2]
         / "alembic"
         / "versions"
-        / "374_scm_proforma_invoice.py"
+        / "375_scm_proforma_invoice.py"
     )
     spec = importlib.util.spec_from_file_location("m374", path)
     m = importlib.util.module_from_spec(spec)

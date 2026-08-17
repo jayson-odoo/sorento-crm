@@ -364,7 +364,7 @@ def seed_scm_module_data() -> None:
     # header is recognised by resolving item code, quantity and unit price on one row, so
     # with no aliases every upload is refused as "the file does not name the columns".
     spec_374 = importlib.util.spec_from_file_location(
-        "_scm_seed_374", versions / "374_scm_proforma_invoice.py"
+        "_scm_seed_374", versions / "375_scm_proforma_invoice.py"
     )
     module_374 = importlib.util.module_from_spec(spec_374)
     spec_374.loader.exec_module(module_374)

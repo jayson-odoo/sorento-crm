@@ -54,10 +54,9 @@ Both tables in the `scm` schema, `CompanyScopedMixin`, mirroring `supplier_inven
 - `created_at`
 - index on `invoice_id`, index on `po_ref`
 
-Migration `374_scm_proforma_invoice`: `down_revision = ("373_merge_372_flyer_specs",
-"373_merge_media_into_main")` - main currently carries two heads, so this revision joins
-them and adds its tables in one step. Re-check `alembic heads` after the pre-push rebase; if
-somebody merged the heads first, point at that merge instead. The migration also:
+Migration `375_scm_proforma_invoice`: `down_revision = "374_merge_proj_media_flyer"` -
+originally targeted the two 373 heads, retargeted at rebase time onto the merge revision
+main gained when Project Sales landed (#155). The migration also:
 - seeds the `proforma_invoice` aliases (module-level `_ALIASES` + `seed(bind)`, replayed
   from `scripts/bootstrap_env.py` alongside 338/357/358);
 - declares `company_id` with its `companies` FK and index (what `CompanyScopedMixin` +

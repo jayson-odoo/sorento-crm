@@ -1,6 +1,6 @@
 """G3b: the proforma invoice becomes a document we hold, with priced lines.
 
-Revision ID: 374_scm_proforma_invoice
+Revision ID: 375_scm_proforma_invoice
 Revises: ("373_merge_372_flyer_specs", "373_merge_media_into_main")
 Create Date: 2026-08-17
 
@@ -27,8 +27,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
-revision = "374_scm_proforma_invoice"
-down_revision = ("373_merge_372_flyer_specs", "373_merge_media_into_main")
+revision = "375_scm_proforma_invoice"
+down_revision = "374_merge_proj_media_flyer"
 branch_labels = None
 depends_on = None
 

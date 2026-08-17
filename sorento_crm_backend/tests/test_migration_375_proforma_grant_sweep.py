@@ -33,7 +33,7 @@ _MIGRATION_PATH = (
     Path(__file__).resolve().parent.parent
     / "alembic"
     / "versions"
-    / "374_scm_proforma_invoice.py"
+    / "375_scm_proforma_invoice.py"
 )
 
 SOURCE_SLUG = "scm.reorder.run"
