@@ -1260,17 +1260,22 @@ class ProjectSODraftService:
         carried = dict(reusable_refs or {})
         orders: List[ProjectSalesOrder] = []
         for area_group in sorted(grouped, key=lambda value: (value is None, value or "")):
+            # The ref this area group already had, when the rebuild replaced a draft
+            # carrying one. A genuinely new area group takes the next number -- and must
+            # be told which refs are still owed to the groups after it in this loop: the
+            # drafts carrying them were deleted before this ran, so `_next_ref` cannot see
+            # them, and the groups are minted in name order, so a new group sorting first
+            # would otherwise be handed the very number the group after it takes back.
+            provisional_ref = carried.pop(area_group, None) or self._next_ref(
+                project.company_id, reserved=carried.values()
+            )
             order = ProjectSalesOrder(
                 company_id=project.company_id,
                 project_id=project.id,
                 purchase_order_id=po.id,
                 schedule_version_id=schedule_version.id,
                 area_group=area_group,
-                # The ref this area group already had, when the rebuild replaced a draft
-                # carrying one. A genuinely new area group takes the next number.
-                provisional_ref=(
-                    carried.pop(area_group, None) or self._next_ref(project.company_id)
-                ),
+                provisional_ref=provisional_ref,
                 status=SO_STATUS_DRAFT,
                 grouping_origin=grouping_origin,
             )
@@ -1381,19 +1386,28 @@ class ProjectSODraftService:
         )
         return int(row[0]) if row else None
 
-    def _next_ref(self, company_id: str) -> str:
+    def _next_ref(
+        self, company_id: str, *, reserved: Optional[Iterable[str]] = None
+    ) -> str:
         """A provisional reference, from the numbering rule when one is configured.
 
         Falls back to the highest existing reference plus one rather than refusing: this
         is an INTERNAL handle that the customer never sees, and blocking a whole build on
-        an unseeded settings row would be a rule with no purpose behind it.
+        an unseeded settings row would be a rule with no purpose behind it. Nothing seeds
+        a `project_sales_order` rule today, so the fallback IS the path production takes.
+
+        ``reserved`` are references that are NOT in the table but are already spoken for:
+        the refs a rebuild is carrying from drafts it deleted a moment ago. Counted here
+        as though they were still stored, because otherwise the fallback re-mints one of
+        them and two orders claim the same reference.
         """
         from app.services.numbering_service import NumberingService
 
+        taken = {ref for ref in (reserved or ()) if ref}
         configured = NumberingService(self.db).get_next_number(
             NUMBERING_DOC_TYPE, commit_rule=False
         )
-        if configured:
+        if configured and configured not in taken:
             return configured
 
         highest = 0
@@ -1405,8 +1419,10 @@ class ProjectSODraftService:
             )
             .all()
         )
-        for (ref,) in rows:
-            tail = (ref or "")[len(_REF_PREFIX) :]
+        for ref in [row[0] for row in rows] + sorted(taken):
+            if not (ref or "").startswith(_REF_PREFIX):
+                continue
+            tail = ref[len(_REF_PREFIX) :]
             if tail.isdigit():
                 highest = max(highest, int(tail))
         return f"{_REF_PREFIX}{highest + 1:0{_REF_DIGITS}d}"
