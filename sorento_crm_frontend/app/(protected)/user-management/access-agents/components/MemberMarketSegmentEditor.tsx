@@ -4,8 +4,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  SearchableMultiSelect,
+  type SearchableMultiSelectOption,
+} from '@/components/common/SearchableMultiSelect';
 import {
   useMarketSegments,
   useMemberMarketSegments,
@@ -18,6 +28,10 @@ import {
  * both checked. A member with no segments serves ALL contacts ("Serves all").
  * Keyed by (team_id, user_id) so the same person can serve different segments
  * across teams. See PLAN-cs-team-market-segment-routing.md.
+ *
+ * Dialog rather than popover, for the reason spelled out in MemberBrandEditor:
+ * SearchableMultiSelect's own portalled popover reads as an outside click to a
+ * parent popover and would dismiss the editor mid-selection.
  */
 export default function MemberMarketSegmentEditor({
   teamId,
@@ -37,91 +51,95 @@ export default function MemberMarketSegmentEditor({
     if (open) setDraft(assigned);
   }, [open, assigned]);
 
+  const options: SearchableMultiSelectOption[] = useMemo(() => {
+    const byCode = new Map<string, SearchableMultiSelectOption>();
+    for (const s of catalog) {
+      if (!s.code || byCode.has(s.code)) continue;
+      byCode.set(s.code, { value: s.code, label: s.name });
+    }
+    // A tag whose segment has since left the catalogue stays selectable, or the
+    // member is stuck with it forever and can never go back to serving all.
+    for (const code of assigned) {
+      if (!byCode.has(code)) byCode.set(code, { value: code, label: code });
+    }
+    return Array.from(byCode.values());
+  }, [catalog, assigned]);
+
   const nameByCode = useMemo(() => {
     const m = new Map<string, string>();
-    catalog.forEach((s) => m.set(s.code, s.name));
+    options.forEach((o) => m.set(o.value, o.label));
     return m;
-  }, [catalog]);
+  }, [options]);
 
   const label = (code: string) => nameByCode.get(code) ?? code;
-
-  function toggle(code: string, checked: boolean) {
-    setDraft((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(code);
-      else next.delete(code);
-      return Array.from(next);
-    });
-  }
 
   function save() {
     setSegments.mutate(draft, { onSuccess: () => setOpen(false) });
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-6 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
-          aria-label="Edit market segments"
-        >
-          <Tag className="size-3" aria-hidden />
-          {isLoading ? (
-            <span>…</span>
-          ) : assigned.length > 0 ? (
-            <span className="flex flex-wrap items-center gap-1">
-              {assigned.map((code) => (
-                <Badge key={code} variant="secondary" className="text-[10px] font-normal">
-                  {label(code)}
-                </Badge>
-              ))}
-            </span>
-          ) : (
-            <span>Serves all</span>
-          )}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-64">
-        <div className="space-y-3">
-          <p className="text-xs font-medium text-muted-foreground">Market segments served</p>
-          {catalog.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              No market segments configured. Add some under User Management → Market Segments.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {catalog.map((opt) => {
-                const id = `member-segment-${teamId}-${userId}-${opt.code}`;
-                return (
-                  <label key={opt.code} htmlFor={id} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <Checkbox
-                      id={id}
-                      checked={draft.includes(opt.code)}
-                      onCheckedChange={(v) => toggle(opt.code, v === true)}
-                      disabled={setSegments.isPending}
-                    />
-                    <span>{opt.name}</span>
-                  </label>
-                );
-              })}
-            </div>
-          )}
-          <p className="text-xs text-muted-foreground">
-            Leave empty to serve all contacts.
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setOpen(false)} disabled={setSegments.isPending}>
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-6 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+        aria-label="Edit market segments"
+        onClick={() => setOpen(true)}
+      >
+        <Tag className="size-3" aria-hidden />
+        {isLoading ? (
+          <span>…</span>
+        ) : assigned.length > 0 ? (
+          <span className="flex flex-wrap items-center gap-1">
+            {assigned.map((code) => (
+              <Badge key={code} variant="secondary" className="text-[10px] font-normal">
+                {label(code)}
+              </Badge>
+            ))}
+          </span>
+        ) : (
+          <span>Serves all</span>
+        )}
+      </Button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Market segments served</DialogTitle>
+            <DialogDescription>Leave empty to serve all contacts.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <SearchableMultiSelect
+              value={draft}
+              onChange={setDraft}
+              options={options}
+              placeholder="All contacts"
+              emptyMessage="No matching segment."
+              disabled={setSegments.isPending}
+            />
+            {catalog.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No market segments configured. Add some under User Management → Market
+                Segments.
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setOpen(false)}
+              disabled={setSegments.isPending}
+            >
               Cancel
             </Button>
-            <Button size="sm" onClick={save} disabled={setSegments.isPending || catalog.length === 0}>
+            <Button size="sm" onClick={save} disabled={setSegments.isPending}>
               Save
             </Button>
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

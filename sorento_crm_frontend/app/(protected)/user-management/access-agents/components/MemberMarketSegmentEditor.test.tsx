@@ -25,6 +25,12 @@ function renderWithClient(ui: React.ReactElement) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
+/** Opens the editor dialog, then the multiselect menu inside it. */
+function openPicker() {
+  fireEvent.click(screen.getByLabelText(/edit market segments/i));
+  fireEvent.click(document.querySelector('[data-slot="searchable-multi-select-trigger"]')!);
+}
+
 beforeEach(() => {
   useMemberMarketSegments.mockReset();
   useMarketSegments.mockReset();
@@ -53,10 +59,23 @@ describe('MemberMarketSegmentEditor', () => {
   it('persists the selected segments on save', () => {
     useMemberMarketSegments.mockReturnValue({ data: ['retail'], isLoading: false });
     renderWithClient(<MemberMarketSegmentEditor teamId="t1" userId="u1" />);
-    fireEvent.click(screen.getByLabelText(/edit market segments/i));
-    fireEvent.click(screen.getByLabelText('Project'));
+    openPicker();
+    fireEvent.click(screen.getByRole('option', { name: 'Project' }));
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
     expect(setMutate).toHaveBeenCalledTimes(1);
     expect(setMutate.mock.calls[0][0]).toEqual(['retail', 'project']);
+  });
+
+  it('still lets a stale tag be cleared when the catalogue is empty', () => {
+    useMemberMarketSegments.mockReturnValue({ data: ['retail'], isLoading: false });
+    useMarketSegments.mockReturnValue({ data: [], isLoading: false });
+    renderWithClient(<MemberMarketSegmentEditor teamId="t1" userId="u1" />);
+    openPicker();
+    expect(screen.getByText(/no market segments configured/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'retail' }));
+    const save = screen.getByRole('button', { name: /^save$/i });
+    expect(save).not.toBeDisabled();
+    fireEvent.click(save);
+    expect(setMutate.mock.calls[0][0]).toEqual([]);
   });
 });
