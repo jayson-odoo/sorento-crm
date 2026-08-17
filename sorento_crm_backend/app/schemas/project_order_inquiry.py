@@ -22,6 +22,11 @@ class OrderInquiryRowOut(BaseModel):
     so_line_id: Optional[str] = None
     project_sales_order_id: Optional[str] = None
     sales_order_ref: Optional[str] = None
+    # AC-D06: the Project SO reference, its line number and the decision revision the Buy
+    # came from. Absent on an amendment exception row, which no revision decided.
+    project_so_ref: Optional[str] = None
+    line_no: Optional[int] = None
+    decision_revision: Optional[int] = None
     so_date: Optional[datetime] = None
     project_customer: Optional[str] = None
     is_amendment: bool = False

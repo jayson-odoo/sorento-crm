@@ -93,10 +93,12 @@ _KIND_OF_LINK = {
     LINK_DUPLICATE: KIND_DUPLICATE,
 }
 
-# The whole SO's one pre-confirmation state (AC-A03). Stage 1C adds `confirmed` on top of
-# these; no line ever carries a state of its own.
+# The whole SO's one state (AC-A03). No line ever carries a state of its own, and there is
+# no fourth value: a superseded or challenged decision reads `needs_cs_review` again.
 REVIEW_AWAITING = "awaiting_reconciliation"
 REVIEW_NEEDS_CS = "needs_cs_review"
+#: Stage 1C. The Stage 1B conditions hold AND an active supply decision exists.
+REVIEW_CONFIRMED = "confirmed"
 
 #: A core line in this state is not a candidate, and a link naming one is stale. Same word
 #: `project_so_ingest_service` retires a superseded row with.
@@ -178,6 +180,9 @@ class _OrderOutcome:
     core_so_number: Optional[str]
     lines: List[_LineOutcome] = field(default_factory=list)
     surplus: List[Tuple[Optional[str], str]] = field(default_factory=list)
+    #: Whether an ACTIVE `projects.so_supply_decisions` row covers this order (Stage 1C).
+    #: Read once per batch, so a page of fifty rows costs one more query, not fifty.
+    has_active_decision: bool = False
 
     @property
     def lines_total(self) -> int:
@@ -195,6 +200,11 @@ class _OrderOutcome:
         one still being costed is reconciled against nothing - there is no AutoCount
         document for it to disagree with - so it carries NO state rather than an
         "awaiting reconciliation" it has not earned, and the screen renders no pill.
+
+        `confirmed` sits on top of the same conditions rather than replacing them: an
+        order whose mapping has since broken is back to awaiting reconciliation whatever
+        its decision says, and a superseded or challenged decision is not an active one,
+        so the order reads Needs CS review again (AC-C06).
         """
         if self.order.status not in LIVE_SO_STATUSES:
             return None
@@ -204,7 +214,7 @@ class _OrderOutcome:
             return REVIEW_AWAITING
         if self.surplus:
             return REVIEW_AWAITING
-        return REVIEW_NEEDS_CS
+        return REVIEW_CONFIRMED if self.has_active_decision else REVIEW_NEEDS_CS
 
     @property
     def exceptions(self) -> List[Dict[str, Any]]:
@@ -340,7 +350,24 @@ class ProjectSOReconciliationService:
         Two flushes on purpose: `uq_projects_so_line_core_line` is a unique index, so two
         lines swapping core lines inside one flush would collide on the statement that
         writes the first of them.
+
+        A re-mapping is a material change (AC-C06): an active revision was decided against
+        the links that stood then, so if any of them moves it is superseded and the whole
+        SO goes back to Needs CS review. When the links stand but the facts behind them
+        have drifted - a quantity or a required date on the core line - the revision is
+        challenged instead, which says the same thing about the promise and keeps the
+        evidence of what was promised.
         """
+        relinked = [
+            row
+            for row in outcome.lines
+            if (
+                str(row.line.core_sales_order_line_id)
+                if row.line.core_sales_order_line_id
+                else None
+            )
+            != row.core_line_id
+        ]
         cleared = False
         for row in outcome.lines:
             current = (
@@ -369,6 +396,19 @@ class ProjectSOReconciliationService:
                 f"{outcome.order.autocount_doc_no or '(none)'} while this one was being "
                 "reconciled. Re-run the reconciliation to see which line it took.",
             ) from exc
+
+        from app.services.project_supply_service import ProjectSupplyService
+
+        supply = ProjectSupplyService(self.db)
+        if relinked:
+            supply.supersede_for_material_change(
+                outcome.order,
+                "The AutoCount line mapping changed after this revision was confirmed.",
+            )
+        else:
+            supply.challenge_if_drifted(
+                outcome.order, lines=[row.line for row in outcome.lines]
+            )
 
     # ---------------------------------------------------------------- the map
 
@@ -413,8 +453,9 @@ class ProjectSOReconciliationService:
             [line.product_id for lines in project_lines.values() for line in lines]
             + [line.product_id for lines in core_lines.values() for line in lines]
         )
+        decided = self._orders_with_an_active_decision(order_ids)
 
-        return {
+        outcomes = {
             str(order.id): self._outcome(
                 order,
                 project_lines.get(str(order.id), []),
@@ -425,6 +466,25 @@ class ProjectSOReconciliationService:
                 codes=codes,
             )
             for order in orders
+        }
+        for order_id, outcome in outcomes.items():
+            outcome.has_active_decision = order_id in decided
+        return outcomes
+
+    def _orders_with_an_active_decision(self, order_ids: Sequence[str]) -> set:
+        """Which of these orders CS has already confirmed (Stage 1C)."""
+        from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+        if not order_ids:
+            return set()
+        return {
+            str(row[0])
+            for row in self.db.query(SOSupplyDecision.project_sales_order_id)
+            .filter(
+                SOSupplyDecision.project_sales_order_id.in_(list(order_ids)),
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .all()
         }
 
     def _outcome(

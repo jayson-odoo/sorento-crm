@@ -6,7 +6,14 @@ covering pools come from, where the stock location comes from, how the rows are 
 once and only once, how purchasing is handed them, and how they leave the system as the
 spreadsheet the client already reads.
 
-Four things worth knowing before changing anything here.
+Five things worth knowing before changing anything here.
+
+**The standard demand row is the confirmed Buy residual, and only that**
+(`PLAN-scm-front-planning.md` section 4). `refresh_for_decision` is its ONLY writer and it
+runs inside the atomic CS confirmation. Publish writes no inquiry and reconciliation writes
+none (AC-D01), because a published order may be covered entirely by Reserve, Borrow or
+timely SPO cover and ordering all of it would buy it twice. The netting engine below still
+serves AMENDMENTS, whose exception verbs are a different thing from new demand.
 
 **The inquiry is never a second source of demand** (AC-I6). Committed quantity lives on
 `sales_order_lines` and the SCM reorder engine reads that, exactly as it does today.
@@ -18,6 +25,8 @@ to, not a record of what anybody has ordered.
 second sales order against a project whose pre-order is already spoken for must not net
 against the same 5,950 twice, so the pool is reduced by every row that already claims
 it. ``covered_by`` is the key for that: the engine writes a stable label, not free text.
+It stays NULL on a confirmed-Buy row: nothing covers it, because CS already removed the
+covered part of the line.
 
 **The stock location is never invented** (AC-H5). It is the warehouse on a CONFIRMED
 allocation from slice P9. No confirmation yet means the column is empty, and the screen
@@ -40,7 +49,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
-from app.models.order import Customer
+from app.models.order import Customer, SalesOrderLine
 from app.models.procurement import InboundShipment, SPOAllocation
 from app.models.product import Product
 from app.models.project_so import (
@@ -177,38 +186,120 @@ class ProjectOrderInquiryService:
 
     # ------------------------------------------------------------- derivation
 
-    def derive_for_sales_order(
-        self, order: ProjectSalesOrder, *, actor_user_id: Optional[str] = None
-    ) -> OrderInquiry:
-        """Every line of a confirmed sales order is new demand (AC-I1).
+    def refresh_for_decision(
+        self,
+        order: ProjectSalesOrder,
+        decision: Any,
+        buy_lines: Sequence[Dict[str, Any]],
+        *,
+        actor_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """The Buy-only handoff, written INSIDE the atomic confirmation (PLAN section 4).
 
-        Idempotent: the second call returns the inquiry the first one wrote. Derivation
-        must not depend on its caller refusing a second run, because a corrective path
-        added later would otherwise double what purchasing is told to buy.
+        The only creator of standard demand rows. Publish creates none and reconciliation
+        creates none (AC-D01): a published-but-unconfirmed order may be covered entirely by
+        Reserve, Borrow or timely SPO cover, and ordering all of it would buy it twice.
 
-        **Publish is no longer the caller** (PLAN-scm-front-planning.md section 4,
-        AC-D01). Stage 1C's atomic CS confirmation becomes the only one, with the confirmed
-        Buy residual only: a published-but-unconfirmed order may be covered entirely by
-        Reserve, Borrow or timely SPO cover, and ordering all of it here buys it twice.
+        What reaches purchasing is the confirmed Buy residual and nothing else - no netting
+        pass, no coverage verbs, `covered_by` NULL. The evidence for why the rest of the
+        line needs nothing bought belongs to the decision, not to a purchasing instruction.
+
+        Three lifecycle rules, all of them AC-C07/AC-D05:
+
+        * a still-unplaced row from a superseded revision is CANCELLED with the revision
+          that replaced it named, never edited in place;
+        * a row purchasing already actioned STAYS. Placed supply is in the ledger and this
+          service does not get to rewrite history;
+        * when the new need is lower than what was already placed, the difference becomes a
+          `CANCEL_BALANCE` exception row stating both figures, so somebody answers it.
         """
-        existing = self._existing(order.id, None)
-        if existing is not None:
-            return existing
-
-        lines = self._lines_of(order.id)
-        demand = [
-            DemandRow(
-                line_id=line.id,
-                product_id=str(line.product_id) if line.product_id else "",
-                item_code=self._product_code(line.product_id),
-                qty=_dec(line.qty),
-                delivery_date=line.delivery_date,
-                stock_location=self._stock_location(line.id),
-                change=CHANGE_NEW,
+        inquiry = self._existing(order.id, None)
+        if inquiry is None:
+            inquiry = OrderInquiry(
+                company_id=order.company_id,
+                project_sales_order_id=order.id,
+                amendment_id=None,
+                state=INQUIRY_RAISED,
+                raised_by=actor_user_id,
             )
-            for line in lines
-        ]
-        return self._write(order, None, demand, actor_user_id=actor_user_id)
+            self.db.add(inquiry)
+            self.db.flush()
+
+        created = 0
+        exceptions: List[Dict[str, Any]] = []
+        for entry in buy_lines:
+            line = entry["line"]
+            need = _dec(entry.get("buy_qty"))
+            # This sales order's OWN inquiry only. An amendment raises its exception verbs
+            # under its own inquiry (`amendment_id`), and cancelling those here would
+            # delete an instruction purchasing is still working from.
+            rows = (
+                self.db.query(OrderInquiryRow)
+                .filter(
+                    OrderInquiryRow.order_inquiry_id == inquiry.id,
+                    OrderInquiryRow.so_line_id == line.id,
+                    OrderInquiryRow.verb == IV_ORDER,
+                )
+                .all()
+            )
+            placed = _ZERO
+            for row in rows:
+                if row.state == INQUIRY_RAISED:
+                    row.state = INQUIRY_CANCELLED
+                    row.note = f"Superseded by revision {decision.revision_no}"
+                elif row.state == INQUIRY_ACTIONED:
+                    placed += _dec(row.qty)
+
+            outstanding = need - placed
+            if outstanding > _ZERO:
+                self.db.add(
+                    OrderInquiryRow(
+                        company_id=order.company_id,
+                        order_inquiry_id=inquiry.id,
+                        so_line_id=line.id,
+                        item_code=entry.get("item_code") or None,
+                        qty=outstanding,
+                        delivery_date=entry.get("required_date"),
+                        stock_location=entry.get("stock_location"),
+                        verb=IV_ORDER,
+                        # No netting on this path, so nothing covers this row: the coverage
+                        # decision was CS's and is recorded on the supply decision.
+                        covered_by=None,
+                        supply_decision_id=decision.id,
+                        state=INQUIRY_RAISED,
+                    )
+                )
+                created += 1
+            elif placed > need:
+                message = (
+                    f"Placed {_qty_str(placed)}, new need {_qty_str(need)}"
+                )
+                self.db.add(
+                    OrderInquiryRow(
+                        company_id=order.company_id,
+                        order_inquiry_id=inquiry.id,
+                        so_line_id=line.id,
+                        item_code=entry.get("item_code") or None,
+                        qty=placed - need,
+                        delivery_date=entry.get("required_date"),
+                        stock_location=entry.get("stock_location"),
+                        verb=IV_CANCEL_BALANCE,
+                        note=message,
+                        supply_decision_id=decision.id,
+                        state=INQUIRY_RAISED,
+                    )
+                )
+                exceptions.append(
+                    {
+                        "line_no": entry.get("line_no"),
+                        "item_code": entry.get("item_code"),
+                        "message": message,
+                    }
+                )
+        self.db.flush()
+        if created and self.task_for(inquiry.id) is None:
+            self._hand_to_purchasing(order, inquiry, created)
+        return {"inquiry": inquiry, "created": created, "exceptions": exceptions}
 
     def derive_for_amendment(
         self, amendment: SOAmendment, *, actor_user_id: Optional[str] = None
@@ -735,9 +826,11 @@ class ProjectOrderInquiryService:
         if not rows:
             return []
         context, names = self._context_for(rows)
+        traces = self._decision_traces(rows)
         out: List[Dict[str, Any]] = []
         for row in rows:
             meta = context.get(row.order_inquiry_id, {})
+            trace = traces.get(row.id, {})
             out.append(
                 {
                     "id": row.id,
@@ -745,6 +838,12 @@ class ProjectOrderInquiryService:
                     "so_line_id": row.so_line_id,
                     "sales_order_ref": meta.get("sales_order_ref"),
                     "project_sales_order_id": meta.get("project_sales_order_id"),
+                    # AC-D06: the buyer traces a Buy back to the Project SO, the line
+                    # number and the revision that decided it, in identifiers a person
+                    # reads - never an id.
+                    "project_so_ref": meta.get("project_so_ref"),
+                    "line_no": trace.get("line_no"),
+                    "decision_revision": trace.get("decision_revision"),
                     "so_date": meta.get("so_date"),
                     "project_customer": meta.get("project_customer"),
                     "is_amendment": meta.get("is_amendment", False),
@@ -785,6 +884,10 @@ class ProjectOrderInquiryService:
             context[inquiry.id] = {
                 "project_sales_order_id": order.id,
                 "sales_order_ref": order.autocount_doc_no or order.provisional_ref,
+                # The Project SO's OWN reference, beside the AutoCount number the
+                # sales_order_ref prefers: they are two different documents and the buyer
+                # tracing a Buy back to a project needs the one this system minted.
+                "project_so_ref": order.provisional_ref,
                 "so_date": (order.published_at or order.created_at),
                 "project_customer": labels.get(order.id),
                 "is_amendment": bool(inquiry.amendment_id),
@@ -796,6 +899,46 @@ class ProjectOrderInquiryService:
             self.db, [row.actioned_by for row in rows if row.actioned_by]
         )
         return context, names
+
+    def _decision_traces(
+        self, rows: Sequence[OrderInquiryRow]
+    ) -> Dict[str, Dict[str, Any]]:
+        """The line number and decision revision behind each row (AC-D06).
+
+        Both are absent on an amendment exception row and on anything raised before
+        Stage 1C, which is honest: those rows were not decided by a supply revision.
+        """
+        from app.models.project_so import SOSupplyDecision
+
+        line_ids = {row.so_line_id for row in rows if row.so_line_id}
+        decision_ids = {row.supply_decision_id for row in rows if row.supply_decision_id}
+        line_nos = (
+            dict(
+                self.db.query(
+                    ProjectSalesOrderLine.id, ProjectSalesOrderLine.line_no
+                )
+                .filter(ProjectSalesOrderLine.id.in_(list(line_ids)))
+                .all()
+            )
+            if line_ids
+            else {}
+        )
+        revisions = (
+            dict(
+                self.db.query(SOSupplyDecision.id, SOSupplyDecision.revision_no)
+                .filter(SOSupplyDecision.id.in_(list(decision_ids)))
+                .all()
+            )
+            if decision_ids
+            else {}
+        )
+        return {
+            row.id: {
+                "line_no": line_nos.get(row.so_line_id),
+                "decision_revision": revisions.get(row.supply_decision_id),
+            }
+            for row in rows
+        }
 
     def _project_customer_labels(self, pso_ids: set) -> Dict[str, str]:
         """`BUIMACO / TUJU RESIDENCE`, the way purchasing reads the column.
@@ -1021,3 +1164,48 @@ class ProjectOrderInquiryService:
             return ""
         row = self.db.query(Product.product_code).filter(Product.id == product_id).first()
         return row[0] if row else ""
+
+
+def confirmed_unplaced_buy_rows(
+    db: Session,
+    *,
+    product_id: Optional[str] = None,
+    warehouse_id: Optional[str] = None,
+) -> List[OrderInquiryRow]:
+    """Confirmed, still-unplaced Project Buy - the one thing SCM reads (AC-D04).
+
+    Counts the current `raised` ORDER rows of ACTIVE decisions DIRECTLY. No re-netting
+    against pre-order or inbound pools, and no subtracting customer deliveries a second
+    time: CS already decided what still has to be bought, and repeating that arithmetic
+    downstream is how the same requirement gets bought twice or vanishes entirely.
+
+    The join to core stock facts runs through
+    `projects.sales_order_lines.core_sales_order_line_id` (front planning section 4),
+    never through a reference, a document number or an item code.
+    """
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    query = (
+        db.query(OrderInquiryRow)
+        .join(
+            SOSupplyDecision, SOSupplyDecision.id == OrderInquiryRow.supply_decision_id
+        )
+        .join(
+            ProjectSalesOrderLine,
+            ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+        )
+        .join(
+            SalesOrderLine,
+            SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+        )
+        .filter(
+            SOSupplyDecision.state == DECISION_ACTIVE,
+            OrderInquiryRow.verb == IV_ORDER,
+            OrderInquiryRow.state == INQUIRY_RAISED,
+        )
+    )
+    if product_id:
+        query = query.filter(SalesOrderLine.product_id == product_id)
+    if warehouse_id:
+        query = query.filter(SalesOrderLine.warehouse_id == warehouse_id)
+    return query.all()

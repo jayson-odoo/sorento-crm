@@ -672,6 +672,16 @@ class ProjectSODeltaService:
         self._recompute(order)
         self.db.flush()
 
+        # AC-C06: an amendment is a material change, so any active supply decision is
+        # superseded and the whole SO goes back to Needs CS review. What was already
+        # placed stays in purchasing's ledger; nothing is deleted and nothing is bought
+        # again on the strength of a revision decided against the old quantities.
+        from app.services.project_supply_service import ProjectSupplyService
+
+        ProjectSupplyService(self.db).supersede_for_material_change(
+            order, f"Amendment {ocn.ocn_number} was published."
+        )
+
         # P10 (AC-I1): the amendment is derived into purchasing's own verbs AFTER the
         # delta has been applied, so each row carries the line as it now stands and says
         # what it moved from. Idempotent per amendment.

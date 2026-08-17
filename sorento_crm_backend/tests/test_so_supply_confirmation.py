@@ -151,7 +151,7 @@ def _core_line(db, so, product: Product, warehouse: Warehouse, *, qty_ordered, q
     return line
 
 
-def _project_so(db, project, *, status=SO_STATUS_PUBLISHED):
+def _project_so(db, project, *, status=SO_STATUS_PUBLISHED, so_id=None):
     order = ProjectSalesOrder(
         id=_uid(),
         company_id=project.company_id,
@@ -159,6 +159,10 @@ def _project_so(db, project, *, status=SO_STATUS_PUBLISHED):
         provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
         area_group="TOWER",
         status=status,
+        # The reconciled core sales order. Set wherever the assertion turns on the review
+        # state, because Stage 1B reads `awaiting_reconciliation` until the HEADER is
+        # linked too, not only the lines (`_header` in the reconciliation service).
+        so_id=so_id,
     )
     db.add(order)
     db.flush()
@@ -509,19 +513,28 @@ def test_reconfirming_supersedes_the_active_decision_and_increments_the_revision
 
 
 def test_a_second_confirmation_racing_an_already_active_decision_gets_a_conflict_with_no_partial_writes(api):
-    """AC-C05, via the DB-level singleton rather than real threads: simulate the winner of
-    a race already having committed an active decision, then attempt a second confirm and
-    assert it loses cleanly -- a 409 conflict, and no new decision or allocation row."""
+    """AC-C05, driven through the DB-level singleton rather than through real threads.
+
+    A confirmation that SEES an active decision supersedes it - that is reconfirmation,
+    and it is the test above. The race is the other case: two sessions each read "nothing
+    active here" and both insert, which is what the partial unique index exists to settle.
+
+    Patching `active_decision` to answer None while an active row is committed reproduces
+    exactly that: the service takes the first-confirmation path, its insert collides with
+    the winner's row, and what has to be proven is that it loses WHOLE - a 409, one
+    decision left, and not a single allocation or inquiry row from the loser's attempt.
+    """
+    from app.models.project_so import OrderInquiryRow, SOLineAllocation, SOSupplyDecision
+    from app.services.project_supply_service import ProjectSupplyService
+
     client, world = api
     db = world.db
     _stock(db, world.product, world.own_wh, on_hand=50)
-    order = _project_so(db, world.project)
+    order = _project_so(db, world.project, so_id=None)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
     line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
     db.commit()
-
-    from app.models.project_so import SOSupplyDecision
 
     winner = SOSupplyDecision(
         id=_uid(),
@@ -536,11 +549,16 @@ def test_a_second_confirmation_racing_an_already_active_decision_gets_a_conflict
     db.add(winner)
     db.commit()
 
-    response = client.post(
-        f"{BASE}/sales-orders/{order.id}/confirm",
-        json={"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}])]},
-    )
-    assert response.status_code == 409, response.text
+    original = ProjectSupplyService.active_decision
+    try:
+        ProjectSupplyService.active_decision = lambda self, pso_id: None
+        response = client.post(
+            f"{BASE}/sales-orders/{order.id}/confirm",
+            json={"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}])]},
+        )
+        assert response.status_code == 409, response.text
+    finally:
+        ProjectSupplyService.active_decision = original
 
     remaining = (
         db.query(SOSupplyDecision)
@@ -549,6 +567,55 @@ def test_a_second_confirmation_racing_an_already_active_decision_gets_a_conflict
     )
     assert len(remaining) == 1, "the loser must not have written a second active row"
     assert remaining[0].id == winner.id
+    assert db.query(SOLineAllocation).filter(
+        SOLineAllocation.so_line_id == line.id
+    ).count() == 0
+    assert db.query(OrderInquiryRow).filter(
+        OrderInquiryRow.so_line_id == line.id
+    ).count() == 0
+
+
+def test_the_database_refuses_a_second_active_revision_for_one_sales_order(api):
+    """The mechanism the test above leans on, stated on its own (AC-C05).
+
+    `uq_so_supply_decisions_active` is what makes the loser of a real race lose: without
+    it two confirmations would both commit and the same stock would be promised twice, with
+    nothing in the data to say which promise was real.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.project_so import SOSupplyDecision
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=50)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "50"}])]},
+    )
+    assert first.status_code == 200, first.text
+
+    db.add(
+        SOSupplyDecision(
+            id=_uid(),
+            company_id=world.company_id,
+            project_sales_order_id=order.id,
+            revision_no=99,
+            state="active",
+            line_snapshots=[],
+            confirmed_by=world.eling,
+            confirmed_at=None,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.flush()
+    db.rollback()
 
 
 # --------------------------------------------------------------------------- supersession
@@ -617,8 +684,8 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
     client, world = api
     db = world.db
     _stock(db, world.product, world.own_wh, on_hand=50)
-    order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
     line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
     db.commit()
@@ -626,7 +693,14 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
     decision = SOSupplyDecision(
         id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
         revision_no=1, state="active",
-        line_snapshots=[{"line_no": 10, "project_line_id": line.id, "core_line_id": core_line.id}],
+        line_snapshots=[
+            {
+                "line_no": 10,
+                "project_line_id": line.id,
+                "core_line_id": core_line.id,
+                "open_qty": "50",
+            }
+        ],
         confirmed_by=world.eling, confirmed_at=None,
     )
     db.add(decision)
@@ -655,8 +729,8 @@ def test_a_fact_drift_challenges_the_active_decision_on_read(api):
     client, world = api
     db = world.db
     _stock(db, world.product, world.own_wh, on_hand=50)
-    order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
     line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
     db.commit()
@@ -691,8 +765,8 @@ def test_review_states_for_reads_confirmed_when_an_active_decision_exists(api):
 
     client, world = api
     db = world.db
-    order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
     line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
     db.commit()
@@ -950,16 +1024,28 @@ def test_the_fulfilment_planning_list_filters_by_the_confirmed_review_state(api)
     """Section 6: `GET /fulfilment-planning` `review_state` Literal gains `confirmed`."""
     client, world = api
     db = world.db
-    order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
-    _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
     db.commit()
 
+    # The worklist row names the Project SO in `id` (`FulfilmentPlanningRow`, Stage 1B);
+    # `project_sales_order_id` is the RECONCILIATION summary's spelling of the same thing.
     unconfirmed = client.get(f"{BASE}/fulfilment-planning?review_state=confirmed")
     assert unconfirmed.status_code == 200, unconfirmed.text
-    assert order.id not in {row["project_sales_order_id"] for row in unconfirmed.json()["data"]}
+    assert order.id not in {row["id"] for row in unconfirmed.json()["data"]}
 
     needs_review = client.get(f"{BASE}/fulfilment-planning?review_state=needs_cs_review")
     assert needs_review.status_code == 200, needs_review.text
-    assert order.id in {row["project_sales_order_id"] for row in needs_review.json()["data"]}
+    assert order.id in {row["id"] for row in needs_review.json()["data"]}
+
+    confirmed = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="10")]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+
+    now_confirmed = client.get(f"{BASE}/fulfilment-planning?review_state=confirmed")
+    assert now_confirmed.status_code == 200, now_confirmed.text
+    assert order.id in {row["id"] for row in now_confirmed.json()["data"]}

@@ -44,6 +44,17 @@ REQUIRED_DATE = date(2027, 3, 1)
 # response field a display value leaked an id where a human-readable one belongs (AC-D06).
 _UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
+#: The fields that carry an id ON PURPOSE (section 6: "addressing only ... never
+#: rendered"). The row id is what the mark-actioned call posts back, and the rest are the
+#: links the screen resolves to codes and references before it draws anything.
+_ADDRESSING_KEYS = {
+    "id",
+    "order_inquiry_id",
+    "so_line_id",
+    "project_sales_order_id",
+    "supply_decision_id",
+}
+
 
 def _uid() -> str:
     return str(uuid.uuid4())
@@ -233,8 +244,11 @@ def test_inquiry_rows_appear_only_at_successful_confirmation_not_at_publish_or_r
     is that a successful confirmation must create the row in the SAME transaction."""
     client, world = api
     db = world.db
-    order = _project_so(db, world.project)
+    # Reconciled for real: the Project SO names the core sales order its lines are linked
+    # to. Without the header link, re-running reconciliation clears the line links as
+    # stale, which is Stage 1B behaviour and not what this test is about.
     core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="25")
     line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
     db.commit()
@@ -488,6 +502,7 @@ def test_committed_v_excludes_a_confirmed_project_sos_line_from_its_committed_su
         )
         product = _product(db)
         own_wh = _warehouse(db, f"ZZT-CV-{_uid()[:4]}")
+        _stock(db, product, own_wh, on_hand=5)
         core_so = _core_so(db, company_id, demand_class="project", demand_origin="scm_order_inquiry")
         core_line = _core_line(db, core_so, product, own_wh, qty_ordered="9")
         order = _project_so(db, project, so_id=core_so.id)
@@ -497,23 +512,45 @@ def test_committed_v_excludes_a_confirmed_project_sos_line_from_its_committed_su
         client, originals = _client(db, eling)
         try:
             with company_scope(db, frozenset({company_id})):
+                # 9 on the sheet, of which CS reserves 5 and buys 4. The two figures are
+                # deliberately different, so "the sheet leg is gone" and "the confirmed
+                # Buy is counted" are distinguishable in the one number below.
                 response = client.post(
                     f"{BASE}/sales-orders/{order.id}/confirm",
-                    json={"lines": [_line_payload(line.id, buy_qty="9")]},
+                    json={
+                        "lines": [
+                            _line_payload(
+                                line.id,
+                                reserve=[{"warehouse_id": own_wh.id, "qty": "5"}],
+                                buy_qty="4",
+                            )
+                        ]
+                    },
                 )
                 assert response.status_code == 200, response.text
         finally:
             _restore(originals)
 
-        committed = db.execute(
-            text(
-                "SELECT COALESCE(SUM(committed), 0) FROM scm.committed_v "
-                "WHERE product_id = :pid AND warehouse_id = :wid"
-            ),
-            {"pid": product.id, "wid": own_wh.id},
-        ).scalar()
-        assert Decimal(str(committed)) == Decimal("0"), (
-            "the sheet leg must stop being counted once the project SO is confirmed"
+        committed = Decimal(
+            str(
+                db.execute(
+                    text(
+                        "SELECT COALESCE(SUM(committed), 0) FROM scm.committed_v "
+                        "WHERE product_id = :pid AND warehouse_id = :wid"
+                    ),
+                    {"pid": product.id, "wid": own_wh.id},
+                ).scalar()
+            )
+        )
+        # The sheet's 9 must be gone whatever else the view carries. This slice's view
+        # answers 0 (the confirmed Buy reaches SCM through
+        # `confirmed_unplaced_buy_rows`, and the committed Buy LEG is Stage 2's own
+        # addition to this view); a database that already has Stage 2's version answers 4,
+        # the confirmed Buy residual. Both count the requirement exactly once, which is
+        # the criterion. 9 or 13 would be the double count this exists to stop.
+        assert committed in (Decimal("0"), Decimal("4")), (
+            "the sheet leg must stop being counted once the project SO is confirmed, "
+            f"and the view answered {committed}"
         )
 
 
@@ -545,6 +582,11 @@ def test_serialized_inquiry_rows_carry_human_identifiers_and_no_uuid(api):
     assert row["decision_revision"] == 1
     assert row["project_so_ref"] == order.provisional_ref
 
-    for value in row.values():
-        if isinstance(value, str):
-            assert not _UUID_RE.search(value), f"a UUID leaked into a display field: {value}"
+    # Section 6 is explicit that a handful of fields are ADDRESSING and are never
+    # rendered - the row's own id is what "mark actioned" posts back, and the sheet needs
+    # the ids of the things it names by code. Every other field is something a person
+    # reads, and a UUID in one of those is the defect this guards.
+    for key, value in row.items():
+        if key in _ADDRESSING_KEYS or not isinstance(value, str):
+            continue
+        assert not _UUID_RE.search(value), f"a UUID leaked into a display field: {value}"
