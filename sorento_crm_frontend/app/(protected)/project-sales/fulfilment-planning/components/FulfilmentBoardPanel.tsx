@@ -110,16 +110,32 @@ export function FulfilmentBoardPanel({
 
   const decidedKeys = React.useMemo(() => new Set(Object.keys(draft)), [draft]);
 
-  // Recomputed from the board's own contributions rather than from the raw lines, so the
-  // counter and the cells can never disagree about which line is which.
-  // Straight off the board's own contributions, which carry the SERVER's keys. Rebuilding a
-  // key on this side is what makes the counter silently stop at zero (deviation 5).
+  /**
+   * Which order each contribution key belongs to, ACCUMULATED across every board shown.
+   *
+   * A verdict is only ever given on a cell that was on screen, so every draft key passes
+   * through here once. Rebuilding this from the current board instead would drop a verdict the
+   * moment its cell left the day window, and the counter would fall as the planner scrolled.
+   * The key is stored, never parsed: the server owns its format (deviation 5).
+   */
+  const owners = React.useRef<Map<string, string>>(new Map());
+  for (const cell of board.data?.cells ?? []) {
+    for (const contribution of cell.contributions) {
+      owners.current.set(contribution.key, contribution.sales_order_id);
+    }
+  }
+
+  /**
+   * The standings are the SERVER's, off `board.orders`, which counts every row of the
+   * selection. Only the verdicts are ours.
+   *
+   * Counting them from `cells` was a live defect: at day granularity the cells are a 30-day
+   * window, so a forty-line order read "3 of 3 lines decided" and the Confirm beside it
+   * promised to leave nothing behind.
+   */
   const standings = React.useMemo<BoardOrderStanding[]>(() => {
     if (!board.data) return [];
-    return standingsFor(
-      board.data.cells.flatMap((cell) => cell.contributions),
-      draft,
-    );
+    return standingsFor(board.data.orders, owners.current, draft);
   }, [board.data, draft]);
 
   const previews = React.useMemo<Record<string, BoardCommitPreview>>(() => {
@@ -153,19 +169,19 @@ export function FulfilmentBoardPanel({
   /**
    * How many LINES of the selection are already past their required date.
    *
-   * Off the server's `past_count`, which counts contributions whose OWN required date is past
-   * - not the buckets that are tinted. The two disagree on purpose: a line due yesterday sits
-   * in the week that contains `as_of`, whose period has not ended, so counting tinted buckets
-   * would report none of this week's late lines. Nothing here compares a date: the server owns
-   * `as_of` and every comparison against it.
+   * The server's two selection-scoped totals, read straight. NOT summed off the cells: cells
+   * are what a window is showing, so the same board reported a different number on day than on
+   * week and reported none at all when the window was scrolled somewhere empty. The per-cell
+   * `past_count` is still right for its own cell; it was only wrong as a banner source.
+   *
+   * It also is not the count of TINTED columns, which is a different question: a line due
+   * yesterday sits in the week containing `as_of`, whose period has not ended, so that week is
+   * not tinted while the line is certainly late.
    */
-  const pastTotal = React.useMemo(() => {
-    const cells = board.data?.cells ?? [];
-    return {
-      lines: cells.reduce((total, cell) => total + (cell.past_count ?? 0), 0),
-      allLines: cells.reduce((total, cell) => total + cell.contributions.length, 0),
-    };
-  }, [board.data]);
+  const pastTotal = {
+    lines: board.data?.past_line_count ?? 0,
+    allLines: board.data?.line_count ?? 0,
+  };
 
   return (
     <div className="space-y-4">
@@ -243,12 +259,27 @@ export function FulfilmentBoardPanel({
         <Card>
           <CardContent className="px-6 py-10 text-center">
             <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
-            <h3 className="mt-2 text-sm font-semibold">
-              These sales orders owe nothing that can be planned
-            </h3>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              Every line of the selection is already delivered, closed or covered.
-            </p>
+            {/* No cells does NOT mean nothing is owed. A day window scrolled to a stretch
+                nobody owes has no cells while the selection still holds every one of its
+                lines, and "these orders owe nothing" would flatly contradict them. The
+                selection-scoped total is the only thing that can tell the two apart. */}
+            {(board.data?.line_count ?? 0) > 0 ? (
+              <>
+                <h3 className="mt-2 text-sm font-semibold">Nothing is owed in these dates</h3>
+                <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                  {`The selection holds ${board.data?.line_count} lines on other dates.`}
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 className="mt-2 text-sm font-semibold">
+                  These sales orders owe nothing that can be planned
+                </h3>
+                <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                  Every line of the selection is already delivered, closed or covered.
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
       ) : (

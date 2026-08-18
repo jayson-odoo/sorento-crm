@@ -70,8 +70,7 @@ from app.models.project_so import (
     DECISION_ACTIVE,
     DECISION_CHALLENGED,
     DECISION_SUPERSEDED,
-    SO_STATUS_AMENDED,
-    SO_STATUS_PUBLISHED,
+    LIVE_SO_STATUSES,
     AllocationClaim,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -100,7 +99,14 @@ _ZERO = Decimal("0")
 
 #: The statuses a Project SO may be confirmed in. A draft has not left the building and a
 #: blocked one has findings in the way.
-CONFIRMABLE_STATUSES = (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
+#:
+#: `adopted` is IN, which is `PLAN-fulfilment-planning-from-autocount-so.md` section 4's own
+#: verdict on this site ("Confirming it is the point"): an order adopted from the AutoCount
+#: book is a real customer commitment that nobody in this module authored, and planning it
+#: is the entire journey. It is `LIVE_SO_STATUSES` exactly - the same three the worklist and
+#: the reconciliation service already treat as live - so the tuple is imported rather than
+#: restated, or the two would drift the next time a status is added.
+CONFIRMABLE_STATUSES = LIVE_SO_STATUSES
 
 #: The warehouse segment the hot-selling test is about (PLAN 3.3). Stored on the warehouse
 #: row, never parsed out of a code.
@@ -368,7 +374,9 @@ class ProjectSupplyService:
             "project_sales_order_id": str(order.id),
             "provisional_ref": order.provisional_ref,
             "autocount_doc_no": order.autocount_doc_no,
-            "project_id": str(order.project_id),
+            # None, never "None": an adopted order has no project (section 4), and a
+            # stringified null is a value the screen renders and links to.
+            "project_id": str(order.project_id) if order.project_id else None,
             "project_code": header.get("project_code"),
             "project_name": header.get("project_name"),
             "status": order.status,
@@ -933,6 +941,20 @@ class ProjectSupplyService:
         if not item.donor_project_id:
             refuse(invalid, "Name the project this stock is being borrowed from.")
             return
+        if self._project_id_of(fact.line) is None:
+            # An order adopted from the AutoCount book has no project (section 4), and a
+            # cross-project Borrow is a claim from one project to another: there is no
+            # side to record. Refused by name here rather than exploding on
+            # `AllocationClaim.from_project_id`, which is NOT NULL. The sheet does not
+            # offer this Borrow on an adopted order either (`_borrow_candidates`); free
+            # stock at another location is still available as an ordinary Borrow.
+            refuse(
+                invalid,
+                "This sales order is planned straight from the AutoCount book and belongs "
+                "to no project, so it cannot borrow another project's stock. Borrow the "
+                "free stock at that location instead.",
+            )
+            return
         donor = (
             self.db.query(Project).filter(Project.id == item.donor_project_id).first()
         )
@@ -1286,13 +1308,20 @@ class ProjectSupplyService:
                 )
             )
 
-    def _project_id_of(self, line: ProjectSalesOrderLine) -> str:
+    def _project_id_of(self, line: ProjectSalesOrderLine) -> Optional[str]:
+        """The project the line's order belongs to, or None for an adopted order.
+
+        None rather than `str(None)`: this feeds `AllocationClaim.from_project_id`, which
+        is a NOT NULL uuid column, so a stringified null would have reached Postgres as the
+        text "None" and failed the write of an otherwise valid confirmation. The confirm
+        recheck refuses a cross-project Borrow before it gets here (`_check_borrow`).
+        """
         order = (
             self.db.query(ProjectSalesOrder.project_id)
             .filter(ProjectSalesOrder.id == line.project_sales_order_id)
             .first()
         )
-        return str(order[0]) if order else ""
+        return str(order[0]) if order and order[0] else None
 
     def _donor_impact(self, item: Any, fact: _LineFacts, qty: Decimal) -> Dict[str, Any]:
         free = self._free_at(fact.product_id, str(item.warehouse_id))
@@ -1583,8 +1612,14 @@ class ProjectSupplyService:
             query = query.filter(
                 ProjectSalesOrder.id != exclude_order_id
             )
+        # An ADOPTED order holds stock with no project behind it (section 4), and the
+        # holding project is a dict KEY here - so it is the empty string rather than the
+        # string "None", which is a value that looks like an id and matches nothing. The
+        # hold still nets out of free stock either way; what it cannot be is a cross-project
+        # Borrow donor, because there is no project to borrow FROM.
         return [
-            ((str(product_id), str(warehouse_id)), str(project_id), _dec(qty))
+            ((str(product_id), str(warehouse_id)), str(project_id) if project_id else "",
+             _dec(qty))
             for product_id, warehouse_id, project_id, qty in query.all()
         ]
 
@@ -1875,7 +1910,10 @@ class ProjectSupplyService:
         holds = [
             (warehouse_id, project_id, qty)
             for (product_id, warehouse_id, project_id), qty in self._holds_cache.items()
-            if product_id == fact.product_id and qty > _ZERO
+            # `project_id` empty means an adopted order holds it and there is no project to
+            # name as the donor. Offering it would be offering a Borrow that cannot be
+            # confirmed, so it is not offered - the stock stays netted out of free either way.
+            if product_id == fact.product_id and qty > _ZERO and project_id
         ]
         if holds:
             projects = {

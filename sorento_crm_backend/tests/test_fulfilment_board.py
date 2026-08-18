@@ -770,6 +770,13 @@ def test_the_board_route_answers_the_selection_it_was_given():
         assert body["policy"]["name"]
         assert [row["item_code"] for row in body["productRows"]] == [product.product_code]
         assert body["cells"][0]["contributions"][0]["so_number"] == order.so_number
+        # The selection-scoped totals reach the wire. A field the service returns but the
+        # response model does not declare is dropped silently, and the banner would then read
+        # zero rather than fail.
+        assert body["line_count"] == 1
+        assert body["past_line_count"] == 0
+        assert body["unplannable_line_count"] == 0
+        assert body["contested_line_count"] == 0
         # No identifier a person has to resolve is rendered anywhere: the human keys are the
         # sales-order number, the item code and the warehouse code.
         assert body["cells"][0]["contributions"][0]["item_code"] == product.product_code
@@ -895,3 +902,137 @@ def test_the_day_window_falls_back_to_the_earliest_owed_when_everything_is_past(
         dated = [b for b in board["dateBuckets"] if b["kind"] == "dated"]
         assert dated[0]["key"] == "2025-06-15", "open where the work is, not on an empty today"
         assert dated[0]["is_past"] is True
+
+
+# --------------------------------------------------------------------------- #
+# board-level totals: the selection's truth, not the window's
+# --------------------------------------------------------------------------- #
+
+
+def _past_world(db):
+    """One order, three products, most of it already past, spread over three years."""
+    warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+    order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+    for offset, when in enumerate(
+        [date(2024, 3, 4), date(2025, 6, 15), date(2026, 8, 17), date(2026, 9, 3)]
+    ):
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        _stock(db, product, warehouse, on_hand=1)
+        _line(db, order, product, qty="5", required_date=when, warehouse=warehouse)
+    # One line nobody stated a location for, and one with no date at all.
+    spare = _product(db, f"ZZT-{_uid()[:6]}")
+    _line(db, order, spare, qty="5", required_date=date(2024, 3, 4), warehouse=None)
+    _line(db, order, spare, qty="5", required_date=None, warehouse=warehouse)
+    return order
+
+
+def test_the_board_totals_are_the_selections_and_do_not_move_with_the_granularity():
+    """The FE banner reads "143 of 153 lines are already past their required date".
+
+    Summed off the cells ON SCREEN that sentence is true at week and month and vanishes at day,
+    because the day window opens on work still to come and so holds no past cell at all - the
+    planner switching to the closest view silently loses the most important number on the
+    board. So the total is the SELECTION's, computed before any window is applied.
+    """
+    with blank_session() as db:
+        order = _past_world(db)
+
+        boards = {
+            gran: _service(db).build([order.so_number], granularity=gran, as_of=TODAY)
+            for gran in ("day", "week", "month")
+        }
+
+        for gran, board in boards.items():
+            assert board["line_count"] == 6, gran
+            assert board["past_line_count"] == 4, gran
+            assert board["unplannable_line_count"] == 1, gran
+        # And the day board really does show none of them, which is the whole point.
+        day_cells_past = sum(cell["past_count"] for cell in boards["day"]["cells"])
+        assert day_cells_past == 0
+        assert boards["day"]["past_line_count"] == 4
+
+
+def test_moving_the_day_window_does_not_change_the_board_totals():
+    with blank_session() as db:
+        order = _past_world(db)
+
+        here = _service(db).build([order.so_number], granularity="day", as_of=TODAY)
+        long_ago = _service(db).build(
+            [order.so_number],
+            granularity="day",
+            as_of=TODAY,
+            day_window_start=date(2024, 3, 1),
+        )
+        empty = _service(db).build(
+            [order.so_number],
+            granularity="day",
+            as_of=TODAY,
+            day_window_start=date(2029, 1, 1),
+        )
+
+        for board in (here, long_ago, empty):
+            assert board["line_count"] == 6
+            assert board["past_line_count"] == 4
+            assert board["unplannable_line_count"] == 1
+        # The windows genuinely differ, so the totals holding still means something. The
+        # dateless column survives the window because it is not on the timeline at all, which
+        # is why this counts DATED cells rather than all of them.
+        assert [c for c in empty["cells"] if c["bucket_key"] != "no_date"] == []
+        assert sum(c["past_count"] for c in long_ago["cells"]) == 2
+
+
+def test_a_line_outside_the_day_window_is_still_served_from_its_pile():
+    """The window is a display bound, so it must not change what anybody is proposed.
+
+    Two lines competing for one unit at one location: whoever the ranking serves first takes
+    it and the other is contested. Look at that through a day window containing neither of
+    them, and the contest still has to be reported - the board's totals describe the selection,
+    not the columns that happen to be on screen.
+    """
+    with blank_session() as db:
+        _policy(db, {"need_by_date": 1.0})
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=10)
+        winner = _order(db, so_number="ZZT-SO-WINDOW1", order_date=date(2026, 1, 1))
+        loser = _order(db, so_number="ZZT-SO-WINDOW2", order_date=date(2026, 1, 1))
+        _line(db, winner, product, qty="10", required_date=date(2026, 9, 1), warehouse=warehouse)
+        _line(db, loser, product, qty="10", required_date=date(2026, 9, 4), warehouse=warehouse)
+
+        week = _service(db).build(
+            ["ZZT-SO-WINDOW1", "ZZT-SO-WINDOW2"], granularity="week", as_of=TODAY
+        )
+        far = _service(db).build(
+            ["ZZT-SO-WINDOW1", "ZZT-SO-WINDOW2"],
+            granularity="day",
+            as_of=TODAY,
+            day_window_start=date(2029, 1, 1),
+        )
+
+        assert week["contested_line_count"] == 1
+        assert [c for c in far["cells"] if c["bucket_key"] != "no_date"] == [], (
+            "the window shows nothing of the timeline"
+        )
+        assert far["contested_line_count"] == 1, "and the contest is still reported"
+
+
+def test_each_orders_standing_counts_the_whole_order_not_the_window():
+    """`orders[]` is the other place the window could lie, and it must not.
+
+    The screen prints "N of M lines decided" per order. Rebuilt from the cells on screen, M
+    shrinks to the window at day granularity and an order of forty lines reads as three - so
+    the standings are counted from the selection here, and the screen overlays only its own
+    draft count on top.
+    """
+    with blank_session() as db:
+        order = _past_world(db)
+
+        day = _service(db).build([order.so_number], granularity="day", as_of=TODAY)
+        month = _service(db).build([order.so_number], granularity="month", as_of=TODAY)
+
+        assert [(s["so_number"], s["line_count"], s["unplannable_count"]) for s in day["orders"]] == [
+            (order.so_number, 6, 1)
+        ]
+        assert day["orders"] == month["orders"]
+        # And the window really is narrower than the order, so the equality means something.
+        assert sum(len(c["contributions"]) for c in day["cells"]) < 6

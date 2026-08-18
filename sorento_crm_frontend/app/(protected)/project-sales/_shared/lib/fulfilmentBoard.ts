@@ -1,11 +1,13 @@
 /**
  * What the fulfilment board needs from the CLIENT, now that the server computes the board.
  *
- * Seam B owns the arithmetic: bucketing, ranking, allocation and the contribution keys all come
- * down the wire. Three things stay here because they are the client's own business:
+ * Seam B owns the arithmetic: bucketing, ranking, allocation, the selection-scoped totals and
+ * the contribution keys all come down the wire. Three things stay here because they are the
+ * client's own business:
  *
  *   - `standingsFor`, because verdicts live in the board's draft and the server always sends
- *     `decided_count: 0` (deviation 4);
+ *     `decided_count: 0` (deviation 4). Everything ELSE about a standing is read, not counted:
+ *     anything counted off the cells is window-scoped and therefore wrong;
  *   - `commitPreviewFor`, which turns a standing into the sentence beside its Confirm;
  *   - `amendNeedsReason`, which decides whether an edit is displacing the ranking.
  *
@@ -22,53 +24,50 @@ import type {
 } from '../types/fulfilmentPlanning.types';
 import { toMinor } from './supplyComposition';
 
-/** The least a contribution has to carry for the standings to be computed from it. */
-export interface StandingContribution {
-  /** The SERVER's key. Never rebuilt on this side - see the tests for why. */
-  key: string;
-  sales_order_id: string;
-  so_number: string;
-  customer_name?: string | null;
-  fulfilment_location?: string | null;
-}
+/**
+ * Which sales order each contribution key belongs to.
+ *
+ * Accumulated by the panel across every board it has shown, rather than rebuilt from the cells
+ * currently on screen: a verdict given on a cell that a later window no longer displays is
+ * still that order's verdict, and dropping it would make the counter fall as the planner
+ * scrolled. The key itself is never parsed - the server owns its format (deviation 5).
+ */
+export type ContributionOwners = Map<string, string>;
 
 /**
- * Per order: how many of its lines in this selection carry a verdict yet.
+ * Per order: how many lines it has IN THE SELECTION, and how many of them carry a verdict yet.
  *
  * This is the number that makes the partial-decision reality visible (13.4). A cell holds one
  * product on one date and an order spans many lines across many dates, so approving one cell
  * almost never finishes an order.
  *
- * It reads the contribution's OWN key and never rebuilds one. The server derives `line_no`
- * (core sales-order lines have none) and owns the key format, so any disagreement about
- * bucketing between the two sides would make every rebuilt key miss - and miss SILENTLY, with
- * the draft still filling up while the counter sat at zero. Deviation 5.
+ * `line_count` and `unplannable_count` are the SERVER's, off `board.orders`, which is built
+ * from every row of the selection. They used to be counted from the cells on screen, and at day
+ * granularity the cells are a 30-day window: a forty-line order read "3 of 3 lines decided" and
+ * the Confirm beside it promised to leave nothing behind. A count that shrinks when you change
+ * the view is not a count of anything.
  *
- * The server's `orders[].decided_count` is always 0 by design (deviation 4): verdicts live in
- * the client draft, so the count is ours to compute and the server's field is not read.
+ * Only `decided_count` is ours, because verdicts live in the client draft; the server's field is
+ * always 0 by design (deviation 4) and is overwritten here. A draft key nobody owns counts for
+ * nobody rather than being guessed at.
  */
 export function standingsFor(
-  contributions: StandingContribution[],
+  orders: BoardOrderStanding[],
+  owners: ContributionOwners,
   draft: BoardDraft,
 ): BoardOrderStanding[] {
-  const byOrder = new Map<string, BoardOrderStanding>();
-  for (const contribution of contributions) {
-    const standing = byOrder.get(contribution.sales_order_id) ?? {
-      sales_order_id: contribution.sales_order_id,
-      so_number: contribution.so_number,
-      customer_name: contribution.customer_name ?? null,
-      line_count: 0,
-      decided_count: 0,
-      unplannable_count: 0,
-    };
-    standing.line_count += 1;
-    if (!contribution.fulfilment_location) standing.unplannable_count += 1;
-    if (draft[contribution.key]) standing.decided_count += 1;
-    byOrder.set(contribution.sales_order_id, standing);
+  const decided = new Map<string, number>();
+  for (const key of Object.keys(draft)) {
+    const salesOrderId = owners.get(key);
+    if (!salesOrderId) continue;
+    decided.set(salesOrderId, (decided.get(salesOrderId) ?? 0) + 1);
   }
-  return [...byOrder.values()].sort((left, right) =>
-    left.so_number.localeCompare(right.so_number),
-  );
+  return [...orders]
+    .map((order) => ({
+      ...order,
+      decided_count: decided.get(order.sales_order_id) ?? 0,
+    }))
+    .sort((left, right) => left.so_number.localeCompare(right.so_number));
 }
 
 /**

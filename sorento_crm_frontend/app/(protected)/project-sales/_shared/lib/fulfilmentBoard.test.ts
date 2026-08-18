@@ -465,6 +465,15 @@ describe('buildBoard: a line with no location (AC-FP16)', () => {
   });
 });
 
+/**
+ * The standings are SELECTION-scoped, and that is the whole point of them.
+ *
+ * `line_count` and `unplannable_count` come off the server's `orders[]`, which is built from
+ * every row of the selection. Counting them from the cells ON SCREEN was a live defect: at day
+ * granularity the cells are a 30-day window, so a forty-line order read "3 of 3 lines decided"
+ * and `commitPreviewFor` then promised to leave nothing behind. Only `decided_count` is the
+ * client's, because verdicts live in the client draft.
+ */
 describe('standingsFor and commitPreviewFor (13.4)', () => {
   // Built through buildBoard so the contributions carry REAL keys, which is the only kind the
   // counter reads now.
@@ -477,10 +486,11 @@ describe('standingsFor and commitPreviewFor (13.4)', () => {
     { today: TODAY },
   );
   const contributions = board.cells.flatMap((cell) => cell.contributions);
+  const owners = new Map(contributions.map((entry) => [entry.key, entry.sales_order_id]));
 
   it('counts the lines of each order inside the selection', () => {
     expect(
-      standingsFor(contributions, {}).map(
+      standingsFor(board.orders, owners, {}).map(
         (entry) => `${entry.so_number} ${entry.decided_count}/${entry.line_count}`,
       ),
     ).toEqual(['SO000001 0/2', 'SO000002 0/1']);
@@ -488,14 +498,27 @@ describe('standingsFor and commitPreviewFor (13.4)', () => {
 
   it('counts a verdict against the order whose contribution it was', () => {
     const key = contributions.find((entry) => entry.so_number === 'SO000001')!.key;
-    const standings = standingsFor(contributions, { [key]: { verdict: 'approved' } });
+    const standings = standingsFor(board.orders, owners, { [key]: { verdict: 'approved' } });
     expect(standings[0].decided_count).toBe(1);
     expect(standings[1].decided_count).toBe(0);
   });
 
+  it('counts nothing for a draft key no contribution ever carried', () => {
+    // The rebuild bug's shape (deviation 5): a plausible key nobody owns is not guessed at.
+    const standings = standingsFor(board.orders, owners, {
+      'so-a|1|WESERP10B|2026-09-27': { verdict: 'approved' },
+    });
+    expect(standings.every((entry) => entry.decided_count === 0)).toBe(true);
+  });
+
+  it('ignores the server decided_count, which is always 0 (deviation 4)', () => {
+    const orders = board.orders.map((entry) => ({ ...entry, decided_count: 99 }));
+    expect(standingsFor(orders, owners, {})[0].decided_count).toBe(0);
+  });
+
   it('states what a partial confirmation would commit and what it would leave', () => {
     const key = contributions.find((entry) => entry.so_number === 'SO000001')!.key;
-    const standings = standingsFor(contributions, { [key]: { verdict: 'approved' } });
+    const standings = standingsFor(board.orders, owners, { [key]: { verdict: 'approved' } });
     // Confirm is NOT gated on completeness (13.4): the planner commits what they decided and
     // the rest keeps flowing to reorder planning, so the screen owes the consequence.
     expect(commitPreviewFor(standings[0])).toEqual({
@@ -506,7 +529,7 @@ describe('standingsFor and commitPreviewFor (13.4)', () => {
   });
 
   it('has nothing to commit before anything is decided', () => {
-    expect(commitPreviewFor(standingsFor(contributions, {})[0]).committing).toBe(0);
+    expect(commitPreviewFor(standingsFor(board.orders, owners, {})[0]).committing).toBe(0);
   });
 
   it('counts a line that can never be decided here as left behind, and names it as blocked', () => {
@@ -517,11 +540,24 @@ describe('standingsFor and commitPreviewFor (13.4)', () => {
       ],
       { today: TODAY },
     );
-    const preview = commitPreviewFor(
-      standingsFor(withBlocked.cells.flatMap((cell) => cell.contributions), {})[0],
-    );
+    const preview = commitPreviewFor(standingsFor(withBlocked.orders, new Map(), {})[0]);
     expect(preview.leaving_undecided).toBe(2);
     expect(preview.blocked).toBe(1);
+  });
+
+  it('does NOT shrink to the day window: the order is counted over the whole selection', () => {
+    const lines = [
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, required_date: '2026-09-04' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, required_date: '2028-01-04' }),
+    ];
+    const week = buildBoard(lines, { today: TODAY });
+    const day = buildBoard(lines, { today: TODAY, granularity: 'day' });
+
+    // The window genuinely hides one of the two lines...
+    expect(day.cells.flatMap((cell) => cell.contributions)).toHaveLength(1);
+    // ...and the standings are unmoved by that, exactly as the server's own day == month test.
+    expect(day.orders).toEqual(week.orders);
+    expect(standingsFor(day.orders, new Map(), {})[0].line_count).toBe(2);
   });
 });
 
@@ -599,32 +635,32 @@ describe('amendNeedsReason', () => {
  * reintroducing the rebuild.
  */
 describe('standingsFor reads the server key (deviation 5)', () => {
-  const contributions = [
+  const orders = [
     {
-      key: '41125fbc-4176-4044-b819-c196c9f6467f|1|CSK11A|2026-09-28',
       sales_order_id: '41125fbc-4176-4044-b819-c196c9f6467f',
       so_number: 'SO396488',
       customer_name: 'PP CHIN HIN SDN BHD (PROJECT)',
-      fulfilment_location: 'BRW-BB',
+      line_count: 2,
+      decided_count: 0,
+      unplannable_count: 0,
     },
     {
-      key: '41125fbc-4176-4044-b819-c196c9f6467f|2|CSK11A|2026-10-05',
-      sales_order_id: '41125fbc-4176-4044-b819-c196c9f6467f',
-      so_number: 'SO396488',
-      customer_name: 'PP CHIN HIN SDN BHD (PROJECT)',
-      fulfilment_location: 'BRW-BB',
-    },
-    {
-      key: 'aaaaaaaa-0000-0000-0000-000000000001|1|WESERP10B|2022-06-27',
       sales_order_id: 'aaaaaaaa-0000-0000-0000-000000000001',
       so_number: 'SO345418',
       customer_name: 'PEMBINAAN YUEN SENG SDN BHD (PROJECT)',
-      fulfilment_location: null,
+      line_count: 1,
+      decided_count: 0,
+      unplannable_count: 1,
     },
   ];
+  const owners = new Map([
+    ['41125fbc-4176-4044-b819-c196c9f6467f|1|CSK11A|2026-09-28', orders[0].sales_order_id],
+    ['41125fbc-4176-4044-b819-c196c9f6467f|2|CSK11A|2026-10-05', orders[0].sales_order_id],
+    ['aaaaaaaa-0000-0000-0000-000000000001|1|WESERP10B|2022-06-27', orders[1].sales_order_id],
+  ]);
 
   it('counts a verdict against the order whose contribution it was', () => {
-    const standings = standingsFor(contributions, {
+    const standings = standingsFor(orders, owners, {
       '41125fbc-4176-4044-b819-c196c9f6467f|1|CSK11A|2026-09-28': { verdict: 'approved' },
     });
     const chin = standings.find((entry) => entry.so_number === 'SO396488');
@@ -634,20 +670,22 @@ describe('standingsFor reads the server key (deviation 5)', () => {
 
   it('counts nothing when the draft key is not one the server sent', () => {
     // This is the exact shape of the rebuild bug: a plausible key that no contribution has.
-    const standings = standingsFor(contributions, {
+    const standings = standingsFor(orders, owners, {
       '41125fbc-4176-4044-b819-c196c9f6467f|1|CSK11A|2026-09-27': { verdict: 'approved' },
     });
     expect(standings.every((entry) => entry.decided_count === 0)).toBe(true);
   });
 
   it('still counts a line the sales order gave no location as unplannable', () => {
-    const standings = standingsFor(contributions, {});
+    const standings = standingsFor(orders, owners, {});
     const yuen = standings.find((entry) => entry.so_number === 'SO345418');
     expect(yuen?.unplannable_count).toBe(1);
   });
 
-  it('ignores the server decided_count, which is always 0 (deviation 4)', () => {
-    const standings = standingsFor(contributions, {
+  it('counts a verdict on a contribution the current window no longer shows', () => {
+    // The owner map outlives the board: a cell decided at week granularity is still that
+    // order's line after the planner switches to day and it scrolls out of the window.
+    const standings = standingsFor(orders, owners, {
       'aaaaaaaa-0000-0000-0000-000000000001|1|WESERP10B|2022-06-27': { verdict: 'rejected' },
     });
     expect(standings.find((entry) => entry.so_number === 'SO345418')?.decided_count).toBe(1);

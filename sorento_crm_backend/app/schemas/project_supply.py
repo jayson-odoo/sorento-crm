@@ -120,7 +120,12 @@ class SupplyProposal(BaseModel):
     project_sales_order_id: str
     provisional_ref: str
     autocount_doc_no: Optional[str] = None
-    project_id: str
+    #: NULLABLE since adoption (`PLAN-fulfilment-planning-from-autocount-so.md` section 4):
+    #: an order adopted from the AutoCount book has no project registration and must not
+    #: invent one, so all three project fields are absent on that path. Optional here so
+    #: the value is a null rather than the string "None" - which is what a required field
+    #: turned it into, and which the screen would have rendered and linked to.
+    project_id: Optional[str] = None
     project_code: Optional[str] = None
     project_name: Optional[str] = None
     status: str

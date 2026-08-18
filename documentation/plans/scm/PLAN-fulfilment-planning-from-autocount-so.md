@@ -551,6 +551,39 @@ Two changes only:
 `propose_line`, `confirm`, `attribute_sources`, the snapshots, the allocations and the Buy handoff
 are untouched.
 
+**Completed while building seam C, 18 August 2026 - four places the missing project still broke the
+journey, all found by walking the adopted path end to end** (`tests/test_adopted_order_supply_sheet.py`,
+reproduced against the live adopted orders SO391698 and SO324265):
+
+1. `proposal_for` serialised `str(order.project_id)` into a NOT-NULL schema field, so an adopted
+   order's sheet answered the STRING `"None"`. Every frontend guard is a truthiness check
+   (`proposal?.project_id && <Link href={...}>`), which a non-empty string passes, so the Order
+   Inquiry link rendered and pointed at `/project-sales/None/order-inquiries`.
+   `SupplyProposal.project_id` is `Optional[str]` and the service answers `None`.
+2. The **Confirm** and **Re-sync** routes ran `get_project_or_404(db, order.project_id)`, which
+   answers 404 "Project not found" for `None` - the last steps of the journey were unreachable on
+   every adopted order. Both now go through one `_assert_can_act_on` helper implementing this plan's
+   own rule (section 2, "Authorisation with no project"): the module permission is the whole gate
+   when there is no project, and `assert_can_edit_project` is kept when there is one.
+3. `CONFIRMABLE_STATUSES` was still `(published, amended)`, so confirming an adopted order answered
+   409 "not published yet". It is now `LIVE_SO_STATUSES`, which is section 4's own verdict for that
+   site ("IN - confirming it is the point"), imported rather than restated.
+4. **A cross-project Borrow is refused on an adopted order, by name.** `AllocationClaim` records a
+   claim FROM one project TO another and `from_project_id` is NOT NULL; an adopted order has no
+   FROM side, and the old `str(project_id)` reached Postgres as the text `"None"`. The sheet no
+   longer offers another project's stock as a Borrow candidate on such an order, and a payload that
+   asks for one anyway is a failing line ("planned straight from the AutoCount book and belongs to
+   no project"), not a 500 after every recheck has passed. Borrowing free stock at another location
+   is unaffected. Symmetrically, an adopted order's own confirmed hold is not offered TO other
+   orders as a cross-project donor, while still being netted out of free stock.
+
+**Two gaps left open deliberately, because they are screen decisions rather than defects**, both
+about step 6 (purchasing) on the adopted path: the project-scoped Order Inquiry list, summary and
+export (`/projects/{project_id}/order-inquiry-rows`) cannot show an order that has no project - the
+per-sales-order surface (`/sales-orders/{pso_id}/order-inquiry`) reaches it and is tested - and
+`_hand_to_purchasing` writes no `ProjectTask` and sends no notification for an adopted order,
+because the task hangs off a project. Purchasing gets the rows; nobody is told they arrived.
+
 ### 5.4 `project_so_ingest_service.py`
 
 - `reconcile_core_order` (`:259`) gains a fifth outcome: the real number's core row is already held

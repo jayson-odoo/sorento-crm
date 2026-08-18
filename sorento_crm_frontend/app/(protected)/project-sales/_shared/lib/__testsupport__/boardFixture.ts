@@ -15,6 +15,7 @@ import type {
   BoardContribution,
   BoardDateBucket,
   BoardGranularity,
+  BoardOrderStanding,
   BoardPolicy,
   BoardProductRow,
   BoardRankFactor,
@@ -422,20 +423,32 @@ export function buildBoard(
     today,
     options.dayWindowStart,
   );
+  const shown = new Set(dateBuckets.map((bucket) => bucket.key));
   const cells: BoardCell[] = [];
 
-  for (const bucket of dateBuckets) {
+  // ALLOCATION RUNS OVER EVERY BUCKET IN THE SELECTION, in date order, and the window is
+  // applied afterwards purely to decide which cells are emitted. Allocating only the displayed
+  // buckets made `contested` window-COMPUTED rather than window-scoped: a line outside the day
+  // window got no proposal at all, so it could not be contested even in principle, and the same
+  // line read Reserve on week and had no verdict on day.
+  const allBuckets = [...bucketKeys]
+    .filter((key) => key !== NO_DATE_BUCKET)
+    .sort()
+    .concat(bucketKeys.has(NO_DATE_BUCKET) ? [NO_DATE_BUCKET] : []);
+
+  for (const bucketKey of allBuckets) {
     for (const item of [...productSet].sort()) {
-      const contributions = contributionsByCell.get(`${item}|${bucket.key}`);
+      const contributions = contributionsByCell.get(`${item}|${bucketKey}`);
       if (!contributions || contributions.length === 0) continue;
       // Score first, then serve down the ranking: the order stock is given out in IS the
       // ranking, so computing it after the sort would be describing a decision already taken.
       factorsForCell(contributions, lineByKey, policy);
       contributions.sort(compareContributions);
       allocate(contributions, remaining, consumed);
+      if (!shown.has(bucketKey)) continue;
       cells.push({
         item_code: item,
-        bucket_key: bucket.key,
+        bucket_key: bucketKey,
         total_qty: fromMinor(
           contributions.reduce((total, entry) => total + toMinor(entry.qty), 0),
         ),
@@ -452,15 +465,49 @@ export function buildBoard(
     .sort()
     .map((item_code) => ({ item_code }));
 
+  const everyContribution = [...contributionsByCell.values()].flat();
+
   return {
     granularity,
     policy,
     as_of: today,
+    // Counted over the whole SELECTION, never over `cells`: these are the numbers a window must
+    // not be able to move, and the day window is what proved it.
+    line_count: everyContribution.length,
+    past_line_count: everyContribution.filter((entry) => entry.is_past).length,
+    unplannable_line_count: everyContribution.filter((entry) => entry.unplannable).length,
+    contested_line_count: everyContribution.filter((entry) => entry.contested).length,
     dateBuckets,
     productRows,
     cells,
-    orders: standingsFor(cells.flatMap((cell) => cell.contributions), {}),
+    orders: ordersFor(everyContribution),
   };
+}
+
+/**
+ * One standing per order, over every contributing line of the selection.
+ *
+ * `decided_count` is 0 here exactly as the server sends it (deviation 4): the verdicts are the
+ * client's, and `standingsFor` overlays them.
+ */
+function ordersFor(contributions: BoardContribution[]): BoardOrderStanding[] {
+  const byOrder = new Map<string, BoardOrderStanding>();
+  for (const contribution of contributions) {
+    const standing = byOrder.get(contribution.sales_order_id) ?? {
+      sales_order_id: contribution.sales_order_id,
+      so_number: contribution.so_number,
+      customer_name: contribution.customer_name ?? null,
+      line_count: 0,
+      decided_count: 0,
+      unplannable_count: 0,
+    };
+    standing.line_count += 1;
+    if (contribution.unplannable) standing.unplannable_count += 1;
+    byOrder.set(contribution.sales_order_id, standing);
+  }
+  return [...byOrder.values()].sort((left, right) =>
+    left.so_number.localeCompare(right.so_number),
+  );
 }
 
 /**

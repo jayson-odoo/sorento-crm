@@ -56,7 +56,10 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
-import type { BoardPolicy } from '../../_shared/types/fulfilmentPlanning.types';
+import type {
+  BoardGranularity,
+  BoardPolicy,
+} from '../../_shared/types/fulfilmentPlanning.types';
 
 const TODAY = '2026-08-18';
 
@@ -76,8 +79,12 @@ function demand(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
   };
 }
 
-function boardOf(lines: BoardDemandLine[], freeStock: Record<string, string> = {}) {
-  return buildBoard(lines, { today: TODAY, freeStock });
+function boardOf(
+  lines: BoardDemandLine[],
+  freeStock: Record<string, string> = {},
+  granularity: BoardGranularity = 'week',
+) {
+  return buildBoard(lines, { today: TODAY, freeStock, granularity });
 }
 
 function renderPanel(soNumbers = ['SO403340', 'SO398322'], onBack: () => void = vi.fn()) {
@@ -226,6 +233,32 @@ describe('FulfilmentBoardPanel: the axes', () => {
     );
     expect(
       screen.getByText('1 of 2 lines are already past their required date'),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The banner counts the SELECTION, not the columns on screen. The server sends
+   * `past_line_count` / `line_count` at the top level for exactly this reason: summing
+   * `cell.past_count` counts only what a window happens to be showing, so the same board read
+   * differently on day than on week. The per-cell count stays correct for the cell itself.
+   */
+  it('reads the selection-scoped totals rather than summing the cells on screen', async () => {
+    const board = boardOf([
+      demand({ line_no: 1, required_date: '2022-07-03' }),
+      demand({ line_no: 2, required_date: '2026-09-04' }),
+    ]);
+    getPlanningBoard.mockResolvedValue({
+      ...board,
+      // What the server counted over the whole selection; the two cells on screen are a
+      // fraction of it, and summing them would report "1 of 2".
+      line_count: 161,
+      past_line_count: 130,
+    });
+
+    renderPanel();
+
+    expect(
+      await screen.findByText('130 of 161 lines are already past their required date'),
     ).toBeInTheDocument();
   });
 
@@ -434,6 +467,97 @@ describe('FulfilmentBoardPanel: the commit rail (13.4)', () => {
   });
 });
 
+/**
+ * The counter the captain asked to see, at the granularity that used to lie about it.
+ *
+ * The standings were built from the cells on screen, so at day granularity a forty-line order
+ * read "3 of 3 lines decided" and Confirm promised to leave nothing behind. The server's
+ * `orders[]` is selection-scoped; only the verdicts are the client's.
+ */
+describe('FulfilmentBoardPanel: the commit rail is selection-scoped, not window-scoped', () => {
+  /** Three lines inside the first day window, thirty-seven far outside it. */
+  function fortyLines() {
+    const inside = Array.from({ length: 3 }, (_unused, index) =>
+      demand({ line_no: index + 1, item_code: `IN-${index}`, required_date: '2026-09-04' }),
+    );
+    const outside = Array.from({ length: 37 }, (_unused, index) =>
+      demand({ line_no: 100 + index, item_code: `OUT-${index}`, required_date: '2028-01-04' }),
+    );
+    return [...inside, ...outside];
+  }
+
+  it('counts all forty lines at day granularity, where only three are on screen', async () => {
+    const lines = fortyLines();
+    getPlanningBoard.mockImplementation((_orders: unknown, granularity: BoardGranularity) =>
+      Promise.resolve(boardOf(lines, {}, granularity)),
+    );
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByText('0 of 40 lines decided')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('granularity'), { target: { value: 'day' } });
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'day', false, {}),
+    );
+
+    // The window shows three of the forty; the counter must still say forty.
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    expect(within(matrix).getAllByRole('button')).toHaveLength(3);
+    await waitFor(() => expect(screen.getByText('0 of 40 lines decided')).toBeInTheDocument());
+  });
+
+  it('states what a decision leaves behind against the whole order, not the window', async () => {
+    const lines = fortyLines();
+    getPlanningBoard.mockImplementation((_orders: unknown, granularity: BoardGranularity) =>
+      Promise.resolve(boardOf(lines, {}, granularity)),
+    );
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.change(screen.getByLabelText('granularity'), { target: { value: 'day' } });
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'day', false, {}),
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /IN-0, 100 across 1 sales order/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Confirms 1, leaves 39 undecided for reorder planning.'),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it('keeps a verdict counted after the window scrolls past the cell it was made on', async () => {
+    const lines = fortyLines();
+    getPlanningBoard.mockImplementation((_orders: unknown, granularity: BoardGranularity) =>
+      Promise.resolve(boardOf(lines, {}, granularity)),
+    );
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Decide a line that only the WEEK board shows...
+    fireEvent.click(
+      await screen.findByRole('button', { name: /OUT-0, 100 across 1 sales order/ }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+    await waitFor(() => expect(screen.getByText('1 of 40 lines decided')).toBeInTheDocument());
+
+    // ...then move to a window that does not contain it. The verdict is still the planner's.
+    fireEvent.change(screen.getByLabelText('granularity'), { target: { value: 'day' } });
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'day', false, {}),
+    );
+    await waitFor(() => expect(screen.getByText('1 of 40 lines decided')).toBeInTheDocument());
+  });
+});
+
 describe('FulfilmentBoardPanel: the ranking policy (13.5)', () => {
   /** A board with the policy the server actually sends, flag and all. */
   function boardWithPolicy(policy: Partial<BoardPolicy>) {
@@ -587,6 +711,29 @@ describe('FulfilmentBoardPanel: states', () => {
     expect(
       await screen.findByText('These sales orders owe nothing that can be planned'),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * The same window-scoped mistake as the banner, in the emptiest possible form: a day window
+   * scrolled to a stretch nobody owes has no cells, and "these orders owe nothing" is then a
+   * flat contradiction of the 161 lines the selection is holding.
+   */
+  it('does not call the selection empty when the window is merely showing nothing', async () => {
+    const board = boardOf([demand()]);
+    getPlanningBoard.mockResolvedValue({
+      ...board,
+      granularity: 'day',
+      cells: [],
+      line_count: 161,
+      past_line_count: 130,
+    });
+
+    renderPanel();
+
+    expect(await screen.findByText('Nothing is owed in these dates')).toBeInTheDocument();
+    expect(
+      screen.queryByText('These sales orders owe nothing that can be planned'),
+    ).not.toBeInTheDocument();
   });
 
   it('does not flash an empty or error state while loading', () => {

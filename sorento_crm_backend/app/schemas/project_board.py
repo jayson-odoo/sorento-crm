@@ -166,3 +166,24 @@ class PlanningBoard(BaseModel):
     product_rows: List[BoardProductRow] = Field(default=[], alias="productRows")
     cells: List[BoardCell] = []
     orders: List[BoardOrderStanding] = []
+
+    # ---- selection-scoped totals -------------------------------------------------
+    #
+    # Counted over every contributing line of the SELECTION, before any window is applied.
+    # Read these for a banner; never sum the cells on screen for one.
+    #
+    # The difference bites at day granularity. The 30-column window opens on work still to
+    # come, so it holds no past cell at all: a banner summing `BoardCell.past_count` reads
+    # "143 of 153 lines are already past their required date" at week and month and then
+    # DISAPPEARS at day, losing the most important number on the board exactly when the
+    # planner is looking closest.
+    #: Contributing lines in the selection.
+    line_count: int = 0
+    #: Of those, the ones whose own required date is behind `as_of`.
+    past_line_count: int = 0
+    #: Of those, the ones whose sales order states no fulfilment location (AC-FP16).
+    unplannable_line_count: int = 0
+    #: Of those, the ones the ranking could not cover because a higher-ranked line took the
+    #: supply first. Allocation runs over the whole selection, not over the window, so this is
+    #: the selection's contest count on every granularity.
+    contested_line_count: int = 0

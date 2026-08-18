@@ -295,15 +295,19 @@ class FulfilmentBoardService:
         )
         products = sorted({row.item_code for row in rows})
 
-        # Board order: bucket by bucket, product by product, and inside a cell by rank. That
-        # is the order the one pile is served in, so a line owed in 2025 is served before a
-        # line owed in 2030 rather than losing to it by an accident of iteration. With the
-        # buckets now plainly chronological this falls out of the axis itself, where before it
-        # needed the aggregate past column pinned to the front.
+        # Serve order: bucket by bucket in date order, product by product, and inside a cell by
+        # rank. That is the order the one pile is served in, so a line owed in 2025 is served
+        # before a line owed in 2030 rather than losing to it by an accident of iteration. With
+        # the buckets now plainly chronological this falls out of the axis itself, where before
+        # it needed the aggregate past column pinned to the front.
+        #
+        # Built from EVERY bucket the selection has, never from the ones on screen. The day
+        # window is a display bound, and a display bound that changed what a line was proposed
+        # would make the same line read Reserve on one view and Buy on another.
         served: List[_Row] = []
-        for bucket in buckets:
+        for bucket_key in self._serve_order({row.bucket_key for row in rows}):
             for item in products:
-                served.extend(cells_by_key.get((item, bucket["key"]), []))
+                served.extend(cells_by_key.get((item, bucket_key), []))
 
         self._allocate(served)
 
@@ -336,6 +340,18 @@ class FulfilmentBoardService:
             "productRows": [{"item_code": item, "description": None} for item in products],
             "cells": cells,
             "orders": self._standings(rows),
+            # SELECTION-scoped totals, counted over every contributing line before any window
+            # is applied - never over the cells on screen.
+            #
+            # The screen cannot compute these for itself. Summed off the visible cells, "143 of
+            # 153 lines are already past their required date" is right at week and month and
+            # DISAPPEARS at day, because the 30-day window opens on work still to come and so
+            # holds no past cell at all. The planner switching to the closest view would
+            # silently lose the most important number on the board.
+            "line_count": len(rows),
+            "past_line_count": sum(1 for row in rows if row.is_past),
+            "unplannable_line_count": sum(1 for row in rows if row.unplannable),
+            "contested_line_count": sum(1 for row in rows if row.contested),
         }
 
     # ---------------------------------------------------------------- policy
@@ -748,6 +764,23 @@ class FulfilmentBoardService:
                 }
             )
         return buckets
+
+    @staticmethod
+    def _serve_order(keys: Iterable[str]) -> List[str]:
+        """Every bucket the selection has, in the order the piles are served.
+
+        Chronological, with the dateless column last: a line nobody has dated cannot claim
+        stock ahead of one with a date on it. Deliberately independent of `_buckets`, which
+        answers a different question - what is on SCREEN - and at day granularity answers it
+        with a 30-column window. Allocating over the window instead would leave every line
+        outside it with no proposal at all and would make the board's contest counts describe
+        the columns rather than the selection.
+        """
+        present = set(keys)
+        ordered = sorted(key for key in present if key != NO_DATE_BUCKET)
+        if NO_DATE_BUCKET in present:
+            ordered.append(NO_DATE_BUCKET)
+        return ordered
 
     @staticmethod
     def _default_day_window(dated: Sequence[str], as_of: date) -> Optional[date]:

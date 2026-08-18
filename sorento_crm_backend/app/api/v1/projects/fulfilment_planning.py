@@ -55,6 +55,25 @@ VIEW = "projects.projects.view"
 EDIT = "projects.projects.edit"
 
 
+def _assert_can_act_on(db: Session, order, current_user: dict) -> None:
+    """Write authorisation for one planning record, whether or not it has a project.
+
+    `assert_can_edit_project` cannot run without a project, and an order adopted from the
+    AutoCount book has none by design (`PLAN-fulfilment-planning-from-autocount-so.md`
+    section 2, "Authorisation with no project"): the module permission on the route is then
+    the whole gate, and the per-project check is kept for records that DO have a project.
+    Passing `order.project_id` straight to `get_project_or_404` answered 404 "Project not
+    found" for every adopted order, which took Confirm and Re-sync - the last steps of the
+    journey - off the screen entirely. Company scope is enforced by the mixin either way.
+    """
+    if not order.project_id:
+        return
+    project = projects.get_project_or_404(db, order.project_id)
+    projects.assert_can_edit_project(
+        db, project, current_user["id"], permission_slugs(db, current_user["id"])
+    )
+
+
 @router.get("/fulfilment-planning", response_model=ListResponse[FulfilmentPlanningRow])
 def list_fulfilment_planning(
     query: Optional[str] = Query(
@@ -283,10 +302,7 @@ def confirm_supply(
         validate_uuid_path(pso_id, resource="Sales order")
         service = ProjectSupplyService(db)
         order = service.get_order(pso_id)
-        project = projects.get_project_or_404(db, order.project_id)
-        projects.assert_can_edit_project(
-            db, project, current_user["id"], permission_slugs(db, current_user["id"])
-        )
+        _assert_can_act_on(db, order, current_user)
         body = service.confirm(order, payload, actor_user_id=current_user["id"])
         db.commit()
         return body
@@ -309,10 +325,7 @@ def rerun_reconciliation(
     try:
         validate_uuid_path(pso_id, resource="Sales order")
         order = ProjectSODraftService(db).get_order(pso_id)
-        project = projects.get_project_or_404(db, order.project_id)
-        projects.assert_can_edit_project(
-            db, project, current_user["id"], permission_slugs(db, current_user["id"])
-        )
+        _assert_can_act_on(db, order, current_user)
         body = ProjectSOReconciliationService(db).reconcile(order)
         db.commit()
         return body

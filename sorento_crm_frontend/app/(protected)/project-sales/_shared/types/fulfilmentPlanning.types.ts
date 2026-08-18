@@ -614,9 +614,9 @@ export interface BoardOrderStanding {
   sales_order_id: string;
   so_number: string;
   customer_name?: string | null;
-  /** Lines of this order inside the current selection. */
+  /** Lines of this order inside the SELECTION - never only the ones a window is showing. */
   line_count: number;
-  /** How many of those lines carry a verdict in the draft. */
+  /** How many of those lines carry a verdict in the draft. The client's, never the server's. */
   decided_count: number;
   /** Lines that can never be decided here because their sales order states no location. */
   unplannable_count: number;
@@ -638,16 +638,39 @@ export interface BoardCommitPreview {
   blocked: number;
 }
 
-/** `GET /project-sales/fulfilment-planning/board`. A pure read: opening it claims nothing. */
+/**
+ * `GET /project-sales/fulfilment-planning/board`. A pure read: opening it claims nothing.
+ *
+ * The four `*_count` totals are SELECTION-scoped: counted over every contributing line before
+ * any window is applied, so they are identical on day, week and month and do not move when the
+ * day window is scrolled somewhere empty. Anything summed off `cells` is window-scoped and
+ * answers a different question - see `line_count`.
+ */
 export interface PlanningBoard {
   granularity: BoardGranularity;
   /** Which policy produced the ranking on show. Always stated (13.5). */
   policy: BoardPolicy;
   /** The date the board was built against, so `is_past` is reproducible in a test. */
   as_of: string;
+  /**
+   * Every contributing line in the selection, windowed or not. The denominator of every
+   * headline number on this screen: summing `cells[].contributions.length` instead counts what
+   * a window happens to be showing, which is how "160 of 160" became "1 of 2" on a day view.
+   */
+  line_count: number;
+  /** Of those, the lines whose own required date is past. The banner's numerator. */
+  past_line_count: number;
+  /** Of those, the lines whose sales order states no fulfilment location (AC-FP16). */
+  unplannable_line_count: number;
+  /** Of those, the lines the allocation rule could not cover from free stock (13.5). */
+  contested_line_count: number;
   dateBuckets: BoardDateBucket[];
   productRows: BoardProductRow[];
   cells: BoardCell[];
+  /**
+   * One standing per selected order, built from ALL its rows rather than the displayed ones.
+   * `decided_count` is always 0 here (deviation 4) and is overlaid from the client draft.
+   */
   orders: BoardOrderStanding[];
 }
 
