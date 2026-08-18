@@ -80,7 +80,9 @@ Applied by the caller when result ≠ current state:
 3. New `event_type` value `reassignment` in `ConversationSLAEventLog` (Text column — no
    migration needed; confirm no enum/check constraint).
 4. `scripts/amend_tier1_membership_violations.py` — auto-fix: keep latest membership,
-   delete older, print removals. Idempotent.
+   delete older, print removals. Idempotent. **Retired (deleted) 2026-08-18**: it enforced
+   the superseded global per-user invariant and a rerun would have deleted now-legal
+   cross-team-set memberships (see `PLAN-tier1-teamset-invariant.md`).
 5. `scripts/backfill_tracking_team_from_assignee.py` — open trackings, JOIN-based
    set-where-mismatch, routing fields only. Idempotent.
 
