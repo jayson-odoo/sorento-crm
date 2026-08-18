@@ -10,10 +10,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildColumnStates,
   compareQty,
+  diffScheduleQuantities,
   groupPhasesByArea,
   isQty,
   normaliseQty,
   phaseRowLabel,
+  schedulePhaseDateMoves,
   signedQty,
   subtractQty,
   sumQty,
@@ -304,5 +306,202 @@ describe('phase grouping', () => {
     expect(phaseRowLabel({ label: null, sequence: 3 })).toBe('Phase 3');
     expect(phaseRowLabel({ label: '  ', sequence: 3 })).toBe('Phase 3');
     expect(phaseRowLabel({ label: 'Level 2 & 7', sequence: 1 })).toBe('Level 2 & 7');
+  });
+});
+
+describe('schedulePhaseDateMoves (section 9.1)', () => {
+  it('reports a phase whose promoted date differs from this version, with the day delta', () => {
+    const moves = schedulePhaseDateMoves([
+      {
+        id: 'ph1',
+        area_group: 'TOWER',
+        sequence: 1,
+        label: 'Level 2 & 7',
+        delivery_date: '2027-01-07',
+        promoted_delivery_date: '2026-07-01',
+      },
+    ]);
+
+    expect(moves).toHaveLength(1);
+    expect(moves[0]).toMatchObject({
+      phaseId: 'ph1',
+      label: 'Level 2 & 7',
+      area: 'TOWER',
+      from: '2026-07-01',
+      to: '2027-01-07',
+      deltaDays: 190,
+    });
+  });
+
+  it('leaves out a phase with no promoted date, or one that did not move', () => {
+    const moves = schedulePhaseDateMoves([
+      {
+        id: 'ph1',
+        area_group: 'TOWER',
+        sequence: 1,
+        label: null,
+        delivery_date: '2027-01-07',
+        promoted_delivery_date: null,
+      },
+      {
+        id: 'ph2',
+        area_group: 'TOWER',
+        sequence: 2,
+        label: null,
+        delivery_date: '2027-01-07',
+        promoted_delivery_date: '2027-01-07',
+      },
+    ]);
+
+    expect(moves).toHaveLength(0);
+  });
+
+  it('reads a pulled-in date as a negative delta', () => {
+    const moves = schedulePhaseDateMoves([
+      {
+        id: 'ph1',
+        area_group: null,
+        sequence: 1,
+        label: null,
+        delivery_date: '2026-01-01',
+        promoted_delivery_date: '2026-01-11',
+      },
+    ]);
+
+    expect(moves[0].deltaDays).toBe(-10);
+  });
+});
+
+describe('diffScheduleQuantities (section 9.1)', () => {
+  const priorPhases = [{ id: 'prior-ph1', area_group: 'TOWER', sequence: 1, label: 'Level 2 & 7' }];
+  const currentPhases = [
+    { id: 'cur-ph1', area_group: 'TOWER', sequence: 1, label: 'Level 2 & 7' },
+  ];
+
+  it('matches phases by (area_group, sequence) and products by id across two versions', () => {
+    const { changes, unchangedCount } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'cur-ph1', product_id: 'p1', qty: '66' }],
+      },
+      {
+        phases: priorPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'prior-ph1', product_id: 'p1', qty: '72' }],
+      },
+    );
+
+    expect(unchangedCount).toBe(0);
+    expect(changes).toEqual([
+      {
+        phaseId: 'cur-ph1',
+        phaseLabel: 'Level 2 & 7',
+        area: 'TOWER',
+        productLabel: 'SRTWC8613-RL',
+        from: '72',
+        to: '66',
+      },
+    ]);
+  });
+
+  it('counts a matched cell with the same quantity as unchanged', () => {
+    const { changes, unchangedCount } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'cur-ph1', product_id: 'p1', qty: '72' }],
+      },
+      {
+        phases: priorPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'prior-ph1', product_id: 'p1', qty: '72.00' }],
+      },
+    );
+
+    expect(changes).toHaveLength(0);
+    expect(unchangedCount).toBe(1);
+  });
+
+  it('falls back to the product code when neither version has resolved the product', () => {
+    const { changes } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: null, product_code: 'SRTWB7055' })],
+        cells: [{ phase_id: 'cur-ph1', product_id: null, product_index: 0, qty: '20' }],
+      },
+      {
+        phases: priorPhases,
+        products: [product({ product_id: null, product_code: 'SRTWB7055' })],
+        cells: [{ phase_id: 'prior-ph1', product_id: null, product_index: 0, qty: '10' }],
+      },
+    );
+
+    expect(changes).toEqual([
+      expect.objectContaining({ productLabel: 'SRTWB7055', from: '10', to: '20' }),
+    ]);
+  });
+
+  it('reports a quantity the prior version had that this one no longer carries', () => {
+    const { changes } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [],
+      },
+      {
+        phases: priorPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'prior-ph1', product_id: 'p1', qty: '72' }],
+      },
+    );
+
+    expect(changes).toEqual([
+      expect.objectContaining({ productLabel: 'SRTWC8613-RL', from: '72', to: null }),
+    ]);
+  });
+
+  it('reports a quantity on a phase+product the prior version never had, as added', () => {
+    const { changes } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'cur-ph1', product_id: 'p1', qty: '72' }],
+      },
+      {
+        phases: [{ id: 'prior-ph9', area_group: 'COMMON AREA', sequence: 9, label: null }],
+        products: [product({ product_id: 'p9' })],
+        cells: [{ phase_id: 'prior-ph9', product_id: 'p9', qty: '5' }],
+      },
+    );
+
+    expect(changes).toEqual([
+      expect.objectContaining({ productLabel: 'SRTWC8613-RL', from: null, to: '72' }),
+    ]);
+  });
+
+  it('leaves out a prior quantity whose phase no longer exists on this version at all', () => {
+    const { changes } = diffScheduleQuantities(
+      {
+        phases: currentPhases,
+        products: [product({ product_id: 'p1' })],
+        cells: [{ phase_id: 'cur-ph1', product_id: 'p1', qty: '72' }],
+      },
+      {
+        phases: [
+          ...priorPhases,
+          { id: 'prior-ph9', area_group: 'COMMON AREA', sequence: 9, label: null },
+        ],
+        products: [product({ product_id: 'p1' }), product({ product_id: 'p9' })],
+        cells: [
+          { phase_id: 'prior-ph1', product_id: 'p1', qty: '72' },
+          { phase_id: 'prior-ph9', product_id: 'p9', qty: '5' },
+        ],
+      },
+    );
+
+    // The matched pair is unchanged (silent); the phase COMMON AREA::9 does not exist on
+    // this version at all, so nothing honest can be said about its removed quantity.
+    expect(changes).toHaveLength(0);
   });
 });

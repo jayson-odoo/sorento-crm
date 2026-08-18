@@ -7,6 +7,8 @@ import type {
   AmendmentDetail,
   AmendmentPreview,
   AmendmentPreviewBody,
+  AmendmentRowDecisionInput,
+  AutocountChangeListResponse,
   PoVersionOption,
   ProjectSalesOrderDetail,
   ProjectSalesOrderListParams,
@@ -432,6 +434,53 @@ export async function publishAmendment(amendmentId: string): Promise<AmendmentDe
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to publish this amendment'));
   return response.json();
+}
+
+/**
+ * Accept or decline rows on a PROPOSED amendment (section 9.3). Declined rows are excluded
+ * from the amendment and are never keyed into AutoCount; the reason is required server-side
+ * for each one. 409 once the amendment is published - nothing left to decide.
+ */
+export async function updateAmendmentRowDecisions(
+  amendmentId: string,
+  decisions: Record<string, AmendmentRowDecisionInput>,
+): Promise<AmendmentDetail> {
+  const response = await apiFetch(`${BASE}/amendments/${amendmentId}/rows`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decisions }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the decision'));
+  return response.json();
+}
+
+/**
+ * The accepted rows, in the export's own column order, so the change list can be READ before
+ * it is downloaded (section 9.4).
+ */
+export async function getAmendmentAutocountChangeList(
+  amendmentId: string,
+): Promise<AutocountChangeListResponse> {
+  const response = await apiFetch(`${BASE}/amendments/${amendmentId}/autocount-change-list`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the AutoCount change list'));
+  return response.json();
+}
+
+/** The same rows, as the workbook a person keys into AutoCount from. */
+export async function downloadAmendmentAutocountChangeListXlsx(
+  amendmentId: string,
+): Promise<{ blob: Blob; filename: string | null }> {
+  const response = await apiFetch(
+    `${BASE}/amendments/${amendmentId}/autocount-change-list.xlsx`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to export the change list'));
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(response.headers.get('Content-Disposition')),
+  };
 }
 
 // ------------------------------------------------------------- version pickers

@@ -22,6 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useProject } from '../../../_shared/hooks/useProjects';
 import {
+  useDeliverySchedulePriorVersion,
   useDeliveryScheduleVersion,
   useDeliveryScheduleVersionMutations,
   useDeliveryScheduleVersionNeighbours,
@@ -50,6 +51,7 @@ import { DeliveryScheduleMatrix } from './DeliveryScheduleMatrix';
 import type { ColumnFocusRequest, ScheduleGridController } from './DeliveryScheduleMatrix';
 import { poProductOptions } from './DeliveryScheduleProductPicker';
 import { DeliveryScheduleReconciliationList } from './DeliveryScheduleReconciliationList';
+import { DeliveryScheduleRevisionDiff } from './DeliveryScheduleRevisionDiff';
 
 /**
  * Reviewing one version of a delivery schedule.
@@ -82,6 +84,8 @@ export function DeliveryScheduleReviewClient({
     useDeliveryScheduleVersionMutations(projectId, versionId);
   // The demo screen has no server behind it, so it has no neighbours to ask for either.
   const neighbours = useDeliveryScheduleVersionNeighbours(versionId, { enabled: !demo });
+  // The version this one revises, for the was -> now diff. No-op on a version 1 or on demo.
+  const priorVersion = useDeliverySchedulePriorVersion(version, { enabled: !demo });
 
   /**
    * The PO this schedule was checked against, for the column pickers.
@@ -454,6 +458,20 @@ export function DeliveryScheduleReviewClient({
         </div>
       )}
 
+      {version.amendment_preview_url && (
+        <div
+          data-testid="amendment-needed-banner"
+          className="flex flex-col gap-3 rounded-lg border border-[var(--color-warning-accent,var(--color-yellow-500))]/50 bg-[var(--color-warning-soft,var(--color-yellow-100))] px-3 py-2 text-sm dark:bg-[var(--color-warning-soft,var(--color-yellow-950))] sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span className="break-words">
+            This schedule is confirmed; the linked sales order has not been amended yet.
+          </span>
+          <Button asChild size="sm" variant="outline" className="shrink-0">
+            <Link href={version.amendment_preview_url}>Review the amendment</Link>
+          </Button>
+        </div>
+      )}
+
       {readingNow && <ExtractionProgress version={version} />}
 
       {phase === 'failed' && (
@@ -524,6 +542,14 @@ export function DeliveryScheduleReviewClient({
 
       {!readingNow && columns.length > 0 && (
         <>
+          {version.version_no > 1 && (
+            <DeliveryScheduleRevisionDiff
+              version={version}
+              priorVersion={priorVersion.data}
+              priorLoading={priorVersion.isLoading}
+            />
+          )}
+
           <Card>
             <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle className="text-sm">Reconciliation</CardTitle>

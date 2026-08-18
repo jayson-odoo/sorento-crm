@@ -211,7 +211,7 @@ interface PhaseLike {
 }
 
 /** The column a cell belongs to, mirroring `columnKey` below. */
-function cellColumnKey(cell: CellLike): string {
+export function cellColumnKey(cell: CellLike): string {
   if (cell.product_id) return cell.product_id;
   if (cell.product_index !== null && cell.product_index !== undefined) {
     return `#${cell.product_index}`;
@@ -441,4 +441,206 @@ export function phaseRowLabel(phase: {
 }): string {
   const label = phase.label?.trim();
   return label ? label : `Phase ${phase.sequence}`;
+}
+
+// ------------------------------------------------------------------ revision diff (section 9.1)
+
+/** A phase's identity across versions: `id` is per-version, `(area_group, sequence)` is not. */
+function phaseAgnosticKey(phase: { area_group: string | null; sequence: number }): string {
+  return `${phase.area_group ?? ''}::${phase.sequence}`;
+}
+
+/**
+ * A product's identity across versions: the id once resolved, else the code the document
+ * printed. Null when neither is known, which means this column cannot be matched to its
+ * counterpart on the other version at all.
+ */
+function productAgnosticKey(product: {
+  product_id: string | null;
+  product_code: string | null;
+}): string | null {
+  if (product.product_id) return `id:${product.product_id}`;
+  if (product.product_code) return `code:${product.product_code.trim().toUpperCase()}`;
+  return null;
+}
+
+export interface PhaseDateMove {
+  phaseId: string;
+  label: string;
+  area: string | null;
+  /** What the project held before this version (`promoted_delivery_date`). */
+  from: string;
+  /** What this version says. */
+  to: string;
+  /** Positive: pushed out. Negative: pulled in. Null when either date does not parse. */
+  deltaDays: number | null;
+}
+
+function diffDaysIso(a: string, b: string): number | null {
+  const from = Date.parse(`${a}T00:00:00Z`);
+  const to = Date.parse(`${b}T00:00:00Z`);
+  if (Number.isNaN(from) || Number.isNaN(to)) return null;
+  return Math.round((to - from) / 86_400_000);
+}
+
+/**
+ * Which phases moved since whatever the project held before this version, straight off the
+ * payload (`promoted_delivery_date`) - no extra fetch needed for dates.
+ */
+export function schedulePhaseDateMoves(
+  phases: {
+    id: string;
+    area_group: string | null;
+    sequence: number;
+    label: string | null;
+    delivery_date: string | null;
+    promoted_delivery_date?: string | null;
+  }[],
+): PhaseDateMove[] {
+  const moves: PhaseDateMove[] = [];
+  for (const phase of phases) {
+    const from = phase.promoted_delivery_date;
+    const to = phase.delivery_date;
+    if (!from || !to || from === to) continue;
+    moves.push({
+      phaseId: phase.id,
+      label: phaseRowLabel(phase),
+      area: phase.area_group,
+      from,
+      to,
+      deltaDays: diffDaysIso(from, to),
+    });
+  }
+  return moves;
+}
+
+export interface ScheduleQtyChange {
+  phaseId: string;
+  phaseLabel: string;
+  area: string | null;
+  productLabel: string;
+  /** Null means the quantity did not exist on that side (a blank cell, not a zero). */
+  from: string | null;
+  to: string | null;
+}
+
+interface FullVersionLike {
+  phases: {
+    id: string;
+    area_group: string | null;
+    sequence: number;
+    label: string | null;
+  }[];
+  products: ProductLike[];
+  cells: CellLike[];
+}
+
+/**
+ * Quantities that changed between this version and the one before it, matched by
+ * `(area_group, sequence)` for the phase and `(product id, else product code)` for the
+ * column - neither survives as a stable id across two versions on its own.
+ *
+ * The payload carries no "quantity the project held before", unlike the date (finding
+ * P6-9.1), so this needs the FULL prior version fetched separately and diffs client-side.
+ * A pair that cannot be matched on either side is left out of both the changes and the
+ * unchanged count: there is nothing honest to say about a column or phase that only exists
+ * on one of the two documents.
+ */
+export function diffScheduleQuantities(
+  current: FullVersionLike,
+  prior: FullVersionLike,
+): { changes: ScheduleQtyChange[]; unchangedCount: number } {
+  const currentPhaseByAgnostic = new Map<string, FullVersionLike['phases'][number]>();
+  for (const phase of current.phases) {
+    currentPhaseByAgnostic.set(phaseAgnosticKey(phase), phase);
+  }
+  const currentPhaseAgnosticById = new Map<string, string>();
+  for (const phase of current.phases) {
+    currentPhaseAgnosticById.set(phase.id, phaseAgnosticKey(phase));
+  }
+
+  const currentColumnByKey = new Map<string, { agnostic: string; label: string }>();
+  const currentLabelByAgnostic = new Map<string, string>();
+  current.products.forEach((product, index) => {
+    const agnostic = productAgnosticKey(product);
+    if (!agnostic) return;
+    const label = product.product_code ?? product.customer_code_raw ?? 'Unidentified column';
+    currentColumnByKey.set(columnKey(product, index), { agnostic, label });
+    currentLabelByAgnostic.set(agnostic, label);
+  });
+
+  const priorPhaseAgnosticById = new Map<string, string>();
+  for (const phase of prior.phases) {
+    priorPhaseAgnosticById.set(phase.id, phaseAgnosticKey(phase));
+  }
+  const priorProductAgnosticByColumnKey = new Map<string, string>();
+  prior.products.forEach((product, index) => {
+    const agnostic = productAgnosticKey(product);
+    if (agnostic) priorProductAgnosticByColumnKey.set(columnKey(product, index), agnostic);
+  });
+  const priorQtyByDiffKey = new Map<string, string>();
+  for (const cell of prior.cells) {
+    const phaseAgnostic = priorPhaseAgnosticById.get(cell.phase_id);
+    if (!phaseAgnostic) continue;
+    const productAgnostic = priorProductAgnosticByColumnKey.get(cellColumnKey(cell));
+    if (!productAgnostic) continue;
+    priorQtyByDiffKey.set(`${phaseAgnostic}||${productAgnostic}`, cell.qty);
+  }
+
+  const changes: ScheduleQtyChange[] = [];
+  let unchangedCount = 0;
+  const seen = new Set<string>();
+
+  for (const cell of current.cells) {
+    const phaseAgnostic = currentPhaseAgnosticById.get(cell.phase_id);
+    if (!phaseAgnostic) continue;
+    const column = currentColumnByKey.get(cellColumnKey(cell));
+    if (!column) continue;
+    const diffKey = `${phaseAgnostic}||${column.agnostic}`;
+    if (seen.has(diffKey)) continue;
+    seen.add(diffKey);
+
+    const phase = currentPhaseByAgnostic.get(phaseAgnostic);
+    if (!phase) continue;
+    const priorQty = priorQtyByDiffKey.get(diffKey) ?? null;
+    if (priorQty !== null && qtyEquals(cell.qty, priorQty)) {
+      unchangedCount += 1;
+      continue;
+    }
+    changes.push({
+      phaseId: phase.id,
+      phaseLabel: phaseRowLabel(phase),
+      area: phase.area_group,
+      productLabel: column.label,
+      from: priorQty,
+      to: cell.qty,
+    });
+  }
+
+  // What the prior version had for a phase+product that STILL exists on this version but no
+  // longer carries a cell at all - a quantity removed rather than changed.
+  for (const cell of prior.cells) {
+    const phaseAgnostic = priorPhaseAgnosticById.get(cell.phase_id);
+    if (!phaseAgnostic) continue;
+    const productAgnostic = priorProductAgnosticByColumnKey.get(cellColumnKey(cell));
+    if (!productAgnostic) continue;
+    const diffKey = `${phaseAgnostic}||${productAgnostic}`;
+    if (seen.has(diffKey)) continue;
+    seen.add(diffKey);
+
+    const phase = currentPhaseByAgnostic.get(phaseAgnostic);
+    const label = currentLabelByAgnostic.get(productAgnostic);
+    if (!phase || !label) continue;
+    if (!isQty(cell.qty) || qtyEquals(cell.qty, '0')) continue;
+    changes.push({
+      phaseId: phase.id,
+      phaseLabel: phaseRowLabel(phase),
+      area: phase.area_group,
+      productLabel: label,
+      from: cell.qty,
+      to: null,
+    });
+  }
+
+  return { changes, unchangedCount };
 }
