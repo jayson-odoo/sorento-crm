@@ -44,8 +44,10 @@ def main() -> int:
     db = SessionLocal()
     try:
         # user_id -> their unique tier-1-linked team's links [(code, agent_id)] sorted
-        # deterministically; users in multiple tier-1-linked teams are ambiguous and
-        # skipped (the amend script must run first).
+        # deterministically; users in multiple tier-1-linked teams are skipped
+        # conservatively. Cross-team-set multi-membership is now legal
+        # (PLAN-tier1-teamset-invariant.md) - the runtime derivation handles those
+        # users; this backfill predates that relaxation and leaves them untouched.
         links = (
             db.query(TeamMember.user_id, AgentTeam.agent_id, AgentTeam.code, AgentTeam.team_id)
             .join(AgentTeam, AgentTeam.team_id == TeamMember.team_id)
@@ -66,7 +68,8 @@ def main() -> int:
         for uid in ambiguous:
             print(
                 f"[SKIP] User {uid} is a member of multiple tier-1-linked teams; "
-                "run scripts/amend_tier1_membership_violations.py first."
+                "left untouched (cross-team-set membership is legal per "
+                "PLAN-tier1-teamset-invariant.md; runtime derivation handles it)."
             )
 
         agent_codes = {str(a.id): str(a.code) for a in db.query(AccessAgent).all()}
