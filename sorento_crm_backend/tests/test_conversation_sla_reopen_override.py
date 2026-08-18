@@ -25,11 +25,20 @@ from app.models.access import AccessAgent, RespondContact
 from app.models.sla import ConversationSLATracking, SLAPolicy, SLAPolicyTier
 from app.services.sla_service import ConversationSLATrackingService
 
-NAME_MARKER = "REOPENCONV"
-PHONE = "+60999111000"
-POLICY_CODE = "REOPEN-CONV-POLICY"
-AGENT_CODE = "REOPEN-AGENT"
-TEAM_SET_CODE = "REOPEN_TEAM"
+# Every business key this file writes is unique per RUN. They used to be fixed strings
+# cleaned up by the fixture below, which is correct only while that cleanup always
+# succeeds. It is best effort and swallows what it catches, so on a busy database a
+# blocked DELETE left the row behind and the next test died on the unique index instead
+# of on anything it was testing. Under the serial gate the database was quiet and it
+# never fired; under `-n auto` it does. A key nothing else can collide with removes the
+# dependency altogether: cleanup now only keeps the shared database tidy, and can fail
+# without taking a test with it.
+RUN = uuid.uuid4().hex[:8]
+NAME_MARKER = f"REOPENCONV{RUN}"
+PHONE = f"+6099911{int(RUN, 16) % 10000:04d}"
+POLICY_CODE = f"REOPEN-CONV-POLICY-{RUN}"
+AGENT_CODE = f"REOPEN-AGENT-{RUN}"
+TEAM_SET_CODE = f"REOPEN_TEAM_{RUN}"
 # sla_policies.company_id is NOT NULL at the DB level (migration 320) on this
 # live test DB; Sorento is the incumbent company for all pre-multi-company data.
 SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
@@ -41,10 +50,14 @@ def _clean_state():
         conn.execute(
             text(
                 "DELETE FROM conversation_sla_tracking WHERE respond_contact_id IN "
-                "(SELECT id FROM respond_contacts WHERE name LIKE 'REOPENCONV%')"
-            )
+                "(SELECT id FROM respond_contacts WHERE name LIKE :marker)"
+            ),
+            {"marker": f"{NAME_MARKER}%"},
         )
-        conn.execute(text("DELETE FROM respond_contacts WHERE name LIKE 'REOPENCONV%'"))
+        conn.execute(
+            text("DELETE FROM respond_contacts WHERE name LIKE :marker"),
+            {"marker": f"{NAME_MARKER}%"},
+        )
         conn.execute(
             text("DELETE FROM sla_policy_tiers WHERE policy_id IN (SELECT id FROM sla_policies WHERE code = :c)"),
             {"c": POLICY_CODE},
