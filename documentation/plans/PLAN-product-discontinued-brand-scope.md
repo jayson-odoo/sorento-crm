@@ -135,6 +135,15 @@ current code path (`==`), multiple use `IN` (AC-10).
 ### Slices
 
 - S1 [FE, Phase 1]: scope editor + read view + deep-link preservation against mocked service.
+  **Done** (code only; no browser verification run yet). The expected API contract is
+  documented at the top of
+  `sorento_crm_frontend/app/(protected)/user-management/users/services/productDiscontinuedScopeService.ts`,
+  whose `USE_SCOPE_BRAND_MOCKS` flag is the single Phase-1 mock S2 flips. One addition to the
+  plan: the editor needs brands OF A GIVEN COMPANY, so the contract asks S2 for a
+  `company_id` filter on `GET /api/v1/master-data/brands/select` (brands are
+  `CompanyScopedMixin`, and an admin edits scopes for a company they are not switched into).
+  Company options come from the existing `useCompany()` grants rather than the superadmin-only
+  `/companies/select`, so a non-superadmin admin can use the editor.
 - S2 [BE, Phase 2]: model + migration + backfill, service fan-out rework, products
   multi-brand filter, user API scopes; swap FE mock to real.
 - S3 [T, Phase 2]: pytest + vitest suites above.

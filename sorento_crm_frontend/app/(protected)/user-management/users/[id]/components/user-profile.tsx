@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
@@ -11,7 +11,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserStatus } from '@/app/models/user';
+import { useCompany } from '@/app/providers/CompanyProvider';
 import { getUserStatusProps } from '../../constants/status';
+import {
+  describeScopeRow,
+  scopesToRows,
+} from '../../lib/productDiscontinuedScopes';
 import UserProfileEditDialog from './user-profile-edit-dialog';
 
 const UserProfile = ({
@@ -125,6 +130,15 @@ const UserProfile = ({
     enabled: !!user?.id && isSuperadmin,
     staleTime: 1000 * 60,
   });
+
+  // Same rows, same order as the edit dialog's scope editor - read-only here.
+  const { companies: companyGrants } = useCompany();
+  const scopeRows = useMemo(
+    () => scopesToRows(user?.productDiscontinuedScopes),
+    [user?.productDiscontinuedScopes],
+  );
+  const resolveCompanyName = (companyId: string) =>
+    companyGrants.find((company) => company.id === companyId)?.name;
 
   const Content = () => {
     const statusPros = getUserStatusProps(user.status as UserStatus);
@@ -258,6 +272,24 @@ const UserProfile = ({
                 </dd>
               </div>
             )}
+            <div className="grid grid-cols-subgrid col-span-2 items-baseline">
+              <dt>Discontinued product scope:</dt>
+              <dd>
+                <span className="inline-flex flex-wrap items-center gap-1.5">
+                  {scopeRows.length ? (
+                    scopeRows.map((row) => (
+                      <Badge key={row.key} variant="secondary" appearance="light">
+                        {describeScopeRow(row, resolveCompanyName)}
+                      </Badge>
+                    ))
+                  ) : (
+                    <span className="text-muted-foreground">
+                      No scope set. No discontinued product notices.
+                    </span>
+                  )}
+                </span>
+              </dd>
+            </div>
           </dl>
           <Button
             variant="outline"

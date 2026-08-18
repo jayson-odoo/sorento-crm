@@ -135,6 +135,7 @@ export default function UserLayout({
         notifyWhatsappOnHandling: data.notify_whatsapp_on_handling ?? data.notifyWhatsappOnHandling ?? false,
         notifyEmailOnProductDiscontinued: data.notify_email_on_product_discontinued ?? data.notifyEmailOnProductDiscontinued ?? false,
         notifyWhatsappOnProductDiscontinued: data.notify_whatsapp_on_product_discontinued ?? data.notifyWhatsappOnProductDiscontinued ?? false,
+        productDiscontinuedScopes: data.product_discontinued_scopes ?? data.productDiscontinuedScopes ?? [],
         superiorId: data.superior_id || data.superiorId,
         superiorName: data.superior_name || data.superiorName,
         tier: data.tier != null ? data.tier : undefined,
