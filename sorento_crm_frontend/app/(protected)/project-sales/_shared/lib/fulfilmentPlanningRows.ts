@@ -40,6 +40,27 @@ export function planningRowProjectLabel(row: FulfilmentPlanningRow): string | nu
   return row.project_label || row.project_name || null;
 }
 
+/**
+ * Where the row's identity column links to: the sales order it names.
+ *
+ * The captain asked to reach the sales order from a row ("on click i should be able to view
+ * the SO"). The row itself keeps its existing meaning - it opens the plan - and the identity
+ * column becomes the link, which is what every other listing here does (the SCM sales-order
+ * list and the purchase-order list both make the document number the way in).
+ *
+ * The CORE sales order wins when a row can reach both: it is the document the number on screen
+ * belongs to, and an adopted planning record is a mirror of it rather than a second subject.
+ * A row with neither answers null and renders as plain text - a dead link that looks like a way
+ * in and answers with a 404 is worse than no link at all.
+ */
+export function planningRowSalesOrderHref(row: FulfilmentPlanningRow): string | null {
+  if (row.sales_order_id) return `/scm/sales-orders/${row.sales_order_id}`;
+  // The project route needs both halves; an adopted record has no project registration, so it
+  // is simply not reachable that way (and it has a core order anyway).
+  if (row.project_id && row.id) return `/project-sales/${row.project_id}/sales-orders/${row.id}`;
+  return null;
+}
+
 /** Nobody has planned this order yet, so the row's one action is Start planning. */
 export function isNotStarted(row: FulfilmentPlanningRow): boolean {
   return row.review_state === 'not_started';

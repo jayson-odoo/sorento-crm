@@ -21,17 +21,29 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 BoardGranularity = Literal["day", "week", "month"]
-BoardBucketKind = Literal["overdue", "dated", "no_date"]
+BoardBucketKind = Literal["dated", "no_date"]
 BoardSourceKind = Literal["reserve", "timely_spo", "buy", "unplannable"]
 
 
 class BoardDateBucket(BaseModel):
+    """One column: a period, or the one column that is not a period.
+
+    There is no aggregate for the past. Every dated line buckets by its OWN period whether that
+    period is past or future, because lumping three years of late demand into one column
+    destroys the schedule the board exists to show. `is_past` is how the information survives
+    the lumping being removed.
+    """
+
     key: str
     kind: BoardBucketKind
-    #: What the column header reads, already formatted. `Overdue` and `No date` are not
-    #: buckets of time at all and carry no start.
+    #: What the column header reads, already formatted. `No date` is not a bucket of time at
+    #: all and carries no start.
     label: str
     start: Optional[date] = None
+    #: This bucket's whole period ended before `as_of`, so the screen can tint it. The period
+    #: CONTAINING `as_of` is not past: some of its dates are still to come. Always false for
+    #: `no_date` - an absent date has not passed, it is simply absent.
+    is_past: bool = False
 
 
 class BoardRankFactor(BaseModel):
@@ -75,6 +87,10 @@ class BoardContribution(BaseModel):
     qty: str
     #: The line's REAL required date, never the bucket it landed in.
     required_date: Optional[date] = None
+    #: This line's own date is behind `as_of`. Per LINE, which is what a "N of M lines are past
+    #: their required date" summary counts: a line dated yesterday is past even when the week
+    #: it sits in has not ended, so the bucket flag alone would undercount it.
+    is_past: bool = False
     fulfilment_location: Optional[str] = None
     #: The sales-order line states no location, so it cannot be planned (AC-FP16).
     unplannable: bool = False
@@ -100,6 +116,8 @@ class BoardCell(BaseModel):
     contributions: List[BoardContribution] = []
     unplannable_count: int = 0
     contested_count: int = 0
+    #: Contributions whose own required date is already past.
+    past_count: int = 0
 
 
 class BoardProductRow(BaseModel):
@@ -141,8 +159,8 @@ class PlanningBoard(BaseModel):
 
     granularity: BoardGranularity
     policy: BoardPolicy
-    #: The date the board was built against, so "overdue" is reproducible rather than whatever
-    #: the client's clock said.
+    #: The date the board was built against, so which periods read as past is reproducible
+    #: rather than whatever the client's clock said.
     as_of: date
     date_buckets: List[BoardDateBucket] = Field(default=[], alias="dateBuckets")
     product_rows: List[BoardProductRow] = Field(default=[], alias="productRows")

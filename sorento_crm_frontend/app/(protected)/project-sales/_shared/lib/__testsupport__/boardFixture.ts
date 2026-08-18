@@ -33,9 +33,9 @@ export { standingsFor };
  * lines are served in (13.5), and whether an order is fully decided yet (13.4). Each one is an
  * acceptance criterion, and none of them needs a table mounted to be checked.
  *
- * `today` is always passed in, never read from the clock. "Overdue" is 37 per cent of the book,
- * so a board that quietly disagreed with itself between two renders would be disagreeing about
- * the biggest column on screen.
+ * `today` is always passed in, never read from the clock. 37 per cent of the book is already
+ * past its required date, so a board that quietly disagreed with itself between two renders
+ * would be disagreeing about which third of its columns are tinted.
  */
 
 
@@ -103,7 +103,6 @@ export const PREVIEW_POLICY: BoardPolicy = {
   discriminates_nothing: false,
 };
 
-export const OVERDUE_BUCKET = 'overdue';
 export const NO_DATE_BUCKET = 'no_date';
 
 /** Monday of the ISO week containing `iso`, as a date-only string. */
@@ -122,18 +121,24 @@ export function monthStart(iso: string): string {
 /**
  * Which column a line belongs in.
  *
- * Overdue swallows every past date whatever it is: they are all equally late, and spreading
- * three years of history across the axis would push the columns anyone can still act on off
- * the right-hand edge. A line with no date gets its own column rather than being guessed into
- * one, for the same reason no warehouse is ever guessed (section 11, question 2).
+ * EVERY dated line buckets by its own required date, past or future (the captain: "don't put
+ * overdue together, still split by the date"). A past date is not a category, it is a date,
+ * and the aggregate column that used to swallow them threw away the only thing that says how
+ * late a line is - one selection collapsed 160 of 160 lines into a single column. The past is
+ * tinted instead, which costs columns and keeps the information.
+ *
+ * A line with no date gets its own column rather than being guessed into one, for the same
+ * reason no warehouse is ever guessed (section 11, question 2).
+ *
+ * `today` is kept in the signature because `is_past` is measured against it; it no longer
+ * decides which bucket anything lands in.
  */
 export function bucketKeyFor(
   requiredDate: string | null | undefined,
-  today: string,
+  _today: string,
   granularity: BoardGranularity,
 ): string {
   if (!requiredDate) return NO_DATE_BUCKET;
-  if (requiredDate < today) return OVERDUE_BUCKET;
   if (granularity === 'month') return monthStart(requiredDate);
   // Day granularity keys on the date itself; the 30-day window that keeps 349 of them off one
   // screen is applied when the columns are ORDERED, never when they are assigned, so nothing is
@@ -143,7 +148,6 @@ export function bucketKeyFor(
 }
 
 function bucketLabel(key: string, granularity: BoardGranularity): string {
-  if (key === OVERDUE_BUCKET) return 'Overdue';
   if (key === NO_DATE_BUCKET) return 'No date';
   const [year, month, day] = key.split('-');
   const MONTHS = [
@@ -401,14 +405,19 @@ export function buildBoard(
   }
 
   // One running pool for the whole board, drawn down in the order the buckets are served, so
-  // stock promised to an overdue line is not promised again to a later one.
+  // stock promised to an earlier-dated line is not promised again to a later one.
   const remaining: Record<string, number> = {};
   for (const [key, qty] of Object.entries(options.freeStock ?? {})) {
     remaining[key] = toMinor(qty);
   }
   const consumed: Record<string, number> = {};
 
-  const dateBuckets = orderBuckets([...bucketKeys], granularity, options.dayWindowStart);
+  const dateBuckets = orderBuckets(
+    [...bucketKeys],
+    granularity,
+    today,
+    options.dayWindowStart,
+  );
   const cells: BoardCell[] = [];
 
   for (const bucket of dateBuckets) {
@@ -450,23 +459,23 @@ export function buildBoard(
 }
 
 /**
- * Overdue pinned first, dated in ascending order, No date pinned last, in EVERY granularity
- * (13.3): neither of those two is a bucket of time and neither has a place on a timeline.
+ * Dated columns in ascending order, past included, and No date pinned last (13.3, as amended
+ * by the captain): a date is a date however far back, and No date is the only answer with no
+ * place on a timeline.
  *
  * At day granularity the dated columns are a 30-day WINDOW rather than one column per distinct
  * date, because the book carries 349 of them. Days inside the window with nothing owed are still
  * rendered: a calendar that hides its empty days is not a calendar, and the gap is the
  * information. Demand outside the window is never dropped from the plan; it is reached by moving
- * the window, and anything already past is in Overdue regardless.
+ * the window.
  */
 function orderBuckets(
   keys: string[],
   granularity: BoardGranularity,
+  today: string,
   dayWindowStart?: string,
 ): BoardDateBucket[] {
-  let dated = keys
-    .filter((key) => key !== OVERDUE_BUCKET && key !== NO_DATE_BUCKET)
-    .sort();
+  let dated = keys.filter((key) => key !== NO_DATE_BUCKET).sort();
 
   if (granularity === 'day') {
     const start = dayWindowStart ?? dated[0];
@@ -477,22 +486,38 @@ function orderBuckets(
       );
     }
   }
-  const buckets: BoardDateBucket[] = [];
-  if (keys.includes(OVERDUE_BUCKET)) {
-    buckets.push({ key: OVERDUE_BUCKET, kind: 'overdue', label: 'Overdue', start: null });
-  }
-  for (const key of dated) {
+  const buckets: BoardDateBucket[] = dated.map((key) => ({
+    key,
+    kind: 'dated' as const,
+    label: bucketLabel(key, granularity),
+    start: key,
+    is_past: bucketEnd(key, granularity) < today,
+  }));
+  if (keys.includes(NO_DATE_BUCKET)) {
     buckets.push({
-      key,
-      kind: 'dated',
-      label: bucketLabel(key, granularity),
-      start: key,
+      key: NO_DATE_BUCKET,
+      kind: 'no_date',
+      label: 'No date',
+      start: null,
+      is_past: false,
     });
   }
-  if (keys.includes(NO_DATE_BUCKET)) {
-    buckets.push({ key: NO_DATE_BUCKET, kind: 'no_date', label: 'No date', start: null });
-  }
   return buckets;
+}
+
+/**
+ * The last day the bucket covers. A bucket counts as past only when the WHOLE of it is behind
+ * `as_of`: the week that contains today still holds dates anybody can act on, so tinting it
+ * would call the current week late.
+ */
+function bucketEnd(key: string, granularity: BoardGranularity): string {
+  if (granularity === 'day') return key;
+  if (granularity === 'week') {
+    return new Date((dayNumber(key) + 6) * DAY).toISOString().slice(0, 10);
+  }
+  const [year, month] = key.split('-').map(Number);
+  // Day 0 of the next month is the last day of this one.
+  return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 }
 
 /**

@@ -332,9 +332,20 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
         revision_no=1, state=decision_state,
         # Stated, not defaulted: Stage 1C owns this model and declares `line_snapshots`
         # NOT NULL with no default, so the row a test builds has to carry one the same way
-        # `project_supply_service` does. Empty is honest here - this helper is pinning the
-        # section-4 read path, and the view never looks inside the snapshots.
-        line_snapshots=[],
+        # `project_supply_service` does. It used to be `[]`, on the grounds that the view
+        # never looked inside - which stopped being true when partial confirmation made
+        # `scm.committed_v` decide PER LINE
+        # (`PLAN-fulfilment-planning-from-autocount-so.md` 13.4, migration
+        # `384_committed_v_line_decision`). A decision covering no line now covers no line,
+        # so the sheet leg went on counting the order beside its own confirmed Buy: 28
+        # where the test says 8. The snapshot below is the one the real confirmation
+        # writes, named by `core_line_id`, which is what the view matches on.
+        line_snapshots=[{
+            "line_no": 1,
+            "project_line_id": str(pso_line.id),
+            "core_line_id": str(core_line.id),
+            "buy_qty": str(buy_qty),
+        }],
         # A confirmed decision has a confirmation time. 1C's column is nullable, so this is
         # realism rather than a constraint - and it keeps the helper working against a dev
         # database still carrying the older NOT NULL shape.

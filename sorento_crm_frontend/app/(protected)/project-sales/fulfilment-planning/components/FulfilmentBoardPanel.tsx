@@ -145,29 +145,47 @@ export function FulfilmentBoardPanel({
     );
   }, [openCell, board.data]);
 
-  const overdueTotal = React.useMemo(() => {
-    const cells = (board.data?.cells ?? []).filter((cell) => cell.bucket_key === 'overdue');
-    const lines = cells.reduce((total, cell) => total + cell.contributions.length, 0);
-    const allLines = (board.data?.cells ?? []).reduce(
-      (total, cell) => total + cell.contributions.length,
-      0,
+  /**
+   * How much of the selection is already past its required date.
+   *
+   * Counted off the SERVER's `is_past` per bucket, never off a date compared here: the board
+   * spans 2022 to 2030 and the server is the side that decided where each bucket falls
+   * relative to `as_of`. A count derived on this side would disagree with the tint beside it.
+   */
+  const pastTotal = React.useMemo(() => {
+    const pastBuckets = new Set(
+      (board.data?.dateBuckets ?? [])
+        .filter((bucket) => bucket.is_past)
+        .map((bucket) => bucket.key),
     );
-    return { lines, allLines };
+    const cells = board.data?.cells ?? [];
+    return {
+      lines: cells
+        .filter((cell) => pastBuckets.has(cell.bucket_key))
+        .reduce((total, cell) => total + cell.contributions.length, 0),
+      allLines: cells.reduce((total, cell) => total + cell.contributions.length, 0),
+    };
   }, [board.data]);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={onBack}>
-            <ArrowLeft className="size-4" aria-hidden />
-            Back to the worklist
-          </Button>
-          <h2 className="min-w-0 truncate text-lg font-semibold">
-            {`Planning ${soNumbers.length} sales orders together`}
-          </h2>
-        </div>
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+      {/* Title left, actions right, and the row WRAPS. A plain `items-center justify-between`
+          does not, so at narrow widths the controls landed on top of the title and pushed the
+          page sideways - which is what the captain screenshotted. */}
+      <div
+        data-testid="board-header"
+        className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <h2
+          data-testid="board-header-title"
+          className="min-w-0 text-lg font-semibold break-words"
+        >
+          {`Planning ${soNumbers.length} sales orders together`}
+        </h2>
+        <div
+          data-testid="board-header-actions"
+          className="flex w-full flex-wrap items-center gap-2 sm:w-auto"
+        >
           {granularity === 'day' && (
             <>
               <Button type="button" variant="outline" size="sm" onClick={() => shiftWindow(-1)}>
@@ -190,6 +208,12 @@ export function FulfilmentBoardPanel({
               options={GRANULARITY_OPTIONS}
             />
           </div>
+          {/* Last in the row and `ghost`: going back is secondary to the control that decides
+              what the board shows, and an outline button beside the select out-shouted it. */}
+          <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+            <ArrowLeft className="size-4" aria-hidden />
+            Back to the worklist
+          </Button>
         </div>
       </div>
 
@@ -229,19 +253,18 @@ export function FulfilmentBoardPanel({
         </Card>
       ) : (
         <>
-          {overdueTotal.lines > 0 && (
+          {/* The fact, and only the fact. The columns and their tint say where those lines
+              are; a paragraph explaining the tint would be a feature explanation in the UI,
+              and a tint that needs one has failed. */}
+          {pastTotal.lines > 0 && (
             <Alert appearance="light">
               <AlertIcon>
                 <AlertTriangle />
               </AlertIcon>
               <AlertContent>
                 <AlertTitle>
-                  {`${overdueTotal.lines} of ${overdueTotal.allLines} lines are already past their required date`}
+                  {`${pastTotal.lines} of ${pastTotal.allLines} lines are already past their required date`}
                 </AlertTitle>
-                <AlertDescription>
-                  They are held in the Overdue column, first on the board, rather than spread
-                  back across the dates they were due on.
-                </AlertDescription>
               </AlertContent>
             </Alert>
           )}

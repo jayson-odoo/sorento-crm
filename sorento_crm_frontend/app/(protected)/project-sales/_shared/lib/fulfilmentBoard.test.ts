@@ -55,10 +55,15 @@ describe('weekStart / monthStart', () => {
   });
 });
 
-describe('bucketKeyFor (13.3)', () => {
-  it('sends every past date to one Overdue column, however far past', () => {
-    expect(bucketKeyFor('2022-07-03', TODAY, 'week')).toBe('overdue');
-    expect(bucketKeyFor('2026-08-17', TODAY, 'week')).toBe('overdue');
+describe('bucketKeyFor (13.3, captain: do not put overdue together)', () => {
+  it('buckets a past date by its OWN date, never into one aggregate column', () => {
+    // The captain, verbatim: "don't put overdue together, still split by the date, don't put
+    // under overdue". A four-year-old required date is still a date, and collapsing it loses
+    // the only thing that says how late it is.
+    expect(bucketKeyFor('2022-07-03', TODAY, 'week')).toBe(weekStart('2022-07-03'));
+    expect(bucketKeyFor('2026-08-17', TODAY, 'week')).toBe(weekStart('2026-08-17'));
+    expect(bucketKeyFor('2022-07-03', TODAY, 'day')).toBe('2022-07-03');
+    expect(bucketKeyFor('2022-07-03', TODAY, 'month')).toBe('2022-07-01');
   });
 
   it('keeps a line with no date in its own column rather than guessing one', () => {
@@ -71,8 +76,8 @@ describe('bucketKeyFor (13.3)', () => {
     expect(bucketKeyFor('2026-09-04', TODAY, 'month')).toBe('2026-09-01');
   });
 
-  it('treats today itself as due, not overdue', () => {
-    expect(bucketKeyFor(TODAY, TODAY, 'week')).not.toBe('overdue');
+  it('buckets today itself like any other date', () => {
+    expect(bucketKeyFor(TODAY, TODAY, 'week')).toBe(weekStart(TODAY));
   });
 });
 
@@ -230,7 +235,7 @@ describe('compareContributions', () => {
 });
 
 describe('buildBoard: the axes', () => {
-  it('pins Overdue first and No date last, with the dated buckets in between', () => {
+  it('orders every dated bucket chronologically, past included, with No date pinned last', () => {
     const board = buildBoard(
       [
         line({ line_no: 1, required_date: '2026-09-04' }),
@@ -241,13 +246,45 @@ describe('buildBoard: the axes', () => {
       { today: TODAY },
     );
     expect(board.dateBuckets.map((bucket) => bucket.key)).toEqual([
-      'overdue',
+      '2022-06-27',
       '2026-08-31',
       '2026-11-30',
       'no_date',
     ]);
-    expect(board.dateBuckets[0].label).toBe('Overdue');
+    expect(board.dateBuckets[0].label).toBe('w/c 27 Jun 2022');
     expect(board.dateBuckets[3].label).toBe('No date');
+    expect(board.dateBuckets.map((bucket) => bucket.kind)).toEqual([
+      'dated',
+      'dated',
+      'dated',
+      'no_date',
+    ]);
+  });
+
+  /**
+   * The past is TINTED, not merged. `is_past` is the server's verdict about a bucket that
+   * lies entirely before `as_of`, and it is the only thing the grid may colour on: deriving
+   * it here would make the tint disagree with the bucketing the server actually did.
+   */
+  it('marks a bucket that lies entirely before the as-of date as past, and leaves the rest alone', () => {
+    const board = buildBoard(
+      [
+        line({ line_no: 1, required_date: '2022-07-03' }),
+        line({ line_no: 2, required_date: '2026-09-04' }),
+        line({ line_no: 3, required_date: null, fulfilment_location: null }),
+      ],
+      { today: TODAY },
+    );
+    expect(board.dateBuckets.map((bucket) => `${bucket.key} ${bucket.is_past}`)).toEqual([
+      '2022-06-27 true',
+      '2026-08-31 false',
+      'no_date false',
+    ]);
+  });
+
+  it('does not call the bucket holding the as-of date itself past', () => {
+    const board = buildBoard([line({ required_date: TODAY })], { today: TODAY });
+    expect(board.dateBuckets[0].is_past).toBe(false);
   });
 
   it('produces NO cell for a product and date nobody owes, so the grid can render blank', () => {
@@ -263,7 +300,7 @@ describe('buildBoard: the axes', () => {
     expect(board.cells.find((cell) => cell.item_code === 'AAA' && cell.bucket_key === '2026-11-30')).toBeUndefined();
   });
 
-  it('echoes the date it was built against, so Overdue is reproducible', () => {
+  it('echoes the date it was built against, so the past tint is reproducible', () => {
     expect(buildBoard([line()], { today: TODAY }).as_of).toBe(TODAY);
   });
 });
@@ -488,7 +525,7 @@ describe('day granularity (13.3)', () => {
     expect(board.cells.some((cell) => cell.bucket_key === '2026-09-02')).toBe(false);
   });
 
-  it('still pins Overdue first and No date last', () => {
+  it('still pins No date last, and starts the window at the earliest date owed', () => {
     const board = buildBoard(
       [
         line({ line_no: 1, required_date: '2026-09-04' }),
@@ -497,7 +534,8 @@ describe('day granularity (13.3)', () => {
       ],
       { today: TODAY, granularity: 'day' },
     );
-    expect(board.dateBuckets[0].key).toBe('overdue');
+    expect(board.dateBuckets[0].key).toBe('2022-07-03');
+    expect(board.dateBuckets[0].is_past).toBe(true);
     expect(board.dateBuckets[board.dateBuckets.length - 1].key).toBe('no_date');
   });
 });
@@ -549,7 +587,7 @@ describe('standingsFor reads the server key (deviation 5)', () => {
       fulfilment_location: 'BRW-BB',
     },
     {
-      key: 'aaaaaaaa-0000-0000-0000-000000000001|1|WESERP10B|overdue',
+      key: 'aaaaaaaa-0000-0000-0000-000000000001|1|WESERP10B|2022-06-27',
       sales_order_id: 'aaaaaaaa-0000-0000-0000-000000000001',
       so_number: 'SO345418',
       customer_name: 'PEMBINAAN YUEN SENG SDN BHD (PROJECT)',
@@ -582,7 +620,7 @@ describe('standingsFor reads the server key (deviation 5)', () => {
 
   it('ignores the server decided_count, which is always 0 (deviation 4)', () => {
     const standings = standingsFor(contributions, {
-      'aaaaaaaa-0000-0000-0000-000000000001|1|WESERP10B|overdue': { verdict: 'rejected' },
+      'aaaaaaaa-0000-0000-0000-000000000001|1|WESERP10B|2022-06-27': { verdict: 'rejected' },
     });
     expect(standings.find((entry) => entry.so_number === 'SO345418')?.decided_count).toBe(1);
   });

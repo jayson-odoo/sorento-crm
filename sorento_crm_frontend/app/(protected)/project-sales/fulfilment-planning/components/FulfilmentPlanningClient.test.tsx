@@ -13,10 +13,13 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FulfilmentPlanningRow } from '../../_shared/types/fulfilmentPlanning.types';
 
+const routerReplace = vi.fn();
+let currentSearchParams = new URLSearchParams('');
+
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: (...args: unknown[]) => routerReplace(...args) }),
   usePathname: () => '/project-sales/fulfilment-planning',
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => currentSearchParams,
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -118,6 +121,7 @@ function openFilters() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  currentSearchParams = new URLSearchParams('');
 });
 
 describe('FulfilmentPlanningClient', () => {
@@ -402,7 +406,8 @@ describe('FulfilmentPlanningClient, the AutoCount sales-order arm', () => {
 
     renderClient();
 
-    fireEvent.click(await screen.findByText('SO345418'));
+    // Anywhere but the identity cell, which is the link to the sales order.
+    fireEvent.click(await screen.findByText('PEMBINAAN YUEN SENG SDN BHD (PROJECT)'));
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(adoptSalesOrder).not.toHaveBeenCalled();
@@ -426,6 +431,85 @@ describe('FulfilmentPlanningClient, the AutoCount sales-order arm', () => {
     );
   });
 
+  /**
+   * The captain: "on click i should be able to view the SO". The row keeps its own meaning
+   * (open the plan) and the identity column becomes the way to the sales order, which is the
+   * idiom every other listing here already uses.
+   */
+  describe('the sales-order link', () => {
+    it('links an AutoCount-arm row to the core sales order', async () => {
+      listFulfilmentPlanning.mockResolvedValue(envelope([notStarted()]));
+
+      renderClient();
+
+      expect(await screen.findByRole('link', { name: 'SO345418' })).toHaveAttribute(
+        'href',
+        '/scm/sales-orders/so-345418',
+      );
+    });
+
+    it('links an authored row to its project sales order', async () => {
+      listFulfilmentPlanning.mockResolvedValue(
+        envelope([
+          row({
+            row_kind: 'planning_record',
+            id: 'pso-authored',
+            sales_order_id: null,
+            so_number: null,
+            project_id: 'proj-1',
+            provisional_ref: 'PSO-000123',
+            autocount_doc_no: null,
+          }),
+        ]),
+      );
+
+      renderClient();
+
+      expect(await screen.findByRole('link', { name: 'PSO-000123' })).toHaveAttribute(
+        'href',
+        '/project-sales/proj-1/sales-orders/pso-authored',
+      );
+    });
+
+    it('renders plain text, never a dead link, when there is nothing to open', async () => {
+      listFulfilmentPlanning.mockResolvedValue(
+        envelope([
+          row({
+            row_kind: 'planning_record',
+            id: 'pso-adopted',
+            sales_order_id: null,
+            so_number: null,
+            project_id: null,
+            provisional_ref: 'PSO-000999',
+            autocount_doc_no: null,
+          }),
+        ]),
+      );
+
+      renderClient();
+
+      // Twice: the identity column and the Project SO column, both as plain text.
+      expect(await screen.findAllByText('PSO-000999')).toHaveLength(2);
+      expect(screen.queryByRole('link', { name: 'PSO-000999' })).not.toBeInTheDocument();
+    });
+
+    it('leaves the row’s own click behaviour alone: the link opens the SO, the row opens the plan', async () => {
+      listFulfilmentPlanning.mockResolvedValue(envelope([row()]));
+      getReconciliation.mockReturnValue(new Promise(() => {}));
+
+      renderClient();
+
+      // The identity cell is a link now, so clicking it must NOT also open the sheet.
+      fireEvent.click(await screen.findByRole('link', { name: 'SO376201' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      // The rest of the row still opens the plan, exactly as before.
+      fireEvent.click(screen.getByText('Buimaco Sdn Bhd (Project)'));
+      await screen.findByRole('dialog');
+      await waitFor(() => expect(getReconciliation).toHaveBeenCalledWith('pso-1'));
+    });
+  });
+
   it('keeps the authored rows and their state beside the adopted ones', async () => {
     listFulfilmentPlanning.mockResolvedValue(
       envelope([
@@ -447,5 +531,191 @@ describe('FulfilmentPlanningClient, the AutoCount sales-order arm', () => {
       screen.getByText('Awaiting reconciliation · 3 exceptions'),
     ).toBeInTheDocument();
     expect(screen.getByText('PSO-000123')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Sorting the worklist (captain: "all columns should be sortable").
+ *
+ * The sort is the SERVER's. The grid holds the state and sends it; it never re-sorts the page
+ * it was handed, because a page sorted on this side disagrees with paging the moment there is
+ * more than one page - row 26 stays on page 2 whatever the browser did to rows 1 to 25.
+ */
+describe('FulfilmentPlanningClient: sorting', () => {
+  function sorted(overrides: Partial<FulfilmentPlanningRow> = {}): FulfilmentPlanningRow {
+    return {
+      row_kind: 'sales_order',
+      id: null,
+      sales_order_id: 'so-1',
+      so_number: 'SO000001',
+      customer_name: 'ALPHA SDN BHD',
+      line_count: 1,
+      review_state: 'not_started',
+      earliest_required_date: '2026-01-01',
+      ...overrides,
+    };
+  }
+
+  it('opens on the order the server promises, earliest required date first', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([sorted()]));
+
+    renderClient();
+
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'earliest_required_date', dir: 'asc' }),
+      ),
+    );
+  });
+
+  it('asks the server for a new sort when a header is pressed, and reverses it on the second press', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([sorted()]));
+
+    renderClient();
+    await screen.findByText('ALPHA SDN BHD');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Customer' }));
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'customer_name', dir: 'asc' }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Customer' }));
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'customer_name', dir: 'desc' }),
+      ),
+    );
+  });
+
+  it('renders the page in the server’s order, never re-sorting it here', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([
+        sorted({ sales_order_id: 'so-3', so_number: 'SO000003', customer_name: 'ZULU SDN BHD' }),
+        sorted({ sales_order_id: 'so-1', so_number: 'SO000001', customer_name: 'ALPHA SDN BHD' }),
+        sorted({ sales_order_id: 'so-2', so_number: 'SO000002', customer_name: 'MIKE SDN BHD' }),
+      ]),
+    );
+
+    renderClient();
+    await screen.findByText('ZULU SDN BHD');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Customer' }));
+
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'customer_name' }),
+      ),
+    );
+    // The response did not change, so neither did the order on screen. A client re-sort would
+    // have put ALPHA first and silently disagreed with page 2.
+    expect(screen.getAllByTitle(/SDN BHD$/).map((node) => node.textContent)).toEqual([
+      'ZULU SDN BHD',
+      'ALPHA SDN BHD',
+      'MIKE SDN BHD',
+    ]);
+  });
+
+  it('renders no sort affordance on a column the server cannot sort', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([sorted()]));
+
+    renderClient();
+    await screen.findByText('ALPHA SDN BHD');
+
+    // Sortable: the header is a button that toggles the server's sort.
+    expect(screen.getByRole('button', { name: 'Sales order' })).toBeInTheDocument();
+    // Not sortable: the selection and action columns carry no server field, so they offer
+    // nothing to press.
+    expect(screen.queryByRole('button', { name: 'Select' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Action' })).not.toBeInTheDocument();
+  });
+
+  it('ignores a sort in the URL that is not one the server can do', async () => {
+    currentSearchParams = new URLSearchParams('sort=whatever&dir=desc');
+    listFulfilmentPlanning.mockResolvedValue(envelope([sorted()]));
+
+    renderClient();
+
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'earliest_required_date', dir: 'asc' }),
+      ),
+    );
+    expect(listFulfilmentPlanning).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sort: 'whatever' }),
+    );
+  });
+
+  it('opens on the sort the URL carries, so a worklist view is shareable', async () => {
+    currentSearchParams = new URLSearchParams('sort=customer_name&dir=desc');
+    listFulfilmentPlanning.mockResolvedValue(envelope([sorted()]));
+
+    renderClient();
+
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'customer_name', dir: 'desc' }),
+      ),
+    );
+  });
+
+  it('writes the sort back into the URL', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([sorted()]));
+
+    renderClient();
+    await screen.findByText('ALPHA SDN BHD');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Customer' }));
+
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith(
+        '/project-sales/fulfilment-planning?sort=customer_name&dir=asc',
+        expect.objectContaining({ scroll: false }),
+      ),
+    );
+  });
+
+  it('keeps the sort when the review-state filter changes', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([sorted()]));
+
+    renderClient();
+    await screen.findByText('ALPHA SDN BHD');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Customer' }));
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'customer_name' }),
+      ),
+    );
+
+    openFilters();
+    fireEvent.change(within(screen.getByRole('menu')).getByRole('combobox'), {
+      target: { value: 'not_started' },
+    });
+
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ review_state: 'not_started', sort: 'customer_name' }),
+      ),
+    );
+  });
+
+  it('keeps the sort when the search changes', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([sorted()]));
+
+    renderClient();
+    await screen.findByText('ALPHA SDN BHD');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Customer' }));
+    fireEvent.change(screen.getByPlaceholderText('Search sales order, project or customer'), {
+      target: { value: 'alpha' },
+    });
+
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ query: 'alpha', sort: 'customer_name' }),
+      ),
+    );
   });
 });

@@ -78,6 +78,31 @@ def list_fulfilment_planning(
     sales_order_id: Optional[str] = Query(
         None, description="Narrow to one core sales order. Addressing only."
     ),
+    # `sort` + `dir` are the names `buildDataGridParams` sends, unchanged. The set is
+    # CLOSED for the same reason `review_state` is: a grid drawing a sort arrow on a column
+    # the server quietly ignored is a screen lying about what it is showing. It must equal
+    # `SORTABLE_FIELDS` in the service - FastAPI cannot build a `Literal` from a runtime
+    # set, so a test asserts the two agree.
+    sort: Optional[
+        Literal[
+            "so_number",
+            "customer_name",
+            "project_label",
+            "earliest_required_date",
+            "outstanding_qty",
+            "line_count",
+            "review_state",
+            "provisional_ref",
+            "po_number",
+            "area_group",
+            "updated_at",
+        ]
+    ] = Query(None, description="Defaults to earliest_required_date. Nulls always last."),
+    direction: Optional[Literal["asc", "desc"]] = Query(
+        "asc",
+        alias="dir",
+        description="Nulls sort last in BOTH directions, never first on desc.",
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
@@ -103,6 +128,8 @@ def list_fulfilment_planning(
             review_state=review_state,
             project_id=project_id,
             sales_order_id=sales_order_id,
+            sort=sort,
+            dir=direction,
             page=page,
             limit=limit,
         )

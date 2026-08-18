@@ -468,10 +468,20 @@ def test_confirmed_unplaced_buy_rows_reader_counts_raised_order_rows_directly(ap
 
 
 def test_the_sheet_leg_predicate_excludes_a_core_so_once_its_project_so_holds_an_active_decision(api):
-    """PLAN section 4: `is_plan_demand_order()` keeps counting a sheet-named project SO
-    until it is confirmed, then the confirmed Buy replaces it -- never both."""
-    from app.models.order import SalesOrder
-    from app.services.scm.demand import is_plan_demand_order
+    """PLAN section 4: the sheet leg keeps counting a sheet-named project SO until it is
+    confirmed, then the confirmed Buy replaces it -- never both.
+
+    The CLAIM is unchanged; the LEVEL it is answered at moved, and this test moved with it.
+    `is_plan_demand_order()` alone used to say it, because a confirmation had to cover
+    every line of its order. Since partial confirmation
+    (`PLAN-fulfilment-planning-from-autocount-so.md` 13.4) it takes both halves of the
+    rule: the order half says the sheet speaks for this order, the LINE half says which of
+    its lines CS has already decided. Deciding it per order again would take an order's
+    undecided lines out of the plan with its decided one, which is the defect 13.4 exists
+    to prevent (`tests/test_partial_decision_demand_invariants.py`).
+    """
+    from app.models.order import SalesOrder, SalesOrderLine
+    from app.services.scm.demand import is_plan_demand_line, is_plan_demand_order
 
     client, world = api
     db = world.db
@@ -483,10 +493,19 @@ def test_the_sheet_leg_predicate_excludes_a_core_so_once_its_project_so_holds_an
     line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
     db.commit()
 
-    still_counts = (
-        db.query(SalesOrder).filter(SalesOrder.id == core_so.id, is_plan_demand_order()).first()
-    )
-    assert still_counts is not None, "unconfirmed, the sheet leg must still count"
+    def counted_lines():
+        return (
+            db.query(SalesOrderLine.id)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(
+                SalesOrderLine.sales_order_id == core_so.id,
+                is_plan_demand_order(),
+                is_plan_demand_line(),
+            )
+            .all()
+        )
+
+    assert counted_lines(), "unconfirmed, the sheet leg must still count"
 
     response = client.post(
         f"{BASE}/sales-orders/{order.id}/confirm",
@@ -495,10 +514,9 @@ def test_the_sheet_leg_predicate_excludes_a_core_so_once_its_project_so_holds_an
     assert response.status_code == 200, response.text
 
     db.expire_all()
-    now_excluded = (
-        db.query(SalesOrder).filter(SalesOrder.id == core_so.id, is_plan_demand_order()).first()
+    assert not counted_lines(), (
+        "confirmed, the sheet leg must stop counting a second time"
     )
-    assert now_excluded is None, "confirmed, the sheet leg must stop counting a second time"
 
 
 def test_committed_v_excludes_a_confirmed_project_sos_line_from_its_committed_sum():

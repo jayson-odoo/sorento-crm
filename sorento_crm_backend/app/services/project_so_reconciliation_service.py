@@ -53,6 +53,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import func
@@ -133,6 +134,52 @@ ROW_KIND_PLANNING_RECORD = "planning_record"
 ORIGIN_ADOPTED = "adopted"
 ORIGIN_AUTHORED = "authored"
 
+#: Every column the worklist renders is sortable (captain, 18 August 2026), and this is the
+#: CLOSED SET. An unknown value is a 422 at the route rather than a silent fall back to the
+#: default: a grid drawing a sort arrow on a column the server ignored is a screen lying
+#: about what it is showing, which is worse than a refusal a person can see.
+#:
+#: The route declares the same names as a `Literal` (FastAPI cannot build one from a runtime
+#: set), and `test_the_route_and_the_service_agree_on_the_sortable_set` is what stops the
+#: two drifting.
+SORTABLE_FIELDS = frozenset(
+    {
+        "so_number",
+        "customer_name",
+        "project_label",
+        "earliest_required_date",
+        "outstanding_qty",
+        "line_count",
+        "review_state",
+        "provisional_ref",
+        "po_number",
+        "area_group",
+        "updated_at",
+    }
+)
+
+#: Earliest still-owed required date, because that is the order the work is due in
+#: (AC-FP04). Sorting is an override of this, never a replacement for having one.
+DEFAULT_SORT_FIELD = "earliest_required_date"
+
+#: Sorting on one of these needs the DERIVED review state, so the outcomes have to be
+#: computed for every planning record in the result rather than for the page alone.
+_SORT_NEEDS_OUTCOMES = frozenset({"review_state", "line_count"})
+
+#: Sorting on one of these needs the joined project / customer / PO strip, so
+#: `_header_rows` runs over every planning record in the result rather than the page.
+_SORT_NEEDS_HEADERS = frozenset({"customer_name", "project_label", "po_number"})
+
+#: The order the work MOVES in, which is the only order these four pills mean anything in.
+#: Alphabetically they read awaiting, confirmed, needs, not started - which is no order at
+#: all to the person looking at the column.
+_REVIEW_STATE_RANK = {
+    REVIEW_NOT_STARTED: 0,
+    REVIEW_AWAITING: 1,
+    REVIEW_NEEDS_CS: 2,
+    REVIEW_CONFIRMED: 3,
+}
+
 #: What the Order Inquiry sheet prefixes the project string on the core order with
 #: (`project_order_inquiry_import_service`). Stripped for display: the machine's word for
 #: where a fact came from is not part of the fact.
@@ -182,15 +229,29 @@ def _origin_of(record: Optional[ProjectSalesOrder]) -> Optional[str]:
     return ORIGIN_ADOPTED if record.status == SO_STATUS_ADOPTED else ORIGIN_AUTHORED
 
 
-def _worklist_sort_key(row: Dict[str, Any]) -> tuple:
-    """AC-FP04, and TOTAL.
+def _folded(value: Optional[str]) -> Optional[str]:
+    """A text sort key a person would recognise: case-folded, and blank counts as absent.
 
-    Earliest still-owed required date first, undated last, tie-broken on the human key -
-    the sales-order number, else the AutoCount document number, else our own reference,
-    which is the same fallback chain the screen names the row by. A non-total order is what
-    puts one row on two pages of a paged list and another on none.
+    An empty string is not a value somebody typed, so it sorts with the nulls rather than
+    ahead of every real name.
     """
-    when = row.get("earliest_required_date")
+    text_value = (value or "").strip()
+    return text_value.casefold() if text_value else None
+
+
+def _worklist_tiebreak(row: Dict[str, Any]) -> tuple:
+    """How two rows that tie on the sorted field are separated. TOTAL, and ALWAYS ASCENDING.
+
+    The human key first - the sales-order number, else the AutoCount document number, else
+    our own reference, which is the same fallback chain the screen names the row by - then
+    the row's own identity, so two subjects that somehow shared a reference still have an
+    answer. A non-total order is what puts one row on two pages of a paged list and another
+    on none, and it is invisible until somebody counts.
+
+    Ascending whichever way the primary sort runs, deliberately: "which of these equal rows
+    comes first" should have ONE answer on this screen rather than an answer that flips
+    when somebody reverses an unrelated column.
+    """
     record: Optional[ProjectSalesOrder] = row.get("record")
     reference = (
         row.get("so_number")
@@ -198,7 +259,7 @@ def _worklist_sort_key(row: Dict[str, Any]) -> tuple:
         or (record.provisional_ref if record is not None else None)
         or ""
     )
-    return (when is None, when or date.min, reference, str(row.get("id") or ""))
+    return (str(reference), str(row.get("id") or row.get("sales_order_id") or ""))
 
 
 def _date_phrase(value: Optional[date]) -> str:
@@ -1071,6 +1132,8 @@ class ProjectSOReconciliationService:
         review_state: Optional[str] = None,
         project_id: Optional[str] = None,
         sales_order_id: Optional[str] = None,
+        sort: Optional[str] = None,
+        dir: Optional[str] = None,
         page: int = 1,
         limit: int = 50,
     ) -> Dict[str, Any]:
@@ -1094,11 +1157,24 @@ class ProjectSOReconciliationService:
         arm 1", which is a superset of both and keeps each subject on exactly one row
         (AC-FP03). Deviation recorded in the plan's section 6.
 
-        Ordering is earliest OUTSTANDING required date ascending, undated last, tie-broken
-        on the human key - the sales-order number, else the AutoCount document number, else
-        our own reference (AC-FP04). Total, so no row lands on two pages or on neither, and
-        it is the order the work is actually due in rather than the order somebody last
-        saved a record in.
+        Ordering DEFAULTS to earliest OUTSTANDING required date ascending, undated last
+        (AC-FP04): the order the work is actually due in, rather than the order somebody
+        last saved a record in. `sort` + `dir` (the names `buildDataGridParams` sends)
+        override it on any of `SORTABLE_FIELDS`, and three rules hold for every one of them:
+
+        * **The sort is applied to the UNION, not per arm.** A core sales order and an
+          authored record interleave on every field; sorting each arm and concatenating
+          would look right at the top of page 1 and be wrong everywhere below it.
+        * **It stays TOTAL and STABLE.** Every sort ends in `_worklist_tiebreak`, applied as
+          a stable pre-pass, so a tie breaks the same way on page 2 as on page 1 and in
+          either direction.
+        * **Nulls sort LAST in BOTH directions.** Postgres would put them last ascending
+          and first descending, so reversing "earliest required date" would answer with the
+          orders that have no date at all. A missing value is not an extreme value.
+
+        A field one arm cannot supply (an authored record has no sales-order number, a
+        not-started row has no reference, updated_at or area group) does not hide that arm:
+        those rows sort to the end by the null rule and are never dropped.
 
         Paging is done in Python, and this is a deliberate change from Stage 1B's SQL
         paging. Two arms over two tables have no single SQL cursor to offset, and the
@@ -1109,12 +1185,32 @@ class ProjectSOReconciliationService:
 
         The review state is DERIVED and has no column, so it is derived for as few subjects
         as the filter allows: not at all for `not_started` (which is simply "no planning
-        record"), for every planning record when another state is filtered on, and for the
-        page alone when nothing is filtered.
+        record"), for every planning record when another state is filtered on OR when the
+        sort needs it (`_SORT_NEEDS_OUTCOMES`), and for the page alone otherwise. The same
+        rule governs the joined project / customer / PO strip (`_SORT_NEEDS_HEADERS`). Both
+        extra passes are bounded by the number of PLANNING RECORDS, not by the book: 16
+        against 605 core orders on the live data (plan section 12).
         """
         page = max(page, 1)
         offset = (page - 1) * limit
         needle = (query or "").strip()
+        sort_field = sort or DEFAULT_SORT_FIELD
+        if sort_field not in SORTABLE_FIELDS:
+            # Belt and braces behind the route's `Literal`: a service caller (a test, a
+            # script, the MCP) must get the same refusal the HTTP caller gets rather than a
+            # quiet fall back to the default order.
+            raise AppException(
+                422,
+                f"'{sort_field}' is not a column this list can be sorted by.",
+                code="unsortable_field",
+            )
+        if dir not in (None, "asc", "desc"):
+            raise AppException(
+                422,
+                f"'{dir}' is not a sort direction. Use asc or desc.",
+                code="invalid_sort_direction",
+            )
+        descending = dir == "desc"
 
         core_rows = self._core_arm(needle=needle, sales_order_id=sales_order_id)
         records = self._records_for([row["sales_order_id"] for row in core_rows])
@@ -1134,30 +1230,46 @@ class ProjectSOReconciliationService:
                 for row in rows
                 if str(row.get("sales_order_id") or "") == str(sales_order_id)
             ]
-        rows.sort(key=_worklist_sort_key)
-
+        # A not-started row IS a row with no planning record, so that filter needs nothing
+        # derived; it also empties the two extra passes below, because there is then no
+        # record left to derive anything for.
         if review_state == REVIEW_NOT_STARTED:
             rows = [row for row in rows if row["id"] is None]
-            total = len(rows)
-            window = rows[offset : offset + limit]
-            outcomes = {}
-        elif review_state:
-            outcomes = self._outcomes_for(self._planning_records([row["id"] for row in rows]))
+
+        record_ids = [row["id"] for row in rows if row["id"]]
+        wants_all_outcomes = bool(
+            (review_state and review_state != REVIEW_NOT_STARTED)
+            or sort_field in _SORT_NEEDS_OUTCOMES
+        )
+        outcomes: Dict[str, _OrderOutcome] = (
+            self._outcomes_for(self._planning_records(record_ids))
+            if wants_all_outcomes
+            else {}
+        )
+        headers: Dict[str, Dict[str, Any]] = (
+            self._header_rows(record_ids)
+            if sort_field in _SORT_NEEDS_HEADERS
+            else {}
+        )
+
+        if review_state and review_state != REVIEW_NOT_STARTED:
             rows = [
                 row
                 for row in rows
                 if row["id"] and outcomes[str(row["id"])].review_state == review_state
             ]
-            total = len(rows)
-            window = rows[offset : offset + limit]
-        else:
-            total = len(rows)
-            window = rows[offset : offset + limit]
-            outcomes = self._outcomes_for(
-                self._planning_records([row["id"] for row in window])
-            )
 
-        headers = self._header_rows([row["id"] for row in window if row["id"]])
+        self._sort_rows(rows, sort_field, descending, outcomes, headers)
+        total = len(rows)
+        window = rows[offset : offset + limit]
+
+        # Top up for the page when the sort did not already need the whole set. Both
+        # helpers are already covering a superset when it did.
+        page_ids = [row["id"] for row in window if row["id"]]
+        if not wants_all_outcomes:
+            outcomes = self._outcomes_for(self._planning_records(page_ids))
+        if sort_field not in _SORT_NEEDS_HEADERS:
+            headers = self._header_rows(page_ids)
 
         data = []
         for row in window:
@@ -1169,6 +1281,96 @@ class ProjectSOReconciliationService:
             # without the worklist being empty, and the siblings all read it this way.
             "empty": total == 0,
         }
+
+    # ------------------------------------------------------------------- sorting
+
+    def _sort_rows(
+        self,
+        rows: List[Dict[str, Any]],
+        field: str,
+        descending: bool,
+        outcomes: Dict[str, _OrderOutcome],
+        headers: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """Order the whole union in place, nulls last, total and stable.
+
+        TWO PASSES, and that is the whole trick. Python's sort is stable, so sorting by the
+        tiebreaker FIRST and by the field second leaves the tiebreaker's order intact inside
+        every group of equal values - including when the second pass runs in reverse. Doing
+        it as one composite key would need the tiebreaker to invert with the direction,
+        which is how "which of these equal rows comes first" ends up with two answers.
+
+        Rows with no value are partitioned out BEFORE either pass rather than given a
+        sentinel, so they land last in both directions and never compare against a real
+        value. This is the one thing an `ORDER BY` would have got wrong for free.
+        """
+        decorated = [
+            (self._sort_value(row, field, outcomes, headers), row) for row in rows
+        ]
+        present = [pair for pair in decorated if pair[0] is not None]
+        absent = [pair[1] for pair in decorated if pair[0] is None]
+
+        present.sort(key=lambda pair: _worklist_tiebreak(pair[1]))
+        present.sort(key=lambda pair: pair[0], reverse=descending)
+        absent.sort(key=_worklist_tiebreak)
+
+        rows[:] = [pair[1] for pair in present] + absent
+
+    def _sort_value(
+        self,
+        row: Dict[str, Any],
+        field: str,
+        outcomes: Dict[str, _OrderOutcome],
+        headers: Dict[str, Dict[str, Any]],
+    ) -> Any:
+        """What one row sorts BY, or `None` when it has no value for this field.
+
+        `None` is the honest answer for a field the row's arm cannot supply - an authored
+        record has no sales-order number, a not-started row has no reference, area group or
+        `updated_at` - and it is what puts that row at the end rather than dropping it.
+
+        Every value here is the one the CELL SHOWS, resolved through the same fallbacks
+        `_worklist_row` uses, so a column can never sort by one number and print another.
+        Text is compared case-folded, or `Zebra` sorts above `apple` and the grid looks
+        broken to everyone except a computer.
+        """
+        record: Optional[ProjectSalesOrder] = row.get("record")
+        display = headers.get(str(row["id"]), {}) if row.get("id") else {}
+        outcome = outcomes.get(str(row["id"])) if row.get("id") else None
+
+        if field == "so_number":
+            return _folded(row.get("so_number"))
+        if field == "earliest_required_date":
+            return row.get("earliest_required_date")
+        if field == "outstanding_qty":
+            value = row.get("outstanding_qty")
+            return Decimal(str(value)) if value is not None else None
+        if field == "line_count":
+            # The mirror's count when there is a planning record, the core order's open-line
+            # count when there is not: exactly what the cell prints.
+            return outcome.lines_total if outcome is not None else row.get("open_line_count")
+        if field == "review_state":
+            state = (
+                (outcome.review_state if outcome is not None else None)
+                if record is not None
+                else REVIEW_NOT_STARTED
+            )
+            return _REVIEW_STATE_RANK.get(state) if state else None
+        if field == "customer_name":
+            return _folded(display.get("customer_name") or row.get("core_customer_name"))
+        if field == "project_label":
+            return _folded(display.get("project_name") or row.get("project_string"))
+        if field == "po_number":
+            return _folded(display.get("po_number"))
+        if field == "provisional_ref":
+            return _folded(record.provisional_ref if record is not None else None)
+        if field == "area_group":
+            return _folded(record.area_group if record is not None else None)
+        if field == "updated_at":
+            return record.updated_at if record is not None else None
+        # Unreachable: `SORTABLE_FIELDS` is checked before this is ever called, and the
+        # route's `Literal` checks it again a layer earlier.
+        return None
 
     # ------------------------------------------------------------- arm 1: the book
 

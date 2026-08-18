@@ -126,6 +126,40 @@ def test_an_unknown_review_state_is_a_422_not_an_empty_200(api):
     assert response.status_code == 422, response.text
 
 
+def test_the_worklist_accepts_the_datagrid_sort_and_dir_the_shared_builder_sends(api):
+    """`buildDataGridParams` emits `sort` + `dir`, so those are the names, unchanged."""
+    client, _db, _company_id, core = api
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning", params={"sort": "so_number", "dir": "desc"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert core.so_number in {row["so_number"] for row in response.json()["data"]}
+
+
+def test_an_unknown_sort_field_is_a_422_and_never_a_silent_fallback(api):
+    """A grid showing an arrow on a column the server quietly ignored is a screen lying
+    about what it is showing, which is worse than a refusal."""
+    client, *_rest = api
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning", params={"sort": "whatever", "dir": "asc"}
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_an_unknown_sort_direction_is_a_422(api):
+    client, *_rest = api
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning", params={"sort": "so_number", "dir": "sideways"}
+    )
+
+    assert response.status_code == 422, response.text
+
+
 def test_the_worklist_can_be_narrowed_to_one_sales_order(api):
     client, db, company_id, core = api
     with company_scope(db, frozenset({company_id})):

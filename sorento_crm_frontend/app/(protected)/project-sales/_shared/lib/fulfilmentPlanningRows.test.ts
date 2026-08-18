@@ -12,6 +12,7 @@ import {
   planningRowKey,
   planningRowProjectLabel,
   planningRowReference,
+  planningRowSalesOrderHref,
   sortByEarliestRequired,
 } from './fulfilmentPlanningRows';
 import type { FulfilmentPlanningRow } from '../types/fulfilmentPlanning.types';
@@ -52,6 +53,53 @@ describe('planningRowReference', () => {
 
   it('answers null rather than an id when the row has no human key at all', () => {
     expect(planningRowReference(row({ sales_order_id: 'so-345418' }))).toBeNull();
+  });
+});
+
+/**
+ * Reaching the sales order from a row (captain: "on click i should be able to view the SO").
+ *
+ * The identity column is the link, which is this repo's usual idiom for a listing - the SCM
+ * sales-order list and the purchase-order list both make the document number the way in. The
+ * row itself keeps its existing meaning (open the plan), so nothing a CS already does changes.
+ */
+describe('planningRowSalesOrderHref', () => {
+  it('sends an AutoCount-arm row to the core sales order', () => {
+    expect(
+      planningRowSalesOrderHref(
+        row({ row_kind: 'sales_order', sales_order_id: 'so-345418', so_number: 'SO345418' }),
+      ),
+    ).toBe('/scm/sales-orders/so-345418');
+  });
+
+  it('sends an authored row to its project sales order', () => {
+    expect(
+      planningRowSalesOrderHref(
+        row({
+          row_kind: 'planning_record',
+          id: 'pso-1',
+          project_id: 'proj-1',
+          provisional_ref: 'PSO-000123',
+        }),
+      ),
+    ).toBe('/project-sales/proj-1/sales-orders/pso-1');
+  });
+
+  it('prefers the core sales order when a row can reach both', () => {
+    expect(
+      planningRowSalesOrderHref(
+        row({ sales_order_id: 'so-345418', id: 'pso-1', project_id: 'proj-1' }),
+      ),
+    ).toBe('/scm/sales-orders/so-345418');
+  });
+
+  it('answers null rather than a dead link when there is nothing to open', () => {
+    // An adopted record has no project registration, so the project route cannot be built for
+    // it; a row with no core order either is simply not linkable, and says so by rendering
+    // plain text.
+    expect(planningRowSalesOrderHref(row({ id: 'pso-1', project_id: null }))).toBeNull();
+    expect(planningRowSalesOrderHref(row({ project_id: 'proj-1' }))).toBeNull();
+    expect(planningRowSalesOrderHref(row({ provisional_ref: 'PSO-000123' }))).toBeNull();
   });
 });
 

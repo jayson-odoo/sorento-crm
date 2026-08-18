@@ -27,8 +27,14 @@ const Z_CORNER = 'z-30';
  * is also the only way to tint these tokens: Tailwind v4 resolves them to `oklch(...)`, so
  * `hsl(var(--destructive) / 0.1)` is dropped by the browser as invalid.
  */
-const OVERDUE_BG = 'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
+const PAST_HEADER_BG = 'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
 const NO_DATE_BG = 'bg-[color-mix(in_oklab,var(--foreground)_6%,var(--muted))]';
+
+/**
+ * The body tint for a bucket that is already past. Lighter than the header, and still opaque:
+ * a `/5` alpha over a scrolling body reads as a smudge rather than as a column.
+ */
+const PAST_CELL_BG = 'bg-[color-mix(in_oklab,var(--destructive)_6%,var(--background))]';
 
 /**
  * The planning board: DATE BUCKETS across the top, PRODUCTS down the side, each cell the
@@ -52,6 +58,12 @@ const NO_DATE_BG = 'bg-[color-mix(in_oklab,var(--foreground)_6%,var(--muted))]';
  *
  * A BLANK CELL IS NOT A ZERO. It means no selected order owes that product by that date, so it
  * renders blank and stays blank.
+ *
+ * THE PAST IS TINTED, NOT MERGED. Every dated bucket is a real date, however far back, and the
+ * server's `is_past` is the only thing this grid colours on. The board used to carry one
+ * aggregate Overdue column and it collapsed a whole selection into it - 160 of 160 lines, with
+ * their dates gone. The cost of the change is columns, and the board pays it: it spans years,
+ * so the horizontal scroll below is load-bearing rather than a nicety.
  */
 export function FulfilmentBoardMatrix({
   dateBuckets,
@@ -96,23 +108,24 @@ export function FulfilmentBoardMatrix({
                 key={bucket.key}
                 scope="col"
                 data-bucket={bucket.key}
+                data-past={String(Boolean(bucket.is_past))}
                 className={cn(
                   DATE_COL,
                   Z_PINNED,
                   'sticky top-0 border-b border-e border-border px-2 py-2 text-start align-bottom font-medium',
-                  bucket.kind === 'overdue'
-                    ? OVERDUE_BG
-                    : bucket.kind === 'no_date'
-                      ? NO_DATE_BG
+                  bucket.kind === 'no_date'
+                    ? NO_DATE_BG
+                    : bucket.is_past
+                      ? PAST_HEADER_BG
                       : 'bg-muted',
                 )}
               >
                 <span className="block truncate" title={bucket.label}>
                   {bucket.label}
                 </span>
-                {bucket.kind !== 'dated' && (
+                {(bucket.kind === 'no_date' || bucket.is_past) && (
                   <span className="block truncate text-[11px] font-normal text-muted-foreground">
-                    {bucket.kind === 'overdue' ? 'Already past' : 'Not stated'}
+                    {bucket.kind === 'no_date' ? 'Not stated' : 'Already past'}
                   </span>
                 )}
               </th>
@@ -145,7 +158,7 @@ export function FulfilmentBoardMatrix({
                     className={cn(
                       DATE_COL,
                       'border-b border-e border-border p-0 align-top',
-                      bucket.kind === 'overdue' && 'bg-destructive/5',
+                      bucket.is_past && PAST_CELL_BG,
                     )}
                   >
                     {cell ? (

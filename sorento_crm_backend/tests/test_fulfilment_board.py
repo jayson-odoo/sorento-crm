@@ -10,8 +10,10 @@ writes nothing - so every test here reads.
 
 The four things worth arguing about, and so the four things pinned here:
 
-  * which column a line lands in (13.3), including the two that are not buckets of time at all:
-    Overdue pinned first, No date pinned last, in EVERY granularity;
+  * which column a line lands in (13.3): its OWN period, past or future, with No date pinned
+    last as the only column that is not a period. There is no aggregate for the past - an
+    earlier build had one and it swallowed 160 of 160 lines into a single column - so what a
+    past date carries instead is a flag (`is_past`) on its bucket, its cell count and its line;
   * that several orders owing one product by one date aggregate into ONE cell;
   * that scarce free stock is served per (product, LOCATION) and never across - moving stock
     between locations is a transfer, and a non-goal here (13.7);
@@ -219,31 +221,102 @@ def test_bucket_assignment_for_day_week_and_month():
     assert bucket_key_for(when, TODAY, "month") == "2026-09-01"
 
 
-def test_a_past_date_is_overdue_and_no_date_is_its_own_bucket_at_every_granularity():
+def test_a_past_date_keeps_its_own_period_and_only_no_date_is_special():
+    """The captain, on seeing 160 of 160 lines collapse into one column: "don't put overdue
+    together, still split by the date, don't put under overdue".
+
+    So a date in the past buckets by ITS OWN period, exactly like a future one. The only
+    non-period column left is No date, because an absent date is a different thing from an old
+    one and there is no period to put it in.
+    """
     from app.services.project_fulfilment_board_service import bucket_key_for
 
+    long_ago = date(2022, 7, 6)  # a Wednesday, so the week key must be the Monday before it
+    assert bucket_key_for(long_ago, TODAY, "day") == "2022-07-06"
+    assert bucket_key_for(long_ago, TODAY, "week") == "2022-07-04"
+    assert bucket_key_for(long_ago, TODAY, "month") == "2022-07-01"
     for granularity in ("day", "week", "month"):
-        assert bucket_key_for(date(2025, 6, 15), TODAY, granularity) == "overdue"
         assert bucket_key_for(None, TODAY, granularity) == "no_date"
 
 
-def test_overdue_is_pinned_first_and_no_date_last():
+def test_no_aggregate_bucket_exists_and_a_years_old_line_keeps_its_own_column():
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="5", required_date=date(2022, 7, 6), warehouse=warehouse)
         _line(db, order, product, qty="5", required_date=date(2025, 6, 15), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=date(2026, 9, 3), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=None, warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="month", as_of=TODAY)
+
+        keys = [bucket["key"] for bucket in board["dateBuckets"]]
+        assert "overdue" not in keys, "the aggregate column is gone, not renamed"
+        # Chronological, earliest first, and the two past months are two columns.
+        assert keys == ["2022-07-01", "2025-06-01", "2026-09-01", "no_date"]
+        kinds = {b["key"]: b["kind"] for b in board["dateBuckets"]}
+        assert kinds["2022-07-01"] == "dated"
+        assert kinds["no_date"] == "no_date"
+        # And the line is IN its own column, carrying its own real date.
+        cell = _cell(board, product.product_code, "2022-07-01")
+        assert cell["total_qty"] == "5"
+        assert cell["contributions"][0]["required_date"] == date(2022, 7, 6)
+
+
+def test_a_bucket_whose_period_has_ended_says_so_and_the_current_one_does_not():
+    """The information the Overdue column used to carry, without the lumping.
+
+    A bucket is past when its whole period ended before the as-of date. The period CONTAINING
+    the as-of date is not past: some of its dates are still to come, and tinting it would tell
+    the planner this week is already lost.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        # TODAY is 2026-08-18, a Tuesday, so its week runs 17 to 23 August.
+        _line(db, order, product, qty="5", required_date=date(2025, 6, 15), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=date(2026, 8, 17), warehouse=warehouse)
         _line(db, order, product, qty="5", required_date=date(2026, 9, 3), warehouse=warehouse)
         _line(db, order, product, qty="5", required_date=None, warehouse=warehouse)
 
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
 
-        keys = [bucket["key"] for bucket in board["dateBuckets"]]
-        assert keys[0] == "overdue"
-        assert keys[-1] == "no_date"
-        kinds = {b["key"]: b["kind"] for b in board["dateBuckets"]}
-        assert kinds["overdue"] == "overdue" and kinds["no_date"] == "no_date"
-        assert kinds["2026-08-31"] == "dated"
+        past = {bucket["key"]: bucket["is_past"] for bucket in board["dateBuckets"]}
+        assert past["2025-06-09"] is True
+        assert past["2026-08-17"] is False, "the week we are in has not ended"
+        assert past["2026-08-31"] is False  # w/c 31 Aug, which holds the 3 September line
+        assert past["no_date"] is False, "no date is not a date that has passed"
+
+
+def test_every_contribution_says_whether_its_own_date_has_passed():
+    """What the "160 of 160 lines are past their required date" summary counts.
+
+    Per LINE, not per bucket: the line dated 17 August is past even though the week it sits in
+    has not ended, and a summary built off the bucket flag alone would miss it.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="5", required_date=date(2026, 8, 17), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=date(2026, 8, 19), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=None, warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        by_date = {
+            contribution["required_date"]: contribution["is_past"]
+            for cell in board["cells"]
+            for contribution in cell["contributions"]
+        }
+        assert by_date[date(2026, 8, 17)] is True
+        assert by_date[date(2026, 8, 19)] is False
+        assert by_date[None] is False, "an absent date has not passed; it is simply absent"
+        # And the cell counts them, so the summary needs no second pass over contributions.
+        this_week = _cell(board, product.product_code, "2026-08-17")
+        assert this_week["past_count"] == 1
 
 
 def test_day_granularity_is_a_thirty_day_window_not_a_column_per_distinct_date():
@@ -778,3 +851,47 @@ def test_preview_policy_1_means_the_modules_own_board_preview():
 
         assert board["policy"]["name"] == priority.BOARD_PREVIEW_NAME
         assert board["policy"]["is_preview"] is True
+
+
+def test_the_day_window_opens_on_the_work_still_to_come_not_three_years_ago():
+    """With the Overdue column gone, "the earliest dated bucket" can be years in the past.
+
+    The prototype's day view opened on the earliest STILL-FUTURE date, and it has to keep
+    doing that: a 30-day window that opens in December 2024 shows the planner one line and an
+    empty month. Past demand is reached by moving the window, which is what the control is for.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="5", required_date=date(2024, 12, 3), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="day", as_of=TODAY)
+
+        dated = [b for b in board["dateBuckets"] if b["kind"] == "dated"]
+        assert dated[0]["key"] == "2026-09-03"
+        # And the past line is still reachable: the window is a display control, so asking for
+        # it by date brings it back rather than the plan having lost it.
+        back = _service(db).build(
+            [order.so_number],
+            granularity="day",
+            as_of=TODAY,
+            day_window_start=date(2024, 12, 1),
+        )
+        assert [b["key"] for b in back["dateBuckets"]][0] == "2024-12-01"
+        assert _cell(back, product.product_code, "2024-12-03")["past_count"] == 1
+
+
+def test_the_day_window_falls_back_to_the_earliest_owed_when_everything_is_past():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="5", required_date=date(2025, 6, 15), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="day", as_of=TODAY)
+
+        dated = [b for b in board["dateBuckets"] if b["kind"] == "dated"]
+        assert dated[0]["key"] == "2025-06-15", "open where the work is, not on an empty today"
+        assert dated[0]["is_past"] is True

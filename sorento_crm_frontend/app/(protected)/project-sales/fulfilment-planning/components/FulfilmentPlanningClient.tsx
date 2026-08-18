@@ -39,6 +39,7 @@ import {
   planningRowKey,
   planningRowProjectLabel,
   planningRowReference,
+  planningRowSalesOrderHref,
 } from '../../_shared/lib/fulfilmentPlanningRows';
 import { InfoHint } from '../../[projectId]/components/InfoHint';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
@@ -181,12 +182,25 @@ export function FulfilmentPlanningClient() {
         header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
         cell: ({ row }) => {
           const reference = planningRowReference(row.original);
-          return reference ? (
+          if (!reference) return <span className="text-muted-foreground">Not linked yet</span>;
+          const href = planningRowSalesOrderHref(row.original);
+          // The identity column is the way to the sales order (the repo's listing idiom), and
+          // the row keeps its own meaning: `stopPropagation` so following the link does not
+          // also open the planning sheet behind it. A row with nothing to open renders plain
+          // text rather than a link that 404s.
+          return href ? (
+            <Link
+              href={href}
+              onClick={(event) => event.stopPropagation()}
+              title={reference}
+              className="block truncate font-medium tabular-nums text-primary hover:underline"
+            >
+              {reference}
+            </Link>
+          ) : (
             <span className="block truncate font-medium tabular-nums" title={reference}>
               {reference}
             </span>
-          ) : (
-            <span className="text-muted-foreground">Not linked yet</span>
           );
         },
         size: 140,

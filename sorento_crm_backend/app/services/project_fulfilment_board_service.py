@@ -22,6 +22,11 @@ never scored zero. The board states which policy produced what is on screen, and
 that policy separates nothing at all rather than showing a plausible-looking order it did not
 earn.
 
+**Every date keeps its own column.** There is no aggregate for the past: a line owed in July
+2022 is shown in July 2022, marked as past, not merged into an "Overdue" pile with everything
+else. The earlier build had that pile and on real data it swallowed 160 of 160 lines into one
+column, which is precisely the schedule the planner opened the board to read.
+
 **Allocation is per (product, LOCATION), never across.** Free stock at one warehouse cannot
 cover a line that must be fulfilled from another; moving it is a transfer, which is M9's job
 and a non-goal here (13.7). One cell therefore legitimately spans several locations, and the
@@ -65,16 +70,19 @@ _ZERO = Decimal("0")
 #: of the design rather than a guard bolted on, so it is stated when it bites.
 BOARD_ORDER_CAP = 50
 
-#: The two columns that are not buckets of time, and so have no place on a timeline. Overdue
-#: is pinned first (4,183 of 11,166 open lines are already past, so it is the biggest column
-#: on the board), No date last (63 lines state none, and a guessed date is the same class of
-#: silent wrong answer as a guessed warehouse).
-OVERDUE_BUCKET = "overdue"
+#: The one column that is not a bucket of time. An absent required date has no period to be
+#: put in, and guessing one is the same class of silent wrong answer as guessing a warehouse,
+#: so it gets its own column, pinned last.
+#:
+#: There is deliberately NO aggregate column for the past. An earlier build lumped every past
+#: date into one "Overdue", and on real data that swallowed 160 of 160 lines into a single
+#: column - which destroys exactly the schedule the planner opened the board to read. A date
+#: in the past is still a date; what it needs is to be MARKED, not merged (see `is_past`).
 NO_DATE_BUCKET = "no_date"
 
 #: Day granularity renders a window, not a column per distinct date (13.3). A DISPLAY bound
-#: only: nothing is filtered out of the plan by it, anything past is in Overdue regardless,
-#: and future demand beyond it is reached by moving the window.
+#: only: nothing is filtered out of the plan by it, and demand outside it is reached by moving
+#: the window.
 DAY_WINDOW_COLUMNS = 30
 
 GRANULARITIES = ("day", "week", "month")
@@ -97,12 +105,18 @@ def week_start(when: date) -> date:
 def bucket_key_for(
     required_date: Optional[date], as_of: date, granularity: str
 ) -> str:
-    """Which column a line belongs in.
+    """Which column a line belongs in: its own period, whether that period is past or future.
 
-    Overdue swallows every past date whatever it is: they are all equally late, and spreading
-    years of history across the axis would push the columns anyone can still act on off the
-    right-hand edge. A line with no date gets its own column rather than being guessed into
-    one.
+    Nothing is aggregated by age. The captain, on seeing the earlier build: "don't put overdue
+    together, still split by the date, don't put under overdue". A line owed in July 2022 is
+    owed in July 2022, and collapsing three years of them into one column destroys the schedule
+    the board exists to show.
+
+    `as_of` therefore takes NO part in the key, and is kept in the signature on purpose: the
+    key is what the frontend rebuilds (`bucketKeyFor` in `_shared/lib/fulfilmentBoard.ts`), the
+    two must stay the same function, and dropping the argument on one side only would be a
+    silent divergence. Whether a period has already passed is reported separately, as a flag
+    (`is_past`), because a bucket that is past today is not past-SHAPED - it is just old.
 
     Bucketing is a DISPLAY choice and nothing is ever stored bucketed: every contribution
     carries the line's own real `required_date`, and the allocation sorts on the ranking,
@@ -110,8 +124,6 @@ def bucket_key_for(
     """
     if required_date is None:
         return NO_DATE_BUCKET
-    if required_date < as_of:
-        return OVERDUE_BUCKET
     if granularity == "month":
         return required_date.replace(day=1).isoformat()
     if granularity == "day":
@@ -119,9 +131,23 @@ def bucket_key_for(
     return week_start(required_date).isoformat()
 
 
+def bucket_end(key: str, granularity: str) -> Optional[date]:
+    """The last date the bucket covers, or None for the dateless column."""
+    if key == NO_DATE_BUCKET:
+        return None
+    start = date.fromisoformat(key)
+    if granularity == "day":
+        return start
+    if granularity == "week":
+        return start + timedelta(days=6)
+    following = (
+        date(start.year + 1, 1, 1) if start.month == 12
+        else date(start.year, start.month + 1, 1)
+    )
+    return following - timedelta(days=1)
+
+
 def _bucket_label(key: str, granularity: str) -> str:
-    if key == OVERDUE_BUCKET:
-        return "Overdue"
     if key == NO_DATE_BUCKET:
         return "No date"
     when = date.fromisoformat(key)
@@ -149,8 +175,8 @@ class _Row:
         "line_id", "sales_order_id", "so_number", "customer_id", "customer_name",
         "project_label", "order_date", "line_no", "item_code", "product_id", "qty",
         "required_date", "warehouse_id", "location", "priority", "demand_class",
-        "payment_terms_days", "bucket_key", "rank_score", "rank_factors", "sources",
-        "contested",
+        "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
+        "sources", "contested",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -160,6 +186,7 @@ class _Row:
         self.rank_factors = []
         self.sources = []
         self.contested = False
+        self.is_past = False
 
     @property
     def unplannable(self) -> bool:
@@ -197,9 +224,10 @@ class FulfilmentBoardService:
     ) -> Dict[str, Any]:
         """The board for one selection of sales orders.
 
-        `as_of` is a parameter rather than the clock so "overdue" is reproducible, and it is
-        echoed back in the response for the same reason: the biggest column on the board must
-        not quietly change shape between two reads.
+        `as_of` is a parameter rather than the clock so which periods read as past is
+        reproducible, and it is echoed back in the response for the same reason: a board that
+        quietly disagreed with itself between two reads would be disagreeing about which of the
+        planner's commitments are already late.
         """
         if granularity not in GRANULARITIES:
             raise AppException(
@@ -226,6 +254,10 @@ class FulfilmentBoardService:
         rows = self._demand_rows(numbers)
         for row in rows:
             row.bucket_key = bucket_key_for(row.required_date, as_of, granularity)
+            # Per LINE, against its own date, which is the number the "N of M lines are past
+            # their required date" summary counts. A line dated yesterday is past even though
+            # the week it sits in has not ended, so the bucket flag alone would undercount it.
+            row.is_past = row.required_date is not None and row.required_date < as_of
 
         cells_by_key: Dict[Tuple[str, str], List[_Row]] = defaultdict(list)
         for row in rows:
@@ -259,13 +291,15 @@ class FulfilmentBoardService:
             members.sort(key=lambda m: (-m.rank_score, m.so_number, m.line_no))
 
         buckets = self._buckets(
-            {row.bucket_key for row in rows}, granularity, day_window_start
+            {row.bucket_key for row in rows}, granularity, day_window_start, as_of
         )
         products = sorted({row.item_code for row in rows})
 
         # Board order: bucket by bucket, product by product, and inside a cell by rank. That
-        # is the order the one pile is served in, so an overdue line is served before a line
-        # owed next year rather than losing to it by an accident of iteration.
+        # is the order the one pile is served in, so a line owed in 2025 is served before a
+        # line owed in 2030 rather than losing to it by an accident of iteration. With the
+        # buckets now plainly chronological this falls out of the axis itself, where before it
+        # needed the aggregate past column pinned to the front.
         served: List[_Row] = []
         for bucket in buckets:
             for item in products:
@@ -624,6 +658,11 @@ class FulfilmentBoardService:
             "contributions": [self._contribution(row) for row in members],
             "unplannable_count": sum(1 for row in members if row.unplannable),
             "contested_count": sum(1 for row in members if row.contested),
+            # Lines whose OWN required date is already past. Counted here so the screen can say
+            # "160 of 160 lines are past their required date" without walking every
+            # contribution, which is the information the aggregate Overdue column used to carry
+            # and the only part of it worth keeping.
+            "past_count": sum(1 for row in members if row.is_past),
         }
 
     def _contribution(self, row: _Row) -> Dict[str, Any]:
@@ -637,6 +676,8 @@ class FulfilmentBoardService:
             "item_code": row.item_code,
             "qty": qty_text(row.qty),
             "required_date": row.required_date,
+            #: This line's own date is behind the as-of date. Per line, not per column.
+            "is_past": row.is_past,
             "fulfilment_location": row.location,
             "unplannable": row.unplannable,
             "priority": row.priority,
@@ -651,23 +692,31 @@ class FulfilmentBoardService:
         keys: Iterable[str],
         granularity: str,
         day_window_start: Optional[date],
+        as_of: date,
     ) -> List[Dict[str, Any]]:
-        """Overdue first, dated ascending, No date last, in EVERY granularity (13.3).
+        """Chronological, earliest first, with No date pinned last (13.3).
 
-        At day granularity the dated columns are a 30-day WINDOW rather than one column per
-        distinct date, because the book carries 349 of them. Days inside the window with
-        nothing owed are still columns: a calendar that hides its empty days is not a
-        calendar, and the gap is the information. Demand outside the window is not lost from
-        the plan - anything past is in Overdue regardless, and anything further out is reached
-        by moving the window - but it is not SHOWN, and so is not served from the pile either.
-        A day view can therefore offer stock that the week view has already promised to a line
-        outside the window, which is the same property the Phase 1 prototype has and the
-        reason the window is a display control rather than a planning horizon.
+        No aggregate column: a past period is a column like any other, carrying `is_past` so
+        the screen can tint it and count what is late. A bucket is past when its WHOLE period
+        ended before the as-of date - the period we are inside is not past, because some of its
+        dates are still to come and tinting it would tell the planner this week is already
+        lost.
+
+        Only DATED buckets somebody owes are emitted, so a selection with a three-year gap in
+        it produces no columns for those years. That keeps the axis proportional to the work
+        rather than to the calendar; the day granularity's 30-column window is the one place a
+        run of empty columns IS rendered, because there a gap between two days is the
+        information and a calendar that hides its empty days is not a calendar.
+
+        Demand outside the day window is not lost from the plan - it is reached by moving the
+        window - but it is not SHOWN, and so is not served from the pile either. A day view can
+        therefore offer stock the week view has already promised to a line outside the window,
+        which is why the window is a display control rather than a planning horizon.
         """
         present = set(keys)
-        dated = sorted(k for k in present if k not in (OVERDUE_BUCKET, NO_DATE_BUCKET))
+        dated = sorted(k for k in present if k != NO_DATE_BUCKET)
         if granularity == "day":
-            start = day_window_start or (date.fromisoformat(dated[0]) if dated else None)
+            start = day_window_start or self._default_day_window(dated, as_of)
             dated = (
                 [(start + timedelta(days=offset)).isoformat()
                  for offset in range(DAY_WINDOW_COLUMNS)]
@@ -675,24 +724,46 @@ class FulfilmentBoardService:
                 else []
             )
         buckets: List[Dict[str, Any]] = []
-        if OVERDUE_BUCKET in present:
-            buckets.append(
-                {"key": OVERDUE_BUCKET, "kind": "overdue", "label": "Overdue", "start": None}
-            )
         for key in dated:
+            end = bucket_end(key, granularity)
             buckets.append(
                 {
                     "key": key,
                     "kind": "dated",
                     "label": _bucket_label(key, granularity),
                     "start": date.fromisoformat(key),
+                    "is_past": end is not None and end < as_of,
                 }
             )
         if NO_DATE_BUCKET in present:
             buckets.append(
-                {"key": NO_DATE_BUCKET, "kind": "no_date", "label": "No date", "start": None}
+                {
+                    "key": NO_DATE_BUCKET,
+                    "kind": "no_date",
+                    "label": "No date",
+                    "start": None,
+                    # An absent date has not passed. It is simply absent, which is a different
+                    # thing and must not be tinted as lateness.
+                    "is_past": False,
+                }
             )
         return buckets
+
+    @staticmethod
+    def _default_day_window(dated: Sequence[str], as_of: date) -> Optional[date]:
+        """Where the 30-day window opens when the planner has not moved it.
+
+        On the earliest day still to come, and only on the earliest day owed at all when
+        everything is already past. Without the second half a selection of old orders would
+        open on an empty month; without the first, one whose oldest line is from 2024 would
+        open the calendar three years ago - which is what happened the moment the aggregate
+        past column was removed and "the earliest dated bucket" stopped meaning "the earliest
+        future one".
+        """
+        if not dated:
+            return None
+        future = [key for key in dated if date.fromisoformat(key) >= as_of]
+        return date.fromisoformat(future[0] if future else dated[0])
 
     def _standings(self, rows: Sequence[_Row]) -> List[Dict[str, Any]]:
         """Per order: how much of it is on this board, and how much of it can never be decided.

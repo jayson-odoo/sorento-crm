@@ -304,10 +304,16 @@ then the detach is refused unless the request carries an explicit acknowledgemen
 constraint, and `tests/test_projects_module_purge_invariants.py` still derives the purge list from
 the model files with no new table in it.
 
-**AC-FP24 [BE][T] `scm.committed_v` semantics are unchanged.** Given the view SQL constant
-(`app/services/scm/demand.py:188`), when this slice lands, then the constant is byte-identical, and
-a test proves that confirming an adopted order moves that core order from the sheet leg to the
-confirmed leg exactly once (never both, never neither).
+**AC-FP24 [BE][T] `scm.committed_v` counts every line exactly once, and the view changes to keep
+it that way.** REWRITTEN 18 August 2026 (13.4): partial confirmation makes the old wording ("the
+constant is byte-identical") false and, worse, makes it wrong - a per-order `decided` CTE loses the
+undecided lines of a partly confirmed order. Given a partially confirmed order, when the demand
+readers run, then its confirmed lines contribute their Buy residual through the CONFIRMED leg, its
+undecided lines contribute their full outstanding quantity through the SHEET leg, and no line
+contributes through both or through neither. Proven on the reorder engine's own read path
+(`reorder_run_service._planning_rows`), not merely against a table
+(`tests/test_partial_decision_demand_invariants.py`), and the Python twin
+(`is_plan_demand_order()` + `is_plan_demand_line()`) is pinned to agree with the SQL.
 
 **AC-FP25 [BE][T] AC-A01, AC-A03 and AC-A04 of the Stage 1B contract still hold.** One whole-order
 state and no per-line workflow state anywhere (AC-A03) - "Not started" is a whole-order value, not a
@@ -739,9 +745,15 @@ service. New selects use `SearchableSelect` with `clearable` where optional.
    `public.sales_orders` / `sales_order_lines`. AC-FP23.
 2. **Module purge list is unchanged** (ADR-0009 purge clause, ADR-0011). No new table, so
    `tests/test_projects_module_purge_invariants.py` needs no edit and must stay green untouched.
-3. **`scm.committed_v` is byte-identical** (`COMMITTED_V_SQL`, `demand.py:188`) and stays one
-   aggregate row per `(product_id, warehouse_id)`. AC-FP24. The Stage 2 channel columns are not
-   touched.
+3. **`scm.committed_v` keeps its keys, its cardinality and its columns** - one aggregate row per
+   `(product_id, warehouse_id)`, the same six columns in the same order, so `scm.net_position_v`
+   and every consumer of it are untouched and the Stage 2 channel columns are not moved. Its
+   BODY changes, deliberately and once (migration `384_committed_v_line_decision`): the `decided`
+   CTE is per LINE, because partial confirmation would otherwise take an order's undecided lines
+   out of planning along with its decided one. The byte-identity this invariant used to claim is
+   superseded by AC-FP24 as rewritten. Seam A's AC-FP09 ("adoption changes no demand") is
+   unaffected: adoption writes no decision, so the CTE is empty for an adopted-but-unconfirmed
+   order and the view answers exactly what it answered before.
 4. **One confirmed leg per core order.** The partial unique index on `so_id` is what guarantees
    confirmed Buy cannot be counted twice for one core sales order. AC-FP10.
 5. **AC-A03: one whole-order state, never a per-line one.** "Not started" is an order-level value.
@@ -1075,11 +1087,25 @@ written as one object per line of the order. Partial confirmation needs one of t
   the order has. The unique index stays (still one active decision per order). Deciding more lines
   later is a NEW revision covering the union, which is exactly what revisions already do.
 
-**Recommendation: (B).** It changes no key, no index and no revision semantics, and the thing it
-needs - "which lines does this decision cover" - is already IN the snapshot. AC-C01 changes from
-*"every line of the order commits or none does"* to **"every line in THIS confirmation commits or
-none does"**: still atomic, over a set the planner chose rather than over the whole order. That
-wording change is the entire contract amendment on the Stage 1C side.
+**Recommendation: (B). BUILT as (B), seam C, 18 August 2026.** It changes no key, no index and no
+revision semantics, and the thing it needs - "which lines does this decision cover" - is already IN
+the snapshot. AC-C01 changes from *"every line of the order commits or none does"* to **"every line
+in THIS confirmation commits or none does"**: still atomic, over a set the planner chose rather than
+over the whole order. That wording change is the entire contract amendment on the Stage 1C side, and
+it is made in `UAC-scm-front-planning.md` (AC-C01, AC-C02, AC-C04, AC-C06) and recorded in
+`STAGE1C-scm-front-planning-promising.md` section 6.
+
+As built, four things beyond the wording, none of them a new key or state:
+
+- a confirmation names the lines it covers; a line it does not name is left undecided, and a
+  confirmation naming NO line is refused (`422 supply_nothing_to_confirm`);
+- the sheet says which lines carry a verdict - `SupplyLine.decided`, plus `lines_total` /
+  `lines_decided` on the proposal and `lines_decided` / `lines_undecided` on the confirm result.
+  Information only: none of it disables anything, and there is still no per-line workflow state;
+- the drift check stops treating "covers fewer lines than the order has" as drift, while still
+  challenging on a covered line whose facts moved;
+- dropping a line from a later revision cancels its still-raised Buy row, because that line is
+  undecided again and its quantity has gone back to the sheet leg.
 
 **What it costs that is NOT optional: `scm.committed_v` must change.** This is the part that would
 have shipped as a silent data defect, so it is stated in full. The view's `decided` CTE is per
@@ -1111,14 +1137,56 @@ remain visible to reorder planning and are never counted as covered, which is th
   undecided lines through the sheet leg, each exactly once, never both for one line and never
   neither.
 - Stage 2 is concurrently extending this same view, so this is a coordinated change, not a
-  drive-by. It must be sequenced with that lane.
+  drive-by. It must be sequenced with that lane. **What a Stage 2 rebase onto this must do,
+  written down on 18 August 2026 when seam C landed the change:** (1) do NOT edit
+  `376_scm_channel_read_model` - its body is history and `tests/scm/test_committed_v_migration_chain.py`
+  pins it; extend `scm.committed_v` by adding a NEW revision after
+  `384_committed_v_line_decision` that freezes the whole new body and keeps a verbatim copy of
+  384's `_AS_OF_384` for its downgrade, then point the "newest body" assertion in that test at
+  the new revision; (2) start from 384's body, so the per-LINE `decided` CTE and the
+  `dd.core_line_id = sol.id` exclusion survive - restarting from 376's would silently reinstate
+  the per-order rule and lose the undecided lines again; (3) a new column must be APPENDED, since
+  `CREATE OR REPLACE VIEW` only allows that, and if the change instead drops or reorders columns
+  it must drop the view CASCADE and recreate `scm.net_position_v` beside it, as 376 does; (4) any
+  test fixture that builds an `SOSupplyDecision` by hand must give it a `line_snapshots` entry
+  carrying the `core_line_id` it covers - an empty list now means "covers nothing", which is what
+  broke `tests/scm/test_channel_read_model.py::test_confirmed_decision_and_sheet_origin_counts_the_confirmed_buy_once`
+  (it answered 28 where the criterion is 8) and is fixed in that file.
 - A test is owed for the precise failure above: partially confirm an order, assert the undecided
-  lines still appear in `committed_v`'s project leg with their full outstanding quantity.
+  lines still appear in `committed_v`'s project leg with their full outstanding quantity. **Built:**
+  `tests/test_partial_decision_demand_invariants.py`, which asserts it through
+  `reorder_run_service._planning_rows` (the engine's own read) as well as through the view, and
+  pins the opposite failure - a confirmed line counted twice - beside it.
 
 **Open sub-question, named rather than assumed:** how the "covered lines" test is written. Either a
 lateral over `line_snapshots` matching `core_line_id`, or a small `projects.so_decision_lines` link
 table if the JSONB test does not hold up in the view. Recommendation: measure the lateral first, it
 needs no migration; take the link table only if the view plan is unacceptable.
+
+**SETTLED, and BUILT (seam C, 18 August 2026): the lateral, measured.** `decided` is now
+
+```sql
+decided AS (
+    SELECT DISTINCT (snap->>'core_line_id')::uuid AS core_line_id
+    FROM projects.so_supply_decisions d
+    CROSS JOIN LATERAL jsonb_array_elements(d.line_snapshots) AS snap
+    WHERE d.state = 'active' AND snap->>'core_line_id' IS NOT NULL
+)
+```
+
+and the sheet leg's exclusion is `NOT EXISTS (SELECT 1 FROM decided dd WHERE dd.core_line_id =
+sol.id)`. Postgres hashes the sub-select once rather than per row (`hashed SubPlan`), and the whole
+view over the live scratch database - 20,322 open lines, 3,202 aggregate rows - measured 12 to 14 ms
+against the old body's 14 to 22 ms across three runs each. So the link table buys nothing and is not
+built. Migration `384_committed_v_line_decision`, chained on `383_adopted_autocount_planning`, with
+`depends_on = 376_scm_channel_read_model`; it freezes the new body and carries a verbatim copy of
+376's for its downgrade, and `tests/scm/test_committed_v_migration_chain.py` pins both copies.
+
+The Python twin moved with it, because `demand.py` exists so the two cannot drift:
+`PLAN_DEMAND_ORDER_SQL` / `is_plan_demand_order()` keep the ORDER half (S13b) and the new
+`PLAN_DEMAND_LINE_SQL` / `is_plan_demand_line()` carry the per-line decided exclusion. Every reader
+applies both: the view, `demand_breakdown_service`, `unplanned_demand_service` and the coverage
+timeline.
 
 ### 13.5 Ranking when several sales orders compete for one location's stock
 
@@ -1349,11 +1417,13 @@ the eight fixture orders, `WESERP10B` is owed by four different orders out of bo
 **ACs that DO change, now that partial confirmation is decided.** This section is no longer a pure
 addition, and pretending otherwise would hide the cost:
 
-| AC | Change |
-|---|---|
-| **AC-C01** (Stage 1C) | "every line of the order commits or none does" becomes "every line in THIS confirmation commits or none does". Still atomic, over the chosen set. |
-| **AC-FP24** (this plan) | No longer "`scm.committed_v` is byte-identical". Rewritten as: a partially-confirmed order contributes confirmed Buy through the confirmed leg and its undecided lines through the sheet leg, each exactly once. |
-| **Section 8, invariant 3** | Same: the view changes deliberately, and the new invariant replaces byte-identity. |
+All three are MADE, in the files named beside them (seam C, 18 August 2026):
+
+| AC | Change | Where |
+|---|---|---|
+| **AC-C01** (Stage 1C) | "every line of the order commits or none does" becomes "every line in THIS confirmation commits or none does". Still atomic, over the chosen set. AC-C02, AC-C04 and AC-C06 take the same amendment, because each of them said "the whole SO" about the same thing. | `UAC-scm-front-planning.md`, and recorded in `STAGE1C-scm-front-planning-promising.md` section 6 |
+| **AC-FP24** (this plan) | No longer "`scm.committed_v` is byte-identical". Rewritten as: a partially-confirmed order contributes confirmed Buy through the confirmed leg and its undecided lines through the sheet leg, each exactly once. | section 1 of this file |
+| **Section 8, invariant 3** | Same: the view's BODY changes deliberately and once; what stays invariant is its keys, cardinality and columns. | section 8 of this file |
 
 Everything in Groups A to E is otherwise untouched. The board's own criteria are new (Group F, to be
 written into section 1 as AC-FP28 onward once 13.4's open sub-question and 13.5's policy choice are

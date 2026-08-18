@@ -425,11 +425,11 @@ export interface FulfilmentPlanningListEnvelope {
 export type BoardGranularity = 'day' | 'week' | 'month';
 
 /**
- * A column of the board. `overdue` and `no_date` are not buckets of time at all: they are the
- * two answers that have no place on a timeline, pinned first and last respectively so they
- * are never lost among the dated columns.
+ * A column of the board. Every dated column is a real date, however far past (the captain,
+ * verbatim: "don't put overdue together, still split by the date, don't put under overdue").
+ * `no_date` is the one answer that has no place on a timeline, and it is pinned last.
  */
-export type BoardBucketKind = 'overdue' | 'dated' | 'no_date';
+export type BoardBucketKind = 'dated' | 'no_date';
 
 export interface BoardDateBucket {
   key: string;
@@ -438,6 +438,18 @@ export interface BoardDateBucket {
   label: string;
   /** ISO date of the bucket start, for a dated bucket only. Ordering key. */
   start?: string | null;
+  /**
+   * This bucket lies entirely before the board's `as_of`, so nothing in it can still be met
+   * on time. The past is TINTED, never merged: the date is the information, and an aggregate
+   * column throws it away.
+   *
+   * The SERVER's verdict, read and never re-derived, for the same reason
+   * `BoardPolicy.discriminates_nothing` is: only the side that did the bucketing knows where a
+   * week or month bucket falls relative to `as_of`, and a tint derived here would disagree
+   * with the columns it is painting. Absent means not past, so a backend that has not shipped
+   * the flag yet renders an untinted board rather than a wrongly tinted one.
+   */
+  is_past?: boolean;
 }
 
 /** How a contributing line's quantity is proposed to be met. Mirrors SupplyComponentKind. */
@@ -592,7 +604,7 @@ export interface PlanningBoard {
   granularity: BoardGranularity;
   /** Which policy produced the ranking on show. Always stated (13.5). */
   policy: BoardPolicy;
-  /** The date the board was built against, so "overdue" is reproducible in a test. */
+  /** The date the board was built against, so `is_past` is reproducible in a test. */
   as_of: string;
   dateBuckets: BoardDateBucket[];
   productRows: BoardProductRow[];

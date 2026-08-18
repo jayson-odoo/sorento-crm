@@ -183,17 +183,31 @@ not satisfy this criterion.
 
 ## Group C: Atomic Project SO confirmation
 
-### AC-C01 [E2E][J05] One action confirms all lines
+### AC-C01 [E2E][J05] One action confirms every line in the confirmation
 
-Given a Project SO with multiple valid balanced lines, when authorized CS presses **Confirm
-Project SO** once, then every line becomes committed in one transaction and the SO leaves
-**Needs CS review**; there is no per-line confirmation action or durable partial state.
+**Amended 18 August 2026** by the captain's decision in
+`PLAN-fulfilment-planning-from-autocount-so.md` 13.4 ("we shouldn't block the confirm when the
+decision for the order are incomplete yet, we might want to flow a few product to reorder planning
+first"). It read "every line of the order commits or none does"; it now reads "every line in THIS
+confirmation commits or none does". Still atomic, over a set the planner chose rather than over the
+whole order.
 
-### AC-C02 [BE][J05] One invalid line rolls back the SO
+Given a Project SO with several valid balanced lines, when authorized CS presses **Confirm
+Project SO** once, then every line **included in that confirmation** becomes committed in one
+transaction and the SO leaves **Needs CS review**; there is no per-line confirmation action and no
+per-line workflow state. A line the planner did not include is **explicitly undecided** - no
+snapshot, no allocation, no inquiry row - and its full outstanding quantity keeps counting as
+demand for reorder planning until it is confirmed too. The order reports how many of its lines are
+decided (`lines_decided` of `lines_total`) as information; that count gates nothing. A
+confirmation naming no line at all is refused.
+
+### AC-C02 [BE][J05] One invalid line rolls back the confirmation
 
 Given one line becomes stale, over-allocated, unbalanced, unmapped, or invalid while other lines
-remain valid, when confirmation is attempted, then no decision, allocation, claim, or inquiry row
-from that attempt is committed and every failing line is returned by line number and item code.
+in the same confirmation remain valid, when confirmation is attempted, then no decision,
+allocation, claim, or inquiry row from that attempt is committed and every failing line is
+returned by line number and item code. A line that is merely **absent** from the confirmation is
+not a failure: it is the undecided remainder (AC-C01).
 
 ### AC-C03 [BE][J05] Confirmation rechecks authoritative facts
 
@@ -204,8 +218,9 @@ reorder levels, donor impact, and product lifecycle before writing.
 ### AC-C04 [BE][J05] One active revision represents the SO
 
 Given a confirmed Project SO, when its decision is read, then exactly one active SO-level revision
-contains one snapshot for every SO line and each snapshot records all balance components and
-evidence identifiers.
+contains one snapshot for every line **that revision covers** (AC-C01 as amended: a revision may
+cover a subset of the order's lines, and a line with no snapshot is undecided), and each snapshot
+records all balance components and evidence identifiers.
 
 ### AC-C05 [BE][J05] Concurrent confirmations cannot double-claim
 
@@ -216,8 +231,10 @@ a refresh-required conflict without partial writes.
 ### AC-C06 [E2E][J05] Material change reopens the whole SO
 
 Given a confirmed Project SO, when quantity, required date, product mapping, core line link, or a
-material supply fact changes, then the active revision is superseded or challenged, the whole SO
-returns to **Needs CS review**, and no line remains independently confirmed.
+material supply fact **behind a line the active revision covers** changes, then the active revision
+is superseded or challenged, the whole SO returns to **Needs CS review**, and no line remains
+independently confirmed. A line the revision never covered moving is not drift: it was already
+undecided and already counted as demand (AC-C01 as amended).
 
 ### AC-C07 [BE][J05] Existing execution is preserved on reconfirmation
 

@@ -322,6 +322,33 @@ A refused confirmation is read by the frontend from the response body directly
 (`failing_lines`), not through `extractApiError`, which answers with a string: the shared
 extractor supplies the message and the list is read from a clone of the same response.
 
+**Amended 18 August 2026: a confirmation covers the lines the planner chose.** The captain
+ruled that Confirm is not gated on an order being fully decided
+(`PLAN-fulfilment-planning-from-autocount-so.md` 13.4, shape B), so this note's
+"every line of the order commits or none does" becomes "every line in THIS confirmation
+commits or none does". What that changes here, and nothing else:
+
+- `ConfirmSupplyBody.lines` is the SET being confirmed. A line it does not name is left
+  undecided; the old "This line has no composition" refusal is gone. An EMPTY body is
+  refused (`422 supply_nothing_to_confirm`), because superseding the revision that holds
+  stock and putting nothing in its place is not a decision anybody made.
+- `SupplyProposal` gains `lines_total` and `lines_decided`, and `SupplyLine` gains
+  `decided`. `ConfirmResult` gains `lines_decided` and `lines_undecided`. All four are
+  information; none of them gates anything, and no per-line workflow STATE is introduced
+  (AC-A03 stands - a line is covered by the order's one active revision or it is not).
+- Section 5.3's challenge-on-read no longer challenges a revision for covering FEWER lines
+  than the order has; a covered line whose facts move still challenges it, unchanged.
+- `refresh_for_decision` cancels a still-raised Buy row of an earlier revision when the new
+  revision does not cover that line. The line is undecided again and its whole quantity
+  goes back to the sheet leg, so leaving the row raised would tell purchasing to buy the
+  same requirement twice.
+- Section 5.4's reader precedence changes with it: the sheet leg is narrowed PER LINE now
+  (`scm.committed_v` migration `384_committed_v_line_decision`, `PLAN_DEMAND_LINE_SQL` /
+  `is_plan_demand_line()`), because the per-order rule would have taken an order's
+  undecided lines out of planning along with its decided one. Section 9's AC-C01 evidence
+  stands as measured on 18 August 2026 and is not rewritten; the criterion it was measured
+  against is the one in the UAC, which now carries the amendment.
+
 Two corrections made while building Phase 2, both recorded here rather than left as a
 difference between this note and the code:
 

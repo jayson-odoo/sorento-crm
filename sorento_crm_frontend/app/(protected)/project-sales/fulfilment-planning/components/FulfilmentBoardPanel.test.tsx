@@ -80,13 +80,13 @@ function boardOf(lines: BoardDemandLine[], freeStock: Record<string, string> = {
   return buildBoard(lines, { today: TODAY, freeStock });
 }
 
-function renderPanel(soNumbers = ['SO403340', 'SO398322']) {
+function renderPanel(soNumbers = ['SO403340', 'SO398322'], onBack: () => void = vi.fn()) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <FulfilmentBoardPanel soNumbers={soNumbers} onBack={vi.fn()} />
+      <FulfilmentBoardPanel soNumbers={soNumbers} onBack={onBack} />
     </QueryClientProvider>,
   );
 }
@@ -105,8 +105,53 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+/**
+ * Title left, actions right (captain, with a screenshot of Back overlapping the title).
+ *
+ * `flex items-center justify-between` does not wrap, so a long title and a control row
+ * collide at narrow widths and push the whole page sideways - the exact failure the
+ * responsive-header rule in CLAUDE.md exists to prevent.
+ */
+describe('FulfilmentBoardPanel: the header', () => {
+  it('puts Back to the worklist in the actions on the right, after the granularity control', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const actions = screen.getByTestId('board-header-actions');
+    const back = within(actions).getByRole('button', { name: 'Back to the worklist' });
+    const granularity = within(actions).getByLabelText('granularity');
+    expect(back.compareDocumentPosition(granularity)).toBe(Node.DOCUMENT_POSITION_PRECEDING);
+  });
+
+  it('still returns to the worklist', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    const onBack = vi.fn();
+
+    renderPanel(['SO403340'], onBack);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to the worklist' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the header wrap instead of overlapping the title', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const header = screen.getByTestId('board-header');
+    expect(header.className).toContain('flex-col');
+    expect(header.className).toContain('sm:flex-row');
+    expect(screen.getByTestId('board-header-title').className).toContain('min-w-0');
+    expect(screen.getByTestId('board-header-actions').className).toContain('flex-wrap');
+  });
+});
+
 describe('FulfilmentBoardPanel: the axes', () => {
-  it('pins Overdue first and No date last', async () => {
+  it('orders the buckets chronologically and pins No date last, with no Overdue column at all', async () => {
     getPlanningBoard.mockResolvedValue(
       boardOf([
         demand({ line_no: 1, required_date: '2026-09-04' }),
@@ -122,11 +167,43 @@ describe('FulfilmentBoardPanel: the axes', () => {
       .getAllByRole('columnheader')
       .map((node) => node.textContent ?? '');
     expect(headers[0]).toBe('Product');
-    expect(headers[1]).toContain('Overdue');
+    expect(headers[1]).toContain('w/c 27 Jun 2022');
+    expect(headers[2]).toContain('w/c 31 Aug 2026');
     expect(headers[headers.length - 1]).toContain('No date');
+    expect(headers.some((header) => header.includes('Overdue'))).toBe(false);
   });
 
-  it('says how much of the selection is already past its required date', async () => {
+  /**
+   * The captain's instruction, and the thing that made this a bug rather than a preference:
+   * a 2022 date is its own column, tinted, and its quantity is NOT summed into anything else.
+   */
+  it('gives a bucket dated years back its own column, tinted, outside any aggregate', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand({ line_no: 1, qty: '40', required_date: '2022-07-03' }),
+        demand({ line_no: 2, qty: '100', required_date: '2026-09-04' }),
+      ]),
+    );
+
+    renderPanel();
+
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    const past = matrix.querySelector('[data-bucket="2022-06-27"]');
+    expect(past).not.toBeNull();
+    expect(past?.getAttribute('data-past')).toBe('true');
+    expect(matrix.querySelector('[data-bucket="2026-08-31"]')?.getAttribute('data-past')).toBe(
+      'false',
+    );
+    // Its quantity stands alone in its own cell rather than being rolled into a later one.
+    expect(
+      within(matrix).getByRole('button', { name: /WESERP10B, 40 across 1 sales order/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(matrix).getByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('states plainly how much of the selection is already past, and explains nothing', async () => {
     getPlanningBoard.mockResolvedValue(
       boardOf([
         demand({ line_no: 1, required_date: '2022-07-03' }),
@@ -139,6 +216,10 @@ describe('FulfilmentBoardPanel: the axes', () => {
     expect(
       await screen.findByText('1 of 2 lines are already past their required date'),
     ).toBeInTheDocument();
+    // The old copy described a column that no longer exists, and a tint that needs a
+    // paragraph is a tint that failed. No feature explanations in the UI (CLAUDE.md).
+    expect(screen.queryByText(/Overdue column/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/rather than spread/)).not.toBeInTheDocument();
   });
 
   it('renders the products down the side', async () => {
