@@ -111,6 +111,17 @@ export interface OutstandingAgentNotice {
   reason: string;
 }
 
+/**
+ * The planning-change batch this upload raised, when the diff changed a PLANNED line
+ * (`PLAN-so-book-diff-replanning.md` AC-R01). `null` when nothing planned was touched - no
+ * batch was born, and the upload card renders nothing.
+ */
+export interface OutstandingPlanningChangeBatch {
+  id: string;
+  order_count: number;
+  line_count: number;
+}
+
 export interface OutstandingPreview {
   doc_type: string;
   /** false = the header is missing required columns; nothing can be applied. */
@@ -124,6 +135,8 @@ export interface OutstandingPreview {
   resolution_issues: OutstandingResolutionIssue[];
   samples: OutstandingSamples;
   unmapped_agents: OutstandingAgentNotice[];
+  /** Absent (not just `null`) on every Phase 1 response - Phase 2 wires the real preview. */
+  planning_change_batch?: OutstandingPlanningChangeBatch | null;
 }
 
 /**
