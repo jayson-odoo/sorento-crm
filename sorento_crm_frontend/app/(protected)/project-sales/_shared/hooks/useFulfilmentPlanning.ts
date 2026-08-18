@@ -5,6 +5,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { toast } from 'sonner';
 import {
   adoptSalesOrder,
+  getPlanningBoard,
   confirmSupply,
   getReconciliation,
   getSupply,
@@ -13,6 +14,7 @@ import {
 } from '../services/fulfilmentPlanningService';
 import type {
   AdoptSalesOrderResult,
+  BoardGranularity,
   ConfirmSupplyBody,
   FulfilmentPlanningListParams,
 } from '../types/fulfilmentPlanning.types';
@@ -20,6 +22,7 @@ import { ORDER_INQUIRY_ROWS_KEY, ORDER_INQUIRY_SUMMARY_KEY } from './useOrderInq
 import { SALES_ORDERS_KEY, SALES_ORDER_KEY } from './useProjectSalesOrders';
 
 export const FULFILMENT_PLANNING_KEY = 'project-fulfilment-planning';
+export const PLANNING_BOARD_KEY = 'project-fulfilment-board';
 export const RECONCILIATION_KEY = 'project-so-reconciliation';
 export const SUPPLY_KEY = 'project-so-supply';
 
@@ -185,4 +188,29 @@ export function useReconciliationMutations() {
   });
 
   return { rerun, confirm };
+}
+
+/**
+ * The multi-order board for a selection of sales orders.
+ *
+ * `enabled` on a non-empty selection: the board is meaningless for nothing, and firing a
+ * request for an empty `orders=` would ask the server to aggregate the whole book, which is
+ * the one thing section 13.2 says it must never be asked to do.
+ *
+ * No `placeholderData`: changing the selection or the granularity changes what the grid MEANS,
+ * and holding the previous board on screen under a new header would state the old answer as
+ * though it were the new one.
+ */
+export function usePlanningBoard(
+  soNumbers: string[],
+  granularity: BoardGranularity = 'week',
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: [PLANNING_BOARD_KEY, [...soNumbers].sort().join(','), granularity],
+    queryFn: () => getPlanningBoard(soNumbers, granularity),
+    enabled: enabled && soNumbers.length > 0,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
 }

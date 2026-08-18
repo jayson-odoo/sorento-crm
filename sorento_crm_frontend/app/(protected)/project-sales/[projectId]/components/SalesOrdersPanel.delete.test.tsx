@@ -16,6 +16,7 @@ import type { ProjectSalesOrderRow } from '../../_shared/types/projectSalesOrder
 
 const listProjectSalesOrders = vi.fn();
 const deleteProjectSalesOrder = vi.fn();
+const bulkDeleteProjectSalesOrders = vi.fn();
 const push = vi.fn();
 
 vi.mock('next/navigation', () => ({
@@ -38,6 +39,8 @@ vi.mock('../../_shared/services/projectSalesOrderService', () => ({
   listProjectSalesOrders: (...args: unknown[]) => listProjectSalesOrders(...args),
   buildSalesOrders: vi.fn(),
   deleteProjectSalesOrder: (...args: unknown[]) => deleteProjectSalesOrder(...args),
+  bulkDeleteProjectSalesOrders: (...args: unknown[]) =>
+    bulkDeleteProjectSalesOrders(...args),
   saveSalesOrderDocument: vi.fn(),
   getProjectSalesOrder: vi.fn(),
   acknowledgeFinding: vi.fn(),
@@ -143,6 +146,12 @@ beforeEach(() => {
     provisional_ref: 'PSO-000123',
     deleted: {},
   });
+  bulkDeleteProjectSalesOrders.mockResolvedValue({
+    success: true,
+    deleted_count: 1,
+    deleted: {},
+    refused: [],
+  });
 });
 
 describe('deleting a draft from the list', () => {
@@ -192,5 +201,150 @@ describe('deleting a draft from the list', () => {
 
     await screen.findByText('PSO-000123');
     expect(screen.queryByRole('button', { name: /^Delete / })).toBeNull();
+  });
+});
+
+describe('deleting a batch of drafts', () => {
+  it('ticks rows, and refuses to tick one that cannot be deleted', async () => {
+    renderPanel([
+      row(),
+      row({ id: 'so-2', provisional_ref: 'PSO-000124', status: 'published' }),
+      row({ id: 'so-3', provisional_ref: 'PSO-000125', autocount_doc_no: 'SO397450' }),
+    ]);
+
+    expect(await screen.findByRole('checkbox', { name: 'Select PSO-000123' })).toBeEnabled();
+    // Published, and adopted by AutoCount: two separate facts, each with its own sentence.
+    const published = screen.getByRole('checkbox', { name: 'Select PSO-000124' });
+    expect(published).toBeDisabled();
+    expect(published.closest('[title]')).toHaveAttribute(
+      'title',
+      'Published orders are amended, not deleted',
+    );
+    const adopted = screen.getByRole('checkbox', { name: 'Select SO397450' });
+    expect(adopted).toBeDisabled();
+    expect(adopted.closest('[title]')).toHaveAttribute(
+      'title',
+      'In AutoCount as SO397450, so it is amended, not deleted',
+    );
+  });
+
+  it('offers the batch action only once something is ticked, and names the count', async () => {
+    renderPanel([row(), row({ id: 'so-2', provisional_ref: 'PSO-000124' })]);
+
+    await screen.findByRole('checkbox', { name: 'Select PSO-000123' });
+    expect(screen.queryByRole('button', { name: /Delete \d+ sales order/ })).toBeNull();
+    // The counts row is what the header says with nothing selected.
+    expect(screen.getByText('2 sales orders')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PSO-000123' }));
+
+    expect(
+      await screen.findByRole('button', { name: 'Delete 1 sales order' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+    // One statement at a time: the counts row stands down while a selection is live.
+    expect(screen.queryByText('2 sales orders')).toBeNull();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PSO-000124' }));
+
+    expect(
+      await screen.findByRole('button', { name: 'Delete 2 sales orders' }),
+    ).toBeInTheDocument();
+  });
+
+  it('the header checkbox ticks every selectable row on the page, and no other', async () => {
+    renderPanel([
+      row(),
+      row({ id: 'so-2', provisional_ref: 'PSO-000124' }),
+      row({ id: 'so-3', provisional_ref: 'PSO-000125', status: 'published' }),
+    ]);
+
+    // The rows FIRST. The grid draws its header before the list query settles, and "select
+    // all on this page" over an empty page selects nothing - which is the component behaving
+    // correctly and the test racing it.
+    await screen.findByRole('checkbox', { name: 'Select PSO-000123' });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Delete 2 sales orders' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select PSO-000125' })).not.toBeChecked();
+  });
+
+  it('asks with the count, sends the ticked ids in one call, and clears the selection', async () => {
+    bulkDeleteProjectSalesOrders.mockResolvedValue({
+      success: true,
+      deleted_count: 2,
+      deleted: { 'projects.sales_orders': 2 },
+      refused: [],
+    });
+    renderPanel([row(), row({ id: 'so-2', provisional_ref: 'PSO-000124' })]);
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select PSO-000123' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PSO-000124' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 2 sales orders' }));
+
+    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Delete 2 sales orders and their lines\? This action cannot be undone\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/the drafts can be built again/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() =>
+      expect(bulkDeleteProjectSalesOrders).toHaveBeenCalledWith(['so-1', 'so-2']),
+    );
+    // One call for the whole selection, never one per row.
+    expect(bulkDeleteProjectSalesOrders).toHaveBeenCalledTimes(1);
+    expect(deleteProjectSalesOrder).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /Delete \d+ sales order/ })).toBeNull(),
+    );
+  });
+
+  it('says "1 sales order", not "1 sales orders"', async () => {
+    renderPanel([row()]);
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select PSO-000123' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 1 sales order' }));
+
+    // "1 sales orders" and "and their lines" for one record are both wrong, and both were
+    // in the first cut of this copy.
+    expect(
+      await screen.findByText(/Delete 1 sales order and its lines\?/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/the draft can be built again/)).toBeInTheDocument();
+  });
+
+  it('keeps the selection when the server refuses the batch', async () => {
+    bulkDeleteProjectSalesOrders.mockRejectedValue(
+      new Error(
+        '1 of the selected sales orders cannot be deleted, so none were. PSO-000124: it is published.',
+      ),
+    );
+    renderPanel([row(), row({ id: 'so-2', provisional_ref: 'PSO-000124' })]);
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select PSO-000123' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PSO-000124' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 2 sales orders' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(bulkDeleteProjectSalesOrders).toHaveBeenCalled());
+    // Un-tick the two named and retry is only possible if the selection survived.
+    expect(
+      await screen.findByRole('button', { name: 'Delete 2 sales orders' }),
+    ).toBeInTheDocument();
+  });
+
+  it('offers no selection at all to a reader', async () => {
+    renderPanel([row()], { ...PROJECT, can_edit: false } as Project);
+
+    await screen.findByText('PSO-000123');
+    expect(screen.queryByRole('checkbox')).toBeNull();
   });
 });

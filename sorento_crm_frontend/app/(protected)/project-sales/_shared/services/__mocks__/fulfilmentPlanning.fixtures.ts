@@ -560,3 +560,246 @@ export function mockRowFor(soNumber: string): FulfilmentPlanningRow | undefined 
     (row) => planningRowReference(row) === soNumber,
   );
 }
+
+// ---------------------------------------------------------------------------
+// The multi-order planning board (PLAN section 13), Phase 1 fixtures.
+//
+// Same rules as above: real numbers, throwaway code. Every line below was read out of
+// `sorento_scm_e2e_stack` on 18 August 2026 - sales-order number, item code, still-owed
+// quantity, required date and the line's OWN warehouse. They are the subset of the nine
+// selected orders' lines that lands on the shared products, which is what makes the
+// aggregation visible rather than merely claimed:
+//
+//   WESERP10B      owed by 4 of the orders, out of BRW-BB and BRW-IB (the hero cell)
+//   CKS1050        owed by 4, across five different dates
+//   CKSW015        owed by 4, same shape
+//   SRTPW0035-CR   owed by 3
+//   C-FH14         owed by 3, two locations
+//   SRT1000-CR     owed by 3
+//   SRTSC03-ABS-NL owed by 2, one of which (SO366992) states NO location at all
+//   CB6633         owed by 2, one of which (SO362797) states no location AND no date
+//   TPE-9201       owed by 2, and its overdue cell sits at BRW
+//
+// Nothing here is rounded, invented or nudged to make a demonstration work. Where the board
+// shows something awkward - a cell spanning two locations, a line that cannot be planned, a
+// second order losing the free stock to an earlier one - that is the book, not the fixture.
+// ---------------------------------------------------------------------------
+
+import type { BoardDemandLine, FreeStock } from '../../lib/fulfilmentBoard';
+import { buildBoard } from '../../lib/fulfilmentBoard';
+import type { BoardGranularity, PlanningBoard } from '../../types/fulfilmentPlanning.types';
+
+/** The ninth order, undated and location-less, so the No date column is real (13.3). */
+const TOONG_STAR = {
+  sales_order_id: 'so-362797',
+  so_number: 'SO362797',
+  customer_name: null,
+  project_label: 'TOONG STAR SDN BHD (18 UNITS RUMAH)',
+};
+
+const ORDER_META: Record<
+  string,
+  { sales_order_id: string; customer_name: string | null; project_label: string | null }
+> = {
+  SO391698: {
+    sales_order_id: 'so-391698',
+    customer_name: 'OIB CONSTRUCTION SDN BHD (PROJECT)',
+    project_label: 'OIB CONSTRUCTION / MYRA DAHLIA 9307, SALAK TINGGI / SEPANG',
+  },
+  SO324265: {
+    sales_order_id: 'so-324265',
+    customer_name: 'MASUKA BINA SDN BHD (PROJECT)',
+    project_label: 'MASUKA/THE SENZE PICC/TOWER NORMAL UNIT/UPGRADED UNIT',
+  },
+  SO346436: {
+    sales_order_id: 'so-346436',
+    customer_name: 'GLOBAL INGRESS SDN BHD (PROJECT)',
+    project_label: 'GLOBAL INGRESS/ 252U RMMJ TAMAN IMPIAN EMAS',
+  },
+  SO345418: {
+    sales_order_id: 'so-345418',
+    customer_name: 'PEMBINAAN YUEN SENG SDN BHD (PROJECT)',
+    project_label: null,
+  },
+  SO396071: {
+    sales_order_id: 'so-396071',
+    customer_name: 'ASASJAYA HARDWARE ENTERPRISE (PROJECT)',
+    project_label: 'ASASJAYA/THE STRAITS VIEW GARDEN/JB',
+  },
+  SO369758: {
+    sales_order_id: 'so-369758',
+    customer_name: 'JUBIN BMS (1990) SDN BHD (PROJECT)',
+    project_label: 'JUBIN BMS (1990)/VISTA LAVENDAR',
+  },
+  SO368874: {
+    sales_order_id: 'so-368874',
+    customer_name: 'EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT)',
+    project_label: 'EMB EMPRESS / PINNACLE ARA DAMANSARA - TOWER A / VESTLAND',
+  },
+  SO366992: {
+    sales_order_id: 'so-366992',
+    customer_name: 'BUIMACO SDN BHD',
+    project_label: 'BUIMACO / UNITIN ENG/ TMN PUCHONG LEGENDA',
+  },
+  SO362797: {
+    sales_order_id: TOONG_STAR.sales_order_id,
+    customer_name: TOONG_STAR.customer_name,
+    project_label: TOONG_STAR.project_label,
+  },
+};
+
+/** `[so_number, item_code, required_date | null, warehouse | null, qty]`, straight from the DB. */
+const RAW: [string, string, string | null, string | null, string][] = [
+  ['SO391698', 'WESERP10B', '2022-07-03', 'BRW-IB', '12'],
+  ['SO345418', 'WESERP10B', '2025-06-15', 'BRW-BB', '202'],
+  ['SO391698', 'WESERP10B', '2026-03-02', 'BRW-IB', '216'],
+  ['SO391698', 'WESERP10B', '2026-04-05', 'BRW-IB', '216'],
+  ['SO368874', 'WESERP10B', '2026-05-01', 'BRW-IB', '364'],
+  ['SO369758', 'WESERP10B', '2026-05-01', 'BRW-BB', '40'],
+  ['SO369758', 'WESERP10B', '2026-05-01', 'BRW-BB', '40'],
+  ['SO369758', 'WESERP10B', '2026-06-01', 'BRW-BB', '40'],
+  ['SO369758', 'WESERP10B', '2026-06-01', 'BRW-BB', '40'],
+  ['SO369758', 'WESERP10B', '2026-07-01', 'BRW-BB', '40'],
+  ['SO369758', 'WESERP10B', '2026-07-01', 'BRW-BB', '40'],
+  ['SO391698', 'WESERP10B', '2026-07-03', 'BRW-IB', '216'],
+  ['SO369758', 'WESERP10B', '2026-08-01', 'BRW-BB', '40'],
+  ['SO369758', 'WESERP10B', '2026-08-01', 'BRW-BB', '40'],
+  ['SO391698', 'WESERP10B', '2026-09-04', 'BRW-IB', '216'],
+  ['SO391698', 'WESERP10B', '2026-09-04', 'BRW-IB', '12'],
+
+  ['SO346436', 'CKS1050', '2026-01-10', 'BRW-IB', '150'],
+  ['SO369758', 'CKS1050', '2026-05-01', 'BRW-BB', '40'],
+  ['SO391698', 'CKS1050', '2026-05-10', 'BRW-IB', '24'],
+  ['SO369758', 'CKS1050', '2026-06-01', 'BRW-BB', '40'],
+  ['SO369758', 'CKS1050', '2026-07-01', 'BRW-BB', '40'],
+  ['SO369758', 'CKS1050', '2026-08-01', 'BRW-BB', '40'],
+  ['SO396071', 'CKS1050', '2026-09-01', 'BRW-BB', '183'],
+
+  ['SO346436', 'CKSW015', '2026-01-10', 'BRW-IB', '150'],
+  ['SO369758', 'CKSW015', '2026-05-01', 'BRW-BB', '40'],
+  ['SO391698', 'CKSW015', '2026-05-10', 'BRW-IB', '24'],
+  ['SO369758', 'CKSW015', '2026-06-01', 'BRW-BB', '40'],
+  ['SO369758', 'CKSW015', '2026-07-01', 'BRW-BB', '40'],
+  ['SO369758', 'CKSW015', '2026-08-01', 'BRW-BB', '40'],
+  ['SO396071', 'CKSW015', '2026-09-01', 'BRW-BB', '183'],
+
+  ['SO368874', 'C-FH14', '2026-05-01', 'BRW-IB', '728'],
+  ['SO391698', 'C-FH14', '2026-05-10', 'BRW-IB', '500'],
+  ['SO324265', 'C-FH14', '2026-06-01', 'BRW-BB', '18'],
+  ['SO324265', 'C-FH14', '2026-06-01', 'BRW-BB', '1'],
+  ['SO324265', 'C-FH14', '2026-06-01', 'BRW-BB', '27'],
+
+  ['SO368874', 'SRT1000-CR', '2026-05-01', 'BRW-IB', '364'],
+  ['SO324265', 'SRT1000-CR', '2026-06-01', 'BRW-BB', '36'],
+  ['SO396071', 'SRT1000-CR', '2026-09-01', 'BRW-BB', '732'],
+
+  ['SO368874', 'SRTPW0035-CR', '2025-09-22', 'BRW-IB', '364'],
+  ['SO369758', 'SRTPW0035-CR', '2026-05-01', 'BRW-BB', '80'],
+  ['SO324265', 'SRTPW0035-CR', '2026-06-01', 'BRW-BB', '45'],
+  ['SO369758', 'SRTPW0035-CR', '2026-06-01', 'BRW-BB', '80'],
+  ['SO369758', 'SRTPW0035-CR', '2026-07-01', 'BRW-BB', '80'],
+  ['SO369758', 'SRTPW0035-CR', '2026-08-01', 'BRW-BB', '80'],
+
+  // SO366992 came from the Order Inquiry sheet, which states no location on any line.
+  ['SO366992', 'SRTSC03-ABS-NL', '2025-05-02', null, '24'],
+  ['SO366992', 'SRTSC03-ABS-NL', '2026-03-02', null, '29'],
+  ['SO366992', 'SRTSC03-ABS-NL', '2026-04-04', null, '29'],
+  ['SO396071', 'SRTSC03-ABS-NL', '2026-09-01', 'BRW-BB', '732'],
+
+  // SO362797 carries neither a date nor a location, so it is the No date column AND blocked.
+  ['SO362797', 'CB6633', null, null, '36'],
+  ['SO369758', 'CB6633', '2026-05-01', 'BRW-BB', '80'],
+  ['SO369758', 'CB6633', '2026-06-01', 'BRW-BB', '80'],
+  ['SO369758', 'CB6633', '2026-07-01', 'BRW-BB', '140'],
+  ['SO369758', 'CB6633', '2026-08-01', 'BRW-BB', '80'],
+  ['SO362797', 'CB6638', null, null, '108'],
+
+  ['SO346436', 'TPE-9201', '2025-04-23', 'BRW', '150'],
+  ['SO346436', 'TPE-9201', '2025-04-23', 'BRW', '100'],
+  ['SO324265', 'TPE-9201', '2026-05-04', 'BRW-BB', '130'],
+  ['SO324265', 'TPE-9201', '2026-05-04', 'BRW-BB', '25'],
+  ['SO324265', 'TPE-9201', '2026-06-01', 'BRW-BB', '130'],
+  ['SO324265', 'TPE-9201', '2026-06-01', 'BRW-BB', '25'],
+  ['SO324265', 'TPE-9201', '2026-08-03', 'BRW-BB', '19'],
+  ['SO324265', 'TPE-9201', '2026-08-03', 'BRW-BB', '118'],
+];
+
+export const BOARD_DEMAND_LINES: BoardDemandLine[] = RAW.map(
+  ([soNumber, itemCode, requiredDate, warehouse, qty], index) => {
+    const meta = ORDER_META[soNumber];
+    return {
+      sales_order_id: meta.sales_order_id,
+      so_number: soNumber,
+      customer_name: meta.customer_name,
+      project_label: meta.project_label,
+      line_no: index + 1,
+      item_code: itemCode,
+      qty,
+      required_date: requiredDate,
+      fulfilment_location: warehouse,
+      priority: null,
+    };
+  },
+);
+
+/**
+ * Free unclaimed stock the board draws down, per `${item}|${location}`.
+ *
+ * Deliberately SHORT of total demand on the products that several orders share, because that
+ * is the situation the board exists for and the one the per-order sheet cannot show. With 250
+ * free WESERP10B at BRW-BB, SO345418's overdue 202 is covered and SO369758's later lines are
+ * not, so they come back as contested Buy naming who took it - which today would surface only
+ * as a refusal at confirmation time, to whichever of the two happened to confirm second
+ * (PLAN 13.5).
+ */
+export const BOARD_FREE_STOCK: FreeStock = {
+  'WESERP10B|BRW-BB': '250',
+  'WESERP10B|BRW-IB': '500',
+  'CKS1050|BRW-BB': '60',
+  'CKS1050|BRW-IB': '150',
+  'CKSW015|BRW-BB': '60',
+  'CKSW015|BRW-IB': '150',
+  'C-FH14|BRW-IB': '400',
+  'C-FH14|BRW-BB': '46',
+  'SRT1000-CR|BRW-IB': '364',
+  'SRT1000-CR|BRW-BB': '0',
+  'SRTPW0035-CR|BRW-IB': '364',
+  'SRTPW0035-CR|BRW-BB': '120',
+  'SRTSC03-ABS-NL|BRW-BB': '300',
+  'CB6633|BRW-BB': '160',
+  'TPE-9201|BRW': '250',
+  'TPE-9201|BRW-BB': '100',
+};
+
+/** The nine orders the board fixture plans together, in worklist order. */
+export const BOARD_SELECTION = [
+  'SO391698',
+  'SO324265',
+  'SO346436',
+  'SO366992',
+  'SO345418',
+  'SO362797',
+  'SO369758',
+  'SO396071',
+  'SO368874',
+];
+
+/**
+ * The board for a selection of sales orders.
+ *
+ * `today` is a parameter rather than the clock so the Overdue column is reproducible: the
+ * fixture dates are fixed, so a board built "now" would quietly change shape as real time
+ * passes and the demonstration would rot.
+ */
+export function mockPlanningBoard(
+  soNumbers: string[] = BOARD_SELECTION,
+  options: { today?: string; granularity?: BoardGranularity } = {},
+): PlanningBoard {
+  const selected = new Set(soNumbers);
+  const lines = BOARD_DEMAND_LINES.filter((line) => selected.has(line.so_number));
+  return buildBoard(lines, {
+    today: options.today ?? '2026-08-18',
+    granularity: options.granularity ?? 'week',
+    freeStock: BOARD_FREE_STOCK,
+  });
+}

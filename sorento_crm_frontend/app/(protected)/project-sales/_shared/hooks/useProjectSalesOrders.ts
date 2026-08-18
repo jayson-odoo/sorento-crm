@@ -262,25 +262,23 @@ export function useSalesOrderDelete(projectId: string) {
  * tab left open on one of them refetches into its own "could not be loaded" state rather than
  * showing an order that is gone.
  *
- * The toast is raised HERE and not by the dialog, because only this call knows how many
- * actually went; the refusal path never reaches `onSuccess` at all - it throws, and the
- * server's sentence (which names every order to un-tick) is what the caller shows.
+ * NO toast either way, and deliberately: `ConfirmDeleteDialog` raises both, and a second
+ * notification for one button press is the noise the per-line saves were removed for. The
+ * dialog's error toast is what carries the server's refusal sentence, which names every order
+ * to un-tick.
  */
 export function useSalesOrderBulkDelete(projectId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (ids: string[]) => bulkDeleteProjectSalesOrders(ids),
-    onSuccess: (result, ids) => {
+    onSuccess: (_result, ids) => {
       ids.forEach((psoId) =>
         queryClient.invalidateQueries({ queryKey: salesOrderKey(psoId) }),
       );
       queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY, projectId] });
       queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
-      const count = result.deleted_count;
-      toast.success(`${count} sales order${count === 1 ? '' : 's'} deleted`);
     },
-    onError: (error: Error) => toast.error(error.message),
   });
 }
 

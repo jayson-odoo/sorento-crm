@@ -402,3 +402,153 @@ export interface FulfilmentPlanningListEnvelope {
   page: number;
   limit: number;
 }
+
+// ---------------------------------------------------------------------------
+// The multi-order planning board (PLAN section 13)
+//
+// The board is a LENS (section 13.4): it reads across several sales orders and writes no
+// decision object of its own. The persisted decision stays per sales order, atomic across
+// its lines, exactly where Stage 1C put it. Everything below is either a read model or the
+// board's own working draft.
+//
+// Axis naming is deliberate: `dateBuckets` across, `productRows` down. The delivery-schedule
+// matrix calls a PRODUCT a `column` (its API's word, kept even after that grid was
+// transposed), so borrowing its vocabulary would leave two grids using one word for opposite
+// things.
+// ---------------------------------------------------------------------------
+
+/** How the date axis is cut. Weeks by default; exact dates are never columns (13.3). */
+export type BoardGranularity = 'week' | 'month';
+
+/**
+ * A column of the board. `overdue` and `no_date` are not buckets of time at all: they are the
+ * two answers that have no place on a timeline, pinned first and last respectively so they
+ * are never lost among the dated columns.
+ */
+export type BoardBucketKind = 'overdue' | 'dated' | 'no_date';
+
+export interface BoardDateBucket {
+  key: string;
+  kind: BoardBucketKind;
+  /** What the column header reads. Already formatted for display. */
+  label: string;
+  /** ISO date of the bucket start, for a dated bucket only. Ordering key. */
+  start?: string | null;
+}
+
+/** How a contributing line's quantity is proposed to be met. Mirrors SupplyComponentKind. */
+export type BoardSourceKind = 'reserve' | 'timely_spo' | 'buy' | 'unplannable';
+
+/**
+ * One contributing sales-order line inside a cell: the row of the breakdown table the captain
+ * asked for ("which sales order, which customer, which project, the quantity, where should it
+ * be supplied from").
+ */
+export interface BoardContribution {
+  /** Stable key for the draft. Addressing only, never rendered. */
+  key: string;
+  sales_order_id: string;
+  so_number: string;
+  customer_name?: string | null;
+  project_label?: string | null;
+  line_no: number;
+  item_code: string;
+  qty: string;
+  /** The line's REAL required date, not the bucket it landed in. */
+  required_date?: string | null;
+  /** The core sales-order line's own warehouse code. Null means the source record is silent. */
+  fulfilment_location?: string | null;
+  /** The line states no location, so it cannot be planned and blocks its order (AC-FP16). */
+  unplannable: boolean;
+  /** `sales_order_lines.priority`, when anybody stated one. Almost nobody does (13.5). */
+  priority?: 'high' | 'medium' | 'low' | null;
+  /** The default rule's proposal for this row, in the order the engine proposes them. */
+  sources: BoardSource[];
+  /**
+   * Free stock at this row's location ran out before this row was reached, so the default
+   * rule gave it to an earlier-dated row and this one is bought instead (13.5). Named because
+   * today the two orders would both silently propose the same stock and the second would only
+   * be refused at confirmation.
+   */
+  contested: boolean;
+}
+
+export interface BoardSource {
+  kind: BoardSourceKind;
+  qty: string;
+  /** Warehouse code for a Reserve; null for Buy, which has no location by definition. */
+  location?: string | null;
+  /** The sentence the rule wrote, shown beside the quantity. Never a bare code. */
+  reason: string;
+  /** SPO number when the source is incoming stock. */
+  spo_number?: string | null;
+  arrival_date?: string | null;
+}
+
+/** How much of a cell comes out of one location. Drives the cell's source strip (13.7). */
+export interface BoardCellLocation {
+  location: string | null;
+  qty: string;
+}
+
+/** One cell: this product, by this bucket, across every selected order. */
+export interface BoardCell {
+  item_code: string;
+  bucket_key: string;
+  /** Summed across every contributing line, including the unplannable ones (13.7). */
+  total_qty: string;
+  /** One entry per distinct source location; more than one is normal, not exotic. */
+  locations: BoardCellLocation[];
+  contributions: BoardContribution[];
+  /** Contributions whose sales order states no location for them. */
+  unplannable_count: number;
+  /** Contributions the default allocation rule could not cover from free stock. */
+  contested_count: number;
+}
+
+export interface BoardProductRow {
+  item_code: string;
+  description?: string | null;
+}
+
+/** One selected order's standing, which is what makes the partial-decision reality visible. */
+export interface BoardOrderStanding {
+  sales_order_id: string;
+  so_number: string;
+  customer_name?: string | null;
+  /** Lines of this order inside the current selection. */
+  line_count: number;
+  /** How many of those lines carry a verdict in the draft. */
+  decided_count: number;
+  /** Lines that can never be decided here because their sales order states no location. */
+  unplannable_count: number;
+}
+
+/** `GET /project-sales/fulfilment-planning/board`. A pure read: opening it claims nothing. */
+export interface PlanningBoard {
+  granularity: BoardGranularity;
+  /** The date the board was built against, so "overdue" is reproducible in a test. */
+  as_of: string;
+  dateBuckets: BoardDateBucket[];
+  productRows: BoardProductRow[];
+  cells: BoardCell[];
+  orders: BoardOrderStanding[];
+}
+
+/** What CS did to one contributing row. The board's working draft, persisted nowhere yet. */
+export type BoardVerdict = 'approved' | 'amended' | 'rejected';
+
+export interface BoardDecision {
+  verdict: BoardVerdict;
+  /** Present on an amend: the Reserve quantity CS typed in place of the proposed one. */
+  reserve_qty?: string;
+  /**
+   * Mandatory on an amend that displaces the default priority rule, and on a reject. Same
+   * shape as the Borrow reason the per-line card already demands (AC-B09): a decision a
+   * person made by hand has to say why, or the snapshot cannot explain itself later.
+   */
+  reason?: string;
+}
+
+/** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */
+export type BoardDraft = Record<string, BoardDecision>;

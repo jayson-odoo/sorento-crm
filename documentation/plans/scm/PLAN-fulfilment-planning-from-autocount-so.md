@@ -1,9 +1,13 @@
 # PLAN: Fulfilment Planning driven by the AutoCount sales order
 
-**Status:** APPROVED, 18 August 2026. Both design questions are decided by the captain (section 11):
-the **adopted mirror** is the shape ("yeah we can do that no problem"), and the **fulfilment location
-is the core sales-order line's own `warehouse_id`** - nobody is asked for it. Phase 1 frontend
-prototype is built against mocks; no backend code written yet.
+**Status:** Sections 0 to 12 are APPROVED, 18 August 2026. Both design questions are decided by the
+captain (section 11): the **adopted mirror** is the shape ("yeah we can do that no problem"), and the
+**fulfilment location is the core sales-order line's own `warehouse_id`** - nobody is asked for it.
+Phase 1 frontend prototype is built against mocks; no backend code written yet.
+
+**Section 13 (the multi-order planning board) is DESIGN, awaiting the captain.** It adds a
+cross-order board above the per-order sheet and changes nothing in sections 0 to 12; no AC is
+superseded. Its own criteria become Group F once it is confirmed. Nothing in it is built until then.
 
 **Classification:** MIXED, and no new schema location. Core `public.sales_orders` stays exactly as it
 is (finding G5: the core table stays ignorant of the module). Everything this slice adds lives in
@@ -40,6 +44,18 @@ separate `*-acceptance-criteria.md`: two files holding one contract is how the c
 > fulfilment location that i need to plan against"
 
 > On the adopted mirror: "yeah we can do that no problem"
+
+> "i think the planning is okay for single sales order, but what if it is based on multiple sales
+> order, like the user might want to plan against multiple sales order ... I should be able to plan
+> multiple sales order also, so I can see something like delivery schedule, across the dates, what
+> are the products to be fulfilled, and where will I need to source to fulfil ... then in each cell
+> right, there should be a dropdown where your supply composition is broken down, like this quantity
+> comes from which sales order, which customer, which project, the quantity, where should it be
+> supplied from, in a table, then the user will have to approve / amend / reject the decision like
+> your mock right now"
+
+That last one is section 13, the multi-order planning board. It ADDS a surface above the per-order
+sheet and takes nothing away from it.
 
 The dependency inverts: the CORE sales order is the subject of planning, and a project-authored
 Project SO becomes an optional counterpart rather than the entry ticket. The interim
@@ -129,6 +145,9 @@ sales-order book is untouched.
 **Decisions asked of the user across the whole journey:** which order (step 2), and the component
 composition (step 5, pre-proposed). That is two, down from three: the fulfilment location used to be
 the third and is now read off the line (step 4). Everything else is derived.
+
+**Planning several orders at once** is the same journey with "which order" becoming "which orders",
+and is designed in section 13. It is a second way in, not a replacement: this journey stands.
 
 ---
 
@@ -817,3 +836,283 @@ GROUP BY so.source_system;
 
 The `WHERE` is `is_open_demand()` written out, plus the header predicate of section 3, which is why
 it may be compared with the netting engine's own counts.
+
+---
+
+## 13. The multi-order planning board
+
+**Status of this section:** DESIGN, awaiting the captain. Sections 0 to 12 are approved and are not
+changed by it: the per-order sheet stays exactly as it is, and the board sits ABOVE it as a second
+way in. Nothing in section 13 is built until this section is confirmed.
+
+### 13.1 Journey (before any grid)
+
+**Actor:** the same Customer Service person, in the same place. **Arrives from:** the worklist,
+having ticked more than one order.
+
+**What the system already knows before CS does anything:** everything section 0 lists, plus, for
+every selected order, each open line's product, still-owed quantity, required date and fulfilment
+location. Nothing new is asked for and no new upload exists.
+
+1. **CS ticks the orders to plan together on the worklist** and presses **Plan together (N)**. The
+   worklist is already filtered and sorted by the work that is due, so the tick is a confirmation of
+   a set CS can see, not a query CS has to compose.
+2. **The board opens: dates across the top, products down the side.** A cell is the quantity of that
+   product owed by that date, summed across every selected order. This is the answer to "what are
+   the products to be fulfilled, across the dates".
+3. **The cell states where it would come from before CS opens anything**: a compact source strip
+   under the quantity ("BRW-BB 366 · BRW-IB 216", or "Buy 140"), so the board answers "where will I
+   need to source to fulfil" at a glance rather than only on click.
+4. **CS clicks a cell and gets the breakdown table**: one row per contributing sales-order line, with
+   sales order, customer, project, quantity, fulfilment location, and the proposed composition for
+   that row (Reserve at a location / incoming SPO with its date / Buy), each with the reason its rule
+   wrote. This is the same explanation the per-line card already owes - the captain's screenshot,
+   "23 open = 0 incoming + 0 reserve + 0 borrow + 23 buy" - restated per contributing order.
+5. **CS approves, amends or rejects, per row or for the whole cell.** Amending a row's Reserve moves
+   the difference into that row's Buy and asks for a reason, exactly as the per-line card does today.
+6. **CS commits.** The commit is still per sales order and still atomic (13.4). The board says which
+   orders are now fully decided and confirms those; an order the board has only half-decided is
+   named as such and is not confirmed.
+7. **Purchasing is handed the same Buy-only rows it is handed today.** The board changes what CS
+   looks at, not what purchasing consumes.
+
+**Decisions asked of the user:** which orders (step 1), and the composition (step 5, pre-proposed).
+Still two. The board does not add a third.
+
+### 13.2 How the orders are selected
+
+**Recommendation: explicit multi-select on the worklist, with the existing filters as the way to
+make that selection fast.** Checkbox column, a "Plan together (N)" button in the toolbar, selection
+capped at **50 orders** with the cap stated when it bites.
+
+Why, and why not the alternatives:
+
+- **Not "plan everything due in a window" with no explicit selection.** The board writes decisions.
+  A decision set the user did not compose is a set they cannot audit, and the first time an order
+  they had never looked at gets Reserve taken off it, the feature has done something behind their
+  back. The captain's words are "the user might want to plan against multiple sales order" - a
+  choice, made by a person.
+- **Not a customer/project filter as the selection mechanism.** It is a fine way to NARROW (and the
+  worklist already searches customer, project string and area group), but a filter is a query, not a
+  set: it silently changes underneath the board when the next upload lands, and the board would then
+  be planning something other than what CS ticked. Filter to find, tick to select.
+- **The cap is not arbitrary.** Section 13.9 measures the whole book at 862 distinct products across
+  349 distinct required dates. A board of everything is roughly 300,000 cells and is not a screen. A
+  bounded selection is what makes the board legible, so the bound is part of the design rather than a
+  guard bolted on.
+
+The selection lives in the URL (`?orders=SO391698,SO324265,...` by sales-order number, never by id)
+so a board can be linked to and reloaded.
+
+### 13.3 What the date axis is
+
+**Recommendation: bucketed by ISO week by default, switchable to month, never exact dates.** Plus
+two special columns that are not buckets at all.
+
+Measured on the live scratch DB (13.9): 11,166 open project lines carry **349 distinct required
+dates** but only **114 distinct weeks** and **35 distinct months**, spanning 2022-07-03 to
+2030-01-01. Exact-date columns would be hundreds of mostly-blank columns; weeks are the coarsest
+bucket that still separates "this week" from "next week", which is the distinction fulfilment
+actually turns on.
+
+The two columns that are not buckets:
+
+- **Overdue**, pinned first. Any line whose required date is already past goes here, whatever its
+  date. **4,183 of the 11,166 open lines are overdue** - 37 per cent - so this is not an edge case,
+  it is the biggest column on the board. Splitting those across their historical weeks would push
+  the columns CS can still act on off the right-hand edge behind three years of the past. They are
+  all equally late; what matters is what they need now.
+- **No date**, pinned last. 63 lines carry no required date. They are neither dropped nor guessed
+  into a bucket, because a guessed date is the same class of silent wrong answer as a guessed
+  warehouse (section 11, question 2). The column states what it is, and its cells plan normally.
+
+A bucket's header shows the week's start date, formatted through `formatDateInMalaysia`, with the
+exact dates inside it available on the cell's breakdown rows (which carry the line's real
+`required_date`). Bucketing is a display choice; nothing is ever stored bucketed.
+
+### 13.4 Who owns the decision: the board is a LENS
+
+**Recommendation: the board is a lens. The decision stays where Stage 1C put it, and the board
+writes no new decision object.** I agree with the prior, and reading Stage 1C makes the case
+stronger than "purchasing consumes it per line":
+
+- `projects.so_supply_decisions` is keyed **per sales order**, and the DB enforces it: partial unique
+  index `uq_so_supply_decisions_active` on `(project_sales_order_id) WHERE state = 'active'`
+  (STAGE1C section 2). One active decision per order, by construction.
+- Confirmation is **atomic across the whole order** (AC-C01): every line commits or none does, and a
+  refusal names each failing line.
+- A board **cell cuts across orders**. So a cell can never be a unit of persistence without either
+  dropping that unique index or making confirmation per line - which is a rewrite of the lane that
+  shipped, and it would also break AC-A03 (one whole-order state, never a per-line one).
+
+So: **the cell is where CS decides; the order is still what commits.** Cell-level approve/amend/
+reject writes into a **cross-order draft** held by the board, not into a per-line workflow status,
+and not into any new table. When every line of a given order has been decided in the draft, that
+order is confirmable and the board offers to confirm it through the existing per-order confirm.
+
+**The honest consequence, stated rather than hidden:** approving one cell will usually leave several
+orders only partly decided, because a cell holds one product on one date and an order has many lines
+across many dates. The board must therefore show, per selected order, a plain "4 of 12 lines
+decided" and a Confirm that is disabled until it reads 12 of 12. This is the one place the board's
+shape and the commit's shape genuinely disagree, and no design makes that disappear - it can only be
+made visible. **This is the question I would most want the captain to look at**, because the
+alternative (per-line confirmation) is available, it is what would let a cell commit on its own, and
+it costs the Stage 1C rewrite plus AC-C01 and AC-A03.
+
+Where the draft lives is deliberately left to Phase 2 (client state is enough for Phase 1). If it
+needs to survive a reload it becomes a `projects.so_planning_drafts` row keyed on the selection,
+which lands on the module purge list and nowhere near the decision tables.
+
+### 13.5 Allocation when free stock cannot cover the cell
+
+This is the genuinely new logic, and today it is a latent race the board makes visible. Verified in
+`project_supply_service._free_stock`: free stock nets on-hand minus reserved minus **CONFIRMED**
+holds only. Two orders composed separately therefore both see the same free stock and both propose
+Reserve against it; whoever confirms first wins and the second is refused at recheck. Nobody sees the
+conflict until the refusal. On the board both orders are in the same cell, so it has to be resolved
+up front.
+
+**Default rule, applied within a cell, per (product, location):**
+
+1. **Earliest required date first** (the real date on the line, not the bucket). The work that is due
+   soonest gets the stock. Overdue lines sort by their own date, so the latest-overdue is served
+   first.
+2. **Then `sales_order_lines.priority`** when it is set, high before medium before low. Measured:
+   **14 rows of 90,548 carry a priority** (8 high, 3 medium, 3 low). It is therefore a genuine
+   override where somebody has bothered to state one, and it must NOT be the primary key, because
+   for 99.98 per cent of lines it would decide nothing.
+3. **Then sales-order number ascending**, so the rule is TOTAL and reproducible. The same tie-break
+   the worklist already uses (AC-FP04); a non-total rule gives a different answer on each refresh.
+
+Whatever the rule cannot cover becomes **Buy** on the losing rows, with the reason naming why
+("Free stock at BRW-BB went to SO324265, required 2024-12-03; the residual is bought").
+
+**Explicitly NOT pro-rata.** Splitting 100 free units across five orders needing 100 each gives five
+short deliveries instead of one complete one and four honest Buys. Short-shipping everybody is the
+worst available outcome, and it is what an "even split" quietly chooses.
+
+**How the user overrides:** in the breakdown table, per row, by editing the Reserve quantity. The
+board recomputes every other row in that cell against the same free pool and moves the difference to
+Buy. An override is recorded with a reason, the same mandatory-reason shape Borrow already uses
+(AC-B09), so the decision snapshot says a person chose this and why.
+
+### 13.6 Is cell-level approve atomic?
+
+**No, and it must not claim to be.** Per 13.4 the atomic unit is the order. A cell approve stages
+every contributing row in that cell into the draft; nothing is written to the database at that
+moment, so there is nothing to be atomic about yet. That is what lets a cell hold rows from six
+orders without inventing a six-order transaction.
+
+At commit the board runs **one existing per-order confirmation per order**, each atomic in itself.
+Partial refusal reports **per order**: the orders that committed stay committed, the ones that
+refused are listed with their `failing_lines` (line number and item code, never an id), and the board
+keeps the draft for the refused ones so CS fixes and re-commits only those. Confirming five orders
+where one is stale must not roll back the four good ones - they are five separate decisions about
+five separate customer commitments, and tying them together would create a cross-order atomicity
+this system does not otherwise have and cannot honour.
+
+### 13.7 Locations in a cell
+
+The location is the core sales-order line's own warehouse (section 11, question 2), so **one cell can
+legitimately span several source locations**, and this is common rather than exotic: measured across
+the eight fixture orders, `WESERP10B` is owed by four different orders out of both BRW-BB and BRW-IB
+(13.9).
+
+- The **cell** shows the total, then a source strip listing each location with its share
+  ("BRW-BB 366 · BRW-IB 216"), truncated with a `title` when it does not fit.
+- The **breakdown table** carries the location per row, because that is where it is a fact.
+- **Allocation is computed per (product, location)**, never across locations: free stock at BRW-IB
+  cannot cover a line that must be fulfilled from BRW-BB. Moving stock between locations is a
+  transfer, which is M9's job and a non-goal here (13.8).
+- A contributing row whose sales-order line states **no location** renders the blocked state already
+  designed (AC-FP16): it contributes its quantity to the cell total so the demand is not hidden, is
+  marked as unplannable, links to its SCM sales order, and blocks its own order's confirm. The cell
+  shows "1 line needs a location" rather than silently under-sourcing.
+
+### 13.8 What the board does NOT do
+
+- **It does not replace the per-order sheet.** The sheet stays as the way to plan one order end to
+  end, and remains the only place the reconciliation card lives.
+- **It does not create a cross-order decision object**, table or status (13.4).
+- **It does not move stock between locations.** Transfers are `PLAN-scm-m9-stock-allocation-transfer`.
+- **It does not re-open the fulfilment-location question.** No location is ever chosen on the board.
+- **It does not plan the whole book.** Selection is explicit and bounded (13.2).
+- **It does not introduce a per-line workflow state.** AC-A03 stands; the draft is a working set.
+- **It does not change what purchasing receives.** Buy-only rows, per confirmed line, unchanged.
+
+**ACs superseded: none.** Every criterion in Groups A to E stands unchanged, which is the test that
+this is an addition rather than a redesign. The board's own criteria are new (Group F, to be written
+into section 1 when this section is confirmed, as AC-FP28 onward).
+
+### 13.9 Facts measured for this section
+
+Live scratch DB `sorento_scm_e2e_stack`, 18 August 2026, open lines of open project-class orders:
+
+| Fact | Value | Why it decides something |
+|---|---|---|
+| Open project lines | 11,166 | The board's population. |
+| Distinct required dates | 349 | Exact-date columns are not a screen (13.3). |
+| Distinct ISO weeks | 114 | The default bucket. |
+| Distinct months | 35 | The coarse bucket. |
+| Distinct products | 862 | With 349 dates, a whole-book board is ~300,000 cells (13.2). |
+| Required date range | 2022-07-03 to 2030-01-01 | Seven and a half years wide; the past has to be collapsed. |
+| **Overdue lines** | **4,183 of 11,166 (37%)** | The Overdue column is the biggest one on the board (13.3). |
+| Lines with no required date | 63 | Small, and still never dropped or guessed (13.3). |
+| `sales_order_lines.priority` populated | **14 of 90,548** (8 high, 3 medium, 3 low) | Priority cannot be the primary allocation key (13.5). |
+| Free stock nets confirmed holds only | `project_supply_service._free_stock` | Two unconfirmed orders both propose the same stock today (13.5). |
+| Products shared across the 8 fixture orders | e.g. `WESERP10B` in 4 orders over BRW-BB + BRW-IB (1,774), `CKS1050` and `CKSW015` in 4 each (517), `SRTSC03-ABS-NL` in 2 where one states no location | The mock aggregates visibly, and covers the multi-location and blocked cells (13.7). |
+
+Reproduce the axis figures with:
+
+```sql
+WITH ol AS (
+  SELECT sol.required_date, sol.product_id
+  FROM sales_orders so JOIN sales_order_lines sol ON sol.sales_order_id = so.id
+  WHERE so.demand_class = 'project' AND so.status = 'open' AND sol.line_status = 'open'
+    AND coalesce(sol.purchasing_status, '') <> 'covered'
+    AND greatest(coalesce(sol.qty_required, sol.qty_ordered) - coalesce(sol.qty_delivered, 0), 0) > 0)
+SELECT count(*), count(DISTINCT required_date), count(DISTINCT date_trunc('week', required_date)),
+       count(DISTINCT date_trunc('month', required_date)),
+       count(*) FILTER (WHERE required_date IS NULL),
+       count(*) FILTER (WHERE required_date < CURRENT_DATE),
+       count(DISTINCT product_id)
+FROM ol;
+```
+
+### 13.10 Frontend shape
+
+The board is the **delivery-schedule matrix idiom**, which is what the captain is pointing at:
+`app/(protected)/project-sales/[projectId]/delivery-schedules/components/DeliveryScheduleMatrix.tsx`.
+That lane's transposition **has landed** and was read before this section was finalised: its
+docstring now says "The schedule, TRANSPOSED: dates across the top, products down the side ... it now
+reads the way people ask about it instead". That is exactly the board's axis, so the board matches it
+rather than inventing a second grid language, and none of its files are edited here.
+
+One vocabulary warning taken from it: in that lane a `column` in the code and the API means a
+PRODUCT (the customer's own word for the strip on their printed sheet) even though a product is now a
+ROW on screen, and they deliberately did not rename it. The board has no such inherited API, so it
+names its axes for what they are on screen - `dateBuckets` across, `productRows` down - and must not
+borrow that file's `ColumnState` naming, or the two grids will use the same word for opposite things.
+
+That file is also the precedent for the one convention the board knowingly departs from. The
+code-review hard-fail list forbids a hand-rolled table and requires the shared `DataGrid`, and the
+matrix documents why it is not one: **here the COLUMNS ARE DATA** - there are as many as there are
+date buckets, and no column config, sort or resize applies to them. The board is the same shape and
+takes the same carve-out, with the same three obligations the matrix already meets:
+
+- the whole table scrolls **inside its own container** (`overflow-auto`, `max-h`,
+  `overscroll-x-contain`), so the page body never scrolls sideways;
+- the product column is `sticky left-0` and the header row `sticky top-0`, with the corner cell on a
+  higher layer than either, and every pinned cell **opaque** (`color-mix(in oklab, ...)`, never an
+  alpha token, which Tailwind v4 resolves to `oklch(...)` and the browser drops);
+- fixed cell widths on a `w-max` table, never `table-fixed`, which overlaps its columns as soon as
+  content exceeds the declared width.
+
+**A blank cell is not a zero**: it means no selected order owes that product by that date. It renders
+blank and stays blank, exactly as the schedule matrix's blank means "this phase does not take this
+product".
+
+The worklist gains a selection column and a "Plan together (N)" toolbar action; the board is a route
+under the same screen so it can be linked (13.2). The breakdown is a shared `DataGrid` - there the
+columns are fixed and known (sales order, customer, project, quantity, location, composition,
+decision), which is exactly when `DataGrid` is right.

@@ -6,11 +6,20 @@ import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   getCoreRowModel,
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { AlertTriangle, ClipboardList, Hammer, Pencil, Trash2, TriangleAlert } from 'lucide-react';
+import {
+  AlertTriangle,
+  ClipboardList,
+  Hammer,
+  Pencil,
+  Trash2,
+  TriangleAlert,
+  X,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -18,6 +27,10 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import {
+  buildSelectColumn,
+  selectedRowIds,
+} from '@/components/ui/data-grid-select-column';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -25,6 +38,7 @@ import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import {
   useProjectSalesOrders,
   useSalesOrderBuild,
+  useSalesOrderBulkDelete,
   useSalesOrderDelete,
 } from '../../_shared/hooks/useProjectSalesOrders';
 import type { Project } from '../../_shared/types/project.types';
@@ -358,7 +372,15 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
     pageCount: Math.ceil(total / pagination.pageSize) || 0,
     getRowId: (row) => row.id,
     state: { pagination, rowSelection },
-    enableRowSelection: true,
+    /**
+     * The gate is HERE, on the table, and the same predicate is handed to the column above.
+     *
+     * Both, and it is not belt-and-braces: `row.getCanSelect()` - which is what greys the box
+     * out - reads this TABLE option, while the column's copy is what the cell renders from.
+     * The two existing callers of `buildSelectColumn` (the spec proposal review and the flyer
+     * dimension review) pass the pair the same way.
+     */
+    enableRowSelection: (row) => salesOrderDeleteRefusal(row.original) === undefined,
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
@@ -366,6 +388,10 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
     manualPagination: true,
     columnResizeMode: 'onChange',
   });
+
+  // Read off the TABLE, not off `rowSelection`, so a row that has since left the page (a
+  // refetch, a page change) cannot leave its id behind in the request.
+  const selectedIds = selectedRowIds(table);
 
   return (
     <>
@@ -451,6 +477,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
                 </Badge>
               )}
             </div>
+            )}
           </CardHeader>
 
           <CardTable>
@@ -489,6 +516,33 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
           )}
         </Card>
       </DataGrid>
+
+      {/* The bulk confirmation. It names the COUNT, because that is the only thing the
+          reviewer can check before pressing it - thirteen references would not fit and would
+          not be read - and it says what survives, since the whole point of deleting a batch
+          is to build it again. */}
+      <ConfirmDeleteDialog
+        open={confirmBulkDelete}
+        onOpenChange={setConfirmBulkDelete}
+        title="Confirm delete"
+        description={
+          selectedIds.length === 1
+            ? 'Delete 1 sales order and its lines? This action cannot be undone. The purchase order and its delivery schedule are untouched, so the draft can be built again.'
+            : `Delete ${selectedIds.length} sales orders and their lines? This action cannot be undone. The purchase orders and their delivery schedules are untouched, so the drafts can be built again.`
+        }
+        onDelete={async () => {
+          await removeSelected.mutateAsync(selectedIds);
+        }}
+        // Cleared only on success. A refusal leaves the selection exactly as it was, which is
+        // what makes the server's "un-tick these two and retry" actionable.
+        onSuccess={() => {
+          setRowSelection({});
+          setConfirmBulkDelete(false);
+        }}
+        successMessage={`${selectedIds.length} sales order${
+          selectedIds.length === 1 ? '' : 's'
+        } deleted`}
+      />
 
       <ConfirmDeleteDialog
         open={Boolean(pendingDelete)}

@@ -842,8 +842,10 @@ def test_one_undeletable_order_refuses_the_whole_selection(api):
     assert [item["id"] for item in body["refused"]] == [published_id]
     assert body["refused"][0]["code"] == "so_published_not_deletable"
     assert body["refused"][0]["provisional_ref"] == published_ref
-    # The sentence a person reads names the reference, not the id.
+    # The sentence a person reads names the reference, not the id - and reads as English at
+    # a count of one, which "1 of the selected sales order" did not.
     assert published_ref in body["message"]
+    assert body["message"].startswith("One of the selected sales orders cannot be deleted")
 
     db.expire_all()
     assert db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == ok_id).first()

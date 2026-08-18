@@ -2038,9 +2038,11 @@ class ProjectSODraftService:
             f"{item['provisional_ref']}: {item['message']}" for item in refusals
         )
         count = len(refusals)
+        # "sales orders" stays plural whatever the count: it is the SELECTION being described,
+        # and "1 of the selected sales order" is not a sentence.
+        leading = "One" if count == 1 else str(count)
         return (
-            f"{count} of the selected sales order{'s' if count != 1 else ''} cannot be "
-            f"deleted, so none were. {named}"
+            f"{leading} of the selected sales orders cannot be deleted, so none were. {named}"
         )
 
     def _assert_deletable(self, order: ProjectSalesOrder) -> None:

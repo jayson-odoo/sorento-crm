@@ -2,6 +2,8 @@ import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   AdoptSalesOrderResult,
+  BoardGranularity,
+  PlanningBoard,
   ConfirmResult,
   ConfirmSupplyBody,
   FulfilmentPlanningListEnvelope,
@@ -13,6 +15,7 @@ import type {
 } from '../types/fulfilmentPlanning.types';
 import {
   mockAdopt,
+  mockPlanningBoard,
   mockReconciliation,
   mockSupply,
   mockWorklist,
@@ -259,5 +262,52 @@ export async function confirmSupply(
     }
     throw new ConfirmSupplyError(message, failingLines);
   }
+  return response.json();
+}
+
+/**
+ * The multi-order planning board (PLAN section 13).
+ *
+ * CONTRACT:
+ *
+ *   GET /project-sales/fulfilment-planning/board
+ *       ?orders=SO391698,SO324265,...        // sales-order NUMBERS, never ids (13.2)
+ *       &granularity=week|month              // default week; exact dates are never columns
+ *       -> PlanningBoard
+ *
+ *       Read-only. Opening the board claims no stock and writes nothing, exactly as opening
+ *       the per-order sheet does not.
+ *
+ *       `as_of` is the date the server built it against, echoed back so "overdue" is
+ *       reproducible rather than whatever the client's clock said.
+ *
+ *       Cells are returned only for (product, bucket) pairs somebody owes. A pair with no
+ *       cell renders blank, and a blank cell is NOT a zero: it means no selected order owes
+ *       that product by that date.
+ *
+ *       Allocation across competing lines is the server's, computed per (product, location)
+ *       in the 13.5 order (earliest required date, then stated priority, then sales-order
+ *       number), and every contribution carries `contested` when an earlier line actually
+ *       took the free stock it would otherwise have had.
+ *
+ * THERE IS NO BOARD WRITE ENDPOINT, and that is the design (13.4). The board is a LENS: the
+ * decision stays per sales order and atomic across its lines, so approve / amend / reject are
+ * held in a client draft and the commit is the EXISTING per-order confirm:
+ *
+ *   POST /project-sales/sales-orders/{pso_id}/confirm   // one call per order, unchanged
+ *
+ * Committing a selection is therefore N independent atomic confirmations, not one
+ * transaction. A refusal reports per order and the orders that committed stay committed
+ * (13.6).
+ */
+export async function getPlanningBoard(
+  soNumbers: string[],
+  granularity: BoardGranularity = 'week',
+): Promise<PlanningBoard> {
+  if (FULFILMENT_MOCK) return mockPlanningBoard(soNumbers, { granularity });
+  const search = new URLSearchParams({ orders: soNumbers.join(','), granularity });
+  const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the planning board'));
   return response.json();
 }
