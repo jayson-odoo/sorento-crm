@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """Amend tier-1 membership invariant violations (PLAN-sla-assignee-team-derivation).
 
-Invariant (TEAM-level): a user may belong to at most ONE team that is linked at tier 1
-(under any agent) — otherwise assignee-driven routing derivation is ambiguous. The same
-team being linked at tier 1 under many agents is fine (shared executive pools).
+STALE - DO NOT RUN until updated. The invariant this script enforces was relaxed to
+per TEAM SET (`AgentTeam.code`) by PLAN-tier1-teamset-invariant.md: a user may now
+legally hold tier-1 membership in one team PER team set (cross-team-set membership is
+valid). This script still groups violations per user globally, so a run would DELETE
+now-legal cross-team-set memberships. It needs its violation detection rescoped to
+(user, team set code) before any future use.
+
+Old invariant (TEAM-level, superseded): a user may belong to at most ONE team that is
+linked at tier 1 (under any agent), otherwise assignee-driven routing derivation is
+ambiguous. The same team being linked at tier 1 under many agents is fine (shared
+executive pools).
 
 Run from sorento_crm_backend/:
     python scripts/amend_tier1_membership_violations.py [--dry-run]

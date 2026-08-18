@@ -93,9 +93,10 @@ collision reporting, and the requester/captain notifications.
   treatment: lane stays `pending`, labelled.
 - The **WhatsApp welcome message** is OFF (captain decision D6 - it would spend a WhatsApp
   template on every dealer). No plumbing is added for it in this slice.
-- **Team placement in templates.** At most one conversation-SLA tier-1 team per user is a hard
-  cross-user invariant (`user_service._assert_single_tier1_team`-class check); a template that
-  places people on teams would break it in bulk. Templates carry roles and companies only.
+- **Team placement in templates.** At most one conversation-SLA tier-1 team per user PER TEAM
+  SET is a hard cross-user invariant (`user_service._validate_tier1_membership_invariant`; see
+  `PLAN-tier1-teamset-invariant.md`); a template that places people on teams would break it in
+  bulk. Templates carry roles and companies only.
 
 ---
 
