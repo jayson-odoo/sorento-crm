@@ -10,6 +10,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { toast } from 'sonner';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   DeliveryScheduleVersion,
@@ -87,11 +88,12 @@ const getDeliveryScheduleVersion = vi.fn();
 const saveDeliveryScheduleCells = vi.fn();
 const resolveDeliveryScheduleProduct = vi.fn();
 const confirmDeliveryScheduleVersion = vi.fn();
+const listDeliveryScheduleVersions = vi.fn();
 vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
   DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH:
     '/api/v1/project-sales/delivery-schedule-versions/neighbours',
   listDeliverySchedules: vi.fn(),
-  listDeliveryScheduleVersions: vi.fn(),
+  listDeliveryScheduleVersions: (...args: unknown[]) => listDeliveryScheduleVersions(...args),
   uploadDeliverySchedule: vi.fn(),
   getDeliveryScheduleVersion: (...args: unknown[]) => getDeliveryScheduleVersion(...args),
   saveDeliveryScheduleCells: (...args: unknown[]) => saveDeliveryScheduleCells(...args),
@@ -100,6 +102,8 @@ vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
   confirmDeliveryScheduleVersion: (...args: unknown[]) =>
     confirmDeliveryScheduleVersion(...args),
 }));
+
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const getProject = vi.fn();
 vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
@@ -270,6 +274,7 @@ function poVersion() {
 beforeEach(() => {
   vi.clearAllMocks();
   getDeliveryScheduleVersion.mockResolvedValue(version());
+  listDeliveryScheduleVersions.mockResolvedValue([]);
   getPOVersion.mockResolvedValue(poVersion());
   getProject.mockResolvedValue({ id: 'p1', project_code: 'PRJ-1', title: 'Tuju', can_edit: true });
   getProductsForVariantSelect.mockResolvedValue([
@@ -830,5 +835,138 @@ describe('DeliveryScheduleReviewClient header', () => {
     expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
     // The pager is chevrons, not a third and fourth thing to read.
     expect(screen.getByRole('button', { name: 'Previous schedule version' })).toBeInTheDocument();
+  });
+});
+
+/** Section 9.1/9.2 of PLAN-so-book-diff-replanning: was -> now, and confirm's amendment notice. */
+describe('DeliveryScheduleReviewClient revision diff and amendment banner', () => {
+  it('finds this version its predecessor and renders the was -> now diff', async () => {
+    listDeliveryScheduleVersions.mockResolvedValue([
+      {
+        id: 'v1',
+        delivery_schedule_id: 's1',
+        version_no: 1,
+        revision_label: 'R1',
+        issuer_party_label: null,
+        schedule_date: null,
+        extraction_state: 'done',
+        reconciled_columns: 1,
+        total_columns: 1,
+        confirmed_at: '2026-01-20T00:00:00',
+        created_at: null,
+      },
+    ]);
+
+    const current = version({
+      phases: [
+        {
+          id: 'ph1',
+          area_group: 'TOWER',
+          sequence: 1,
+          label: 'Level 2 & 7',
+          delivery_date: '2026-07-01',
+          promoted_delivery_date: '2026-01-01',
+        },
+        {
+          id: 'ph2',
+          area_group: 'COMMON AREA',
+          sequence: 3,
+          label: null,
+          delivery_date: '2027-06-01',
+        },
+      ],
+    });
+    const prior = version({
+      id: 'v1',
+      version_no: 1,
+      phases: [
+        {
+          id: 'prior-ph1',
+          area_group: 'TOWER',
+          sequence: 1,
+          label: 'Level 2 & 7',
+          delivery_date: '2026-01-01',
+        },
+        {
+          id: 'prior-ph2',
+          area_group: 'COMMON AREA',
+          sequence: 3,
+          label: null,
+          delivery_date: '2027-06-01',
+        },
+      ],
+      cells: [
+        { phase_id: 'prior-ph1', product_id: 'p1', product_index: 0, qty: '900' },
+        { phase_id: 'prior-ph2', product_id: 'p2', product_index: 1, qty: '8' },
+      ],
+    });
+
+    getDeliveryScheduleVersion.mockImplementation((id: string) =>
+      Promise.resolve(id === 'v1' ? prior : current),
+    );
+
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(await screen.findByText('Changes since the previous version')).toBeInTheDocument();
+    // The phase moved (01/01/2026 -> 01/07/2026) and the WC's quantity grew (900 -> 927).
+    expect(await screen.findByText(/1 phase moved/)).toBeInTheDocument();
+    expect(screen.getByText(/1 quantit(y|ies) changed/)).toBeInTheDocument();
+  });
+
+  it('shows the amendment-needed banner and a toast whose action goes to it, once confirm answers a preview url', async () => {
+    const reconciled = version({
+      products: [
+        {
+          product_id: 'p1',
+          product_code: 'SRTWC8613-RL',
+          product_name: 'One-Piece WC',
+          customer_code_raw: 'BUI-HB-SRTWC8613-RL',
+          resolution_source: 'code',
+          column_total: '927',
+          reported_total: '927',
+          po_qty: '927',
+          reconciled: true,
+          product_index: 0,
+        },
+      ],
+      cells: [{ phase_id: 'ph1', product_id: 'p1', product_index: 0, qty: '927' }],
+      reconciliation: { reconciled_columns: 1, total_columns: 1 },
+    });
+    getDeliveryScheduleVersion.mockResolvedValue(reconciled);
+    confirmDeliveryScheduleVersion.mockResolvedValue({
+      ...reconciled,
+      confirmed_at: '2026-07-24T01:05:00',
+      amendment_preview_url: '/project-sales/p1/sales-orders/so-1/revisions',
+    });
+
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm$/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.click(dialog.getByRole('button', { name: /^Confirm$/ }));
+
+    await waitFor(() => expect(confirmDeliveryScheduleVersion).toHaveBeenCalled());
+
+    expect(await screen.findByTestId('amendment-needed-banner')).toHaveTextContent(
+      'the linked sales order has not been amended yet',
+    );
+    expect(screen.getByRole('link', { name: 'Review the amendment' })).toHaveAttribute(
+      'href',
+      '/project-sales/p1/sales-orders/so-1/revisions',
+    );
+
+    expect(toast.success).toHaveBeenCalledWith(
+      'Schedule confirmed - the linked sales order needs an amendment.',
+      expect.objectContaining({
+        action: expect.objectContaining({ label: 'Review the amendment' }),
+      }),
+    );
+    const [, options] = (toast.success as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([message]) => message === 'Schedule confirmed - the linked sales order needs an amendment.',
+    ) as [string, { action: { onClick: () => void } }];
+    options.action.onClick();
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/sales-orders/so-1/revisions');
   });
 });

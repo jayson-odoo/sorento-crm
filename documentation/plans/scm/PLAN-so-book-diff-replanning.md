@@ -317,3 +317,28 @@ Scouted 18 August; none is a blocker for the second half but the captain's journ
 6. The extractor read `7/1/2027` as `2027-07-01` on one page of R2 and `2027-01-07` on the
    others (seen live 19 August). Day-first is the customer's convention; pin it in the extraction
    prompt/normaliser and add the R2 fixture case.
+
+7. **The revision that is prose and colour, not a new column** (seen live 19 August, R2 of
+   Tuju Residences, version e36327d7). Page 7 keeps R1's phase columns and carries the change
+   as a margin note - `ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026, START FROM 23/7/2026` - with
+   the affected cells filled rose (`#DB9694` / `#E5B8B8` over SRT382-6's twelve TOWER cells,
+   135 then 72 x 11; the common-area cells untinted). The extractor read the columns and
+   nothing else, so R2 extracted identical to R1 and the review had no diff to show. The
+   captain: "all the red coloured cell is moved starting from 23/7, with the same cadence ...
+   we need to be smart enough to identify the affected phases and the cadence."
+   Build, in order: (a) the text-layer parser tags each cell inside a coloured fill (grey
+   excluded) with its `highlight` colour, and every page's free-text remarks are captured
+   verbatim as `notes[]` (the LLM path returns the same two fields; geometry wins when both
+   exist); (b) a post-extraction proposal per product with highlighted cells whose page note
+   names a date: first highlighted phase -> the note's date, each later highlighted phase ->
+   previous + the ORIGINAL gap between those phases (the cadence is the document's own, never
+   a constant), quantities untouched, stored as `revision_proposals` on the version
+   (`proposed | accepted | rejected`, who/when); (c) `delivery_schedule_cells.delivery_date_override`
+   (nullable) written when a proposal is accepted, and `project_so_delta_service` reading the
+   override for that product-phase so the amendment proposes ADVANCE / DELAY per line; (d) the
+   review shows highlighted cells tinted, the notes as a callout beside the rows they sit on,
+   and one proposal card per product ("Re-date 12 phases from 23/07/2026, fortnightly:
+   07/01/2027 -> 23/07/2026, 21/01/2027 -> 06/08/2026, ...") with Accept / Reject; accepted
+   dates render as was -> now (item 1). Nothing is inferred beyond note date + highlight +
+   original cadence; a note without a date, or highlights without a note, show as-is with no
+   proposal.

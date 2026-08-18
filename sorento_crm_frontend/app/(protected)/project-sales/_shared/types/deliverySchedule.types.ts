@@ -43,6 +43,12 @@ export interface DeliverySchedulePhase {
   sequence: number;
   label: string | null;
   delivery_date: string | null;
+  /**
+   * What the project holds today for this phase, ahead of this version being agreed. Null on
+   * the first version of a schedule, or once nothing has been promoted for this phase yet.
+   * The "was" half of the was -> now the review screen shows on a revision.
+   */
+  promoted_delivery_date?: string | null;
 }
 
 /**
@@ -140,6 +146,13 @@ export interface DeliveryScheduleVersion {
   confirmed_by_name?: string | null;
   uploaded_by_name?: string | null;
   created_at?: string | null;
+
+  /**
+   * GUESS: set by the confirm response when confirming this version leaves the linked sales
+   * order out of step with it. Null once there is nothing to amend, or on a version this
+   * schedule's PO never built an order from.
+   */
+  amendment_preview_url?: string | null;
 }
 
 /**

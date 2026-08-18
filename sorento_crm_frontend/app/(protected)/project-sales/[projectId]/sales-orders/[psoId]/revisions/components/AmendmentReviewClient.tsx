@@ -3,6 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { GitCompareArrows } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -10,6 +11,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
+  useAmendment,
+  useAmendmentAutocountChangeList,
+  useAmendmentAutocountChangeListExport,
   useAmendmentMutations,
   usePoVersions,
   useProjectSalesOrder,
@@ -17,6 +21,7 @@ import {
 } from '../../../../../_shared/hooks/useProjectSalesOrders';
 import { useProject, usePurchaseOrders } from '../../../../../_shared/hooks/useProjects';
 import type { AmendmentPreview } from '../../../../../_shared/types/projectSalesOrder.types';
+import { AmendmentAutocountChangeList } from '../../../../components/AmendmentAutocountChangeList';
 import { AmendmentCreateDialog } from '../../../../components/AmendmentCreateDialog';
 import { AmendmentDeltaSummary } from '../../../../components/AmendmentDeltaSummary';
 import { AmendmentDeltaTable } from '../../../../components/AmendmentDeltaTable';
@@ -57,11 +62,26 @@ export function AmendmentReviewClient({
 
   const scheduleVersions = useScheduleVersions(poId);
   const poVersions = usePoVersions(poId);
-  const { preview, create } = useAmendmentMutations(projectId, psoId);
+  const { preview, create, publish, updateRowDecisions } = useAmendmentMutations(
+    projectId,
+    psoId,
+  );
 
   const [selection, setSelection] = React.useState('');
   const [result, setResult] = React.useState<AmendmentPreview | null>(null);
   const [creating, setCreating] = React.useState(false);
+
+  /**
+   * The amendment CREATE writes something the preview did not: from here on, decisions and
+   * the change list address rows by `row_key`, which only exists once created. `create.data`
+   * (rather than local state) is the source of the id, so it survives whatever the create
+   * dialog does with its own "created" screen.
+   */
+  const amendmentId = create.data?.amendment_id ?? null;
+  const amendment = useAmendment(amendmentId ?? undefined);
+  const changeList = useAmendmentAutocountChangeList(amendmentId ?? undefined);
+  const exportChangeList = useAmendmentAutocountChangeListExport(amendmentId ?? '');
+  const published = amendment.data?.status === 'published';
 
   const options = React.useMemo(
     () => [
@@ -152,7 +172,7 @@ export function AmendmentReviewClient({
               Back to the draft
             </Link>
           </Button>
-          {result && canEdit && (
+          {!amendmentId && result && canEdit && (
             <Button
               type="button"
               size="sm"
@@ -162,93 +182,123 @@ export function AmendmentReviewClient({
               Create the amendment
             </Button>
           )}
+          {amendmentId && canEdit && !published && (
+            <Button
+              type="button"
+              size="sm"
+              disabled={publish.isPending}
+              onClick={() => publish.mutate(amendmentId)}
+            >
+              {publish.isPending ? 'Publishing…' : 'Publish the amendment'}
+            </Button>
+          )}
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Compare against</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-            <div className="w-full space-y-1.5 sm:w-80">
-              <Label htmlFor="revision-version">Newer version</Label>
-              {!poId ? (
-                <p className="rounded-md border border-dashed border-border px-3 py-2.5 text-sm text-muted-foreground">
-                  This sales order is not linked to a purchase order we can read versions from.
-                </p>
-              ) : scheduleVersions.isLoading || poVersions.isLoading ? (
-                <Skeleton className="h-9 w-full" />
-              ) : scheduleVersions.isError && poVersions.isError ? (
-                <p className="text-sm text-destructive">
-                  {scheduleVersions.error instanceof Error
-                    ? scheduleVersions.error.message
-                    : 'The versions could not be loaded.'}
-                </p>
-              ) : options.length === 0 ? (
-                <p className="rounded-md border border-dashed border-border px-3 py-2.5 text-sm text-muted-foreground">
-                  Only one version exists. Upload the revised PO or schedule on the project
-                  first.
-                </p>
-              ) : (
-                <SearchableSelect
-                  id="revision-version"
-                  value={selection}
-                  onChange={setSelection}
-                  options={options}
-                  placeholder="Select a version"
-                />
-              )}
-            </div>
-            <Button
-              type="button"
-              disabled={!selection || preview.isPending}
-              onClick={compare}
-            >
-              <GitCompareArrows className="size-4" aria-hidden />
-              {preview.isPending ? 'Comparing…' : 'Compare'}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {preview.isPending ? (
-        <div className="space-y-4">
-          <Skeleton className="h-28 w-full" />
-          <Skeleton className="h-64 w-full" />
-          <Skeleton className="h-32 w-full" />
-        </div>
-      ) : preview.isError && !result ? (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
-          <h2 className="text-sm font-semibold text-destructive">
-            The two versions could not be compared
-          </h2>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            {preview.error instanceof Error ? preview.error.message : 'Try again shortly.'}
-          </p>
-        </div>
-      ) : !result ? (
-        <Card>
-          <CardContent className="px-6 py-10 text-center">
-            <h3 className="text-sm font-semibold">Nothing compared yet</h3>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              Pick the newer version above and press Compare. Nothing is written until you
-              create the amendment.
-            </p>
-          </CardContent>
-        </Card>
+      {amendmentId ? (
+        <AmendmentSection
+          amendment={amendment}
+          canEdit={canEdit}
+          published={published}
+          onDecide={(rowKey, decision, reason) =>
+            updateRowDecisions.mutate({
+              amendmentId,
+              decisions: { [rowKey]: { decision, reason: reason ?? null } },
+            })
+          }
+          changeList={changeList}
+          exporting={exportChangeList.isPending}
+          onExport={() => exportChangeList.mutate(reference)}
+        />
       ) : (
-        <div className="space-y-4">
-          <AmendmentDeltaSummary
-            rows={result.rows}
-            verbSummary={result.verb_summary ?? {}}
-            unmatchedCount={(result.unmatched ?? []).length}
-            fromLabel={result.from?.label || `version ${result.from?.version_no ?? ''}`}
-            toLabel={result.to?.label || `version ${result.to?.version_no ?? ''}`}
-          />
-          <AmendmentDeltaTable rows={result.rows} />
-          <AmendmentUnmatchedSection unmatched={result.unmatched ?? []} />
-        </div>
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Compare against</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="w-full space-y-1.5 sm:w-80">
+                  <Label htmlFor="revision-version">Newer version</Label>
+                  {!poId ? (
+                    <p className="rounded-md border border-dashed border-border px-3 py-2.5 text-sm text-muted-foreground">
+                      This sales order is not linked to a purchase order we can read versions
+                      from.
+                    </p>
+                  ) : scheduleVersions.isLoading || poVersions.isLoading ? (
+                    <Skeleton className="h-9 w-full" />
+                  ) : scheduleVersions.isError && poVersions.isError ? (
+                    <p className="text-sm text-destructive">
+                      {scheduleVersions.error instanceof Error
+                        ? scheduleVersions.error.message
+                        : 'The versions could not be loaded.'}
+                    </p>
+                  ) : options.length === 0 ? (
+                    <p className="rounded-md border border-dashed border-border px-3 py-2.5 text-sm text-muted-foreground">
+                      Only one version exists. Upload the revised PO or schedule on the project
+                      first.
+                    </p>
+                  ) : (
+                    <SearchableSelect
+                      id="revision-version"
+                      value={selection}
+                      onChange={setSelection}
+                      options={options}
+                      placeholder="Select a version"
+                    />
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  disabled={!selection || preview.isPending}
+                  onClick={compare}
+                >
+                  <GitCompareArrows className="size-4" aria-hidden />
+                  {preview.isPending ? 'Comparing…' : 'Compare'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {preview.isPending ? (
+            <div className="space-y-4">
+              <Skeleton className="h-28 w-full" />
+              <Skeleton className="h-64 w-full" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          ) : preview.isError && !result ? (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
+              <h2 className="text-sm font-semibold text-destructive">
+                The two versions could not be compared
+              </h2>
+              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                {preview.error instanceof Error ? preview.error.message : 'Try again shortly.'}
+              </p>
+            </div>
+          ) : !result ? (
+            <Card>
+              <CardContent className="px-6 py-10 text-center">
+                <h3 className="text-sm font-semibold">Nothing compared yet</h3>
+                <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                  Pick the newer version above and press Compare. Nothing is written until you
+                  create the amendment.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              <AmendmentDeltaSummary
+                rows={result.rows}
+                verbSummary={result.verb_summary ?? {}}
+                unmatchedCount={(result.unmatched ?? []).length}
+                fromLabel={result.from?.label || `version ${result.from?.version_no ?? ''}`}
+                toLabel={result.to?.label || `version ${result.to?.version_no ?? ''}`}
+              />
+              <AmendmentDeltaTable rows={result.rows} />
+              <AmendmentUnmatchedSection unmatched={result.unmatched ?? []} />
+            </div>
+          )}
+        </>
       )}
 
       {creating && result && (
@@ -264,6 +314,89 @@ export function AmendmentReviewClient({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * The created amendment: decisions and the AutoCount change list both need a `row_key` to
+ * address, which only exists from here on - a bare preview has neither.
+ */
+function AmendmentSection({
+  amendment,
+  canEdit,
+  published,
+  onDecide,
+  changeList,
+  exporting,
+  onExport,
+}: {
+  amendment: ReturnType<typeof useAmendment>;
+  canEdit: boolean;
+  published: boolean;
+  onDecide: (rowKey: string, decision: 'accepted' | 'declined', reason?: string) => void;
+  changeList: ReturnType<typeof useAmendmentAutocountChangeList>;
+  exporting: boolean;
+  onExport: () => void;
+}) {
+  if (amendment.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-28 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (amendment.isError || !amendment.data) {
+    return (
+      <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
+        <h2 className="text-sm font-semibold text-destructive">
+          This amendment could not be loaded
+        </h2>
+        <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+          {amendment.error instanceof Error ? amendment.error.message : 'Try again shortly.'}
+        </p>
+      </div>
+    );
+  }
+
+  const detail = amendment.data;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle className="text-sm">
+            {detail.ocn_number ? `Change notice ${detail.ocn_number}` : 'Amendment'}
+          </CardTitle>
+          <Badge variant={published ? 'success' : 'secondary'} appearance="light">
+            {(detail.status ?? 'proposed').replace(/_/g, ' ')}
+          </Badge>
+        </CardHeader>
+        {detail.reason && (
+          <CardContent>
+            <p className="break-words text-sm text-muted-foreground">{detail.reason}</p>
+          </CardContent>
+        )}
+      </Card>
+
+      <AmendmentDeltaSummary
+        rows={detail.rows}
+        verbSummary={detail.verb_summary ?? {}}
+        unmatchedCount={(detail.unmatched ?? []).length}
+        fromLabel={detail.from?.label || `version ${detail.from?.version_no ?? ''}`}
+        toLabel={detail.to?.label || `version ${detail.to?.version_no ?? ''}`}
+      />
+      <AmendmentDeltaTable rows={detail.rows} onDecide={onDecide} disabled={!canEdit || published} />
+      <AmendmentAutocountChangeList
+        rows={changeList.data?.rows ?? []}
+        declinedCount={changeList.data?.declined_count ?? 0}
+        isLoading={changeList.isLoading}
+        exporting={exporting}
+        onExport={onExport}
+      />
+      <AmendmentUnmatchedSection unmatched={detail.unmatched ?? []} />
     </div>
   );
 }
