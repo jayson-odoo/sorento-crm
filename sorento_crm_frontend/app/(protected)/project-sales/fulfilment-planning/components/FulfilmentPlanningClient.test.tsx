@@ -841,6 +841,26 @@ describe('FulfilmentPlanningClient: search', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * Two things a planner would otherwise discover by being wrong about them. Both are in the
+   * box's own tooltip rather than as prose on the page: a hint of the form "what happens if I
+   * set this" is allowed, a paragraph teaching the feature is not.
+   */
+  it('warns that a product match does not narrow the numbers in the row', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([row()]));
+
+    renderClient();
+
+    const box = await screen.findByPlaceholderText(
+      'Search sales order, customer, project or product',
+    );
+    const hint = box.getAttribute('title') ?? '';
+    // A product match is an ORDER match: the row still counts the whole order.
+    expect(hint).toContain('whole order');
+    // And an order whose only matching line is already done is absent on purpose.
+    expect(hint).toContain('outstanding');
+  });
+
   it('sends a product code as the same query parameter', async () => {
     listFulfilmentPlanning.mockResolvedValue(envelope([row()]));
 
