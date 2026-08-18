@@ -11,13 +11,7 @@
  * channel toggles stay HOW the user is notified; scopes decide WHAT they hear
  * about. See documentation/plans/PLAN-product-discontinued-brand-scope.md.
  *
- * -- PHASE-1 / PHASE-2 SWAP ---------------------------------------------------
- * `USE_SCOPE_BRAND_MOCKS` is the single flag between the Phase-1 prototype
- * fixture and the live endpoint. Phase 1 = true (no backend yet). Phase 2 (slice
- * S2) flips it to false and deletes the fixture below; the real `apiFetch`
- * branch is already wired to the contract.
- *
- * -- PHASE-2 BACKEND CONTRACT -------------------------------------------------
+ * -- BACKEND CONTRACT (live since slice S2) -----------------------------------
  *
  * 1. Brand options for one company (the ONLY new call this screen needs)
  *
@@ -60,37 +54,16 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 
-/** Phase 1: brands per company are served from the fixture below. */
-export const USE_SCOPE_BRAND_MOCKS = true;
-
 export interface ScopeBrandOption {
   id: string;
   brand_code: string;
   brand_name: string;
 }
 
-// -- Phase-1 fixture ---------------------------------------------------------
-// Deterministic per company so the prototype can be clicked through (and
-// screenshotted) with no backend running. Deleted when the flag flips.
-const MOCK_BRANDS = ['Mocha', 'Nova', 'Sorento Classic', 'Vertu', 'Zenith'];
-
-function mockBrandOptions(companyId: string): ScopeBrandOption[] {
-  return MOCK_BRANDS.map((brandName, index) => ({
-    id: `${companyId}:mock-brand-${index + 1}`,
-    brand_code: brandName.slice(0, 3).toUpperCase(),
-    brand_name: brandName,
-  }));
-}
-
 /** Active brands of one company, for the scope editor's brand picker. */
 export async function getScopeBrandOptions(
   companyId: string,
 ): Promise<ScopeBrandOption[]> {
-  if (USE_SCOPE_BRAND_MOCKS) {
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    return mockBrandOptions(companyId);
-  }
-
   const response = await apiFetch(
     `/api/v1/master-data/brands/select?company_id=${encodeURIComponent(companyId)}`,
   );

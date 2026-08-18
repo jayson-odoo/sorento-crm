@@ -234,6 +234,38 @@ class ProductService:
     # to an empty result without hitting the DB.
     _EMPTY_RESULT = object()
 
+    def _resolve_brand_filter(self, brand_id: Optional[str]) -> Optional[list[str]]:
+        """Brand ids for the ``brand_id`` filter, which accepts a comma-separated list.
+
+        The product-discontinued notice deep-links a recipient to exactly their
+        slice of a batch, and that slice can span several brands. One value keeps
+        the single-identifier path it always had (UUID, brand code or brand name);
+        several resolve individually and union, so an unknown id among known ones
+        narrows nothing rather than emptying the whole list.
+
+        Returns ``None`` for "no filter" and ``[]`` for "definitively no rows",
+        exactly as :func:`resolve_identifier` does.
+        """
+        raw = (brand_id or "").strip()
+        if "," not in raw:
+            return resolve_identifier(
+                self.db, brand_id, Brand, code_fields=("brand_code", "brand_name")
+            )
+
+        tokens = [t.strip() for t in raw.split(",") if t.strip()]
+        if not tokens:
+            return None
+
+        resolved: list[str] = []
+        for token in tokens:
+            ids = resolve_identifier(
+                self.db, token, Brand, code_fields=("brand_code", "brand_name")
+            )
+            for bid in ids or []:
+                if bid not in resolved:
+                    resolved.append(bid)
+        return resolved
+
     def _build_list_query(
         self,
         query: Optional[str] = None,
@@ -293,12 +325,7 @@ class ProductService:
                 return self._EMPTY_RESULT
             filters.append(Product.category_id.in_(category_ids))
 
-        brand_ids = resolve_identifier(
-            self.db,
-            brand_id,
-            Brand,
-            code_fields=("brand_code", "brand_name"),
-        )
+        brand_ids = self._resolve_brand_filter(brand_id)
         if brand_ids is not None:
             if not brand_ids:
                 return self._EMPTY_RESULT

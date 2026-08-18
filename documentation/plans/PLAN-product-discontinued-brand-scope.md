@@ -145,7 +145,19 @@ current code path (`==`), multiple use `IN` (AC-10).
   Company options come from the existing `useCompany()` grants rather than the superadmin-only
   `/companies/select`, so a non-superadmin admin can use the editor.
 - S2 [BE, Phase 2]: model + migration + backfill, service fan-out rework, products
-  multi-brand filter, user API scopes; swap FE mock to real.
+  multi-brand filter, user API scopes; swap FE mock to real. **Done** (migration
+  `375_user_discontinued_scopes`, chained onto `374_merge_proj_media_flyer`; still one
+  head). Three notes on top of the plan:
+  - `GET /brands/select?company_id=` runs the read under `company_scope(db, {company})`
+    but first checks the caller can REACH that company (superadmin/admin, or holds the
+    grant; the API-key principal is unscoped by design) and 404s the company otherwise,
+    mirroring `system/companies.get_company`. The param widens WHICH company is read,
+    never WHO may read it - the precedent set by `lookup.resolve`, which refuses to let
+    a JWT user re-scope themselves out of a body value.
+  - Scope validation raises `handle_unprocessable` (422) for an unknown company, an
+    unknown brand, or a brand outside the named company - matching the FE contract.
+  - The three existing discontinued suites seed their subscribers with the all/all scope
+    the migration backfills, since a user with no scope now hears nothing by design.
 - S3 [T, Phase 2]: pytest + vitest suites above.
 - S4 [Review, Phase 3]: reviewer agent + /code-review; evidence run (AC-19).
 
