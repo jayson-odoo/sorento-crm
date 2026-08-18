@@ -16,20 +16,24 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePlanningBoard } from '../../_shared/hooks/useFulfilmentPlanning';
 import {
-  confirmBlockedReason,
+  commitPreviewFor,
   standingsFor,
 } from '../../_shared/lib/fulfilmentBoard';
 import type {
   BoardCell,
+  BoardCommitPreview,
   BoardDecision,
   BoardDraft,
   BoardGranularity,
   BoardOrderStanding,
+  BoardPolicy,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
 
+/** The calendar control the captain asked for: day, week or month (PLAN 13.3). */
 const GRANULARITY_OPTIONS = [
+  { value: 'day', label: 'By day' },
   { value: 'week', label: 'By week' },
   { value: 'month', label: 'By month' },
 ];
@@ -41,11 +45,12 @@ const GRANULARITY_OPTIONS = [
  * amend / reject go into a draft held here, and the thing that commits is still the existing
  * per-order confirmation, one call per order, atomic across that order's lines (13.4, 13.6).
  *
- * Which is why the commit rail is not decoration. A cell holds one product on one date and an
- * order spans many lines across many dates, so approving a cell almost never finishes an
- * order. The rail says "4 of 12 lines decided" per order and keeps Confirm disabled with that
- * sentence as its reason, because the alternative - a Confirm that looks ready - would imply
- * the cell committed something it did not.
+ * Confirm is NOT gated on an order being fully decided (13.4, the captain overruling this plan's
+ * own recommendation): a planner commits the lines they are sure about precisely so the undecided
+ * ones keep flowing to reorder planning. So the rail's "4 of 12 lines decided" is INFORMATION, not
+ * a gate, and beside it the screen states plainly what each Confirm would leave behind and where
+ * that demand goes. A button that silently committed four lines and dropped eight would be the
+ * same lie in the other direction.
  */
 export function FulfilmentBoardPanel({
   soNumbers,
@@ -57,8 +62,9 @@ export function FulfilmentBoardPanel({
   const [granularity, setGranularity] = React.useState<BoardGranularity>('week');
   const [draft, setDraft] = React.useState<BoardDraft>({});
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
+  const [previewPolicy, setPreviewPolicy] = React.useState(false);
 
-  const board = usePlanningBoard(soNumbers, granularity);
+  const board = usePlanningBoard(soNumbers, granularity, previewPolicy);
 
   const decide = React.useCallback((key: string, decision: BoardDecision | null) => {
     setDraft((current) => {
@@ -92,6 +98,16 @@ export function FulfilmentBoardPanel({
       granularity: board.data.granularity,
     });
   }, [board.data, draft]);
+
+  const previews = React.useMemo<Record<string, BoardCommitPreview>>(() => {
+    if (!board.data) return {};
+    return Object.fromEntries(
+      standings.map((standing) => [
+        standing.sales_order_id,
+        commitPreviewFor(standing),
+      ]),
+    );
+  }, [standings, board.data]);
 
   const bucketLabel = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -195,6 +211,15 @@ export function FulfilmentBoardPanel({
             </Alert>
           )}
 
+          {/* Which ranking produced what is on screen. Always stated: under the live policy
+              every row scores 0.0, and a planner who cannot see that is looking at a flat
+              ranking believing it is a considered one (PLAN 13.5). */}
+          <PolicyNote
+            policy={board.data.policy}
+            previewing={previewPolicy}
+            onPreviewChange={setPreviewPolicy}
+          />
+
           <FulfilmentBoardMatrix
             dateBuckets={board.data.dateBuckets}
             productRows={board.data.productRows}
@@ -207,12 +232,17 @@ export function FulfilmentBoardPanel({
             <CardHeader className="block">
               <h3 className="text-sm font-semibold">Commit</h3>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                One confirmation per sales order, each atomic across that order&apos;s lines.
+                One confirmation per sales order, each atomic across the lines it commits.
+                Anything left undecided stays outstanding and keeps flowing to reorder planning.
               </p>
             </CardHeader>
             <CardContent className="space-y-2">
               {standings.map((standing) => (
-                <OrderCommitRow key={standing.sales_order_id} standing={standing} />
+                <OrderCommitRow
+                  key={standing.sales_order_id}
+                  standing={standing}
+                  preview={previews[standing.sales_order_id]}
+                />
               ))}
             </CardContent>
           </Card>
@@ -240,8 +270,16 @@ export function FulfilmentBoardPanel({
  * board decides by cell, the database commits by order, and until every line of an order has a
  * verdict there is nothing to commit.
  */
-function OrderCommitRow({ standing }: { standing: BoardOrderStanding }) {
-  const blocked = confirmBlockedReason(standing);
+function OrderCommitRow({
+  standing,
+  preview,
+}: {
+  standing: BoardOrderStanding;
+  preview?: BoardCommitPreview;
+}) {
+  const committing = preview?.committing ?? 0;
+  const leaving = preview?.leaving_undecided ?? 0;
+  const blocked = preview?.blocked ?? 0;
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
@@ -257,11 +295,80 @@ function OrderCommitRow({ standing }: { standing: BoardOrderStanding }) {
         <span className="text-sm tabular-nums">
           {`${standing.decided_count} of ${standing.line_count} lines decided`}
         </span>
-        {blocked ? (
-          <span className="min-w-0 text-sm text-muted-foreground break-words">{blocked}</span>
-        ) : null}
-        <Button type="button" size="sm" disabled={Boolean(blocked)}>
-          Confirm this order
+        {/* What this press would actually do, stated before it is pressed. The counter above is
+            information; this is the consequence. */}
+        <span className="min-w-0 text-sm text-muted-foreground break-words">
+          {committing === 0
+            ? 'Nothing decided yet on this order.'
+            : leaving === 0
+              ? `Confirms all ${committing}.`
+              : `Confirms ${committing}, leaves ${leaving} undecided for reorder planning${
+                  blocked > 0
+                    ? ` (${blocked} of them need a location on the sales order)`
+                    : ''
+                }.`}
+        </span>
+        <Button type="button" size="sm" disabled={committing === 0}>
+          {/* "Confirm 0 lines" on an untouched order would be a button describing nothing.
+              The count only appears once it means something. */}
+          {committing > 0 && leaving > 0 ? `Confirm ${committing} lines` : 'Confirm this order'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The policy the board ranked by, named on screen.
+ *
+ * The live seeded row weights only `po_document_sequence`, which a sales-order line cannot have,
+ * so it scores every contributor 0.0 and ranks nothing. That is not a bug to hide behind a
+ * plausible-looking order; it is the thing the captain has to decide about (PLAN 13.5).
+ */
+function PolicyNote({
+  policy,
+  previewing,
+  onPreviewChange,
+}: {
+  policy: BoardPolicy;
+  previewing: boolean;
+  onPreviewChange: (next: boolean) => void;
+}) {
+  const scorable = Object.entries(policy.factors).filter(
+    ([key, weight]) => Number(weight) > 0 && key !== 'po_document_sequence',
+  );
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border border-border px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 text-sm">
+        <span className="text-muted-foreground">Ranked by </span>
+        <span className="font-medium">{policy.name}</span>
+        {policy.is_preview && (
+          <span className="ms-2 rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">
+            Preview, not live
+          </span>
+        )}
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
+        {scorable.length === 0 ? (
+          <p className="min-w-0 text-sm text-destructive break-words">
+            This policy weights nothing a sales-order line carries, so every row scores the same
+            and the ranking is flat.
+          </p>
+        ) : (
+          <p className="min-w-0 text-sm text-muted-foreground break-words">
+            {scorable.map(([key, weight]) => `${key} ${weight}`).join(' · ')}
+          </p>
+        )}
+        {/* A what-if, never an activation: previewing shows what a fair weighting would do to
+            these real orders without changing what container loading and stock assignment use. */}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          onClick={() => onPreviewChange(!previewing)}
+        >
+          {previewing ? 'Back to the live policy' : 'Preview a fairer weighting'}
         </Button>
       </div>
     </div>

@@ -303,9 +303,18 @@ export async function confirmSupply(
 export async function getPlanningBoard(
   soNumbers: string[],
   granularity: BoardGranularity = 'week',
+  /**
+   * Rank by a what-if policy instead of the live one (13.5, recommendation 3). Read-only: a
+   * previewed ranking is labelled on screen and may never be committed against.
+   */
+  previewPolicy = false,
 ): Promise<PlanningBoard> {
-  if (FULFILMENT_MOCK) return mockPlanningBoard(soNumbers, { granularity });
-  const search = new URLSearchParams({ orders: soNumbers.join(','), granularity });
+  if (FULFILMENT_MOCK) return mockPlanningBoard(soNumbers, { granularity, previewPolicy });
+  const search = new URLSearchParams({
+    orders: soNumbers.join(','),
+    granularity,
+    ...(previewPolicy ? { preview_policy: '1' } : {}),
+  });
   const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the planning board'));

@@ -5,9 +5,20 @@ captain (section 11): the **adopted mirror** is the shape ("yeah we can do that 
 **fulfilment location is the core sales-order line's own `warehouse_id`** - nobody is asked for it.
 Phase 1 frontend prototype is built against mocks; no backend code written yet.
 
-**Section 13 (the multi-order planning board) is DESIGN, awaiting the captain.** It adds a
-cross-order board above the per-order sheet and changes nothing in sections 0 to 12; no AC is
-superseded. Its own criteria become Group F once it is confirmed. Nothing in it is built until then.
+**Section 13 (the multi-order planning board) is DESIGN, part-decided.** The captain has decided its
+three open points: the competition ranking reuses the reorder engine's `scm.priority_policy` (13.5),
+the date axis is a calendar control with day / week / month (13.3), and **Confirm is NOT gated on an
+order being fully decided** (13.4). That last one reverses this plan's own recommendation and is not
+free: partial confirmation changes the Stage 1C contract (AC-C01) and REQUIRES a `scm.committed_v`
+change, which breaks section 8 invariant 3 and AC-FP24 as written. 13.4 states the cost, recommends
+the cheaper of the two shapes, and lists exactly what changes.
+
+**Still open in section 13, and each is named in place:** whether `document_age` means the sales
+order's date or the customer's PO date (13.5); what a `customer_credit` factor may honestly score,
+given the database holds NO receivables at all and `credit_limit` reaches 8 of 11,166 open project
+lines (13.5); whether the board ranks on the ACTIVE policy, which today weights only a factor no
+board row can have (13.5); and how a partially-covering decision records WHICH lines it covers
+(13.4). Phase 1 mocks the shapes; none of this is built until those are settled.
 
 **Classification:** MIXED, and no new schema location. Core `public.sales_orders` stays exactly as it
 is (finding G5: the core table stays ignorant of the module). Everything this slice adds lives in
@@ -54,8 +65,16 @@ separate `*-acceptance-criteria.md`: two files holding one contract is how the c
 > supplied from, in a table, then the user will have to approve / amend / reject the decision like
 > your mock right now"
 
-That last one is section 13, the multi-order planning board. It ADDS a surface above the per-order
-sheet and takes nothing away from it.
+> "yeah so when multiple SO compete for a stock from 1 location, we must have a ranking system just
+> like our reorder planning, delivery date, document date, customer credit should come into play,
+> okay the date axis should be like google calendar, i can control by date, or weekly, or monthly,
+> hmm we shouldn't block the confirm when the decision for the order are incomplete yet, we might
+> want to flow a few product to reorder planning first"
+
+That last pair is section 13, the multi-order planning board. It ADDS a surface above the per-order
+sheet and takes nothing away from it. The three decisions in the second quote are folded into 13.3
+(the calendar control), 13.4 (partial confirmation) and 13.5 (the ranking policy); the third of them
+reverses this plan's own earlier recommendation, and 13.4 says so plainly and pays for it.
 
 The dependency inverts: the CORE sales order is the subject of planning, and a project-authored
 Project SO becomes an optional counterpart rather than the entry ticket. The interim
@@ -904,88 +923,295 @@ Why, and why not the alternatives:
 The selection lives in the URL (`?orders=SO391698,SO324265,...` by sales-order number, never by id)
 so a board can be linked to and reloaded.
 
-### 13.3 What the date axis is
+### 13.3 What the date axis is: a calendar control
 
-**Recommendation: bucketed by ISO week by default, switchable to month, never exact dates.** Plus
-two special columns that are not buckets at all.
+**Decided by the captain: "the date axis should be like google calendar, i can control by date, or
+weekly, or monthly".** So granularity is a control the planner turns, not a fixed choice: **day,
+week or month**, week by default. The measurements below still justify week as the default; what
+changes from this plan's earlier wording is that exact dates are now REACHABLE rather than forbidden.
 
 Measured on the live scratch DB (13.9): 11,166 open project lines carry **349 distinct required
-dates** but only **114 distinct weeks** and **35 distinct months**, spanning 2022-07-03 to
-2030-01-01. Exact-date columns would be hundreds of mostly-blank columns; weeks are the coarsest
-bucket that still separates "this week" from "next week", which is the distinction fulfilment
-actually turns on.
+dates**, **114 distinct weeks** and **35 distinct months**, spanning 2022-07-03 to 2030-01-01.
 
-The two columns that are not buckets:
+- **Week (default).** One column per ISO week, headed by its Monday. The coarsest cut that still
+  separates "this week" from "next week", which is the distinction fulfilment turns on.
+- **Month.** 35 columns across the whole book, so a month view of any real selection fits on a
+  screen and is the right grain for "what does the quarter look like".
+- **Day.** This is the one that needs a rule, because 349 columns is not a screen. Day granularity
+  renders a **scrolling window of 30 consecutive days**, starting at the earliest still-future
+  required date in the selection, with the window moved by the same calendar control (a previous /
+  next pair, and a date picker for a jump). Days inside the window with nothing owed still render as
+  columns, because a calendar that hides empty days is not a calendar and the gap is the
+  information. Demand outside the window is not lost: it stays in the Overdue column when it is
+  past, and the next-window control is how it is reached when it is future. The window is a
+  DISPLAY bound only, never a filter on what the board planned.
 
-- **Overdue**, pinned first. Any line whose required date is already past goes here, whatever its
-  date. **4,183 of the 11,166 open lines are overdue** - 37 per cent - so this is not an edge case,
-  it is the biggest column on the board. Splitting those across their historical weeks would push
-  the columns CS can still act on off the right-hand edge behind three years of the past. They are
-  all equally late; what matters is what they need now.
-- **No date**, pinned last. 63 lines carry no required date. They are neither dropped nor guessed
+**Overdue is pinned first and No date is pinned last in EVERY granularity**, because neither is a
+bucket of time and neither has a place on a timeline:
+
+- **Overdue** absorbs every past required date, whatever it is. **4,183 of the 11,166 open lines are
+  overdue (37 per cent)**, so this is the biggest column on the board rather than an edge case.
+  Splitting it across three years of historical days, weeks or months would push everything anyone
+  can still act on off the right-hand edge behind the past.
+- **No date** holds the 63 lines that state no required date. They are neither dropped nor guessed
   into a bucket, because a guessed date is the same class of silent wrong answer as a guessed
-  warehouse (section 11, question 2). The column states what it is, and its cells plan normally.
+  warehouse (section 11, question 2).
 
-A bucket's header shows the week's start date, formatted through `formatDateInMalaysia`, with the
-exact dates inside it available on the cell's breakdown rows (which carry the line's real
-`required_date`). Bucketing is a display choice; nothing is ever stored bucketed.
+Bucketing is a DISPLAY choice and nothing is ever stored bucketed: every breakdown row carries the
+line's own real `required_date`, and the allocation rule sorts on that date, never on the bucket.
 
-### 13.4 Who owns the decision: the board is a LENS
+**The granularity travels in the URL with the selection**, so a board is shareable and reloadable:
+`?orders=SO403340,SO398322&granularity=week&day_window=2026-09-01`. Sales-order NUMBERS, never ids.
 
-**Recommendation: the board is a lens. The decision stays where Stage 1C put it, and the board
-writes no new decision object.** I agree with the prior, and reading Stage 1C makes the case
-stronger than "purchasing consumes it per line":
+### 13.4 Who owns the decision, and partial confirmation
 
-- `projects.so_supply_decisions` is keyed **per sales order**, and the DB enforces it: partial unique
-  index `uq_so_supply_decisions_active` on `(project_sales_order_id) WHERE state = 'active'`
-  (STAGE1C section 2). One active decision per order, by construction.
-- Confirmation is **atomic across the whole order** (AC-C01): every line commits or none does, and a
-  refusal names each failing line.
-- A board **cell cuts across orders**. So a cell can never be a unit of persistence without either
-  dropping that unique index or making confirmation per line - which is a rewrite of the lane that
-  shipped, and it would also break AC-A03 (one whole-order state, never a per-line one).
+**Two things here, and the second reverses this plan's own recommendation.**
 
-So: **the cell is where CS decides; the order is still what commits.** Cell-level approve/amend/
-reject writes into a **cross-order draft** held by the board, not into a per-line workflow status,
-and not into any new table. When every line of a given order has been decided in the draft, that
-order is confirmable and the board offers to confirm it through the existing per-order confirm.
+#### The board is still a LENS
 
-**The honest consequence, stated rather than hidden:** approving one cell will usually leave several
-orders only partly decided, because a cell holds one product on one date and an order has many lines
-across many dates. The board must therefore show, per selected order, a plain "4 of 12 lines
-decided" and a Confirm that is disabled until it reads 12 of 12. This is the one place the board's
-shape and the commit's shape genuinely disagree, and no design makes that disappear - it can only be
-made visible. **This is the question I would most want the captain to look at**, because the
-alternative (per-line confirmation) is available, it is what would let a cell commit on its own, and
-it costs the Stage 1C rewrite plus AC-C01 and AC-A03.
+The board writes no decision object of its own. `projects.so_supply_decisions` is keyed per sales
+order with a partial unique index (`uq_so_supply_decisions_active` on `(project_sales_order_id)
+WHERE state = 'active'`), and a board CELL cuts across orders, so a cell can never be the unit of
+persistence. Cell-level approve / amend / reject write into the board's **draft**; the commit is the
+existing per-order confirmation. That part stands.
 
-Where the draft lives is deliberately left to Phase 2 (client state is enough for Phase 1). If it
-needs to survive a reload it becomes a `projects.so_planning_drafts` row keyed on the selection,
-which lands on the module purge list and nowhere near the decision tables.
+#### Confirm is NOT gated on the order being complete (captain, superseding this plan)
 
-### 13.5 Allocation when free stock cannot cover the cell
+> "hmm we shouldn't block the confirm when the decision for the order are incomplete yet, we might
+> want to flow a few product to reorder planning first"
 
-This is the genuinely new logic, and today it is a latent race the board makes visible. Verified in
-`project_supply_service._free_stock`: free stock nets on-hand minus reserved minus **CONFIRMED**
-holds only. Two orders composed separately therefore both see the same free stock and both propose
-Reserve against it; whoever confirms first wins and the second is refused at recheck. Nobody sees the
-conflict until the refusal. On the board both orders are in the same cell, so it has to be resolved
-up front.
+This plan recommended the opposite and was overruled, for a reason that is better than the
+recommendation: a planner should be able to decide the lines they are sure about, commit those, and
+**deliberately leave the rest undecided so that undecided demand keeps flowing to reorder planning**.
+Confirm therefore commits whatever subset carries a verdict. The per-order "4 of 12 lines decided"
+counter STAYS, as information; it no longer disables anything.
 
-**Default rule, applied within a cell, per (product, location):**
+That is cheap on the screen and expensive underneath, so here is the whole bill.
 
-1. **Earliest required date first** (the real date on the line, not the bucket). The work that is due
-   soonest gets the stock. Overdue lines sort by their own date, so the latest-overdue is served
-   first.
-2. **Then `sales_order_lines.priority`** when it is set, high before medium before low. Measured:
-   **14 rows of 90,548 carry a priority** (8 high, 3 medium, 3 low). It is therefore a genuine
-   override where somebody has bothered to state one, and it must NOT be the primary key, because
-   for 99.98 per cent of lines it would decide nothing.
-3. **Then sales-order number ascending**, so the rule is TOTAL and reproducible. The same tie-break
-   the worklist already uses (AC-FP04); a non-total rule gives a different answer on each refresh.
+**What breaks.** AC-C01 makes confirmation atomic across the WHOLE order, and `line_snapshots` is
+written as one object per line of the order. Partial confirmation needs one of two shapes:
 
-Whatever the rule cannot cover becomes **Buy** on the losing rows, with the reason naming why
-("Free stock at BRW-BB went to SO324265, required 2024-12-03; the residual is bought").
+- **(A) The decision object becomes per LINE.** Drop the per-order partial unique index, re-key
+  `so_supply_decisions` to the line, rewrite revision and supersede logic per line, and rework every
+  reader. Honest, and a rewrite of the lane that shipped.
+- **(B) An order's active decision COVERS A SUBSET of its lines, the remainder explicitly
+  undecided.** `line_snapshots` already carries one object per covered line including its
+  `core_line_id`, so a partial decision is simply a decision whose snapshots cover fewer lines than
+  the order has. The unique index stays (still one active decision per order). Deciding more lines
+  later is a NEW revision covering the union, which is exactly what revisions already do.
+
+**Recommendation: (B).** It changes no key, no index and no revision semantics, and the thing it
+needs - "which lines does this decision cover" - is already IN the snapshot. AC-C01 changes from
+*"every line of the order commits or none does"* to **"every line in THIS confirmation commits or
+none does"**: still atomic, over a set the planner chose rather than over the whole order. That
+wording change is the entire contract amendment on the Stage 1C side.
+
+**What it costs that is NOT optional: `scm.committed_v` must change.** This is the part that would
+have shipped as a silent data defect, so it is stated in full. The view's `decided` CTE is per
+ORDER:
+
+```sql
+decided AS (SELECT DISTINCT pso.so_id AS sales_order_id FROM projects.sales_orders pso
+            JOIN projects.so_supply_decisions d ON d.project_sales_order_id = pso.id
+             AND d.state = 'active' WHERE pso.so_id IS NOT NULL)
+```
+
+and the sheet leg then excludes the whole order the moment ANY active decision exists for it
+(`AND NOT EXISTS (SELECT 1 FROM decided dd WHERE dd.sales_order_id = so.id)`). So under partial
+confirmation as the view stands today, **confirming 1 line of a 12-line order removes all 12 from
+the sheet leg** while only the confirmed line's Buy appears in the confirmed leg. The other 11
+become invisible to the reorder engine: uncovered demand nobody buys. That is the exact opposite of
+the captain's stated reason for wanting this.
+
+**So `decided` must become per LINE**, and the sheet-leg exclusion with it: a core sales-order line
+is excluded from the sheet leg only when the active decision actually covers THAT line, and every
+uncovered line keeps counting as project demand exactly as it does today. Undecided lines therefore
+remain visible to reorder planning and are never counted as covered, which is the requirement.
+
+**Consequences to book, not to discover later:**
+
+- Section 8 invariant 3 ("`scm.committed_v` is byte-identical") and **AC-FP24 as written no longer
+  hold** and must be rewritten: the view changes, deliberately, and the new invariant is that a
+  partially-confirmed order contributes its confirmed Buy through the confirmed leg AND its
+  undecided lines through the sheet leg, each exactly once, never both for one line and never
+  neither.
+- Stage 2 is concurrently extending this same view, so this is a coordinated change, not a
+  drive-by. It must be sequenced with that lane.
+- A test is owed for the precise failure above: partially confirm an order, assert the undecided
+  lines still appear in `committed_v`'s project leg with their full outstanding quantity.
+
+**Open sub-question, named rather than assumed:** how the "covered lines" test is written. Either a
+lateral over `line_snapshots` matching `core_line_id`, or a small `projects.so_decision_lines` link
+table if the JSONB test does not hold up in the view. Recommendation: measure the lateral first, it
+needs no migration; take the link table only if the view plan is unacceptable.
+
+### 13.5 Ranking when several sales orders compete for one location's stock
+
+**Decided by the captain: "when multiple SO compete for a stock from 1 location, we must have a
+ranking system just like our reorder planning, delivery date, document date, customer credit should
+come into play."** This SUPERSEDES this plan's earlier three-step tiebreak (earliest required date,
+then `sales_order_lines.priority`, then sales-order number).
+
+**The ranking is the reorder engine's own policy, not a second one.** `scm.priority_policy`
+(`app/models/scm.py`) is a weighted policy whose `factors` and `demand_class_weights` are JSONB
+precisely so that adding a factor is a data change and never a migration, and it already serves two
+allocation moments (container loading and arriving-stock assignment) through
+`app/services/scm/priority.py`. Its docstring makes the rule explicit: two implementations agreeing
+today is not the same as one implementation. The board is a third moment of the same question, so it
+uses the same row, the same scorer and the same graceful-degrade semantics.
+
+#### What is reused, and the one thing that has to be written
+
+Reused verbatim: the `scm.priority_policy` row and its weights, `Factor`, and
+`rank_score = SUM(w*v) / SUM(w present)` from `cash_ranking`, including its central rule that **a
+factor with no value is ABSENT, not zero** - dropped from numerator and denominator both, so a
+missing factor never dilutes anyone's score.
+
+What cannot be reused as-is, and this is a real finding rather than a detail: **the existing
+assembly is PURCHASE-ORDER shaped.** `factors_for_candidates` takes `po_line_id`, `po_number`,
+`expected_date` and `po_date`, and `demand_class_by_po` resolves the class through
+`scm.order_link_claim`, the SO-to-PO pairing. A board row is a SALES-ORDER line and has no purchase
+order behind it at all. So the board needs a sibling assembly in the same module -
+`factors_for_demand_rows(db, rows)` next to `factors_for_candidates` - reading the values off the
+sales-order line. Forcing sales-order demand through the PO-shaped signature would mean inventing a
+`po_line_id`, which is how the two-implementations defect starts.
+
+#### The factors, and what each honestly scores for a board row
+
+| Captain's name | Factor key | Value for a board row | Coverage over the 11,166 open project lines |
+|---|---|---|---|
+| delivery date | `need_by_date` (exists) | `sales_order_lines.required_date`, sooner is higher, normalized across the candidate set | **11,103 (99.4%)** |
+| document date | `document_age` (exists) | `sales_orders.order_date`, older is higher | **11,166 (100%)** |
+| customer credit | `customer_credit` (**NEW**) | see below | see below |
+| - | `demand_class` (exists) | every board row is `demand_class = 'project'` by construction | 100%, and therefore **decides nothing here** |
+| - | `po_document_sequence` (exists) | no purchase order behind a sales-order line | **0%, always ABSENT** |
+
+Two of those rows are warnings rather than entries. `demand_class` is constant across a board whose
+population is defined as project-class, so it can be weighted without harm but can never separate two
+contributors; leaving it in keeps one policy serving three moments, which is the point.
+`po_document_sequence` is structurally absent, which matters more than it looks - see the blocker
+below.
+
+**`document_age`: which document?** Specified as the **sales order's own `order_date`** (100%
+coverage, oldest 2023-12-08, newest 2026-07-28), because that is the document the board row IS. The
+alternative reading is the CUSTOMER's PO date, which is what a project-authored order carries as
+`po_number` on the projects side; for the AutoCount-sourced book that this feature exists to plan,
+there is no customer PO on the core order at all, so that reading would be absent for nearly every
+row. **Open for the captain:** if "document date" means the customer's PO date, say so, and the
+factor becomes mostly-absent rather than universal.
+
+**`customer_credit`: a new factor, and the database cannot yet answer the question it implies.**
+Measured, not assumed:
+
+- There is **no invoice table and no receivables table anywhere in the database**. Outstanding
+  exposure, ageing and overdue balance are therefore not computable from this system today. The
+  obvious reading of "customer credit" - how much of their limit they are already using - has no
+  source.
+- `customers.credit_limit` is set on **172 of 6,397 customers**, and reaches **8 of the 11,166 open
+  project lines: 0.07 per cent**. A factor keyed on it would be absent for 99.93 per cent of the
+  board and would rank essentially nothing.
+- `customers.payment_terms_days` is set on **6,225 of 6,397 customers** and reaches **10,982 of the
+  11,166 lines: 98.4 per cent**. It is the only credit signal with real coverage.
+
+So `customer_credit` is specified as **payment terms, shorter is higher**, normalized across the
+candidate set: a customer who pays in 30 days converts a scarce unit to cash sooner than one who
+pays in 90. A customer with **no terms recorded is ABSENT** - dropped from both sums by `rank_score`
+- and is explicitly **never ranked as best or as worst**, because a customer nobody has assessed is
+not thereby the safest or the riskiest, and silently treating an unknown as either is how a ranking
+starts lying. `credit_limit` is deliberately NOT used: at 0.07 per cent it would add noise, not
+signal.
+
+**Recorded as a Phase 2+ dependency:** the exposure-against-limit factor the captain most likely
+means needs an AR balance per customer, which means an AR feed (AutoCount already holds it). When
+that arrives, `customer_credit` changes from terms to `1 - (outstanding / credit_limit)` clamped to
+[0, 1], as a data change to `factors` plus a new value source - no migration, which is the whole
+reason the policy is JSONB. Until then the board must not pretend to know.
+
+#### The blocker the captain has to see
+
+**Under the policy that is live right now, the board cannot rank at all.** The single active row is
+`Today's rule (PO document sequence)`, weighting `po_document_sequence: 1.0` and
+`demand_class / need_by_date / document_age: 0.0`. Every board row has `po_document_sequence`
+ABSENT, and the other three weigh zero, so `rank_score` divides by a zero denominator and returns
+**0.0 for every contributor** - a flat ranking, which is no ranking.
+
+This is not a bug in the scorer; it is the seeded legacy rule doing exactly what it says. The fairer
+weighting already exists in code as `SEEDED_WEIGHTS` (`demand_class: 3.0`, sequence 1.0) but is
+deliberately NOT the live row. Three ways out, and the captain picks:
+
+1. **A board-specific policy row** (`name = 'Fulfilment board'`, active alongside) - rejected: the
+   partial unique index allows exactly one active policy, and two policies for two moments is the
+   defect `priority.py` was written to prevent.
+2. **Re-weight the active policy** so it weights factors a sales-order line can have. One row
+   update, no migration, and it changes container loading and stock assignment too - which is
+   either the point or a surprise, so it is the captain's call, not a coder's.
+3. **The board names the policy it ran** and lets the planner PREVIEW an alternative without
+   activating it (read-only what-if), while writes always use the active policy.
+
+**Recommendation: 3 plus 2, in that order.** Ship the preview first, because it lets the captain see
+what the fairer weighting would do to real orders before it is switched on anywhere; then re-weight
+the active row once they are satisfied. The board always states which policy produced the ranking it
+is showing, and a previewed ranking is visibly labelled as not-live and cannot be committed against.
+
+#### What the score is used for
+
+Contributions in a cell are ordered by `rank_score` DESCENDING, and free stock at each
+`(product, location)` is served down that order. Ties are broken by **sales-order number ascending**
+so the order is TOTAL and reproducible - a non-total rule gives a different answer on each refresh
+and "why did this order lose today" becomes unanswerable.
+
+Whatever the rule cannot cover becomes **Buy** on the losing rows, with the reason naming who took
+it ("Free stock at BRW-BB went to SO398322, which outranks this line 0.72 to 0.41").
+
+**Every breakdown row shows its score AND the factor values that produced it**, because a ranking
+nobody can inspect is a ranking nobody will trust: the planner sees that this order won on need-by
+date and lost on document age, not merely that it won.
+
+**Explicitly NOT pro-rata.** Splitting 100 free units across five orders needing 100 each gives five
+short deliveries instead of one complete one and four honest Buys, and short-shipping everybody is
+the worst outcome available.
+
+**How the user overrides:** in the breakdown table, per row, by editing the Reserve quantity. The
+board recomputes every other row in that cell against the same free pool and moves the difference to
+Buy. An override is recorded with a **mandatory reason**, the same shape Borrow already uses
+(AC-B09), so a decision a person made against the ranking says why.
+
+#### 13.5.1 The double-promise defect, and the Phase 2 obligation it creates
+
+The race above is not a board problem. It is a **live defect in the shipped per-order path**, and
+the board only makes it visible. Recorded here so it is fixed rather than admired:
+
+> `ProjectSupplyService._free_stock` (`project_supply_service.py:1460`) computes on hand minus
+> reserved minus holds whose allocation belongs to an **ACTIVE decision** - that is, minus
+> CONFIRMED holds only. Two orders composed separately therefore both see the same free stock and
+> both propose Reserve against it. Whoever confirms first wins; the second is refused at the
+> confirmation recheck, having shown a person a plan that was never available. Worse, the recheck
+> reads without a lock, so two confirmations that interleave between recheck and commit can both
+> pass and over-commit the same stock.
+
+**Phase 2 obligation, three parts, none optional:**
+
+1. **Lock at write time.** The confirmation transaction takes `SELECT ... FOR UPDATE` on the `stock`
+   rows for every `(product_id, warehouse_id)` it is about to reserve, before the recheck. Two
+   concurrent confirmations then serialise and the second sees the first's holds, instead of both
+   passing a recheck neither's commit honours. This is the actual correctness fix; everything else
+   is presentation.
+2. **Surface the contest at read time.** The board already does this (`contested`, per contribution,
+   computed per product and location), so a person sees "an earlier-dated line took this" while
+   composing rather than as a refusal minutes later. The per-order sheet should read the same signal
+   once the board's allocator is server-side.
+3. **Prove it with a concurrency test.** `tests/test_project_supply_concurrent_confirm.py`: two
+   orders, one product, one location, free stock enough for exactly one of them; confirm both from
+   two sessions; assert exactly one succeeds, the other is refused by the existing `failing_lines`
+   shape naming the order that took the stock, and `stock.quantity_reserved` plus the holds never
+   exceed on hand. Postgres only, seeding its own chain, per PRINCIPLES.
+
+Until part 1 lands, the board's proposal is honest about scarcity but the commit underneath it is
+not fully safe against a concurrent confirmation. **The Phase 1 mock does not paper over this**: the
+contested rows are shown as contested, with the reason naming what happened, rather than being
+rendered as clean Reserves that would quietly imply the stock is there.
+
+Logged in `documentation/backlogs/backlog.md` so it survives this plan.
 
 **Explicitly NOT pro-rata.** Splitting 100 free units across five orders needing 100 each gives five
 short deliveries instead of one complete one and four honest Buys. Short-shipping everybody is the
@@ -998,18 +1224,19 @@ Buy. An override is recorded with a reason, the same mandatory-reason shape Borr
 
 ### 13.6 Is cell-level approve atomic?
 
-**No, and it must not claim to be.** Per 13.4 the atomic unit is the order. A cell approve stages
-every contributing row in that cell into the draft; nothing is written to the database at that
-moment, so there is nothing to be atomic about yet. That is what lets a cell hold rows from six
-orders without inventing a six-order transaction.
+**No, and it must not claim to be.** A cell approve stages every contributing row in that cell into
+the draft; nothing is written at that moment, so there is nothing to be atomic about yet. That is
+what lets one cell hold rows from six orders without inventing a six-order transaction.
 
-At commit the board runs **one existing per-order confirmation per order**, each atomic in itself.
-Partial refusal reports **per order**: the orders that committed stay committed, the ones that
-refused are listed with their `failing_lines` (line number and item code, never an id), and the board
-keeps the draft for the refused ones so CS fixes and re-commits only those. Confirming five orders
-where one is stale must not roll back the four good ones - they are five separate decisions about
-five separate customer commitments, and tying them together would create a cross-order atomicity
-this system does not otherwise have and cannot honour.
+At commit the board runs **one existing per-order confirmation per order**, each atomic over **the
+lines that order is committing** (13.4's amended AC-C01: the confirmed SET, not necessarily the
+whole order). Partial refusal reports **per order**: the orders that committed stay committed, the
+refused ones are listed with their `failing_lines` (line number and item code, never an id), and the
+board keeps the draft for the refused ones so the planner fixes and re-commits only those.
+
+Confirming five orders where one is stale must not roll back the four good ones: they are five
+separate decisions about five separate customer commitments, and tying them together would create a
+cross-order atomicity this system does not otherwise have and cannot honour.
 
 ### 13.7 Locations in a cell
 
@@ -1037,12 +1264,25 @@ the eight fixture orders, `WESERP10B` is owed by four different orders out of bo
 - **It does not move stock between locations.** Transfers are `PLAN-scm-m9-stock-allocation-transfer`.
 - **It does not re-open the fulfilment-location question.** No location is ever chosen on the board.
 - **It does not plan the whole book.** Selection is explicit and bounded (13.2).
-- **It does not introduce a per-line workflow state.** AC-A03 stands; the draft is a working set.
+- **It does not introduce a per-line workflow STATE.** A line is covered by a decision or it is not;
+  there is still no per-line pill and no per-line status column (AC-A03 stands).
+- **It does not invent a second ranking.** One `scm.priority_policy`, three moments (13.5).
 - **It does not change what purchasing receives.** Buy-only rows, per confirmed line, unchanged.
+- **It does not silently drop undecided demand.** Undecided lines keep flowing to reorder planning;
+  that is the captain's whole reason for partial confirmation (13.4).
 
-**ACs superseded: none.** Every criterion in Groups A to E stands unchanged, which is the test that
-this is an addition rather than a redesign. The board's own criteria are new (Group F, to be written
-into section 1 when this section is confirmed, as AC-FP28 onward).
+**ACs that DO change, now that partial confirmation is decided.** This section is no longer a pure
+addition, and pretending otherwise would hide the cost:
+
+| AC | Change |
+|---|---|
+| **AC-C01** (Stage 1C) | "every line of the order commits or none does" becomes "every line in THIS confirmation commits or none does". Still atomic, over the chosen set. |
+| **AC-FP24** (this plan) | No longer "`scm.committed_v` is byte-identical". Rewritten as: a partially-confirmed order contributes confirmed Buy through the confirmed leg and its undecided lines through the sheet leg, each exactly once. |
+| **Section 8, invariant 3** | Same: the view changes deliberately, and the new invariant replaces byte-identity. |
+
+Everything in Groups A to E is otherwise untouched. The board's own criteria are new (Group F, to be
+written into section 1 as AC-FP28 onward once 13.4's open sub-question and 13.5's policy choice are
+settled).
 
 ### 13.9 Facts measured for this section
 
@@ -1058,7 +1298,11 @@ Live scratch DB `sorento_scm_e2e_stack`, 18 August 2026, open lines of open proj
 | Required date range | 2022-07-03 to 2030-01-01 | Seven and a half years wide; the past has to be collapsed. |
 | **Overdue lines** | **4,183 of 11,166 (37%)** | The Overdue column is the biggest one on the board (13.3). |
 | Lines with no required date | 63 | Small, and still never dropped or guessed (13.3). |
-| `sales_order_lines.priority` populated | **14 of 90,548** (8 high, 3 medium, 3 low) | Priority cannot be the primary allocation key (13.5). |
+| `sales_order_lines.priority` populated | **14 of 90,548** (8 high, 3 medium, 3 low) | Why the superseded tiebreak could not have rested on it either (13.5). |
+| **Ranking factor sources, over the 11,166 open project lines** | `required_date` 11,103 (99.4%); `sales_orders.order_date` 11,166 (100%, 2023-12-08 to 2026-07-28); `customers.payment_terms_days` 10,982 (98.4%); `customers.credit_limit` **8 (0.07%)** | The factor table in 13.5. Credit LIMIT is unusable; payment TERMS is the only credit signal with coverage. |
+| Invoice or receivables tables | **none exist in the database** | Exposure-against-limit is not computable today, so `customer_credit` cannot mean it yet (13.5). |
+| `customers` with a credit limit | 172 of 6,397 (169 positive) | Same. |
+| Live `scm.priority_policy` | one active row, `Today's rule (PO document sequence)`: `po_document_sequence` 1.0, everything else 0.0 | Under it every board row scores 0.0, so the board cannot rank until the policy question in 13.5 is answered. |
 | Free stock nets confirmed holds only | `project_supply_service._free_stock` | Two unconfirmed orders both propose the same stock today (13.5). |
 | Products shared across the 8 fixture orders | e.g. `WESERP10B` in 4 orders over BRW-BB + BRW-IB (1,774), `CKS1050` and `CKSW015` in 4 each (517), `SRTSC03-ABS-NL` in 2 where one states no location | The mock aggregates visibly, and covers the multi-location and blocked cells (13.7). |
 

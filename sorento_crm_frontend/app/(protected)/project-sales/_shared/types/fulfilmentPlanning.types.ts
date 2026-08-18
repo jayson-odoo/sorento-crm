@@ -417,8 +417,12 @@ export interface FulfilmentPlanningListEnvelope {
 // things.
 // ---------------------------------------------------------------------------
 
-/** How the date axis is cut. Weeks by default; exact dates are never columns (13.3). */
-export type BoardGranularity = 'week' | 'month';
+/**
+ * How the date axis is cut, as a calendar control: day, week or month (13.3, captain's
+ * decision). Week is the default. Day renders a scrolling 30-day window rather than a column
+ * per distinct date, because the book carries 349 of them.
+ */
+export type BoardGranularity = 'day' | 'week' | 'month';
 
 /**
  * A column of the board. `overdue` and `no_date` are not buckets of time at all: they are the
@@ -460,8 +464,18 @@ export interface BoardContribution {
   fulfilment_location?: string | null;
   /** The line states no location, so it cannot be planned and blocks its order (AC-FP16). */
   unplannable: boolean;
-  /** `sales_order_lines.priority`, when anybody stated one. Almost nobody does (13.5). */
+  /** `sales_order_lines.priority`, when anybody stated one. Almost nobody does. */
   priority?: 'high' | 'medium' | 'low' | null;
+  /**
+   * Where this row came in the competition for the cell's stock, and why (13.5).
+   *
+   * `rank_score` is the reorder engine's own `SUM(w*v) / SUM(w present)` over the active
+   * `scm.priority_policy`. The factors are carried with it because a ranking nobody can
+   * inspect is a ranking nobody will trust: the planner has to be able to see that this order
+   * won on need-by date and lost on document age.
+   */
+  rank_score: number;
+  rank_factors: BoardRankFactor[];
   /** The default rule's proposal for this row, in the order the engine proposes them. */
   sources: BoardSource[];
   /**
@@ -471,6 +485,31 @@ export interface BoardContribution {
    * be refused at confirmation.
    */
   contested: boolean;
+}
+
+/**
+ * One weighted factor behind a row's rank. `present: false` means the value was unknown and the
+ * factor was dropped from BOTH sums, never scored as zero: an unknown is not a bad score, and
+ * treating it as one is how a ranking starts lying.
+ */
+export interface BoardRankFactor {
+  key: string;
+  /** What the policy weights it at. A zero weight is still shown, so "this counted for nothing" is visible. */
+  weight: number;
+  value: number | null;
+  present: boolean;
+}
+
+/** The `scm.priority_policy` row a board was ranked by. Named on screen, never assumed. */
+export interface BoardPolicy {
+  name: string;
+  factors: Record<string, number>;
+  demand_class_weights: Record<string, number>;
+  /**
+   * True when this is a what-if the planner asked for rather than the row that is live.
+   * A previewed ranking is labelled and cannot be committed against (13.5).
+   */
+  is_preview: boolean;
 }
 
 export interface BoardSource {
@@ -524,9 +563,27 @@ export interface BoardOrderStanding {
   unplannable_count: number;
 }
 
+/**
+ * What one order is about to commit, and what it is deliberately leaving behind.
+ *
+ * Confirm is NOT gated on completeness (13.4, captain's decision): a planner commits the lines
+ * they are sure about precisely so the undecided ones keep flowing to reorder planning. So the
+ * screen owes them a plain statement of what is being left, rather than a disabled button.
+ */
+export interface BoardCommitPreview {
+  /** Lines carrying a verdict that would be written by this confirmation. */
+  committing: number;
+  /** Lines with no verdict, which stay outstanding and keep counting as demand. */
+  leaving_undecided: number;
+  /** Of those, the ones that could never be decided here (no location on the sales order). */
+  blocked: number;
+}
+
 /** `GET /project-sales/fulfilment-planning/board`. A pure read: opening it claims nothing. */
 export interface PlanningBoard {
   granularity: BoardGranularity;
+  /** Which policy produced the ranking on show. Always stated (13.5). */
+  policy: BoardPolicy;
   /** The date the board was built against, so "overdue" is reproducible in a test. */
   as_of: string;
   dateBuckets: BoardDateBucket[];

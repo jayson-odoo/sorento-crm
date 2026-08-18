@@ -586,142 +586,196 @@ export function mockRowFor(soNumber: string): FulfilmentPlanningRow | undefined 
 // ---------------------------------------------------------------------------
 
 import type { BoardDemandLine, FreeStock } from '../../lib/fulfilmentBoard';
-import { buildBoard } from '../../lib/fulfilmentBoard';
-import type { BoardGranularity, PlanningBoard } from '../../types/fulfilmentPlanning.types';
-
-/** The ninth order, undated and location-less, so the No date column is real (13.3). */
-const TOONG_STAR = {
-  sales_order_id: 'so-362797',
-  so_number: 'SO362797',
-  customer_name: null,
-  project_label: 'TOONG STAR SDN BHD (18 UNITS RUMAH)',
-};
+import { buildBoard, LIVE_POLICY, PREVIEW_POLICY } from '../../lib/fulfilmentBoard';
+import type {
+  BoardGranularity,
+  BoardPolicy,
+  PlanningBoard,
+} from '../../types/fulfilmentPlanning.types';
 
 const ORDER_META: Record<
   string,
-  { sales_order_id: string; customer_name: string | null; project_label: string | null }
+  {
+    sales_order_id: string;
+    customer_name: string | null;
+    project_label: string | null;
+    /** `sales_orders.order_date`. Feeds the `document_age` factor (PLAN 13.5). */
+    order_date: string;
+    /**
+     * `customers.payment_terms_days`, the only credit signal with real coverage.
+     *
+     * Note what the REAL data does here, because it is the honest answer to "customer credit
+     * should come into play": eight of these nine customers are on 30 days and the ninth has no
+     * terms recorded, so on this selection the credit factor is constant where it is present and
+     * ABSENT where it is not. It separates nobody. None of the nine carries a credit limit at
+     * all. That is the book, not the fixture, and it is why 13.5 records exposure-against-limit
+     * as needing an AR feed the system does not have.
+     */
+    payment_terms_days: number | null;
+  }
 > = {
-  SO391698: {
-    sales_order_id: 'so-391698',
-    customer_name: 'OIB CONSTRUCTION SDN BHD (PROJECT)',
-    project_label: 'OIB CONSTRUCTION / MYRA DAHLIA 9307, SALAK TINGGI / SEPANG',
+  SO403340: {
+    sales_order_id: 'so-403340',
+    customer_name: 'SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)',
+    project_label: 'SETIA-WOOD INDUSTRIES/100U DSTH (DIMINA) @ SETIA',
+    order_date: '2026-05-13',
+    payment_terms_days: 30,
   },
-  SO324265: {
-    sales_order_id: 'so-324265',
-    customer_name: 'MASUKA BINA SDN BHD (PROJECT)',
-    project_label: 'MASUKA/THE SENZE PICC/TOWER NORMAL UNIT/UPGRADED UNIT',
+  SO398322: {
+    sales_order_id: 'so-398322',
+    customer_name: 'SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)',
+    project_label: 'SETIA-WOOD/LSC/NADI 3/SETIA ECOHILL 2 @ SEMENYIH',
+    order_date: '2026-04-08',
+    payment_terms_days: 30,
   },
-  SO346436: {
-    sales_order_id: 'so-346436',
-    customer_name: 'GLOBAL INGRESS SDN BHD (PROJECT)',
-    project_label: 'GLOBAL INGRESS/ 252U RMMJ TAMAN IMPIAN EMAS',
+  SO403765: {
+    sales_order_id: 'so-403765',
+    customer_name: 'BATHE CODE SDN BHD (PROJECT)',
+    project_label: 'BATHE CODE/LOT 7916 RAMBAI MELAKA',
+    order_date: '2026-05-15',
+    payment_terms_days: 30,
   },
+  SO394056: {
+    sales_order_id: 'so-394056',
+    customer_name: 'BATHE CODE SDN BHD (PROJECT)',
+    project_label: 'BATHE CODE/EKAR MHN@SEREMBAN',
+    order_date: '2026-03-06',
+    payment_terms_days: 30,
+  },
+  SO396488: {
+    sales_order_id: 'so-396488',
+    customer_name: 'PP CHIN HIN SDN BHD (PROJECT)',
+    project_label: 'PP CHIN HIN/KIN TONG/PTD 27843-27847/TANGKAK',
+    order_date: '2026-03-27',
+    payment_terms_days: 30,
+  },
+  SO411662: {
+    sales_order_id: 'so-411662',
+    customer_name: 'ECH MARKETING (PROJECT)',
+    project_label: 'ECH MARKETING/SIN SIN /JB',
+    order_date: '2026-07-10',
+    payment_terms_days: 30,
+  },
+  // The overdue one: a single WESERP10B line owed since June 2025, at BRW-BB.
   SO345418: {
     sales_order_id: 'so-345418',
     customer_name: 'PEMBINAAN YUEN SENG SDN BHD (PROJECT)',
     project_label: null,
+    order_date: '2025-04-16',
+    payment_terms_days: 30,
   },
-  SO396071: {
-    sales_order_id: 'so-396071',
-    customer_name: 'ASASJAYA HARDWARE ENTERPRISE (PROJECT)',
-    project_label: 'ASASJAYA/THE STRAITS VIEW GARDEN/JB',
-  },
-  SO369758: {
-    sales_order_id: 'so-369758',
-    customer_name: 'JUBIN BMS (1990) SDN BHD (PROJECT)',
-    project_label: 'JUBIN BMS (1990)/VISTA LAVENDAR',
-  },
-  SO368874: {
-    sales_order_id: 'so-368874',
-    customer_name: 'EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT)',
-    project_label: 'EMB EMPRESS / PINNACLE ARA DAMANSARA - TOWER A / VESTLAND',
-  },
+  // Order Inquiry sheet: states no location on any line, so its lines cannot be planned.
   SO366992: {
     sales_order_id: 'so-366992',
     customer_name: 'BUIMACO SDN BHD',
     project_label: 'BUIMACO / UNITIN ENG/ TMN PUCHONG LEGENDA',
+    order_date: '2025-09-10',
+    payment_terms_days: 30,
   },
+  // No location AND no required date, which is what puts the No date column on the board.
   SO362797: {
-    sales_order_id: TOONG_STAR.sales_order_id,
-    customer_name: TOONG_STAR.customer_name,
-    project_label: TOONG_STAR.project_label,
+    sales_order_id: 'so-362797',
+    customer_name: null,
+    project_label: 'TOONG STAR SDN BHD (18 UNITS RUMAH BERKEMBAR 3 TINGKAT)',
+    order_date: '2025-08-13',
+    payment_terms_days: null,
   },
 };
 
 /** `[so_number, item_code, required_date | null, warehouse | null, qty]`, straight from the DB. */
 const RAW: [string, string, string | null, string | null, string][] = [
-  ['SO391698', 'WESERP10B', '2022-07-03', 'BRW-IB', '12'],
-  ['SO345418', 'WESERP10B', '2025-06-15', 'BRW-BB', '202'],
-  ['SO391698', 'WESERP10B', '2026-03-02', 'BRW-IB', '216'],
-  ['SO391698', 'WESERP10B', '2026-04-05', 'BRW-IB', '216'],
-  ['SO368874', 'WESERP10B', '2026-05-01', 'BRW-IB', '364'],
-  ['SO369758', 'WESERP10B', '2026-05-01', 'BRW-BB', '40'],
-  ['SO369758', 'WESERP10B', '2026-05-01', 'BRW-BB', '40'],
-  ['SO369758', 'WESERP10B', '2026-06-01', 'BRW-BB', '40'],
-  ['SO369758', 'WESERP10B', '2026-06-01', 'BRW-BB', '40'],
-  ['SO369758', 'WESERP10B', '2026-07-01', 'BRW-BB', '40'],
-  ['SO369758', 'WESERP10B', '2026-07-01', 'BRW-BB', '40'],
-  ['SO391698', 'WESERP10B', '2026-07-03', 'BRW-IB', '216'],
-  ['SO369758', 'WESERP10B', '2026-08-01', 'BRW-BB', '40'],
-  ['SO369758', 'WESERP10B', '2026-08-01', 'BRW-BB', '40'],
-  ['SO391698', 'WESERP10B', '2026-09-04', 'BRW-IB', '216'],
-  ['SO391698', 'WESERP10B', '2026-09-04', 'BRW-IB', '12'],
-
-  ['SO346436', 'CKS1050', '2026-01-10', 'BRW-IB', '150'],
-  ['SO369758', 'CKS1050', '2026-05-01', 'BRW-BB', '40'],
-  ['SO391698', 'CKS1050', '2026-05-10', 'BRW-IB', '24'],
-  ['SO369758', 'CKS1050', '2026-06-01', 'BRW-BB', '40'],
-  ['SO369758', 'CKS1050', '2026-07-01', 'BRW-BB', '40'],
-  ['SO369758', 'CKS1050', '2026-08-01', 'BRW-BB', '40'],
-  ['SO396071', 'CKS1050', '2026-09-01', 'BRW-BB', '183'],
-
-  ['SO346436', 'CKSW015', '2026-01-10', 'BRW-IB', '150'],
-  ['SO369758', 'CKSW015', '2026-05-01', 'BRW-BB', '40'],
-  ['SO391698', 'CKSW015', '2026-05-10', 'BRW-IB', '24'],
-  ['SO369758', 'CKSW015', '2026-06-01', 'BRW-BB', '40'],
-  ['SO369758', 'CKSW015', '2026-07-01', 'BRW-BB', '40'],
-  ['SO369758', 'CKSW015', '2026-08-01', 'BRW-BB', '40'],
-  ['SO396071', 'CKSW015', '2026-09-01', 'BRW-BB', '183'],
-
-  ['SO368874', 'C-FH14', '2026-05-01', 'BRW-IB', '728'],
-  ['SO391698', 'C-FH14', '2026-05-10', 'BRW-IB', '500'],
-  ['SO324265', 'C-FH14', '2026-06-01', 'BRW-BB', '18'],
-  ['SO324265', 'C-FH14', '2026-06-01', 'BRW-BB', '1'],
-  ['SO324265', 'C-FH14', '2026-06-01', 'BRW-BB', '27'],
-
-  ['SO368874', 'SRT1000-CR', '2026-05-01', 'BRW-IB', '364'],
-  ['SO324265', 'SRT1000-CR', '2026-06-01', 'BRW-BB', '36'],
-  ['SO396071', 'SRT1000-CR', '2026-09-01', 'BRW-BB', '732'],
-
-  ['SO368874', 'SRTPW0035-CR', '2025-09-22', 'BRW-IB', '364'],
-  ['SO369758', 'SRTPW0035-CR', '2026-05-01', 'BRW-BB', '80'],
-  ['SO324265', 'SRTPW0035-CR', '2026-06-01', 'BRW-BB', '45'],
-  ['SO369758', 'SRTPW0035-CR', '2026-06-01', 'BRW-BB', '80'],
-  ['SO369758', 'SRTPW0035-CR', '2026-07-01', 'BRW-BB', '80'],
-  ['SO369758', 'SRTPW0035-CR', '2026-08-01', 'BRW-BB', '80'],
-
-  // SO366992 came from the Order Inquiry sheet, which states no location on any line.
+  ['SO398322', 'B2155-NL-BLUE', '2026-09-04', 'BRW-BB', '18'],
+  ['SO411662', 'B2155-NL-BLUE', '2026-10-01', 'BRW-BB', '17'],
+  ['SO394056', 'B2155-NL-BLUE', '2026-11-02', 'BRW-BB', '259'],
+  ['SO398322', 'B2155-NL-BLUE', '2026-11-16', 'BRW-BB', '58'],
+  ['SO403765', 'B2155-NL-BLUE', '2026-12-28', 'BRW-BB', '43'],
+  ['SO403765', 'B2155-NL-BLUE', '2026-12-28', 'BRW-BB', '22'],
+  ['SO403765', 'B2155-NL-BLUE', '2026-12-28', 'BRW-BB', '21'],
+  ['SO398322', 'B2155-NL-BLUE', '2027-01-18', 'BRW-BB', '74'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-01-20', 'BRW-BB', '31'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-01-20', 'BRW-BB', '94'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-01-20', 'BRW-BB', '62'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-01-20', 'BRW-BB', '31'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-01-20', 'BRW-BB', '62'],
+  ['SO396488', 'B2155-NL-BLUE', '2027-02-02', 'BRW-BB', '30'],
+  ['SO398322', 'B2155-NL-BLUE', '2027-02-15', 'BRW-BB', '86'],
+  ['SO398322', 'B2155-NL-BLUE', '2027-04-12', 'BRW-BB', '96'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-04-15', 'BRW-BB', '31'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-04-15', 'BRW-BB', '94'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-04-15', 'BRW-BB', '63'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-04-15', 'BRW-BB', '31'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-04-15', 'BRW-BB', '63'],
+  ['SO398322', 'B2155-NL-BLUE', '2027-05-10', 'BRW-BB', '74'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-05-15', 'BRW-BB', '94'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-05-15', 'BRW-BB', '63'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-05-15', 'BRW-BB', '32'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-05-15', 'BRW-BB', '32'],
+  ['SO403340', 'B2155-NL-BLUE', '2027-05-15', 'BRW-BB', '63'],
+  ['SO398322', 'B2155-NL-BLUE', '2027-07-05', 'BRW-BB', '74'],
+  ['SO398322', 'B2155-NL-BLUE', '2027-08-09', 'BRW-BB', '96'],
+  ['SO398322', 'B2155-NL-BLUE', '2027-10-04', 'BRW-BB', '96'],
+  ['SO403340', 'CB6633', '2027-01-20', 'BRW-BB', '88'],
+  ['SO403340', 'CB6633', '2027-04-15', 'BRW-BB', '89'],
+  ['SO403340', 'CB6633', '2027-05-15', 'BRW-BB', '89'],
+  ['SO362797', 'CB6633', null, null, '36'],
+  ['SO398322', 'CKS1050', '2026-09-04', 'BRW-BB', '5'],
+  ['SO411662', 'CKS1050', '2026-10-01', 'BRW-BB', '1'],
+  ['SO394056', 'CKS1050', '2026-11-02', 'BRW-BB', '37'],
+  ['SO403765', 'CKS1050', '2026-12-28', 'BRW-BB', '21'],
+  ['SO403340', 'CKS1050', '2027-01-20', 'BRW-BB', '62'],
+  ['SO396488', 'CKS1050', '2027-02-02', 'BRW-BB', '5'],
+  ['SO398322', 'CKS1050', '2027-03-15', 'BRW-BB', '67'],
+  ['SO403340', 'CKS1050', '2027-04-15', 'BRW-BB', '63'],
+  ['SO403340', 'CKS1050', '2027-05-15', 'BRW-BB', '63'],
+  ['SO398322', 'CKS1050', '2027-09-14', 'BRW-BB', '120'],
+  ['SO398322', 'CKSW015', '2026-09-04', 'BRW-BB', '5'],
+  ['SO411662', 'CKSW015', '2026-10-01', 'BRW-BB', '1'],
+  ['SO394056', 'CKSW015', '2026-11-02', 'BRW-BB', '37'],
+  ['SO403765', 'CKSW015', '2026-12-28', 'BRW-BB', '21'],
+  ['SO403340', 'CKSW015', '2027-01-20', 'BRW-BB', '62'],
+  ['SO396488', 'CKSW015', '2027-02-02', 'BRW-BB', '5'],
+  ['SO398322', 'CKSW015', '2027-03-15', 'BRW-BB', '67'],
+  ['SO403340', 'CKSW015', '2027-04-15', 'BRW-BB', '63'],
+  ['SO403340', 'CKSW015', '2027-05-15', 'BRW-BB', '63'],
+  ['SO398322', 'CKSW015', '2027-09-14', 'BRW-BB', '120'],
   ['SO366992', 'SRTSC03-ABS-NL', '2025-05-02', null, '24'],
   ['SO366992', 'SRTSC03-ABS-NL', '2026-03-02', null, '29'],
   ['SO366992', 'SRTSC03-ABS-NL', '2026-04-04', null, '29'],
-  ['SO396071', 'SRTSC03-ABS-NL', '2026-09-01', 'BRW-BB', '732'],
-
-  // SO362797 carries neither a date nor a location, so it is the No date column AND blocked.
-  ['SO362797', 'CB6633', null, null, '36'],
-  ['SO369758', 'CB6633', '2026-05-01', 'BRW-BB', '80'],
-  ['SO369758', 'CB6633', '2026-06-01', 'BRW-BB', '80'],
-  ['SO369758', 'CB6633', '2026-07-01', 'BRW-BB', '140'],
-  ['SO369758', 'CB6633', '2026-08-01', 'BRW-BB', '80'],
-  ['SO362797', 'CB6638', null, null, '108'],
-
-  ['SO346436', 'TPE-9201', '2025-04-23', 'BRW', '150'],
-  ['SO346436', 'TPE-9201', '2025-04-23', 'BRW', '100'],
-  ['SO324265', 'TPE-9201', '2026-05-04', 'BRW-BB', '130'],
-  ['SO324265', 'TPE-9201', '2026-05-04', 'BRW-BB', '25'],
-  ['SO324265', 'TPE-9201', '2026-06-01', 'BRW-BB', '130'],
-  ['SO324265', 'TPE-9201', '2026-06-01', 'BRW-BB', '25'],
-  ['SO324265', 'TPE-9201', '2026-08-03', 'BRW-BB', '19'],
-  ['SO324265', 'TPE-9201', '2026-08-03', 'BRW-BB', '118'],
+  ['SO403340', 'TPE-9204', '2026-04-20', 'BRW', '18'],
+  ['SO398322', 'TPE-9204', '2026-09-04', 'BRW-BB', '10'],
+  ['SO411662', 'TPE-9204', '2026-10-01', 'BRW-BB', '6'],
+  ['SO394056', 'TPE-9204', '2026-11-02', 'BRW-BB', '111'],
+  ['SO403765', 'TPE-9204', '2026-12-28', 'BRW', '43'],
+  ['SO403340', 'TPE-9204', '2027-01-20', 'BRW-BB', '94'],
+  ['SO396488', 'TPE-9204', '2027-02-02', 'BRW', '15'],
+  ['SO398322', 'TPE-9204', '2027-02-15', 'BRW-BB', '86'],
+  ['SO398322', 'TPE-9204', '2027-04-12', 'BRW-BB', '96'],
+  ['SO403340', 'TPE-9204', '2027-04-15', 'BRW-BB', '94'],
+  ['SO403340', 'TPE-9204', '2027-05-15', 'BRW-BB', '94'],
+  ['SO398322', 'TPE-9204', '2027-08-09', 'BRW-BB', '96'],
+  ['SO398322', 'TPE-9204', '2027-10-04', 'BRW-BB', '96'],
+  ['SO345418', 'WESERP10B', '2025-06-15', 'BRW-BB', '202'],
+  ['SO398322', 'WESERP10B', '2026-09-04', 'BRW-BB', '8'],
+  ['SO411662', 'WESERP10B', '2026-10-01', 'BRW', '5'],
+  ['SO394056', 'WESERP10B', '2026-11-02', 'BRW-BB', '74'],
+  ['SO394056', 'WESERP10B', '2026-11-02', 'BRW-BB', '37'],
+  ['SO398322', 'WESERP10B', '2026-11-16', 'BRW-BB', '66'],
+  ['SO403765', 'WESERP10B', '2026-12-28', 'BRW-BB', '22'],
+  ['SO403765', 'WESERP10B', '2026-12-28', 'BRW', '21'],
+  ['SO398322', 'WESERP10B', '2027-01-18', 'BRW-BB', '74'],
+  ['SO403340', 'WESERP10B', '2027-01-20', 'BRW-BB', '31'],
+  ['SO403340', 'WESERP10B', '2027-01-20', 'BRW-BB', '62'],
+  ['SO403340', 'WESERP10B', '2027-01-20', 'BRW-BB', '31'],
+  ['SO396488', 'WESERP10B', '2027-02-02', 'BRW', '5'],
+  ['SO396488', 'WESERP10B', '2027-02-02', 'BRW', '10'],
+  ['SO403340', 'WESERP10B', '2027-04-15', 'BRW-BB', '63'],
+  ['SO403340', 'WESERP10B', '2027-04-15', 'BRW-BB', '31'],
+  ['SO403340', 'WESERP10B', '2027-04-15', 'BRW-BB', '31'],
+  ['SO398322', 'WESERP10B', '2027-05-10', 'BRW-BB', '74'],
+  ['SO403340', 'WESERP10B', '2027-05-15', 'BRW-BB', '32'],
+  ['SO403340', 'WESERP10B', '2027-05-15', 'BRW-BB', '32'],
+  ['SO403340', 'WESERP10B', '2027-05-15', 'BRW-BB', '63'],
+  ['SO398322', 'WESERP10B', '2027-07-05', 'BRW-BB', '74'],
 ];
 
 export const BOARD_DEMAND_LINES: BoardDemandLine[] = RAW.map(
@@ -738,6 +792,9 @@ export const BOARD_DEMAND_LINES: BoardDemandLine[] = RAW.map(
       required_date: requiredDate,
       fulfilment_location: warehouse,
       priority: null,
+      order_date: meta.order_date,
+      payment_terms_days: meta.payment_terms_days,
+      demand_class: 'project',
     };
   },
 );
@@ -745,44 +802,77 @@ export const BOARD_DEMAND_LINES: BoardDemandLine[] = RAW.map(
 /**
  * Free unclaimed stock the board draws down, per `${item}|${location}`.
  *
- * Deliberately SHORT of total demand on the products that several orders share, because that
- * is the situation the board exists for and the one the per-order sheet cannot show. With 250
- * free WESERP10B at BRW-BB, SO345418's overdue 202 is covered and SO369758's later lines are
- * not, so they come back as contested Buy naming who took it - which today would surface only
- * as a refusal at confirmation time, to whichever of the two happened to confirm second
- * (PLAN 13.5).
+ * Deliberately SHORT of total demand on the products several orders share, because scarcity is
+ * the situation the board exists for and the one the per-order sheet structurally cannot show.
+ *
+ * It is also how the Phase 2 defect in PLAN 13.5 is made visible rather than papered over.
+ * `_free_stock` nets CONFIRMED holds only, so today two orders composed separately both see
+ * the same free stock and both propose Reserve against it; the loser finds out only when its
+ * confirmation is refused. Here they are in one cell: the earliest-dated line takes the stock
+ * and every later line comes back as a contested Buy naming who took it.
  */
 export const BOARD_FREE_STOCK: FreeStock = {
-  'WESERP10B|BRW-BB': '250',
-  'WESERP10B|BRW-IB': '500',
-  'CKS1050|BRW-BB': '60',
-  'CKS1050|BRW-IB': '150',
-  'CKSW015|BRW-BB': '60',
-  'CKSW015|BRW-IB': '150',
-  'C-FH14|BRW-IB': '400',
-  'C-FH14|BRW-BB': '46',
-  'SRT1000-CR|BRW-IB': '364',
-  'SRT1000-CR|BRW-BB': '0',
-  'SRTPW0035-CR|BRW-IB': '364',
-  'SRTPW0035-CR|BRW-BB': '120',
-  'SRTSC03-ABS-NL|BRW-BB': '300',
-  'CB6633|BRW-BB': '160',
-  'TPE-9201|BRW': '250',
-  'TPE-9201|BRW-BB': '100',
+  'B2155-NL-BLUE|BRW-BB': '340',
+  'TPE-9204|BRW-BB': '200',
+  'TPE-9204|BRW': '58',
+  'CKS1050|BRW-BB': '110',
+  'CKSW015|BRW-BB': '110',
+  'WESERP10B|BRW-BB': '150',
+  'CB6633|BRW-BB': '0',
+  'SRTSC03-ABS-NL|BRW-BB': '400',
 };
 
 /** The nine orders the board fixture plans together, in worklist order. */
 export const BOARD_SELECTION = [
-  'SO391698',
-  'SO324265',
-  'SO346436',
-  'SO366992',
   'SO345418',
   'SO362797',
-  'SO369758',
-  'SO396071',
-  'SO368874',
+  'SO366992',
+  'SO394056',
+  'SO396488',
+  'SO398322',
+  'SO403340',
+  'SO403765',
+  'SO411662',
 ];
+
+/**
+ * The board's own orders, folded back into the WORKLIST so the two halves of this fixture cannot
+ * drift apart.
+ *
+ * They have to be the same set: the worklist is where a planner ticks orders and presses Plan
+ * together, so a board order missing from the worklist is unreachable, and a worklist order the
+ * board knows nothing about produces an empty board. Deriving the rows from `BOARD_DEMAND_LINES`
+ * rather than transcribing them a second time means the totals on the row and the quantities in
+ * the cells are the same numbers by construction.
+ */
+for (const soNumber of BOARD_SELECTION) {
+  if (ORDERS.some((order) => order.so_number === soNumber)) continue;
+  const lines = BOARD_DEMAND_LINES.filter((line) => line.so_number === soNumber);
+  if (lines.length === 0) continue;
+  const meta = ORDER_META[soNumber];
+  const dates = lines
+    .map((line) => line.required_date)
+    .filter((date): date is string => Boolean(date))
+    .sort();
+  ORDERS.push({
+    so_number: soNumber,
+    sales_order_id: meta.sales_order_id,
+    customer_name: meta.customer_name ?? 'Customer not recorded',
+    project_label: meta.project_label,
+    earliest_required_date: dates[0] ?? '',
+    line_count: lines.length,
+    outstanding_qty: String(
+      lines.reduce((total, line) => total + Number.parseFloat(line.qty), 0),
+    ),
+    lines: lines.map((line) => ({
+      item_code: line.item_code,
+      open_qty: line.qty,
+      required_date: line.required_date ?? '',
+      warehouse: line.fulfilment_location ?? '',
+    })),
+  });
+}
+
 
 /**
  * The board for a selection of sales orders.
@@ -793,7 +883,15 @@ export const BOARD_SELECTION = [
  */
 export function mockPlanningBoard(
   soNumbers: string[] = BOARD_SELECTION,
-  options: { today?: string; granularity?: BoardGranularity } = {},
+  options: {
+    today?: string;
+    granularity?: BoardGranularity;
+    /** Which `scm.priority_policy` to rank by. Defaults to the LIVE row, warts and all. */
+    policy?: BoardPolicy;
+    /** Rank by the what-if instead of the live row (13.5). */
+    previewPolicy?: boolean;
+    dayWindowStart?: string;
+  } = {},
 ): PlanningBoard {
   const selected = new Set(soNumbers);
   const lines = BOARD_DEMAND_LINES.filter((line) => selected.has(line.so_number));
@@ -801,5 +899,7 @@ export function mockPlanningBoard(
     today: options.today ?? '2026-08-18',
     granularity: options.granularity ?? 'week',
     freeStock: BOARD_FREE_STOCK,
+    policy: options.policy ?? (options.previewPolicy ? PREVIEW_POLICY : LIVE_POLICY),
+    dayWindowStart: options.dayWindowStart,
   });
 }

@@ -204,11 +204,17 @@ export function useReconciliationMutations() {
 export function usePlanningBoard(
   soNumbers: string[],
   granularity: BoardGranularity = 'week',
+  previewPolicy = false,
   enabled = true,
 ) {
   return useQuery({
-    queryKey: [PLANNING_BOARD_KEY, [...soNumbers].sort().join(','), granularity],
-    queryFn: () => getPlanningBoard(soNumbers, granularity),
+    queryKey: [
+      PLANNING_BOARD_KEY,
+      [...soNumbers].sort().join(','),
+      granularity,
+      previewPolicy ? 'preview' : 'live',
+    ],
+    queryFn: () => getPlanningBoard(soNumbers, granularity, previewPolicy),
     enabled: enabled && soNumbers.length > 0,
     retry: 1,
     refetchOnWindowFocus: false,

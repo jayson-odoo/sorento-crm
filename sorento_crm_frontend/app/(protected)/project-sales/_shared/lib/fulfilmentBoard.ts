@@ -12,6 +12,9 @@
  */
 import type {
   BoardCell,
+  BoardCommitPreview,
+  BoardPolicy,
+  BoardRankFactor,
   BoardCellLocation,
   BoardContribution,
   BoardDateBucket,
@@ -37,12 +40,57 @@ export interface BoardDemandLine {
   /** The core line's own warehouse code. Empty or null means the source record is silent. */
   fulfilment_location?: string | null;
   priority?: 'high' | 'medium' | 'low' | null;
+  /** `sales_orders.order_date`, the document this row IS. Feeds `document_age` (13.5). */
+  order_date?: string | null;
+  /** `customers.payment_terms_days`. The only credit signal with real coverage (13.5). */
+  payment_terms_days?: number | null;
+  /** Always 'project' on this board, so it weighs but never discriminates. */
+  demand_class?: string | null;
 }
+
+/**
+ * The live `scm.priority_policy` row, as seeded.
+ *
+ * Reproduced here so the mock ranks by the real thing rather than by an invention, and so the
+ * blocker in PLAN 13.5 is visible rather than hidden: this policy weights ONLY
+ * `po_document_sequence`, which no sales-order line can have, so under it every board row scores
+ * 0.0 and the board cannot rank at all.
+ */
+export const LIVE_POLICY: BoardPolicy = {
+  name: "Today's rule (PO document sequence)",
+  factors: {
+    po_document_sequence: 1.0,
+    demand_class: 0.0,
+    need_by_date: 0.0,
+    document_age: 0.0,
+  },
+  demand_class_weights: { project: 1.0, retail: 0.4 },
+  is_preview: false,
+};
+
+/**
+ * The what-if the board offers instead, so a planner can see what a fair weighting would do
+ * before anybody switches it on (13.5, recommendation 3 then 2).
+ *
+ * Weighted on the three factors a sales-order demand row can actually carry. `demand_class` is
+ * left at zero on purpose: every row on this board is project-class, so weighting it would add a
+ * constant to every score and separate nothing.
+ */
+export const PREVIEW_POLICY: BoardPolicy = {
+  name: 'Fulfilment board preview (delivery date, document date, customer credit)',
+  factors: {
+    po_document_sequence: 0.0,
+    demand_class: 0.0,
+    need_by_date: 3.0,
+    document_age: 1.0,
+    customer_credit: 1.0,
+  },
+  demand_class_weights: { project: 1.0, retail: 0.4 },
+  is_preview: true,
+};
 
 export const OVERDUE_BUCKET = 'overdue';
 export const NO_DATE_BUCKET = 'no_date';
-
-const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
 /** Monday of the ISO week containing `iso`, as a date-only string. */
 export function weekStart(iso: string): string {
@@ -72,7 +120,12 @@ export function bucketKeyFor(
 ): string {
   if (!requiredDate) return NO_DATE_BUCKET;
   if (requiredDate < today) return OVERDUE_BUCKET;
-  return granularity === 'month' ? monthStart(requiredDate) : weekStart(requiredDate);
+  if (granularity === 'month') return monthStart(requiredDate);
+  // Day granularity keys on the date itself; the 30-day window that keeps 349 of them off one
+  // screen is applied when the columns are ORDERED, never when they are assigned, so nothing is
+  // filtered out of the plan by a display choice.
+  if (granularity === 'day') return requiredDate;
+  return weekStart(requiredDate);
 }
 
 function bucketLabel(key: string, granularity: BoardGranularity): string {
@@ -84,37 +137,122 @@ function bucketLabel(key: string, granularity: BoardGranularity): string {
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
   ];
   const monthName = MONTHS[Number(month) - 1] ?? month;
-  return granularity === 'month'
-    ? `${monthName} ${year}`
-    : `w/c ${Number(day)} ${monthName} ${year}`;
+  if (granularity === 'month') return `${monthName} ${year}`;
+  if (granularity === 'day') return `${Number(day)} ${monthName} ${year}`;
+  return `w/c ${Number(day)} ${monthName} ${year}`;
 }
 
 /**
- * The order competing lines are served in (13.5), and it is TOTAL.
+ * `SUM(w*v) / SUM(w present)` over the PRESENT factors only.
  *
- * 1. Earliest required date, because the work that is due soonest gets the stock. An undated
- *    line sorts last: nothing about it says it is urgent.
- * 2. Then a stated priority. Measured at 14 rows in 90,548, so it is a real override where
- *    somebody bothered and decides nothing at all for everyone else - which is exactly why it
- *    is the tie-break and not the key.
- * 3. Then the sales-order number, so two lines can never compare equal. A non-total rule gives
- *    a different answer on each refresh, and "why did this order lose today" becomes
- *    unanswerable.
+ * Lifted deliberately from the reorder engine's `cash_ranking.rank_score`, including the rule
+ * that carries the whole design: a factor with NO VALUE is dropped from the numerator AND the
+ * denominator, never scored as zero. An unknown is not a bad score. Returns 0.0 when nothing is
+ * present, which is exactly what the live policy produces on this board (see `LIVE_POLICY`).
+ */
+export function rankScore(factors: BoardRankFactor[]): number {
+  let numerator = 0;
+  let denominator = 0;
+  for (const factor of factors) {
+    if (!factor.present || factor.value === null) continue;
+    numerator += factor.weight * factor.value;
+    denominator += factor.weight;
+  }
+  return denominator > 0 ? numerator / denominator : 0;
+}
+
+/** Sooner (or smaller) is higher, normalized across the set present. Absent stays absent. */
+function normalizeAscending(values: (number | null)[]): (number | null)[] {
+  const present = values.filter((value): value is number => value !== null);
+  if (present.length === 0) return values.map(() => null);
+  const low = Math.min(...present);
+  const high = Math.max(...present);
+  const span = high - low || 1;
+  return values.map((value) => (value === null ? null : 1 - (value - low) / span));
+}
+
+const DAY = 86_400_000;
+const dayNumber = (iso: string) => Math.round(Date.parse(`${iso}T00:00:00Z`) / DAY);
+
+/**
+ * The factors behind every contributor in one cell, per PLAN 13.5.
+ *
+ * Values are normalized ACROSS THE CANDIDATE SET, the way the reorder engine's `date_values`
+ * does: a rank only ever means "against the others competing for this stock", and a score
+ * normalized against the whole book would be dominated by orders that are not in the fight.
+ *
+ *   need_by_date     sooner is higher      <- the captain's "delivery date"
+ *   document_age     older is higher       <- the captain's "document date" (the SO's own)
+ *   customer_credit  shorter terms higher  <- the only credit signal with coverage
+ *   demand_class     the policy's weight for the row's class (constant on this board)
+ *   po_document_sequence  ALWAYS ABSENT: a sales-order line has no purchase order
+ */
+function factorsForCell(
+  contributions: BoardContribution[],
+  lines: Map<string, BoardDemandLine>,
+  policy: BoardPolicy,
+): void {
+  const meta = contributions.map((entry) => lines.get(entry.key));
+  const needBy = normalizeAscending(
+    contributions.map((entry) => (entry.required_date ? dayNumber(entry.required_date) : null)),
+  );
+  // Older document is higher, and `normalizeAscending` already gives 1.0 to the SMALLEST value,
+  // which for a date is the earliest one. So the raw day number is fed straight in: negating it
+  // (the first attempt) handed the top score to the NEWEST document, the exact opposite of what
+  // "document age" means, and the ranking read plausibly while being backwards.
+  const age = normalizeAscending(
+    meta.map((entry) => (entry?.order_date ? dayNumber(entry.order_date) : null)),
+  );
+  const credit = normalizeAscending(
+    meta.map((entry) =>
+      entry?.payment_terms_days === null || entry?.payment_terms_days === undefined
+        ? null
+        : entry.payment_terms_days,
+    ),
+  );
+
+  contributions.forEach((contribution, index) => {
+    const demandClass = meta[index]?.demand_class ?? 'project';
+    const classWeight = policy.demand_class_weights[demandClass];
+    const values: Record<string, number | null> = {
+      po_document_sequence: null,
+      demand_class: classWeight === undefined ? null : classWeight,
+      need_by_date: needBy[index],
+      document_age: age[index],
+      customer_credit: credit[index],
+    };
+    contribution.rank_factors = Object.keys(policy.factors)
+      .concat(Object.keys(values).filter((key) => !(key in policy.factors)))
+      .filter((key, position, all) => all.indexOf(key) === position)
+      .map((key) => {
+        const value = values[key] ?? null;
+        return {
+          key,
+          weight: Number(policy.factors[key] ?? 0),
+          value,
+          present: value !== null,
+        };
+      });
+    contribution.rank_score = rankScore(contribution.rank_factors);
+  });
+}
+
+/**
+ * The order competing lines are served in, and it is TOTAL.
+ *
+ * Highest rank first (13.5). Ties break on the sales-order number and then the line number, so
+ * two contributors can never compare equal: a non-total rule gives a different answer on each
+ * refresh, and "why did this order lose today" becomes unanswerable.
+ *
+ * Under a policy that can score nothing - which is the live one - every score is 0.0 and this
+ * degrades to sales-order order. That is a flat ranking rather than a wrong one, and the board
+ * says so on screen rather than hiding it behind an arbitrary sort.
  */
 export function compareContributions(
-  left: Pick<BoardContribution, 'required_date' | 'priority' | 'so_number' | 'line_no'>,
-  right: Pick<BoardContribution, 'required_date' | 'priority' | 'so_number' | 'line_no'>,
+  left: Pick<BoardContribution, 'rank_score' | 'so_number' | 'line_no'>,
+  right: Pick<BoardContribution, 'rank_score' | 'so_number' | 'line_no'>,
 ): number {
-  const leftDate = left.required_date ?? null;
-  const rightDate = right.required_date ?? null;
-  if (leftDate !== rightDate) {
-    if (leftDate === null) return 1;
-    if (rightDate === null) return -1;
-    return leftDate < rightDate ? -1 : 1;
-  }
-  const leftRank = PRIORITY_RANK[left.priority ?? ''] ?? 3;
-  const rightRank = PRIORITY_RANK[right.priority ?? ''] ?? 3;
-  if (leftRank !== rightRank) return leftRank - rightRank;
+  if (left.rank_score !== right.rank_score) return right.rank_score - left.rank_score;
   const byOrder = left.so_number.localeCompare(right.so_number);
   return byOrder !== 0 ? byOrder : left.line_no - right.line_no;
 }
@@ -179,9 +317,11 @@ function allocate(
       });
     }
     contribution.sources = sources;
-    // Contested means somebody earlier in the rule actually TOOK the stock this line would
-    // otherwise have had. A line at a location that never held any is not contested, it is
-    // simply a Buy; calling both the same thing would make the flag mean nothing.
+    // Contested means the stock this line would otherwise have had was actually TAKEN, either
+    // by a higher-ranked line in this same cell or by an earlier bucket that drew the pool down
+    // first. Both are "somebody got there before you"; the screen therefore says exactly that
+    // rather than naming a cause it cannot always know. A line at a location that never held
+    // any stock is NOT contested, it is simply a Buy.
     contribution.contested = buy > 0 && (consumed[stockKey] ?? 0) > 0;
     consumed[stockKey] = (consumed[stockKey] ?? 0) + reserved;
   }
@@ -194,14 +334,25 @@ function allocate(
  * a zero - it means no selected order owes this product by this date - which is the same rule
  * the delivery-schedule matrix states about its own blanks.
  */
+export const DAY_WINDOW_COLUMNS = 30;
+
 export function buildBoard(
   lines: BoardDemandLine[],
-  options: { today: string; granularity?: BoardGranularity; freeStock?: FreeStock },
+  options: {
+    today: string;
+    granularity?: BoardGranularity;
+    freeStock?: FreeStock;
+    policy?: BoardPolicy;
+    /** First day of the day-granularity window. Defaults to the earliest future date owed. */
+    dayWindowStart?: string;
+  },
 ): PlanningBoard {
   const granularity = options.granularity ?? 'week';
+  const policy = options.policy ?? LIVE_POLICY;
   const { today } = options;
 
   const contributionsByCell = new Map<string, BoardContribution[]>();
+  const lineByKey = new Map<string, BoardDemandLine>();
   const bucketKeys = new Set<string>();
   const productSet = new Set<string>();
 
@@ -226,10 +377,13 @@ export function buildBoard(
       priority: line.priority ?? null,
       sources: [],
       contested: false,
+      rank_score: 0,
+      rank_factors: [],
     };
     const bucket = contributionsByCell.get(cellKey);
     if (bucket) bucket.push(contribution);
     else contributionsByCell.set(cellKey, [contribution]);
+    lineByKey.set(contribution.key, line);
   }
 
   // One running pool for the whole board, drawn down in the order the buckets are served, so
@@ -240,13 +394,16 @@ export function buildBoard(
   }
   const consumed: Record<string, number> = {};
 
-  const dateBuckets = orderBuckets([...bucketKeys], granularity);
+  const dateBuckets = orderBuckets([...bucketKeys], granularity, options.dayWindowStart);
   const cells: BoardCell[] = [];
 
   for (const bucket of dateBuckets) {
     for (const item of [...productSet].sort()) {
       const contributions = contributionsByCell.get(`${item}|${bucket.key}`);
       if (!contributions || contributions.length === 0) continue;
+      // Score first, then serve down the ranking: the order stock is given out in IS the
+      // ranking, so computing it after the sort would be describing a decision already taken.
+      factorsForCell(contributions, lineByKey, policy);
       contributions.sort(compareContributions);
       allocate(contributions, remaining, consumed);
       cells.push({
@@ -269,6 +426,7 @@ export function buildBoard(
 
   return {
     granularity,
+    policy,
     as_of: today,
     dateBuckets,
     productRows,
@@ -277,11 +435,34 @@ export function buildBoard(
   };
 }
 
-/** Overdue pinned first, dated in ascending order, No date pinned last (13.3). */
-function orderBuckets(keys: string[], granularity: BoardGranularity): BoardDateBucket[] {
-  const dated = keys
+/**
+ * Overdue pinned first, dated in ascending order, No date pinned last, in EVERY granularity
+ * (13.3): neither of those two is a bucket of time and neither has a place on a timeline.
+ *
+ * At day granularity the dated columns are a 30-day WINDOW rather than one column per distinct
+ * date, because the book carries 349 of them. Days inside the window with nothing owed are still
+ * rendered: a calendar that hides its empty days is not a calendar, and the gap is the
+ * information. Demand outside the window is never dropped from the plan; it is reached by moving
+ * the window, and anything already past is in Overdue regardless.
+ */
+function orderBuckets(
+  keys: string[],
+  granularity: BoardGranularity,
+  dayWindowStart?: string,
+): BoardDateBucket[] {
+  let dated = keys
     .filter((key) => key !== OVERDUE_BUCKET && key !== NO_DATE_BUCKET)
     .sort();
+
+  if (granularity === 'day') {
+    const start = dayWindowStart ?? dated[0];
+    if (start) {
+      const from = dayNumber(start);
+      dated = Array.from({ length: DAY_WINDOW_COLUMNS }, (_unused, offset) =>
+        new Date((from + offset) * DAY).toISOString().slice(0, 10),
+      );
+    }
+  }
   const buckets: BoardDateBucket[] = [];
   if (keys.includes(OVERDUE_BUCKET)) {
     buckets.push({ key: OVERDUE_BUCKET, kind: 'overdue', label: 'Overdue', start: null });
@@ -353,20 +534,23 @@ export function standingsFor(
 }
 
 /**
- * Why this order cannot be confirmed yet, or null when it can.
+ * What confirming this order right now would do, and what it would leave behind.
  *
- * A disabled button that does not say why is the thing that makes a screen feel broken, and
- * here the reason is the entire point of the design question in 13.4.
+ * Confirm is NOT gated on completeness (PLAN 13.4, the captain's decision): a planner commits
+ * the lines they are sure about so the undecided ones keep flowing to reorder planning. So the
+ * screen owes a plain statement of the consequence instead of a disabled button, and this is the
+ * number behind that sentence.
+ *
+ * A line that can never be decided here (its sales order states no location) is counted inside
+ * `leaving_undecided` and named again in `blocked`, because it is undecided for a reason the
+ * planner cannot fix on this screen.
  */
-export function confirmBlockedReason(standing: BoardOrderStanding): string | null {
-  if (standing.unplannable_count > 0) {
-    const count = standing.unplannable_count;
-    return `${count} line${count === 1 ? '' : 's'} ha${count === 1 ? 's' : 've'} no fulfilment location on the sales order.`;
-  }
-  if (standing.decided_count < standing.line_count) {
-    return `${standing.decided_count} of ${standing.line_count} lines decided.`;
-  }
-  return null;
+export function commitPreviewFor(standing: BoardOrderStanding): BoardCommitPreview {
+  return {
+    committing: standing.decided_count,
+    leaving_undecided: standing.line_count - standing.decided_count,
+    blocked: standing.unplannable_count,
+  };
 }
 
 /**

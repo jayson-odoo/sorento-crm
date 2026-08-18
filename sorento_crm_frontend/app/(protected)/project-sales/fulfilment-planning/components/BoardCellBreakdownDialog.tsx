@@ -170,6 +170,38 @@ function ContributionRow({
         </div>
       </header>
 
+      {/* Why this row is where it is in the queue. A ranking nobody can inspect is a ranking
+          nobody will trust, so the score comes with the factors that produced it (PLAN 13.5). */}
+      <div className="space-y-1 border-b border-border px-3 py-2.5">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="text-2xs uppercase tracking-wide text-muted-foreground">Rank</span>
+          <span className="text-sm font-medium tabular-nums">
+            {contribution.rank_score.toFixed(2)}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {contribution.rank_factors.map((factor) => (
+            <span
+              key={factor.key}
+              className={`rounded px-1 text-[10px] ${
+                factor.present
+                  ? 'bg-muted text-muted-foreground'
+                  : 'bg-muted/50 text-muted-foreground/70 line-through'
+              }`}
+              title={
+                factor.present
+                  ? `${factor.key}: value ${factor.value?.toFixed(2)}, weight ${factor.weight}`
+                  : `${factor.key}: no value, so it is dropped from the score entirely rather than counted as zero`
+              }
+            >
+              {factor.present
+                ? `${factor.key} ${factor.value?.toFixed(2)} x${factor.weight}`
+                : `${factor.key} absent`}
+            </span>
+          ))}
+        </div>
+      </div>
+
       <div className="space-y-1.5 border-b border-border px-3 py-2.5">
         <div className="text-2xs uppercase tracking-wide text-muted-foreground">
           Sourced from
@@ -194,8 +226,12 @@ function ContributionRow({
         {contribution.contested && (
           <div className="flex items-start gap-1.5 text-sm text-amber-700">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            {/* Deliberately not "a higher-ranked line took it": the stock may equally have gone
+                to an EARLIER BUCKET, and the top-ranked row of a cell can be contested for that
+                reason. Naming the wrong cause is worse than naming none. */}
             <span>
-              An earlier-dated line took the free stock at this location, so this one is bought.
+              Free stock at this location was already committed to earlier demand, so this line is
+              bought.
             </span>
           </div>
         )}
