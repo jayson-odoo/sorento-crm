@@ -34,6 +34,7 @@ import {
   useOrderInquirySummary,
 } from '../../../_shared/hooks/useOrderInquiry';
 import { useProject } from '../../../_shared/hooks/useProjects';
+import { saveBlobAs } from '../../../_shared/services/fileDownload';
 import { downloadOrderInquiryXlsx } from '../../../_shared/services/orderInquiryService';
 import type { OrderInquiryRow } from '../../../_shared/types/orderInquiry.types';
 import { InfoHint } from '../../components/InfoHint';
@@ -295,14 +296,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
         verb: verbFilter || undefined,
         state: stateFilter || undefined,
       });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `order-inquiry-${project.data?.project_code ?? 'project'}.xlsx`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      saveBlobAs(blob, `order-inquiry-${project.data?.project_code ?? 'project'}.xlsx`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to export the order inquiry');
     } finally {

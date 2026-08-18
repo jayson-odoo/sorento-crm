@@ -2,12 +2,15 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { saveBlobAs } from '../services/fileDownload';
 import {
   acknowledgeFinding,
   buildSalesOrders,
   createAmendment,
+  downloadSalesOrderImportFile,
   getAmendment,
   getProjectSalesOrder,
+  getSalesOrderWorksheet,
   listPoVersions,
   listProjectSalesOrders,
   listScheduleVersions,
@@ -27,6 +30,7 @@ import type {
 
 export const SALES_ORDERS_KEY = 'project-sales-orders';
 export const SALES_ORDER_KEY = 'project-sales-order';
+export const SALES_ORDER_WORKSHEET_KEY = 'project-sales-order-worksheet';
 export const SCHEDULE_VERSIONS_KEY = 'project-schedule-versions';
 export const PO_VERSIONS_KEY = 'project-po-versions';
 export const AMENDMENT_KEY = 'project-so-amendment';
@@ -53,6 +57,19 @@ export function useProjectSalesOrder(psoId: string | undefined) {
   return useQuery({
     queryKey: salesOrderKey(psoId ?? ''),
     queryFn: () => getProjectSalesOrder(psoId as string),
+    enabled: Boolean(psoId),
+  });
+}
+
+/**
+ * The AutoCount worksheet for one order. Separate from the draft query rather than a field
+ * on it: the worksheet is the document as AutoCount will read it, and it is only ever
+ * wanted on its own screen.
+ */
+export function useSalesOrderWorksheet(psoId: string | undefined) {
+  return useQuery({
+    queryKey: [SALES_ORDER_WORKSHEET_KEY, psoId ?? ''],
+    queryFn: () => getSalesOrderWorksheet(psoId as string),
     enabled: Boolean(psoId),
   });
 }
@@ -155,6 +172,24 @@ export function useSalesOrderMutations(projectId: string, psoId: string) {
   });
 
   return { acknowledge, updateLine, regroup, publish };
+}
+
+/**
+ * The AutoCount import file for one order.
+ *
+ * A mutation rather than a query because it must only run when someone asks for the file,
+ * and it caches nothing: the backend generates it per request so it always matches the
+ * order as it stands. The variable is the reference the file is named after when the
+ * response carries no filename of its own.
+ */
+export function useSalesOrderImportFile(psoId: string) {
+  return useMutation({
+    mutationFn: async (reference: string) => {
+      const { blob, filename } = await downloadSalesOrderImportFile(psoId);
+      saveBlobAs(blob, filename ?? `${reference}.csv`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 }
 
 /**

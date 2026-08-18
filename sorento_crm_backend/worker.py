@@ -2,9 +2,9 @@
 """RQ worker + APScheduler combined.
 
 Single process owns both queue draining (`imports`, `respond_io`, `catalogue_render`,
-`media`, `flyer_read`) and cron ticks fired by `app.scheduler.task_scheduler`. Compose
-runs exactly one `worker` service so jobs and ticks are never duplicated across
-blue/green API containers.
+`media`, `project_docs`, `flyer_read`) and cron ticks fired by
+`app.scheduler.task_scheduler`. Compose runs exactly one `worker` service so jobs
+and ticks are never duplicated across blue/green API containers.
 
 Set `ENABLE_SCHEDULER=true` in the worker container; API containers leave it false.
 """
@@ -115,9 +115,9 @@ if __name__ == '__main__':
     # same reason: slower than an import, faster than a flyer read.
     #
     # PRODUCTION: the compose file on the server is hand-edited and gitignored.
-    # If it pins WORKER_QUEUES explicitly, `flyer_read` has to be added there or
-    # a flyer read enqueues and never runs. If it does not pin it, this default
-    # is picked up on the next deploy.
+    # If it pins WORKER_QUEUES explicitly, `flyer_read` and `project_docs` have
+    # to be added there or those jobs enqueue and never run. If it does not pin
+    # it, this default is picked up on the next deploy.
     #
     # 'media' drains the chatbot media extraction jobs. The /external/media
     # endpoint enqueues and then AWAITS the job, so a worker that is not draining

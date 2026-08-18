@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { filenameFromContentDisposition } from './fileDownload';
 import type {
   AmendmentCreateBody,
   AmendmentCreated,
@@ -13,6 +14,7 @@ import type {
   SalesOrderLineUpdateBody,
   SalesOrderPublishResult,
   SalesOrderRegroupGroup,
+  SalesOrderWorksheet,
   ScheduleVersionOption,
 } from '../types/projectSalesOrder.types';
 
@@ -162,6 +164,74 @@ export async function publishSalesOrder(psoId: string): Promise<SalesOrderPublis
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to publish this sales order'));
   return response.json();
+}
+
+// -------------------------------------------------------- Stage 1A: the worksheet
+
+/**
+ * The AutoCount SO worksheet for one Project SO.
+ *
+ * API CONTRACT (Stage 1A, PLAN-scm-front-planning sections 1.2 steps 1-3 and 2). Built in
+ * Phase 2 to this exact shape and live since; `ProjectSODraftService.worksheet` is the one
+ * builder behind both this and the CSV `import_file` writes, so the screen and the
+ * downloaded file cannot describe different orders.
+ *
+ *   GET /api/v1/project-sales/sales-orders/{pso_id}/worksheet
+ *   200 {
+ *     id, provisional_ref, autocount_doc_no, status, area_group, po_number, customer_name,
+ *     header: { debtor, your_ref_no, our_ref_no, our_qt_ref_no, terms },
+ *     lines: [{ line_no, item_code, description, reserve_qty, qty, delivery_date, uom,
+ *               unit_price, discount, total }],
+ *     total_amount,
+ *     findings: SODraftFindingRow[],
+ *     can_export: boolean,
+ *     import_file_url: string | null
+ *   }
+ *
+ * Notes the backend honours, each pinned by a test in
+ * `sorento_crm_backend/tests/test_project_so_worksheet.py`:
+ * - `lines` is in AutoCount's column order and in `line_no` order; the screen does not sort.
+ * - `reserve_qty` is "0" on every row until Stage 1C confirms a supply source.
+ * - money and quantities are decimal STRINGS, never numbers.
+ * - `can_export` is false while the order is unpublished or carries an unacknowledged hard
+ *   finding, so the FE never has to re-derive the rule.
+ * - `import_file_url` is null until the order is published.
+ * - 404 when the order does not exist, as the sibling routes do.
+ */
+export async function getSalesOrderWorksheet(psoId: string): Promise<SalesOrderWorksheet> {
+  if (PROJECT_SO_MOCK) return mockWorksheet(psoId);
+  const response = await apiFetch(`${BASE}/sales-orders/${psoId}/worksheet`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the AutoCount worksheet'));
+  return response.json();
+}
+
+/**
+ * The stage 1 AutoCount import file, fetched rather than linked to.
+ *
+ * `import_file_url` is a path on the BACKEND. Given to an anchor it resolves against the
+ * frontend origin, where nothing serves it, so the download 404s; the route also wants the
+ * bearer token, which a plain link does not carry. Generated per request exactly as the
+ * corrective file is: a stored copy goes stale the moment an amendment publishes.
+ *
+ * The filename is the one the backend stamped on the response; the caller supplies a
+ * fallback for a response that carries no `Content-Disposition`.
+ *
+ * The export gate is the SERVER's: an order that is not published, or is published and
+ * still carries an unacknowledged hard finding, answers 422 `so_export_blocked` here. The
+ * screens disable their download on the same `can_export` flag so the refusal is visible
+ * before the click, but this call is what actually enforces it.
+ */
+export async function downloadSalesOrderImportFile(
+  psoId: string,
+): Promise<{ blob: Blob; filename: string | null }> {
+  const response = await apiFetch(`${BASE}/sales-orders/${psoId}/import-file`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to download the import file'));
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(response.headers.get('Content-Disposition')),
+  };
 }
 
 // -------------------------------------------------------------- P11: amendments
@@ -572,4 +642,183 @@ function mockPreview(body: AmendmentPreviewBody): AmendmentPreview {
           },
         ],
   };
+}
+
+// --------------------------------------------------------- worksheet fixtures
+//
+// One fixture per state the worksheet screen has to render, keyed by the order id in the
+// URL. `mock-subset`, `mock-tower` and `mock-common` are the same three orders the list
+// serves, so the screen is reachable by clicking through from a sales order. `mock-amended`
+// and `mock-empty` have no list row and are reached by typing the id into the URL; they
+// carry the published-with-findings and no-lines states that the three listed orders do
+// not produce.
+
+const MOCK_WORKSHEET_HEADER = {
+  debtor: 'Hong Bee Hardware Sdn Bhd',
+  your_ref_no: 'HQ/26/01/121',
+  our_ref_no: 'Tuju Residences',
+  our_qt_ref_no: 'QT-004188 v1',
+  terms: '*Net 60 days',
+};
+
+/**
+ * Two delivery dates, one zero-priced companion, all reserve 0 until Stage 1C.
+ *
+ * Money is at TWO decimals, unlike the draft-line fixtures above: the worksheet is the CSV,
+ * and the backend writes its cells through `_money`, which quantizes. A fixture carrying the
+ * line table's 5dp would tune the screen against a string the document never contains.
+ */
+const MOCK_WORKSHEET_LINES: SalesOrderWorksheet['lines'] = [
+  {
+    line_no: 1,
+    item_code: 'CB6633',
+    description: 'CABANA S/STEEL FLOOR GRATING 6"',
+    reserve_qty: '0',
+    qty: '600',
+    delivery_date: '2026-07-01',
+    uom: 'UNIT',
+    unit_price: '11.16',
+    discount: '',
+    total: '6696.00',
+  },
+  {
+    line_no: 2,
+    item_code: 'SRT382-6',
+    description: 'SORENTO STAINLESS STEEL FLOOR GRATING 6" x 6"',
+    reserve_qty: '0',
+    qty: '135',
+    delivery_date: '2026-07-01',
+    uom: 'UNIT',
+    unit_price: '13.77',
+    discount: '',
+    total: '1858.95',
+  },
+  {
+    line_no: 3,
+    item_code: 'SRTWC8613-RL',
+    description: 'SORENTO ONE PIECE WASH DOWN (RIMLESS) WC S-TRAP',
+    reserve_qty: '0',
+    qty: '135',
+    delivery_date: '2027-01-07',
+    uom: 'SET',
+    unit_price: '392.85',
+    discount: '',
+    total: '53034.75',
+  },
+  {
+    line_no: 4,
+    item_code: 'TPE-9300',
+    description: 'FLEXIBLE STRAIGHT CONNECTOR P10 B (4")100MM (PW-136)',
+    reserve_qty: '0',
+    qty: '135',
+    delivery_date: '2027-01-07',
+    uom: 'UNIT',
+    unit_price: '0.00',
+    discount: '',
+    total: '0.00',
+  },
+];
+
+const MOCK_WORKSHEET_BLOCKING: SalesOrderWorksheet['findings'] = [
+  {
+    id: 'wf1',
+    severity: 'hard',
+    code: 'line_arithmetic',
+    detail: 'Line 4: 351 x 10.00 is 3,510.00 but the PO says 3,150.00.',
+    line_no: 4,
+  },
+  {
+    id: 'wf2',
+    severity: 'hard',
+    code: 'schedule_short',
+    detail:
+      'CB6645-NL: the schedule places 702 units but the PO orders 1,053. 351 are unscheduled.',
+    line_no: 3,
+  },
+];
+
+const MOCK_WORKSHEET_WARNING: SalesOrderWorksheet['findings'] = [
+  {
+    id: 'wf3',
+    severity: 'warn',
+    code: 'price_vs_quotation',
+    detail: 'SRT382-6 is quoted at 13.20 and ordered at 13.77.',
+    line_no: 2,
+  },
+];
+
+function mockWorksheet(psoId: string): SalesOrderWorksheet {
+  const base: SalesOrderWorksheet = {
+    id: psoId,
+    provisional_ref: 'PSO-000101',
+    autocount_doc_no: 'SO376200',
+    status: 'published',
+    area_group: null,
+    po_number: 'HQ/26/01/121',
+    customer_name: 'Hong Bee Hardware Sdn Bhd',
+    header: MOCK_WORKSHEET_HEADER,
+    lines: MOCK_WORKSHEET_LINES,
+    total_amount: '61589.70',
+    findings: MOCK_WORKSHEET_WARNING,
+    can_export: true,
+    import_file_url: '/mock/PSO-000101.csv',
+  };
+
+  if (psoId === 'mock-tower') {
+    return {
+      ...base,
+      provisional_ref: 'PSO-000123',
+      autocount_doc_no: null,
+      status: 'draft',
+      area_group: 'TOWER',
+      customer_name: 'Buimaco Sdn Bhd (Project)',
+      header: { ...MOCK_WORKSHEET_HEADER, debtor: 'Buimaco Sdn Bhd (Project)' },
+      can_export: false,
+      import_file_url: null,
+    };
+  }
+
+  if (psoId === 'mock-common') {
+    return {
+      ...base,
+      provisional_ref: 'PSO-000124',
+      autocount_doc_no: null,
+      status: 'blocked',
+      area_group: 'COMMON AREA',
+      customer_name: 'Buimaco Sdn Bhd (Project)',
+      header: { ...MOCK_WORKSHEET_HEADER, debtor: 'Buimaco Sdn Bhd (Project)' },
+      lines: MOCK_WORKSHEET_LINES.slice(0, 2),
+      total_amount: '8554.95',
+      findings: [...MOCK_WORKSHEET_BLOCKING, ...MOCK_WORKSHEET_WARNING],
+      can_export: false,
+      import_file_url: null,
+    };
+  }
+
+  // Published, and still carrying a hard finding: the file exists, the export is refused.
+  if (psoId === 'mock-amended') {
+    return {
+      ...base,
+      provisional_ref: 'PSO-000102',
+      autocount_doc_no: 'SO376244',
+      status: 'amended',
+      findings: [MOCK_WORKSHEET_BLOCKING[0], ...MOCK_WORKSHEET_WARNING],
+      can_export: false,
+    };
+  }
+
+  if (psoId === 'mock-empty') {
+    return {
+      ...base,
+      provisional_ref: 'PSO-000103',
+      autocount_doc_no: null,
+      lines: [],
+      total_amount: '0.00',
+      findings: [],
+      can_export: false,
+      import_file_url: null,
+    };
+  }
+
+  return base;
 }

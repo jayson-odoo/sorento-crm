@@ -149,6 +149,31 @@ def _customer(db, name: str, *, credit_limit: str | None = None) -> Customer:
     return row
 
 
+def _numbering_rule(db, company_id: str) -> None:
+    """The provisional-ref counter as production carries it: enabled, and monotonic."""
+    from app.models.numbering import DocumentNumberingRule
+    from app.services.project_so_draft_service import NUMBERING_DOC_TYPE
+
+    rule = (
+        db.query(DocumentNumberingRule)
+        .filter(DocumentNumberingRule.doc_type == NUMBERING_DOC_TYPE)
+        .first()
+    )
+    if rule is None:
+        rule = DocumentNumberingRule(id=_uid(), doc_type=NUMBERING_DOC_TYPE)
+        if hasattr(DocumentNumberingRule, "company_id"):
+            rule.company_id = company_id
+        db.add(rule)
+    rule.enabled = True
+    rule.prefix_template = "PSO-"
+    rule.number_digits = 6
+    rule.next_value = 1
+    rule.start_value = 1
+    rule.reset_policy = "none"
+    rule.last_reset_key = None
+    db.flush()
+
+
 def _party(db, company_id: str, *, customer: Customer | None = None) -> ProjectParty:
     row = ProjectParty(
         id=_uid(),
@@ -1235,6 +1260,183 @@ def test_rebuilding_replaces_its_own_drafts_and_leaves_published_orders_alone(se
     assert [area for status, area in refs.values() if status != "published"] == [
         "COMMON AREA"
     ]
+
+
+def _two_area_build(db, company_id, owner, *, numbering_rule: bool = False):
+    """One PO, one schedule, two area groups: the smallest thing a rebuild can replace."""
+    if numbering_rule:
+        _numbering_rule(db, company_id)
+    project = _project(db, company_id, owner)
+    tower_product = _product(db, "SRTWC8613-RL")
+    common_product = _product(db, "SRTUB206-BI")
+    quotation = _quotation(
+        db, project, lines=[(tower_product, "10", "392.85"), (common_product, "5", "295.85")]
+    )
+    party = _party(db, company_id)
+    po = _po(db, project, party=party, quotation_version=quotation)
+    po_version = _po_version(
+        db,
+        po,
+        lines=[
+            (1, tower_product, "SRTWC8613-RL", "10", "UNIT", "392.85", "3928.50", False),
+            (2, common_product, "SRTUB206-BI", "5", "NOS", "295.85", "1479.25", False),
+        ],
+    )
+    schedule = _schedule(db, project, po, po_version=po_version)
+    tower = _phase(
+        db,
+        project,
+        area_group="TOWER",
+        sequence=1,
+        label="Level 2 & 7",
+        delivery_date=date(2026, 7, 1),
+        version=schedule,
+    )
+    common = _phase(
+        db,
+        project,
+        area_group="COMMON AREA",
+        sequence=13,
+        label=None,
+        delivery_date=date(2027, 6, 1),
+        version=schedule,
+    )
+    tower_cell = _cell(db, schedule, tower, tower_product, "10")
+    _cell(db, schedule, common, common_product, "5")
+
+    return {
+        "project": project,
+        "po": po,
+        "schedule": schedule,
+        "tower_product": tower_product,
+        "tower_cell": tower_cell,
+        "service": ProjectSODraftService(db),
+    }
+
+
+def _rebuild_shape(db, po):
+    """Every order this PO carries, as (ref, area group, lines) in reference order."""
+    orders = (
+        db.query(ProjectSalesOrder)
+        .filter(ProjectSalesOrder.purchase_order_id == po.id)
+        .order_by(ProjectSalesOrder.provisional_ref.asc())
+        .all()
+    )
+    return [
+        (
+            order.provisional_ref,
+            order.area_group,
+            [
+                (line.line_no, line.product_id, line.qty, line.delivery_date)
+                for line in _lines(db, order.id)
+            ],
+        )
+        for order in orders
+    ]
+
+
+def test_rebuilding_from_the_same_inputs_is_a_no_op(seeded):
+    """Re-uploading the same PO and schedule must produce the SAME orders, not new ones.
+
+    "Repeat upload is a no-op" is only true if the reference survives it: a rebuild that
+    replaces PSO-000123 with PSO-000125 leaves CS looking at a number nobody wrote down,
+    and every reference to the old one (an email, a printed worksheet) now points at a row
+    that no longer exists. The rows are genuinely deleted and re-inserted -- that is what
+    makes the rebuild correct when the schedule DID change -- so the provisional ref is
+    carried across per area group instead.
+
+    NO numbering rule is seeded, because production has none for this doc type: nothing
+    seeds `project_sales_order`, so the real install takes ``_next_ref``'s fallback branch
+    ("the highest existing PSO- reference plus one"). That is the path this test has to
+    exercise. The fallback's own hazard -- the deleted drafts are gone from the count by
+    the time a NEW group asks for a number -- is pinned separately below.
+    """
+    db, company_id, owner = seeded
+    built = _two_area_build(db, company_id, owner)
+    service, po, schedule = built["service"], built["po"], built["schedule"]
+
+    service.build(po.id, schedule.id)
+    before = _rebuild_shape(db, po)
+    assert len(before) == 2
+
+    second = service.build(po.id, schedule.id)
+    assert second["replaced_drafts"] == 2
+    assert second["skipped_published"] == 0
+
+    assert _rebuild_shape(db, po) == before
+
+
+def test_rebuilding_is_still_a_no_op_when_a_numbering_rule_is_configured(seeded):
+    """The same guarantee on the other branch of ``_next_ref``.
+
+    An install that DOES seed a `project_sales_order` numbering rule takes the counter
+    instead of the fallback, and that counter only ever goes up: without the carry across
+    the rebuild the second build would hand back PSO-000003 and PSO-000004.
+    """
+    db, company_id, owner = seeded
+    built = _two_area_build(db, company_id, owner, numbering_rule=True)
+    service, po, schedule = built["service"], built["po"], built["schedule"]
+
+    service.build(po.id, schedule.id)
+    before = _rebuild_shape(db, po)
+    assert len(before) == 2
+
+    service.build(po.id, schedule.id)
+
+    assert _rebuild_shape(db, po) == before
+
+
+def test_an_area_group_that_appears_in_a_rebuild_gets_its_own_reference(seeded):
+    """A group added by a revised schedule must never be handed a carried reference.
+
+    On the fallback path (which is production's, no numbering rule is seeded anywhere)
+    ``_next_ref`` counts the highest PSO- reference in the table. The rebuild deletes the
+    drafts it is replacing BEFORE minting, so those numbers are no longer in the table
+    while it is still owing them back to their area groups -- and the groups are minted in
+    alphabetical order, so a new group sorting FIRST is offered exactly the number the
+    group after it is about to take back. Both rows then claim one reference, which the
+    unique index on (company_id, provisional_ref) refuses in production.
+    """
+    db, company_id, owner = seeded
+    built = _two_area_build(db, company_id, owner)
+    service, po, schedule = built["service"], built["po"], built["schedule"]
+    project, tower_product = built["project"], built["tower_product"]
+
+    first = service.build(po.id, schedule.id)
+    carried = {row["area_group"]: row["provisional_ref"] for row in first["data"]}
+    assert set(carried) == {"TOWER", "COMMON AREA"}
+
+    # The revised schedule moves 4 of the tower's 10 units into a new area group whose
+    # name sorts before every group already drafted.
+    built["tower_cell"].qty = Decimal("6")
+    alpha = _phase(
+        db,
+        project,
+        area_group="ALPHA BLOCK",
+        sequence=2,
+        label="Block A",
+        delivery_date=date(2026, 8, 3),
+        version=schedule,
+    )
+    _cell(db, schedule, alpha, tower_product, "4")
+    db.flush()
+
+    second = service.build(po.id, schedule.id)
+    refs = {row["area_group"]: row["provisional_ref"] for row in second["data"]}
+
+    assert set(refs) == {"ALPHA BLOCK", "TOWER", "COMMON AREA"}
+    # The groups that were already drafted keep the number CS has written down.
+    assert refs["TOWER"] == carried["TOWER"]
+    assert refs["COMMON AREA"] == carried["COMMON AREA"]
+    # And the new one is genuinely new, rather than a second claim on a carried number.
+    assert len(set(refs.values())) == 3
+    stored = {
+        row.provisional_ref
+        for row in db.query(ProjectSalesOrder)
+        .filter(ProjectSalesOrder.purchase_order_id == po.id)
+        .all()
+    }
+    assert len(stored) == 3
 
 
 def test_a_published_order_cannot_be_edited_in_place(seeded):

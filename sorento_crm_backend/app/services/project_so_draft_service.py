@@ -290,7 +290,9 @@ class ProjectSODraftService:
                 code="po_has_no_lines",
             )
 
-        replaced, skipped, committed_areas = self._clear_previous_drafts(po, schedule_version)
+        replaced, skipped, committed_areas, reusable_refs = self._clear_previous_drafts(
+            po, schedule_version
+        )
 
         quotation_version = self._quotation_version(po)
         findings: List[_PendingFinding] = []
@@ -318,6 +320,7 @@ class ProjectSODraftService:
             findings=findings,
             grouping_origin=GROUPING_LEARNED if used_learned else GROUPING_AREA,
             committed_areas=committed_areas,
+            reusable_refs=reusable_refs,
         )
         self.db.flush()
         return {
@@ -1180,13 +1183,21 @@ class ProjectSODraftService:
 
     def _clear_previous_drafts(
         self, po: ProjectPurchaseOrder, schedule_version: DeliveryScheduleVersion
-    ) -> Tuple[int, int, set]:
+    ) -> Tuple[int, int, set, Dict[Optional[str], str]]:
         """Replace what this pair drafted before; leave anything committed alone.
 
         Returns the area groups that are already published as well as the counts. Those
         groups are then NOT re-drafted: a second TOWER draft beside a published TOWER order
         would be a duplicate commitment, and the way to change a published order is an
         amendment.
+
+        Also returns the provisional ref each deleted draft was carrying, keyed by area
+        group, so ``_persist`` can give the replacement the SAME reference. Re-uploading the
+        same PO and schedule is meant to be a no-op, and it is not one if PSO-000123 comes
+        back as PSO-000125: every note, email and printed worksheet quoting the old number
+        now points at a row that no longer exists. The rows really are deleted and rebuilt,
+        because that is what makes the rebuild correct when the schedule DID change, so the
+        reference is carried across rather than the row kept.
         """
         existing = (
             self.db.query(ProjectSalesOrder)
@@ -1194,20 +1205,25 @@ class ProjectSODraftService:
                 ProjectSalesOrder.purchase_order_id == po.id,
                 ProjectSalesOrder.schedule_version_id == schedule_version.id,
             )
+            .order_by(ProjectSalesOrder.provisional_ref.asc())
             .all()
         )
         replaced = 0
         skipped = 0
         committed: set = set()
+        reusable_refs: Dict[Optional[str], str] = {}
         for order in existing:
             if order.status in (SO_STATUS_DRAFT, SO_STATUS_BLOCKED, SO_STATUS_READY):
+                # Ordered by ref above, so two drafts sharing an area group hand on the
+                # lower of the two rather than whichever the database returned first.
+                reusable_refs.setdefault(order.area_group, order.provisional_ref)
                 self.db.delete(order)
                 replaced += 1
             else:
                 skipped += 1
                 committed.add(order.area_group)
         self.db.flush()
-        return replaced, skipped, committed
+        return replaced, skipped, committed, reusable_refs
 
     def _persist(
         self,
@@ -1219,6 +1235,7 @@ class ProjectSODraftService:
         findings: List[_PendingFinding],
         grouping_origin: str,
         committed_areas: set,
+        reusable_refs: Optional[Dict[Optional[str], str]] = None,
     ) -> List[ProjectSalesOrder]:
         grouped: Dict[Optional[str], List[_LineDraft]] = {}
         for draft in drafts:
@@ -1240,15 +1257,25 @@ class ProjectSODraftService:
                 code="so_nothing_to_draft",
             )
 
+        carried = dict(reusable_refs or {})
         orders: List[ProjectSalesOrder] = []
         for area_group in sorted(grouped, key=lambda value: (value is None, value or "")):
+            # The ref this area group already had, when the rebuild replaced a draft
+            # carrying one. A genuinely new area group takes the next number -- and must
+            # be told which refs are still owed to the groups after it in this loop: the
+            # drafts carrying them were deleted before this ran, so `_next_ref` cannot see
+            # them, and the groups are minted in name order, so a new group sorting first
+            # would otherwise be handed the very number the group after it takes back.
+            provisional_ref = carried.pop(area_group, None) or self._next_ref(
+                project.company_id, reserved=carried.values()
+            )
             order = ProjectSalesOrder(
                 company_id=project.company_id,
                 project_id=project.id,
                 purchase_order_id=po.id,
                 schedule_version_id=schedule_version.id,
                 area_group=area_group,
-                provisional_ref=self._next_ref(project.company_id),
+                provisional_ref=provisional_ref,
                 status=SO_STATUS_DRAFT,
                 grouping_origin=grouping_origin,
             )
@@ -1359,19 +1386,28 @@ class ProjectSODraftService:
         )
         return int(row[0]) if row else None
 
-    def _next_ref(self, company_id: str) -> str:
+    def _next_ref(
+        self, company_id: str, *, reserved: Optional[Iterable[str]] = None
+    ) -> str:
         """A provisional reference, from the numbering rule when one is configured.
 
         Falls back to the highest existing reference plus one rather than refusing: this
         is an INTERNAL handle that the customer never sees, and blocking a whole build on
-        an unseeded settings row would be a rule with no purpose behind it.
+        an unseeded settings row would be a rule with no purpose behind it. Nothing seeds
+        a `project_sales_order` rule today, so the fallback IS the path production takes.
+
+        ``reserved`` are references that are NOT in the table but are already spoken for:
+        the refs a rebuild is carrying from drafts it deleted a moment ago. Counted here
+        as though they were still stored, because otherwise the fallback re-mints one of
+        them and two orders claim the same reference.
         """
         from app.services.numbering_service import NumberingService
 
+        taken = {ref for ref in (reserved or ()) if ref}
         configured = NumberingService(self.db).get_next_number(
             NUMBERING_DOC_TYPE, commit_rule=False
         )
-        if configured:
+        if configured and configured not in taken:
             return configured
 
         highest = 0
@@ -1383,8 +1419,10 @@ class ProjectSODraftService:
             )
             .all()
         )
-        for (ref,) in rows:
-            tail = (ref or "")[len(_REF_PREFIX) :]
+        for ref in [row[0] for row in rows] + sorted(taken):
+            if not (ref or "").startswith(_REF_PREFIX):
+                continue
+            tail = ref[len(_REF_PREFIX) :]
             if tail.isdigit():
                 highest = max(highest, int(tail))
         return f"{_REF_PREFIX}{highest + 1:0{_REF_DIGITS}d}"
@@ -1766,24 +1804,23 @@ class ProjectSODraftService:
         order.published_at = datetime.utcnow()
         self.db.flush()
 
-        # P10 (AC-I1): publishing is the moment purchasing is told what to do about the
-        # quantity that has just been committed. Derived here rather than in the route
-        # so an amendment, a corrective publish or a future caller all raise it the same
-        # way. Idempotent on its own, so a second publish cannot double the rows.
-        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-
-        inquiry = ProjectOrderInquiryService(self.db).derive_for_sales_order(
-            order, actor_user_id=actor_user_id
-        )
+        # Publishing raises NO order inquiry (PLAN-scm-front-planning.md section 4,
+        # AC-D01). It used to, on the reading that a published order is committed demand,
+        # but a published order has not been reconciled to AutoCount and CS has not
+        # composed its supply yet: Reserve, Borrow and timely SPO cover may account for all
+        # of it, and telling purchasing to buy the whole quantity here is how the same
+        # units get bought twice. The inquiry is created inside the atomic Project SO
+        # confirmation, carrying the confirmed Buy residual only. Until then the whole SO
+        # is Needs CS review and contributes zero purchase requirement.
 
         return {
             "status": order.status,
             "provisional_ref": order.provisional_ref,
-            "order_inquiry_id": inquiry.id,
             # Stage 1 (D3): an AutoCount import file carrying our own reference. The
             # returned document number is adopted later, and the ESB call replaces this
             # transport in stage 2 without changing a table or a status.
             "import_file_url": f"/api/v1/project-sales/sales-orders/{order.id}/import-file",
+            "can_export": self.can_export(order),
             "total_amount": _money(_dec(order.total_amount)),
             "line_count": len(lines),
         }
@@ -1999,13 +2036,21 @@ class ProjectSODraftService:
             self.db.query(Product).filter(Product.product_code.ilike(cleaned)).first()
         )
 
-    def import_file(self, order: ProjectSalesOrder) -> Tuple[str, str]:
-        """The stage 1 AutoCount import file, as CSV. Returns (filename, body).
+    def worksheet(self, order: ProjectSalesOrder) -> Dict[str, Any]:
+        """The AutoCount SO worksheet as data (Stage 1A, J02).
+
+        The one place the document is assembled. ``import_file`` renders THIS into CSV and
+        the worksheet screen renders it as a table, so the file CS downloads and the sheet
+        they were looking at cannot describe different orders.
 
         The columns and header refs are the real document's (SO397450): `Your Ref No.` is
         the customer PO number, `Our Ref No.` is the project, the area prints as a section
         header, and `Reserve Qty` is a real column distinct from `Qty`. Reserve is zero
         until allocation confirms a source (P9), which is honest rather than blank.
+
+        Quantities and money are the FORMATTED strings, not Decimals, because the CSV cell
+        is the contract: ``_qty_str`` writes 927 where a Decimal would render 927.0000, and
+        an import line reading 1E+2 would be taken for a price list error.
         """
         project = self._project_or_404(order.project_id)
         po = (
@@ -2016,17 +2061,97 @@ class ProjectSODraftService:
             else None
         )
         customer = self._customer_for(order)
+        published = order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
+        lines = self._lines_of(order.id)
+        # One query for every code on the document. Asked per line, a 101-line order (the
+        # real SO397450 shape) is 101 round trips to render one screen.
+        codes = self._product_codes(line.product_id for line in lines)
+        return {
+            "id": order.id,
+            "provisional_ref": order.provisional_ref,
+            "autocount_doc_no": order.autocount_doc_no,
+            "status": order.status,
+            "area_group": order.area_group,
+            "po_number": po.po_number if po else None,
+            "customer_name": customer.customer_name if customer else None,
+            "header": {
+                "debtor": customer.customer_name if customer else None,
+                "your_ref_no": po.po_number if po else None,
+                "our_ref_no": project.title,
+                "our_qt_ref_no": self._quotation_ref(po) or None,
+                "terms": f"*Net {po.term_days} days" if po and po.term_days else None,
+            },
+            "lines": [
+                {
+                    "line_no": line.line_no,
+                    "item_code": codes.get(line.product_id) or None,
+                    "description": line.description,
+                    "reserve_qty": "0",
+                    "qty": _qty_str(_dec(line.qty)),
+                    "delivery_date": line.delivery_date,
+                    "uom": line.uom,
+                    "unit_price": str(_money(_dec(line.unit_price))),
+                    "discount": "",
+                    "total": str(_money(_dec(line.amount))),
+                }
+                for line in lines
+            ],
+            "total_amount": str(_money(_dec(order.total_amount))),
+            "findings": self.serialize_findings(order),
+            "can_export": self.can_export(order),
+            "import_file_url": (
+                f"/api/v1/project-sales/sales-orders/{order.id}/import-file"
+                if published
+                else None
+            ),
+        }
+
+    def can_export(self, order: ProjectSalesOrder) -> bool:
+        """May this order's document leave the building (AC-A01)?
+
+        The one owner of the rule: an unpublished order is not a document yet, and a
+        published one still carrying an unacknowledged hard stop must not reach AutoCount.
+        Read by the worksheet, by the sales order row the screens gate their buttons on,
+        and by the import-file route, which refuses the fetch outright -- a frontend that
+        respects the answer is not enforcement.
+        """
+        published = order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
+        return published and not self.blocking_findings(order)
+
+    def assert_can_export(self, order: ProjectSalesOrder) -> None:
+        if self.can_export(order):
+            return
+        if order.status not in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED):
+            message = (
+                f"{order.provisional_ref} is not published yet, so there is no import "
+                "file to take. Publish it first."
+            )
+        else:
+            message = (
+                f"{order.provisional_ref} still carries an unacknowledged hard finding. "
+                "Clear it with a reason before the import file leaves for AutoCount."
+            )
+        raise AppException(status_code=422, message=message, code="so_export_blocked")
+
+    def import_file(self, order: ProjectSalesOrder) -> Tuple[str, str]:
+        """The stage 1 AutoCount import file, as CSV. Returns (filename, body).
+
+        Nothing but layout: every value comes from ``worksheet`` above. An absent value is
+        CSV's blank cell, which is the only difference between the two renderings.
+        """
+        sheet = self.worksheet(order)
+        header = sheet["header"]
         buffer = io.StringIO()
         writer = csv.writer(buffer)
-        writer.writerow(["Provisional Ref", order.provisional_ref])
-        writer.writerow(["Debtor", customer.customer_name if customer else ""])
-        writer.writerow(["Your Ref No.", po.po_number if po else ""])
-        writer.writerow(["Our Ref No.", project.title])
-        writer.writerow(["Our QT Ref No.", self._quotation_ref(po)])
-        writer.writerow(["Terms", f"*Net {po.term_days} days" if po and po.term_days else ""])
+        writer.writerow(["Provisional Ref", sheet["provisional_ref"]])
+        writer.writerow(["Debtor", header["debtor"] or ""])
+        writer.writerow(["Your Ref No.", header["your_ref_no"] or ""])
+        writer.writerow(["Our Ref No.", header["our_ref_no"] or ""])
+        writer.writerow(["Our QT Ref No.", header["our_qt_ref_no"] or ""])
+        writer.writerow(["Terms", header["terms"] or ""])
         writer.writerow([])
-        if order.area_group:
-            writer.writerow([f"***{order.area_group}***"])
+        if sheet["area_group"]:
+            writer.writerow([f"***{sheet['area_group']}***"])
         writer.writerow(
             [
                 "Item",
@@ -2040,23 +2165,23 @@ class ProjectSODraftService:
                 "Total",
             ]
         )
-        for line in self._lines_of(order.id):
+        for line in sheet["lines"]:
             writer.writerow(
                 [
-                    self._product_code(line.product_id),
-                    line.description or "",
-                    "0",
-                    _qty_str(_dec(line.qty)),
-                    line.delivery_date.isoformat() if line.delivery_date else "",
-                    line.uom or "",
-                    str(_money(_dec(line.unit_price))),
-                    "",
-                    str(_money(_dec(line.amount))),
+                    line["item_code"] or "",
+                    line["description"] or "",
+                    line["reserve_qty"],
+                    line["qty"],
+                    line["delivery_date"].isoformat() if line["delivery_date"] else "",
+                    line["uom"] or "",
+                    line["unit_price"],
+                    line["discount"] or "",
+                    line["total"],
                 ]
             )
         writer.writerow([])
-        writer.writerow(["Total", "", "", "", "", "", "", "", str(_money(_dec(order.total_amount)))])
-        return f"{order.provisional_ref}.csv", buffer.getvalue()
+        writer.writerow(["Total", "", "", "", "", "", "", "", sheet["total_amount"]])
+        return f"{sheet['provisional_ref']}.csv", buffer.getvalue()
 
     def _quotation_ref(self, po: Optional[ProjectPurchaseOrder]) -> str:
         if po is None or not po.quotation_version_id:
@@ -2152,6 +2277,22 @@ class ProjectSODraftService:
             .scalar()
             or 0
         )
+
+    def _product_codes(self, product_ids: Iterable[Any]) -> Dict[str, str]:
+        """Every code in one query, for a caller that needs a whole document's worth.
+
+        ``Any`` because callers pass model attributes, which the type checker reads as
+        ``Column[str]`` rather than ``str`` on this codebase's SQLAlchemy version.
+        """
+        wanted = {product_id for product_id in product_ids if product_id}
+        if not wanted:
+            return {}
+        rows = (
+            self.db.query(Product.id, Product.product_code)
+            .filter(Product.id.in_(wanted))
+            .all()
+        )
+        return {row[0]: row[1] or "" for row in rows}
 
     def _product_code(self, product_id: Optional[str]) -> str:
         if not product_id:
@@ -2322,6 +2463,11 @@ class ProjectSODraftService:
                 if order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
                 else None
             ),
+            # Whether that url may actually be fetched, which is NOT the same question:
+            # a published order carrying an unacknowledged hard finding keeps its file's
+            # address and loses permission to take it. The screens gate their download on
+            # this; the route enforces it (`assert_can_export`).
+            "can_export": self.can_export(order),
             "line_count": len(lines),
             "total_amount": _money(_dec(order.total_amount)),
             "hard_findings": counts.get(SEVERITY_HARD, 0),

@@ -32,16 +32,27 @@ export function SalesOrderPublishDialog({
   unacknowledgedWarnings,
   onDone,
   onPublish,
+  onDownloadImportFile,
   submitting,
+  downloading,
 }: {
   reference: string;
   blocking: ProjectSalesOrderFinding[];
   unacknowledgedWarnings: ProjectSalesOrderFinding[];
   onDone: () => void;
   onPublish: () => Promise<SalesOrderPublishResult>;
+  onDownloadImportFile: () => void;
   submitting: boolean;
+  downloading?: boolean;
 }) {
   const [result, setResult] = React.useState<SalesOrderPublishResult | null>(null);
+
+  // The server's gate, read off the publish response rather than re-derived here. A
+  // response from before `can_export` shipped falls back to the url being there at all,
+  // which is what this button used to go on.
+  const canDownload = result
+    ? (result.can_export ?? Boolean(result.import_file_url))
+    : false;
 
   if (blocking.length > 0) {
     return (
@@ -93,11 +104,16 @@ export function SalesOrderPublishDialog({
                   {`This sales order is ${result.autocount_doc_no || result.provisional_ref}.`}
                 </p>
                 {result.import_file_url ? (
-                  <Button asChild variant="outline" size="sm">
-                    <a href={result.import_file_url} download>
-                      <Download className="size-4" aria-hidden />
-                      Download the import file
-                    </a>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onDownloadImportFile}
+                    disabled={!canDownload || downloading}
+                    title={canDownload ? undefined : 'Clear the blocking findings first'}
+                  >
+                    <Download className="size-4" aria-hidden />
+                    Download the import file
                   </Button>
                 ) : (
                   <p className="text-sm">

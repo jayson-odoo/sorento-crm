@@ -180,12 +180,16 @@ class ProjectOrderInquiryService:
     def derive_for_sales_order(
         self, order: ProjectSalesOrder, *, actor_user_id: Optional[str] = None
     ) -> OrderInquiry:
-        """Every line of a freshly published sales order is new demand (AC-I1).
+        """Every line of a confirmed sales order is new demand (AC-I1).
 
-        Idempotent: the second call returns the inquiry the first one wrote. Publishing
-        already refuses a second time, but derivation must not depend on that, because
-        a corrective publish path added later would otherwise double what purchasing is
-        told to buy.
+        Idempotent: the second call returns the inquiry the first one wrote. Derivation
+        must not depend on its caller refusing a second run, because a corrective path
+        added later would otherwise double what purchasing is told to buy.
+
+        **Publish is no longer the caller** (PLAN-scm-front-planning.md section 4,
+        AC-D01). Stage 1C's atomic CS confirmation becomes the only one, with the confirmed
+        Buy residual only: a published-but-unconfirmed order may be covered entirely by
+        Reserve, Borrow or timely SPO cover, and ordering all of it here buys it twice.
         """
         existing = self._existing(order.id, None)
         if existing is not None:

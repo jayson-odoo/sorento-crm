@@ -9,6 +9,7 @@ import {
   GitCompareArrows,
   Send,
   Shuffle,
+  Table2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useProjectSalesOrder,
+  useSalesOrderImportFile,
   useSalesOrderMutations,
 } from '../../../../_shared/hooks/useProjectSalesOrders';
 import { useProject } from '../../../../_shared/hooks/useProjects';
@@ -51,6 +53,7 @@ export function SalesOrderDetailClient({
   const project = useProject(projectId);
   const salesOrder = useProjectSalesOrder(psoId);
   const { acknowledge, regroup, publish } = useSalesOrderMutations(projectId, psoId);
+  const importFile = useSalesOrderImportFile(psoId);
   // Called above the early returns, as every hook must be. Keyed on the order's
   // `updated_at` so an ingest or a publish refetches it: this is what disables the amend
   // button, and a stale answer either blocks a clean order or lets a wrong amendment past.
@@ -97,13 +100,19 @@ export function SalesOrderDetailClient({
   const findings = so.findings ?? [];
   const lines = so.lines ?? [];
 
+  // Acknowledged is `acknowledged_at`, which is what the backend's own gate reads. The
+  // name beside it is a display field and is absent whenever the acknowledger no longer
+  // resolves, which would silently turn a cleared finding back into a blocking one.
   const blocking = findings.filter(
-    (finding) => finding.severity === 'hard' && !finding.acknowledged_by_name,
+    (finding) => finding.severity === 'hard' && !finding.acknowledged_at,
   );
   const unacknowledgedWarnings = findings.filter(
-    (finding) => finding.severity === 'warn' && !finding.acknowledged_by_name,
+    (finding) => finding.severity === 'warn' && !finding.acknowledged_at,
   );
   const isPublished = so.status === 'published' || so.status === 'amended';
+  // The server owns the export gate. `can_export` is optional so a row cached from before
+  // it shipped still offers the download it used to.
+  const canExport = so.can_export ?? Boolean(so.import_file_url);
 
   // Summed from the line amounts as decimal strings so the figure can be read straight off
   // the printed order. `total_amount` is shown beside it and disagreement is worth seeing.
@@ -137,6 +146,12 @@ export function SalesOrderDetailClient({
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/worksheet`}>
+              <Table2 className="size-4" aria-hidden />
+              Worksheet
+            </Link>
+          </Button>
           {/* Disabled rather than hidden while a difference is open: the reviewer has to
               learn WHY they cannot amend, and a button that vanished teaches nothing.
               The server refuses it too (AC-N5) - this only saves the round trip. */}
@@ -197,12 +212,20 @@ export function SalesOrderDetailClient({
               </Link>
             </Button>
           )}
+          {/* Shown while the order has a file, disabled while the server refuses it: the
+              route 422s an export the gate has not cleared, and a button that vanished
+              would not say that a blocking finding is what took it away. */}
           {so.import_file_url && (
-            <Button asChild variant="outline" size="sm">
-              <a href={so.import_file_url} download>
-                <Download className="size-4" aria-hidden />
-                Import file
-              </a>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => importFile.mutate(so.provisional_ref)}
+              disabled={!canExport || importFile.isPending}
+              title={canExport ? undefined : 'Clear the blocking findings first'}
+            >
+              <Download className="size-4" aria-hidden />
+              Import file
             </Button>
           )}
         </div>
@@ -321,8 +344,10 @@ export function SalesOrderDetailClient({
           blocking={blocking}
           unacknowledgedWarnings={unacknowledgedWarnings}
           submitting={publish.isPending}
+          downloading={importFile.isPending}
           onDone={() => setPublishing(false)}
           onPublish={() => publish.mutateAsync()}
+          onDownloadImportFile={() => importFile.mutate(so.provisional_ref)}
         />
       )}
     </div>

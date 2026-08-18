@@ -86,6 +86,10 @@ class ProjectSalesOrderRow(BaseModel):
     # Present only once the order is committed: nothing uncommitted should be importable
     # into AutoCount, and a published order the user comes back to still needs its file.
     import_file_url: Optional[str] = None
+    # Whether that url may be fetched. Not the same question: a published order carrying an
+    # unacknowledged hard finding keeps the address of its file and loses permission to
+    # take it, so the screens gate the download on this rather than on the url's presence.
+    can_export: bool = False
     line_count: int = 0
     total_amount: Optional[Decimal] = None
     hard_findings: int = 0
@@ -155,6 +159,66 @@ class ProjectSalesOrderDetail(ProjectSalesOrderRow):
 BuildSalesOrdersResponse.model_rebuild()
 
 
+# ------------------------------------------------------------ AutoCount worksheet
+
+
+class SalesOrderWorksheetHeader(BaseModel):
+    """The six refs AutoCount prints above the lines (SO397450).
+
+    `Provisional Ref` is the order's own and is not repeated here. A ref the document does
+    not carry is null rather than an empty string: the screen says "Not recorded", and the
+    CSV renders the same absence as its blank cell.
+    """
+
+    debtor: Optional[str] = None
+    your_ref_no: Optional[str] = None
+    our_ref_no: Optional[str] = None
+    our_qt_ref_no: Optional[str] = None
+    terms: Optional[str] = None
+
+
+class SalesOrderWorksheetLine(BaseModel):
+    """One worksheet row, in AutoCount's own column order.
+
+    Quantities and money are ``str``, not ``Decimal``, which is the one place in this module
+    that is true. They are the CSV's own cells: ``_qty_str`` writes 927 where a Decimal
+    renders 927.0000, and the screen and the file have to be the same document to the
+    character. ``reserve_qty`` is "0" on every row until a confirmed supply decision names a
+    source (Stage 1C).
+    """
+
+    line_no: int
+    item_code: Optional[str] = None
+    description: Optional[str] = None
+    reserve_qty: str
+    qty: str
+    delivery_date: Optional[date] = None
+    uom: Optional[str] = None
+    unit_price: str
+    discount: Optional[str] = None
+    total: str
+
+
+class SalesOrderWorksheet(BaseModel):
+    """`GET /sales-orders/{pso_id}/worksheet`: the document before it leaves the building."""
+
+    id: str
+    provisional_ref: str
+    autocount_doc_no: Optional[str] = None
+    status: str
+    area_group: Optional[str] = None
+    po_number: Optional[str] = None
+    customer_name: Optional[str] = None
+    header: SalesOrderWorksheetHeader
+    lines: List[SalesOrderWorksheetLine] = []
+    total_amount: str
+    findings: List[SODraftFindingRow] = []
+    # The server's own answer on whether this worksheet may leave the building, so the
+    # frontend never re-derives the publish gate.
+    can_export: bool = False
+    import_file_url: Optional[str] = None
+
+
 # ------------------------------------------------------------------- draft edits
 
 
@@ -190,14 +254,21 @@ class RegroupRequest(BaseModel):
 
 
 class PublishResponse(BaseModel):
+    """No `order_inquiry_id` (PLAN-scm-front-planning.md section 4, AC-D01).
+
+    Publish used to raise the inquiry in the same transaction and return its id. It no
+    longer raises one at all: the handoff to purchasing happens inside the atomic Project
+    SO confirmation, and carries the confirmed Buy residual only.
+    """
+
     status: str
     provisional_ref: str
     import_file_url: str
+    # The same answer the row and the worksheet carry, so the publish dialog's download
+    # button reads the server's gate rather than the presence of the url beside it.
+    can_export: bool = False
     total_amount: Optional[Decimal] = None
     line_count: int = 0
-    # P10: publishing raises the order inquiry in the same transaction, so the caller
-    # can go straight to what purchasing has just been told to do.
-    order_inquiry_id: Optional[str] = None
 
 
 # ------------------------------------------------------------------------ delta

@@ -77,6 +77,13 @@ export interface ProjectSalesOrderRow {
   purchase_order_id?: string | null;
   published_at?: string | null;
   import_file_url?: string | null;
+  /**
+   * Whether that url may actually be fetched, which is not the same question: a published
+   * order carrying an unacknowledged hard finding keeps the address of its file and loses
+   * permission to take it. Optional so a cached row from before the field shipped falls
+   * back to the url's presence rather than hiding the button.
+   */
+  can_export?: boolean;
 }
 
 export interface ProjectSalesOrderLine {
@@ -116,10 +123,62 @@ export interface ProjectSalesOrderDetail extends ProjectSalesOrderRow {
   findings: ProjectSalesOrderFinding[];
 }
 
+// ------------------------------------------------------------- AutoCount worksheet
+
+/**
+ * The six header refs AutoCount prints above the lines. `Provisional Ref` is the order's
+ * own `provisional_ref` and is not repeated here.
+ */
+export interface SalesOrderWorksheetHeader {
+  debtor?: string | null;
+  your_ref_no?: string | null;
+  our_ref_no?: string | null;
+  our_qt_ref_no?: string | null;
+  terms?: string | null;
+}
+
+/**
+ * One worksheet row, in AutoCount's own column order. Quantities and money stay decimal
+ * strings for the same reason the draft lines do. `reserve_qty` is 0 on every row until a
+ * confirmed supply decision names a source.
+ */
+export interface SalesOrderWorksheetLine {
+  line_no: number;
+  item_code?: string | null;
+  description?: string | null;
+  reserve_qty: string;
+  qty: string;
+  delivery_date?: string | null;
+  uom?: string | null;
+  unit_price: string;
+  discount?: string | null;
+  total: string;
+}
+
+/** `GET /sales-orders/{pso_id}/worksheet`. */
+export interface SalesOrderWorksheet {
+  id: string;
+  provisional_ref: string;
+  autocount_doc_no?: string | null;
+  status: SalesOrderStatus;
+  area_group?: string | null;
+  po_number?: string | null;
+  customer_name?: string | null;
+  header: SalesOrderWorksheetHeader;
+  lines: SalesOrderWorksheetLine[];
+  total_amount: string;
+  findings: ProjectSalesOrderFinding[];
+  /** The server's own answer on whether this worksheet may leave the building. */
+  can_export: boolean;
+  import_file_url?: string | null;
+}
+
 export interface SalesOrderPublishResult {
   status: string;
   provisional_ref: string;
   import_file_url?: string | null;
+  /** The same gate the row and the worksheet carry. Absent on an older backend. */
+  can_export?: boolean;
   autocount_doc_no?: string | null;
 }
 
