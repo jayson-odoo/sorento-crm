@@ -207,7 +207,9 @@ def test_project_id_filters_the_list_to_that_project_only():
         project_a = _project(db, company_id, owner)
         order_a = _project_order(db, project_a, area_group="TOWER")
         _project_line(db, order_a, product, line_no=1, delivery_date=D1)
-        project_b = _project(db, company_id, owner)
+        project_b = _project(
+            db, company_id, owner, title=f"{MAR} Setia Alam Lakeside {_uid()[:6]}"
+        )
         order_b = _project_order(db, project_b, area_group="TOWER")
         _project_line(db, order_b, product, line_no=1, delivery_date=D1)
         db.commit()

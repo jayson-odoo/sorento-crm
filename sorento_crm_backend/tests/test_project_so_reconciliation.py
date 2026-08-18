@@ -110,7 +110,10 @@ def _product(db) -> Product:
     return row
 
 
-def _project(db, company_id: str, owner: str):
+def _project(db, company_id: str, owner: str, *, title: str | None = None):
+    """Register one project. Pass `title` when a test registers TWO: the duplicate
+    detector matches titles fuzzily, and on an empty database two
+    "Tuju Residences <rand>" titles are similar enough to 409 the second."""
     from app.services.project_service import register_project
 
     return register_project(
@@ -118,7 +121,7 @@ def _project(db, company_id: str, owner: str):
         company_id=company_id,
         actor_user_id=owner,
         developer_party_id=None,
-        title=f"{MARKER} Tuju Residences {_uid()[:6]}",
+        title=title or f"{MARKER} Tuju Residences {_uid()[:6]}",
     )
 
 
