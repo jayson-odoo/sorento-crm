@@ -17,10 +17,13 @@
  * of the thing the server now owns, which is exactly the defect `priority.py` warns about.
  */
 import type {
+  BoardAxisRow,
+  BoardCell,
   BoardCommitPreview,
   BoardContribution,
   BoardDraft,
   BoardOrderStanding,
+  BoardRowAxis,
   ConfirmLine,
   ConfirmReserveComponent,
 } from '../types/fulfilmentPlanning.types';
@@ -353,4 +356,130 @@ export function amendNeedsReason(
     .filter((source) => source.kind === 'reserve')
     .reduce((total, source) => total + toMinor(source.qty), 0);
   return toMinor(reserveQty) !== proposed;
+}
+
+
+/**
+ * How one contribution is keyed and labelled on each row axis.
+ *
+ * The KEY is an id wherever an id exists and is never rendered; the LABEL is what the reader
+ * sees. Keeping them apart is the whole reason two customers with one name stay two rows - a
+ * board that merged them would show a single row totalling two companies' demand, and nothing
+ * on screen would say so.
+ *
+ * Where the server sends no id the label becomes the key, which IS that merge. It is a stated
+ * compromise for a payload that has not caught up, not the design: `customer_id` and
+ * `project_id` are what this is written against.
+ */
+function axisKeyOf(
+  contribution: BoardContribution,
+  axis: BoardRowAxis,
+): { key: string; label: string } {
+  if (axis === 'sales_order') {
+    return { key: contribution.sales_order_id, label: contribution.so_number };
+  }
+  if (axis === 'customer') {
+    const label = contribution.customer_name || 'Customer not recorded';
+    return { key: contribution.customer_id || `name:${label}`, label };
+  }
+  if (axis === 'project') {
+    const label = contribution.project_label || 'Not named on the order';
+    return { key: contribution.project_id || `name:${label}`, label };
+  }
+  return { key: contribution.item_code, label: contribution.item_code };
+}
+
+/**
+ * The board's rows and cells for one axis, out of the contributions already on hand.
+ *
+ * A pivot is a different GROUPING of the same lines, never a second fetch and never a second
+ * idea of what a line is - which is why a decision made under one axis is still that line's
+ * decision under another.
+ *
+ * The per-cell counts are summed from per-line facts the SERVER stated (`is_past`,
+ * `unplannable`, `contested`), never re-decided here. The stock position is left EMPTY on
+ * purpose: on-hand and free are facts about one product at one location, and a cell holding
+ * three products has no single stock position to state.
+ */
+export function boardAxis(
+  axis: BoardRowAxis,
+  // The SERVER's cells, not a flat list of contributions: the bucket a line sits in is a fact
+  // about the cell, so flattening first would lose the date and lump a year into one column.
+  cells: BoardCell[],
+): { rows: BoardAxisRow[]; cells: BoardCell[] } {
+  const rows = new Map<string, BoardAxisRow>();
+  const grouped = new Map<string, { row: BoardAxisRow; bucket: string; lines: BoardContribution[] }>();
+
+  for (const cell of cells) {
+    for (const contribution of cell.contributions) {
+      const { key, label } = axisKeyOf(contribution, axis);
+      if (!rows.has(key)) rows.set(key, { key, label });
+      const cellKey = `${key}|${cell.bucket_key}`;
+      const existing = grouped.get(cellKey);
+      if (existing) existing.lines.push(contribution);
+      else {
+        grouped.set(cellKey, {
+          row: rows.get(key) as BoardAxisRow,
+          bucket: cell.bucket_key,
+          lines: [contribution],
+        });
+      }
+    }
+  }
+
+  const pivoted: BoardCell[] = [...grouped.values()].map((entry) => ({
+    // Labelled by what the reader sees, keyed by what cannot collide.
+    item_code: entry.row.label,
+    row_key: entry.row.key,
+    bucket_key: entry.bucket,
+    total_qty: fromMinor(
+      entry.lines.reduce(
+        (total, line) => total + toMinor(line.qty_outstanding ?? line.qty),
+        0,
+      ),
+    ),
+    locations: [],
+    contributions: entry.lines,
+    unplannable_count: entry.lines.filter((line) => line.unplannable).length,
+    contested_count: entry.lines.filter((line) => line.contested).length,
+    past_count: entry.lines.filter((line) => line.is_past).length,
+  }));
+
+  return { rows: [...rows.values()].sort(byLabel), cells: pivoted };
+}
+
+/** Sales-order numbers, customer names and project labels all read best in their own order. */
+function byLabel(left: BoardAxisRow, right: BoardAxisRow): number {
+  return left.label.localeCompare(right.label);
+}
+
+/**
+ * Whether a row survives the board's search box.
+ *
+ * The captain asked for all four: "i also need sales order search, project search, customer
+ * search". A ROW stays when ANY of its lines matches ANY of them, and the cells in that row
+ * keep ALL their contributions - filtering inside a cell would print a total that is not the
+ * cell's, which is the same rule that keeps the selection totals still under a filter.
+ */
+export function rowMatchesSearch(
+  row: BoardAxisRow,
+  contributions: BoardContribution[],
+  search: string,
+): boolean {
+  const needle = search.trim().toLowerCase();
+  if (!needle) return true;
+  if (
+    row.label.toLowerCase().includes(needle) ||
+    (row.description ?? '').toLowerCase().includes(needle)
+  ) {
+    return true;
+  }
+  return contributions.some((contribution) =>
+    [
+      contribution.so_number,
+      contribution.customer_name,
+      contribution.project_label,
+      contribution.item_code,
+    ].some((field) => (field ?? '').toLowerCase().includes(needle)),
+  );
 }

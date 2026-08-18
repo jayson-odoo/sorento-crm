@@ -96,7 +96,14 @@ class BoardContribution(BaseModel):
     project_line_id: Optional[str] = None
     so_number: str
     customer_name: Optional[str] = None
+    #: Addressing only, and what a pivot BY CUSTOMER groups on: two different customers can
+    #: carry the same name, and grouping by the label would merge them.
+    customer_id: Optional[str] = None
     project_label: Optional[str] = None
+    #: What a pivot BY PROJECT groups on: the project string, normalised. An order adopted from
+    #: the AutoCount book has no project registration by design, so the string is the only
+    #: identity a project has here.
+    project_key: Optional[str] = None
     line_no: int
     item_code: str
     qty: str
@@ -143,6 +150,60 @@ class BorrowCandidate(BaseModel):
     free_qty: str
 
 
+class StockDetailSalesOrder(BaseModel):
+    """One document contributing to a location's SO Qty, as AutoCount's drill-down lists it."""
+
+    sales_order_id: str
+    so_number: str
+    customer_name: Optional[str] = None
+    customer_id: Optional[str] = None
+    project_label: Optional[str] = None
+    demand_class: Optional[str] = None
+    #: The document's own date, and the date the quantity is wanted.
+    doc_date: Optional[date] = None
+    delivery_date: Optional[date] = None
+    so_qty: str
+    #: A confirmed decision already covers this line: committed demand, not merely outstanding.
+    is_covered: bool = False
+
+
+class StockDetailIncoming(BaseModel):
+    """One undelivered supply-PO allocation: AutoCount's PO Qty, which in Sorento is the SPO."""
+
+    spo_number: Optional[str] = None
+    supplier_name: Optional[str] = None
+    expected_date: Optional[date] = None
+    spo_qty: str
+
+
+class StockDetail(BaseModel):
+    """`GET /project-sales/fulfilment-planning/stock-detail`.
+
+    AutoCount's Stock Status with Detail for one product at one location: the four totals, and
+    every document behind them. The lists ADD UP to the totals by construction - both are
+    summed from the same rows - so the drill-down can never justify a number the strip did not
+    print.
+    """
+
+    product_id: str
+    item_code: str
+    description: Optional[str] = None
+    warehouse_id: str
+    location: str
+    qty_on_hand: str
+    #: What the whole book still owes here, by the shared `is_open_demand()` rule, every demand
+    #: class: a dealer order occupies the stock as completely as a project one.
+    so_qty: str
+    spo_qty: str
+    #: `on hand - SO + SPO`, SIGNED. A negative is the point, not an error.
+    available_qty: str
+    qty_reserved: str
+    qty_held_by_decisions: str
+    qty_free: str
+    sales_orders: List[StockDetailSalesOrder] = []
+    incoming: List[StockDetailIncoming] = []
+
+
 class BoardCellLocation(BaseModel):
     """One (product, location) of a cell: what is owed there, and what is actually there.
 
@@ -155,6 +216,10 @@ class BoardCellLocation(BaseModel):
     """
 
     location: Optional[str] = None
+    #: Addressing only: what the stock drill-down is opened by. Never rendered, and never
+    #: derived on the client from a warehouse code or an item code.
+    product_id: Optional[str] = None
+    warehouse_id: Optional[str] = None
     #: The demand, under the name the frontend's source strip already reads.
     qty: str
     #: The same number, said unambiguously.
@@ -179,6 +244,14 @@ class BoardCellLocation(BaseModel):
     qty_owed_confirmed: Optional[str] = None
     #: Allocated on a supply PO and not yet received, at this location.
     qty_incoming: Optional[str] = None
+    # ---- AutoCount's Stock Status vocabulary, which is the strip's first line ----
+    #: "SO Qty": the same number as `qty_owed_all_orders`, under the word the planner uses.
+    so_qty: Optional[str] = None
+    #: "PO Qty" in AutoCount is the supplier order; in Sorento that is the SPO.
+    spo_qty: Optional[str] = None
+    #: "Available Qty": `on hand - SO + SPO`, SIGNED and never clamped - "oversold here by 632"
+    #: is the signal, and a floor of zero would report it as "nothing left" instead.
+    available_qty: Optional[str] = None
     incoming: List["BoardIncoming"] = []
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"
@@ -204,6 +277,12 @@ class BoardCell(BaseModel):
     contested_count: int = 0
     #: Contributions whose own required date is already past.
     past_count: int = 0
+    #: How many DISTINCT sales orders contribute here, and whether the ranking told any two of
+    #: these rows apart. "The active policy separates none of these rows" is TRUE of a cell
+    #: holding a single line, and of a cell holding several lines of one order, and in both
+    #: cases it reads as a policy failure when nothing failed. These say which case it is.
+    distinct_order_count: int = 0
+    rank_separates: bool = False
 
 
 class BoardProductRow(BaseModel):

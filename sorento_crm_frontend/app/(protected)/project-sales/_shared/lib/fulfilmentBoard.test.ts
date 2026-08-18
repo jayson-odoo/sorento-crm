@@ -8,10 +8,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   amendNeedsReason,
+  boardAxis,
   bucketLabelText,
   commitPreviewFor,
   confirmLinesFor,
   factorLabel,
+  rankingNote,
+  rowMatchesSearch,
   unpostableDecidedFor,
   standingsFor,
 } from './fulfilmentBoard';
@@ -994,5 +997,216 @@ describe('confirmLinesFor and a line with no mirror', () => {
       contributions.map((entry) => [entry.key, { verdict: 'rejected' as const, reason: 'No.' }]),
     );
     expect(unpostableDecidedFor(contributions, 'so-a', rejected)).toEqual([]);
+  });
+});
+
+/**
+ * Pivoting the row axis (the captain: "i wonder if we can view in the dimension of sales order
+ * also ... how about if we want vertical is sales order, is customer, is project").
+ *
+ * The dates stay across the top and the SAME contributions are grouped differently into cells.
+ * No second fetch, and no second idea of what a line is - which is why a decision made under
+ * one axis is still that line's decision under another.
+ */
+describe('boardAxis: pivoting the rows', () => {
+  function contributionsOf() {
+    const board = buildBoard(
+      [
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, item_code: 'AAA', qty: '10' }),
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, item_code: 'BBB', qty: '20' }),
+        line({ sales_order_id: 'so-b', so_number: 'SO000002', line_no: 3, item_code: 'AAA', qty: '5' }),
+      ],
+      { today: TODAY },
+    );
+    return board.cells;
+  }
+
+  it('keeps each date its own cell: a pivot changes the ROWS, never the columns', () => {
+    const board = buildBoard(
+      [
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, item_code: 'AAA', qty: '10', required_date: '2026-09-04' }),
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, item_code: 'BBB', qty: '20', required_date: '2026-12-01' }),
+      ],
+      { today: TODAY },
+    );
+
+    const { cells } = boardAxis('sales_order', board.cells);
+
+    // One order, two dates: two cells, not one lump of 30.
+    expect(cells).toHaveLength(2);
+    expect(cells.map((cell) => `${cell.bucket_key} ${cell.total_qty}`).sort()).toEqual([
+      '2026-08-31 10',
+      '2026-11-30 20',
+    ]);
+  });
+
+  it('groups a sales-order row by ORDER, across every product it owes', () => {
+    const { rows, cells } = boardAxis('sales_order', contributionsOf());
+
+    expect(rows.map((row) => row.label)).toEqual(['SO000001', 'SO000002']);
+    const first = cells.find((cell) => cell.row_key === 'so-a');
+    // Both of SO000001's lines, though they are different products.
+    expect(first?.contributions).toHaveLength(2);
+    expect(first?.total_qty).toBe('30');
+  });
+
+  it('keys a row on the ID and labels it with the name, so one name is never two customers merged', () => {
+    const shared = contributionsOf().map((cell) => ({
+      ...cell,
+      contributions: cell.contributions.map((entry) => ({
+        ...entry,
+        customer_name: 'ABC SDN BHD',
+        customer_id: entry.sales_order_id === 'so-a' ? 'cust-1' : 'cust-2',
+      })),
+    }));
+
+    const { rows } = boardAxis('customer', shared);
+
+    expect(rows.map((row) => row.key)).toEqual(['cust-1', 'cust-2']);
+    expect(rows.map((row) => row.label)).toEqual(['ABC SDN BHD', 'ABC SDN BHD']);
+  });
+
+  it('groups a project row on its own key', () => {
+    const tagged = contributionsOf().map((cell) => ({
+      ...cell,
+      contributions: cell.contributions.map((entry) => ({
+        ...entry,
+        project_id: entry.sales_order_id === 'so-a' ? 'proj-1' : 'proj-2',
+        project_label: entry.sales_order_id === 'so-a' ? 'TOWER A' : 'TOWER B',
+      })),
+    }));
+
+    const { rows, cells } = boardAxis('project', tagged);
+
+    expect(rows.map((row) => `${row.key} ${row.label}`)).toEqual([
+      'proj-1 TOWER A',
+      'proj-2 TOWER B',
+    ]);
+    expect(cells.find((cell) => cell.row_key === 'proj-1')?.total_qty).toBe('30');
+  });
+
+  it('orders sales orders by number, and customers and projects alphabetically', () => {
+    const jumbled = contributionsOf().map((cell) => ({
+      ...cell,
+      contributions: cell.contributions.map((entry) => ({
+        ...entry,
+        customer_id: entry.sales_order_id === 'so-a' ? 'c-z' : 'c-a',
+        customer_name: entry.sales_order_id === 'so-a' ? 'ZULU SDN BHD' : 'ALPHA SDN BHD',
+      })),
+    }));
+    expect(boardAxis('customer', jumbled).rows.map((row) => row.label)).toEqual([
+      'ALPHA SDN BHD',
+      'ZULU SDN BHD',
+    ]);
+    expect(boardAxis('sales_order', jumbled).rows.map((row) => row.label)).toEqual([
+      'SO000001',
+      'SO000002',
+    ]);
+  });
+
+  it('carries the per-line facts up into the cell, rather than re-deriving them', () => {
+    const flagged = contributionsOf().map((cell) => ({
+      ...cell,
+      contributions: cell.contributions.map((entry) => ({
+        ...entry,
+        is_past: entry.item_code === 'AAA',
+        unplannable: entry.line_no === 2,
+        contested: entry.line_no === 3,
+      })),
+    }));
+
+    const cell = boardAxis('sales_order', flagged).cells.find((c) => c.row_key === 'so-a');
+
+    expect(cell?.past_count).toBe(1);
+    expect(cell?.unplannable_count).toBe(1);
+    expect(cell?.contested_count).toBe(0);
+  });
+
+  it('states no stock position on a pivoted cell, because it spans several products', () => {
+    // On-hand and free are facts about ONE product at ONE location. A cell holding three
+    // products has no single stock position, so it claims none rather than inventing one.
+    const cell = boardAxis('sales_order', contributionsOf()).cells[0];
+    expect(cell.locations).toEqual([]);
+  });
+
+  it('says how many lines it groups, so the reader knows what a cell holds', () => {
+    const cell = boardAxis('sales_order', contributionsOf()).cells.find(
+      (entry) => entry.row_key === 'so-a',
+    );
+    expect(cell?.contributions.length).toBe(2);
+  });
+
+  it('falls back to the label when the server sends no id, and says nothing false about it', () => {
+    const unkeyed = contributionsOf().map((cell) => ({
+      ...cell,
+      contributions: cell.contributions.map((entry) => ({
+        ...entry,
+        customer_id: null,
+        customer_name: 'ONLY ONE SDN BHD',
+      })),
+    }));
+    const { rows } = boardAxis('customer', unkeyed);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('ONLY ONE SDN BHD');
+  });
+});
+
+/**
+ * Searching the board across the four things a planner knows an order by.
+ *
+ * A ROW survives if ANY of its lines matches. The cells in that row still hold all their
+ * contributions: filtering inside a cell would print a total that is not the cell's.
+ */
+describe('rowMatchesSearch', () => {
+  const contributions = [
+    {
+      key: 'k1',
+      sales_order_id: 'so-a',
+      so_number: 'SO391698',
+      customer_name: 'OIB CONSTRUCTION SDN BHD',
+      project_label: 'MYRA DAHLIA 9307',
+      item_code: 'WESERP10B',
+    },
+  ] as BoardContribution[];
+
+  const row = { key: 'WESERP10B', label: 'WESERP10B', description: 'Wall socket 10A' };
+
+  it('matches on any of the four, case-insensitively', () => {
+    for (const needle of ['so3916', 'oib const', 'myra', 'weserp', 'wall socket']) {
+      expect(rowMatchesSearch(row, contributions, needle)).toBe(true);
+    }
+  });
+
+  it('does not match a needle none of them carries', () => {
+    expect(rowMatchesSearch(row, contributions, 'zzzz')).toBe(false);
+  });
+
+  it('keeps every row when nothing is typed', () => {
+    expect(rowMatchesSearch(row, contributions, '   ')).toBe(true);
+  });
+});
+
+/**
+ * The ranking wording, from ONE place.
+ *
+ * The backend lane is reconsidering what the single-line and single-order cases should say -
+ * "the policy separates none of these rows" is true there but reads as a policy failure, when
+ * the real cause is that one order's lines share a customer, a date and a class. So the words
+ * live in one function keyed on the flags, and changing them later is an edit here rather than
+ * a hunt through two components.
+ */
+describe('rankingNote', () => {
+  const ranked = { name: 'Fair', factors: {}, demand_class_weights: {}, is_preview: false, discriminates_nothing: false };
+
+  it('says nothing at all when the policy ranks the rows', () => {
+    expect(rankingNote(ranked)).toBeNull();
+  });
+
+  it('gives the cell and the banner their wording together, so they cannot drift', () => {
+    const note = rankingNote({ ...ranked, discriminates_nothing: true });
+    expect(note?.cell).toBe('Not ranked');
+    expect(note?.banner).toBe(
+      'This policy weights nothing that separates these rows, so every one scores the same and the ranking is flat.',
+    );
   });
 });

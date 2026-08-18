@@ -24,9 +24,11 @@ import {
 } from '../../_shared/hooks/useFulfilmentPlanning';
 import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningService';
 import {
+  boardAxis,
   bucketLabelText,
   commitPreviewFor,
   factorLabel,
+  rowMatchesSearch,
   confirmLinesFor,
   plannedLineCount,
   standingsFor,
@@ -40,6 +42,7 @@ import type {
   BoardDraft,
   BoardGranularity,
   BoardOrderStanding,
+  BoardRowAxis,
   BoardPolicy,
   SupplyFailingLine,
 } from '../../_shared/types/fulfilmentPlanning.types';
@@ -61,6 +64,33 @@ const GRANULARITY_OPTIONS = [
  * the normal case for a shareable URL, not an attack.
  */
 const GRANULARITIES: BoardGranularity[] = ['day', 'week', 'month'];
+
+/**
+ * What the vertical axis can be, and what the reader calls each one.
+ *
+ * Product first because it is the default and the shape the board shipped as; the other three
+ * are the captain's own list, in the order they asked for them.
+ */
+const ROW_AXIS_OPTIONS = [
+  { value: 'product', label: 'Product' },
+  { value: 'sales_order', label: 'Sales order' },
+  { value: 'customer', label: 'Customer' },
+  { value: 'project', label: 'Project' },
+];
+
+/** Singular and plural for the "N of M" line, so it names what the rows actually are. */
+const ROW_AXIS_NOUNS: Record<BoardRowAxis, string> = {
+  product: 'products',
+  sales_order: 'sales orders',
+  customer: 'customers',
+  project: 'projects',
+};
+
+const ROW_AXES: BoardRowAxis[] = ['product', 'sales_order', 'customer', 'project'];
+
+function rowAxisFrom(value: string | null): BoardRowAxis {
+  return ROW_AXES.includes(value as BoardRowAxis) ? (value as BoardRowAxis) : 'product';
+}
 
 function granularityFrom(value: string | null): BoardGranularity {
   return GRANULARITIES.includes(value as BoardGranularity)
@@ -105,6 +135,9 @@ export function FulfilmentBoardPanel({
   const [productSearch, setProductSearch] = React.useState(
     () => searchParams.get('product') ?? '',
   );
+  const [rowAxis, setRowAxis] = React.useState<BoardRowAxis>(() =>
+    rowAxisFrom(searchParams.get('rows')),
+  );
   const [draft, setDraft] = React.useState<BoardDraft>({});
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
   const [previewPolicy, setPreviewPolicy] = React.useState(false);
@@ -118,12 +151,16 @@ export function FulfilmentBoardPanel({
     const next = new URLSearchParams(searchParams.toString());
     if (granularity === 'week') next.delete('granularity');
     else next.set('granularity', granularity);
+    // Absent when it is the default, the same idiom as the granularity, so a link carries only
+    // what the sender actually changed.
+    if (rowAxis === 'product') next.delete('rows');
+    else next.set('rows', rowAxis);
     if (productSearch.trim()) next.set('product', productSearch.trim());
     else next.delete('product');
     const query = next.toString();
     if (query === searchParams.toString()) return;
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  }, [granularity, productSearch, pathname, router, searchParams]);
+  }, [granularity, rowAxis, productSearch, pathname, router, searchParams]);
 
   const board = usePlanningBoard(
     soNumbers,
@@ -361,16 +398,48 @@ export function FulfilmentBoardPanel({
    * this produces are about the FILTER; every headline number on this screen stays
    * selection-scoped, exactly as it does under the day window.
    */
-  const visibleProductRows = React.useMemo(() => {
-    const needle = productSearch.trim().toLowerCase();
-    const rows = board.data?.productRows ?? [];
-    if (!needle) return rows;
-    return rows.filter(
-      (row) =>
-        row.item_code.toLowerCase().includes(needle) ||
-        (row.description ?? '').toLowerCase().includes(needle),
-    );
-  }, [board.data, productSearch]);
+  /**
+   * The rows and cells for the chosen axis.
+   *
+   * On the PRODUCT axis these are the server's own, untouched: its cells carry the stock
+   * position per product and location, which no client-side regrouping could reproduce. The
+   * pivoted axes are the same contributions grouped differently - one payload, one idea of what
+   * a line is.
+   */
+  const axis = React.useMemo(() => {
+    const cells = board.data?.cells ?? [];
+    if (rowAxis === 'product') {
+      return {
+        rows: (board.data?.productRows ?? []).map((row) => ({
+          key: row.item_code,
+          label: row.item_code,
+          description: row.description,
+        })),
+        cells,
+      };
+    }
+    return boardAxis(rowAxis, cells);
+  }, [board.data, rowAxis]);
+
+  /** Lines per row, so the search can ask whether ANY of a row's lines matches. */
+  const linesByRow = React.useMemo(() => {
+    const map = new Map<string, BoardContribution[]>();
+    for (const cell of axis.cells) {
+      const key = cell.row_key ?? cell.item_code;
+      const held = map.get(key);
+      if (held) held.push(...cell.contributions);
+      else map.set(key, [...cell.contributions]);
+    }
+    return map;
+  }, [axis]);
+
+  const visibleProductRows = React.useMemo(
+    () =>
+      axis.rows.filter((row) =>
+        rowMatchesSearch(row, linesByRow.get(row.key) ?? [], productSearch),
+      ),
+    [axis, linesByRow, productSearch],
+  );
 
   const filtering = productSearch.trim().length > 0;
 
@@ -402,13 +471,18 @@ export function FulfilmentBoardPanel({
   // decision pills inside it would keep the shape they had when it was opened.
   const liveCell = React.useMemo(() => {
     if (!openCell || !board.data) return null;
+    // Re-read from the cells of the CURRENT axis, keyed the way that axis keys them. Looking it
+    // up in the server's product cells found nothing on a pivoted board, so the dialog simply
+    // did not open.
+    const openKey = openCell.row_key ?? openCell.item_code;
     return (
-      board.data.cells.find(
+      axis.cells.find(
         (cell) =>
-          cell.item_code === openCell.item_code && cell.bucket_key === openCell.bucket_key,
+          (cell.row_key ?? cell.item_code) === openKey &&
+          cell.bucket_key === openCell.bucket_key,
       ) ?? null
     );
-  }, [openCell, board.data]);
+  }, [openCell, board.data, axis]);
 
   /**
    * How many LINES of the selection are already past their required date.
@@ -448,8 +522,8 @@ export function FulfilmentBoardPanel({
             aria-hidden
           />
           <Input
-            placeholder="Search product"
-            aria-label="Search product"
+            placeholder="Search sales order, customer, project or product"
+            aria-label="Search sales order, customer, project or product"
             value={productSearch}
             onChange={(event) => setProductSearch(event.target.value)}
             className="w-full ps-9"
@@ -481,6 +555,22 @@ export function FulfilmentBoardPanel({
               </Button>
             </>
           )}
+          {/* Labelled in words, because "Product / Sales order / Customer / Project" in a bare
+              select says nothing about what it does to the grid. The captain wrote it as
+              "Rows: Product | Sales order | Customer | Project", so that is what it reads. */}
+          <div className="flex w-full items-center gap-2 sm:w-auto">
+            <label htmlFor="rows" className="text-sm text-muted-foreground">
+              Rows
+            </label>
+            <div className="w-full sm:w-40">
+              <SearchableSelect
+                id="rows"
+                value={rowAxis}
+                onChange={(value) => setRowAxis(value as BoardRowAxis)}
+                options={ROW_AXIS_OPTIONS}
+              />
+            </div>
+          </div>
           <div className="w-full sm:w-44">
             <SearchableSelect
               value={granularity}
@@ -597,7 +687,7 @@ export function FulfilmentBoardPanel({
               fraction, so a narrowed board is never mistaken for the whole one. */}
           {filtering && (
             <p className="text-sm text-muted-foreground tabular-nums">
-              {`${visibleProductRows.length} of ${board.data.productRows.length} products`}
+              {`${visibleProductRows.length} of ${axis.rows.length} ${ROW_AXIS_NOUNS[rowAxis]}`}
             </p>
           )}
 
@@ -613,8 +703,9 @@ export function FulfilmentBoardPanel({
           ) : (
           <FulfilmentBoardMatrix
             dateBuckets={board.data.dateBuckets}
-            productRows={visibleProductRows}
-            cells={board.data.cells}
+            rows={visibleProductRows}
+            rowHeader={ROW_AXIS_OPTIONS.find((option) => option.value === rowAxis)?.label ?? 'Product'}
+            cells={axis.cells}
             decidedKeys={decidedKeys}
             onOpenCell={(cell) => setOpenCell(cell)}
           />

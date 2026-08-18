@@ -159,13 +159,33 @@ def _bucket_label(key: str, granularity: str) -> str:
     return f"w/c {when.day} {month} {when.year}"
 
 
-def _project_label(order: SalesOrder) -> Optional[str]:
-    note = (order.internal_note or "").strip()
-    if not note:
+def _project_key(label: Optional[str]) -> Optional[str]:
+    """A stable key a pivot may group a project by.
+
+    The board can be read with SALES ORDER, CUSTOMER or PROJECT down the side instead of
+    product, and a pivot must never merge two subjects that merely read alike. For a customer
+    that is `customer_id`. For a project there is no id to use: an order adopted from the
+    AutoCount book has no project registration by design (plan section 4), and the project
+    string the sheet named is the only identity it has. So the key is that string, normalised -
+    case-folded with its whitespace collapsed - which merges "PP CHIN HIN / KIN TONG" with
+    "PP Chin Hin /  Kin Tong" and nothing else. Null when the order names no project.
+    """
+    if not label:
         return None
-    if note.startswith(_PROJECT_NOTE_PREFIX):
-        return note[len(_PROJECT_NOTE_PREFIX):].strip() or None
-    return note
+    return " ".join(label.split()).casefold() or None
+
+
+def _project_label_from_note(note: Optional[str]) -> Optional[str]:
+    text_value = (note or "").strip()
+    if not text_value:
+        return None
+    if text_value.startswith(_PROJECT_NOTE_PREFIX):
+        return text_value[len(_PROJECT_NOTE_PREFIX):].strip() or None
+    return text_value
+
+
+def _project_label(order: SalesOrder) -> Optional[str]:
+    return _project_label_from_note(order.internal_note)
 
 
 class _Row:
@@ -178,7 +198,7 @@ class _Row:
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
         "sources", "contested", "qty_ordered", "qty_delivered", "proposed", "free_before",
         "raw_facts", "taken_before", "last_taker", "borrow_candidates",
-        "project_sales_order_id", "project_line_id", "warehouse_ids",
+        "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -390,6 +410,133 @@ class FulfilmentBoardService:
             "contested_line_count": sum(1 for row in rows if row.contested),
         }
 
+    # ----------------------------------------------------- the stock drill-down
+
+    def stock_detail(self, product_id: str, warehouse_id: str) -> Dict[str, Any]:
+        """One product at one location: the four totals, and the documents behind them.
+
+        AutoCount's Stock Status with Detail, which is the screen the captain checks stock on:
+        On Hand, SO Qty, PO Qty, Available - and under it, every document contributing to those
+        totals. "so when a SO is created, it already flows to the outstanding quantity same
+        goes for PO created, so it cannot be all quantity are free because we got so many
+        outstanding SO, right?"
+
+        The list ADDS UP to the total by construction: both are summed from the same rows, so a
+        drill-down can never justify a number the strip did not print. The predicate is the
+        shared one - `SalesOrder.status = 'open'` plus `is_open_demand()` - so this screen,
+        `/scm/sales-orders` and the netting engine cannot disagree about what is outstanding.
+        Deliberately every demand class, because a dealer order occupies the stock as
+        completely as a project one does.
+
+        Bounded by nature: one product at one location. The widest on the live book is 289
+        sales-order lines (B2155-NL-BLUE at BRW-BB), so this is a page, not a report.
+        """
+        product = (
+            self.db.query(Product).filter(Product.id == product_id).first()
+            if product_id
+            else None
+        )
+        warehouse = (
+            self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+            if warehouse_id
+            else None
+        )
+        if product is None or warehouse is None:
+            raise AppException(
+                status_code=404,
+                message="That product or location does not exist.",
+                code="stock_detail_not_found",
+            )
+
+        owed = demand_qty()
+        rows = (
+            self.db.query(
+                SalesOrder.id.label("sales_order_id"),
+                SalesOrder.so_number,
+                SalesOrder.order_date,
+                SalesOrder.internal_note,
+                SalesOrder.demand_class,
+                Customer.customer_name,
+                Customer.id.label("customer_id"),
+                SalesOrderLine.required_date,
+                owed.label("owed"),
+                case((~is_plan_demand_line(), True), else_=False).label("covered"),
+            )
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+            .filter(
+                SalesOrderLine.product_id == product_id,
+                SalesOrderLine.warehouse_id == warehouse_id,
+                SalesOrder.status == "open",
+                is_open_demand(),
+            )
+            .order_by(SalesOrderLine.required_date, SalesOrder.so_number)
+            .all()
+        )
+
+        sales_orders = [
+            {
+                "sales_order_id": str(row.sales_order_id),
+                "so_number": row.so_number,
+                "customer_name": row.customer_name,
+                "customer_id": str(row.customer_id) if row.customer_id else None,
+                "project_label": _project_label_from_note(row.internal_note),
+                "demand_class": row.demand_class,
+                #: AutoCount prints the document's own date and the date it is wanted.
+                "doc_date": row.order_date,
+                "delivery_date": row.required_date,
+                "so_qty": qty_text(_dec(row.owed)),
+                #: A confirmed decision already covers this line, so its demand is committed
+                #: rather than merely outstanding.
+                "is_covered": bool(row.covered),
+            }
+            for row in rows
+        ]
+        incoming_rows = self.supply.incoming_by_location([product_id], [warehouse_id]).get(
+            (str(product_id), str(warehouse_id)), []
+        )
+        incoming = [
+            {
+                "spo_number": ref.spo_number,
+                "supplier_name": ref.supplier_name,
+                "expected_date": ref.arrival_date,
+                "spo_qty": qty_text(ref.qty),
+            }
+            for ref in sorted(
+                incoming_rows,
+                key=lambda ref: (ref.arrival_date is None, ref.arrival_date, ref.spo_number),
+            )
+        ]
+
+        levels = self.supply.stock_levels_by_location([product_id])
+        on_hand, reserved = levels.get((str(product_id), str(warehouse_id)), (_ZERO, _ZERO))
+        so_qty = sum((_dec(row.owed) for row in rows), _ZERO)
+        spo_qty = sum((ref.qty for ref in incoming_rows), _ZERO)
+        free = self.supply.free_stock_by_location([product_id]).get(
+            (str(product_id), str(warehouse_id)), _ZERO
+        )
+        held = self.supply.held_stock_by_location([product_id]).get(
+            (str(product_id), str(warehouse_id)), _ZERO
+        )
+        return {
+            "product_id": str(product.id),
+            "item_code": product.product_code,
+            "description": product.product_name,
+            "warehouse_id": str(warehouse.id),
+            "location": warehouse.warehouse_code,
+            "qty_on_hand": qty_text(on_hand),
+            "so_qty": qty_text(so_qty),
+            "spo_qty": qty_text(spo_qty),
+            # Signed, never clamped: this is where "oversold by 632" is said out loud.
+            "available_qty": qty_text(on_hand - so_qty + spo_qty),
+            # The engine's own figures, so the other reconciliation still closes.
+            "qty_reserved": qty_text(reserved),
+            "qty_held_by_decisions": qty_text(held),
+            "qty_free": qty_text(free),
+            "sales_orders": sales_orders,
+            "incoming": incoming,
+        }
+
     # ---------------------------------------------------------------- policy
 
     def _policy(
@@ -505,6 +652,7 @@ class FulfilmentBoardService:
             # absent key would both make the screen guess.
             row.project_sales_order_id = addressing.get("project_sales_order_id")
             row.project_line_id = addressing.get("project_line_id")
+            row.project_key = _project_key(row.project_label)
             row.payment_terms_days = terms.get(customer_id or "")
             rows.append(row)
         return rows
@@ -927,6 +1075,13 @@ class FulfilmentBoardService:
             "contributions": [self._contribution(row) for row in members],
             "unplannable_count": sum(1 for row in members if row.unplannable),
             "contested_count": sum(1 for row in members if row.contested),
+            #: How many DISTINCT sales orders contribute here, and whether the ranking actually
+            #: told any two of these rows apart. "The active policy separates none of these
+            #: rows" is true of a cell holding one line, and of a cell holding several lines of
+            #: one order - and in both cases it reads as a policy failure when nothing failed.
+            #: These two say which case it is, so the screen can word it honestly.
+            "distinct_order_count": len({row.sales_order_id for row in members}),
+            "rank_separates": len({round(float(row.rank_score), 6) for row in members}) > 1,
             # Lines whose OWN required date is already past. Counted here so the screen can say
             # "160 of 160 lines are past their required date" without walking every
             # contribution, which is the information the aggregate Overdue column used to carry
@@ -951,8 +1106,23 @@ class FulfilmentBoardService:
         on_hand, reserved = self._levels.get(key, (None, None))
         incoming = self._incoming.get(key, [])
         stated = location is not None and first.warehouse_id is not None
+        owed, _covered = self._pressure.get(key, (None, None))
+        incoming_qty = sum((ref.qty for ref in incoming), _ZERO) if stated else None
+        # AutoCount's own arithmetic: on hand, less what the book has sold, plus what is on the
+        # water. It may be NEGATIVE and is never clamped - "oversold here by 632" is the signal
+        # a planner needs, and a floor of zero would report it as "nothing left", which is a
+        # different and less useful fact.
+        available = (
+            (on_hand or _ZERO) - (owed or _ZERO) + (incoming_qty or _ZERO)
+            if stated and on_hand is not None
+            else None
+        )
         return {
             "location": location,
+            #: Addressing only: the stock drill-down is opened by id, never by resolving a
+            #: warehouse code or an item code back into one.
+            "product_id": first.product_id if stated else None,
+            "warehouse_id": first.warehouse_id if stated else None,
             #: The demand, kept under its old name because the frontend's source strip reads
             #: it. `qty_demand` is the same number said unambiguously.
             "qty": qty_text(sum((row.qty for row in rows), _ZERO)),
@@ -989,9 +1159,15 @@ class FulfilmentBoardService:
                 qty_text(self._pressure.get(key, (_ZERO, _ZERO))[1]) if stated else None
             ),
             #: Still to arrive at this location: allocated on a supply PO, not yet received.
-            "qty_incoming": (
-                qty_text(sum((ref.qty for ref in incoming), _ZERO)) if stated else None
-            ),
+            "qty_incoming": qty_text(incoming_qty) if stated else None,
+            # ---- AutoCount's Stock Status vocabulary, which is what the planner reads ----
+            #: "SO Qty": everything the book still owes here. The same number as
+            #: `qty_owed_all_orders`, under the word the captain uses.
+            "so_qty": qty_text(owed) if stated and owed is not None else None,
+            #: "PO Qty" in AutoCount is the supplier order; in Sorento that is the SPO.
+            "spo_qty": qty_text(incoming_qty) if stated else None,
+            #: "Available Qty": on hand - SO + SPO. Signed.
+            "available_qty": qty_text(available) if available is not None else None,
             "incoming": [
                 {
                     "spo_number": ref.spo_number,
@@ -1021,7 +1197,12 @@ class FulfilmentBoardService:
             "project_line_id": row.project_line_id,
             "so_number": row.so_number,
             "customer_name": row.customer_name,
+            #: Addressing only, and the key a pivot BY CUSTOMER groups on: two different
+            #: customers can carry the same name, and grouping by the label would merge them.
+            "customer_id": row.customer_id,
             "project_label": row.project_label,
+            #: The key a pivot BY PROJECT groups on (see `_project_key`).
+            "project_key": row.project_key,
             "line_no": row.line_no,
             "item_code": row.item_code,
             #: The owed quantity, kept under its old name because the frontend reads it.

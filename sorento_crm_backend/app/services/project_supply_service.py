@@ -58,7 +58,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
-from app.models.procurement import InboundShipment, SPOAllocation
+from app.models.procurement import InboundShipment, SPOAllocation, Supplier
 from app.models.product import Product
 from app.models.project_so import (
     ALLOC_SOURCE_BRW,
@@ -161,6 +161,9 @@ class _SpoRow:
     allocation_id: str
     arrival_date: Optional[date]
     qty: Decimal
+    #: Who it is coming from. Display only, and defaulted so every existing construction of
+    #: this row keeps working; the sheet does not read it, the stock drill-down does.
+    supplier_name: Optional[str] = None
 
 
 @dataclass
@@ -1923,10 +1926,12 @@ class ProjectSupplyService:
                 SPOAllocation.quantity_received,
                 InboundShipment.eta_delay_date,
                 InboundShipment.estimated_arrival_date,
+                Supplier.supplier_name,
             )
             .join(
                 InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
             )
+            .outerjoin(Supplier, Supplier.id == InboundShipment.supplier_id)
             .filter(
                 SPOAllocation.product_id.in_(pids),
                 SPOAllocation.warehouse_id.in_(wids),
@@ -1950,6 +1955,7 @@ class ProjectSupplyService:
                     allocation_id=str(row.id),
                     arrival_date=row.eta_delay_date or row.estimated_arrival_date,
                     qty=balance,
+                    supplier_name=row.supplier_name,
                 )
             )
         return out

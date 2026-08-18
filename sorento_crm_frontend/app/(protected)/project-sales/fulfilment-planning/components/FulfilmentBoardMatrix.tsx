@@ -4,9 +4,9 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { bucketLabelText } from '../../_shared/lib/fulfilmentBoard';
 import type {
+  BoardAxisRow,
   BoardCell,
   BoardDateBucket,
-  BoardProductRow,
 } from '../../_shared/types/fulfilmentPlanning.types';
 
 const PRODUCT_COL = 'w-[190px] min-w-[190px] max-w-[190px]';
@@ -41,10 +41,15 @@ const PAST_CELL_BG = 'bg-[color-mix(in_oklab,var(--destructive)_6%,var(--backgro
  * The planning board: DATE BUCKETS across the top, PRODUCTS down the side, each cell the
  * quantity of that product owed by that date across every selected sales order (PLAN 13).
  *
- * The axis words are `dateBuckets` and `productRows` deliberately. The delivery-schedule
- * matrix calls a PRODUCT a `column` - its API's word, kept on purpose even after that grid was
- * transposed to this same orientation - so borrowing its vocabulary here would leave two grids
- * in the same module using one word for opposite things.
+ * The axis words are `dateBuckets` and `rows` deliberately. The delivery-schedule matrix calls
+ * a PRODUCT a `column` - its API's word, kept on purpose even after that grid was transposed to
+ * this same orientation - so borrowing its vocabulary here would leave two grids in the same
+ * module using one word for opposite things.
+ *
+ * The vertical axis is no longer always products: it pivots to sales order, customer or project
+ * (the captain: "how about if we want vertical is sales order, is customer, is project"). Each
+ * row carries a `key` that is an id and a `label` that is what the reader sees, so two customers
+ * with one name are two rows and neither shows an id.
  *
  * NOT a DataGrid, and this is the same carve-out that file documents: here the COLUMNS ARE
  * DATA. There is one per date bucket, there are as many as the selection needs, and no column
@@ -68,21 +73,29 @@ const PAST_CELL_BG = 'bg-[color-mix(in_oklab,var(--destructive)_6%,var(--backgro
  */
 export function FulfilmentBoardMatrix({
   dateBuckets,
-  productRows,
+  rows,
+  rowHeader,
   cells,
   decidedKeys,
   onOpenCell,
 }: {
   dateBuckets: BoardDateBucket[];
-  productRows: BoardProductRow[];
+  /** Whatever the vertical axis is: products, sales orders, customers or projects. */
+  rows: BoardAxisRow[];
+  /** What the corner cell calls them. */
+  rowHeader: string;
   cells: BoardCell[];
   /** Contribution keys that carry a verdict, so a fully-decided cell can say so. */
   decidedKeys: Set<string>;
   onOpenCell: (cell: BoardCell) => void;
 }) {
+  // Keyed by the cell's ROW KEY, which is the item code on the product axis and an id on the
+  // pivoted ones - two customers sharing a name must not share a row.
   const byKey = React.useMemo(() => {
     const map = new Map<string, BoardCell>();
-    for (const cell of cells) map.set(`${cell.item_code}|${cell.bucket_key}`, cell);
+    for (const cell of cells) {
+      map.set(`${cell.row_key ?? cell.item_code}|${cell.bucket_key}`, cell);
+    }
     return map;
   }, [cells]);
 
@@ -102,7 +115,7 @@ export function FulfilmentBoardMatrix({
                 'sticky left-0 top-0 border-b border-e border-border bg-muted px-2 py-2 text-start align-bottom font-medium',
               )}
             >
-              Product
+              {rowHeader}
             </th>
             {dateBuckets.map((bucket) => (
               <th
@@ -135,8 +148,8 @@ export function FulfilmentBoardMatrix({
         </thead>
 
         <tbody>
-          {productRows.map((product) => (
-            <tr key={product.item_code}>
+          {rows.map((product) => (
+            <tr key={product.key}>
               <th
                 scope="row"
                 className={cn(
@@ -145,17 +158,20 @@ export function FulfilmentBoardMatrix({
                   'sticky left-0 border-b border-e border-border bg-background px-2 py-1.5 text-start font-medium',
                 )}
               >
-                <span className="block truncate" title={product.item_code}>
-                  {product.item_code}
+                {/* The label alone. A product's name is searchable but not printed here: the
+                    first column is sticky and every character of it costs width on a board
+                    that already spans years. */}
+                <span className="block truncate" title={product.description || product.label}>
+                  {product.label}
                 </span>
               </th>
 
               {dateBuckets.map((bucket) => {
-                const cell = byKey.get(`${product.item_code}|${bucket.key}`);
+                const cell = byKey.get(`${product.key}|${bucket.key}`);
                 return (
                   <td
                     key={bucket.key}
-                    data-cell={`${product.item_code}|${bucket.key}`}
+                    data-cell={`${product.key}|${bucket.key}`}
                     className={cn(
                       DATE_COL,
                       'border-b border-e border-border p-0 align-top',

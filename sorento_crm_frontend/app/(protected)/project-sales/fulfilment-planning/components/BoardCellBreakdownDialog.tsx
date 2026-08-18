@@ -138,6 +138,23 @@ export function BoardCellBreakdownDialog({
         meta: { headerTitle: 'Sales order' },
       },
       {
+        // The product per line. Redundant on the product axis, where the title already names
+        // it, and load-bearing on the pivoted ones: a sales-order row's cell holds several
+        // products, and a list of lines that does not say which product each one is cannot be
+        // read at all.
+        id: 'item_code',
+        accessorFn: (row) => row.item_code,
+        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate text-sm" title={row.original.item_code}>
+            {row.original.item_code}
+          </span>
+        ),
+        size: 150,
+        minSize: 120,
+        meta: { headerTitle: 'Product' },
+      },
+      {
         id: 'customer_name',
         accessorFn: (row) => row.customer_name ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,

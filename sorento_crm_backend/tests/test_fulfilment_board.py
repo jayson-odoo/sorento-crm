@@ -2178,3 +2178,327 @@ def test_a_refused_reserve_says_which_warehouse_and_what_to_do_about_it():
         assert nothing_free.startswith(f"{own.warehouse_code} has nothing free for this line")
         assert "10" in nothing_free, "it must say how much was asked for"
         assert "Buy that quantity instead" in nothing_free
+
+
+# --------------------------------------------------------------------------- #
+# AutoCount's vocabulary on the strip
+#
+# The captain, reading "BRW-BB - 80 owed - 1015 on hand - 1015 free - 0 incoming": "i am trying
+# to make sense of the 1015 on hand and 1015 free, cause that doesn't make sense... in autocount,
+# when we check stock we will see on hand quantity, SO quantity, PO quantity... so when a SO is
+# created, it already flows to the outstanding quantity... can we show something like autocount
+# to justify the net quantity i.e. on hand - so + spo quantity or available quantity".
+#
+# So the strip leads with the four columns AutoCount's Stock Status screen leads with, and
+# `available_qty` is allowed to be NEGATIVE, because "oversold here by 632" is the signal.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_strip_states_the_autocount_four_and_they_reconcile():
+    with blank_session() as db:
+        planned, _other, product, warehouse = _pressure_world(db)
+        _incoming(
+            db, product, warehouse,
+            spo_number="ZZT-SPO-STRIP", allocated=30, received=10, arrives=date(2026, 9, 1),
+        )
+
+        board = _service(db).build([planned.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        # On hand 100, owed across the book 75, incoming 20 (30 allocated less 10 received).
+        assert location["qty_on_hand"] == "100"
+        assert location["so_qty"] == "75"
+        assert location["spo_qty"] == "20"
+        assert location["available_qty"] == "45", "on hand - SO + SPO, AutoCount's own sum"
+        # The engine's own figure stays, under its own name, and its reconciliation still
+        # closes for anyone who needs it.
+        assert location["qty_free"] == "100"
+        assert location["qty_reserved"] == "0"
+        assert location["qty_held_by_decisions"] == "0"
+
+
+def test_available_goes_negative_rather_than_being_clamped():
+    """A clamp would turn "we are oversold by 300" into "we have nothing", which is a
+    different fact and the less useful one."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=100)
+        mine = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, mine, product, qty="50", required_date=date(2026, 9, 3), warehouse=warehouse)
+        crowd = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, crowd, product, qty="350", required_date=date(2026, 10, 1), warehouse=warehouse)
+
+        board = _service(db).build([mine.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        assert location["so_qty"] == "400"
+        assert location["available_qty"] == "-300"
+
+
+def test_the_strip_carries_the_ids_the_drill_down_is_addressed_by():
+    """The drill-down takes ids, and the screen must not have to derive one from a code."""
+    with blank_session() as db:
+        planned, _other, product, warehouse = _pressure_world(db)
+
+        board = _service(db).build([planned.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        assert location["product_id"] == str(product.id)
+        assert location["warehouse_id"] == str(warehouse.id)
+
+
+def test_a_line_with_no_location_carries_no_ids_and_no_autocount_figures():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="4", required_date=date(2026, 9, 3), warehouse=None)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        assert location["warehouse_id"] is None
+        assert location["so_qty"] is None
+        assert location["spo_qty"] is None
+        assert location["available_qty"] is None
+
+
+# --------------------------------------------------------------------------- #
+# the drill-down: the documents that justify the totals
+# --------------------------------------------------------------------------- #
+
+
+def test_the_drill_down_lists_the_documents_behind_the_totals():
+    with blank_session() as db:
+        planned, other, product, warehouse = _pressure_world(db)
+        _incoming(
+            db, product, warehouse,
+            spo_number="ZZT-SPO-DRILL", allocated=30, received=10, arrives=date(2026, 9, 1),
+        )
+
+        detail = _service(db).stock_detail(str(product.id), str(warehouse.id))
+
+        assert detail["item_code"] == product.product_code
+        assert detail["location"] == warehouse.warehouse_code
+        assert detail["qty_on_hand"] == "100"
+        assert detail["so_qty"] == "75"
+        assert detail["spo_qty"] == "20"
+        assert detail["available_qty"] == "45"
+        # Every open sales-order line at that product and location, whatever its demand class,
+        # because that is what occupies the stock.
+        assert {row["so_number"] for row in detail["sales_orders"]} == {
+            planned.so_number, other.so_number,
+            *[r["so_number"] for r in detail["sales_orders"]
+              if r["so_number"] not in (planned.so_number, other.so_number)],
+        }
+        assert sum(float(row["so_qty"]) for row in detail["sales_orders"]) == 75.0
+        incoming = detail["incoming"]
+        assert [(row["spo_number"], row["spo_qty"], row["expected_date"]) for row in incoming] == [
+            ("ZZT-SPO-DRILL", "20", date(2026, 9, 1))
+        ]
+
+
+def test_the_drill_down_total_is_the_same_number_the_cell_printed():
+    """The list has to ADD UP to the strip, or the drill-down justifies nothing."""
+    with blank_session() as db:
+        planned, _other, product, warehouse = _pressure_world(db)
+
+        board = _service(db).build([planned.so_number], granularity="week", as_of=TODAY)
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        detail = _service(db).stock_detail(str(product.id), str(warehouse.id))
+
+        assert detail["so_qty"] == location["so_qty"]
+        assert detail["available_qty"] == location["available_qty"]
+        assert sum(float(row["so_qty"]) for row in detail["sales_orders"]) == float(
+            location["so_qty"]
+        )
+
+
+def test_the_drill_down_names_each_document_the_way_a_person_reads_it():
+    with blank_session() as db:
+        customer = _customer(db, f"{MARKER} ORIONIS TECHNOLOGY")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=10)
+        order = _order(
+            db, so_number="ZZT-SO-DOC1", customer=customer, order_date=date(2026, 3, 6)
+        )
+        _line(db, order, product, qty="12", required_date=date(2026, 12, 29),
+              warehouse=warehouse)
+
+        detail = _service(db).stock_detail(str(product.id), str(warehouse.id))
+
+        row = next(r for r in detail["sales_orders"] if r["so_number"] == "ZZT-SO-DOC1")
+        assert row["customer_name"] == f"{MARKER} ORIONIS TECHNOLOGY"
+        assert row["doc_date"] == date(2026, 3, 6)
+        assert row["delivery_date"] == date(2026, 12, 29)
+        assert row["so_qty"] == "12"
+        assert row["project_label"] == f"{MARKER} tower"
+        # No identifier a person has to resolve: the sales order is its number, the customer is
+        # its name. The ids that travel are addressing only.
+        assert row["sales_order_id"] == str(order.id)
+
+
+def test_the_drill_down_says_which_demand_a_decision_already_covers():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=10)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="7", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        detail = _service(db).stock_detail(str(product.id), str(warehouse.id))
+
+        assert detail["sales_orders"][0]["is_covered"] is False
+
+
+def test_an_empty_product_location_drills_down_to_an_honest_nothing():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+
+        detail = _service(db).stock_detail(str(product.id), str(warehouse.id))
+
+        assert detail["qty_on_hand"] == "0"
+        assert detail["so_qty"] == "0"
+        assert detail["spo_qty"] == "0"
+        assert detail["available_qty"] == "0"
+        assert detail["sales_orders"] == []
+        assert detail["incoming"] == []
+
+
+def test_the_drill_down_route_answers_over_the_wire():
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        planned, _other, product, warehouse = _pressure_world(db)
+        db.commit()
+        client, originals = _client(db, actor, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/stock-detail",
+                    params={
+                        "product_id": str(product.id),
+                        "warehouse_id": str(warehouse.id),
+                    },
+                )
+                denied = _client(db, actor, [])
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["so_qty"] == "75"
+        assert body["available_qty"] == "25"
+        assert len(body["sales_orders"]) == 3
+        assert len(denied) == 2  # the helper returns (client, originals)
+
+
+def test_the_drill_down_route_refuses_a_caller_without_the_view_permission():
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        _planned, _other, product, warehouse = _pressure_world(db)
+        db.commit()
+        client, originals = _client(db, actor, [])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/stock-detail",
+                    params={
+                        "product_id": str(product.id),
+                        "warehouse_id": str(warehouse.id),
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# why a cell is not ranked, said in the right words
+# --------------------------------------------------------------------------- #
+
+
+def test_a_cell_says_how_many_orders_are_in_it_and_whether_rank_separated_them():
+    with blank_session() as db:
+        _policy(db, {"need_by_date": 1.0})
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=100)
+        alone = _order(db, so_number="ZZT-SO-ONE", order_date=date(2026, 1, 1))
+        _line(db, alone, product, qty="5", required_date=date(2026, 9, 1), warehouse=warehouse)
+        _line(db, alone, product, qty="5", required_date=date(2026, 9, 2), warehouse=warehouse)
+        other = _order(db, so_number="ZZT-SO-TWO", order_date=date(2026, 1, 1))
+        _line(db, other, product, qty="5", required_date=date(2026, 12, 1), warehouse=warehouse)
+
+        board = _service(db).build(
+            ["ZZT-SO-ONE", "ZZT-SO-TWO"], granularity="week", as_of=TODAY
+        )
+
+        # Two lines of ONE order, and the required dates differ so the rank did separate them.
+        shared = _cell(board, product.product_code, "2026-08-31")
+        assert shared["distinct_order_count"] == 1
+        assert shared["rank_separates"] is True
+        # One line on its own: nothing to rank, and the screen should say so in those words
+        # rather than reporting a policy failure.
+        solo = _cell(board, product.product_code, "2026-11-30")
+        assert solo["distinct_order_count"] == 1
+        assert solo["rank_separates"] is False
+
+
+def test_a_genuinely_tied_cell_reports_more_than_one_order_and_no_separation():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=100)
+        for number in ("ZZT-SO-T1", "ZZT-SO-T2"):
+            order = _order(db, so_number=number, order_date=date(2026, 1, 1))
+            _line(db, order, product, qty="5", required_date=date(2026, 9, 3),
+                  warehouse=warehouse)
+
+        board = _service(db).build(
+            ["ZZT-SO-T1", "ZZT-SO-T2"], granularity="week", as_of=TODAY
+        )
+
+        cell = _cell(board, product.product_code, "2026-08-31")
+        assert cell["distinct_order_count"] == 2
+        assert cell["rank_separates"] is False
+
+
+# --------------------------------------------------------------------------- #
+# pivoting the board by order, customer or project
+# --------------------------------------------------------------------------- #
+
+
+def test_a_contribution_can_be_pivoted_by_customer_and_project_without_guessing():
+    """Two different customers can share a name, so a pivot must group by id, not by label."""
+    with blank_session() as db:
+        first = _customer(db, "ZZT SAME NAME SDN BHD")
+        second = _customer(db, "ZZT SAME NAME SDN BHD")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        a = _order(db, so_number="ZZT-SO-C1", customer=first, order_date=date(2026, 1, 1))
+        b = _order(db, so_number="ZZT-SO-C2", customer=second, order_date=date(2026, 1, 1))
+        _line(db, a, product, qty="5", required_date=date(2026, 9, 3), warehouse=warehouse)
+        _line(db, b, product, qty="5", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build(
+            ["ZZT-SO-C1", "ZZT-SO-C2"], granularity="week", as_of=TODAY
+        )
+
+        cell = _cell(board, product.product_code, "2026-08-31")
+        by_order = {c["so_number"]: c for c in cell["contributions"]}
+        assert by_order["ZZT-SO-C1"]["customer_name"] == by_order["ZZT-SO-C2"]["customer_name"]
+        assert by_order["ZZT-SO-C1"]["customer_id"] == str(first.id)
+        assert by_order["ZZT-SO-C2"]["customer_id"] == str(second.id)
+        assert by_order["ZZT-SO-C1"]["customer_id"] != by_order["ZZT-SO-C2"]["customer_id"]
+        # And the project a pivot would group by, stable for the same project string.
+        assert by_order["ZZT-SO-C1"]["project_key"] == by_order["ZZT-SO-C2"]["project_key"]
+        assert by_order["ZZT-SO-C1"]["project_key"] is not None

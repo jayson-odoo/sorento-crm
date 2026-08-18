@@ -66,12 +66,18 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     value,
     onChange,
     options,
+    id,
   }: {
     value: string;
     onChange: (next: string) => void;
     options?: { value: string; label: string }[];
+    id?: string;
   }) => (
-    <select aria-label="granularity" value={value} onChange={(e) => onChange(e.target.value)}>
+    <select
+      aria-label={id ?? 'granularity'}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
       {(options ?? []).map((option) => (
         <option key={option.value} value={option.value}>
           {option.label}
@@ -1164,7 +1170,7 @@ describe('FulfilmentBoardPanel: searching the product rows', () => {
   }
 
   async function searchFor(term: string) {
-    const box = screen.getByPlaceholderText('Search product');
+    const box = screen.getByPlaceholderText('Search sales order, customer, project or product');
     fireEvent.change(box, { target: { value: term } });
     await waitFor(() => expect(box).toHaveValue(term));
   }
@@ -1274,7 +1280,7 @@ describe('FulfilmentBoardPanel: searching the product rows', () => {
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(screen.getByPlaceholderText('Search product')).toHaveValue('ceiling');
+    expect(screen.getByPlaceholderText('Search sales order, customer, project or product')).toHaveValue('ceiling');
     await waitFor(() => expect(productRows()).toEqual(['CKS1050']));
   });
 
@@ -1445,5 +1451,207 @@ describe('FulfilmentBoardPanel: granularity in the URL', () => {
     await screen.findByTestId('fulfilment-board-matrix');
 
     expect(screen.queryByText(/has nothing to plan on this board/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The row axis, on screen (the captain: "how about if we want vertical is sales order, is
+ * customer, is project").
+ */
+describe('FulfilmentBoardPanel: pivoting the rows', () => {
+  function twoOrders() {
+    return boardOf([
+      demand({
+        sales_order_id: 'so-a',
+        so_number: 'SO000001',
+        customer_name: 'ALPHA SDN BHD',
+        project_label: 'TOWER A',
+        line_no: 1,
+        item_code: 'AAA',
+        qty: '10',
+      }),
+      demand({
+        sales_order_id: 'so-a',
+        so_number: 'SO000001',
+        customer_name: 'ALPHA SDN BHD',
+        project_label: 'TOWER A',
+        line_no: 2,
+        item_code: 'BBB',
+        qty: '20',
+      }),
+      demand({
+        sales_order_id: 'so-b',
+        so_number: 'SO000002',
+        customer_name: 'ZULU SDN BHD',
+        project_label: 'TOWER Z',
+        line_no: 3,
+        item_code: 'AAA',
+        qty: '5',
+      }),
+    ]);
+  }
+
+  function rowHeaders() {
+    return [...screen.getByTestId('fulfilment-board-matrix').querySelectorAll('tbody tr')].map(
+      (row) => (row.querySelector('th')?.textContent ?? '').trim(),
+    );
+  }
+
+  async function pivotTo(value: string) {
+    fireEvent.change(screen.getByLabelText('rows'), { target: { value } });
+    await waitFor(() => expect(screen.getByLabelText('rows')).toHaveValue(value));
+  }
+
+  it('offers the four axes, product first', async () => {
+    getPlanningBoard.mockResolvedValue(twoOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const select = screen.getByLabelText('rows');
+    for (const label of ['Product', 'Sales order', 'Customer', 'Project']) {
+      expect(within(select).getByRole('option', { name: label })).toBeInTheDocument();
+    }
+    expect(select).toHaveValue('product');
+  });
+
+  it('puts one row per sales order, holding every product that order owes', async () => {
+    getPlanningBoard.mockResolvedValue(twoOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(rowHeaders()).toEqual(['AAA', 'BBB']);
+
+    await pivotTo('sales_order');
+
+    await waitFor(() => expect(rowHeaders()).toEqual(['SO000001', 'SO000002']));
+    // SO000001's two products in one cell: 10 + 20.
+    expect(
+      screen.getByRole('button', { name: /SO000001, 30 across 1 sales order/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('pivots to customer and to project', async () => {
+    getPlanningBoard.mockResolvedValue(twoOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    await pivotTo('customer');
+    await waitFor(() => expect(rowHeaders()).toEqual(['ALPHA SDN BHD', 'ZULU SDN BHD']));
+
+    await pivotTo('project');
+    await waitFor(() => expect(rowHeaders()).toEqual(['TOWER A', 'TOWER Z']));
+  });
+
+  it('opens the same breakdown from a pivoted cell, with the same lines', async () => {
+    getPlanningBoard.mockResolvedValue(twoOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    await pivotTo('sales_order');
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /SO000001, 30 across 1 sales order/ }),
+    );
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+    // The dialog is unchanged: it lists LINES, which is what it always listed. Scoped to the
+    // dialog because the board itself is a table too.
+    const dialog = await screen.findByRole('dialog');
+    const table = within(dialog).getByRole('table');
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(table.textContent).toContain('AAA');
+    expect(table.textContent).toContain('BBB');
+  });
+
+  it('keeps a decision made under one axis visible under another', async () => {
+    getPlanningBoard.mockResolvedValue(twoOrders());
+
+    renderPanel(['SO000001']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Decide a line while the rows are products. BBB is owed by one order only, so the cell
+    // holds exactly the line this test is deciding.
+    fireEvent.click(await screen.findByRole('button', { name: /BBB, 20 across 1 sales order/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+    await waitFor(() => expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument());
+
+    // ...and it is the same line's decision when the rows become sales orders.
+    await pivotTo('sales_order');
+    await waitFor(() => expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument());
+  });
+
+  it('carries the axis in the URL, absent when it is the default', async () => {
+    getPlanningBoard.mockResolvedValue(twoOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    await pivotTo('customer');
+
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith(
+        '/project-sales/fulfilment-planning?rows=customer',
+        expect.objectContaining({ scroll: false }),
+      ),
+    );
+  });
+
+  it('opens on the axis the URL names, and falls back to product on nonsense', async () => {
+    currentSearchParams = new URLSearchParams('rows=project');
+    getPlanningBoard.mockResolvedValue(twoOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByLabelText('rows')).toHaveValue('project');
+    await waitFor(() => expect(rowHeaders()).toEqual(['TOWER A', 'TOWER Z']));
+  });
+
+  it('falls back to product on an axis nobody defined', async () => {
+    currentSearchParams = new URLSearchParams('rows=warehouse');
+    getPlanningBoard.mockResolvedValue(twoOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByLabelText('rows')).toHaveValue('product');
+  });
+
+  it('searches the four fields, and keeps whole cells while doing it', async () => {
+    getPlanningBoard.mockResolvedValue(twoOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // A customer needle keeps only the product rows that customer owes...
+    fireEvent.change(screen.getByPlaceholderText('Search sales order, customer, project or product'), {
+      target: { value: 'zulu' },
+    });
+
+    await waitFor(() => expect(rowHeaders()).toEqual(['AAA']));
+    // ...and AAA's cell still holds BOTH orders' lines: filtering inside a cell would print a
+    // total that is not the cell's.
+    expect(
+      screen.getByRole('button', { name: /AAA, 15 across 2 sales orders/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 products')).toBeInTheDocument();
+  });
+
+  it('counts the rows of whichever axis is showing', async () => {
+    getPlanningBoard.mockResolvedValue(twoOrders());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    await pivotTo('sales_order');
+
+    fireEvent.change(screen.getByPlaceholderText('Search sales order, customer, project or product'), {
+      target: { value: 'SO000002' },
+    });
+
+    await waitFor(() => expect(rowHeaders()).toEqual(['SO000002']));
+    expect(screen.getByText('1 of 2 sales orders')).toBeInTheDocument();
   });
 });

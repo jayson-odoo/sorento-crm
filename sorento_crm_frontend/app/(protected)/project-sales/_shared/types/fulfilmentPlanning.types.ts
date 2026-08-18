@@ -492,7 +492,17 @@ export interface BoardContribution {
   sales_order_id: string;
   so_number: string;
   customer_name?: string | null;
+  /**
+   * The customer's own id, for GROUPING only - never rendered (no UUIDs in the UI).
+   *
+   * Two customers can share a name, and a board that merged them would show one row totalling
+   * two companies' demand. Absent falls back to the name, which is the merge this exists to
+   * prevent, so the fallback is a stated compromise rather than the design.
+   */
+  customer_id?: string | null;
   project_label?: string | null;
+  /** The project's stable key, for grouping only. Same rule and same fallback as the customer. */
+  project_id?: string | null;
   line_no: number;
   item_code: string;
   /** The still-owed quantity. `qty_outstanding` is the same number under its own name. */
@@ -671,9 +681,19 @@ export interface BoardCellLocation {
   qty_proposed_buy?: string | null;
 }
 
-/** One cell: this product, by this bucket, across every selected order. */
+/** One cell: this row, by this bucket, across every selected order. */
 export interface BoardCell {
+  /**
+   * What the cell is LABELLED by. The item code on the product axis, and the sales-order
+   * number, customer name or project label on the pivoted ones - so the dialog title reads the
+   * same way whichever axis produced the cell.
+   */
   item_code: string;
+  /**
+   * What the cell is KEYED by, when that is not its label. Client-side only, set when the board
+   * is pivoted: two customers can share a name, so the label cannot be the key.
+   */
+  row_key?: string;
   bucket_key: string;
   /** Summed across every contributing line, including the unplannable ones (13.7). */
   total_qty: string;
@@ -693,6 +713,28 @@ export interface BoardCell {
 
 export interface BoardProductRow {
   item_code: string;
+  description?: string | null;
+}
+
+/**
+ * What the board's VERTICAL axis is (the captain: "how about if we want vertical is sales
+ * order, is customer, is project").
+ *
+ * The horizontal axis is always dates. The pivot is a different grouping of the SAME
+ * contributions into cells - no second fetch, and no second idea of what a line is.
+ */
+export type BoardRowAxis = 'product' | 'sales_order' | 'customer' | 'project';
+
+/**
+ * One row of the board, whichever axis is chosen.
+ *
+ * `key` is an id wherever an id exists and is never rendered; `label` is what the reader sees.
+ * Keeping them apart is the whole reason two customers with one name stay two rows.
+ */
+export interface BoardAxisRow {
+  key: string;
+  label: string;
+  /** Secondary text for the row header, e.g. a product's name under its code. */
   description?: string | null;
 }
 

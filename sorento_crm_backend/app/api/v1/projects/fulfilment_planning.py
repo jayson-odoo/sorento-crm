@@ -28,7 +28,7 @@ from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
-from app.schemas.project_board import PlanningBoard
+from app.schemas.project_board import PlanningBoard, StockDetail
 from app.schemas.project_so_reconciliation import (
     AdoptSalesOrderBody,
     AdoptSalesOrderResult,
@@ -236,6 +236,29 @@ def get_planning_board(
             day_window_start=day_window,
             preview_policy=preview_policy,
         )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/fulfilment-planning/stock-detail", response_model=StockDetail)
+def get_stock_detail(
+    product_id: str = Query(..., description="Addressing only; the board's cell carries it."),
+    warehouse_id: str = Query(...),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """One product at one location: On Hand, SO Qty, SPO Qty, Available, and the documents.
+
+    AutoCount's Stock Status with Detail, which is the screen the planner checks stock on and
+    the one they asked the board's cell strip to justify itself against. A pure read.
+
+    Plain ``def``, so FastAPI runs it in a threadpool: it is synchronous SQLAlchemy over one
+    product-location's outstanding book.
+    """
+    try:
+        validate_uuid_path(product_id, resource="Product")
+        validate_uuid_path(warehouse_id, resource="Warehouse")
+        return FulfilmentBoardService(db).stock_detail(product_id, warehouse_id)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

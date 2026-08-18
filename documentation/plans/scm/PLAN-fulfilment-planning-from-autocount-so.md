@@ -1603,6 +1603,28 @@ the eight fixture orders, `WESERP10B` is owed by four different orders out of bo
 
 - The **cell** shows the total, then a source strip listing each location with its share
   ("BRW-BB 366 · BRW-IB 216"), truncated with a `title` when it does not fit.
+
+  **AMENDED, Phase 2: the strip speaks AutoCount.** The captain, reading "BRW-BB - 80 owed -
+  1015 on hand - 1015 free - 0 incoming": "i am trying to make sense of the 1015 on hand and
+  1015 free, cause that doesn't make sense ... so when a SO is created, it already flows to the
+  outstanding quantity same goes for PO created, so it cannot be all quantity are free because
+  we got so many outstanding SO, right? can we show something like autocount to justify the net
+  quantity i.e. on hand - so + spo quantity or available quantity". They are right: free (on
+  hand, less reserved, less confirmed holds) ignores the outstanding book, and on this database
+  almost nothing is confirmed, so it reads as raw on-hand.
+
+  So the strip leads with AutoCount's Stock Status columns - `qty_on_hand`, `so_qty`, `spo_qty`,
+  `available_qty` - where `available_qty = on hand - SO + SPO` and is SIGNED: measured on
+  B2155-NL-BLUE at BRW-BB it is **478 - 47,009 + 0 = -46,531**, and "oversold by 46,531" is the
+  fact the planner needs. `qty_free`, `qty_reserved` and `qty_held_by_decisions` stay under
+  their own names for the engine's own reconciliation. `so_qty` uses the shared
+  `is_open_demand()` rule across EVERY demand class, because a dealer order occupies the stock
+  as completely as a project one.
+
+  **The drill-down** (`GET /project-sales/fulfilment-planning/stock-detail`) is AutoCount's
+  second half: every contributing document, so the totals justify themselves. Both the totals
+  and the list are summed from the same rows, so the list always adds up to the strip. Widest
+  on the live book: 501 sales-order lines (WESERP10B at BRW-BB).
 - The **breakdown table** carries the location per row, because that is where it is a fact.
 - **Allocation is computed per (product, location)**, never across locations: free stock at BRW-IB
   cannot cover a line that must be fulfilled from BRW-BB. Moving stock between locations is a

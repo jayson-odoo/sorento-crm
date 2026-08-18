@@ -967,7 +967,10 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
         {},
       ),
     );
-    expect(screen.getByPlaceholderText('Search product')).toHaveValue('cks');
+    // The board's own box, which now searches the same four things the worklist's does.
+    expect(
+      screen.getAllByPlaceholderText('Search sales order, customer, project or product').length,
+    ).toBeGreaterThan(0);
   });
 
   it('falls back to week on a granularity nobody defined', async () => {
