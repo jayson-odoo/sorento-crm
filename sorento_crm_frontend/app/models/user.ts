@@ -13,6 +13,20 @@ export interface UserRoleSimple {
   name: string;
 }
 
+/**
+ * One (company, brand) slice of the catalogue a user is notified about when
+ * products are discontinued. `company_id` null = all companies (which forces
+ * `brand_id` null); `brand_id` null = all brands in that company.
+ */
+export interface ProductDiscontinuedScope {
+  id?: string;
+  company_id: string | null;
+  company_name?: string | null;
+  brand_id: string | null;
+  brand_code?: string | null;
+  brand_name?: string | null;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -71,6 +85,9 @@ export interface User {
   notify_email_on_product_discontinued?: boolean | null;
   notifyWhatsappOnProductDiscontinued?: boolean | null;
   notify_whatsapp_on_product_discontinued?: boolean | null;
+  /** Which (company, brand) slices this user is notified about. Empty = nothing. */
+  productDiscontinuedScopes?: ProductDiscontinuedScope[] | null;
+  product_discontinued_scopes?: ProductDiscontinuedScope[] | null;
   roles?: UserRoleSimple[];
   role?: UserRole;
   sessions?: Session[];

@@ -87,7 +87,7 @@ Eight boolean columns on `users` gate **whether a user is reached** for SLA even
 | `notify_whatsapp_on_escalation` | **WhatsApp on escalation** | off | escalation (needs a linked WhatsApp contact) |
 | `notify_email_on_deadline_extended` | **Email on deadline extended** | on (`true`) | a lower tier extends a deadline and this user is the next escalation tier |
 | `notify_whatsapp_on_deadline_extended` | **WhatsApp on deadline extended** | off | deadline-extended (needs a linked WhatsApp contact) |
-| `notify_email_on_product_discontinued` | **Email on products discontinued** | off | products newly discontinued (batched) |
+| `notify_email_on_product_discontinued` | **Email on products discontinued** | off | products newly discontinued (batched) - **which** products is set by the user's `user_product_discontinued_scopes` rows (section below) |
 | `notify_whatsapp_on_product_discontinued` | **WhatsApp on products discontinued** | off | product-discontinued (needs a linked WhatsApp contact) |
 
 Two related but separate columns also exist: `notify_whatsapp` (legacy, superseded by the per-event toggles) and `notify_whatsapp_summary` (form label **WhatsApp daily SLA summary**), plus `daily_sla_summary_subscribed` (the **email** daily summary).
@@ -97,7 +97,27 @@ Two related but separate columns also exist: `notify_whatsapp` (legacy, supersed
 * **Per-user toggles gate the channel**: even when the stage allows the event, email fires only if the user's `notify_email_on_{assignment,escalation}` is on, and WhatsApp only if `notify_whatsapp_on_{assignment,escalation}` is on **and** the user has a linked `respond_contact_id`.
 * **In-app always fires** for the assignee when the stage allows the event — the toggles only govern email/WhatsApp.
 
-> **Code-accuracy note for maintainers.** `GET /users/{id}`, `GET /users/me`, and the update response each build a **manual `UserResponse(**user_dict)`** dict — they do **not** rely on `from_attributes` for these columns. A new User column (any future toggle) must be added to **all three** manual dict builders in `app/api/v1/user_management/users.py` or it silently renders its default and never reaches the FE. The eight toggles above are wired in all three today.
+> **Code-accuracy note for maintainers.** `GET /users/{id}`, `GET /users/me`, and the update response each build a **manual `UserResponse(**user_dict)`** dict — they do **not** rely on `from_attributes` for these columns. A new User column (any future toggle) must be added to **all three** manual dict builders in `app/api/v1/user_management/users.py` or it silently renders its default and never reaches the FE. The eight toggles above are wired in all three today. The same applies to `product_discontinued_scopes`, which is not a column at all: each builder fills it via `serialize_scopes(db, user_id)`, and the `PUT` response attaches it after the save.
+
+---
+
+## `user_product_discontinued_scopes` - which discontinued products a subscriber hears about
+
+The two `*_on_product_discontinued` toggles above decide **how** a user is reached; these rows decide **what** counts as their products. One row per scope:
+
+| Field | Meaning |
+|-------|---------|
+| `user_id` → users | Whose subscription (`ON DELETE CASCADE`). |
+| `company_id` → companies | The company slice; **NULL = every company** (which forces `brand_id` NULL). |
+| `brand_id` → brands | The brand inside it; **NULL = every brand of that company**. |
+| `created_at` | Row creation (naive UTC). |
+
+A product matches a scope when `(scope.company_id IS NULL OR = product.company_id) AND (scope.brand_id IS NULL OR = product.brand_id)`, so a product carrying **no** brand only ever reaches an all-brands scope. A unique index over the coalesced NULLs keeps `(user, company, brand)` unique.
+
+* **Zero rows = zero notices**, even with both toggles on. Migration `375_user_discontinued_scopes` backfilled one all-companies/all-brands row for every user who already had either toggle on, so existing subscribers kept receiving everything.
+* Each recipient's notice reports **only their subset** of a batch: count, wording and deep link. The link is the plain `?discontinued_batch_id=<batch>` when the subset is the whole batch, and gains `&brand_id=<ids>` (comma-separated) when it is narrower.
+* Deliberately **not** a company-scoped table: it is a user preference, and the scheduled task `product_discontinued_check` fans a batch out under a per-task company scope that would otherwise hide recipients.
+* Edited on the **Administrative Users** edit dialog under **Discontinued product scope** (see [Manage users & roles](manage-users-and-roles.md)). It rides the user `GET`/`PUT` as `product_discontinued_scopes`: sent = replace the whole set, omitted = leave untouched.
 
 ---
 

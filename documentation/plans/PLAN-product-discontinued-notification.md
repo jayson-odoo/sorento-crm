@@ -2,6 +2,12 @@
 
 **Status:** Implemented 2026-06-21 (Phases 1–3 complete). BE cron + save-path markers + migration + template wiring; FE toggles + product-list deep-link filter. Tests: 8 pytest + 2 vitest green; Playwright-verified end-to-end. Code review (high effort) passed — no correctness findings. **Pending external dep:** create + approve the `product_discontinued` Respond.io template (WhatsApp out-of-window only; email + in-app work now). **Prod deploy:** run `python -m scripts.seed_product_discontinued_task` after migrating.
 
+> **Superseded in part (2026-08-18)** by [`PLAN-product-discontinued-brand-scope.md`](PLAN-product-discontinued-brand-scope.md):
+> the recipient scope below (Q2 "Global", Q9 "recipient = user with >=1 toggle on") is no longer how
+> this works. A subscription is now a set of `(company, brand)` scopes, each recipient hears about
+> only their subset of a batch, and a user with zero scopes hears nothing. Everything else here -
+> the discontinue trigger, stamp-first batching, marker reset, channels and template - still stands.
+
 ## Problem
 
 A product is **discontinued** when its `description` starts with `****` (4 asterisks, after `lstrip()`)

@@ -316,6 +316,13 @@ _COMPANY_ID_ALLOWLIST = {
     # `(coalesce(company_id, nil), sales_agent)`, exactly `container_size`'s index, so a tenant
     # row can coexist with the shared row it overrides.
     "sales_agents",
+    # A user's product-discontinued (company, brand) scopes: a preference about
+    # which company's catalogue they want to hear about, not company-owned data.
+    # The scheduled fan-out runs under the task's own company scope, so an owned
+    # table here would be filtered by it and would silently drop recipients from
+    # a narrowed run - the whole point of the row is to say "notify me about
+    # company X" from a session that is scoped to company Y.
+    "user_product_discontinued_scopes",
 }
 
 

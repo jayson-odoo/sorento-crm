@@ -20,6 +20,7 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserSelectResponse, UserRoleResponse
 from app.services.error_handler import handle_internal_error
 from app.services.notification_service import NotificationService
+from app.services.product_discontinued_scope_service import serialize_scopes
 from app.services.user_service import UserService, UserPermissionService
 from app.services.user_avatar_url import resolve_avatar_url_for_client
 
@@ -388,6 +389,7 @@ async def get_current_user_profile(
             "is_protected": user.is_protected,
             "roles": [{"id": r.id, "name": r.name} for r in roles],
             "superior_name": user.superior.name if user.superior else None,
+            "product_discontinued_scopes": serialize_scopes(db, str(user.id)),
         }
         return UserResponse(**user_dict)
     except HTTPException:
@@ -527,7 +529,8 @@ async def get_user(
             "is_trashed": user.is_trashed,
             "is_protected": user.is_protected,
             "roles": [{"id": r.id, "name": r.name} for r in roles],
-            "superior_name": user.superior.name if user.superior else None
+            "superior_name": user.superior.name if user.superior else None,
+            "product_discontinued_scopes": serialize_scopes(db, str(user.id)),
         }
         return UserResponse(**user_dict)
     except HTTPException:
@@ -583,6 +586,10 @@ async def update_user(
         validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         user = service.update_user(user_id, user_data)
+        # The scopes are rows, not columns, so the ORM instance carries none of
+        # them. Attach the serialized list so the PUT answers with what it just
+        # saved (names included) instead of an empty one.
+        setattr(user, "product_discontinued_scopes", serialize_scopes(db, user_id))
         return user
     except HTTPException:
         raise
@@ -828,6 +835,7 @@ async def update_current_user_profile(
             "is_protected": user.is_protected,
             "roles": [{"id": r.id, "name": r.name} for r in roles],
             "superior_name": user.superior.name if user.superior else None,
+            "product_discontinued_scopes": serialize_scopes(db, str(user.id)),
         }
         return UserResponse(**user_dict)
     except HTTPException:

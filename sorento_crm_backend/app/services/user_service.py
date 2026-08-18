@@ -538,6 +538,12 @@ class UserService:
         update_data = user_data.model_dump(exclude_unset=True)
         logger.info(f"Updating user {user_id} with data: {update_data}")
 
+        # Product-discontinued scopes are rows, not a column: pulled out of the
+        # field loop below and replaced wholesale. Omitted leaves them untouched;
+        # an empty list clears them (and the user then hears nothing).
+        scopes_provided = "product_discontinued_scopes" in update_data
+        scope_items = update_data.pop("product_discontinued_scopes", None)
+
         old_email_for_notification: Optional[str] = None
         email_changed = False
         if "email" in update_data:
@@ -597,6 +603,11 @@ class UserService:
                 setattr(user, key, value)
                 logger.info(f"✓ Set {key} = {repr(value)}")
         
+        if scopes_provided:
+            from app.services.product_discontinued_scope_service import replace_scopes
+
+            replace_scopes(self.db, user_id, scope_items or [])
+
         logger.info(f"Before commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
         self.db.commit()
         self.db.refresh(user)

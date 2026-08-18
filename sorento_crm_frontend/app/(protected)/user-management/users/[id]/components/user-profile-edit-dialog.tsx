@@ -39,8 +39,17 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import { Button } from '@/components/ui/button';
 import { LoaderCircleIcon } from 'lucide-react';
 import { User, UserRole } from '@/app/models/user';
+import { useCompany } from '@/app/providers/CompanyProvider';
 import { useRoleSelectQuery } from '../../../roles/hooks/use-role-select-query';
 import { UserStatusProps } from '../../constants/status';
+import {
+  createAllScopeRow,
+  rowsToScopePayload,
+  scopeRowsHaveUnknownBrands,
+  scopesToRows,
+  type ScopeRow,
+} from '../../lib/productDiscontinuedScopes';
+import ProductDiscontinuedScopeEditor from './product-discontinued-scope-editor';
 import {
   UserProfileSchema,
   UserProfileSchemaType,
@@ -59,6 +68,16 @@ const UserProfileEditDialog = ({
   const { data: session } = useSession();
   const isSuperadmin = isSuperadminUser(session?.user);
   const [copyRolesBusy, setCopyRolesBusy] = useState(false);
+  // Product-discontinued scopes are not part of the zod form: they are rows, not
+  // fields, so they carry their own state + dirty flag and ride the same PUT.
+  const [scopeRows, setScopeRows] = useState<ScopeRow[]>(() =>
+    scopesToRows(user?.productDiscontinuedScopes),
+  );
+  const [scopesDirty, setScopesDirty] = useState(false);
+  // A row whose brand list failed to load would otherwise save as "all brands in
+  // that company", so saving waits until the admin resolves it.
+  const scopeBrandsUnknown = scopeRowsHaveUnknownBrands(scopeRows);
+  const { companies: scopeCompanies } = useCompany();
 
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
@@ -156,8 +175,36 @@ const UserProfileEditDialog = ({
       notify_email_on_product_discontinued: Boolean(user.notifyEmailOnProductDiscontinued),
       notify_whatsapp_on_product_discontinued: Boolean(user.notifyWhatsappOnProductDiscontinued),
     });
+    setScopeRows(scopesToRows(user.productDiscontinuedScopes));
+    setScopesDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; omit to avoid reset loop
   }, [open, user?.id, user?.name, user?.email, user?.status, user?.roles, user?.respondUserId, user?.tier, user?.superiorId, userRoles.length]);
+
+  const discontinuedEmailOn = form.watch('notify_email_on_product_discontinued');
+  const discontinuedWhatsappOn = form.watch('notify_whatsapp_on_product_discontinued');
+  const discontinuedNotifyOn = Boolean(discontinuedEmailOn || discontinuedWhatsappOn);
+
+  // Switching a discontinued channel on with no scopes at all would mean opting in
+  // to silence, so the first row defaults to everything. Removing every row after
+  // that is left alone - the editor says out loud that it means no notices.
+  //
+  // Only a real off -> on flick INSIDE this dialog pre-populates. Merely re-opening
+  // on an already-on toggle must not resurrect a scope set the user deliberately
+  // emptied and saved, which is what a plain "on and empty" condition would do.
+  const discontinuedWasOnRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!open) {
+      discontinuedWasOnRef.current = null;
+      return;
+    }
+    const wasOn = discontinuedWasOnRef.current;
+    discontinuedWasOnRef.current = discontinuedNotifyOn;
+    if (wasOn !== false || !discontinuedNotifyOn) return;
+    if (scopeRows.length) return;
+    setScopeRows([createAllScopeRow()]);
+    setScopesDirty(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on the toggle transition, not on row edits
+  }, [open, discontinuedNotifyOn]);
 
   // Companies aren't carried on the `user` prop, so apply them once the grant fetch
   // resolves. Guarded per user-open so a background refetch can't clobber edits.
@@ -281,6 +328,12 @@ const UserProfileEditDialog = ({
       profileData.notify_whatsapp_on_handling = Boolean(values.notify_whatsapp_on_handling);
       profileData.notify_email_on_product_discontinued = Boolean(values.notify_email_on_product_discontinued);
       profileData.notify_whatsapp_on_product_discontinued = Boolean(values.notify_whatsapp_on_product_discontinued);
+      // Replace-all: whatever the editor shows is the user's full scope set. Sent
+      // only when the editor was actually touched - omitted means "leave scopes
+      // alone", so an unrelated profile save can never rewrite them.
+      if (scopesDirty) {
+        profileData.product_discontinued_scopes = rowsToScopePayload(scopeRows);
+      }
 
       const response = await apiFetch(`/api/user-management/users/${user.id}`, {
         method: 'PUT',
@@ -753,6 +806,16 @@ const UserProfileEditDialog = ({
                 )}
               />
             ))}
+            <ProductDiscontinuedScopeEditor
+              rows={scopeRows}
+              companies={scopeCompanies}
+              disabled={isProcessing}
+              onChange={(rows) => {
+                setScopeRows(rows);
+                setScopesDirty(true);
+              }}
+              onBrandsLoadErrorChange={setScopeRows}
+            />
             <FormField
               control={form.control}
               name="notify_whatsapp_summary"
@@ -775,7 +838,11 @@ const UserProfileEditDialog = ({
               </Button>
               <Button
                 type="submit"
-                disabled={!form.formState.isDirty || isProcessing}
+                disabled={
+                  (!form.formState.isDirty && !scopesDirty) ||
+                  isProcessing ||
+                  scopeBrandsUnknown
+                }
               >
                 {isProcessing && <LoaderCircleIcon className="animate-spin" />}
                 Save Changes

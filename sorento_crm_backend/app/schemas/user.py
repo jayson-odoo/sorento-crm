@@ -153,6 +153,26 @@ class UserPermissionResponse(UserPermissionBase):
         from_attributes = True
 
 
+class ProductDiscontinuedScopeIn(BaseModel):
+    """One (company, brand) slice on a user's product-discontinued subscription.
+
+    ``company_id`` null = every company (which forces ``brand_id`` null);
+    ``brand_id`` null = every brand in that company.
+    """
+
+    company_id: Optional[str] = None
+    brand_id: Optional[str] = None
+
+
+class ProductDiscontinuedScopeOut(ProductDiscontinuedScopeIn):
+    """A saved scope, resolved to names so the UI never renders a UUID."""
+
+    id: str
+    company_name: Optional[str] = None
+    brand_code: Optional[str] = None
+    brand_name: Optional[str] = None
+
+
 class UserBase(BaseModel):
     email: str
     name: Optional[str] = None
@@ -219,6 +239,9 @@ class UserUpdate(BaseModel):
     notify_whatsapp_on_deadline_extended: Optional[bool] = None
     notify_email_on_handling: Optional[bool] = None
     notify_whatsapp_on_handling: Optional[bool] = None
+    # Replace-all when provided (an empty list clears every scope, i.e. the user
+    # hears nothing); untouched when omitted.
+    product_discontinued_scopes: Optional[List[ProductDiscontinuedScopeIn]] = None
 
     @field_validator("email", mode="before")
     @classmethod
@@ -248,6 +271,10 @@ class UserResponse(UserBase):
     is_protected: Optional[bool] = False
     roles: Optional[List[UserRoleSimple]] = None  # Assigned roles from user_role_assignments
     superior_name: Optional[str] = None  # Superior's name for display
+    # Which slice of the catalogue the product-discontinued notice reports to this
+    # user. Populated by every manual UserResponse builder (see users.py) - the
+    # field is not an ORM attribute, so inheritance alone would never fill it.
+    product_discontinued_scopes: List[ProductDiscontinuedScopeOut] = []
 
     class Config:
         from_attributes = True

@@ -27,7 +27,7 @@ from app.models.company import Company
 from app.models.notification import Notification
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scheduled_task import ScheduledTask
-from app.models.user import User
+from app.models.user import User, UserProductDiscontinuedScope
 from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
 from app.services import scheduled_task_service as sts
 
@@ -100,13 +100,18 @@ def _discontinued(db, *, code: str, company_id: str):
 
 
 def _subscriber(db):
+    user_id = str(uuid.uuid4())
     db.add(
         User(
-            id=str(uuid.uuid4()), email=f"sub-{uuid.uuid4().hex[:6]}@x.com",
+            id=user_id, email=f"sub-{uuid.uuid4().hex[:6]}@x.com",
             name="Sub", status="ACTIVE",
             notify_email_on_product_discontinued=True,
         )
     )
+    # The all-companies / all-brands scope migration 375 gives every subscriber
+    # that predates per-(company, brand) scoping. A user with no scope row hears
+    # nothing, so without this the run is correctly silent and proves nothing.
+    db.add(UserProductDiscontinuedScope(id=str(uuid.uuid4()), user_id=user_id))
 
 
 def _run_manually(db, task) -> None:
