@@ -107,7 +107,28 @@ export function FulfilmentPlanningClient() {
   const [debounced, setDebounced] = React.useState('');
   const [openRow, setOpenRow] = React.useState<FulfilmentPlanningRow | null>(null);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
-  const [boardOrders, setBoardOrders] = React.useState<string[] | null>(null);
+  /**
+   * The board's selection, by sales-order NUMBER, hydrated from the URL (PLAN 13.2).
+   *
+   * A link past the cap opens NOTHING rather than the first fifty: a set the sender did not
+   * choose is not the set they meant to share, which is the same argument that made the cap a
+   * stated refusal on the worklist instead of a silent trim.
+   */
+  const urlOrders = React.useMemo(
+    () =>
+      (searchParams.get('orders') ?? '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    [searchParams],
+  );
+  const [boardOrders, setBoardOrders] = React.useState<string[] | null>(() =>
+    urlOrders.length > 0 && urlOrders.length <= MAX_BOARD_SELECTION ? urlOrders : null,
+  );
+  /** A link that asked for too many, so the refusal can be stated on the worklist. */
+  const [refusedLink] = React.useState(() =>
+    urlOrders.length > MAX_BOARD_SELECTION ? urlOrders.length : 0,
+  );
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -514,13 +535,41 @@ export function FulfilmentPlanningClient() {
   }, [rows, table, rowSelection]);
 
   const overCap = selected.length > MAX_BOARD_SELECTION;
+  /** How many were asked for, whether by tick or by link. */
+  const overCapCount = refusedLink || selected.length;
+
+  /** Open the board and put the selection in the URL, so the view can be sent to somebody. */
+  const openBoard = React.useCallback(
+    (orders: string[]) => {
+      setBoardOrders(orders);
+      const next = new URLSearchParams(searchParams.toString());
+      next.set('orders', orders.join(','));
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
+  /**
+   * Back to the worklist, and the whole board leaves the URL with it - selection, granularity
+   * and the product filter. Leaving any of them behind would make the next link carry a board
+   * the sender was no longer looking at. The worklist's own sort and filter stay.
+   */
+  const closeBoard = React.useCallback(() => {
+    setBoardOrders(null);
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete('orders');
+    next.delete('granularity');
+    next.delete('product');
+    const query = next.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   // The board replaces the worklist in place rather than sitting under it: they answer the
   // same question at two grains, and showing both at once would ask the reader which one is
   // the current subject. Phase 2 puts the selection in the URL so a board can be linked.
   if (boardOrders) {
     return (
-      <FulfilmentBoardPanel soNumbers={boardOrders} onBack={() => setBoardOrders(null)} />
+      <FulfilmentBoardPanel soNumbers={boardOrders} onBack={closeBoard} />
     );
   }
 
@@ -537,9 +586,9 @@ export function FulfilmentPlanningClient() {
           {/* Over the cap, the count is STATED rather than the selection quietly trimmed to
               50: a planner who ticked everything and got a board of the first fifty would be
               planning a set they did not choose, which is the thing 13.2 exists to prevent. */}
-          {overCap && (
+          {(overCap || refusedLink > 0) && (
             <span className="text-sm text-destructive break-words">
-              {`${selected.length} ticked. A board takes at most ${MAX_BOARD_SELECTION} sales orders.`}
+              {`${overCapCount} ticked. A board takes at most ${MAX_BOARD_SELECTION} sales orders.`}
             </span>
           )}
           {selected.length > 0 && (
@@ -558,7 +607,7 @@ export function FulfilmentPlanningClient() {
                   ? 'Tick two or more sales orders to plan them together'
                   : undefined
             }
-            onClick={() => setBoardOrders(selected)}
+            onClick={() => openBoard(selected)}
           >
             <LayoutGrid className="size-4" aria-hidden />
             {`Plan together (${selected.length})`}

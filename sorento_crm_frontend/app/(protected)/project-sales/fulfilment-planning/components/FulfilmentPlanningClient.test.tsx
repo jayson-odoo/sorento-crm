@@ -31,6 +31,7 @@ const getReconciliation = vi.fn();
 const rerunReconciliation = vi.fn();
 const adoptSalesOrder = vi.fn();
 const getSupply = vi.fn();
+const getPlanningBoard = vi.fn();
 
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   listFulfilmentPlanning: (...args: unknown[]) => listFulfilmentPlanning(...args),
@@ -38,6 +39,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   rerunReconciliation: (...args: unknown[]) => rerunReconciliation(...args),
   adoptSalesOrder: (...args: unknown[]) => adoptSalesOrder(...args),
   getSupply: (...args: unknown[]) => getSupply(...args),
+  getPlanningBoard: (...args: unknown[]) => getPlanningBoard(...args),
   confirmSupply: vi.fn(),
   ConfirmSupplyError: class extends Error {},
 }));
@@ -905,5 +907,136 @@ describe('FulfilmentPlanningClient: search', () => {
         }),
       ),
     );
+  });
+});
+
+/**
+ * A board link that actually opens the board (PLAN 13.2 / 13.3, finally built).
+ *
+ * The selection and the granularity live in the URL by sales-order NUMBER, never by id, so a
+ * planner can send someone the board they are looking at. Until now `?product=` survived a
+ * reload while the board itself did not, which made the shareable link a half-truth.
+ */
+describe('FulfilmentPlanningClient: the board lives in the URL', () => {
+  function planned(index: number): FulfilmentPlanningRow {
+    return {
+      row_kind: 'sales_order',
+      id: null,
+      sales_order_id: `so-${index}`,
+      so_number: `SO${100000 + index}`,
+      customer_name: 'A CUSTOMER SDN BHD',
+      line_count: 1,
+      review_state: 'not_started',
+      earliest_required_date: '2026-01-01',
+    };
+  }
+
+  it('opens the board on the orders the URL names', async () => {
+    currentSearchParams = new URLSearchParams('orders=SO100001,SO100002');
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1), planned(2)]));
+    getPlanningBoard.mockReturnValue(new Promise(() => {}));
+
+    renderClient();
+
+    expect(await screen.findByText('Planning 2 sales orders together')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(
+        ['SO100001', 'SO100002'],
+        'week',
+        false,
+        {},
+      ),
+    );
+  });
+
+  it('carries the granularity and the product filter through the same link', async () => {
+    currentSearchParams = new URLSearchParams(
+      'orders=SO100001,SO100002&granularity=month&product=cks',
+    );
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1), planned(2)]));
+    getPlanningBoard.mockReturnValue(new Promise(() => {}));
+
+    renderClient();
+
+    await screen.findByText('Planning 2 sales orders together');
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(
+        ['SO100001', 'SO100002'],
+        'month',
+        false,
+        {},
+      ),
+    );
+    expect(screen.getByPlaceholderText('Search product')).toHaveValue('cks');
+  });
+
+  it('falls back to week on a granularity nobody defined', async () => {
+    currentSearchParams = new URLSearchParams('orders=SO100001&granularity=fortnightly');
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1)]));
+    getPlanningBoard.mockReturnValue(new Promise(() => {}));
+
+    renderClient();
+
+    await screen.findByText('Planning 1 sales orders together');
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100001'], 'week', false, {}),
+    );
+  });
+
+  it('refuses a link past the cap rather than quietly planning the first fifty', async () => {
+    const many = Array.from({ length: 60 }, (_unused, index) => `SO${200000 + index}`);
+    currentSearchParams = new URLSearchParams(`orders=${many.join(',')}`);
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1)]));
+
+    renderClient();
+
+    expect(
+      await screen.findByText('60 ticked. A board takes at most 50 sales orders.'),
+    ).toBeInTheDocument();
+    // The worklist, not a board of the first fifty: a set the sender did not choose is not the
+    // set they meant to share.
+    expect(screen.queryByText(/sales orders together/)).not.toBeInTheDocument();
+    expect(getPlanningBoard).not.toHaveBeenCalled();
+  });
+
+  it('writes the selection into the URL when the board is opened', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1), planned(2)]));
+    getPlanningBoard.mockReturnValue(new Promise(() => {}));
+
+    renderClient();
+    await screen.findByText('SO100001');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(screen.getByRole('button', { name: /Plan together \(2\)/ }));
+
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith(
+        expect.stringContaining('orders=SO100001%2CSO100002'),
+        expect.objectContaining({ scroll: false }),
+      ),
+    );
+  });
+
+  it('drops the whole board from the URL on the way back to the worklist', async () => {
+    currentSearchParams = new URLSearchParams(
+      'orders=SO100001&granularity=month&product=cks&sort=customer_name&dir=asc',
+    );
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1)]));
+    getPlanningBoard.mockReturnValue(new Promise(() => {}));
+
+    renderClient();
+    await screen.findByText('Planning 1 sales orders together');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to the worklist' }));
+
+    await waitFor(() => {
+      const urls = routerReplace.mock.calls.map((call) => String(call[0]));
+      const back = urls[urls.length - 1];
+      expect(back).not.toContain('orders=');
+      expect(back).not.toContain('granularity=');
+      expect(back).not.toContain('product=');
+      // The worklist's own state is not collateral damage.
+      expect(back).toContain('sort=customer_name');
+    });
   });
 });

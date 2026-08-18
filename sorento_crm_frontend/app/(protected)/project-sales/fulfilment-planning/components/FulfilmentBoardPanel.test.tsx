@@ -1360,3 +1360,71 @@ describe('FulfilmentBoardPanel: the policy banner reads as words', () => {
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * The granularity travels with the selection (PLAN 13.3), so the whole board is one link.
+ */
+describe('FulfilmentBoardPanel: granularity in the URL', () => {
+  it('opens on the granularity the URL names', async () => {
+    currentSearchParams = new URLSearchParams('granularity=month');
+    getPlanningBoard.mockResolvedValue(boardOf([demand()], {}, 'month'));
+
+    renderPanel(['SO403340']);
+
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'month', false, {}),
+    );
+    expect(screen.getByLabelText('granularity')).toHaveValue('month');
+  });
+
+  it('falls back to week on a granularity nobody defined', async () => {
+    currentSearchParams = new URLSearchParams('granularity=fortnightly');
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel(['SO403340']);
+
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'week', false, {}),
+    );
+  });
+
+  it('writes the granularity back when the planner turns the control', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.change(screen.getByLabelText('granularity'), { target: { value: 'month' } });
+
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith(
+        '/project-sales/fulfilment-planning?granularity=month',
+        expect.objectContaining({ scroll: false }),
+      ),
+    );
+  });
+
+  /**
+   * A link can name an order that has since been delivered, closed, or was simply mistyped.
+   * Opening a board of four when the link asked for five, and saying nothing, is the kind of
+   * quiet subtraction that makes a shared link untrustworthy.
+   */
+  it('reports an order the board came back without, rather than swallowing it', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel(['SO403340', 'SO999999']);
+
+    expect(
+      await screen.findByText('SO999999 has nothing to plan on this board.'),
+    ).toBeInTheDocument();
+  });
+
+  it('says nothing when every order asked for came back', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.queryByText(/has nothing to plan on this board/)).not.toBeInTheDocument();
+  });
+});

@@ -53,6 +53,21 @@ const GRANULARITY_OPTIONS = [
 ];
 
 /**
+ * The granularity a URL may name, and what an unknown one becomes.
+ *
+ * Guarded the way the server guards it: a link carrying `granularity=fortnightly` opens the
+ * week board rather than asking for a cut nothing can produce. A hand-edited or stale link is
+ * the normal case for a shareable URL, not an attack.
+ */
+const GRANULARITIES: BoardGranularity[] = ['day', 'week', 'month'];
+
+function granularityFrom(value: string | null): BoardGranularity {
+  return GRANULARITIES.includes(value as BoardGranularity)
+    ? (value as BoardGranularity)
+    : 'week';
+}
+
+/**
  * Planning several sales orders at once (PLAN section 13).
  *
  * The board is a LENS. It reads across the selection and writes nothing of its own: approve /
@@ -76,7 +91,9 @@ export function FulfilmentBoardPanel({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [granularity, setGranularity] = React.useState<BoardGranularity>('week');
+  const [granularity, setGranularity] = React.useState<BoardGranularity>(() =>
+    granularityFrom(searchParams.get('granularity')),
+  );
   /**
    * Narrowing the PRODUCT ROWS (the captain: "i need the search here also btw").
    *
@@ -93,16 +110,19 @@ export function FulfilmentBoardPanel({
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
   const [dayWindow, setDayWindow] = React.useState<string | undefined>(undefined);
 
-  // The term travels in the URL so a filtered board is shareable. `replace`, not `push`:
-  // narrowing a list is not a place in history to go back to.
+  // The granularity and the product filter travel in the URL, beside the selection the
+  // worklist put there, so the WHOLE board is one link (PLAN 13.2, 13.3). `replace`, not
+  // `push`: turning a dial is not a place in history to go back to.
   React.useEffect(() => {
     const next = new URLSearchParams(searchParams.toString());
+    if (granularity === 'week') next.delete('granularity');
+    else next.set('granularity', granularity);
     if (productSearch.trim()) next.set('product', productSearch.trim());
     else next.delete('product');
     const query = next.toString();
     if (query === searchParams.toString()) return;
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  }, [productSearch, pathname, router, searchParams]);
+  }, [granularity, productSearch, pathname, router, searchParams]);
 
   const board = usePlanningBoard(
     soNumbers,
@@ -353,6 +373,20 @@ export function FulfilmentBoardPanel({
 
   const filtering = productSearch.trim().length > 0;
 
+  /**
+   * Orders the link asked for that the board came back without.
+   *
+   * A shared link can name an order that has since been delivered or closed, or one that was
+   * mistyped. Opening a board of four when the link asked for five, and saying nothing, is the
+   * quiet subtraction that makes a shared link untrustworthy. The message states what is
+   * observable and does not guess which of the two happened.
+   */
+  const missingOrders = React.useMemo(() => {
+    if (!board.data) return [];
+    const present = new Set(board.data.orders.map((order) => order.so_number));
+    return soNumbers.filter((soNumber) => !present.has(soNumber));
+  }, [board.data, soNumbers]);
+
   const bucketLabel = React.useMemo(() => {
     const map = new Map<string, string>();
     // Through the same de-jargoning the column headers go through: the dialog title reads the
@@ -518,6 +552,21 @@ export function FulfilmentBoardPanel({
         </Card>
       ) : (
         <>
+          {missingOrders.length > 0 && (
+            <Alert appearance="light">
+              <AlertIcon>
+                <AlertTriangle />
+              </AlertIcon>
+              <AlertContent>
+                <AlertTitle>
+                  {`${missingOrders.join(', ')} ${
+                    missingOrders.length === 1 ? 'has' : 'have'
+                  } nothing to plan on this board.`}
+                </AlertTitle>
+              </AlertContent>
+            </Alert>
+          )}
+
           {/* The fact, and only the fact. The columns and their tint say where those lines
               are; a paragraph explaining the tint would be a feature explanation in the UI,
               and a tint that needs one has failed. */}

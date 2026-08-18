@@ -1635,13 +1635,30 @@ the eight fixture orders, `WESERP10B` is owed by four different orders out of bo
   Measured on seven real AutoCount orders after the change: 82 of 357 contributions draw on a pool
   location instead of buying, and 180 Buy rows name a borrowable source.
 
-  One difference between the two surfaces REMAINS and is deliberate: a line's share of its own
-  location's free stock is decided on the sheet by required date across every outstanding line in the
-  book, and on the board by the ranking across the SELECTED orders. Seeding the board's contest with
-  demand that is not on the board would make a row lose to an order the planner cannot see, which is
-  the one thing a board exists to prevent. So the ladder is identical and the contest is each
-  surface's own; where they can differ, they differ about who wins a pile, never about which sources
-  were considered.
+  **That difference is now CLOSED, and it had to be (SO396351, live).** This paragraph used to say
+  the board could share own-location stock among the selected orders while the sheet shared it across
+  the whole book, and that the two "differ about who wins a pile, never about which sources were
+  considered". That was wrong in a way the captain hit: `confirm` judges every Reserve against the
+  BOOK-wide share (`_check_line` -> `reserve_capacity` over `fact.own_free`), so a board that handed a
+  line more than its book share proposed something that could never be committed. On SO396351 the
+  board offered Reserve at BRW-BB, the confirmation refused all of it, and - because
+  `reserve_capacity` omits a location contributing zero - the refusal read "Reserve may only come from
+  this line's own location or the shared pool" about the line's own location.
+
+  So the board now reads the same per-line share the confirmation enforces
+  (`ProjectSupplyService.attribution_by_core_line`). Nothing about what the system RESERVES changed:
+  the confirmation always applied that figure. What changed is that the board stops proposing what the
+  confirmation was always going to refuse. Measured on seven real orders afterwards: 132 of 357
+  contributions still carry a Reserve (16,053 units), 40,549 units are honest Buy, and the captain's
+  own order confirms end to end.
+
+  **What the ranking still decides, and what it no longer does.** It orders the rows in a cell, it
+  decides who draws the SHARED POOL first (contested among the selected orders and nowhere else), and
+  it explains itself through the factor chips. It does NOT decide who gets own-location stock: that
+  follows the book's required-date projection, because that is what the confirmation enforces.
+  Making the ranking authoritative end to end means sorting that projection by
+  `scm.priority_policy` instead of by required date, which changes the per-order sheet's proposals
+  too - a business decision, not a coder's, and it is the natural follow-up to the fair policy.
 - A contributing row whose sales-order line states **no location** renders the blocked state already
   designed (AC-FP16): it contributes its quantity to the cell total so the demand is not hidden, is
   marked as unplannable, links to its SCM sales order, and blocks its own order's confirm. The cell
