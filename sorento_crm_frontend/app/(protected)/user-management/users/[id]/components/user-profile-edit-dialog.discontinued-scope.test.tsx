@@ -78,6 +78,18 @@ vi.mock('./product-discontinued-scope-editor', () => ({
         >
           fail-brand-load
         </button>
+        {/* A freshly added company row, which carries no saved all-brands decision. */}
+        <button
+          type="button"
+          onClick={() =>
+            props.onChange([
+              ...props.rows,
+              { key: 'new-row', companyId: 'co-2', brandIds: [], brandLabels: {} },
+            ])
+          }
+        >
+          add-new-company-row
+        </button>
       </div>
     );
   },
@@ -331,18 +343,35 @@ describe('UserProfileEditDialog - a row whose brands failed to load blocks Save'
       ],
     }) as unknown as User;
 
-  it('Save stays disabled while a company row has no brands and no brand list', async () => {
+  it('Save stays disabled while a NEWLY ADDED company row has no brands and no brand list', async () => {
     renderDialog(userWithCompanyRow());
     await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('1'));
 
-    // Dirty an unrelated field so only the errored row can be holding Save back.
-    fireEvent.click(screen.getByRole('checkbox', { name: /email on assignment/i }));
+    fireEvent.click(screen.getByText('add-new-company-row'));
+    await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('2'));
     const saveButton = screen.getByRole('button', { name: /save changes/i });
     await waitFor(() => expect(saveButton).not.toBeDisabled());
 
     fireEvent.click(screen.getByText('fail-brand-load'));
 
     await waitFor(() => expect(saveButton).toBeDisabled());
+  });
+
+  it('a SAVED all-brands row whose brands fail to load still lets the rest of the profile save', async () => {
+    // An admin without master_data.brands.view errors on every company row. If that
+    // froze Save, they could never edit this user's name, roles or status again.
+    renderDialog(userWithCompanyRow());
+    await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('1'));
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /email on assignment/i }));
+    fireEvent.click(screen.getByText('fail-brand-load'));
+
+    const saveButton = screen.getByRole('button', { name: /save changes/i });
+    await waitFor(() => expect(saveButton).not.toBeDisabled());
+    fireEvent.click(saveButton);
+
+    // Scopes were never edited, so they are left alone rather than rewritten.
+    expect(await putBody()).not.toHaveProperty('product_discontinued_scopes');
   });
 
   it('the failed load alone does not count as an edit, so Save stays closed', async () => {

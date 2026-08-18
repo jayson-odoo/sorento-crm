@@ -31,18 +31,27 @@ export interface ScopeRow {
    * could offer. An empty pick then says nothing about what the admin wanted.
    */
   brandsLoadError?: boolean;
+  /**
+   * This row came back from the server as an all-brands scope for its company, so
+   * its empty ``brandIds`` is a saved decision rather than a pick never made.
+   */
+  savedAllBrands?: boolean;
 }
 
 /**
- * A row whose brands never loaded AND which has no brand picked. Empty means all
- * brands, so serialising this row would save the whole company off the back of a
- * failed request - the exact widening the picker's error state exists to stop.
+ * A row whose brands never loaded, which has no brand picked, and whose empty pick
+ * was never saved as "all brands" either. Empty means all brands, so serialising
+ * such a row would save the whole company off the back of a failed request - the
+ * widening the picker's error state exists to stop. A previously saved all-brands
+ * row is NOT this: it already said all brands, and a failed lookup does not change
+ * what it says.
  */
 export function isScopeRowBrandsUnknown(row: ScopeRow): boolean {
   return (
     Boolean(row.brandsLoadError) &&
     row.companyId !== null &&
-    row.brandIds.length === 0
+    row.brandIds.length === 0 &&
+    !row.savedAllBrands
   );
 }
 
@@ -106,6 +115,7 @@ export function scopesToRows(
     if (row) {
       row.brandIds = [];
       row.brandLabels = {};
+      row.savedAllBrands = true;
     }
   }
 

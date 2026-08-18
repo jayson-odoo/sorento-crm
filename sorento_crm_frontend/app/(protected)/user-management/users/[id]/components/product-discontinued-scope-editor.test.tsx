@@ -401,7 +401,7 @@ describe('ProductDiscontinuedScopeEditor - the brand load failed', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('tells the row it is unsavable while nothing is picked', () => {
+  it('tells a NEW row it is unsavable while nothing is picked', () => {
     renderEditor([
       {
         key: 'k1',
@@ -412,7 +412,37 @@ describe('ProductDiscontinuedScopeEditor - the brand load failed', () => {
         brandsLoadError: true,
       },
     ]);
-    expect(screen.getByRole('alert')).toHaveTextContent(/remove this row to save/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/cannot be saved yet/i);
+  });
+
+  it('never tells the admin to delete a row', () => {
+    renderEditor([
+      {
+        key: 'k1',
+        companyId: 'co-1',
+        companyName: 'Sorento',
+        brandIds: [],
+        brandLabels: {},
+        brandsLoadError: true,
+      },
+    ]);
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/remove this row/i);
+  });
+
+  it('a SAVED all-brands row is unaffected: it already said all brands', () => {
+    renderEditor([
+      {
+        key: 'k1',
+        companyId: 'co-1',
+        companyName: 'Sorento',
+        brandIds: [],
+        brandLabels: {},
+        brandsLoadError: true,
+        savedAllBrands: true,
+      },
+    ]);
+    expect(screen.getByRole('alert')).toHaveTextContent(/brands could not be loaded/i);
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/cannot be saved/i);
   });
 
   it('a row that still has its saved brands is savable, so it keeps the plain message', () => {
@@ -426,7 +456,26 @@ describe('ProductDiscontinuedScopeEditor - the brand load failed', () => {
         brandsLoadError: true,
       },
     ]);
-    expect(screen.getByRole('alert')).not.toHaveTextContent(/remove this row/i);
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/cannot be saved/i);
+  });
+
+  it('switching a saved all-brands row to another company drops its saved provenance', () => {
+    const { onChange } = renderEditor([
+      {
+        key: 'k1',
+        companyId: 'co-1',
+        companyName: 'Sorento',
+        brandIds: [],
+        brandLabels: {},
+        savedAllBrands: true,
+      },
+    ]);
+    fireEvent.change(screen.getByLabelText('Select a company'), {
+      target: { value: 'co-2' },
+    });
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({ companyId: 'co-2', savedAllBrands: false }),
+    ]);
   });
 
   it('keeps the brands already saved on the row visible while the load is broken', () => {

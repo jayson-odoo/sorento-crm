@@ -119,6 +119,7 @@ const ScopeRowFields = ({
       brandIds: [],
       brandLabels: {},
       brandsLoadError: false,
+      savedAllBrands: false,
     });
   };
 
@@ -159,7 +160,7 @@ const ScopeRowFields = ({
         {isError ? (
           <p role="alert" className="mt-1 text-xs text-destructive">
             {brandsUnknown
-              ? 'Brands could not be loaded. Remove this row to save.'
+              ? 'Brands could not be loaded, so this row cannot be saved yet.'
               : 'Brands could not be loaded.'}
           </p>
         ) : null}

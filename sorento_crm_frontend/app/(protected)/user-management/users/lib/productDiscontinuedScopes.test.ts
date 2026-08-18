@@ -165,6 +165,18 @@ describe('a row whose brands never loaded is not all brands', () => {
     expect(scopeRowsHaveUnknownBrands([errored([])])).toBe(true);
   });
 
+  it('a SAVED all-brands row stays savable when its brand list fails to load', () => {
+    // It was already saved as "every brand in this company"; a failed lookup does
+    // not turn that into an unknown, and blocking it would freeze the whole dialog
+    // for an admin without the brands permission.
+    const saved: ScopeRow = { ...errored([]), savedAllBrands: true };
+    expect(isScopeRowBrandsUnknown(saved)).toBe(false);
+    expect(scopeRowsHaveUnknownBrands([saved])).toBe(false);
+    expect(rowsToScopePayload([saved])).toEqual([
+      { company_id: 'co-1', brand_id: null },
+    ]);
+  });
+
   it('an errored row that kept its saved brands is still savable', () => {
     expect(isScopeRowBrandsUnknown(errored(['br-1']))).toBe(false);
     expect(scopeRowsHaveUnknownBrands([errored(['br-1'])])).toBe(false);
@@ -196,6 +208,9 @@ describe('an all-brands company scope survives the round trip as a null brand', 
     const rows = scopesToRows(scopes);
     expect(rows).toHaveLength(1);
     expect(rows[0].brandIds).toEqual([]);
+    // Marked as a saved all-brands decision, so a later brand-load failure cannot
+    // mistake it for a pick that was never made.
+    expect(rows[0].savedAllBrands).toBe(true);
     expect(describeScopeRow(rows[0])).toBe(`Sorento: ${ALL_BRANDS_LABEL}`);
     expect(rowsToScopePayload(rows)).toEqual([{ company_id: 'co-1', brand_id: null }]);
   });
