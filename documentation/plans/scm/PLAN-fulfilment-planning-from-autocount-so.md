@@ -1954,6 +1954,37 @@ the count is STATED ("60 ticked. A board takes at most 50 sales orders.") and Pl
 disabled: a planner who ticked everything and got a board of the first fifty would be planning a
 set they did not choose.
 
+**THE WHOLE BOARD IS ONE LINK, as 13.2 and 13.3 always specified.** The selection and the
+granularity are now in the URL beside the product filter -
+`?orders=SO391698,SO324265,SO284663&granularity=month&product=cks`, by sales-order NUMBER, never
+by id. Until this landed `?product=` survived a reload while the board itself did not, which made
+the shareable link a half-truth.
+
+Hydration is guarded the way the server guards it, because a stale or hand-edited link is the
+normal case for a URL people send each other, not an attack:
+
+- an unknown granularity falls back to **week** rather than asking for a cut nothing produces;
+- **more than 50 orders opens NOTHING**, with the worklist's own refusal ("60 ticked. A board
+  takes at most 50 sales orders."), never the first fifty - a set the sender did not choose is
+  not the set they meant to share, which is the same argument that made the cap a stated refusal
+  rather than a silent trim;
+- an order the board comes back without is **named** ("SO999999 has nothing to plan on this
+  board."). Opening a board of two when the link asked for three, and saying nothing, is the
+  quiet subtraction that makes a shared link untrustworthy. The wording states what is
+  observable and does not guess between "delivered or closed" and "not on the book".
+
+**Back to the worklist drops all three** (`orders`, `granularity`, `product`) and leaves the
+worklist's own `sort` and `dir` alone, so the next link never carries a board the sender has
+walked away from.
+
+**Verified live, 18 August 2026.** Ticked three orders, filtered to `cks`, switched to month; the
+URL read `?sort=…&orders=SO391698,SO324265,SO284663&product=cks&granularity=month`. Cold-loading
+that URL reproduced the board exactly: "Planning 3 sales orders together", By month, the search
+box holding `cks`, rows CKS1050 / CKS7306 / CKSW015 and "3 of 40 products". Back returned to
+`?sort=…&dir=asc` with the board gone. A 60-order link showed the refusal and opened no board; a
+link naming `SO999999` with `granularity=fortnightly` opened the week board and named the missing
+order.
+
 **THE BOARD HAS ITS OWN SEARCH** (captain: "i need the search here also btw"). A four-order
 selection is already forty product rows tall, and there was no way to narrow it.
 
