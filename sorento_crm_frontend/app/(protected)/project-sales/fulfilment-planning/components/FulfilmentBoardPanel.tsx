@@ -511,7 +511,7 @@ export function FulfilmentBoardPanel({
   }, [openCell, board.data, axis]);
 
   /**
-   * How many LINES of the selection are already past their required date.
+   * How many LINES of the selection are already past their delivery date.
    *
    * The server's two selection-scoped totals, read straight. NOT summed off the cells: cells
    * are what a window is showing, so the same board reported a different number on day than on
@@ -694,7 +694,7 @@ export function FulfilmentBoardPanel({
               </AlertIcon>
               <AlertContent>
                 <AlertTitle>
-                  {`${pastTotal.lines} of ${pastTotal.allLines} lines are already past their required date`}
+                  {`${pastTotal.lines} of ${pastTotal.allLines} lines are already past their delivery date`}
                 </AlertTitle>
               </AlertContent>
             </Alert>

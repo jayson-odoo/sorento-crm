@@ -97,7 +97,7 @@ describe('BoardAmendDialog: what it is and what it holds', () => {
       .map((section) => section.textContent?.split('\n')[0] ?? '');
     expect(labels).toEqual([
       expect.stringContaining('Owed'),
-      expect.stringContaining('Incoming by the required date'),
+      expect.stringContaining('Incoming by the delivery date'),
       expect.stringContaining('Reserve'),
       expect.stringContaining('Borrow'),
       expect.stringContaining('Buy'),

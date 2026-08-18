@@ -244,7 +244,7 @@ export function BoardCellBreakdownDialog({
       {
         id: 'required_date',
         accessorFn: (row) => row.required_date ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Required" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate text-sm tabular-nums">
             {row.original.required_date
@@ -254,7 +254,7 @@ export function BoardCellBreakdownDialog({
         ),
         size: 120,
         minSize: 100,
-        meta: { headerTitle: 'Required' },
+        meta: { headerTitle: 'Delivery date' },
       },
       {
         id: 'fulfilment_location',

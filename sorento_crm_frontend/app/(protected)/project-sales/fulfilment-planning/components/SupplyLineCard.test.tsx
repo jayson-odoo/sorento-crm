@@ -2,7 +2,7 @@
  * Stage 1C - one line's supply composition (journey steps 1 and 2).
  *
  * Two rules are pinned hardest. Every section renders whatever the answer is, so no
- * eligible stock, no incoming by the required date, no later incoming, no borrow candidate,
+ * eligible stock, no incoming by the delivery date, no later incoming, no borrow candidate,
  * no reorder level and no classification each state that in place (AC-G02); and the read
  * view and the edit view are the SAME layout, so a confirmed line shows the frozen quantity
  * where the input was, in the same order, under the same headings.
@@ -34,7 +34,7 @@ const DONOR_PROJECT = 'b2000000-0000-4000-8000-000000000001';
 const LINE_ID = 'c3000000-0000-4000-8000-000000000001';
 
 const SECTIONS = [
-  'Incoming by the required date',
+  'Incoming by the delivery date',
   'Reserve',
   'Borrow',
   'Buy',
@@ -62,14 +62,14 @@ function line(overrides: Partial<SupplyLine> = {}): SupplyLine {
       {
         kind: 'timely_spo',
         qty: '100',
-        reason: 'SPO-2026-0311 arrives at BRW-BB on 01 Sep 2026, on the required date.',
+        reason: 'SPO-2026-0311 arrives at BRW-BB on 01 Sep 2026, on the delivery date.',
         source_location: 'BRW-BB',
         source_warehouse_id: WH_BRW,
       },
       {
         kind: 'reserve',
         qty: '200',
-        reason: 'Free stock at BRW-BB covers the need by the required date.',
+        reason: 'Free stock at BRW-BB covers the need by the delivery date.',
         source_location: 'BRW-BB',
         source_warehouse_id: WH_BRW,
       },
@@ -141,10 +141,10 @@ describe('SupplyLineCard', () => {
     expect(screen.getByText('600 UNIT')).toBeInTheDocument();
   });
 
-  it('states the required date and the fulfilment location', () => {
+  it('states the delivery date and the fulfilment location', () => {
     renderCard(line());
 
-    expect(within(section('Required')).getByText('01/09/2026')).toBeInTheDocument();
+    expect(within(section('Delivery date')).getByText('01/09/2026')).toBeInTheDocument();
     expect(within(section('Fulfil from')).getByText('BRW-BB')).toBeInTheDocument();
   });
 
@@ -195,11 +195,11 @@ describe('SupplyLineCard', () => {
 
     expect(
       screen.getByText(
-        'SPO-2026-0311 arrives at BRW-BB on 01 Sep 2026, on the required date.',
+        'SPO-2026-0311 arrives at BRW-BB on 01 Sep 2026, on the delivery date.',
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Free stock at BRW-BB covers the need by the required date.'),
+      screen.getByText('Free stock at BRW-BB covers the need by the delivery date.'),
     ).toBeInTheDocument();
     expect(screen.getByText('Remaining uncovered need.')).toBeInTheDocument();
   });
@@ -215,18 +215,18 @@ describe('SupplyLineCard', () => {
   it('names the incoming that covers the line, with its arrival date', () => {
     renderCard(line());
 
-    const incoming = within(section('Incoming by the required date'));
+    const incoming = within(section('Incoming by the delivery date'));
     expect(incoming.getByText('SPO-2026-0311')).toBeInTheDocument();
     expect(incoming.getByText('· 100 · 01/09/2026')).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------- empty states
-  it('says nothing arrives by the required date rather than dropping the section', () => {
+  it('says nothing arrives by the delivery date rather than dropping the section', () => {
     renderCard(BARE);
 
     expect(
-      within(section('Incoming by the required date')).getByText(
-        'No incoming arrives by the required date.',
+      within(section('Incoming by the delivery date')).getByText(
+        'No incoming arrives by the delivery date.',
       ),
     ).toBeInTheDocument();
   });
@@ -281,7 +281,7 @@ describe('SupplyLineCard', () => {
     const later = within(section('Later incoming'));
     expect(later.getByText('SPO-2026-0402')).toBeInTheDocument();
     expect(
-      later.getByText('Advisory: it arrives after the required date and covers nothing.'),
+      later.getByText('Advisory: it arrives after the delivery date and covers nothing.'),
     ).toBeInTheDocument();
   });
 
@@ -454,14 +454,14 @@ describe('SupplyLineCard', () => {
             {
               kind: 'timely_spo',
               qty: '100',
-              reason: 'SPO-2026-0311 arrives at BRW-BB on the required date.',
+              reason: 'SPO-2026-0311 arrives at BRW-BB on the delivery date.',
               source_location: 'BRW-BB',
               source_warehouse_id: WH_BRW,
             },
             {
               kind: 'reserve',
               qty: '200',
-              reason: 'Free stock at BRW-BB covers the need by the required date.',
+              reason: 'Free stock at BRW-BB covers the need by the delivery date.',
               source_location: 'BRW-BB',
               source_warehouse_id: WH_BRW,
             },

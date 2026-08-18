@@ -178,15 +178,15 @@ _COVERED_BEFORE = "Fully covered before this rung."
 #: The planner's words, matching the frontend's `factorLabel` map subject for subject: the
 #: policy's own keys (`need_by_date`) are exactly what the rank chips were told to stop showing.
 _AHEAD_PHRASES = {
-    "need_by_date": "an earlier required date",
+    "need_by_date": "an earlier delivery date",
     "document_age": "an older order date",
     "customer_credit": "shorter payment terms",
     "demand_class": "a higher-ranked demand type",
     "po_document_sequence": "an earlier purchase order sequence",
     #: Not policy factors at all: these three are the tie-break, in `_pile_book`'s own order
-    #: (required date, then line number within an order, then sales-order number), and naming
+    #: (delivery date, then line number within an order, then sales-order number), and naming
     #: a factor here would claim a score difference the two lines do not have.
-    "earlier_date": "the same rank and an earlier required date",
+    "earlier_date": "the same rank and an earlier delivery date",
     "line_order": "an earlier line number in the same order",
     "tie_break": "the same rank and a lower sales order number",
 }
@@ -388,7 +388,7 @@ class FulfilmentBoardService:
         for row in rows:
             row.bucket_key = bucket_key_for(row.required_date, as_of, granularity)
             # Per LINE, against its own date, which is the number the "N of M lines are past
-            # their required date" summary counts. A line dated yesterday is past even though
+            # their delivery date" summary counts. A line dated yesterday is past even though
             # the week it sits in has not ended, so the bucket flag alone would undercount it.
             row.is_past = row.required_date is not None and row.required_date < as_of
 
@@ -485,7 +485,7 @@ class FulfilmentBoardService:
             # is applied - never over the cells on screen.
             #
             # The screen cannot compute these for itself. Summed off the visible cells, "143 of
-            # 153 lines are already past their required date" is right at week and month and
+            # 153 lines are already past their delivery date" is right at week and month and
             # DISAPPEARS at day, because the 30-day window opens on work still to come and so
             # holds no past cell at all. The planner switching to the closest view would
             # silently lose the most important number on the board.
@@ -1978,7 +1978,7 @@ class FulfilmentBoardService:
         where = f" at {row.location}" if row.location else ""
         if taker is None:
             reason = (
-                f"Nothing free{where} by the required date, so the quantity is bought."
+                f"Nothing free{where} by the delivery date, so the quantity is bought."
             )
         elif taker.sales_order_id == row.sales_order_id:
             reason = (
@@ -2061,8 +2061,8 @@ class FulfilmentBoardService:
             #: These two say which case it is, so the screen can word it honestly.
             "distinct_order_count": len({row.sales_order_id for row in members}),
             "rank_separates": len({round(float(row.rank_score), 6) for row in members}) > 1,
-            # Lines whose OWN required date is already past. Counted here so the screen can say
-            # "160 of 160 lines are past their required date" without walking every
+            # Lines whose OWN delivery date is already past. Counted here so the screen can say
+            # "160 of 160 lines are past their delivery date" without walking every
             # contribution, which is the information the aggregate Overdue column used to carry
             # and the only part of it worth keeping.
             "past_count": sum(1 for row in members if row.is_past),

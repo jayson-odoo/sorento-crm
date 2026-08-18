@@ -319,7 +319,7 @@ describe('FulfilmentBoardPanel: the axes', () => {
       'false',
     );
     expect(
-      screen.getByText('1 of 2 lines are already past their required date'),
+      screen.getByText('1 of 2 lines are already past their delivery date'),
     ).toBeInTheDocument();
   });
 
@@ -345,7 +345,7 @@ describe('FulfilmentBoardPanel: the axes', () => {
     renderPanel();
 
     expect(
-      await screen.findByText('130 of 161 lines are already past their required date'),
+      await screen.findByText('130 of 161 lines are already past their delivery date'),
     ).toBeInTheDocument();
   });
 
@@ -360,7 +360,7 @@ describe('FulfilmentBoardPanel: the axes', () => {
     renderPanel();
 
     expect(
-      await screen.findByText('1 of 2 lines are already past their required date'),
+      await screen.findByText('1 of 2 lines are already past their delivery date'),
     ).toBeInTheDocument();
     // The old copy described a column that no longer exists, and a tint that needs a
     // paragraph is a tint that failed. No feature explanations in the UI (CLAUDE.md).
@@ -683,7 +683,7 @@ describe('FulfilmentBoardPanel: no ranking banner at the top (13.5)', () => {
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(screen.queryByText('Required date 3 · Order date 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Delivery date 3 · Order date 1')).not.toBeInTheDocument();
   });
 
   /**
@@ -1388,7 +1388,7 @@ describe('FulfilmentBoardPanel: searching the product rows', () => {
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
-    const banner = '130 of 161 lines are already past their required date';
+    const banner = '130 of 161 lines are already past their delivery date';
     expect(screen.getByText(banner)).toBeInTheDocument();
 
     await searchFor('tpe');
@@ -1499,7 +1499,7 @@ describe('FulfilmentBoardPanel: the live policy, and only it', () => {
     expect(screen.queryByText(/need_by_date/)).not.toBeInTheDocument();
     expect(screen.queryByText(/po_document_sequence/)).not.toBeInTheDocument();
     expect(
-      screen.queryByText('Required date 3 · Order date 1 · Payment terms 1'),
+      screen.queryByText('Delivery date 3 · Order date 1 · Payment terms 1'),
     ).not.toBeInTheDocument();
   });
 });

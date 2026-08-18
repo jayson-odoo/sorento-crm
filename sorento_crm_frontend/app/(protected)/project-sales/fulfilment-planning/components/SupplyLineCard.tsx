@@ -33,7 +33,7 @@ import { BorrowAddDialog } from './BorrowAddDialog';
  * reader where things are.
  *
  * Every section renders whatever the answer is (AC-G02). No eligible stock, no incoming by
- * the required date, no later incoming, no borrow candidate, no reorder level and no
+ * the delivery date, no later incoming, no borrow candidate, no reorder level and no
  * classification each state that in place; a section that disappears reads as a screen
  * that has not finished loading.
  */
@@ -101,7 +101,7 @@ export function SupplyLineCard({
       </header>
 
       <div className="grid grid-cols-2 gap-3 border-b border-border px-3 py-2.5 sm:grid-cols-3">
-        <Fact label="Required">
+        <Fact label="Delivery date">
           {line.required_date ? (
             <span className="tabular-nums">{formatDateInMalaysia(line.required_date)}</span>
           ) : (
@@ -180,11 +180,11 @@ export function SupplyLineCard({
 
       {/* Components, in the order the engine proposes them (plan 3.2). */}
       <div className="divide-y divide-border">
-        <Row label="Incoming by the required date">
+        <Row label="Incoming by the delivery date">
           {frozen ? (
             <FrozenComponents components={frozenOf('timely_spo')} uom={uom} />
           ) : line.timely_spo.length === 0 ? (
-            <Muted>No incoming arrives by the required date.</Muted>
+            <Muted>No incoming arrives by the delivery date.</Muted>
           ) : (
             <div className="space-y-1">
               <div className="text-sm tabular-nums">{`${draft.timely_spo_qty}${uom}`}</div>
@@ -364,7 +364,7 @@ export function SupplyLineCard({
           ) : (
             <div className="space-y-1">
               <SpoList refs={line.advisory_spo} />
-              <Muted>Advisory: it arrives after the required date and covers nothing.</Muted>
+              <Muted>Advisory: it arrives after the delivery date and covers nothing.</Muted>
             </div>
           )}
         </Row>
@@ -453,7 +453,7 @@ function BlockedLineCard({
       </header>
 
       <div className="grid grid-cols-2 gap-3 border-b border-border px-3 py-2.5 sm:grid-cols-3">
-        <Fact label="Required">
+        <Fact label="Delivery date">
           {line.required_date ? (
             <span className="tabular-nums">{formatDateInMalaysia(line.required_date)}</span>
           ) : (

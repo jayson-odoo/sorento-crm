@@ -292,7 +292,7 @@ def test_a_bucket_whose_period_has_ended_says_so_and_the_current_one_does_not():
 
 
 def test_every_contribution_says_whether_its_own_date_has_passed():
-    """What the "160 of 160 lines are past their required date" summary counts.
+    """What the "160 of 160 lines are past their delivery date" summary counts.
 
     Per LINE, not per bucket: the line dated 17 August is past even though the week it sits in
     has not ended, and a summary built off the bucket flag alone would miss it.
@@ -970,7 +970,7 @@ def _past_world(db):
 
 
 def test_the_board_totals_are_the_selections_and_do_not_move_with_the_granularity():
-    """The FE banner reads "143 of 153 lines are already past their required date".
+    """The FE banner reads "143 of 153 lines are already past their delivery date".
 
     Summed off the cells ON SCREEN that sentence is true at week and month and vanishes at day,
     because the day window opens on work still to come and so holds no past cell at all - the
@@ -3194,7 +3194,7 @@ def test_the_own_rung_why_names_the_queue_in_words_a_planner_uses():
         why = own["why"]
         # The flag the rung was judged on comes first; the queue sentence follows it.
         assert "100 on hand, but 6 lines" in why
-        assert "an earlier required date" in why
+        assert "an earlier delivery date" in why
         assert "170" in why
         assert "none is left for this line" in why
         # Words, never the database's own names for them.

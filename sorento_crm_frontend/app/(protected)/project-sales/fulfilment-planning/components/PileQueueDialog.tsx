@@ -156,7 +156,7 @@ export function PileQueueDialog({
       {
         id: 'required_date',
         accessorFn: (row) => row.required_date ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Required" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         cell: ({ row }) => (
           <span className={`${cellClass(row.original, position)} tabular-nums`}>
             {row.original.required_date
@@ -166,7 +166,7 @@ export function PileQueueDialog({
         ),
         size: 130,
         minSize: 110,
-        meta: { headerTitle: 'Required' },
+        meta: { headerTitle: 'Delivery date' },
       },
       {
         id: 'order_date',

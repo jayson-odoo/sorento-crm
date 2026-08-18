@@ -210,7 +210,7 @@ export function FulfilmentPlanningSheet({
       },
       {
         id: 'delivery_date',
-        header: 'Required',
+        header: 'Delivery date',
         cell: ({ row: line }) =>
           line.original.delivery_date ? (
             <span className="block truncate tabular-nums">
@@ -221,7 +221,7 @@ export function FulfilmentPlanningSheet({
           ),
         size: 115,
         minSize: 105,
-        meta: { headerTitle: 'Required' },
+        meta: { headerTitle: 'Delivery date' },
       },
       {
         id: 'stock_location',

@@ -156,7 +156,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
       'Project',
       'Ordered',
       'Owed',
-      'Required',
+      'Delivery date',
       'Location',
       'Sourced from',
       'Rank',
@@ -212,7 +212,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
     expect(screen.getByText(/Reserve 40/)).toBeInTheDocument();
     expect(screen.getByText(/Buy 60/)).toBeInTheDocument();
     expect(
-      screen.getByTitle(/Free unclaimed stock at BRW-BB covers this much by the required date\./),
+      screen.getByTitle(/Free unclaimed stock at BRW-BB covers this much by the delivery date\./),
     ).toBeInTheDocument();
   });
 
@@ -423,7 +423,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     fireEvent.click(screen.getByTestId(`rank-info-${cell.contributions[0].key}`));
     const detail =
       screen.getByTestId(`rank-calculation-${cell.contributions[0].key}`).textContent ?? '';
-    expect(detail).toContain('Required date');
+    expect(detail).toContain('Delivery date');
     expect(detail).toContain('2026-09-03');
   });
 
@@ -841,7 +841,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
         kind: 'timely_spo',
         qty: '15',
         location: 'BRW-BB',
-        reason: 'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the required date.',
+        reason: 'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the delivery date.',
         spo_number: null,
         arrival_date: null,
       },
@@ -861,7 +861,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
         kind: 'timely_spo',
         qty: '15',
         location: 'BRW-BB',
-        reason: 'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the required date.',
+        reason: 'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the delivery date.',
         spo_number: null,
         arrival_date: null,
       },
@@ -869,7 +869,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
 
     expect(
       screen.getByTitle(
-        /SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the required date\./,
+        /SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the delivery date\./,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText('null')).not.toBeInTheDocument();
@@ -918,7 +918,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
               qty: '80',
               location: 'BRW-BB',
               warehouse_id: 'wh-BRW-BB',
-              reason: 'Free unclaimed stock at BRW-BB covers this much by the required date.',
+              reason: 'Free unclaimed stock at BRW-BB covers this much by the delivery date.',
             },
           ],
           ...overrides,
@@ -1269,7 +1269,7 @@ describe('BoardCellBreakdownDialog: how the rank was calculated', () => {
 
     const row = screen.getByTestId('rank-factor-need_by_date');
     expect([...row.querySelectorAll('td')].map((node) => node.textContent)).toEqual([
-      'Required date',
+      'Delivery date',
       '2026-09-03',
       '1.00',
       '3',
@@ -1500,7 +1500,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).toContain(
-      '40 on hand, but 4 lines with an earlier required date rank ahead and want 400 - none is left for this line.',
+      '40 on hand, but 4 lines with an earlier delivery date rank ahead and want 400 - none is left for this line.',
     );
     expect(screen.getByTestId(`trail-why-${last}-buy`).textContent).toBe(
       'Nothing left to take, so the remainder is bought.',
@@ -1517,7 +1517,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).toContain(
-      '40 on hand, but 4 lines with an earlier required date rank ahead and want 400 - none is left for this line.',
+      '40 on hand, but 4 lines with an earlier delivery date rank ahead and want 400 - none is left for this line.',
     );
     expect(trail.textContent).not.toContain('Ahead of this line');
     expect(trail.querySelectorAll('[data-testid^="trail-ahead-line-"]')).toHaveLength(0);

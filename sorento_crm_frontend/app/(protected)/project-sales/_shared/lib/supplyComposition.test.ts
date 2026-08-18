@@ -285,14 +285,14 @@ describe('draftFromLine', () => {
           {
             kind: 'timely_spo',
             qty: '100',
-            reason: 'SPO-2026-0311 arrives at BRW-BB on the required date.',
+            reason: 'SPO-2026-0311 arrives at BRW-BB on the delivery date.',
             source_location: 'BRW-BB',
             source_warehouse_id: WAREHOUSE_BRW,
           },
           {
             kind: 'reserve',
             qty: '200',
-            reason: 'Free stock at BRW-BB covers the need by the required date.',
+            reason: 'Free stock at BRW-BB covers the need by the delivery date.',
             source_location: 'BRW-BB',
             source_warehouse_id: WAREHOUSE_BRW,
           },
@@ -308,7 +308,7 @@ describe('draftFromLine', () => {
       location: 'BRW-BB',
       warehouse_id: WAREHOUSE_BRW,
       qty: '200',
-      reason: 'Free stock at BRW-BB covers the need by the required date.',
+      reason: 'Free stock at BRW-BB covers the need by the delivery date.',
     });
     expect(result.buy_qty).toBe('300');
     expect(lineBalance(result).balanced).toBe(true);

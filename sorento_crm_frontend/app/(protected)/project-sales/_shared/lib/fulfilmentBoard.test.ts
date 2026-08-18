@@ -839,7 +839,7 @@ describe('standingsFor reads the server key (deviation 5)', () => {
  */
 describe('factorLabel', () => {
   it('names the four policy factors in English', () => {
-    expect(factorLabel('need_by_date')).toBe('Required date');
+    expect(factorLabel('need_by_date')).toBe('Delivery date');
     expect(factorLabel('document_age')).toBe('Order date');
     expect(factorLabel('customer_credit')).toBe('Payment terms');
     expect(factorLabel('demand_class')).toBe('Demand type');
@@ -858,13 +858,13 @@ describe('factorLabel', () => {
  */
 describe('aheadFactorLabel', () => {
   it('names the three tie-break keys apart from the policy factors', () => {
-    expect(aheadFactorLabel('earlier_date')).toBe('Earlier required date (tie)');
+    expect(aheadFactorLabel('earlier_date')).toBe('Earlier delivery date (tie)');
     expect(aheadFactorLabel('line_order')).toBe('same order');
     expect(aheadFactorLabel('tie_break')).toBe('tie-break');
   });
 
   it('still names a policy factor as the factor', () => {
-    expect(aheadFactorLabel('need_by_date')).toBe('Required date');
+    expect(aheadFactorLabel('need_by_date')).toBe('Delivery date');
     expect(aheadFactorLabel('customer_credit')).toBe('Payment terms');
   });
 });
