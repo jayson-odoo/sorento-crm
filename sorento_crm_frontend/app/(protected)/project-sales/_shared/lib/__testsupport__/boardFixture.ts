@@ -49,6 +49,10 @@ export interface BoardDemandLine {
   line_no: number;
   item_code: string;
   qty: string;
+  /** What the sales order ordered on the line. A server fact, never derived here. */
+  qty_ordered?: string | null;
+  /** The mirror line the confirmation names. Addressing only. */
+  project_line_id?: string | null;
   required_date?: string | null;
   /** The core line's own warehouse code. Empty or null means the source record is silent. */
   fulfilment_location?: string | null;
@@ -158,7 +162,7 @@ function bucketLabel(key: string, granularity: BoardGranularity): string {
   const monthName = MONTHS[Number(month) - 1] ?? month;
   if (granularity === 'month') return `${monthName} ${year}`;
   if (granularity === 'day') return `${Number(day)} ${monthName} ${year}`;
-  return `w/c ${Number(day)} ${monthName} ${year}`;
+  return `${Number(day)} ${monthName} ${year}`;
 }
 
 /**
@@ -321,6 +325,7 @@ function allocate(
         kind: 'reserve',
         qty: fromMinor(reserved),
         location,
+        warehouse_id: `wh-${location}`,
         reason: `Free unclaimed stock at ${location} covers this much by the required date.`,
       });
     }
@@ -390,12 +395,16 @@ export function buildBoard(
       line_no: line.line_no,
       item_code: line.item_code,
       qty: line.qty,
+      qty_ordered: line.qty_ordered ?? null,
+      qty_outstanding: line.qty,
+      project_line_id: line.project_line_id ?? `pl-${line.sales_order_id}-${line.line_no}`,
       required_date: line.required_date ?? null,
       // The LINE's own lateness, which is not its bucket's: a line due yesterday is late while
       // the week holding it still has days to come. An undated line is never late - nobody
       // said when it was due.
       is_past: Boolean(line.required_date && line.required_date < today),
       fulfilment_location: location,
+      fulfilment_warehouse_id: location ? `wh-${location}` : null,
       unplannable: !location,
       priority: line.priority ?? null,
       sources: [],
@@ -496,6 +505,7 @@ function ordersFor(contributions: BoardContribution[]): BoardOrderStanding[] {
     const standing = byOrder.get(contribution.sales_order_id) ?? {
       sales_order_id: contribution.sales_order_id,
       so_number: contribution.so_number,
+      project_sales_order_id: `pso-${contribution.sales_order_id}`,
       customer_name: contribution.customer_name ?? null,
       line_count: 0,
       decided_count: 0,

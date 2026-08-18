@@ -459,3 +459,39 @@ def discriminates_nothing(factors_by_row: Mapping[str, Sequence[Factor]]) -> boo
 def scores_for(factors_by_row: Mapping[str, Sequence[Factor]]) -> dict[str, float]:
     """`rank_score` per row. The generic scorer, never a second copy of the arithmetic."""
     return {key: rank_score(list(factors)) for key, factors in factors_by_row.items()}
+
+
+def raw_facts_for_demand_row(row: Mapping[str, Any]) -> dict[str, Optional[str]]:
+    """The ABSOLUTE fact behind each of a demand row's factors, as the planner would say it.
+
+    A normalised 0.00 beside a normalised 1.00 explains nothing on its own - and on a policy
+    that weights nothing a demand row carries, every score is 0.00 and the chips read as a
+    broken feature rather than as a rule saying nothing. What answers "why does that order
+    outrank mine" is the fact itself: this line is due on the 1st and yours on the 4th, this
+    order was raised in 2024 and yours this year, this customer pays in 30 days and yours in 90.
+
+    Returned beside the factors rather than inside `Factor`, because `Factor.as_dict()` is
+    FROZEN into `scm.reorder_run` / loading-plan rows by three other callers, and widening a
+    persisted shape to serve a screen is how a display concern ends up in stored history.
+
+    Text, not typed values: each factor's fact is a different kind of thing (a date, a term in
+    days, a class name) and the screen only ever prints it.
+    """
+    terms = row.get("payment_terms_days")
+    klass = row.get("demand_class")
+    return {
+        # No purchase order behind a sales-order line, so there is no sequence to state.
+        "po_document_sequence": None,
+        "demand_class": str(klass) if klass else None,
+        "need_by_date": _iso_or_none(row.get("required_date")),
+        "document_age": _iso_or_none(row.get("order_date")),
+        "customer_credit": f"{int(terms)} days" if terms is not None else None,
+    }
+
+
+def _iso_or_none(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)[:10] or None

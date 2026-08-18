@@ -777,6 +777,17 @@ def test_the_board_route_answers_the_selection_it_was_given():
         assert body["past_line_count"] == 0
         assert body["unplannable_line_count"] == 0
         assert body["contested_line_count"] == 0
+        # The named quantities and the raw facts reach the wire too: a field the service
+        # returns but the response model does not declare is dropped silently.
+        contribution = body["cells"][0]["contributions"][0]
+        assert contribution["qty_ordered"] == "10"
+        assert contribution["qty_outstanding"] == "10"
+        assert contribution["qty_proposed_reserve"] == "10"
+        location = body["cells"][0]["locations"][0]
+        assert location["qty_on_hand"] == "10" and location["qty_free"] == "10"
+        assert {f["key"]: f["raw"] for f in contribution["rank_factors"]}["need_by_date"] == (
+            "2026-09-03"
+        )
         # No identifier a person has to resolve is rendered anywhere: the human keys are the
         # sales-order number, the item code and the warehouse code.
         assert body["cells"][0]["contributions"][0]["item_code"] == product.product_code
@@ -1036,3 +1047,499 @@ def test_each_orders_standing_counts_the_whole_order_not_the_window():
         assert day["orders"] == month["orders"]
         # And the window really is narrower than the order, so the equality means something.
         assert sum(len(c["contributions"]) for c in day["cells"]) < 6
+
+
+# --------------------------------------------------------------------------- #
+# the numbers, by name
+#
+# The captain, on the live board: "how do i see the available quantity for each stock, is it
+# BRW-BB - 22?, we need to be clear on the quantity, like what is the quantity on hand, what is
+# the SO quantity, what is the PO qty, what is the incoming quantity". `22` was the DEMAND at
+# that location, which is the one reading nobody guessed.
+#
+# The fixture below deliberately makes EVERY number different, so a field crossed with its
+# neighbour fails instead of passing:
+#   ordered 28, delivered 8    -> outstanding 20
+#   on hand 30, reserved 25    -> free 5
+#   SPO allocated 9, received 2 -> incoming 7, arriving before the required date
+#   so the proposal must be    -> reserve 5 + incoming 7 + buy 8
+# --------------------------------------------------------------------------- #
+
+
+def _incoming(db, product, warehouse, *, spo_number: str, allocated: int, received: int,
+              arrives: date):
+    from app.models.procurement import InboundShipment, SPOAllocation
+
+    shipment = InboundShipment(
+        id=_uid(),
+        shipment_number=f"ZZT-SHIP-{_uid()[:8]}",
+        shipment_date=date(2026, 1, 1),
+        estimated_arrival_date=arrives,
+    )
+    db.add(shipment)
+    db.flush()
+    row = SPOAllocation(
+        id=_uid(),
+        spo_number=spo_number,
+        spo_line_number=1,
+        inbound_shipment_id=shipment.id,
+        warehouse_id=warehouse.id,
+        product_id=product.id,
+        allocated_quantity=allocated,
+        quantity_received=received,
+        receipt_status="pending",
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _quantity_world(db):
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+    _stock(db, product, warehouse, on_hand=30, reserved=25)
+    _incoming(
+        db, product, warehouse,
+        spo_number="ZZT-SPO-0001", allocated=9, received=2, arrives=date(2026, 8, 25),
+    )
+    order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+    _line(
+        db, order, product, qty="28", delivered="8",
+        required_date=date(2026, 9, 3), warehouse=warehouse,
+    )
+    return order, product, warehouse
+
+
+def test_a_contribution_states_the_sales_order_quantities_by_name():
+    with blank_session() as db:
+        order, product, _warehouse = _quantity_world(db)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        assert contribution["qty_ordered"] == "28"
+        assert contribution["qty_delivered"] == "8"
+        assert contribution["qty_outstanding"] == "20"
+        # The owed quantity is what the board plans against, never the original order.
+        assert contribution["qty"] == contribution["qty_outstanding"]
+
+
+def test_a_contribution_states_the_proposal_by_name():
+    with blank_session() as db:
+        order, product, _warehouse = _quantity_world(db)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        assert contribution["qty_proposed_reserve"] == "5"
+        assert contribution["qty_proposed_incoming"] == "7"
+        assert contribution["qty_proposed_buy"] == "8"
+        # And they still add up to what is owed, which is the invariant the sheet also keeps.
+        assert (
+            int(contribution["qty_proposed_reserve"])
+            + int(contribution["qty_proposed_incoming"])
+            + int(contribution["qty_proposed_buy"])
+        ) == int(contribution["qty_outstanding"])
+
+
+def test_a_cells_location_states_the_availability_not_only_the_demand():
+    """"is it BRW-BB - 22?" - no. 22 was the demand, and the stock facts were nowhere."""
+    with blank_session() as db:
+        order, product, warehouse = _quantity_world(db)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        assert location["location"] == warehouse.warehouse_code
+        assert location["qty_demand"] == "20"
+        assert location["qty_on_hand"] == "30"
+        assert location["qty_reserved"] == "25"
+        # What this engine may actually use, after existing holds - the number the strip was
+        # silently NOT showing.
+        assert location["qty_free"] == "5"
+        assert location["qty_incoming"] == "7"
+        assert location["qty_proposed_reserve"] == "5"
+        assert location["qty_proposed_incoming"] == "7"
+        assert location["qty_proposed_buy"] == "8"
+
+
+def test_a_cells_location_names_the_incoming_document_and_its_arrival_date():
+    with blank_session() as db:
+        order, product, _warehouse = _quantity_world(db)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        assert location["incoming"] == [
+            {
+                "spo_number": "ZZT-SPO-0001",
+                "arrival_date": date(2026, 8, 25),
+                "qty": "7",
+            }
+        ]
+
+
+def test_the_free_figure_says_what_was_left_when_this_cell_was_served():
+    """Stock is not per date, so the same free figure appears in every column of a product.
+
+    That is the truth and it is also the reading most likely to mislead, because an earlier
+    date has already drawn the pile down. So each cell also states what was still unclaimed
+    when ITS lines were served.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=10)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="6", required_date=date(2026, 9, 3), warehouse=warehouse)
+        _line(db, order, product, qty="6", required_date=date(2026, 12, 1), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="month", as_of=TODAY)
+
+        september = _cell(board, product.product_code, "2026-09-01")["locations"][0]
+        december = _cell(board, product.product_code, "2026-12-01")["locations"][0]
+        assert september["qty_free"] == december["qty_free"] == "10"
+        assert september["qty_free_remaining"] == "10"
+        assert december["qty_free_remaining"] == "4", "September took six of the ten"
+        assert december["qty_proposed_reserve"] == "4"
+        assert december["qty_proposed_buy"] == "2"
+
+
+def test_a_line_with_no_location_states_no_availability_rather_than_zeroes():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="4", required_date=date(2026, 9, 3), warehouse=None)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        assert location["location"] is None
+        assert location["qty_demand"] == "4"
+        # Null, not zero: nobody said where this is fulfilled from, so there is no location
+        # whose stock could be counted. A zero would read as "that location is empty".
+        assert location["qty_on_hand"] is None
+        assert location["qty_free"] is None
+        assert location["qty_incoming"] is None
+
+
+# --------------------------------------------------------------------------- #
+# the rank, made readable
+# --------------------------------------------------------------------------- #
+
+
+def test_every_factor_carries_the_absolute_fact_that_produced_it():
+    """A normalised 0.00 next to a normalised 1.00 explains nothing on its own.
+
+    The planner needs the fact: this line's required date, this order's document date, this
+    customer's terms. So each factor carries its raw value beside the normalised one.
+    """
+    with blank_session() as db:
+        _policy(db, dict(priority.BOARD_PREVIEW_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        customer = _customer(db, f"{MARKER} pays in 45", terms=45)
+        order = _order(
+            db, so_number=f"ZZT-SO-{_uid()[:8]}", customer=customer,
+            order_date=date(2025, 4, 16),
+        )
+        _line(db, order, product, qty="5", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        factors = {
+            f["key"]: f
+            for f in _cell(board, product.product_code, "2026-08-31")["contributions"][0][
+                "rank_factors"
+            ]
+        }
+        assert factors["need_by_date"]["raw"] == "2026-09-03"
+        assert factors["document_age"]["raw"] == "2025-04-16"
+        assert factors["customer_credit"]["raw"] == "45 days"
+        assert factors["demand_class"]["raw"] == "project"
+        # An absent factor has no fact to state, and must not invent one.
+        assert factors["po_document_sequence"]["raw"] is None
+        assert factors["po_document_sequence"]["present"] is False
+
+
+def test_the_sign_of_every_factor_is_verified_against_its_raw_fact():
+    """The prototype had `document_age` inverted once, so each sign is pinned to real facts.
+
+    One cell, three competing lines, and for each factor the row whose RAW fact should win is
+    asserted to be the row that scores 1.0 - read off the raw value rather than off knowledge
+    of the seeding order.
+    """
+    with blank_session() as db:
+        _policy(db, dict(priority.BOARD_PREVIEW_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        rows = [
+            ("ZZT-SO-SIGN1", date(2024, 1, 9), 90, date(2026, 9, 1)),
+            ("ZZT-SO-SIGN2", date(2025, 6, 30), 60, date(2026, 9, 2)),
+            ("ZZT-SO-SIGN3", date(2026, 7, 28), 30, date(2026, 9, 4)),
+        ]
+        for so_number, order_date, terms, required in rows:
+            customer = _customer(db, f"{MARKER} {terms}d", terms=terms)
+            order = _order(
+                db, so_number=so_number, customer=customer, order_date=order_date
+            )
+            _line(db, order, product, qty="5", required_date=required, warehouse=warehouse)
+
+        board = _service(db).build(
+            [r[0] for r in rows], granularity="week", as_of=TODAY
+        )
+
+        cell = _cell(board, product.product_code, "2026-08-31")
+        facts = {
+            contribution["so_number"]: {
+                f["key"]: (f["raw"], f["value"]) for f in contribution["rank_factors"]
+            }
+            for contribution in cell["contributions"]
+        }
+
+        def top(key):
+            return max(facts.items(), key=lambda pair: pair[1][key][1])
+
+        # SOONER required date is higher: the winner's raw date is the earliest of the three.
+        winner, values = top("need_by_date")
+        assert values["need_by_date"] == ("2026-09-01", 1.0)
+        assert winner == "ZZT-SO-SIGN1"
+        # OLDER document is higher: the winner's raw order date is the earliest.
+        winner, values = top("document_age")
+        assert values["document_age"] == ("2024-01-09", 1.0)
+        # SHORTER terms are higher: the winner pays in 30 days, not 90.
+        winner, values = top("customer_credit")
+        assert values["customer_credit"] == ("30 days", 1.0)
+        assert winner == "ZZT-SO-SIGN3"
+
+
+# --------------------------------------------------------------------------- #
+# the source ladder: the board must give the SAME answer as the sheet
+#
+# The captain, reading a breakdown line by line: "so for this one, no free stock available, so
+# did it go through the process of whether want to borrow / use BRW (depending on the hot
+# selling / cold selling or discontinued) then only arrive at buy?"
+#
+# It did not, and that made the board's Buy overstate what has to be bought - purchasing acting
+# on the board and purchasing acting on the sheet would disagree about the same line. The
+# ladder is `project_supply_service`'s, and the board runs THAT rather than a reduced copy.
+# --------------------------------------------------------------------------- #
+
+
+def _pooled_warehouses(db):
+    """A project location whose shortfall may draw on a shared pool, as BRW-BB draws on BRW."""
+    pool = _warehouse(db, f"ZZTP{_uid()[:6]}"[:20])
+    own = _warehouse(db, f"ZZTO{_uid()[:6]}"[:20])
+    own.pool_warehouse_id = pool.id
+    db.flush()
+    return own, pool
+
+
+def test_the_board_covers_a_shortfall_from_the_pool_instead_of_buying_it():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        _stock(db, product, own, on_hand=2)
+        _stock(db, product, pool, on_hand=50)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        kinds = [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]]
+        assert kinds == [
+            ("reserve", "2", own.warehouse_code),
+            ("reserve", "8", pool.warehouse_code),
+        ], "the shared pool covers the shortfall before anything is bought"
+        assert contribution["qty_proposed_buy"] == "0"
+
+
+def test_a_dealer_hot_selling_product_may_not_take_its_own_stock_on_the_board_either():
+    """PLAN 3.3, which the board was skipping entirely: hot-selling protects dealer stock.
+
+    Dealer-facing free stock contributes nothing and the pool contributes only above its own
+    reorder level, so the answer is a Buy for a REASON rather than a Buy because the ladder was
+    never walked.
+    """
+    from app.models.scm import ItemClassification, ReorderLevel
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        own.segment = "dealer"
+        db.flush()
+        _stock(db, product, own, on_hand=20)
+        _stock(db, product, pool, on_hand=12)
+        db.add(
+            ItemClassification(
+                id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class="A"
+            )
+        )
+        db.add(
+            ReorderLevel(
+                id=_uid(), product_id=product.id, warehouse_id=pool.id, level=10
+            )
+        )
+        db.flush()
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        kinds = [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]]
+        # Only the pool's headroom above its reorder level (12 - 10), never the dealer stock.
+        assert kinds == [
+            ("reserve", "2", pool.warehouse_code),
+            ("buy", "8", None),
+        ]
+
+
+def test_the_board_proposes_exactly_what_the_sheet_proposes_for_the_same_line():
+    """The point of the whole change: one ladder, two surfaces, the same answer.
+
+    Not "the same shape" - the same quantities, from the same code, for a line that has a
+    partial own-location cover, a pool behind it and a residual.
+    """
+    from datetime import datetime
+
+    from app.models.project_so import (
+        SO_STATUS_PUBLISHED,
+        ProjectSalesOrder,
+        ProjectSalesOrderLine,
+    )
+    from app.services.project_supply_service import ProjectSupplyService
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        _stock(db, product, own, on_hand=3)
+        _stock(db, product, pool, on_hand=4)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core_line = _line(
+            db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own
+        )
+        planning = ProjectSalesOrder(
+            id=_uid(),
+            company_id=company_id,
+            project_id=None,
+            provisional_ref=order.so_number,
+            autocount_doc_no=order.so_number,
+            so_id=order.id,
+            status=SO_STATUS_PUBLISHED,
+            published_at=datetime.utcnow(),
+            grouping_origin="area",
+        )
+        db.add(planning)
+        db.flush()
+        db.add(
+            ProjectSalesOrderLine(
+                id=_uid(),
+                company_id=company_id,
+                project_sales_order_id=planning.id,
+                line_no=1,
+                product_id=product.id,
+                description=f"{MARKER} line",
+                qty=Decimal("10"),
+                uom="UNIT",
+                unit_price=Decimal("10.00"),
+                amount=Decimal("100.00"),
+                delivery_date=date(2026, 9, 3),
+                core_sales_order_line_id=core_line.id,
+            )
+        )
+        db.flush()
+
+        sheet = ProjectSupplyService(db).proposal_for(planning)
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        sheet_components = [
+            (c["kind"], c["qty"], c["source_location"])
+            for c in sheet["lines"][0]["components"]
+        ]
+        board_sources = [
+            (s["kind"], s["qty"], s["location"])
+            for s in _cell(board, product.product_code, "2026-08-31")["contributions"][0][
+                "sources"
+            ]
+        ]
+        assert board_sources == sheet_components
+        assert ("buy", "3", None) in board_sources
+
+
+def test_a_buy_the_board_cannot_avoid_still_says_borrowing_is_possible():
+    """Borrow is never PROPOSED - not on the sheet either, because it needs a donor and a
+    reason from a person. What the sheet does do is OFFER it, and a board that prints a bare
+    Buy hides the fact that the stock exists somewhere."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTO{_uid()[:6]}"[:20])
+        elsewhere = _warehouse(db, f"ZZTE{_uid()[:6]}"[:20])
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, elsewhere, on_hand=25)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        assert contribution["qty_proposed_buy"] == "10"
+        assert contribution["qty_borrow_available"] == "25"
+        assert [c["warehouse_code"] for c in contribution["borrow_candidates"]] == [
+            elsewhere.warehouse_code
+        ]
+        assert "borrow" in contribution["sources"][-1]["reason"].lower()
+
+
+# --------------------------------------------------------------------------- #
+# the two nonsense sentences
+# --------------------------------------------------------------------------- #
+
+
+def test_a_contribution_never_names_its_own_sales_order_as_the_winner():
+    """From the captain's paste: "Free stock at BRW-BB went to SO396563, which outranks this
+    line 0.00 to 0.00" - printed on a contribution FROM SO396563. An order cannot outrank
+    itself; when its own earlier line took the stock, that is what the sentence has to say."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=10)
+        order = _order(db, so_number="ZZT-SO-SELF", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 1), warehouse=warehouse)
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 2), warehouse=warehouse)
+
+        board = _service(db).build(["ZZT-SO-SELF"], granularity="week", as_of=TODAY)
+
+        loser = _cell(board, product.product_code, "2026-08-31")["contributions"][1]
+        buy = loser["sources"][-1]
+        assert buy["kind"] == "buy"
+        assert "ZZT-SO-SELF" not in buy["reason"], buy["reason"]
+        assert "outranks" not in buy["reason"], buy["reason"]
+        assert "earlier line of this sales order" in buy["reason"]
+
+
+def test_equal_ranks_are_never_described_as_one_outranking_the_other():
+    """"outranks this line 0.00 to 0.00" describes a TIE as a ranking. When the scores are
+    equal the tiebreaker decided it, and the sentence has to say which."""
+    with blank_session() as db:
+        # No policy row at all, so every score is 0.0 - the live board's situation exactly.
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=10)
+        first = _order(db, so_number="ZZT-SO-TIE1", order_date=date(2026, 1, 1))
+        second = _order(db, so_number="ZZT-SO-TIE2", order_date=date(2026, 1, 1))
+        _line(db, first, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+        _line(db, second, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build(
+            ["ZZT-SO-TIE1", "ZZT-SO-TIE2"], granularity="week", as_of=TODAY
+        )
+
+        cell = _cell(board, product.product_code, "2026-08-31")
+        assert [c["rank_score"] for c in cell["contributions"]] == [0.0, 0.0]
+        buy = cell["contributions"][1]["sources"][-1]
+        assert "outranks" not in buy["reason"], buy["reason"]
+        assert "ZZT-SO-TIE1" in buy["reason"]
+        assert "rank" in buy["reason"].lower() and "sales order number" in buy["reason"]

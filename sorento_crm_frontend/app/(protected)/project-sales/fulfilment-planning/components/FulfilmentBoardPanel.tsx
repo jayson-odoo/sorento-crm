@@ -14,9 +14,14 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { usePlanningBoard } from '../../_shared/hooks/useFulfilmentPlanning';
+import {
+  useReconciliationMutations,
+  usePlanningBoard,
+} from '../../_shared/hooks/useFulfilmentPlanning';
+import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningService';
 import {
   commitPreviewFor,
+  confirmLinesFor,
   standingsFor,
 } from '../../_shared/lib/fulfilmentBoard';
 import type {
@@ -27,6 +32,7 @@ import type {
   BoardGranularity,
   BoardOrderStanding,
   BoardPolicy,
+  SupplyFailingLine,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
@@ -109,6 +115,72 @@ export function FulfilmentBoardPanel({
   }, []);
 
   const decidedKeys = React.useMemo(() => new Set(Object.keys(draft)), [draft]);
+
+  const { confirm } = useReconciliationMutations();
+  /** Which order is in flight, and what the server refused, per order. */
+  const [confirming, setConfirming] = React.useState<string | null>(null);
+  const [refusals, setRefusals] = React.useState<Record<string, SupplyFailingLine[]>>({});
+
+  /**
+   * Commit one order's decided lines through the existing per-order confirmation.
+   *
+   * The board writes nothing of its own (13.4): this is the SAME endpoint the sheet posts to,
+   * so there is one write path and one set of invariants. Partial by construction - a line the
+   * body does not name is left undecided and keeps flowing to reorder planning.
+   *
+   * On success the confirmed keys leave the draft, because they are in the database now and a
+   * draft that still claimed them would offer to confirm them twice. On a REFUSAL the draft is
+   * untouched: the planner composed that, the server rejected it, and making them do it again
+   * is the one outcome that would teach them not to use the board.
+   */
+  const confirmOrder = React.useCallback(
+    async (standing: BoardOrderStanding) => {
+      const psoId = standing.project_sales_order_id;
+      if (!psoId || !board.data) return;
+      const contributions = board.data.cells.flatMap((cell) => cell.contributions);
+      const lines = confirmLinesFor(contributions, standing.sales_order_id, draft);
+      if (lines.length === 0) return;
+
+      setConfirming(standing.sales_order_id);
+      setRefusals((current) => ({ ...current, [standing.sales_order_id]: [] }));
+      try {
+        await confirm.mutateAsync({ psoId, body: { lines } });
+        const committed = new Set(lines.map((line) => line.project_line_id));
+        setDraft((current) => {
+          const next = { ...current };
+          for (const contribution of contributions) {
+            if (
+              contribution.project_line_id &&
+              committed.has(contribution.project_line_id) &&
+              next[contribution.key]
+            ) {
+              delete next[contribution.key];
+            }
+          }
+          return next;
+        });
+      } catch (error) {
+        if (error instanceof ConfirmSupplyError && error.failingLines.length > 0) {
+          setRefusals((current) => ({
+            ...current,
+            [standing.sales_order_id]: error.failingLines,
+          }));
+        } else {
+          // The mutation already toasted the message; this is the fallback for a refusal that
+          // named no line, so the row still says something happened.
+          setRefusals((current) => ({
+            ...current,
+            [standing.sales_order_id]: [
+              { reason: error instanceof Error ? error.message : 'The confirmation was refused.' },
+            ],
+          }));
+        }
+      } finally {
+        setConfirming(null);
+      }
+    },
+    [board.data, confirm, draft],
+  );
 
   /**
    * Which order each contribution key belongs to, ACCUMULATED across every board shown.
@@ -324,6 +396,14 @@ export function FulfilmentBoardPanel({
                 One confirmation per sales order, each atomic across the lines it commits.
                 Anything left undecided stays outstanding and keeps flowing to reorder planning.
               </p>
+              {/* Two consequences a planner would otherwise wait for and never see. Stated
+                  rather than papered over, and NOT linked: the Order Inquiry list is
+                  project-scoped, so a link from here would open a list this order is not on,
+                  which is worse than no link. */}
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Confirmed Buy rows reach purchasing on the sales order itself. An adopted order
+                raises no purchasing task and sends no notification.
+              </p>
             </CardHeader>
             <CardContent className="space-y-2">
               {standings.map((standing) => (
@@ -331,6 +411,9 @@ export function FulfilmentBoardPanel({
                   key={standing.sales_order_id}
                   standing={standing}
                   preview={previews[standing.sales_order_id]}
+                  busy={confirming === standing.sales_order_id}
+                  refused={refusals[standing.sales_order_id] ?? []}
+                  onConfirm={() => void confirmOrder(standing)}
                 />
               ))}
             </CardContent>
@@ -362,47 +445,85 @@ export function FulfilmentBoardPanel({
 function OrderCommitRow({
   standing,
   preview,
+  busy,
+  refused,
+  onConfirm,
 }: {
   standing: BoardOrderStanding;
   preview?: BoardCommitPreview;
+  busy: boolean;
+  /** The lines the server would not take, kept beside the order that owns them. */
+  refused: SupplyFailingLine[];
+  onConfirm: () => void;
 }) {
   const committing = preview?.committing ?? 0;
   const leaving = preview?.leaving_undecided ?? 0;
   const blocked = preview?.blocked ?? 0;
+  // An order nobody has adopted has no planning record, and the confirm endpoint is keyed on
+  // one. Saying so beats a button that posts to a path that does not exist.
+  const plannable = Boolean(standing.project_sales_order_id);
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium tabular-nums">{standing.so_number}</div>
-        <div
-          className="truncate text-sm text-muted-foreground"
-          title={standing.customer_name ?? ''}
-        >
-          {standing.customer_name || 'Customer not recorded'}
+    <div className="space-y-2 rounded-lg border border-border px-3 py-2.5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium tabular-nums">{standing.so_number}</div>
+          <div
+            className="truncate text-sm text-muted-foreground"
+            title={standing.customer_name ?? ''}
+          >
+            {standing.customer_name || 'Customer not recorded'}
+          </div>
+        </div>
+        <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-3">
+          <span className="text-sm tabular-nums">
+            {`${standing.decided_count} of ${standing.line_count} lines decided`}
+          </span>
+          {/* What this press would actually do, stated before it is pressed. The counter above
+              is information; this is the consequence. */}
+          <span className="min-w-0 text-sm text-muted-foreground break-words">
+            {!plannable
+              ? 'Nobody has started planning this sales order yet.'
+              : committing === 0
+                ? 'Nothing decided yet on this order.'
+                : leaving === 0
+                  ? `Confirms all ${committing}.`
+                  : `Confirms ${committing}, leaves ${leaving} undecided for reorder planning${
+                      blocked > 0
+                        ? ` (${blocked} of them need a location on the sales order)`
+                        : ''
+                    }.`}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            disabled={committing === 0 || !plannable || busy}
+            onClick={onConfirm}
+          >
+            {/* "Confirm 0 lines" on an untouched order would be a button describing nothing.
+                The count only appears once it means something. */}
+            {committing > 0 && leaving > 0
+              ? `Confirm ${committing} line${committing === 1 ? '' : 's'}`
+              : 'Confirm this order'}
+          </Button>
         </div>
       </div>
-      <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-3">
-        <span className="text-sm tabular-nums">
-          {`${standing.decided_count} of ${standing.line_count} lines decided`}
-        </span>
-        {/* What this press would actually do, stated before it is pressed. The counter above is
-            information; this is the consequence. */}
-        <span className="min-w-0 text-sm text-muted-foreground break-words">
-          {committing === 0
-            ? 'Nothing decided yet on this order.'
-            : leaving === 0
-              ? `Confirms all ${committing}.`
-              : `Confirms ${committing}, leaves ${leaving} undecided for reorder planning${
-                  blocked > 0
-                    ? ` (${blocked} of them need a location on the sales order)`
-                    : ''
-                }.`}
-        </span>
-        <Button type="button" size="sm" disabled={committing === 0}>
-          {/* "Confirm 0 lines" on an untouched order would be a button describing nothing.
-              The count only appears once it means something. */}
-          {committing > 0 && leaving > 0 ? `Confirm ${committing} lines` : 'Confirm this order'}
-        </Button>
-      </div>
+
+      {/* A refusal names the lines it refused and why, beside the work that produced them. The
+          draft is untouched, so the planner fixes and presses again rather than starting over. */}
+      {refused.length > 0 && (
+        <ul className="space-y-0.5 rounded-md bg-destructive/5 px-2 py-1.5">
+          {refused.map((line, index) => (
+            <li
+              key={`${line.line_no ?? 'order'}-${line.item_code ?? ''}-${index}`}
+              className="text-sm text-destructive break-words"
+            >
+              {line.line_no
+                ? `Line ${line.line_no}${line.item_code ? `, ${line.item_code}` : ''}: ${line.reason}`
+                : line.reason}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

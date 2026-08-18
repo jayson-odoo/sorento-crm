@@ -495,7 +495,25 @@ export interface BoardContribution {
   project_label?: string | null;
   line_no: number;
   item_code: string;
+  /** The still-owed quantity. `qty_outstanding` is the same number under its own name. */
   qty: string;
+  /**
+   * What the sales order ORDERED on this line, as a fact off the server.
+   *
+   * Never derived here by adding delivered to owed: a number the client invented is a number
+   * nobody can be held to, and the two would drift the first time a return or a cancellation
+   * moved one of them. Absent renders as a stated absence, never as a guess.
+   */
+  qty_ordered?: string | null;
+  /** The owed quantity under its own name. Falls back to `qty`, which is the same figure. */
+  qty_outstanding?: string | null;
+  /**
+   * The mirror line the confirmation names. Addressing only, never rendered.
+   *
+   * A board row cannot be committed without it: `ConfirmLine.project_line_id` is what the
+   * per-order confirm endpoint keys on.
+   */
+  project_line_id?: string | null;
   /** The line's REAL required date, not the bucket it landed in. */
   required_date?: string | null;
   /**
@@ -508,6 +526,13 @@ export interface BoardContribution {
   is_past?: boolean;
   /** The core sales-order line's own warehouse code. Null means the source record is silent. */
   fulfilment_location?: string | null;
+  /**
+   * The same warehouse by id, for the confirm payload only. Never rendered.
+   *
+   * Needed on the LINE and not only on the sources: an amendment that reserves on a line the
+   * engine proposed nothing for has no reserve source to read a warehouse off.
+   */
+  fulfilment_warehouse_id?: string | null;
   /** The line states no location, so it cannot be planned and blocks its order (AC-FP16). */
   unplannable: boolean;
   /** `sales_order_lines.priority`, when anybody stated one. Almost nobody does. */
@@ -571,6 +596,12 @@ export interface BoardSource {
   qty: string;
   /** Warehouse code for a Reserve; null for Buy, which has no location by definition. */
   location?: string | null;
+  /**
+   * The same warehouse by id, for the confirm payload only. Never rendered (no UUIDs in the
+   * UI): `ConfirmReserveComponent.warehouse_id` is what the endpoint takes, and the screen
+   * names warehouses by code.
+   */
+  warehouse_id?: string | null;
   /** The sentence the rule wrote, shown beside the quantity. Never a bare code. */
   reason: string;
   /** SPO number when the source is incoming stock. */
@@ -613,11 +644,23 @@ export interface BoardProductRow {
 export interface BoardOrderStanding {
   sales_order_id: string;
   so_number: string;
+  /**
+   * The PLANNING RECORD's id, which is what `POST .../sales-orders/{pso_id}/confirm` takes.
+   * Addressing only, never rendered. An order that has not been adopted has none, and the
+   * board says so instead of offering a Confirm that cannot post.
+   */
+  project_sales_order_id?: string | null;
   customer_name?: string | null;
   /** Lines of this order inside the SELECTION - never only the ones a window is showing. */
   line_count: number;
   /** How many of those lines carry a verdict in the draft. The client's, never the server's. */
   decided_count: number;
+  /**
+   * Of those, how many would actually be POSTED by a Confirm - approved and amended, never
+   * rejected. A rejected line is a decision to leave it undecided, so a button counting it
+   * would promise to commit something the body deliberately omits.
+   */
+  committing_count?: number;
   /** Lines that can never be decided here because their sales order states no location. */
   unplannable_count: number;
 }

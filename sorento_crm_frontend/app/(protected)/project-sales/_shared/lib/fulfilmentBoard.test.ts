@@ -6,7 +6,14 @@
  * in (13.5), and when an order becomes confirmable (13.4). None of them needs a grid mounted.
  */
 import { describe, expect, it } from 'vitest';
-import { amendNeedsReason, commitPreviewFor, standingsFor } from './fulfilmentBoard';
+import {
+  amendNeedsReason,
+  bucketLabelText,
+  commitPreviewFor,
+  confirmLinesFor,
+  factorLabel,
+  standingsFor,
+} from './fulfilmentBoard';
 import {
   bucketKeyFor,
   buildBoard,
@@ -251,7 +258,7 @@ describe('buildBoard: the axes', () => {
       '2026-11-30',
       'no_date',
     ]);
-    expect(board.dateBuckets[0].label).toBe('w/c 27 Jun 2022');
+    expect(board.dateBuckets[0].label).toBe('27 Jun 2022');
     expect(board.dateBuckets[3].label).toBe('No date');
     expect(board.dateBuckets.map((bucket) => bucket.kind)).toEqual([
       'dated',
@@ -689,5 +696,126 @@ describe('standingsFor reads the server key (deviation 5)', () => {
       'aaaaaaaa-0000-0000-0000-000000000001|1|WESERP10B|2022-06-27': { verdict: 'rejected' },
     });
     expect(standings.find((entry) => entry.so_number === 'SO345418')?.decided_count).toBe(1);
+  });
+});
+
+/**
+ * Words a planner uses, not identifiers we chose.
+ *
+ * The rank chips printed raw database column names - `po_document_sequence absent`,
+ * `need_by_date`, `document_age`, `customer_credit`. The captain asking what "w/c" meant is the
+ * same fault in the column headers, and the same answer applies: nothing on this screen should
+ * need decoding.
+ */
+describe('factorLabel', () => {
+  it('names the four policy factors in English', () => {
+    expect(factorLabel('need_by_date')).toBe('Required date');
+    expect(factorLabel('document_age')).toBe('Order date');
+    expect(factorLabel('customer_credit')).toBe('Payment terms');
+    expect(factorLabel('demand_class')).toBe('Demand type');
+    expect(factorLabel('po_document_sequence')).toBe('Purchase order sequence');
+  });
+
+  it('turns a factor nobody has named yet into words rather than printing the key', () => {
+    expect(factorLabel('supplier_reliability')).toBe('Supplier reliability');
+  });
+});
+
+describe('bucketLabelText', () => {
+  it('drops the week-commencing abbreviation the captain had to ask about', () => {
+    expect(bucketLabelText('w/c 2 Nov 2026')).toBe('2 Nov 2026');
+  });
+
+  it('leaves every other label alone, and is safe to run twice', () => {
+    expect(bucketLabelText('2 Nov 2026')).toBe('2 Nov 2026');
+    expect(bucketLabelText('Nov 2026')).toBe('Nov 2026');
+    expect(bucketLabelText('No date')).toBe('No date');
+  });
+});
+
+/**
+ * Turning the board's draft into the body the per-order confirm endpoint takes.
+ *
+ * The captain asked it as a question - "so now when i click the confirm 8 lines, it won't work
+ * and won't flow to order inquiries isit?" - and the answer was yes, the button was inert. This
+ * is the mapping that makes it not be: one `ConfirmLine` per line the planner actually decided,
+ * and NOTHING for a line they did not, because a line the body does not name is left undecided
+ * and keeps flowing to reorder planning (13.4).
+ */
+describe('confirmLinesFor', () => {
+  const board = buildBoard(
+    [
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' }),
+      line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, qty: '50', item_code: 'TPE-9204' }),
+      line({ sales_order_id: 'so-b', so_number: 'SO000002', line_no: 3, qty: '10' }),
+    ],
+    { today: TODAY, freeStock: { 'WESERP10B|BRW-BB': '100', 'TPE-9204|BRW-BB': '20' } },
+  );
+  const contributions = board.cells.flatMap((cell) => cell.contributions);
+  const keyOf = (soNumber: string, lineNo: number) =>
+    contributions.find((entry) => entry.so_number === soNumber && entry.line_no === lineNo)!.key;
+
+  it('names only the lines of the order being confirmed', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf('SO000001', 1)]: { verdict: 'approved' },
+      [keyOf('SO000002', 3)]: { verdict: 'approved' },
+    });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].project_line_id).toBe('pl-so-a-1');
+  });
+
+  it('carries the proposal as the engine wrote it on an approved line', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf('SO000001', 1)]: { verdict: 'approved' },
+    });
+    expect(lines[0]).toEqual({
+      project_line_id: 'pl-so-a-1',
+      timely_spo_qty: '0',
+      reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '100' }],
+      borrow: [],
+      buy_qty: '0',
+    });
+  });
+
+  it('moves what an amendment took off the Reserve into the Buy', () => {
+    // 50 owed, 20 free: the rule proposed reserve 20 + buy 30. Amended down to 5, the other
+    // 15 has to be bought - the difference cannot simply vanish.
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf('SO000001', 2)]: { verdict: 'amended', reserve_qty: '5', reason: 'Held back.' },
+    });
+    expect(lines[0].reserve).toEqual([{ warehouse_id: 'wh-BRW-BB', qty: '5' }]);
+    expect(lines[0].buy_qty).toBe('45');
+  });
+
+  it('leaves a REJECTED line out entirely, so it stays undecided', () => {
+    expect(
+      confirmLinesFor(contributions, 'so-a', {
+        [keyOf('SO000001', 1)]: { verdict: 'rejected', reason: 'No.' },
+      }),
+    ).toEqual([]);
+  });
+
+  it('leaves out a line the server gave no mirror id for, rather than posting a null', () => {
+    const orphan = contributions.map((entry) =>
+      entry.line_no === 1 ? { ...entry, project_line_id: null } : entry,
+    );
+    expect(
+      confirmLinesFor(orphan, 'so-a', { [keyOf('SO000001', 1)]: { verdict: 'approved' } }),
+    ).toEqual([]);
+  });
+
+  it('counts only what would actually commit, so the button cannot promise a rejected line', () => {
+    const owners = new Map(contributions.map((entry) => [entry.key, entry.sales_order_id]));
+    const standings = standingsFor(board.orders, owners, {
+      [keyOf('SO000001', 1)]: { verdict: 'approved' },
+      [keyOf('SO000001', 2)]: { verdict: 'rejected', reason: 'No.' },
+    });
+    const soA = standings.find((entry) => entry.so_number === 'SO000001')!;
+    expect(soA.decided_count).toBe(2);
+    expect(commitPreviewFor(soA)).toEqual({
+      committing: 1,
+      leaving_undecided: 1,
+      blocked: 0,
+    });
   });
 });

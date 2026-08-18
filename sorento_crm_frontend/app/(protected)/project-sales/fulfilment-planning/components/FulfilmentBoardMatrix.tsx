@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { cn } from '@/lib/utils';
+import { bucketLabelText } from '../../_shared/lib/fulfilmentBoard';
 import type {
   BoardCell,
   BoardDateBucket,
@@ -120,8 +121,8 @@ export function FulfilmentBoardMatrix({
                       : 'bg-muted',
                 )}
               >
-                <span className="block truncate" title={bucket.label}>
-                  {bucket.label}
+                <span className="block truncate" title={bucketLabelText(bucket.label)}>
+                  {bucketLabelText(bucket.label)}
                 </span>
                 {(bucket.kind === 'no_date' || bucket.is_past) && (
                   <span className="block truncate text-[11px] font-normal text-muted-foreground">

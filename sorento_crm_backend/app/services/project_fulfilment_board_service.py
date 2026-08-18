@@ -52,7 +52,7 @@ from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.project_so import ProjectSalesOrderLine
 from app.services.error_handler import AppException
-from app.services.project_supply_service import ProjectSupplyService, _open_of
+from app.services.project_supply_service import ProjectSupplyService, _dec, _open_of
 from app.services.scm import priority
 from app.services.scm.demand import is_open_demand
 from app.services.scm.front_planning_engine import (
@@ -176,7 +176,8 @@ class _Row:
         "project_label", "order_date", "line_no", "item_code", "product_id", "qty",
         "required_date", "warehouse_id", "location", "priority", "demand_class",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
-        "sources", "contested",
+        "sources", "contested", "qty_ordered", "qty_delivered", "proposed", "free_before",
+        "raw_facts", "taken_before", "last_taker", "borrow_candidates",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -187,6 +188,16 @@ class _Row:
         self.sources = []
         self.contested = False
         self.is_past = False
+        # Filled by `_allocate`: what the engine proposes for this line, by kind, and what was
+        # still unclaimed at its location when this line was reached.
+        self.proposed = {}
+        self.free_before = None
+        self.raw_facts = {}
+        # Who had already drawn this line's pile down when it was reached, and how much - the
+        # evidence behind `contested` and behind the sentence a Buy carries.
+        self.taken_before = None
+        self.last_taker = None
+        self.borrow_candidates = []
 
     @property
     def unplannable(self) -> bool:
@@ -210,6 +221,12 @@ class FulfilmentBoardService:
     def __init__(self, db: Session):
         self.db = db
         self.supply = ProjectSupplyService(db)
+        # Per-request stock facts, filled by `_allocate` and read by `_cell`. Cached rather
+        # than re-read because the cell states the same figures the allocation was computed
+        # from - a second read could disagree with the proposal sitting next to it.
+        self._free: Dict[Tuple[str, str], Decimal] = {}
+        self._levels: Dict[Tuple[str, str], Tuple[Decimal, Decimal]] = {}
+        self._incoming: Dict[Tuple[str, str], List[Any]] = {}
 
     # ----------------------------------------------------------------- public
 
@@ -283,6 +300,14 @@ class FulfilmentBoardService:
             scores = priority.scores_for(factors)
             for member in members:
                 member.rank_factors = factors[member.key]
+                member.raw_facts = priority.raw_facts_for_demand_row(
+                    {
+                        "required_date": member.required_date,
+                        "order_date": member.order_date,
+                        "payment_terms_days": member.payment_terms_days,
+                        "demand_class": member.demand_class,
+                    }
+                )
                 member.rank_score = scores[member.key]
                 factors_by_key[member.key] = factors[member.key]
             # Highest rank first, ties broken on sales-order number then line number so the
@@ -452,6 +477,8 @@ class FulfilmentBoardService:
                 # The same open quantity the sheet promises (AC-B01), imported rather than
                 # restated: what is still owed, in the line's own UOM.
                 qty=_open_of(line),
+                qty_ordered=_dec(line.qty_ordered),
+                qty_delivered=_dec(line.qty_delivered),
                 required_date=line.required_date,
                 warehouse_id=str(line.warehouse_id) if line.warehouse_id else None,
                 location=warehouse.warehouse_code if warehouse else None,
@@ -527,14 +554,29 @@ class FulfilmentBoardService:
     # -------------------------------------------------------------- sourcing
 
     def _allocate(self, served: Sequence[_Row]) -> None:
-        """Serve each (product, location) pile down the board order, and say who lost.
+        """Compose every contributing line through the SHEET'S OWN ladder, in board order.
+
+        Two questions, and they belong to different owners.
+
+        **Which sources may cover this line, in what order** is `ProjectSupplyService.
+        compose_line`: own location, then the shared pool under PLAN 3.3's hot-selling rules,
+        then timely incoming, then Buy. That is the sheet's code, called here rather than
+        approximated - an earlier build ran a reduced three-source version, and it proposed a
+        Buy for a line the sheet would have covered from the pool, so purchasing acting on the
+        board and purchasing acting on the sheet disagreed about the same line.
+
+        **Who gets a scarce pile** is the board's: contributions are served in the
+        fulfilment-priority ranking (13.5), which is what the per-order sheet structurally
+        cannot show. So each pile - the own-location free stock, its dated incoming, and the
+        shared pool - is drawn down in board order, and the ladder is then run per line against
+        what is left.
 
         Deliberately NOT pro-rata. Splitting 100 free units across five lines needing 100 each
-        produces five short deliveries instead of one complete one and four honest Buys, and
-        short-shipping everybody is the worst outcome available.
+        produces five short deliveries instead of one complete one and four honest Buys.
 
-        The division itself is `attribute_sources` - the same engine the per-order sheet runs,
-        called once per pile with the lines pre-ordered by the ranking. Only the order differs.
+        Borrow is not proposed, here or on the sheet: it needs a donor and a reason from a
+        person (AC-B09). What the board does is SAY it is available, so a Buy is never printed
+        as if the stock existed nowhere.
         """
         plannable = [row for row in served if not row.unplannable]
         for row in served:
@@ -554,15 +596,34 @@ class FulfilmentBoardService:
                 ]
 
         product_ids = {row.product_id for row in plannable if row.product_id}
-        free = self.supply.free_stock_by_location(product_ids)
-        spo = self.supply.incoming_by_location(
-            product_ids, {row.warehouse_id for row in plannable if row.warehouse_id}
+        warehouse_ids = {row.warehouse_id for row in plannable if row.warehouse_id}
+        # Every stock fact the board states comes from these reads and no other, so the
+        # availability printed beside a proposal is the availability the proposal was computed
+        # from.
+        free = self._free = self.supply.free_stock_by_location(product_ids)
+        self._levels = self.supply.stock_levels_by_location(product_ids)
+        spo = self._incoming = self.supply.incoming_by_location(product_ids, warehouse_ids)
+        facts = self.supply.demand_facts(
+            [
+                {
+                    "key": row.key,
+                    "product_id": row.product_id,
+                    "warehouse_id": row.warehouse_id,
+                    "open_qty": row.qty,
+                    "required_date": row.required_date,
+                    "item_code": row.item_code,
+                }
+                for row in plannable
+            ]
         )
 
         piles: Dict[Tuple[str, str], List[_Row]] = defaultdict(list)
         for row in plannable:
             piles[(row.product_id, row.warehouse_id)].append(row)
 
+        # Pass one: share each own-location pile and its dated incoming, in board order. This
+        # is the sheet's `_attribution` projection with the ranking as its order instead of the
+        # required date, which is the one thing the board decides differently.
         for (product_id, warehouse_id), members in piles.items():
             location = members[0].location or warehouse_id
             attributed = attribute_sources(
@@ -590,55 +651,129 @@ class FulfilmentBoardService:
                 ],
                 preserve_demand_order=True,
             )
+            free_left = free.get((product_id, warehouse_id), _ZERO)
             taken = _ZERO
-            winner: Optional[_Row] = None
+            taker: Optional[_Row] = None
             for row in members:
                 components = attributed.get((row.so_number, row.line_no), ())
-                bought = sum(
-                    (c.qty for c in components if c.kind == BUY), _ZERO
+                own_share = sum((c.qty for c in components if c.kind == RESERVE), _ZERO)
+                timely_share = sum(
+                    (c.qty for c in components if c.kind == TIMELY_SPO), _ZERO
                 )
-                supplied = sum(
-                    (c.qty for c in components if c.kind in (RESERVE, TIMELY_SPO)), _ZERO
-                )
-                # Contested means the supply this line would otherwise have had was actually
-                # TAKEN by a row served before it - the whole point of showing the cell.
-                # A location that never held any stock is NOT contested; it is a plain Buy.
-                row.contested = bought > _ZERO and taken > _ZERO
-                row.sources = [
-                    self._source(component, row, winner)
-                    for component in components
-                ]
-                if supplied > _ZERO:
-                    taken += supplied
-                    winner = row
+                fact = facts[row.key]
+                fact.own_free = own_share
+                fact.timely_qty = timely_share
+                # Stock is not per date, so the same free figure is true of every column of
+                # this product; what differs is how much an earlier date has already taken.
+                row.free_before = free_left
+                row.taken_before = taken
+                row.last_taker = taker
+                free_left = max(free_left - own_share, _ZERO)
+                if own_share + timely_share > _ZERO:
+                    taken += own_share + timely_share
+                    taker = row
 
-    def _source(self, component, row: _Row, winner: Optional[_Row]) -> Dict[str, Any]:
+        # Pass two: run the ladder per line, in board order, against the running pool balance.
+        pool_left: Dict[str, Decimal] = {}
+        borrow_cache: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = {}
+        for row in plannable:
+            fact = facts[row.key]
+            pool_key = fact.pool_key
+            if pool_key and pool_key not in pool_left:
+                pool_left[pool_key] = fact.pool_free
+            components = self.supply.compose_line(
+                fact, pool_free_left=pool_left.get(pool_key, _ZERO) if pool_key else None
+            )
+            if pool_key and fact.pool_code:
+                drawn = sum(
+                    (
+                        c.qty
+                        for c in components
+                        if c.kind == RESERVE and c.source_location == fact.pool_code
+                    ),
+                    _ZERO,
+                )
+                pool_left[pool_key] = max(pool_left.get(pool_key, _ZERO) - drawn, _ZERO)
+
+            reserved = sum((c.qty for c in components if c.kind == RESERVE), _ZERO)
+            incoming = sum((c.qty for c in components if c.kind == TIMELY_SPO), _ZERO)
+            bought = sum((c.qty for c in components if c.kind == BUY), _ZERO)
+            row.proposed = {RESERVE: reserved, TIMELY_SPO: incoming, BUY: bought}
+            # Contested means the supply this line would otherwise have had was actually TAKEN
+            # by a row served before it. A location that never held any stock is NOT contested;
+            # it is a plain Buy.
+            row.contested = bought > _ZERO and (row.taken_before or _ZERO) > _ZERO
+
+            if bought > _ZERO:
+                # Cached per (product, location, hot-selling): the answer depends on the fact's
+                # reserve reach, not on the line, and recomputing it per row walks the whole
+                # free-stock cache once per row.
+                cache_key = (fact.product_id, row.warehouse_id, fact.is_hot_selling)
+                if cache_key not in borrow_cache:
+                    borrow_cache[cache_key] = self.supply.borrow_candidates_for(fact)
+                row.borrow_candidates = borrow_cache[cache_key]
+            else:
+                row.borrow_candidates = []
+
+            row.sources = [self._source(component, row) for component in components]
+
+    def _buy_reason(self, row: _Row) -> str:
+        """Why this quantity is being bought, said in a way a person can check.
+
+        Three cases the earlier build got wrong, all visible in one card the captain read:
+
+        * the row that took the stock belonged to the SAME sales order, and the sentence read
+          "went to SO396563, which outranks this line" on a contribution FROM SO396563 - an
+          order cannot outrank itself, and what actually happened is that its own earlier line
+          took it;
+        * the two scores were EQUAL and the sentence still said "outranks ... 0.00 to 0.00".
+          A tie is not a ranking; what decided it was the tiebreaker, so the tiebreaker is what
+          the sentence names;
+        * nothing was said about Borrow, so a Buy read as "this stock exists nowhere" when it
+          existed one location away.
+        """
+        taker = row.last_taker if row.contested else None
+        where = f" at {row.location}" if row.location else ""
+        if taker is None:
+            reason = (
+                f"Nothing free{where} by the required date, so the quantity is bought."
+            )
+        elif taker.sales_order_id == row.sales_order_id:
+            reason = (
+                f"An earlier line of this sales order (line {taker.line_no}) took the free "
+                f"stock{where}, so the residual is bought."
+            )
+        elif taker.rank_score > row.rank_score:
+            reason = (
+                f"Free stock{where} went to {taker.so_number}, which outranks this line "
+                f"{taker.rank_score:.2f} to {row.rank_score:.2f}."
+            )
+        else:
+            reason = (
+                f"Free stock{where} went to {taker.so_number}, which ties this line on rank "
+                f"({row.rank_score:.2f}) and was served first by the tiebreaker: sales order "
+                "number, then line number."
+            )
+        if row.borrow_candidates:
+            where_from = ", ".join(
+                candidate["warehouse_code"] for candidate in row.borrow_candidates[:3]
+            )
+            reason += (
+                f" Borrowing is possible from {where_from}, which is a decision for a person "
+                "and carries a reason."
+            )
+        return reason
+
+    def _source(self, component, row: _Row) -> Dict[str, Any]:
         """One proposed source, with the sentence its rule wrote.
 
         The engine's reasons are fragments meant to follow "Reserve 10:", so they are stated
-        as sentences here. A contested Buy says who took the stock instead of stating a bare
-        residual, because "why did this order lose" is the question the planner opens the cell
-        with (13.5).
+        as sentences here. A Buy says why it is a Buy, because "why did this order lose" is the
+        question the planner opens the cell with (13.5).
         """
         reason = component.reason
-        if component.kind == BUY and row.contested and winner is not None:
-            if winner.bucket_key == row.bucket_key:
-                reason = (
-                    f"Free stock at {row.location} went to {winner.so_number}, which "
-                    f"outranks this line {winner.rank_score:.2f} to {row.rank_score:.2f}."
-                )
-            else:
-                reason = (
-                    f"Free stock at {row.location} went to {winner.so_number}, which is "
-                    "owed sooner."
-                )
-        elif component.kind == BUY:
-            reason = (
-                f"Nothing free at {row.location} by the required date, so the quantity is "
-                "bought."
-                if row.location
-                else "Nothing free by the required date, so the quantity is bought."
-            )
+        if component.kind == BUY:
+            reason = self._buy_reason(row)
         else:
             reason = reason[:1].upper() + reason[1:] + "."
         return {
@@ -656,21 +791,20 @@ class FulfilmentBoardService:
     # ------------------------------------------------------------ the answer
 
     def _cell(self, item_code: str, bucket_key: str, members: Sequence[_Row]) -> Dict[str, Any]:
-        totals: Dict[Optional[str], Decimal] = {}
+        by_location: Dict[Optional[str], List[_Row]] = defaultdict(list)
         for row in members:
-            totals[row.location] = totals.get(row.location, _ZERO) + row.qty
+            by_location[row.location].append(row)
+        locations = sorted(
+            (self._location(location, rows) for location, rows in by_location.items()),
+            key=lambda entry: (-Decimal(entry["qty_demand"]), entry["location"] or ""),
+        )
         return {
             "item_code": item_code,
             "bucket_key": bucket_key,
             # Summed across every contributing line INCLUDING the unplannable ones: the demand
             # is not hidden because the source record is incomplete (13.7).
             "total_qty": qty_text(sum((row.qty for row in members), _ZERO)),
-            "locations": [
-                {"location": location, "qty": qty_text(qty)}
-                for location, qty in sorted(
-                    totals.items(), key=lambda item: (-item[1], item[0] or "")
-                )
-            ],
+            "locations": locations,
             "contributions": [self._contribution(row) for row in members],
             "unplannable_count": sum(1 for row in members if row.unplannable),
             "contested_count": sum(1 for row in members if row.contested),
@@ -681,6 +815,66 @@ class FulfilmentBoardService:
             "past_count": sum(1 for row in members if row.is_past),
         }
 
+    def _location(self, location: Optional[str], rows: Sequence[_Row]) -> Dict[str, Any]:
+        """One (product, location) line of the cell: what is owed there, and what is there.
+
+        The strip used to read "BRW-BB 22" and the 22 was the DEMAND, which is the one reading
+        nobody guessed - the captain asked "how do i see the available quantity for each stock,
+        is it BRW-BB - 22?". So every number is named, and the stock facts sit beside the
+        demand rather than being implied by a sentence.
+
+        A row whose sales order states no location answers `null` for every stock fact, never
+        zero: there is no location whose stock could be counted, and a zero would read as
+        "that location is empty".
+        """
+        first = rows[0]
+        key = (first.product_id, first.warehouse_id)
+        on_hand, reserved = self._levels.get(key, (None, None))
+        incoming = self._incoming.get(key, [])
+        stated = location is not None and first.warehouse_id is not None
+        return {
+            "location": location,
+            #: The demand, kept under its old name because the frontend's source strip reads
+            #: it. `qty_demand` is the same number said unambiguously.
+            "qty": qty_text(sum((row.qty for row in rows), _ZERO)),
+            "qty_demand": qty_text(sum((row.qty for row in rows), _ZERO)),
+            "qty_on_hand": qty_text(on_hand) if stated and on_hand is not None else None,
+            "qty_reserved": qty_text(reserved) if stated and reserved is not None else None,
+            #: What this engine may actually use: on hand, less reserved, less what confirmed
+            #: decisions already hold. The figure the proposal was computed from.
+            "qty_free": (
+                qty_text(self._free.get(key, _ZERO)) if stated else None
+            ),
+            #: Of that, what was still unclaimed when THIS cell's lines were served. Earlier
+            #: dates draw first, so a December cell can face a smaller pile than the product's
+            #: free figure suggests.
+            "qty_free_remaining": (
+                qty_text(first.free_before) if stated and first.free_before is not None
+                else None
+            ),
+            #: Still to arrive at this location: allocated on a supply PO, not yet received.
+            "qty_incoming": (
+                qty_text(sum((ref.qty for ref in incoming), _ZERO)) if stated else None
+            ),
+            "incoming": [
+                {
+                    "spo_number": ref.spo_number,
+                    "arrival_date": ref.arrival_date,
+                    "qty": qty_text(ref.qty),
+                }
+                for ref in sorted(
+                    incoming, key=lambda ref: (ref.arrival_date is None, ref.arrival_date)
+                )
+            ] if stated else [],
+            "qty_proposed_reserve": self._proposed_text(rows, RESERVE),
+            "qty_proposed_incoming": self._proposed_text(rows, TIMELY_SPO),
+            "qty_proposed_buy": self._proposed_text(rows, BUY),
+        }
+
+    @staticmethod
+    def _proposed_text(rows: Sequence[_Row], kind: str) -> str:
+        return qty_text(sum((row.proposed.get(kind, _ZERO) for row in rows), _ZERO))
+
     def _contribution(self, row: _Row) -> Dict[str, Any]:
         return {
             "key": row.key,
@@ -690,7 +884,38 @@ class FulfilmentBoardService:
             "project_label": row.project_label,
             "line_no": row.line_no,
             "item_code": row.item_code,
+            #: The owed quantity, kept under its old name because the frontend reads it.
+            #: `qty_outstanding` is the same number said unambiguously.
             "qty": qty_text(row.qty),
+            #: What the customer ordered on this line, what has gone out, and what is still
+            #: owed. Three names rather than one `qty`, because they differ the moment a
+            #: delivery is part-made and the board plans against the LAST of them.
+            "qty_ordered": qty_text(row.qty_ordered or _ZERO),
+            "qty_delivered": qty_text(row.qty_delivered or _ZERO),
+            "qty_outstanding": qty_text(row.qty),
+            #: What the engine proposes to meet it with. The three add up to the outstanding
+            #: quantity, which is the balance invariant the per-order sheet also keeps.
+            "qty_proposed_reserve": qty_text(row.proposed.get(RESERVE, _ZERO)),
+            "qty_proposed_incoming": qty_text(row.proposed.get(TIMELY_SPO, _ZERO)),
+            "qty_proposed_buy": qty_text(row.proposed.get(BUY, _ZERO)),
+            #: What could be borrowed instead of bought, and from where. Never PROPOSED - a
+            #: Borrow needs a donor and a reason from a person (AC-B09) - but never hidden
+            #: either, or a Buy reads as "this stock exists nowhere".
+            "qty_borrow_available": qty_text(
+                sum(
+                    (_dec(candidate["free_qty"]) for candidate in row.borrow_candidates),
+                    _ZERO,
+                )
+            ),
+            "borrow_candidates": [
+                {
+                    "source": candidate["source"],
+                    "warehouse_code": candidate["warehouse_code"],
+                    "donor_project_ref": candidate.get("donor_project_ref"),
+                    "free_qty": candidate["free_qty"],
+                }
+                for candidate in row.borrow_candidates
+            ],
             "required_date": row.required_date,
             #: This line's own date is behind the as-of date. Per line, not per column.
             "is_past": row.is_past,
@@ -698,7 +923,15 @@ class FulfilmentBoardService:
             "unplannable": row.unplannable,
             "priority": row.priority,
             "rank_score": round(float(row.rank_score), 6),
-            "rank_factors": [factor.as_dict() for factor in row.rank_factors],
+            # The normalised score with the ABSOLUTE fact beside it. On its own a 0.00 next to
+            # a 1.00 explains nothing, and under a policy that weights nothing a demand row
+            # carries every score is 0.00 - so the screen shows the fact (this line's required
+            # date, this order's document date, this customer's terms) and keeps the normalised
+            # value secondary.
+            "rank_factors": [
+                {**factor.as_dict(), "raw": row.raw_facts.get(factor.key)}
+                for factor in row.rank_factors
+            ],
             "sources": row.sources,
             "contested": row.contested,
         }

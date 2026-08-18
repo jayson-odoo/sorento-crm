@@ -18,6 +18,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 
 const getPlanningBoard = vi.fn();
+const confirmSupply = vi.fn();
 
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getPlanningBoard: (...args: unknown[]) => getPlanningBoard(...args),
@@ -26,8 +27,24 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   rerunReconciliation: vi.fn(),
   adoptSalesOrder: vi.fn(),
   getSupply: vi.fn(),
-  confirmSupply: vi.fn(),
-  ConfirmSupplyError: class extends Error {},
+  confirmSupply: (...args: unknown[]) => confirmSupply(...args),
+  // Declared INSIDE the factory: `vi.mock` is hoisted above every top-level binding, so a
+  // class declared outside it is not initialised yet when the factory runs.
+  ConfirmSupplyError: class ConfirmSupplyError extends Error {
+    readonly failingLines: {
+      line_no?: number | null;
+      item_code?: string | null;
+      reason: string;
+    }[];
+    constructor(
+      message: string,
+      failingLines: { line_no?: number | null; item_code?: string | null; reason: string }[] = [],
+    ) {
+      super(message);
+      this.name = 'ConfirmSupplyError';
+      this.failingLines = failingLines;
+    }
+  },
 }));
 
 vi.mock('sonner', () => ({
@@ -54,6 +71,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningService';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import type {
@@ -174,10 +192,44 @@ describe('FulfilmentBoardPanel: the axes', () => {
       .getAllByRole('columnheader')
       .map((node) => node.textContent ?? '');
     expect(headers[0]).toBe('Product');
-    expect(headers[1]).toContain('w/c 27 Jun 2022');
-    expect(headers[2]).toContain('w/c 31 Aug 2026');
+    expect(headers[1]).toContain('27 Jun 2022');
+    expect(headers[2]).toContain('31 Aug 2026');
     expect(headers[headers.length - 1]).toContain('No date');
     expect(headers.some((header) => header.includes('Overdue'))).toBe(false);
+  });
+
+  /**
+   * The captain, verbatim: "what does w/c 2 Nov 2026 mean? what does w/c mean?" - and then,
+   * on being offered replacements, "just remove it". Having to ask IS the verdict: "w/c" is
+   * week-commencing, a scheduling abbreviation, and the granularity control already says the
+   * board is by week, so the column has nothing left to restate.
+   */
+  it('heads a week column with the date alone, with no abbreviation to decode', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand({ required_date: '2026-11-04' })]));
+
+    renderPanel();
+
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    const header = matrix.querySelector('[data-bucket="2026-11-02"]');
+    expect(header?.textContent).toBe('2 Nov 2026');
+  });
+
+  it('strips the abbreviation even when the server is still sending it', async () => {
+    // Bridge: the label is formatted server-side, so until that lane lands the client must not
+    // put jargon on screen. Idempotent - it does nothing once the server stops sending it.
+    const board = boardOf([demand({ required_date: '2026-11-04' })]);
+    getPlanningBoard.mockResolvedValue({
+      ...board,
+      dateBuckets: board.dateBuckets.map((bucket) => ({
+        ...bucket,
+        label: `w/c ${bucket.label}`,
+      })),
+    });
+
+    renderPanel();
+
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    expect(matrix.querySelector('[data-bucket="2026-11-02"]')?.textContent).toBe('2 Nov 2026');
   });
 
   /**
@@ -419,7 +471,7 @@ describe('FulfilmentBoardPanel: the commit rail (13.4)', () => {
     expect(
       screen.getByText('Confirms 1, leaves 1 undecided for reorder planning.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirm 1 lines' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Confirm 1 line' })).toBeEnabled();
   });
 
   it('says it confirms everything once the whole order is decided', async () => {
@@ -745,5 +797,125 @@ describe('FulfilmentBoardPanel: states', () => {
       screen.queryByText('These sales orders owe nothing that can be planned'),
     ).not.toBeInTheDocument();
     expect(screen.queryByText('The planning board could not be loaded')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Confirm, which the captain asked about as a question: "so now when i click the confirm 8
+ * lines, it won't work and won't flow to order inquiries isit?" It did not - the button had no
+ * onClick at all. It posts to the SAME per-order endpoint the sheet uses (13.4: the board is a
+ * lens, and grows no second write path).
+ *
+ * The two things worth pinning hardest are what happens when it goes wrong: a refusal must not
+ * cost the planner the work they did, and it must say which lines were refused and why.
+ */
+describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
+  async function decideFirstCell() {
+    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+    await waitFor(() => expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument());
+  }
+
+  function twoLineOrder() {
+    return boardOf([
+      demand({ line_no: 1, item_code: 'WESERP10B' }),
+      demand({ line_no: 2, item_code: 'TPE-9204' }),
+    ]);
+  }
+
+  it('posts the decided lines to the order’s own planning record', async () => {
+    getPlanningBoard.mockResolvedValue(twoLineOrder());
+    confirmSupply.mockResolvedValue({
+      revision_no: 1,
+      review_state: 'confirmed',
+      inquiry_rows_created: 1,
+      exceptions: [],
+    });
+
+    renderPanel(['SO403340']);
+    await decideFirstCell();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
+
+    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    const [psoId, body] = confirmSupply.mock.calls[0];
+    expect(psoId).toBe('pso-so-a');
+    expect(body.lines).toHaveLength(1);
+    expect(body.lines[0].project_line_id).toBe('pl-so-a-1');
+  });
+
+  it('clears the confirmed lines from the draft and refetches the board', async () => {
+    getPlanningBoard.mockResolvedValue(twoLineOrder());
+    confirmSupply.mockResolvedValue({
+      revision_no: 1,
+      review_state: 'confirmed',
+      inquiry_rows_created: 1,
+      exceptions: [],
+    });
+
+    renderPanel(['SO403340']);
+    await decideFirstCell();
+    const boardCallsBefore = getPlanningBoard.mock.calls.length;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
+
+    // The verdict is spent: it is in the database now, not in the draft.
+    await waitFor(() => expect(screen.getByText('0 of 2 lines decided')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(getPlanningBoard.mock.calls.length).toBeGreaterThan(boardCallsBefore),
+    );
+  });
+
+  it('keeps the draft and names the refused lines when the server refuses', async () => {
+    getPlanningBoard.mockResolvedValue(twoLineOrder());
+    confirmSupply.mockRejectedValue(
+      new ConfirmSupplyError('The sales order moved on underneath this plan.', [
+        { line_no: 1, item_code: 'WESERP10B', reason: 'Only 40 free at BRW-BB now.' },
+      ]),
+    );
+
+    renderPanel(['SO403340']);
+    await decideFirstCell();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
+
+    expect(await screen.findByText('Line 1, WESERP10B: Only 40 free at BRW-BB now.')).toBeInTheDocument();
+    // The planner does not lose their work to a refusal.
+    expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument();
+  });
+
+  it('states what confirming does NOT do, and links to no list this order is absent from', async () => {
+    getPlanningBoard.mockResolvedValue(twoLineOrder());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(
+      screen.getByText(
+        'Confirmed Buy rows reach purchasing on the sales order itself. An adopted order raises no purchasing task and sends no notification.',
+      ),
+    ).toBeInTheDocument();
+    // The Order Inquiry list is project-scoped, so an adopted order is not on it: a link would
+    // open a list without the thing it promised.
+    expect(screen.queryByRole('link', { name: /order inquir/i })).not.toBeInTheDocument();
+  });
+
+  it('refuses to post an order that has no planning record, and says why', async () => {
+    const board = twoLineOrder();
+    getPlanningBoard.mockResolvedValue({
+      ...board,
+      orders: board.orders.map((order) => ({ ...order, project_sales_order_id: null })),
+    });
+
+    renderPanel(['SO403340']);
+    await decideFirstCell();
+
+    const confirm = screen.getByRole('button', { name: 'Confirm 1 line' });
+    expect(confirm).toBeDisabled();
+    expect(
+      screen.getByText('Nobody has started planning this sales order yet.'),
+    ).toBeInTheDocument();
+    expect(confirmSupply).not.toHaveBeenCalled();
   });
 });

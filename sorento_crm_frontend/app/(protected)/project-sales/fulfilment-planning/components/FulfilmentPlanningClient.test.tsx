@@ -719,3 +719,105 @@ describe('FulfilmentPlanningClient: sorting', () => {
     );
   });
 });
+
+/**
+ * Select all (captain: "need to have select all option also at the top left of table").
+ *
+ * On the repo's own select column, so the header checkbox, its indeterminate state and the
+ * selected-id read are the same ones every other bulk-action list uses. What is worth pinning
+ * is that ticking everything means the same thing ticking rows one at a time means, and that
+ * the 50-order board cap is STATED when it bites rather than silently truncating the selection.
+ */
+describe('FulfilmentPlanningClient: select all', () => {
+  function selectable(index: number): FulfilmentPlanningRow {
+    return {
+      row_kind: 'sales_order',
+      id: null,
+      sales_order_id: `so-${index}`,
+      so_number: `SO${100000 + index}`,
+      customer_name: 'A CUSTOMER SDN BHD',
+      line_count: 1,
+      review_state: 'not_started',
+      earliest_required_date: '2026-01-01',
+    };
+  }
+
+  it('offers a select-all control at the top left of the table', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([selectable(1), selectable(2)]));
+
+    renderClient();
+    await screen.findByText('SO100001');
+
+    const table = screen.getByRole('table');
+    const firstHeader = within(table).getAllByRole('columnheader')[0];
+    expect(
+      within(firstHeader).getByRole('checkbox', { name: 'Select all rows on this page' }),
+    ).toBeInTheDocument();
+  });
+
+  it('ticks every row, and Plan together means the same thing it means one row at a time', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([selectable(1), selectable(2), selectable(3)]),
+    );
+
+    renderClient();
+    await screen.findByText('SO100001');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+
+    expect(screen.getByRole('button', { name: /Plan together \(3\)/ })).toBeEnabled();
+    expect(
+      screen.getByRole('checkbox', { name: 'Select SO100001 for planning' }),
+    ).toBeChecked();
+  });
+
+  it('leaves a row with no sales order unselectable, and says why', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([
+        selectable(1),
+        row({ id: 'pso-authored', so_number: null, sales_order_id: null, autocount_doc_no: null }),
+      ]),
+    );
+
+    renderClient();
+    await screen.findByText('SO100001');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+
+    // Only the row that HAS a core sales order can go on the board: an authored Project SO
+    // with no core order has no core lines to aggregate.
+    expect(screen.getByRole('button', { name: /Plan together \(1\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select row' })).toBeDisabled();
+    expect(
+      screen.getByTitle('Only a sales order from the AutoCount book can go on the board.'),
+    ).toBeInTheDocument();
+  });
+
+  it('states the 50-order cap when a select-all goes past it, rather than truncating', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope(Array.from({ length: 60 }, (_unused, index) => selectable(index))),
+    );
+
+    renderClient();
+    await screen.findByText('SO100000');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+
+    expect(
+      screen.getByText('60 ticked. A board takes at most 50 sales orders.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Plan together \(60\)/ })).toBeDisabled();
+  });
+
+  it('clears the whole selection', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([selectable(1), selectable(2)]));
+
+    renderClient();
+    await screen.findByText('SO100001');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear the selection' }));
+
+    expect(screen.getByRole('button', { name: /Plan together \(0\)/ })).toBeDisabled();
+  });
+});

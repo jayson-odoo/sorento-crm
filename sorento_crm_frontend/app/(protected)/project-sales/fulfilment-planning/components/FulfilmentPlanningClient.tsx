@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   getCoreRowModel,
   getPaginationRowModel,
@@ -19,7 +20,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Checkbox } from '@/components/ui/checkbox';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -105,7 +106,7 @@ export function FulfilmentPlanningClient() {
   const [search, setSearch] = React.useState('');
   const [debounced, setDebounced] = React.useState('');
   const [openRow, setOpenRow] = React.useState<FulfilmentPlanningRow | null>(null);
-  const [selected, setSelected] = React.useState<string[]>([]);
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [boardOrders, setBoardOrders] = React.useState<string[] | null>(null);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -187,35 +188,23 @@ export function FulfilmentPlanningClient() {
   // "what is due and what still needs work".
   const columns = React.useMemo<ColumnDef<FulfilmentPlanningRow>[]>(() => {
     const defs: ColumnDef<FulfilmentPlanningRow>[] = [
+      // The repo's own select column, so the header's select-all and its indeterminate state
+      // are the ones every other bulk-action list uses rather than a second implementation
+      // (the captain: "need to have select all option also at the top left of table").
       {
-        id: 'select',
-        header: '',
-        cell: ({ row }) => {
+        ...buildSelectColumn<FulfilmentPlanningRow>({
           // Only a real, outstanding sales order can go on the board: an authored Project SO
           // with no core order yet has no core lines to aggregate.
-          const soNumber = row.original.so_number;
-          if (!soNumber) return null;
-          const checked = selected.includes(soNumber);
-          return (
-            <Checkbox
-              checked={checked}
-              aria-label={`Select ${soNumber} for planning`}
-              onClick={(event) => event.stopPropagation()}
-              onCheckedChange={(next) =>
-                setSelected((current) =>
-                  next
-                    ? current.includes(soNumber)
-                      ? current
-                      : [...current, soNumber].slice(0, MAX_BOARD_SELECTION)
-                    : current.filter((entry) => entry !== soNumber),
-                )
-              }
-            />
-          );
-        },
-        size: 44,
-        minSize: 44,
-        enableResizing: false,
+          enableRow: (row) => Boolean(row.original.so_number),
+          disabledReason: () =>
+            'Only a sales order from the AutoCount book can go on the board.',
+          // A row with no sales order is named generically rather than as "Select null for
+          // planning": it is the same rule as never rendering an id, applied to a label.
+          rowLabel: (row) =>
+            row.original.so_number
+              ? `Select ${row.original.so_number} for planning`
+              : 'Select row',
+        }),
         meta: { headerTitle: 'Select', skeleton: <Skeleton className="h-4 w-4" /> },
       },
       {
@@ -480,14 +469,18 @@ export function FulfilmentPlanningClient() {
           (row as unknown as Record<string, unknown>)[id],
       };
     });
-  }, [adopt.isPending, startPlanning, selected]);
+  }, [adopt.isPending, startPlanning]);
 
   const table = useReactTable({
     columns,
     data: rows,
     pageCount: Math.ceil((planning.data?.total ?? 0) / pagination.pageSize) || 0,
     getRowId: planningRowKey,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    // The PREDICATE lives on the table, which is where TanStack reads `getCanSelect` from -
+    // a column-level `enableRowSelection` is silently ignored, and every row would tick.
+    enableRowSelection: (row) => Boolean(row.original.so_number),
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     manualPagination: true,
@@ -501,6 +494,22 @@ export function FulfilmentPlanningClient() {
   });
 
   const filtersActive = reviewState !== 'all' ? 1 : 0;
+
+  /**
+   * The ticked orders, by NUMBER, which is what a board is addressed with (13.2, never ids).
+   *
+   * Read off the table's own selection rather than a parallel array, so ticking a row and
+   * ticking the header mean exactly the same thing. The row id is `planningRowKey`, so the
+   * number is resolved back through the rows the page is holding.
+   */
+  const selected = React.useMemo(() => {
+    const byKey = new Map(rows.map((row) => [planningRowKey(row), row]));
+    return selectedRowIds(table)
+      .map((id) => byKey.get(id)?.so_number)
+      .filter((soNumber): soNumber is string => Boolean(soNumber));
+  }, [rows, table, rowSelection]);
+
+  const overCap = selected.length > MAX_BOARD_SELECTION;
 
   // The board replaces the worklist in place rather than sitting under it: they answer the
   // same question at two grains, and showing both at once would ask the reader which one is
@@ -521,19 +530,29 @@ export function FulfilmentPlanningClient() {
           </InfoHint>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Over the cap, the count is STATED rather than the selection quietly trimmed to
+              50: a planner who ticked everything and got a board of the first fifty would be
+              planning a set they did not choose, which is the thing 13.2 exists to prevent. */}
+          {overCap && (
+            <span className="text-sm text-destructive break-words">
+              {`${selected.length} ticked. A board takes at most ${MAX_BOARD_SELECTION} sales orders.`}
+            </span>
+          )}
           {selected.length > 0 && (
-            <Button type="button" variant="ghost" size="sm" onClick={() => setSelected([])}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setRowSelection({})}>
               Clear the selection
             </Button>
           )}
           <Button
             type="button"
             size="sm"
-            disabled={selected.length < 2}
+            disabled={selected.length < 2 || overCap}
             title={
-              selected.length < 2
-                ? 'Tick two or more sales orders to plan them together'
-                : undefined
+              overCap
+                ? `Untick some: a board takes at most ${MAX_BOARD_SELECTION} sales orders`
+                : selected.length < 2
+                  ? 'Tick two or more sales orders to plan them together'
+                  : undefined
             }
             onClick={() => setBoardOrders(selected)}
           >

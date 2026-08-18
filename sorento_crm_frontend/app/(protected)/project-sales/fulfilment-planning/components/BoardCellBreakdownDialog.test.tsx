@@ -1,10 +1,14 @@
 /**
  * The breakdown behind one cell (PLAN section 13, journey step 4).
  *
- * The columns are the captain's own list, so they are asserted by name: which sales order,
- * which customer, which project, the quantity, and where it is sourced from. Each row also owes
- * the balance line the per-line card owes ("23 open = ... + 23 buy"), because a row that states
- * a Buy without saying what it is instead of is not an explanation.
+ * A TABLE, on the shared DataGrid, not a stack of cards. The captain: "this needs to be more
+ * table based instead of card based, so it is easier to see, and you need to show me the SO
+ * order quantity, owed / outstanding quantity also in the table ... then need to show summary
+ * row whenever relevant". So the columns are asserted by name, the quantity columns are
+ * asserted to total in the table's own footer row, and the verbs are a row action.
+ *
+ * The balance for the whole cell is stated ONCE, at the TOP ("7 owed = 7 reserve + 0 incoming
+ * + 0 buy" - the captain: "you should show at the top"), rather than repeated under every row.
  *
  * The verbs write into the DRAFT and nothing else. Nothing in this dialog claims a cell
  * committed anything: the commit is the per-order confirmation on the rail behind it (13.4).
@@ -12,6 +16,10 @@
 import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
 
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
@@ -31,6 +39,7 @@ function demand(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
     line_no: 1,
     item_code: 'WESERP10B',
     qty: '100',
+    qty_ordered: '120',
     required_date: '2026-09-04',
     fulfilment_location: 'BRW-BB',
     priority: null,
@@ -51,7 +60,7 @@ function renderDialog(
   render(
     <BoardCellBreakdownDialog
       cell={cellOf(lines, freeStock)}
-      bucketLabel="w/c 31 Aug 2026"
+      bucketLabel="31 Aug 2026"
       draft={draft}
       onDecide={onDecide}
       onClose={vi.fn()}
@@ -60,59 +69,121 @@ function renderDialog(
   return { onDecide };
 }
 
+/** The totals row the grid renders inside the table, under the columns it sums. */
+function footerCells(): string[] {
+  const table = screen.getByRole('table');
+  const foot = table.querySelector('tfoot');
+  return [...(foot?.querySelectorAll('td') ?? [])].map((cell) => cell.textContent ?? '');
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('BoardCellBreakdownDialog: what a row states', () => {
-  it('names the cell and how much of it is decided', () => {
-    renderDialog([demand()]);
-    expect(screen.getByText('WESERP10B · w/c 31 Aug 2026')).toBeInTheDocument();
-    expect(screen.getByText('100 across 1 line, 0 decided')).toBeInTheDocument();
+describe('BoardCellBreakdownDialog: the cell summary, at the top', () => {
+  it('states the whole cell balance once, above the table', () => {
+    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+
+    const summary = screen.getByTestId('cell-balance');
+    expect(summary.textContent).toBe('100 owed = 40 reserve + 0 incoming + 60 buy');
+    // Above the table, which is what the captain asked for: the summary before the detail.
+    expect(summary.compareDocumentPosition(screen.getByRole('table'))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
-  it('carries the sales order, customer, project and quantity the captain asked for', () => {
+  it('sums the balance across every contributing line, not just the first', () => {
+    renderDialog(
+      [
+        demand({ line_no: 1, qty: '60' }),
+        demand({ line_no: 2, qty: '40', so_number: 'SO398322', sales_order_id: 'so-b' }),
+      ],
+      { 'WESERP10B|BRW-BB': '70' },
+    );
+
+    expect(screen.getByTestId('cell-balance').textContent).toBe(
+      '100 owed = 70 reserve + 0 incoming + 30 buy',
+    );
+  });
+
+  it('names the cell and how much of it is decided', () => {
     renderDialog([demand()]);
+    expect(screen.getByText('WESERP10B · 31 Aug 2026')).toBeInTheDocument();
+    expect(screen.getByText('100 across 1 line, 0 decided')).toBeInTheDocument();
+  });
+});
+
+describe('BoardCellBreakdownDialog: the table', () => {
+  it('carries the columns the captain named', () => {
+    renderDialog([demand()]);
+
+    const table = screen.getByRole('table');
+    const headers = within(table)
+      .getAllByRole('columnheader')
+      .map((node) => node.textContent ?? '');
+    for (const title of [
+      'Sales order',
+      'Customer',
+      'Project',
+      'Ordered',
+      'Owed',
+      'Required',
+      'Location',
+      'Sourced from',
+      'Rank',
+    ]) {
+      expect(headers.some((header) => header.includes(title))).toBe(true);
+    }
+  });
+
+  it('shows the SO ordered quantity beside the owed quantity, both off the server', () => {
+    renderDialog([demand({ qty_ordered: '120', qty: '100' })]);
+
+    const row = screen.getByRole('table').querySelectorAll('tbody tr')[0];
+    expect(within(row as HTMLElement).getByText('120')).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText('100')).toBeInTheDocument();
+  });
+
+  it('says so rather than guessing when the server has not stated the ordered quantity', () => {
+    // Never derived by adding delivered to owed on the client: a number nobody sent is a
+    // number nobody can be held to.
+    renderDialog([demand({ qty_ordered: null })]);
+
+    const row = screen.getByRole('table').querySelectorAll('tbody tr')[0];
+    expect(within(row as HTMLElement).getByText('Not stated')).toBeInTheDocument();
+  });
+
+  it('totals the quantity columns in a summary row inside the table', () => {
+    renderDialog([
+      demand({ line_no: 1, qty: '60', qty_ordered: '70' }),
+      demand({ line_no: 2, qty: '40', qty_ordered: '50', so_number: 'SO398322', sales_order_id: 'so-b' }),
+    ]);
+
+    const cells = footerCells();
+    expect(cells.some((cell) => cell === 'Total')).toBe(true);
+    expect(cells).toContain('120');
+    expect(cells).toContain('100');
+  });
+
+  it('carries the sales order, customer, project and location per row', () => {
+    renderDialog([demand()]);
+
     expect(screen.getByText(/SO403340/)).toBeInTheDocument();
-    expect(
-      screen.getByText('SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)')).toBeInTheDocument();
     expect(
       screen.getByText('SETIA-WOOD INDUSTRIES/100U DSTH (DIMINA) @ SETIA'),
     ).toBeInTheDocument();
-    // The quantity, beside the word that says what it is. Asserted as the pair because the
-    // bare number also appears in the balance line below it.
-    const owed = screen.getByText('owed').closest('div');
-    expect(owed?.textContent).toBe('100 owed');
-  });
-
-  it('carries the location per row, because that is where it is a fact (13.7)', () => {
-    renderDialog([
-      demand({ line_no: 1, qty: '22', fulfilment_location: 'BRW-BB' }),
-      demand({ line_no: 2, qty: '21', fulfilment_location: 'BRW' }),
-    ]);
-    // Once per row, and once each in the strip at the top of the dialog.
     expect(screen.getAllByText('BRW-BB').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('BRW').length).toBeGreaterThan(0);
-    expect(screen.getByText('BRW-BB · 22')).toBeInTheDocument();
-    expect(screen.getByText('BRW · 21')).toBeInTheDocument();
   });
 
   it('shows where the quantity is sourced from, with the reason the rule wrote', () => {
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-    expect(screen.getByText(/Reserve/)).toBeInTheDocument();
-    expect(screen.getByText(/Buy/)).toBeInTheDocument();
-    expect(
-      screen.getByText('Free unclaimed stock at BRW-BB covers this much by the required date.'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Free stock at BRW-BB ran out on this line; the residual is bought.'),
-    ).toBeInTheDocument();
-  });
 
-  it('owes the same balance line the per-line card owes', () => {
-    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-    expect(screen.getByText('100 owed = 40 reserve + 0 incoming + 60 buy')).toBeInTheDocument();
+    expect(screen.getByText(/Reserve 40/)).toBeInTheDocument();
+    expect(screen.getByText(/Buy 60/)).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/Free unclaimed stock at BRW-BB covers this much by the required date\./),
+    ).toBeInTheDocument();
   });
 
   it('says when the stock was already committed to earlier demand (13.5)', () => {
@@ -123,11 +194,8 @@ describe('BoardCellBreakdownDialog: what a row states', () => {
       ],
       { 'WESERP10B|BRW-BB': '100' },
     );
-    expect(
-      screen.getByText(
-        'Free stock at this location was already committed to earlier demand, so this line is bought.',
-      ),
-    ).toBeInTheDocument();
+
+    expect(screen.getByText('Contested')).toBeInTheDocument();
   });
 
   it('lists the rows in the order the allocation rule served them', () => {
@@ -135,11 +203,19 @@ describe('BoardCellBreakdownDialog: what a row states', () => {
       demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, required_date: '2026-09-04' }),
       demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, required_date: '2026-09-02' }),
     ]);
-    const rendered = screen
-      .getAllByTitle(/^SO\d+$/)
-      .map((node) => node.textContent?.replace(/\s+/g, ' ').trim());
-    expect(rendered[0]).toContain('SO398322');
-    expect(rendered[1]).toContain('SO403340');
+
+    const rows = screen.getByRole('table').querySelectorAll('tbody tr');
+    expect(rows[0].textContent).toContain('SO398322');
+    expect(rows[1].textContent).toContain('SO403340');
+  });
+
+  it('names a ranking factor in words, never as a database column', () => {
+    renderDialog([demand()]);
+
+    const rank = screen.getByTestId('rank-factors-so-a|1|WESERP10B|2026-08-31');
+    expect(rank.textContent).toContain('Purchase order sequence');
+    expect(rank.textContent).not.toContain('po_document_sequence');
+    expect(rank.textContent).not.toContain('need_by_date');
   });
 });
 
@@ -147,71 +223,73 @@ describe('BoardCellBreakdownDialog: approve, amend, reject', () => {
   it('approves a row', () => {
     const { onDecide } = renderDialog([demand()]);
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    expect(onDecide).toHaveBeenCalledWith(expect.any(String), { verdict: 'approved' });
+    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
+      verdict: 'approved',
+    });
   });
 
   it('rejects a row, and a rejection carries a reason', () => {
     const { onDecide } = renderDialog([demand()]);
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
-    expect(onDecide).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ verdict: 'rejected', reason: expect.any(String) }),
-    );
+    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
+      verdict: 'rejected',
+      reason: 'Rejected on the planning board.',
+    });
   });
 
   it('takes an amendment at the proposed quantity without demanding a reason', () => {
     const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
-    expect(screen.queryByLabelText(/Reason/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Save the amendment' }));
-    expect(onDecide).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ verdict: 'amended', reserve_qty: '40' }),
-    );
+
+    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
+      verdict: 'amended',
+      reserve_qty: '40',
+      reason: undefined,
+    });
   });
 
   it('demands a reason the moment the amendment displaces the rule, and blocks Save until it has one', () => {
     const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
 
-    fireEvent.change(screen.getByRole('spinbutton', { name: /Reserve for SO403340 line 1/ }), {
-      target: { value: '10' },
-    });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+    const input = screen.getByLabelText('Reserve for SO403340 line 1');
+    fireEvent.change(input, { target: { value: '10' } });
 
     const save = screen.getByRole('button', { name: 'Save the amendment' });
     expect(save).toBeDisabled();
+    expect(onDecide).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByRole('textbox'), {
-      target: { value: 'Holding the rest for the Nadi 3 handover.' },
+    fireEvent.change(screen.getByLabelText(/Reason/), {
+      target: { value: 'Keeping 30 for the site that is already late.' },
     });
     expect(save).toBeEnabled();
-
     fireEvent.click(save);
-    expect(onDecide).toHaveBeenCalledWith(expect.any(String), {
+
+    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'amended',
       reserve_qty: '10',
-      reason: 'Holding the rest for the Nadi 3 handover.',
+      reason: 'Keeping 30 for the site that is already late.',
     });
   });
 
   it('shows a decided row as decided, and lets it be undone', () => {
-    const cell = cellOf([demand()]);
-    const key = cell.contributions[0].key;
-    const { onDecide } = renderDialog([demand()], {}, { [key]: { verdict: 'approved' } });
+    const { onDecide } = renderDialog([demand()], {}, {
+      'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
+    });
 
     expect(screen.getByText('Approved')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
-
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(onDecide).toHaveBeenCalledWith(key, null);
+    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', null);
   });
 
   it('states an amended row at the quantity it was amended to', () => {
-    const cell = cellOf([demand()]);
-    const key = cell.contributions[0].key;
-    renderDialog([demand()], {}, { [key]: { verdict: 'amended', reserve_qty: '10', reason: 'Held back.' } });
-    expect(screen.getByText('Amended to reserve 10')).toBeInTheDocument();
-    expect(screen.getByText('Held back.')).toBeInTheDocument();
+    renderDialog([demand()], {}, {
+      'so-a|1|WESERP10B|2026-08-31': { verdict: 'amended', reserve_qty: '12' },
+    });
+
+    expect(screen.getByText('Amended to reserve 12')).toBeInTheDocument();
   });
 });
 
@@ -219,27 +297,55 @@ describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
   it('offers no verdict at all, and says why', () => {
     renderDialog([demand({ fulfilment_location: null })]);
 
-    expect(
-      screen.getByText(
-        'This line cannot be decided here: its sales order states no fulfilment location.',
-      ),
-    ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Amend' })).not.toBeInTheDocument();
+    expect(screen.getByText('Needs a location')).toBeInTheDocument();
   });
 
   it('still shows its quantity, so the demand is not hidden from the reader', () => {
-    renderDialog([demand({ qty: '24', fulfilment_location: null })]);
-    const dialog = screen.getByRole('dialog');
-    const owed = within(dialog).getByText('owed').closest('div');
-    expect(owed?.textContent).toBe('24 owed');
-    expect(within(dialog).getByText('No location · 24')).toBeInTheDocument();
+    renderDialog([
+      demand({ line_no: 1, qty: '24', fulfilment_location: null }),
+      demand({ line_no: 2, qty: '10' }),
+    ]);
+
+    expect(screen.getByText('34 across 2 lines, 0 decided')).toBeInTheDocument();
   });
 });
 
 /**
- * Phase 2 deviations 2, 3 and 8, checked against the shapes the real board actually emits.
+ * The blocker, measured in the browser: at a 560px-tall window the dialog footer painted OVER
+ * the row's Approve button, so a planner on a laptop could not decide anything at all. The
+ * modal mandate is the fix - the body scrolls in its own region with a max height, and the
+ * footer sits OUTSIDE that region so it can never cover a control.
  */
+describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
+  it('puts the scrolling region between the header and the footer, with the table inside it', () => {
+    renderDialog([demand()]);
+
+    const body = screen.getByTestId('cell-dialog-body');
+    expect(body.className).toContain('overflow-y-auto');
+    expect(body.className).toContain('min-h-0');
+    expect(body.contains(screen.getByRole('table'))).toBe(true);
+    expect(body.contains(screen.getByRole('button', { name: 'Approve' }))).toBe(true);
+
+    // The footer is a SIBLING of the scroll region, never an overlay on top of it.
+    const footer = screen.getByTestId('cell-dialog-footer');
+    expect(footer.contains(body)).toBe(false);
+    expect(body.contains(footer)).toBe(false);
+    expect(footer.parentElement).toBe(body.parentElement);
+  });
+
+  it('lays the dialog out as a column so the body is what shrinks, not the footer', () => {
+    renderDialog([demand()]);
+
+    const content = screen.getByTestId('cell-dialog-content');
+    expect(content.className).toContain('flex');
+    expect(content.className).toContain('flex-col');
+    // A fixed max-height on the BODY was the bug: it let the content run past the footer.
+    // The height belongs to the dialog, and the body takes what is left.
+    expect(screen.getByTestId('cell-dialog-body').className).toContain('flex-1');
+  });
+});
+
 describe('BoardCellBreakdownDialog: the real board’s sources', () => {
   /** A contribution built by hand, in exactly the shape seam B returns. */
   function serverCell(sources: BoardContribution['sources']) {
@@ -254,7 +360,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     render(
       <BoardCellBreakdownDialog
         cell={serverCell(sources)}
-        bucketLabel="w/c 28 Sep 2026"
+        bucketLabel="28 Sep 2026"
         draft={{}}
         onDecide={vi.fn()}
         onClose={vi.fn()}
@@ -278,15 +384,15 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
       },
     ]);
 
-    expect(screen.getByText(/Incoming/)).toBeInTheDocument();
+    expect(screen.getByText(/Incoming 15/)).toBeInTheDocument();
   });
 
   /**
    * Deviation 2: `spo_number` and `arrival_date` are always null, because the SPO and its date
-   * are inside the engine's own sentence. So the sentence is what must be shown, and nothing
-   * may render a placeholder where the null fields would have gone.
+   * are inside the engine's own sentence. So the sentence is what must be reachable, and
+   * nothing may render a placeholder where the null fields would have gone.
    */
-  it('shows the engine’s sentence, and never a blank where the null SPO fields were', () => {
+  it('keeps the engine’s sentence reachable, and never renders a blank for the null fields', () => {
     renderServerCell([
       {
         kind: 'timely_spo',
@@ -299,8 +405,8 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     ]);
 
     expect(
-      screen.getByText(
-        'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the required date.',
+      screen.getByTitle(
+        /SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the required date\./,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText('null')).not.toBeInTheDocument();
@@ -308,12 +414,14 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
   });
 
   /** Deviation 8: Pool and Borrow never reach the board; they cross locations. */
-  it('counts a timely SPO into the balance line as incoming, not as reserve', () => {
+  it('counts a timely SPO into the cell balance as incoming, not as reserve', () => {
     renderServerCell([
       { kind: 'timely_spo', qty: '10', location: 'BRW-BB', reason: 'Incoming covers 10.' },
       { kind: 'buy', qty: '5', location: null, reason: 'The residual is bought.' },
     ]);
 
-    expect(screen.getByText('15 owed = 0 reserve + 10 incoming + 5 buy')).toBeInTheDocument();
+    expect(screen.getByTestId('cell-balance').textContent).toBe(
+      '15 owed = 0 reserve + 10 incoming + 5 buy',
+    );
   });
 });

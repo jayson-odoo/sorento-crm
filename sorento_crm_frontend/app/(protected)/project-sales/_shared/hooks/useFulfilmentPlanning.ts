@@ -171,6 +171,10 @@ export function useReconciliationMutations() {
       confirmSupply(psoId, body),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
+      // The board reads live stock and live holds, so a confirmation changes what every OTHER
+      // order on the same board can still be promised. Leaving it stale would show a planner a
+      // Reserve that their own previous press had just consumed.
+      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
       queryClient.invalidateQueries({ queryKey: [RECONCILIATION_KEY] });
       queryClient.invalidateQueries({ queryKey: [SUPPLY_KEY] });
       queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY] });

@@ -165,10 +165,15 @@ class _SpoRow:
 
 @dataclass
 class _LineFacts:
-    """Everything one line is judged against, read live (AC-C03)."""
+    """Everything one line is judged against, read live (AC-C03).
 
-    line: ProjectSalesOrderLine
-    core: Optional[SalesOrderLine]
+    `line` and `core` are optional because the same bundle now serves TWO callers: the sheet,
+    which judges a mirror line, and the multi-order board, which judges a bare core demand row
+    and has no mirror to point at. Everything the source ladder reads is below them.
+    """
+
+    line: Optional[ProjectSalesOrderLine] = None
+    core: Optional[SalesOrderLine] = None
     item_code: Optional[str] = None
     product_id: Optional[str] = None
     open_qty: Decimal = _ZERO
@@ -320,34 +325,8 @@ class ProjectSupplyService:
             pool_key = fact.pool_key
             if pool_key and pool_key not in pool_left:
                 pool_left[pool_key] = fact.pool_free
-            free_stock: Dict[str, Decimal] = {}
-            if fact.own_code:
-                free_stock[fact.own_code] = fact.own_free
-            if fact.pool_code:
-                free_stock[fact.pool_code] = pool_left.get(pool_key, _ZERO)
-
-            components = propose_line(
-                open_qty=fact.open_qty,
-                line_no=line.line_no,
-                required_date=fact.required_date,
-                fulfilment_location=fact.own_code,
-                is_dealer_hot_selling=fact.is_hot_selling,
-                free_stock=free_stock,
-                pool_location=fact.pool_code,
-                reorder_levels=(
-                    {fact.pool_code: fact.pool_reorder_level} if fact.pool_code else {}
-                ),
-                timely_spo_qty=fact.timely_qty,
-                timely_spo_refs=[
-                    {
-                        "spo_number": ref.spo_number,
-                        "spo_line_no": ref.spo_line_no,
-                        "arrival_date": ref.arrival_date,
-                        "qty": ref.qty,
-                    }
-                    for ref in fact.timely_refs
-                ],
-                is_discontinued=fact.is_discontinued,
+            components = self.compose_line(
+                fact, pool_free_left=pool_left.get(pool_key, _ZERO)
             )
             if pool_key and fact.pool_code:
                 drawn = sum(
@@ -384,6 +363,135 @@ class ProjectSupplyService:
             "decision": self._serialize_decision(decision or self.latest_decision(str(order.id))),
             "lines": payload_lines,
         }
+
+    def compose_line(
+        self, fact: _LineFacts, *, pool_free_left: Optional[Decimal] = None
+    ) -> Tuple[Component, ...]:
+        """The source ladder for ONE line: own location, then the shared pool, then timely
+        incoming, then Buy - with PLAN 3.3's hot-selling rules deciding what Reserve may touch.
+
+        Public because it has two callers and must never have two implementations. The sheet
+        composes one order's lines; the multi-order board composes every contributing line of a
+        selection. A board that walked a reduced ladder proposed a Buy for a line the sheet
+        would have covered from the pool, so purchasing acting on the board and purchasing
+        acting on the sheet disagreed about the same line - which is the whole reason this is a
+        method rather than a loop body.
+
+        Borrow is not proposed here, on either surface: it needs a donor and a reason from a
+        person (AC-B09). `borrow_candidates_for` is what offers it.
+
+        `pool_free_left` is the caller's running pool balance, because the pool is shared: the
+        sheet draws it down across one order's lines, the board across the whole selection.
+        Defaults to the whole pool free, which is what a single line on its own may draw.
+        """
+        free_stock: Dict[str, Decimal] = {}
+        if fact.own_code:
+            free_stock[fact.own_code] = fact.own_free
+        if fact.pool_code:
+            free_stock[fact.pool_code] = (
+                fact.pool_free if pool_free_left is None else pool_free_left
+            )
+        return propose_line(
+            open_qty=fact.open_qty,
+            line_no=fact.line.line_no if fact.line is not None else None,
+            required_date=fact.required_date,
+            fulfilment_location=fact.own_code,
+            is_dealer_hot_selling=fact.is_hot_selling,
+            free_stock=free_stock,
+            pool_location=fact.pool_code,
+            reorder_levels=(
+                {fact.pool_code: fact.pool_reorder_level} if fact.pool_code else {}
+            ),
+            timely_spo_qty=fact.timely_qty,
+            timely_spo_refs=[
+                {
+                    "spo_number": ref.spo_number,
+                    "spo_line_no": ref.spo_line_no,
+                    "arrival_date": ref.arrival_date,
+                    "qty": ref.qty,
+                }
+                for ref in fact.timely_refs
+            ],
+            is_discontinued=fact.is_discontinued,
+        )
+
+    def borrow_candidates_for(self, fact: _LineFacts) -> List[Dict[str, Any]]:
+        """Where else this line could be met from, with what it costs the holder (AC-B09).
+
+        Public for the board, which otherwise prints a bare Buy for a line whose stock exists
+        one location away. Requires `demand_facts` or `_facts_for` to have run, because it
+        reads the same free / holds caches the proposal was computed from.
+        """
+        return self._borrow_candidates(fact)
+
+    def demand_facts(
+        self, rows: Sequence[Dict[str, Any]]
+    ) -> Dict[str, _LineFacts]:
+        """`_LineFacts` for arbitrary CORE demand rows, keyed by the caller's own `key`.
+
+        The board's way in to the same facts the sheet judges a line against: the fulfilment
+        warehouse and its pool, the pool's free stock and reorder level, the dealer hot-selling
+        verdict, product lifecycle, and the location's undelivered incoming. Each row states
+        `key`, `product_id`, `warehouse_id`, `open_qty`, `required_date` and `item_code`.
+
+        What it deliberately does NOT fill is `own_free` and `timely_qty`: those are one line's
+        SHARE of a contested pile, and who gets that share is the question each surface answers
+        differently - the sheet by required date across every outstanding line, the board by the
+        fulfilment-priority ranking across the selected orders. The caller sets them and then
+        calls `compose_line`.
+        """
+        product_ids = {str(r["product_id"]) for r in rows if r.get("product_id")}
+        warehouse_ids = {str(r["warehouse_id"]) for r in rows if r.get("warehouse_id")}
+        warehouses = self._warehouses(warehouse_ids)
+        pool_ids = {
+            str(w.pool_warehouse_id) for w in warehouses.values() if w.pool_warehouse_id
+        }
+        warehouses.update(self._warehouses(pool_ids - set(warehouses)))
+
+        self._free_cache = self._free_stock(product_ids, exclude_order_id=None)
+        self._holds_cache = self._holds_by_project(product_ids, exclude_order_id=None)
+        hot, unavailable = self._classification(product_ids)
+        levels = self._reorder_levels(product_ids, pool_ids)
+        discontinued = self._discontinued(product_ids)
+        spo = self._spo_rows(product_ids, warehouse_ids)
+
+        facts: Dict[str, _LineFacts] = {}
+        for row in rows:
+            product_id = str(row["product_id"]) if row.get("product_id") else None
+            warehouse = (
+                warehouses.get(str(row["warehouse_id"])) if row.get("warehouse_id") else None
+            )
+            pool = (
+                warehouses.get(str(warehouse.pool_warehouse_id))
+                if warehouse and warehouse.pool_warehouse_id
+                else None
+            )
+            required_date = row.get("required_date")
+            key = (product_id or "", str(warehouse.id) if warehouse else "")
+            timely_refs = [
+                ref
+                for ref in spo.get(key, [])
+                if required_date is None
+                or (ref.arrival_date is not None and ref.arrival_date <= required_date)
+            ]
+            facts[str(row["key"])] = _LineFacts(
+                item_code=row.get("item_code"),
+                product_id=product_id,
+                open_qty=_dec(row.get("open_qty")),
+                required_date=required_date,
+                warehouse=warehouse,
+                pool=pool,
+                pool_free=(self._free_at(product_id, str(pool.id)) if pool else _ZERO),
+                pool_reorder_level=levels.get(
+                    (product_id or "", str(pool.id) if pool else ""), _ZERO
+                ),
+                is_hot_selling=(product_id or "") in hot,
+                classification_unavailable=(product_id or "") in unavailable,
+                is_discontinued=(product_id or "") in discontinued,
+                timely_refs=timely_refs,
+                advisory_refs=[ref for ref in spo.get(key, []) if ref not in timely_refs],
+            )
+        return facts
 
     def _serialize_line(
         self,
@@ -1517,6 +1625,33 @@ class ProjectSupplyService:
             if warehouse_id
             else None
         )
+
+    def stock_levels_by_location(
+        self, product_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], Tuple[Decimal, Decimal]]:
+        """`(on hand, reserved)` per `(product_id, warehouse_id)`, straight off the rows.
+
+        The raw pair behind `free_stock_by_location`, read from the same `stock` rows so a
+        screen can show what the planner asked to see - "what is the quantity on hand" - beside
+        what the engine may actually use, and the two can never come from different reads. The
+        subtraction stays in `_free_stock`; this states its inputs, it does not repeat them.
+        """
+        ids = [pid for pid in product_ids if pid]
+        if not ids:
+            return {}
+        rows = (
+            self.db.query(Stock)
+            .join(Warehouse, Warehouse.id == Stock.warehouse_id)
+            .filter(Stock.product_id.in_(ids), Warehouse.is_active.is_(True))
+            .all()
+        )
+        return {
+            (str(stock.product_id), str(stock.warehouse_id)): (
+                _dec(stock.quantity_on_hand),
+                _dec(stock.quantity_reserved),
+            )
+            for stock in rows
+        }
 
     def free_stock_by_location(
         self, product_ids: Iterable[str]

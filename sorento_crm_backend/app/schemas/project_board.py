@@ -59,6 +59,12 @@ class BoardRankFactor(BaseModel):
     weight: float
     value: Optional[float] = None
     present: bool
+    #: The ABSOLUTE fact behind the normalised value, as text: this line's required date, this
+    #: order's document date, this customer's terms, this order's demand class. Shown FIRST,
+    #: with the normalised value secondary - on its own a 0.00 beside a 1.00 explains nothing,
+    #: and under a policy that weights nothing a demand row carries every score is 0.00, which
+    #: reads as a broken feature rather than as a rule saying nothing. Null when absent.
+    raw: Optional[str] = None
 
 
 class BoardSource(BaseModel):
@@ -85,6 +91,23 @@ class BoardContribution(BaseModel):
     line_no: int
     item_code: str
     qty: str
+    #: What the customer ordered on this line, what has gone out, and what is still owed.
+    #: Three names rather than one `qty`, because they differ the moment a delivery is
+    #: part-made and the board plans against the last of them.
+    qty_ordered: str = "0"
+    qty_delivered: str = "0"
+    qty_outstanding: str = "0"
+    #: What the engine proposes to meet it with, from the SAME ladder the per-order sheet runs
+    #: (own location, then the shared pool under the hot-selling rules, then timely incoming,
+    #: then Buy). The three add up to `qty_outstanding`.
+    qty_proposed_reserve: str = "0"
+    qty_proposed_incoming: str = "0"
+    qty_proposed_buy: str = "0"
+    #: What could be borrowed instead of bought, and from where. Borrow is never proposed on
+    #: either surface - it needs a donor and a reason from a person - but a Buy printed with no
+    #: mention of it reads as "this stock exists nowhere".
+    qty_borrow_available: str = "0"
+    borrow_candidates: List[BorrowCandidate] = []
     #: The line's REAL required date, never the bucket it landed in.
     required_date: Optional[date] = None
     #: This line's own date is behind `as_of`. Per LINE, which is what a "N of M lines are past
@@ -102,8 +125,52 @@ class BoardContribution(BaseModel):
     contested: bool = False
 
 
+class BorrowCandidate(BaseModel):
+    """Where a Buy could be borrowed from instead. Offered, never proposed (AC-B09)."""
+
+    source: str
+    warehouse_code: str
+    donor_project_ref: Optional[str] = None
+    free_qty: str
+
+
 class BoardCellLocation(BaseModel):
+    """One (product, location) of a cell: what is owed there, and what is actually there.
+
+    The strip used to read "BRW-BB 22" with 22 being the DEMAND, which is the one reading
+    nobody guessed. Every number is now named, and the stock facts sit beside the demand.
+
+    Every stock figure is null (never zero) for the location-less row of a line whose sales
+    order states no warehouse: there is no location whose stock could be counted, and a zero
+    would read as "that location is empty".
+    """
+
     location: Optional[str] = None
+    #: The demand, under the name the frontend's source strip already reads.
+    qty: str
+    #: The same number, said unambiguously.
+    qty_demand: str
+    qty_on_hand: Optional[str] = None
+    qty_reserved: Optional[str] = None
+    #: What this engine may actually use: on hand, less reserved, less what confirmed decisions
+    #: already hold. The figure the proposal was computed from.
+    qty_free: Optional[str] = None
+    #: Of that, what was still unclaimed when THIS cell's lines were served - earlier dates
+    #: draw first, so a December cell can face a smaller pile than `qty_free` suggests.
+    qty_free_remaining: Optional[str] = None
+    #: Allocated on a supply PO and not yet received, at this location.
+    qty_incoming: Optional[str] = None
+    incoming: List["BoardIncoming"] = []
+    qty_proposed_reserve: str = "0"
+    qty_proposed_incoming: str = "0"
+    qty_proposed_buy: str = "0"
+
+
+class BoardIncoming(BaseModel):
+    """One undelivered supply-PO allocation: how much, when, and on which document."""
+
+    spo_number: Optional[str] = None
+    arrival_date: Optional[date] = None
     qty: str
 
 

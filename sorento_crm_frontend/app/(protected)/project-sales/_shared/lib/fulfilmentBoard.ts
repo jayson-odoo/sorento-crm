@@ -21,8 +21,49 @@ import type {
   BoardContribution,
   BoardDraft,
   BoardOrderStanding,
+  ConfirmLine,
+  ConfirmReserveComponent,
 } from '../types/fulfilmentPlanning.types';
-import { toMinor } from './supplyComposition';
+import { fromMinor, toMinor } from './supplyComposition';
+
+/**
+ * A column header with the week-commencing abbreviation taken off.
+ *
+ * The captain, verbatim: "what does w/c 2 Nov 2026 mean? what does w/c mean?" - and then, on
+ * being offered replacements, "just remove it". Having to ask IS the verdict. The granularity
+ * control already says the board is by week, so the column has nothing left to restate.
+ *
+ * The label is formatted SERVER-side, so this is a bridge until that lane drops the prefix: it
+ * is idempotent, and does nothing at all once the server stops sending it. It is the only
+ * reformatting the client does to a server label, and it exists because jargon on screen is not
+ * something to wait on.
+ */
+export function bucketLabelText(label: string): string {
+  return label.replace(/^w\/c\s+/i, '');
+}
+
+/**
+ * A ranking factor named in words a planner uses.
+ *
+ * The chips printed `po_document_sequence absent` and `need_by_date` - database column names,
+ * shown to somebody who never chose them. Same fault as "w/c", same answer: nothing on this
+ * screen should need decoding. A factor nobody has named yet is humanised rather than printed
+ * raw, so a new one from the policy never regresses the screen to identifiers.
+ */
+const FACTOR_LABELS: Record<string, string> = {
+  need_by_date: 'Required date',
+  document_age: 'Order date',
+  customer_credit: 'Payment terms',
+  demand_class: 'Demand type',
+  po_document_sequence: 'Purchase order sequence',
+};
+
+export function factorLabel(key: string): string {
+  const known = FACTOR_LABELS[key];
+  if (known) return known;
+  const words = key.replace(/_/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 /**
  * Which sales order each contribution key belongs to.
@@ -57,15 +98,22 @@ export function standingsFor(
   draft: BoardDraft,
 ): BoardOrderStanding[] {
   const decided = new Map<string, number>();
-  for (const key of Object.keys(draft)) {
+  const committing = new Map<string, number>();
+  for (const [key, decision] of Object.entries(draft)) {
     const salesOrderId = owners.get(key);
     if (!salesOrderId) continue;
     decided.set(salesOrderId, (decided.get(salesOrderId) ?? 0) + 1);
+    // A REJECTED line is decided but not committed: the planner said no, and the confirm body
+    // deliberately omits it so it stays undecided and keeps flowing to reorder planning.
+    if (decision.verdict !== 'rejected') {
+      committing.set(salesOrderId, (committing.get(salesOrderId) ?? 0) + 1);
+    }
   }
   return [...orders]
     .map((order) => ({
       ...order,
       decided_count: decided.get(order.sales_order_id) ?? 0,
+      committing_count: committing.get(order.sales_order_id) ?? 0,
     }))
     .sort((left, right) => left.so_number.localeCompare(right.so_number));
 }
@@ -83,11 +131,106 @@ export function standingsFor(
  * planner cannot fix on this screen.
  */
 export function commitPreviewFor(standing: BoardOrderStanding): BoardCommitPreview {
+  // What would be POSTED, which is not every verdict: a rejection decides a line and commits
+  // nothing for it. A button reading "Confirm 2 lines" that posts one is a button that lies.
+  const committing = standing.committing_count ?? standing.decided_count;
   return {
-    committing: standing.decided_count,
-    leaving_undecided: standing.line_count - standing.decided_count,
+    committing,
+    leaving_undecided: standing.line_count - committing,
     blocked: standing.unplannable_count,
   };
+}
+
+/**
+ * The body one order's Confirm posts, built from the board's draft.
+ *
+ * The captain asked whether the board's Confirm did anything - "so now when i click the confirm
+ * 8 lines, it won't work and won't flow to order inquiries isit?" - and it did not. This is the
+ * mapping onto the endpoint that already exists (`POST .../sales-orders/{pso_id}/confirm`), so
+ * the board commits through the same per-order confirmation the sheet does rather than growing
+ * a second write path (13.4: the board is a LENS).
+ *
+ * What is NOT named is the point. A line the body omits is left UNDECIDED and keeps flowing to
+ * reorder planning, which is the captain's own reason for wanting partial confirmation. So:
+ *
+ *   - a REJECTED line is omitted. The planner refused the proposal; committing it anyway would
+ *     be the opposite of what they said, and there is no "commit nothing for this line" verb;
+ *   - a line with no `project_line_id` is omitted rather than posted with a null, because the
+ *     endpoint keys on it and a null would fail the whole confirmation for the others;
+ *   - an unplannable line is never decided in the first place (AC-FP16), so it never arrives.
+ *
+ * An AMENDMENT moves the difference into Buy. The quantity a planner takes off a Reserve does
+ * not evaporate: it is still owed, and somebody still has to buy it.
+ */
+export function confirmLinesFor(
+  contributions: BoardContribution[],
+  salesOrderId: string,
+  draft: BoardDraft,
+): ConfirmLine[] {
+  const lines: ConfirmLine[] = [];
+  for (const contribution of contributions) {
+    if (contribution.sales_order_id !== salesOrderId) continue;
+    const decision = draft[contribution.key];
+    if (!decision || decision.verdict === 'rejected') continue;
+    if (!contribution.project_line_id) continue;
+
+    const owed = toMinor(contribution.qty_outstanding ?? contribution.qty);
+    const incoming = sumSources(contribution, 'timely_spo');
+    const proposedReserve = sumSources(contribution, 'reserve');
+    const reserveQty =
+      decision.verdict === 'amended' && decision.reserve_qty !== undefined
+        ? toMinor(decision.reserve_qty)
+        : proposedReserve;
+    // Whatever the Reserve and the incoming stock do not cover is bought. Derived rather than
+    // read off the proposal so an amendment cannot leave a quantity owed by nobody.
+    const buy = Math.max(owed - incoming - reserveQty, 0);
+    const reserve = reserveWarehouses(contribution, reserveQty);
+    // A Reserve nobody can address is not a Reserve. Dropping the line leaves it undecided,
+    // which is recoverable; posting a Reserve with no warehouse would fail the whole
+    // confirmation and take the other lines down with it.
+    if (reserve === null) continue;
+
+    lines.push({
+      project_line_id: contribution.project_line_id,
+      timely_spo_qty: fromMinor(incoming),
+      reserve,
+      // The board never proposes a Borrow: it crosses locations, and the board allocates per
+      // (product, location) only (13.7, deviation 8).
+      borrow: [],
+      buy_qty: fromMinor(buy),
+    });
+  }
+  return lines;
+}
+
+function sumSources(contribution: BoardContribution, kind: string): number {
+  return contribution.sources
+    .filter((source) => source.kind === kind)
+    .reduce((total, source) => total + toMinor(source.qty), 0);
+}
+
+/**
+ * The Reserve, against the one warehouse a board row can reserve from.
+ *
+ * A board row is single-location by construction: allocation runs per (product, location) and
+ * the location is the line's own (13.7). So the payload's list has one entry, and the warehouse
+ * is the proposal's when there is one and the LINE's when there is not - an amendment that
+ * reserves on a line the engine proposed nothing for is exactly the case where the sources
+ * carry no warehouse, and reading only the sources would silently drop the planner's quantity.
+ *
+ * Returns null when the quantity cannot be addressed to any warehouse at all, which the caller
+ * treats as "leave this line undecided" rather than posting something the server must refuse.
+ */
+function reserveWarehouses(
+  contribution: BoardContribution,
+  reserveQty: number,
+): ConfirmReserveComponent[] | null {
+  if (reserveQty <= 0) return [];
+  const warehouseId =
+    contribution.sources.find((source) => source.kind === 'reserve' && source.warehouse_id)
+      ?.warehouse_id ?? contribution.fulfilment_warehouse_id;
+  if (!warehouseId) return null;
+  return [{ warehouse_id: warehouseId, qty: fromMinor(reserveQty) }];
 }
 
 /**

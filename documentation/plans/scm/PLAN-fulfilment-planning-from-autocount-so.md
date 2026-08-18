@@ -1530,6 +1530,41 @@ the eight fixture orders, `WESERP10B` is owed by four different orders out of bo
 - **Allocation is computed per (product, location)**, never across locations: free stock at BRW-IB
   cannot cover a line that must be fulfilled from BRW-BB. Moving stock between locations is a
   transfer, which is M9's job and a non-goal here (13.8).
+
+  **AMENDED, Phase 2, after the captain read a breakdown line by line** ("so for this one, no free
+  stock available, so did it go through the process of whether want to borrow / use BRW (depending on
+  the hot selling / cold selling or discontinued) then only arrive at buy?"). The answer was no, and
+  that was a defect rather than a carve-out: this bullet as first written excluded the shared POOL and
+  Borrow from the board because they cross locations, and in doing so it silently changed the ANSWER.
+  The board proposed Buy for a line the per-order sheet would have covered from the pool, so
+  purchasing acting on the board and purchasing acting on the sheet disagreed about the same line and
+  the board's Buy overstated what has to be bought.
+
+  The rule that replaces it splits the question in two, by owner:
+
+  * **Which sources may cover a line, in what order, is the SHEET'S ladder** - own location, then the
+    shared pool under PLAN 3.3's dealer hot-selling rules, then timely incoming, then Buy. The board
+    calls `ProjectSupplyService.compose_line`, the same method `proposal_for` calls, so there is one
+    implementation and not two that agree today. The pool is not a transfer: it is a location the
+    sheet already treats as an eligible Reserve source for its member locations.
+  * **Who gets a scarce pile is the BOARD'S contest** - contributions are served in the
+    fulfilment-priority ranking (13.5), and each pile (own-location free stock, its dated incoming,
+    and the shared pool) is drawn down in that order across the whole selection. This is what the
+    per-order sheet structurally cannot show.
+  * **Borrow is offered, never proposed**, on both surfaces, because it needs a donor and a reason
+    from a person (AC-B09). What changes is that a board Buy now states that borrowing is possible and
+    from where, instead of reading as "this stock exists nowhere".
+
+  Measured on seven real AutoCount orders after the change: 82 of 357 contributions draw on a pool
+  location instead of buying, and 180 Buy rows name a borrowable source.
+
+  One difference between the two surfaces REMAINS and is deliberate: a line's share of its own
+  location's free stock is decided on the sheet by required date across every outstanding line in the
+  book, and on the board by the ranking across the SELECTED orders. Seeding the board's contest with
+  demand that is not on the board would make a row lose to an order the planner cannot see, which is
+  the one thing a board exists to prevent. So the ladder is identical and the contest is each
+  surface's own; where they can differ, they differ about who wins a pile, never about which sources
+  were considered.
 - A contributing row whose sales-order line states **no location** renders the blocked state already
   designed (AC-FP16): it contributes its quantity to the cell total so the demand is not hidden, is
   marked as unplannable, links to its SCM sales order, and blocks its own order's confirm. The cell
@@ -1541,6 +1576,8 @@ the eight fixture orders, `WESERP10B` is owed by four different orders out of bo
   end, and remains the only place the reconciliation card lives.
 - **It does not create a cross-order decision object**, table or status (13.4).
 - **It does not move stock between locations.** Transfers are `PLAN-scm-m9-stock-allocation-transfer`.
+  Drawing on the shared pool is not a transfer and never was: the pool is an eligible Reserve
+  source for its member locations on the sheet, and now on the board too (13.7 as amended).
 - **It does not re-open the fulfilment-location question.** No location is ever chosen on the board.
 - **It does not plan the whole book.** Selection is explicit and bounded (13.2).
 - **It does not introduce a per-line workflow STATE.** A line is covered by a decision or it is not;
