@@ -7,22 +7,119 @@ import { Badge } from '@/components/ui/badge';
 // needed it first; the endpoint and the shape are the generic ones.
 import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
-import {
-  usePurchaseOrderLineMutations,
-  usePurchaseOrderLines,
-} from '../../_shared/hooks/useProjects';
+import { usePurchaseOrderLines } from '../../_shared/hooks/useProjects';
 import type {
   Project,
   ProjectPurchaseOrder,
   PurchaseOrderLine,
+  PurchaseOrderLineBulkItem,
+  StagedPurchaseOrderLine,
 } from '../../_shared/types/project.types';
 import {
   InlineLineTable,
   type InlineDraft,
   type InlineLineColumn,
+  type InlineStaging,
 } from '../../_shared/components/InlineLineTable';
 import { formatMyr } from './QuotationsPanel';
-import { isDecimalString, multiplyMoney } from '../../_shared/lib/money';
+import { formatMyrExact, isDecimalString, multiplyMoney, sumMoney } from '../../_shared/lib/money';
+
+/**
+ * A row of the line table: the stored line, or a stand-in for one added in this edit session.
+ *
+ * `id` is the row's identity - the line's own id when it has one, the staged key when it does
+ * not - so one set of columns serves both the read and the edit.
+ */
+type LineRow = { id: string; line: PurchaseOrderLine | null };
+
+/** A stored line as an editable draft. Every field the save sends has to be in here. */
+function serverToDraft(line: PurchaseOrderLine): InlineDraft {
+  return {
+    product_id: line.product_id ?? '',
+    product_code: line.product_code ?? '',
+    description: line.description ?? '',
+    quantity: line.quantity ?? '1',
+    uom: line.uom ?? '',
+    unit_price: line.unit_price ?? '',
+    notes: line.notes ?? '',
+  };
+}
+
+/** A brand-new row's starting draft. Also the table's "untouched" comparison. */
+function emptyDraft(): InlineDraft {
+  return {
+    product_id: '',
+    product_code: '',
+    description: '',
+    quantity: '1',
+    uom: '',
+    unit_price: '',
+    notes: '',
+  };
+}
+
+/**
+ * The one rule a PO line has to satisfy before it can be stored.
+ *
+ * A line with no matched product carries the contractor's own code, so that is the one thing
+ * that cannot be left out. Written once and used twice - to mark the cell at fault, and to stop
+ * a Save that would only come back as a 422 - so the desk and the button cannot disagree about
+ * what is wrong.
+ */
+function lineErrors(draft: InlineDraft): Record<string, string> {
+  return !draft.product_id && !draft.product_code.trim()
+    ? { product_code: 'Needed when no product is matched' }
+    : {};
+}
+
+/** Staged lines that are not ready to be written. Counted so a refusal can say how many. */
+export function unfinishedStagedPoLines(lines: StagedPurchaseOrderLine[]): number {
+  return lines.filter(
+    (line) => !line.removed && Object.keys(lineErrors(line.draft)).length > 0,
+  ).length;
+}
+
+/**
+ * A staged set as the body of the whole-PO save.
+ *
+ * Removed lines are simply left out, which is exactly how the endpoint deletes them, and a line
+ * added in this session carries no `id` so the server reads it as new. Order is array position;
+ * `sort_order` is not sent at all. Exported because the SAVE lives on the PO's page: one button
+ * covers the header and the lines, so it cannot live inside the line table.
+ */
+export function stagedPoLinesToBody(
+  lines: StagedPurchaseOrderLine[],
+): PurchaseOrderLineBulkItem[] {
+  return lines
+    .filter((line) => !line.removed)
+    .map((line) => (line.id ? { id: line.id, ...toBody(line.draft) } : toBody(line.draft)));
+}
+
+/**
+ * What the PO comes to, off the LIVE drafts, by the same rule the table's own footer applies.
+ * Exported so the header card can state the figure the screen currently shows rather than the
+ * one the server last stored.
+ */
+export function stagedPoLinesTotal(lines: StagedPurchaseOrderLine[]): string | null {
+  return totalFromDrafts(lines.filter((line) => !line.removed).map((line) => line.draft));
+}
+
+/**
+ * What the PO's page hands down so the lines can be edited without writing anything.
+ *
+ * Its presence IS edit mode. Absent, the table is a clean read: no inputs, no per-row saves,
+ * nothing to press by accident. The client's complaint on the quotation was the same table's
+ * fault - "every addition of line doesn't trigger a save ... very annoying" - and the answer is
+ * the same: a view that is a view, plus an Edit that puts the whole record into one staged
+ * session.
+ */
+export type PurchaseOrderLinesEditing = {
+  /** The staged lines, or null until they have been seeded from the server's rows. */
+  staged: StagedPurchaseOrderLine[] | null;
+  seed: (lines: StagedPurchaseOrderLine[]) => void;
+  stage: (lines: StagedPurchaseOrderLine[]) => void;
+  toggleRemoved: (key: string) => void;
+};
 
 /**
  * The lines of one PO, entered like a spreadsheet, with what each one was quoted at
@@ -31,24 +128,29 @@ import { isDecimalString, multiplyMoney } from '../../_shared/lib/money';
  * Showing both numbers on the same row is the point: "price differs" on its own sends
  * the user hunting through the quotation, and the difference is usually the thing they
  * want to talk to the contractor about within the next ten minutes.
+ *
+ * With no `edit` it is a READ. Every field is text, there is nothing to add and nothing to save,
+ * because a screen that saves on blur cannot also be the screen somebody reads a PO on.
  */
 export function PurchaseOrderLinesEditor({
   project,
   po,
+  edit,
 }: {
   project: Project;
   po: ProjectPurchaseOrder;
+  /** Set by the PO's page while its edit session is open. See `PurchaseOrderLinesEditing`. */
+  edit?: PurchaseOrderLinesEditing | null;
 }) {
   const lines = usePurchaseOrderLines(po.id);
-  const { create, update, remove } = usePurchaseOrderLineMutations(project.id, po.id);
 
   const rows = React.useMemo(
     () => [...(lines.data ?? [])].sort((a, b) => a.sort_order - b.sort_order),
     [lines.data],
   );
-  const nextSortOrder =
-    rows.length === 0 ? 0 : Math.max(...rows.map((line) => line.sort_order)) + 10;
   const editable = project.can_edit;
+  const isEditing = Boolean(edit) && editable;
+  const staged = edit?.staged ?? null;
 
   const uoms = useUOMSelectQuery();
   const uomOptions = React.useMemo(
@@ -70,7 +172,7 @@ export function PurchaseOrderLinesEditor({
     }));
   }, []);
 
-  const columns = React.useMemo<InlineLineColumn<PurchaseOrderLine>[]>(
+  const columns = React.useMemo<InlineLineColumn<LineRow>[]>(
     () => [
       {
         key: 'product_id',
@@ -82,11 +184,20 @@ export function PurchaseOrderLinesEditor({
         // unmatched line is recorded and flagged instead (AC-F9).
         placeholder: 'Not matched',
         fetchOptions: fetchProducts,
-        resolveSelected: (line) =>
-          line?.product_id
-            ? { value: line.product_id, label: line.product_code ?? 'Selected product' }
+        // Read off the DRAFT, not the stored line: nothing refetches during an edit session,
+        // so resolving from the stored row would leave the trigger naming the product that was
+        // there before the pick, right up until Save.
+        resolveSelected: (row, draft) =>
+          draft.product_id
+            ? {
+                value: draft.product_id,
+                label:
+                  row?.line?.product_id === draft.product_id
+                    ? (row.line.product_code ?? 'Selected product')
+                    : 'Selected product',
+              }
             : undefined,
-        annotate: (line) => (line ? <LineFlags line={line} /> : null),
+        annotate: (row) => (row?.line ? <LineFlags line={row.line} /> : null),
       },
       {
         key: 'product_code',
@@ -121,7 +232,7 @@ export function PurchaseOrderLinesEditor({
         kind: 'select',
         placeholder: 'PCS',
         options: uomOptions,
-        resolveSelected: (_line, draft) =>
+        resolveSelected: (_row, draft) =>
           uomOptions.find((option) => option.value === draft.uom),
       },
       {
@@ -134,16 +245,16 @@ export function PurchaseOrderLinesEditor({
         validate: (value) =>
           value.trim() === '' || isDecimalString(value) ? null : 'Must be a number',
         formatReadOnly: (value) => formatMyr(value),
-        annotate: (line) =>
-          line?.quoted_unit_price ? (
+        annotate: (row) =>
+          row?.line?.quoted_unit_price ? (
             <span
               className={
-                line.price_mismatch
+                row.line.price_mismatch
                   ? 'mt-0.5 block text-end text-xs text-destructive'
                   : 'mt-0.5 block text-end text-xs text-muted-foreground'
               }
             >
-              {`Quoted ${formatMyr(line.quoted_unit_price)}`}
+              {`Quoted ${formatMyr(row.line.quoted_unit_price)}`}
             </span>
           ) : null,
       },
@@ -154,36 +265,90 @@ export function PurchaseOrderLinesEditor({
         kind: 'derived',
         align: 'end',
         derive: (draft) => formatMyr(multiplyMoney(draft.quantity, draft.unit_price) ?? '0'),
+        /**
+         * The PO's own total, under the column it sums, and off the LIVE drafts so it moves
+         * while a quantity is being typed. Reading the saved rows instead left the footer
+         * stating the last save's answer while the cells said something else, and the first
+         * thing anybody does after changing a quantity is look down here.
+         */
+        footer: (drafts) => {
+          const total = totalFromDrafts(drafts);
+          return total === null ? '-' : formatMyrExact(total);
+        },
       },
     ],
     [fetchProducts, uomOptions],
   );
 
-  const toDraft = React.useCallback(
-    (line: PurchaseOrderLine): InlineDraft => ({
-      product_id: line.product_id ?? '',
-      product_code: line.product_code ?? '',
-      description: line.description ?? '',
-      quantity: line.quantity ?? '1',
-      uom: line.uom ?? '',
-      unit_price: line.unit_price ?? '',
-      notes: line.notes ?? '',
-    }),
-    [],
+  /**
+   * The starting point, taken from the server's rows the first time the session is opened.
+   * Seeded through the page, never held here: the staged work has to outlive this component.
+   */
+  const seedLines = edit?.seed;
+  React.useEffect(() => {
+    if (!seedLines || !isEditing || staged !== null || lines.isLoading) return;
+    seedLines(
+      rows.map((line) => ({
+        id: line.id,
+        key: line.id,
+        line,
+        draft: serverToDraft(line),
+        removed: false,
+      })),
+    );
+  }, [isEditing, lines.isLoading, rows, seedLines, staged]);
+
+  /**
+   * What the table draws, in display order: the staged set while editing, the server's rows
+   * otherwise. One row type either way, so there is one set of columns rather than two that can
+   * drift apart.
+   */
+  const lineRows = React.useMemo<LineRow[]>(
+    () =>
+      isEditing && staged
+        ? staged.map((line) => ({ id: line.key, line: line.line }))
+        : rows.map((line) => ({ id: line.id, line })),
+    [isEditing, rows, staged],
   );
 
-  const emptyDraft = React.useCallback(
-    (): InlineDraft => ({
-      product_id: '',
-      product_code: '',
-      description: '',
-      quantity: '1',
-      uom: '',
-      unit_price: '',
-      notes: '',
-    }),
-    [],
+  const stagedByKey = React.useMemo(() => {
+    const map = new Map<string, StagedPurchaseOrderLine>();
+    (staged ?? []).forEach((line) => map.set(line.key, line));
+    return map;
+  }, [staged]);
+
+  const toDraft = React.useCallback(
+    (row: LineRow): InlineDraft =>
+      // The staged draft when there is one, so an edit already made is what comes back rather
+      // than the server's untouched row.
+      stagedByKey.get(row.id)?.draft ?? (row.line ? serverToDraft(row.line) : emptyDraft()),
+    [stagedByKey],
   );
+
+  const stageLines = edit?.stage;
+  const toggleRemoved = edit?.toggleRemoved;
+  const staging = React.useMemo<InlineStaging<LineRow> | undefined>(() => {
+    if (!isEditing || !stageLines || !toggleRemoved) return undefined;
+    return {
+      onChange: (reported) =>
+        stageLines(
+          reported.map(({ rowKey, draft }) => {
+            // A key the page has not seen is a row the table has just added: no id, no stored
+            // line, and the save will read it as new.
+            const held = stagedByKey.get(rowKey);
+            return {
+              id: held?.id ?? null,
+              key: rowKey,
+              line: held?.line ?? null,
+              draft,
+              removed: held?.removed ?? false,
+            };
+          }),
+        ),
+      isRemoved: (row) => stagedByKey.get(row.id)?.removed ?? false,
+      toggleRemove: (rowKey) => toggleRemoved(rowKey),
+    };
+  }, [isEditing, stageLines, stagedByKey, toggleRemoved]);
 
   return (
     <div className="min-w-0 space-y-3">
@@ -197,45 +362,43 @@ export function PurchaseOrderLinesEditor({
         </p>
       )}
 
-      <InlineLineTable<PurchaseOrderLine>
-        rows={rows}
-        getRowId={(line) => line.id}
+      <InlineLineTable<LineRow>
+        /**
+         * A fresh table when the session opens and again when it closes.
+         *
+         * The table keeps its own drafts and deliberately refuses to overwrite a dirty row from
+         * `rows` - that is what stops a refetch wiping what somebody is typing. It also means
+         * Cancel could not put a row back: the staged set disappears and the table carries on
+         * showing the edit. Remounting is the honest reset.
+         */
+        key={isEditing ? 'editing' : 'reading'}
+        rows={lineRows}
+        getRowId={(row) => row.id}
         columns={columns}
         toDraft={toDraft}
         emptyDraft={emptyDraft}
-        readOnly={!editable}
+        // A view is a view: outside an edit session there is nothing to type into, nothing to
+        // add and nothing that can be saved by moving the caret.
+        readOnly={!isEditing}
         isLoading={lines.isLoading}
         addLabel="Add a line"
+        staging={staging}
         emptyHint={
-          editable
-            ? 'No lines entered. Add one and it is checked against the quoted version.'
-            : 'This PO was recorded as a single amount with no line detail.'
+          isEditing
+            ? 'Nothing entered yet. Add a line and match it to a product to have its price checked against the quotation.'
+            : editable
+              ? 'No lines entered. Press Edit to enter what the PO ordered.'
+              : 'This PO was recorded as a single amount with no line detail.'
         }
-        describeRow={(line, index) =>
-          line?.product_code ?? line?.description ?? `line ${index + 1}`
+        describeRow={(row, index) =>
+          row?.line?.product_code ?? row?.line?.description ?? `line ${index + 1}`
         }
         rowDetail={{
           key: 'notes',
           label: 'Notes',
           placeholder: 'Why the price or the model differs, if it does',
         }}
-        validateRow={(draft): Record<string, string> =>
-          !draft.product_id && !draft.product_code.trim()
-            ? { product_code: 'Needed when no product is matched' }
-            : {}
-        }
-        onCreate={async (draft) => {
-          await create.mutateAsync({ ...toBody(draft), sort_order: nextSortOrder });
-        }}
-        onUpdate={async (line, draft) => {
-          await update.mutateAsync({ id: line.id, body: toBody(draft) });
-        }}
-        onDelete={async (line) => {
-          await remove.mutateAsync(line.id);
-        }}
-        deleteDescription={(line) =>
-          `Remove "${line.product_code ?? line.description ?? 'this line'}" from ${po.po_number}? This action cannot be undone.`
-        }
+        validateRow={lineErrors}
       />
     </div>
   );
@@ -265,7 +428,17 @@ function LineFlags({ line }: { line: PurchaseOrderLine }) {
   );
 }
 
-/** Draft to the body the per-line endpoint already takes. Unchanged from the dialog. */
+/**
+ * The PO's money, off the LIVE drafts.
+ *
+ * A cell that is not a number yet counts as zero rather than blanking the whole total, so the
+ * figure survives a half-typed price.
+ */
+function totalFromDrafts(drafts: InlineDraft[]): string | null {
+  return sumMoney(drafts.map((draft) => multiplyMoney(draft.quantity, draft.unit_price) ?? '0'));
+}
+
+/** Draft to the body the save sends per line. Unchanged from the per-row write it replaces. */
 function toBody(draft: InlineDraft) {
   return {
     product_id: draft.product_id || null,

@@ -10,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { AlertTriangle, ClipboardList, Hammer, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, ClipboardList, Hammer, Pencil, Trash2, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -21,9 +21,11 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import {
   useProjectSalesOrders,
   useSalesOrderBuild,
+  useSalesOrderDelete,
 } from '../../_shared/hooks/useProjectSalesOrders';
 import type { Project } from '../../_shared/types/project.types';
 import type { ProjectSalesOrderRow } from '../../_shared/types/projectSalesOrder.types';
@@ -47,6 +49,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
     pageSize: 25,
   });
   const [building, setBuilding] = React.useState(false);
+  const [pendingDelete, setPendingDelete] = React.useState<ProjectSalesOrderRow | null>(null);
 
   const params = React.useMemo(
     () => ({ page: pagination.pageIndex + 1, limit: pagination.pageSize }),
@@ -54,6 +57,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
   );
   const salesOrders = useProjectSalesOrders(project.id, params);
   const build = useSalesOrderBuild(project.id);
+  const removeOrder = useSalesOrderDelete(project.id);
 
   const rows = React.useMemo(() => salesOrders.data?.data ?? [], [salesOrders.data]);
   const total = salesOrders.data?.total ?? 0;
@@ -227,8 +231,80 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
         minSize: 100,
         meta: { headerTitle: 'Drafted', skeleton: <Skeleton className="h-4 w-20" /> },
       },
+      // Deleting a draft is what makes building one repeatable: the build is idempotent per
+      // (PO version, schedule version), so a draft that came out wrong is removed here and
+      // built again from the toolbar. Only on a draft - a published order is in AutoCount and
+      // is amended, never deleted - and the button says so rather than vanishing.
+      ...(project.can_edit
+        ? [
+            {
+              id: 'actions',
+              header: '',
+              cell: ({ row }: { row: { original: ProjectSalesOrderRow } }) => {
+                const published =
+                  row.original.status === 'published' || row.original.status === 'amended';
+                const reference =
+                  row.original.autocount_doc_no || row.original.provisional_ref;
+                return (
+                  <div className="flex justify-end">
+                    {/* Edit is the order's own PAGE in edit mode, not a modal collecting the
+                        same fields a second time. One editing surface per record, and it is the
+                        one the reader already knows the layout of - the same move the customer
+                        PO list makes. */}
+                    <Button
+                      type="button"
+                      mode="icon"
+                      variant="ghost"
+                      size="sm"
+                      disabled={published}
+                      aria-label={`Edit ${reference}`}
+                      title={
+                        published
+                          ? 'Published orders are amended, not edited'
+                          : 'Correct this draft'
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        router.push(
+                          `/project-sales/${project.id}/sales-orders/${row.original.id}?edit=1`,
+                        );
+                      }}
+                    >
+                      <Pencil className="size-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      mode="icon"
+                      variant="ghost"
+                      size="sm"
+                      disabled={published}
+                      aria-label={`Delete ${row.original.autocount_doc_no || row.original.provisional_ref}`}
+                      title={
+                        published
+                          ? 'Published orders are amended, not deleted'
+                          : 'Delete this draft'
+                      }
+                      onClick={(event) => {
+                        // The row itself navigates to the order. Without this the dialog and
+                        // the detail page would both open on one click.
+                        event.stopPropagation();
+                        setPendingDelete(row.original);
+                      }}
+                    >
+                      <Trash2 className="size-3.5 text-destructive" />
+                    </Button>
+                  </div>
+                );
+              },
+              size: 100,
+              minSize: 84,
+              enableResizing: false,
+              meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-4" /> },
+            } as ColumnDef<ProjectSalesOrderRow>,
+          ]
+        : []),
     ],
-    [],
+    [project.can_edit, project.id, router],
   );
 
   const table = useReactTable({
@@ -332,6 +408,25 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
           )}
         </Card>
       </DataGrid>
+
+      <ConfirmDeleteDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(next) => !next && setPendingDelete(null)}
+        title="Confirm delete"
+        description={
+          pendingDelete
+            ? `Delete ${pendingDelete.autocount_doc_no || pendingDelete.provisional_ref} and its ${
+                pendingDelete.line_count
+              } line${pendingDelete.line_count === 1 ? '' : 's'}? This action cannot be undone. The purchase order and its delivery schedule are untouched, so the drafts can be built again.`
+            : ''
+        }
+        onDelete={async () => {
+          if (!pendingDelete) return;
+          await removeOrder.mutateAsync(pendingDelete.id);
+        }}
+        onSuccess={() => setPendingDelete(null)}
+        successMessage="Sales order deleted"
+      />
 
       {building && (
         <SalesOrderBuildDialog

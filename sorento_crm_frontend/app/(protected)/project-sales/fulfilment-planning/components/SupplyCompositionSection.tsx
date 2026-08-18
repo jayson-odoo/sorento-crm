@@ -80,8 +80,31 @@ export function SupplyCompositionSection({
   ]);
 
   const frozen = isConfirmed && !composingAgain;
-  const blockers = React.useMemo(() => (frozen ? [] : draftBlockers(drafts)), [frozen, drafts]);
-  const lines = proposal?.lines ?? [];
+  const lines = React.useMemo(() => proposal?.lines ?? [], [proposal]);
+  const salesOrderHref = proposal?.sales_order_id
+    ? `/scm/sales-orders/${proposal.sales_order_id}`
+    : null;
+
+  /**
+   * A line whose sales order states no fulfilment location blocks the whole order's Confirm,
+   * named by line number and item code the way every other refusal is. It is listed FIRST
+   * because it is the only blocker that cannot be cleared on this screen.
+   */
+  const locationBlockers = React.useMemo(
+    () =>
+      lines
+        .filter((line) => line.fulfilment_location_missing)
+        .map(
+          (line) =>
+            `Line ${line.line_no}${line.item_code ? `, ${line.item_code}` : ''}: no fulfilment location on the sales order line.`,
+        ),
+    [lines],
+  );
+
+  const blockers = React.useMemo(
+    () => (frozen ? [] : [...locationBlockers, ...draftBlockers(drafts)]),
+    [frozen, locationBlockers, drafts],
+  );
 
   async function submit() {
     setFailingLines([]);
@@ -227,6 +250,7 @@ export function SupplyCompositionSection({
                 line={line}
                 draft={draft}
                 frozen={frozen}
+                salesOrderHref={salesOrderHref}
                 onChange={(next) =>
                   setDrafts((current) =>
                     current.map((entry, position) => (position === index ? next : entry)),

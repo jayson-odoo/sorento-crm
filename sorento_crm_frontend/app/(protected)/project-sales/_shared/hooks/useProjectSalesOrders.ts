@@ -2,11 +2,17 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import {
+  useRecordNeighbours,
+  type RecordNeighboursResult,
+} from '@/hooks/useRecordNeighbours';
 import { saveBlobAs } from '../services/fileDownload';
+import { projectKey } from './useProjects';
 import {
   acknowledgeFinding,
   buildSalesOrders,
   createAmendment,
+  deleteProjectSalesOrder,
   downloadSalesOrderImportFile,
   getAmendment,
   getProjectSalesOrder,
@@ -18,14 +24,19 @@ import {
   publishAmendment,
   publishSalesOrder,
   regroupSalesOrder,
+  salesOrderNeighboursPath,
+  saveSalesOrderDocument,
   updateSalesOrderLine,
 } from '../services/projectSalesOrderService';
 import type {
   AmendmentCreateBody,
   AmendmentPreviewBody,
   ProjectSalesOrderListParams,
+  SalesOrderDocumentSaveBody,
   SalesOrderLineUpdateBody,
+  SalesOrderPublishBody,
   SalesOrderRegroupGroup,
+  SalesOrderSplitBy,
 } from '../types/projectSalesOrder.types';
 
 export const SALES_ORDERS_KEY = 'project-sales-orders';
@@ -59,6 +70,24 @@ export function useProjectSalesOrder(psoId: string | undefined) {
     queryFn: () => getProjectSalesOrder(psoId as string),
     enabled: Boolean(psoId),
   });
+}
+
+/**
+ * Prev/next within the project's sales orders, so a reviewer can walk them one by one
+ * rather than going back to the list between each.
+ *
+ * No list params are sent: the detail page is reached from a tab rather than from a
+ * filtered grid, so the sequence is the project's own default order (newest first), which
+ * is what the tab shows.
+ */
+export function useProjectSalesOrderNeighbours(
+  projectId: string | undefined,
+  psoId: string | undefined,
+): RecordNeighboursResult {
+  return useRecordNeighbours(
+    salesOrderNeighboursPath(projectId ?? ''),
+    projectId ? (psoId ?? null) : null,
+  );
 }
 
 /**
@@ -107,8 +136,15 @@ export function useSalesOrderBuild(projectId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ poId, scheduleVersionId }: { poId: string; scheduleVersionId: string }) =>
-      buildSalesOrders(poId, scheduleVersionId),
+    mutationFn: ({
+      poId,
+      scheduleVersionId,
+      splitBy,
+    }: {
+      poId: string;
+      scheduleVersionId: string;
+      splitBy?: SalesOrderSplitBy;
+    }) => buildSalesOrders(poId, scheduleVersionId, splitBy ?? 'area'),
     onSuccess: (envelope) => {
       queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY, projectId] });
       const count = envelope.data.length;
@@ -145,6 +181,19 @@ export function useSalesOrderMutations(projectId: string, psoId: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /**
+   * The edit view's one write: the header and the whole line set together.
+   *
+   * No toast here. The detail screen raises exactly one ("Sales order saved") for the button
+   * press, and a second notification for the same press is the noise the per-line saves were
+   * taken out for.
+   */
+  const save = useMutation({
+    mutationFn: (body: SalesOrderDocumentSaveBody) => saveSalesOrderDocument(psoId, body),
+    onSuccess: () => invalidate(),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const updateLine = useMutation({
     mutationFn: ({ lineId, body }: { lineId: string; body: SalesOrderLineUpdateBody }) =>
       updateSalesOrderLine(psoId, lineId, body),
@@ -165,13 +214,44 @@ export function useSalesOrderMutations(projectId: string, psoId: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  // No toast: the publish dialog shows the reference and the import file itself.
+  // No toast: the publish dialog shows the reference and the import file itself, and it
+  // renders a refusal (403 without the override, 422 without a reason) in place rather than
+  // as a toast the user would have to read behind the dialog.
   const publish = useMutation({
-    mutationFn: () => publishSalesOrder(psoId),
+    // The ordinary publish sends no body, not an empty one: the argument is only passed on
+    // when there is an override to ask for.
+    mutationFn: (body?: SalesOrderPublishBody) =>
+      body ? publishSalesOrder(psoId, body) : publishSalesOrder(psoId),
     onSuccess: () => invalidate(),
   });
 
-  return { acknowledge, updateLine, regroup, publish };
+  return { acknowledge, save, updateLine, regroup, publish };
+}
+
+/**
+ * Deleting one drafted sales order, so the build can be run again.
+ *
+ * The order's id is the MUTATION VARIABLE rather than a hook argument, because both callers
+ * need it that way: the project's sales order list deletes whichever row was clicked, and the
+ * detail page deletes the one it is showing. One implementation, so the two cannot invalidate
+ * different things.
+ *
+ * `ConfirmDeleteDialog` raises the toast, so this one does not: it would be the second
+ * notification for one press.
+ */
+export function useSalesOrderDelete(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (psoId: string) => deleteProjectSalesOrder(psoId),
+    onSuccess: (_result, psoId) => {
+      queryClient.invalidateQueries({ queryKey: salesOrderKey(psoId) });
+      queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY, projectId] });
+      // The project row carries the funnel position and the last-activity stamp the list
+      // reads, and a deleted draft changes both.
+      queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
+    },
+  });
 }
 
 /**

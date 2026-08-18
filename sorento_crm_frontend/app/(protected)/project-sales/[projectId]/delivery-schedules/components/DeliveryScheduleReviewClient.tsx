@@ -7,6 +7,7 @@ import {
   ArrowRight,
   CheckCircle2,
   ExternalLink,
+  FileText,
   Loader2,
   RefreshCw,
 } from 'lucide-react';
@@ -14,13 +15,18 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import RecordNavigation from '@/components/common/RecordNavigation';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useProject } from '../../../_shared/hooks/useProjects';
 import {
   useDeliveryScheduleVersion,
   useDeliveryScheduleVersionMutations,
+  useDeliveryScheduleVersionNeighbours,
 } from '../../../_shared/hooks/useDeliverySchedules';
+import { usePOVersion } from '../../../_shared/hooks/usePOIntake';
 import { resolveExtractionPhase } from '../../../_shared/types/deliverySchedule.types';
 import { describeReadingTime, describeWaitingFor } from '../../../_shared/lib/readingTime';
 import type { DeliveryScheduleConfirmBody } from '../../../_shared/types/deliverySchedule.types';
@@ -42,6 +48,7 @@ import { DeliveryScheduleColumnCards } from './DeliveryScheduleColumnCards';
 import { DeliveryScheduleConfirmDialog } from './DeliveryScheduleConfirmDialog';
 import { DeliveryScheduleMatrix } from './DeliveryScheduleMatrix';
 import type { ColumnFocusRequest, ScheduleGridController } from './DeliveryScheduleMatrix';
+import { poProductOptions } from './DeliveryScheduleProductPicker';
 import { DeliveryScheduleReconciliationList } from './DeliveryScheduleReconciliationList';
 
 /**
@@ -71,8 +78,24 @@ export function DeliveryScheduleReviewClient({
       ? describeReadingTime(version.extraction_elapsed_ms)
       : null;
 
-  const { saveCells, resolveProduct, confirm, retryExtraction } =
+  const { saveCells, resolveProduct, dismissColumn, confirm, retryExtraction } =
     useDeliveryScheduleVersionMutations(projectId, versionId);
+  // The demo screen has no server behind it, so it has no neighbours to ask for either.
+  const neighbours = useDeliveryScheduleVersionNeighbours(versionId, { enabled: !demo });
+
+  /**
+   * The PO this schedule was checked against, for the column pickers.
+   *
+   * A column has to land on a line of THIS PO or it cannot reconcile, so the pickers offer
+   * the PO's own products rather than the whole catalogue. Read once here rather than in
+   * each picker: the three views mount a picker per unreconciled column and they would
+   * otherwise ask for the same document a dozen times.
+   */
+  const poVersion = usePOVersion(version?.po_version_id ?? undefined, !demo);
+  const poOptions = React.useMemo(
+    () => poProductOptions(poVersion.data?.lines ?? []),
+    [poVersion.data?.lines],
+  );
 
   const [drafts, setDrafts] = React.useState<Map<string, string>>(new Map());
   const [learnedColumns, setLearnedColumns] = React.useState<number[]>([]);
@@ -125,6 +148,27 @@ export function DeliveryScheduleReviewClient({
     [columns],
   );
   const reconciledCount = columns.length - blocking.length;
+  /**
+   * Everything worth a look: what blocks, what was dismissed, and what carries a warning.
+   *
+   * A dismissed column no longer blocks and stays here all the same: this is the only place
+   * the dismissal and its reason are visible, and it is where the Undo lives. Dropping the
+   * row the moment it stopped counting would leave a reviewer no way back from a decision
+   * they had just taken.
+   *
+   * A warning is not work - the column agrees with the PO - but it is the one place the
+   * sentence behind it can be read, so it is listed in the same table with an amber pill
+   * rather than hidden among the thirty columns that had nothing to say. Filtered in ONE
+   * pass so a column that is both blocked and warned appears once, in document order, which
+   * is the order the matrix beside it uses.
+   */
+  const listedColumns = React.useMemo(
+    () =>
+      columns.filter(
+        (column) => !column.reconciled || column.dismissed || Boolean(column.warning),
+      ),
+    [columns],
+  );
 
   const registerColumnRef = React.useCallback((key: string, node: HTMLElement | null) => {
     // A ref callback reports its unmount as a bare null and never says which node it was
@@ -250,6 +294,14 @@ export function DeliveryScheduleReviewClient({
     [demo, resolveProduct],
   );
 
+  const onDismissColumn = React.useCallback(
+    (columnIndex: number, dismissed: boolean, reason?: string) => {
+      if (demo) return;
+      dismissColumn.mutate({ columnIndex, dismissed, reason: reason ?? null });
+    },
+    [demo, dismissColumn],
+  );
+
   const controller: ScheduleGridController = {
     columns,
     phaseGroups,
@@ -257,17 +309,29 @@ export function DeliveryScheduleReviewClient({
     setDraft,
     commit,
     resolveProduct: onResolveProduct,
+    poOptions,
     canEdit,
     learnedColumns,
     registerColumnRef,
     focusRequest,
   };
 
-  // Only when this schedule was actually checked against a PO version; there is nothing to
-  // open otherwise, and a dead link is worse than no link.
-  const poHref = version?.po_version_id
-    ? `/project-sales/${projectId}/purchase-orders/${version.po_version_id}`
-    : null;
+  /**
+   * The PO this schedule is checked against, for the gear menu.
+   *
+   * The PO record (`pos/{id}`, its lines and documents) rather than the document confirm
+   * screen: amending a PO is what the reviewer comes here to do. `purchase_order_id` arrives
+   * on the schedule version; the PO version we already read for the pickers is the fallback,
+   * and the version review screen the last resort. Null when this schedule was checked
+   * against no PO at all - a dead link is worse than no link.
+   */
+  const poHref = version?.purchase_order_id
+    ? `/project-sales/${projectId}/pos/${version.purchase_order_id}`
+    : poVersion.data?.purchase_order_id
+      ? `/project-sales/${projectId}/pos/${poVersion.data.purchase_order_id}`
+      : version?.po_version_id
+        ? `/project-sales/${projectId}/purchase-orders/${version.po_version_id}`
+        : null;
 
   if (view.isLoading) {
     return <ReviewSkeleton />;
@@ -320,13 +384,40 @@ export function DeliveryScheduleReviewClient({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {version.document_url && (
-            <Button asChild variant="outline" size="sm">
-              <a href={version.document_url} target="_blank" rel="noreferrer">
-                <ExternalLink className="size-4" aria-hidden />
-                View document
-              </a>
-            </Button>
+          {/* This schedule's own revisions, walked one after another rather than through the
+              project tab between each. Same pager as the user record. */}
+          <RecordNavigation
+            basePath={`/project-sales/${projectId}/delivery-schedules`}
+            prevId={neighbours.prevId}
+            nextId={neighbours.nextId}
+            currentIndex={neighbours.index != null ? neighbours.index - 1 : undefined}
+            totalCount={neighbours.total}
+            isLoading={neighbours.isLoading}
+            ariaLabel="schedule version"
+          />
+          {/* Everything that only takes you somewhere lives behind the gear. The header used
+              to carry a button per destination, and the row of them competed with Confirm,
+              which is the one thing this screen is for. Both open in a new tab: the reviewer
+              is mid-reconciliation and leaving the page loses the cells they have typed. */}
+          {(poHref || version.document_url) && (
+            <DetailActionsMenu ariaLabel="Schedule actions">
+              {poHref && (
+                <DropdownMenuItem asChild>
+                  <a href={poHref} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="size-4" aria-hidden />
+                    View PO
+                  </a>
+                </DropdownMenuItem>
+              )}
+              {version.document_url && (
+                <DropdownMenuItem asChild>
+                  <a href={version.document_url} target="_blank" rel="noopener noreferrer">
+                    <FileText className="size-4" aria-hidden />
+                    View document
+                  </a>
+                </DropdownMenuItem>
+              )}
+            </DetailActionsMenu>
           )}
           {!version.confirmed_at && (
             <Button
@@ -447,7 +538,7 @@ export function DeliveryScheduleReviewClient({
                   ? 'Every column has to agree with the PO before this schedule can be confirmed.'
                   : 'This schedule is confirmed, so nothing here can be changed. What follows is what did not agree with the PO at the time it was confirmed.'}
               </p>
-              {blocking.length === 0 ? (
+              {listedColumns.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   Nothing to fix. Every one of them matches the PO and the schedule&apos;s
                   own totals.
@@ -460,21 +551,24 @@ export function DeliveryScheduleReviewClient({
                       to do, so the same number has to be reported as a finding instead, or
                       the screen asks for work it will not accept. */}
                   <p data-testid="reconciliation-remaining" className="text-sm font-medium">
-                    {canEdit
-                      ? blocking.length === 1
-                        ? '1 column still to fix.'
-                        : `${blocking.length} columns still to fix.`
-                      : blocking.length === 1
-                        ? '1 column did not agree.'
-                        : `${blocking.length} columns did not agree.`}
+                    {blocking.length === 0
+                      ? 'Nothing left to fix. What follows was dismissed, or carries a warning that does not block.'
+                      : canEdit
+                        ? blocking.length === 1
+                          ? '1 column still to fix.'
+                          : `${blocking.length} columns still to fix.`
+                        : blocking.length === 1
+                          ? '1 column did not agree.'
+                          : `${blocking.length} columns did not agree.`}
                   </p>
                   <DeliveryScheduleReconciliationList
-                    columns={blocking}
+                    columns={listedColumns}
                     canEdit={canEdit}
-                    poHref={poHref}
+                    poOptions={poOptions}
                     onJump={jumpToColumn}
                     onFixQuantities={jumpAndFocusColumn}
                     onResolveProduct={onResolveProduct}
+                    onDismissColumn={demo ? undefined : onDismissColumn}
                   />
                 </>
               )}

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -53,6 +53,14 @@ class BuildSalesOrdersRequest(BaseModel):
             "The confirmed delivery schedule version to spread quantities across. It "
             "also names the PO version the build reads, which is what makes the build "
             "idempotent per (po_version, schedule_version)."
+        ),
+    )
+    split_by: Literal["area", "delivery_date", "delivery_month"] = Field(
+        "area",
+        description=(
+            "The key the drafted lines are cut into sales orders on. The schedule area "
+            "is the default; the two date keys give one sales order per delivery date or "
+            "per delivery month, with undated lines in a group of their own."
         ),
     )
 
@@ -250,6 +258,54 @@ class SalesOrderLineUpdate(BaseModel):
     stock_location: Optional[str] = Field(None, max_length=80)
 
 
+class SalesOrderLineWrite(SalesOrderLineUpdate):
+    """One line inside a whole-document save.
+
+    ``id`` is what tells a stored line from a new one: a line already stored carries the id
+    the API gave it, a new one arrives without one, and an id that is not on this order is
+    refused rather than treated as new (which would duplicate the row the caller meant to
+    move). ``line_no`` is not a field at all -- position in the array is the order.
+
+    ``qty`` and ``unit_price`` are REQUIRED here, unlike on the per-line correction above: a
+    whole-set write states each line in full, and a line arriving without a quantity would be
+    silently stored as whatever the row happened to hold.
+    """
+
+    id: Optional[str] = None
+    qty: Decimal = Field(..., gt=0)
+    unit_price: Decimal = Field(Decimal("0"), ge=0)
+
+
+class SalesOrderDocumentSave(BaseModel):
+    """`PUT /sales-orders/{pso_id}`: the header, and optionally the whole line set.
+
+    ``lines`` ABSENT leaves the lines exactly as they are, which is what a header-only save
+    sends. An empty ARRAY is a different intent (every line removed) and is refused rather
+    than obeyed: a sales order with no lines is not a proposal, and that is the same answer
+    the builder gives when every line on a purchase order is cancelled.
+
+    The route reads this with ``exclude_unset=True``, so an absent ``area_group`` leaves the
+    stored group alone while an explicit ``null`` clears it. The two are different asks and
+    a schema default cannot tell them apart.
+    """
+
+    area_group: Optional[str] = Field(None, max_length=80)
+    lines: Optional[List[SalesOrderLineWrite]] = None
+
+
+class SalesOrderDeleteResponse(BaseModel):
+    """What a hard delete actually removed, keyed by ``schema.table``.
+
+    The counts are reported rather than swallowed for the same reason the module purge
+    reports them: an operator (or a test) reading the result needs to see what was
+    CONSIDERED, not only that something happened.
+    """
+
+    success: bool = True
+    provisional_ref: str
+    deleted: Dict[str, int] = {}
+
+
 class RegroupGroup(BaseModel):
     area_group: Optional[str] = Field(None, max_length=80)
     line_ids: List[str] = Field(..., min_length=1)
@@ -257,6 +313,18 @@ class RegroupGroup(BaseModel):
 
 class RegroupRequest(BaseModel):
     groups: List[RegroupGroup] = Field(..., min_length=1)
+
+
+class PublishRequest(BaseModel):
+    """The body is optional: publishing an order with nothing outstanding sends none of it.
+
+    ``acknowledge_blocking`` is the one-decision form of the per-finding override (D9). It
+    needs the same sales-manager grant and the same reason, and the reason is recorded on
+    every hard finding it clears. The service decides; this only carries the ask.
+    """
+
+    acknowledge_blocking: bool = False
+    reason: Optional[str] = None
 
 
 class PublishResponse(BaseModel):
@@ -275,6 +343,9 @@ class PublishResponse(BaseModel):
     can_export: bool = False
     total_amount: Optional[Decimal] = None
     line_count: int = 0
+    # How many hard findings this publish waved through. Zero on the ordinary path, so an
+    # existing caller reading the response is unaffected.
+    acknowledged_findings: int = 0
 
 
 # ------------------------------------------------------------------------ delta

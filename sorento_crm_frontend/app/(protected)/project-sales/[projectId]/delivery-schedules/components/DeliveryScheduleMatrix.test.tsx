@@ -66,6 +66,7 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
     setDraft: vi.fn(),
     commit: vi.fn(),
     resolveProduct: vi.fn(),
+    poOptions: [],
     canEdit: true,
     learnedColumns: [],
     registerColumnRef: vi.fn(),

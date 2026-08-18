@@ -5,6 +5,10 @@ import * as React from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  useRecordNeighbours,
+  type RecordNeighboursResult,
+} from '@/hooks/useRecordNeighbours';
+import {
   addStakeholder,
   changeProjectStatus,
   changeTaskStatus,
@@ -53,6 +57,7 @@ import {
   updateSample,
   deleteSample,
   listPurchaseOrders,
+  purchaseOrderNeighboursPath,
   createPurchaseOrder,
   updatePurchaseOrder,
   deletePurchaseOrder,
@@ -112,6 +117,7 @@ import type {
   PriceFloorRuleBody,
   ProjectSampleBody,
   ProjectPurchaseOrderBody,
+  ProjectPurchaseOrderSaveBody,
   PurchaseOrderLineBody,
   ProjectQuotation,
   ProjectQuotationBody,
@@ -1329,6 +1335,23 @@ export function usePurchaseOrders(projectId: string | undefined) {
   });
 }
 
+/**
+ * Prev/next within the project's purchase orders, so a reviewer can walk them one by one
+ * rather than going back to the tab between each.
+ *
+ * No list params are sent: the PO list is a project tab rather than a filtered grid, so the
+ * sequence is the project's own order (PO date newest first), which is what the tab shows.
+ */
+export function usePurchaseOrderNeighbours(
+  projectId: string | undefined,
+  poId: string | undefined,
+): RecordNeighboursResult {
+  return useRecordNeighbours(
+    purchaseOrderNeighboursPath(projectId ?? ''),
+    projectId ? (poId ?? null) : null,
+  );
+}
+
 export function usePurchaseOrderLines(poId: string | undefined) {
   return useQuery({
     queryKey: poLinesKey(poId ?? ''),
@@ -1403,11 +1426,21 @@ export function usePurchaseOrderMutations(projectId: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /**
+   * The PO's header and, when the body carries `lines`, its whole line set. One request, so
+   * the edit view's Save either lands or does not.
+   *
+   * The LINES query is invalidated too, and not only when lines were sent: re-binding the
+   * quotation version rechecks every line's mismatch flags on the server, so a header-only
+   * save can change every row on screen. Leaving them cached is what showed "not quoted"
+   * beside lines the save had just matched.
+   */
   const update = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectPurchaseOrderBody> }) =>
+    mutationFn: ({ id, body }: { id: string; body: ProjectPurchaseOrderSaveBody }) =>
       updatePurchaseOrder(id, body),
-    onSuccess: () => {
+    onSuccess: (_po, { id }) => {
       invalidate();
+      queryClient.invalidateQueries({ queryKey: poLinesKey(id) });
       toast.success('Purchase order saved');
     },
     onError: (error: Error) => toast.error(error.message),

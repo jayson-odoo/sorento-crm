@@ -1018,6 +1018,12 @@ export interface ProjectPurchaseOrder {
   status?: string | null;
   po_confirmed?: boolean;
   schedule_confirmed?: boolean;
+  /**
+   * Sales orders already published out of this PO. Editing the PO is still allowed - a
+   * correction is the normal case - but the edit view says this first, because those orders
+   * do not follow the change.
+   */
+  published_sales_order_count?: number;
   model_mismatch_count: number;
   price_mismatch_count: number;
 
@@ -1070,6 +1076,48 @@ export interface PurchaseOrderLineBody {
   uom?: string | null;
   sort_order?: number;
   notes?: string | null;
+}
+
+/**
+ * One line inside a whole-PO save. `id` on a line already stored, absent on a new one.
+ *
+ * `sort_order` is deliberately not part of it: the array's order IS the order, so a client
+ * never computes one.
+ */
+export interface PurchaseOrderLineBulkItem extends Omit<PurchaseOrderLineBody, 'sort_order'> {
+  id?: string;
+}
+
+/**
+ * The body of the PO edit view's one Save: the header fields that changed, plus the FULL line
+ * set when the lines were touched at all.
+ *
+ * The sharp edge is worth stating where it is typed: a stored line whose id is missing from
+ * `lines` is DELETED, so send everything on screen and never only what changed. Leaving
+ * `lines` out entirely is how a header-only save (the record-a-PO modal) leaves them alone.
+ */
+export interface ProjectPurchaseOrderSaveBody extends Partial<ProjectPurchaseOrderBody> {
+  lines?: PurchaseOrderLineBulkItem[];
+}
+
+/**
+ * One PO line as the edit view holds it, before anything has been written.
+ *
+ * Shared between the line editor that draws it and the detail shell that owns it, which is why
+ * it is a domain type rather than one component's local shape. Same shape as the quotation's
+ * `StagedQuotationLine`, for the same reasons.
+ */
+export interface StagedPurchaseOrderLine {
+  /** The stored line's id, or null for one added in this session. */
+  id: string | null;
+  /** The row's identity for as long as the session lasts. Minted by the line table. */
+  key: string;
+  /** The stored line it came from, for the flags only the server can decide. */
+  line: PurchaseOrderLine | null;
+  /** Every field as a string, the way the line table holds a row. */
+  draft: Record<string, string>;
+  /** Staged for removal: struck through on screen, and gone only once Save runs. */
+  removed: boolean;
 }
 
 /** A sponsorship form linked to this project (AC-F3). Read-only here: procurement owns it. */

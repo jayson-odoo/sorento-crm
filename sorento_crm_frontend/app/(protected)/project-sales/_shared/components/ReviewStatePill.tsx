@@ -15,8 +15,10 @@ import {
  * carrying both would force a choice between them.
  *
  * Mapped onto the shared palette's existing keys the way every other pill in this module
- * is: awaiting reconciliation is a wait, so it takes `pending`'s amber; needs CS review is
- * work that has come back to us and wants a decision, which is exactly what `submitted`'s
+ * is: not started is work nobody has picked up, so it takes the neutral `draft` grey and
+ * reads as quiet rather than as a problem (there are hundreds of them and they are not
+ * faults); awaiting reconciliation is a wait, so it takes `pending`'s amber; needs CS review
+ * is work that has come back to us and wants a decision, which is exactly what `submitted`'s
  * sky already means elsewhere; confirmed is a decision that stands, so it takes the same
  * emerald `active` wears everywhere.
  *
@@ -28,6 +30,7 @@ import {
  * field yet.
  */
 const PALETTE_KEY: Record<ReviewState, string> = {
+  not_started: 'draft',
   awaiting_reconciliation: 'pending',
   needs_cs_review: 'submitted',
   confirmed: 'active',

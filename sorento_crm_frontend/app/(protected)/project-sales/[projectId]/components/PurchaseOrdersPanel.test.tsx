@@ -225,10 +225,9 @@ describe('PurchaseOrdersPanel', () => {
 
     renderLines();
 
-    // The ordered price is now an editable cell, so it reads as a value rather than as text.
-    expect(
-      await screen.findByRole('textbox', { name: 'Ordered at on SRT-WC-01' }),
-    ).toHaveValue('820.00');
+    // A READ by default now (the edit view owns the inputs), so the ordered price reads as
+    // money with what was quoted underneath it.
+    expect(await screen.findByText('RM 820.00')).toBeInTheDocument();
     expect(screen.getByText('Quoted RM 900.00')).toBeInTheDocument();
     expect(screen.getByText('Price differs')).toBeInTheDocument();
   });

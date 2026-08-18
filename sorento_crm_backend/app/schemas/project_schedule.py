@@ -67,8 +67,27 @@ class ScheduleProductResponse(BaseModel):
         None, description="text_layer | vision | manual"
     )
     reconciled: bool = False
-    reason: Optional[str] = None
+    reason: Optional[str] = Field(
+        None, description="Why the column does NOT reconcile. Null when it does."
+    )
+    warning: Optional[str] = Field(
+        None,
+        description=(
+            "Reconciled, and still worth saying. A schedule may be partial: asking for "
+            "less than the PO ordered is expected and does not block the confirm."
+        ),
+    )
     note: Optional[str] = None
+    dismissed: bool = Field(
+        False,
+        description=(
+            "A person overruled this column's failing check as a false signal. It stops "
+            "blocking the confirm; `reason` still says what the check found."
+        ),
+    )
+    dismissed_reason: Optional[str] = None
+    dismissed_by_name: Optional[str] = None
+    dismissed_at: Optional[str] = None
 
 
 class ScheduleCellResponse(BaseModel):
@@ -213,6 +232,15 @@ class ScheduleCellsUpdate(BaseModel):
 
 class ScheduleProductResolve(BaseModel):
     product_id: str
+
+
+class ScheduleColumnDismiss(BaseModel):
+    """Overrule one column's failing check, or put it back under it."""
+
+    dismissed: bool = True
+    reason: Optional[str] = Field(
+        None, description="Required when dismissing: why the check is wrong here."
+    )
 
 
 class ScheduleConfirmRequest(BaseModel):

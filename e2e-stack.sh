@@ -25,7 +25,7 @@ start_one() {
 case "${1:-status}" in
   start)
     ENABLE_SCHEDULER=false start_one backend "$ROOT/sorento_crm_backend" \
-      venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $BE_PORT
+      venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $BE_PORT --reload --reload-dir app
     PGGSSENCMODE=disable OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES start_one worker "$ROOT/sorento_crm_backend" \
       venv/bin/python worker.py
     start_one frontend "$ROOT/sorento_crm_frontend" \

@@ -26,11 +26,17 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const listFulfilmentPlanning = vi.fn();
 const getReconciliation = vi.fn();
 const rerunReconciliation = vi.fn();
+const adoptSalesOrder = vi.fn();
+const getSupply = vi.fn();
 
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   listFulfilmentPlanning: (...args: unknown[]) => listFulfilmentPlanning(...args),
   getReconciliation: (...args: unknown[]) => getReconciliation(...args),
   rerunReconciliation: (...args: unknown[]) => rerunReconciliation(...args),
+  adoptSalesOrder: (...args: unknown[]) => adoptSalesOrder(...args),
+  getSupply: (...args: unknown[]) => getSupply(...args),
+  confirmSupply: vi.fn(),
+  ConfirmSupplyError: class extends Error {},
 }));
 
 vi.mock('sonner', () => ({
@@ -120,7 +126,7 @@ describe('FulfilmentPlanningClient', () => {
 
     renderClient();
 
-    expect(screen.queryByText('No published Project SO yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('Nothing is outstanding')).not.toBeInTheDocument();
     expect(screen.queryByText('The planning list could not be loaded')).not.toBeInTheDocument();
   });
 
@@ -182,20 +188,20 @@ describe('FulfilmentPlanningClient', () => {
     );
   });
 
-  it('offers the pipeline as the next step when nothing has published yet', async () => {
+  it('offers the sales order book as the next step when nothing is outstanding', async () => {
     listFulfilmentPlanning.mockResolvedValue(envelope([]));
 
     renderClient();
 
-    expect(await screen.findByText('No published Project SO yet')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing is outstanding')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'A sales order appears here once it is published from a project. Publish one from the project, then upload its AutoCount document.',
+        'An outstanding project sales order appears here on its own, with no upload and nothing to publish.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open the pipeline' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Open the sales order book' })).toHaveAttribute(
       'href',
-      '/project-sales/pipeline',
+      '/scm/sales-orders',
     );
   });
 
@@ -209,7 +215,7 @@ describe('FulfilmentPlanningClient', () => {
     });
 
     expect(
-      await screen.findByText('No sales order has finished reconciling yet'),
+      await screen.findByText('No sales order is waiting on a decision'),
     ).toBeInTheDocument();
     expect(
       screen.getByText('Clear the review state filter to see the rest of the sales orders.'),
@@ -257,5 +263,189 @@ describe('FulfilmentPlanningClient', () => {
     // Shown twice inside the sheet: the title, and the AutoCount doc field in the header strip.
     expect(within(dialog).getAllByText('SO376201').length).toBeGreaterThan(0);
     await waitFor(() => expect(getReconciliation).toHaveBeenCalledWith('pso-1'));
+  });
+});
+
+/**
+ * The AutoCount-driven arm (PLAN-fulfilment-planning-from-autocount-so, journey steps 1
+ * and 2). What is worth pinning is that an order nobody planned appears at all, reads Not
+ * started, states the facts CS judges it on, and offers exactly one decision.
+ */
+describe('FulfilmentPlanningClient, the AutoCount sales-order arm', () => {
+  /** An outstanding core sales order with no planning record: no id, no Project SO. */
+  function notStarted(overrides: Partial<FulfilmentPlanningRow> = {}): FulfilmentPlanningRow {
+    return {
+      row_kind: 'sales_order',
+      id: null,
+      sales_order_id: 'so-345418',
+      so_number: 'SO345418',
+      origin: null,
+      provisional_ref: null,
+      autocount_doc_no: null,
+      project_id: null,
+      project_label: 'PEMBINAAN YUEN SENG / TAMAN IMPIAN',
+      customer_name: 'PEMBINAAN YUEN SENG SDN BHD (PROJECT)',
+      status: null,
+      line_count: 1,
+      lines_linked: 0,
+      exception_count: 0,
+      outstanding_qty: '202.0000',
+      earliest_required_date: '2025-06-15',
+      review_state: 'not_started',
+      updated_at: null,
+      ...overrides,
+    };
+  }
+
+  it('shows an unplanned core sales order as Not started, with no Project SO invented for it', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([notStarted()]));
+
+    renderClient();
+
+    expect(await screen.findByText('SO345418')).toBeInTheDocument();
+    expect(screen.getByText('Not started')).toBeInTheDocument();
+    // AC-FP01: no reference and no document number claiming an upload that never happened.
+    expect(screen.getByText('Not authored here')).toBeInTheDocument();
+    expect(screen.queryByText('PSO-')).not.toBeInTheDocument();
+  });
+
+  it('states the facts the row is judged on: customer, project, earliest required date and outstanding quantity', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([notStarted()]));
+
+    renderClient();
+
+    expect(
+      await screen.findByText('PEMBINAAN YUEN SENG SDN BHD (PROJECT)'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('PEMBINAAN YUEN SENG / TAMAN IMPIAN')).toBeInTheDocument();
+    expect(screen.getByText('15/06/2025')).toBeInTheDocument();
+    // The decimal string off the wire is read as a quantity, not as a machine's "202.0000".
+    expect(screen.getByText('202')).toBeInTheDocument();
+  });
+
+  it('says the order named no project rather than showing a bare dash', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([notStarted({ project_label: null, project_name: null })]),
+    );
+
+    renderClient();
+
+    expect(await screen.findByText('Not named on the order')).toBeInTheDocument();
+  });
+
+  it('counts a not-started order plainly, never as "0 linked" of a mirror nobody wrote', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([notStarted({ line_count: 40, lines_linked: 0 })]),
+    );
+
+    renderClient();
+
+    await screen.findByText('SO345418');
+    expect(screen.queryByText('0 linked / 40')).not.toBeInTheDocument();
+    expect(screen.getByText('40')).toBeInTheDocument();
+  });
+
+  it('renders the list in the order the server sent it, earliest required date first', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([
+        notStarted({
+          sales_order_id: 'so-391698',
+          so_number: 'SO391698',
+          earliest_required_date: '2022-07-03',
+        }),
+        notStarted({
+          sales_order_id: 'so-346436',
+          so_number: 'SO346436',
+          earliest_required_date: '2025-04-23',
+        }),
+        notStarted({
+          sales_order_id: 'so-396071',
+          so_number: 'SO396071',
+          earliest_required_date: '2025-09-01',
+        }),
+      ]),
+    );
+
+    renderClient();
+
+    await screen.findByText('SO391698');
+    const rendered = screen
+      .getAllByTitle(/^SO\d+$/)
+      .map((node) => node.textContent);
+    expect(rendered).toEqual(['SO391698', 'SO346436', 'SO396071']);
+  });
+
+  it('Start planning is the row’s one decision, and it opens the order it just created', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([notStarted()]));
+    adoptSalesOrder.mockResolvedValue({
+      project_sales_order_id: 'pso-adopted-345418',
+      so_number: 'SO345418',
+      review_state: 'needs_cs_review',
+      already_adopted: false,
+    });
+    getReconciliation.mockReturnValue(new Promise(() => {}));
+
+    renderClient();
+
+    fireEvent.click(await screen.findByRole('button', { name: /start planning/i }));
+
+    await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-345418'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getAllByText('SO345418').length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(getReconciliation).toHaveBeenCalledWith('pso-adopted-345418'),
+    );
+  });
+
+  it('does not open a sheet, or write anything, when a not-started row itself is clicked', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([notStarted()]));
+
+    renderClient();
+
+    fireEvent.click(await screen.findByText('SO345418'));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(adoptSalesOrder).not.toHaveBeenCalled();
+  });
+
+  it('offers the Not started filter, and reaches the service with it', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([notStarted()]));
+
+    renderClient();
+    await screen.findByText('SO345418');
+
+    openFilters();
+    const select = within(screen.getByRole('menu')).getByRole('combobox');
+    expect(within(select).getByRole('option', { name: 'Not started' })).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: 'not_started' } });
+
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ review_state: 'not_started' }),
+      ),
+    );
+  });
+
+  it('keeps the authored rows and their state beside the adopted ones', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([
+        notStarted(),
+        row({
+          id: 'pso-authored',
+          row_kind: 'planning_record',
+          origin: 'authored',
+          review_state: 'awaiting_reconciliation',
+          exception_count: 3,
+        }),
+      ]),
+    );
+
+    renderClient();
+
+    expect(await screen.findByText('Not started')).toBeInTheDocument();
+    expect(
+      screen.getByText('Awaiting reconciliation · 3 exceptions'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('PSO-000123')).toBeInTheDocument();
   });
 });

@@ -153,7 +153,9 @@ describe('SupplyLineCard', () => {
     );
 
     expect(screen.getByText('No date')).toBeInTheDocument();
-    expect(screen.getByText('Not set')).toBeInTheDocument();
+    // The location comes off the core sales-order line and is never defaulted, so its
+    // absence names the record that is missing it rather than reading as a blank setting.
+    expect(screen.getByText('Not on the sales order line')).toBeInTheDocument();
     expect(screen.getByText('No description')).toBeInTheDocument();
   });
 

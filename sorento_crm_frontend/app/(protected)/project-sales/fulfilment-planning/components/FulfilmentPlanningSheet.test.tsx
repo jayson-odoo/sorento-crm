@@ -207,7 +207,9 @@ describe('FulfilmentPlanningSheet', () => {
 
     const dialog = await screen.findByRole('dialog');
     await waitFor(() => expect(within(dialog).getByText('Not linked')).toBeInTheDocument());
-    expect(within(dialog).getByText('Not uploaded')).toBeInTheDocument();
+    // The header strip's own absent state for the core sales order, distinct from the
+    // reconciliation card's "Not linked" above.
+    expect(within(dialog).getByText('Not linked yet')).toBeInTheDocument();
     expect(within(dialog).getByText('Not recorded')).toBeInTheDocument();
     expect(within(dialog).getByText('None')).toBeInTheDocument();
     expect(within(dialog).getByText('No area group')).toBeInTheDocument();
@@ -593,5 +595,162 @@ describe('FulfilmentPlanningSheet', () => {
 
     expect(dialog.textContent).toContain('Confirmed');
     expect(dialog.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+  });
+});
+
+/**
+ * The sheet on an order ADOPTED from the AutoCount sales-order book
+ * (PLAN-fulfilment-planning-from-autocount-so, journey steps 3 and 4).
+ *
+ * Two things have to hold. The reconciliation card is rendered even though there is nothing
+ * to reconcile against - "no separately authored Project SO exists" is the answer CS came
+ * for, and a card that disappears reads as a screen that has not finished loading. And the
+ * fulfilment location is the LINE's own, shown per line, never asked for.
+ */
+describe('FulfilmentPlanningSheet, an adopted sales order', () => {
+  const SALES_ORDER_ID = 'e5000000-0000-4000-8000-000000000001';
+
+  function adoptedRow(): FulfilmentPlanningRow {
+    return row({
+      row_kind: 'sales_order',
+      sales_order_id: SALES_ORDER_ID,
+      so_number: 'SO368874',
+      origin: 'adopted',
+      provisional_ref: 'SO368874',
+      autocount_doc_no: 'SO368874',
+      project_id: null,
+      project_code: null,
+      project_name: null,
+      project_label: 'EMB EMPRESS / PINNACLE ARA DAMANSARA - TOWER A',
+      status: 'adopted',
+    });
+  }
+
+  function adoptedSummary(): ReconciliationSummary {
+    return summary({
+      provisional_ref: 'SO368874',
+      autocount_doc_no: 'SO368874',
+      project_id: null,
+      project_code: null,
+      project_name: null,
+      status: 'adopted',
+      header: {
+        outcome: 'adopted',
+        core_so_number: 'SO368874',
+        reason:
+          'This order came from the AutoCount sales-order book, so there is no separately authored Project SO to compare it against.',
+      },
+    });
+  }
+
+  it('renders the reconciliation card with its empty state, never hides it', async () => {
+    getReconciliation.mockResolvedValue(adoptedSummary());
+
+    renderSheet(adoptedRow());
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/no separately authored Project SO/i);
+    expect(within(dialog).getByText('Core sales order')).toBeInTheDocument();
+    expect(within(dialog).getByText('Exceptions')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Every line is in step with the sales order book.'),
+    ).toBeInTheDocument();
+  });
+
+  it('offers Re-sync as the action, not "Re-run reconciliation"', async () => {
+    getReconciliation.mockResolvedValue(adoptedSummary());
+
+    renderSheet(adoptedRow());
+
+    const dialog = await screen.findByRole('dialog');
+    const resync = await within(dialog).findByRole('button', { name: 'Re-sync' });
+    expect(
+      within(dialog).queryByRole('button', { name: 'Re-run reconciliation' }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(resync);
+    await waitFor(() => expect(rerunReconciliation).toHaveBeenCalledWith(PSO_ID));
+  });
+
+  it('never shows the same number twice: the Project SO cell says nobody authored one here', async () => {
+    getReconciliation.mockResolvedValue(adoptedSummary());
+
+    renderSheet(adoptedRow());
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('Not authored here');
+    expect(within(dialog).getByText('Sales order')).toBeInTheDocument();
+  });
+
+  it('links to the SCM sales order, which is where the fulfilment location is stated', async () => {
+    getReconciliation.mockResolvedValue(adoptedSummary());
+
+    renderSheet(adoptedRow());
+
+    const dialog = await screen.findByRole('dialog');
+    const link = await within(dialog).findByRole('link', { name: 'Open the sales order' });
+    expect(link).toHaveAttribute('href', `/scm/sales-orders/${SALES_ORDER_ID}`);
+  });
+
+  it('shows each line’s OWN fulfilment location beside its proposed split', async () => {
+    getReconciliation.mockResolvedValue(adoptedSummary());
+    getSupply.mockResolvedValue(
+      supply({
+        sales_order_number: 'SO368874',
+        sales_order_id: SALES_ORDER_ID,
+        project_id: null,
+        status: 'adopted',
+      }),
+    );
+
+    renderSheet(adoptedRow());
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('Line 1 · CB6633');
+    // The location off the core line, and no question anywhere asking for one: no
+    // "Fulfil from" select at order level, no per-line override.
+    expect(within(dialog).getAllByText('BRW-BB').length).toBeGreaterThan(0);
+    expect(
+      within(dialog).queryByRole('combobox', { name: /fulfil|location|warehouse/i }),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole('button', { name: /fulfil from|set the location/i }),
+    ).toBeNull();
+  });
+
+  it('blocks a line whose sales order states no location, and names it rather than guessing', async () => {
+    getReconciliation.mockResolvedValue(adoptedSummary());
+    const proposal = supply({
+      sales_order_number: 'SO366992',
+      sales_order_id: SALES_ORDER_ID,
+      project_id: null,
+      status: 'adopted',
+    });
+    getSupply.mockResolvedValue({
+      ...proposal,
+      lines: [
+        {
+          ...proposal.lines[0],
+          fulfilment_location: null,
+          fulfilment_location_missing: true,
+          components: [],
+          timely_spo: [],
+        },
+      ],
+    });
+
+    renderSheet(adoptedRow());
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(
+      'No fulfilment location on the sales order line, so nothing can be composed for it.',
+    );
+    // The blocker names the line the only way it may be: number and item code, no id.
+    expect(
+      within(dialog).getByText(
+        'Line 1, CB6633: no fulfilment location on the sales order line.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm Project SO' })).toBeDisabled();
   });
 });

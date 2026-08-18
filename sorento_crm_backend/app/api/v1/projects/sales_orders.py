@@ -40,14 +40,18 @@ from app.schemas.project_sales_order import (
     ProjectSalesOrderDetail,
     ProjectSalesOrderLineRow,
     ProjectSalesOrderRow,
+    PublishRequest,
     PublishResponse,
     RegroupRequest,
+    SalesOrderDeleteResponse,
+    SalesOrderDocumentSave,
     SalesOrderLineUpdate,
     SalesOrderWorksheet,
     ScheduleVersionOption,
     SODraftFindingRow,
 )
 from app.services import project_po_service as po_svc
+from app.services import project_record_navigation as record_nav
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_so_delta_service import ProjectSODeltaService
@@ -60,6 +64,9 @@ router = APIRouter()
 
 VIEW = "projects.projects.view"
 EDIT = "projects.projects.edit"
+# Deleting a draft is its own grant, the way it is on the customer PO beside it: correcting an
+# order and removing it are different privileges even though both act on a proposal.
+DELETE = "projects.projects.delete"
 
 
 def _order_for_edit(db: Session, pso_id: str, current_user: dict):
@@ -141,7 +148,10 @@ async def build_sales_orders(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = ProjectSODraftService(db).build(
-            po_id, payload.schedule_version_id, actor_user_id=current_user["id"]
+            po_id,
+            payload.schedule_version_id,
+            split_by=payload.split_by,
+            actor_user_id=current_user["id"],
         )
         db.commit()
         return body
@@ -193,6 +203,28 @@ async def list_project_sales_orders(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.get("/projects/{project_id}/sales-orders/neighbours")
+async def get_sales_order_neighbours(
+    project_id: str,
+    id: str = Query(..., description="Sales order id to resolve neighbours for"),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Prev/next of one order within this project's sales orders.
+
+    The same set, in the same order, the list above returns unfiltered - so the detail
+    pager and the tab the user came from cannot disagree. Returns
+    ``{total, index, prev_id, next_id}`` with a 1-based ``index`` and circular neighbours.
+    """
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        validate_uuid_path(id, resource="Sales order")
+        projects.get_project_or_404(db, project_id)
+        return record_nav.sales_order_neighbours(db, project_id=project_id, pso_id=id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.get("/sales-orders/{pso_id}", response_model=ProjectSalesOrderDetail)
 async def get_sales_order(
     pso_id: str,
@@ -213,6 +245,89 @@ async def get_sales_order(
 
 
 # ------------------------------------------------------------------ draft edits
+
+
+@router.put("/sales-orders/{pso_id}", response_model=ProjectSalesOrderDetail)
+async def save_sales_order(
+    pso_id: str,
+    payload: SalesOrderDocumentSave,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Save the WHOLE sales order in one request: the header, and the full line set.
+
+    **Why this exists.** The detail screen is an edit VIEW now, the way the quotation document
+    and the customer PO already are. Writing per line meant a ten-line correction was ten
+    requests, each able to half-land and leave an order in a state nobody typed. One request
+    makes a Save atomic: either the arrangement the reviewer made is what is stored, or nothing
+    moved.
+
+    **The body's ``lines`` is the full desired set, in display order.** A stored line carries
+    its ``id``; a new one arrives without one. **Anything stored whose id is absent from the
+    body is DELETED**, so a client that omits the lines it did not touch will silently wipe
+    them and must always send everything it is showing. ``line_no`` comes from array position,
+    and ``amount`` is recomputed as ``qty * unit_price`` rather than accepted.
+
+    **``lines`` absent leaves the lines alone**, which is what a header-only save sends. An
+    empty array is refused (422 ``so_lines_required``): an order with no lines is not a
+    proposal, and deleting the order is the honest way to say that.
+
+    A PUBLISHED or AMENDED order is refused 409 ``so_not_editable``, before anything is
+    written. It is in AutoCount, and the way to change it is an amendment carrying an order
+    change notice (finding G9) - the amendment path computes its delta between two DOCUMENT
+    versions, so a free-hand correction cannot be routed through it and is refused instead.
+
+    Answers the same body ``GET /sales-orders/{pso_id}`` does, so the client reads one shape.
+    """
+    try:
+        service, order = _order_for_edit(db, pso_id, current_user)
+        service.save_document(order, payload.model_dump(exclude_unset=True))
+        db.commit()
+        db.refresh(order)
+        return service.serialize_detail(
+            order, review_states=service.review_states_for([order])
+        )
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.delete("/sales-orders/{pso_id}", response_model=SalesOrderDeleteResponse)
+async def delete_sales_order(
+    pso_id: str,
+    current_user: dict = Depends(require_permission(DELETE)),
+    db: Session = Depends(get_db),
+):
+    """Hard delete, so building the draft can be repeated.
+
+    The build is idempotent per (PO version, schedule version), which corrects a draft that
+    was rebuilt - but not one that should never have existed, or one cut on the wrong key. So
+    the draft goes, its lines go, and everything hanging off them goes with it: findings,
+    allocations and the claims they raised, the order inquiry and its rows, amendments and the
+    change notices they carried, divergences and their compared rows, and superseded supply
+    decisions. The purchase order and its delivery schedule are untouched, which is what makes
+    the rebuild possible.
+
+    It REFUSES, 409, anything that is a live commitment rather than a proposal: a published or
+    amended order, one linked to an AutoCount document, one carrying a published amendment, and
+    one whose supply has been confirmed. Those are amended, never deleted. Every refusal comes
+    from the service.
+    """
+    try:
+        validate_uuid_path(pso_id, resource="Sales order")
+        service = ProjectSODraftService(db)
+        order = service.get_order(pso_id)
+        project = projects.get_project_or_404(db, order.project_id)
+        projects.assert_can_edit_project(
+            db, project, current_user["id"], permission_slugs(db, current_user["id"])
+        )
+        reference = order.provisional_ref
+        deleted = service.delete_order(order)
+        db.commit()
+        return {"success": True, "provisional_ref": reference, "deleted": deleted}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.post(
@@ -319,13 +434,25 @@ async def regroup_sales_order(
 @router.post("/sales-orders/{pso_id}/publish", response_model=PublishResponse)
 async def publish_sales_order(
     pso_id: str,
+    payload: Optional[PublishRequest] = None,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
-    """409 listing the blocking findings when any hard stop is unacknowledged."""
+    """409 listing the blocking findings when any hard stop is unacknowledged.
+
+    `acknowledge_blocking` waves them all through under one reason, on the sales-manager
+    grant: 403 without it, 422 without a reason. Body-less POSTs keep the old behaviour.
+    """
     try:
         service, order = _order_for_edit(db, pso_id, current_user)
-        body = service.publish(order, actor_user_id=current_user["id"])
+        ask = payload or PublishRequest()
+        body = service.publish(
+            order,
+            actor_user_id=current_user["id"],
+            acknowledge_blocking=ask.acknowledge_blocking,
+            reason=ask.reason,
+            permissions=permission_slugs(db, current_user["id"]),
+        )
         db.commit()
         return body
     except Exception as exc:

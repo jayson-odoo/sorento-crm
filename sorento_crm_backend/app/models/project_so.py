@@ -438,7 +438,10 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("purchase_requests.id", ondelete="SET NULL"), nullable=True
     )
     # How the lines were grouped, so the next PO from this customer proposes what CS did (G2).
-    grouping_origin = Column(String(32), nullable=True)  # area | manual | learned
+    # It also says which namespace `area_group` holds: an area name for area/learned/manual/
+    # subset, an ISO date for delivery_date, `YYYY-MM` for delivery_month.
+    # area | learned | manual | subset | delivery_date | delivery_month
+    grouping_origin = Column(String(32), nullable=True)
 
     total_amount = Column(Numeric(15, 2), nullable=True)
     published_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

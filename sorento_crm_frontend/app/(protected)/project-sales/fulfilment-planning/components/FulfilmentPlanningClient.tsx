@@ -9,7 +9,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { PackageSearch, Search, X } from 'lucide-react';
+import { PackageSearch, Play, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -22,18 +22,29 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { useFulfilmentPlanning } from '../../_shared/hooks/useFulfilmentPlanning';
+import {
+  useFulfilmentPlanning,
+  useFulfilmentPlanningMutations,
+} from '../../_shared/hooks/useFulfilmentPlanning';
 import { ReviewStatePill } from '../../_shared/components/ReviewStatePill';
 import type {
   FulfilmentPlanningRow,
   ReviewState,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { REVIEW_STATE_LABELS } from '../../_shared/types/fulfilmentPlanning.types';
+import {
+  formatOutstandingQty,
+  isNotStarted,
+  planningRowKey,
+  planningRowProjectLabel,
+  planningRowReference,
+} from '../../_shared/lib/fulfilmentPlanningRows';
 import { InfoHint } from '../../[projectId]/components/InfoHint';
 import { FulfilmentPlanningSheet } from './FulfilmentPlanningSheet';
 
 const REVIEW_STATE_OPTIONS = [
   { value: 'all', label: 'Any' },
+  { value: 'not_started', label: REVIEW_STATE_LABELS.not_started },
   {
     value: 'awaiting_reconciliation',
     label: REVIEW_STATE_LABELS.awaiting_reconciliation,
@@ -43,12 +54,22 @@ const REVIEW_STATE_OPTIONS = [
 ];
 
 /**
- * Every published or amended Project SO across projects, one row each (journey step 1).
+ * One worklist of everything that needs planning, one row each (journey step 1).
  *
- * The screen is a worklist rather than a report: the review state and the exception count
- * are what a CS reads down the page, and the row is the way into the reconciliation for
- * that order. Nothing here is per line - the whole sales order carries one state (AC-A03),
- * so no column can say "3 of 4 lines confirmed".
+ * Two kinds of subject share the list: an outstanding project-class CORE sales order out of
+ * the AutoCount book, which reads **Not started** until somebody plans it, and a Project SO
+ * authored here that has no core order yet. Nobody has to publish anything for the first
+ * kind to appear, and no row was written to make it appear.
+ *
+ * The reading order of the columns is the order the work is judged in: which sales order,
+ * for whom, on what project, when it is due, how much is owed. Due date first is why the
+ * default order is earliest outstanding required date - the top of the list is the work
+ * that is due, not the row that was touched last.
+ *
+ * The screen is a worklist rather than a report: the review state is what a CS reads down
+ * the page, and the row's one action is the way into the order. Nothing here is per line -
+ * the whole sales order carries one state (AC-A03), so no column can say "3 of 4 lines
+ * confirmed" and "Not started" is a whole-order value.
  */
 export function FulfilmentPlanningClient() {
   const [reviewState, setReviewState] = React.useState('all');
@@ -79,43 +100,158 @@ export function FulfilmentPlanningClient() {
   });
 
   const rows = React.useMemo(() => planning.data?.data ?? [], [planning.data]);
+  const { adopt } = useFulfilmentPlanningMutations();
 
-  // Column order is the reading order of the worklist: which sales order, which document,
-  // what state it is in, how far the mapping got. The rest is context and can sit past the
-  // fold, because a CS scanning the page is answering "what still needs work".
+  /**
+   * Start planning, then open the order on the record it just created. One press, no form
+   * and no confirmation: adoption writes a planning record and its mirror lines and asks
+   * nothing else, and it is idempotent, so a second press lands on the same record.
+   */
+  const startPlanning = React.useCallback(
+    async (row: FulfilmentPlanningRow) => {
+      if (!row.sales_order_id) return;
+      const result = await adopt.mutateAsync(row.sales_order_id).catch(() => null);
+      if (!result) return;
+      setOpenRow({
+        ...row,
+        id: result.project_sales_order_id,
+        origin: 'adopted',
+        provisional_ref: result.so_number,
+        autocount_doc_no: result.so_number,
+        status: 'adopted',
+        review_state: result.review_state,
+      });
+    },
+    [adopt],
+  );
+
+  // Column order is the reading order of the worklist: which sales order, for whom, on what
+  // project, when it is due, how much is owed, what state it is in, and the one action. The
+  // rest is context and can sit past the fold, because a CS scanning the page is answering
+  // "what is due and what still needs work".
   const columns = React.useMemo<ColumnDef<FulfilmentPlanningRow>[]>(
     () => [
       {
-        id: 'provisional_ref',
-        header: ({ column }) => <DataGridColumnHeader title="Project SO" column={column} />,
-        cell: ({ row }) => (
-          <span
-            className="block truncate font-medium tabular-nums"
-            title={row.original.provisional_ref}
-          >
-            {row.original.provisional_ref}
-          </span>
-        ),
-        size: 140,
-        minSize: 110,
-        enableSorting: false,
-        meta: { headerTitle: 'Project SO', skeleton: <Skeleton className="h-4 w-20" /> },
-      },
-      {
-        id: 'autocount_doc_no',
-        header: ({ column }) => <DataGridColumnHeader title="AutoCount doc" column={column} />,
-        cell: ({ row }) =>
-          row.original.autocount_doc_no ? (
-            <span className="block truncate tabular-nums" title={row.original.autocount_doc_no}>
-              {row.original.autocount_doc_no}
+        id: 'so_number',
+        header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
+        cell: ({ row }) => {
+          const reference = planningRowReference(row.original);
+          return reference ? (
+            <span className="block truncate font-medium tabular-nums" title={reference}>
+              {reference}
             </span>
           ) : (
-            <span className="text-muted-foreground">Not uploaded</span>
-          ),
+            <span className="text-muted-foreground">Not linked yet</span>
+          );
+        },
         size: 140,
         minSize: 110,
         enableSorting: false,
-        meta: { headerTitle: 'AutoCount doc', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Sales order', skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
+        id: 'customer_name',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        cell: ({ row }) =>
+          row.original.customer_name ? (
+            <span className="block truncate" title={row.original.customer_name}>
+              {row.original.customer_name}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Not recorded</span>
+          ),
+        size: 180,
+        minSize: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
+        id: 'project',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) => {
+          const label = planningRowProjectLabel(row.original);
+          return (
+            <div className="flex min-w-0 flex-col gap-0.5">
+              {label ? (
+                <span className="block truncate" title={label}>
+                  {label}
+                </span>
+              ) : (
+                // An adopted order has no project registration, and the AutoCount book did
+                // not always name one either. Say which it is rather than showing a dash.
+                <span className="text-muted-foreground">Not named on the order</span>
+              )}
+              {row.original.project_code ? (
+                <span
+                  className="block truncate text-xs text-muted-foreground"
+                  title={row.original.project_code}
+                >
+                  {row.original.project_code}
+                </span>
+              ) : null}
+            </div>
+          );
+        },
+        size: 220,
+        minSize: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
+        id: 'earliest_required_date',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Earliest required" column={column} />
+        ),
+        cell: ({ row }) =>
+          row.original.earliest_required_date ? (
+            <span className="block truncate tabular-nums">
+              {formatDateInMalaysia(row.original.earliest_required_date)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">No date</span>
+          ),
+        size: 140,
+        minSize: 120,
+        enableSorting: false,
+        meta: { headerTitle: 'Earliest required', skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
+        id: 'outstanding_qty',
+        header: ({ column }) => <DataGridColumnHeader title="Outstanding" column={column} />,
+        cell: ({ row }) => {
+          const qty = formatOutstandingQty(row.original.outstanding_qty);
+          return qty ? (
+            <span className="block truncate tabular-nums" title={qty}>
+              {qty}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Unknown</span>
+          );
+        },
+        size: 120,
+        minSize: 100,
+        enableSorting: false,
+        meta: { headerTitle: 'Outstanding', skeleton: <Skeleton className="h-4 w-14" /> },
+      },
+      {
+        id: 'lines',
+        header: ({ column }) => <DataGridColumnHeader title="Lines" column={column} />,
+        cell: ({ row }) => {
+          // "0 linked / 40" on an order nobody has planned would report a failure that has
+          // not happened: there is no mirror to link yet, so the count is the whole story.
+          const text = isNotStarted(row.original)
+            ? String(row.original.line_count)
+            : `${row.original.lines_linked ?? 0} linked / ${row.original.line_count}`;
+          return (
+            <span className="block truncate tabular-nums" title={text}>
+              {text}
+            </span>
+          );
+        },
+        size: 120,
+        minSize: 105,
+        enableSorting: false,
+        meta: { headerTitle: 'Lines', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         id: 'review_state',
@@ -134,63 +270,58 @@ export function FulfilmentPlanningClient() {
         meta: { headerTitle: 'Review state', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
-        id: 'lines',
-        header: ({ column }) => <DataGridColumnHeader title="Lines" column={column} />,
-        cell: ({ row }) => {
-          const text = `${row.original.lines_linked} linked / ${row.original.line_count}`;
-          return (
-            <span className="block truncate tabular-nums" title={text}>
-              {text}
-            </span>
-          );
-        },
-        size: 120,
-        minSize: 105,
-        enableSorting: false,
-        meta: { headerTitle: 'Lines', skeleton: <Skeleton className="h-4 w-16" /> },
-      },
-      {
-        id: 'project',
-        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
-        cell: ({ row }) => (
-          <div className="flex min-w-0 flex-col gap-0.5">
-            {row.original.project_name ? (
-              <span className="block truncate" title={row.original.project_name}>
-                {row.original.project_name}
-              </span>
-            ) : (
-              <span className="text-muted-foreground">-</span>
-            )}
-            {row.original.project_code ? (
-              <span
-                className="block truncate text-xs text-muted-foreground"
-                title={row.original.project_code}
-              >
-                {row.original.project_code}
-              </span>
-            ) : null}
-          </div>
-        ),
-        size: 180,
-        minSize: 140,
-        enableSorting: false,
-        meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-28" /> },
-      },
-      {
-        id: 'customer_name',
-        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        id: 'actions',
+        header: '',
         cell: ({ row }) =>
-          row.original.customer_name ? (
-            <span className="block truncate" title={row.original.customer_name}>
-              {row.original.customer_name}
+          isNotStarted(row.original) ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={adopt.isPending}
+              onClick={(event) => {
+                // The row itself opens the sheet; this cell is the other decision.
+                event.stopPropagation();
+                void startPlanning(row.original);
+              }}
+            >
+              <Play className="size-4" aria-hidden />
+              Start planning
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpenRow(row.original);
+              }}
+            >
+              Open
+            </Button>
+          ),
+        size: 150,
+        minSize: 130,
+        enableSorting: false,
+        enableResizing: false,
+        meta: { headerTitle: 'Action', skeleton: <Skeleton className="h-7 w-24" /> },
+      },
+      {
+        id: 'provisional_ref',
+        header: ({ column }) => <DataGridColumnHeader title="Project SO" column={column} />,
+        cell: ({ row }) =>
+          row.original.provisional_ref ? (
+            <span className="block truncate tabular-nums" title={row.original.provisional_ref}>
+              {row.original.provisional_ref}
             </span>
           ) : (
-            <span className="text-muted-foreground">Not recorded</span>
+            <span className="text-muted-foreground">Not authored here</span>
           ),
-        size: 180,
-        minSize: 140,
+        size: 150,
+        minSize: 120,
         enableSorting: false,
-        meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Project SO', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         id: 'po_number',
@@ -241,14 +372,14 @@ export function FulfilmentPlanningClient() {
         meta: { headerTitle: 'Updated', skeleton: <Skeleton className="h-4 w-20" /> },
       },
     ],
-    [],
+    [adopt.isPending, startPlanning],
   );
 
   const table = useReactTable({
     columns,
     data: rows,
     pageCount: Math.ceil((planning.data?.total ?? 0) / pagination.pageSize) || 0,
-    getRowId: (row) => row.id,
+    getRowId: planningRowKey,
     state: { pagination },
     onPaginationChange: setPagination,
     manualPagination: true,
@@ -265,8 +396,7 @@ export function FulfilmentPlanningClient() {
         <div className="flex min-w-0 items-center gap-2">
           <h1 className="text-xl font-semibold break-words">Fulfilment planning</h1>
           <InfoHint label="About fulfilment planning">
-            A sales order is awaiting reconciliation until every line of ours matches
-            exactly one line of the AutoCount document.
+            Outstanding project sales orders, earliest required date first.
           </InfoHint>
         </div>
       </div>
@@ -275,9 +405,20 @@ export function FulfilmentPlanningClient() {
         table={table}
         recordCount={planning.data?.total ?? 0}
         isLoading={planning.isLoading}
-        listingKey="projects.projects.view::project-fulfilment-planning"
+        // The stable id is bumped because this is not the same listing it was: four columns
+        // are new and one is gone, so a config saved against the old set interleaves them
+        // into an order nobody chose (verified in the browser: Sales order, Project SO,
+        // Review state, action, Lines, ... with Customer and the dates pushed off). A user
+        // would have to find Columns -> Reset to get the intended reading order. Bumping
+        // the id gives everyone the new defaults once, which is the honest answer to "the
+        // columns changed"; anyone who had resized this grid sets it again.
+        listingKey="projects.projects.view::project-fulfilment-planning-v2"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        onRowClick={(row) => setOpenRow(row)}
+        // A not-started row has no planning record to open, and clicking a row must never
+        // be the thing that writes one: Start planning is an explicit press.
+        onRowClick={(row) => {
+          if (row.id) setOpenRow(row);
+        }}
       >
         <Card>
           <CardHeader className="block">
@@ -355,21 +496,23 @@ export function FulfilmentPlanningClient() {
               <div className="px-6 py-10 text-center">
                 <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
                 <h3 className="mt-2 text-sm font-semibold">
-                  {reviewState === 'needs_cs_review'
-                    ? 'No sales order has finished reconciling yet'
-                    : reviewState === 'awaiting_reconciliation'
-                      ? 'Every sales order here is reconciled'
-                      : reviewState === 'confirmed'
-                        ? 'No sales order has been confirmed yet'
-                        : 'No published Project SO yet'}
+                  {reviewState === 'not_started'
+                    ? 'Every outstanding sales order is being planned'
+                    : reviewState === 'needs_cs_review'
+                      ? 'No sales order is waiting on a decision'
+                      : reviewState === 'awaiting_reconciliation'
+                        ? 'Every sales order here is reconciled'
+                        : reviewState === 'confirmed'
+                          ? 'No sales order has been confirmed yet'
+                          : 'Nothing is outstanding'}
                 </h3>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                   {reviewState === 'all'
-                    ? 'A sales order appears here once it is published from a project. Publish one from the project, then upload its AutoCount document.'
+                    ? 'An outstanding project sales order appears here on its own, with no upload and nothing to publish.'
                     : 'Clear the review state filter to see the rest of the sales orders.'}
                 </p>
                 <Button asChild variant="outline" className="mt-4">
-                  <Link href="/project-sales/pipeline">Open the pipeline</Link>
+                  <Link href="/scm/sales-orders">Open the sales order book</Link>
                 </Button>
               </div>
             ) : (

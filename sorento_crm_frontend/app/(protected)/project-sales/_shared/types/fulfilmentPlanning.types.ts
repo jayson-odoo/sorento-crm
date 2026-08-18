@@ -17,18 +17,38 @@
 /**
  * The whole sales order's one state. `confirmed` is Stage 1C's addition and means an
  * ACTIVE supply decision exists; a superseded or challenged decision reads
- * `needs_cs_review` again, so there is never a fourth value and never a per-line one.
+ * `needs_cs_review` again, so there is never a per-line one.
+ *
+ * `not_started` is the AutoCount-driven plan's addition (PLAN-fulfilment-planning-from-
+ * autocount-so section 6): an outstanding project-class sales order that nobody has
+ * planned yet. It is the state of a row that has no planning record at all, which is why
+ * a `not_started` row carries no `id` and no `provisional_ref`.
  */
-export type ReviewState = 'awaiting_reconciliation' | 'needs_cs_review' | 'confirmed';
+export type ReviewState =
+  | 'not_started'
+  | 'awaiting_reconciliation'
+  | 'needs_cs_review'
+  | 'confirmed';
 
 export const REVIEW_STATE_LABELS: Record<ReviewState, string> = {
+  not_started: 'Not started',
   awaiting_reconciliation: 'Awaiting reconciliation',
   needs_cs_review: 'Needs CS review',
   confirmed: 'Confirmed',
 };
 
-/** Why the Project SO header is, or is not, attached to a core sales order. */
-export type ReconciliationHeaderOutcome = 'no_document' | 'no_core_so' | 'linked';
+/**
+ * Why the Project SO header is, or is not, attached to a core sales order.
+ *
+ * `adopted` is the AutoCount-driven arm: the planning record WAS the core sales order, so
+ * there is no separately authored document to disagree with and reconciliation is a one-way
+ * sync rather than a diff.
+ */
+export type ReconciliationHeaderOutcome =
+  | 'no_document'
+  | 'no_core_so'
+  | 'linked'
+  | 'adopted';
 
 /**
  * What happened to one Project SO line when it was mapped against the core SO lines.
@@ -48,22 +68,50 @@ export type ReconciliationExceptionKind =
   | 'duplicate'
   | 'surplus';
 
-/** Row of `GET /project-sales/fulfilment-planning`. */
+/**
+ * Row of `GET /project-sales/fulfilment-planning`.
+ *
+ * The worklist is a union of two arms, one row per subject, and the arms are disjoint by
+ * construction: arm 1 is an outstanding core sales order (`row_kind = 'sales_order'`), arm
+ * 2 is a planning record that has no core sales order yet (`row_kind = 'planning_record'`).
+ * A core order that HAS been planned still comes back as arm 1, carrying the planning
+ * record's `id` and state.
+ *
+ * Everything a not-started row cannot have is optional, because it genuinely does not exist
+ * yet: no planning record means no `id`, no `provisional_ref`, no `status`, and no counts
+ * off a mirror nobody has written. `project_id` is nullable because an adopted order has no
+ * project registration and must not invent one.
+ */
 export interface FulfilmentPlanningRow {
-  id: string;
-  provisional_ref: string;
+  /** Which arm this row came from. Addressing only, never rendered. */
+  row_kind?: 'sales_order' | 'planning_record';
+  /** The planning record's id. Absent on a not-started row: there is no record. */
+  id?: string | null;
+  /** The core `sales_orders` id, for addressing the SCM sales order. Never rendered. */
+  sales_order_id?: string | null;
+  /** The AutoCount / core sales-order number. The human key of an arm-1 row. */
+  so_number?: string | null;
+  /** Whether the planning record was authored here or adopted from the core book. */
+  origin?: 'authored' | 'adopted' | null;
+  provisional_ref?: string | null;
   autocount_doc_no?: string | null;
-  project_id: string;
+  project_id?: string | null;
   project_code?: string | null;
   project_name?: string | null;
+  /** The project name when one is registered, else the core order's own project string. */
+  project_label?: string | null;
   customer_name?: string | null;
   po_number?: string | null;
   area_group?: string | null;
-  /** The existing sales-order status (published, amended, ...), not a review state. */
-  status: string;
+  /** The existing sales-order status (published, amended, adopted, ...), not a review state. */
+  status?: string | null;
   line_count: number;
-  lines_linked: number;
-  exception_count: number;
+  lines_linked?: number;
+  exception_count?: number;
+  /** Decimal STRING, summed over the still-owed lines. Same reason line quantities are. */
+  outstanding_qty?: string | null;
+  /** Earliest still-owed required date across the lines. The order the work is due in. */
+  earliest_required_date?: string | null;
   review_state: ReviewState;
   updated_at?: string | null;
 }
@@ -110,7 +158,8 @@ export interface ReconciliationSummary {
   project_sales_order_id: string;
   provisional_ref: string;
   autocount_doc_no?: string | null;
-  project_id: string;
+  /** Nullable: an adopted order has no project registration. */
+  project_id?: string | null;
   project_code?: string | null;
   project_name?: string | null;
   customer_name?: string | null;
@@ -136,6 +185,21 @@ export interface FulfilmentPlanningListParams {
   query?: string;
   review_state?: ReviewState;
   project_id?: string;
+  sales_order_id?: string;
+}
+
+/**
+ * What Start planning answers with (`POST /project-sales/fulfilment-planning/adopt`).
+ *
+ * Adoption is idempotent: pressing it twice, or a second CS pressing it, returns the record
+ * that already exists with `already_adopted` true rather than writing a second one. That is
+ * why it takes no confirmation dialog - it destroys nothing and it repeats safely.
+ */
+export interface AdoptSalesOrderResult {
+  project_sales_order_id: string;
+  so_number: string;
+  review_state: ReviewState;
+  already_adopted: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,8 +282,19 @@ export interface SupplyLine {
   /** The core line's current open fulfilment quantity (AC-B01), in the line UOM. */
   open_qty: string;
   required_date?: string | null;
-  /** Warehouse CODE of the line's fulfilment location. */
+  /**
+   * Warehouse CODE of the line's fulfilment location, read off the CORE sales-order line's
+   * own `warehouse_id`. Nobody is asked for it and nothing defaults it (captain's decision,
+   * PLAN-fulfilment-planning-from-autocount-so section 11 question 2).
+   */
   fulfilment_location?: string | null;
+  /**
+   * The core sales-order line states no warehouse, so this line cannot be planned against a
+   * location at all. Nothing is proposed for it and Confirm refuses it by name; the way out
+   * is to state the location on the SCM sales order, which the sheet links to. Never a
+   * guessed default.
+   */
+  fulfilment_location_missing?: boolean;
   is_dealer_hot_selling: boolean;
   /** No classification row at any qualifying dealer warehouse (AC-B05). */
   classification_unavailable: boolean;
@@ -263,10 +338,15 @@ export interface SupplyProposal {
   project_sales_order_id: string;
   provisional_ref: string;
   autocount_doc_no?: string | null;
-  project_id: string;
+  /** The core sales-order number. The human key of an adopted order. */
+  sales_order_number?: string | null;
+  /** The core `sales_orders` id. Addressing only, for the /scm link; never rendered. */
+  sales_order_id?: string | null;
+  /** Nullable: an adopted order has no project registration. */
+  project_id?: string | null;
   project_code?: string | null;
   project_name?: string | null;
-  status: string;
+  status?: string | null;
   review_state: ReviewState | null;
   decision?: SupplyDecision | null;
   lines: SupplyLine[];

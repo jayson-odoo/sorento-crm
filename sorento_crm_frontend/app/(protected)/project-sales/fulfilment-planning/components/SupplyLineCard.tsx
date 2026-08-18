@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,14 +42,24 @@ export function SupplyLineCard({
   draft,
   frozen,
   onChange,
+  salesOrderHref,
 }: {
   line: SupplyLine;
   draft: DraftLine;
   /** The composition is a decision that stands: it is shown, not edited. */
   frozen: boolean;
   onChange: (next: DraftLine) => void;
+  /** Where the fulfilment location is stated, for a line whose sales order does not. */
+  salesOrderHref?: string | null;
 }) {
   const [adding, setAdding] = React.useState(false);
+
+  // The sales order states no fulfilment location for this line, so there is no free stock,
+  // no pool and no incoming to read and nothing can be proposed. It is named and blocked
+  // rather than guessed at, and the way out is the sales order itself.
+  if (line.fulfilment_location_missing) {
+    return <BlockedLineCard line={line} salesOrderHref={salesOrderHref} />;
+  }
 
   const frozenComponents = line.frozen?.components ?? [];
   const balance = lineBalance(draft);
@@ -86,11 +97,14 @@ export function SupplyLineCard({
             <Muted>No date</Muted>
           )}
         </Fact>
+        {/* The line's own location, off the core sales-order line. Never asked for here and
+            never defaulted: a guessed warehouse is a silent wrong answer inside a promise to
+            a customer. */}
         <Fact label="Fulfil from">
           {line.fulfilment_location ? (
             <span>{line.fulfilment_location}</span>
           ) : (
-            <Muted>Not set</Muted>
+            <span className="text-destructive">Not on the sales order line</span>
           )}
         </Fact>
         <Fact label="Retail classification">
@@ -380,6 +394,66 @@ export function SupplyLineCard({
           }
         />
       )}
+    </article>
+  );
+}
+
+/**
+ * A line that cannot be planned, and why, in the same shape as one that can: same header,
+ * same facts row, so nothing moves between a blocked line and its neighbour.
+ */
+function BlockedLineCard({
+  line,
+  salesOrderHref,
+}: {
+  line: SupplyLine;
+  salesOrderHref?: string | null;
+}) {
+  return (
+    <article className="rounded-lg border border-border">
+      <header className="flex flex-col gap-1 border-b border-border px-3 py-2.5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium">
+            {`Line ${line.line_no}${line.item_code ? ` · ${line.item_code}` : ''}`}
+          </div>
+          <div className="truncate text-sm text-muted-foreground" title={line.description ?? ''}>
+            {line.description || 'No description'}
+          </div>
+        </div>
+        <div className="shrink-0 text-sm tabular-nums sm:text-end">
+          <span className="font-medium">
+            {`${line.open_qty}${line.uom ? ` ${line.uom}` : ''}`}
+          </span>
+          <span className="text-muted-foreground"> open</span>
+        </div>
+      </header>
+
+      <div className="grid grid-cols-2 gap-3 border-b border-border px-3 py-2.5 sm:grid-cols-3">
+        <Fact label="Required">
+          {line.required_date ? (
+            <span className="tabular-nums">{formatDateInMalaysia(line.required_date)}</span>
+          ) : (
+            <Muted>No date</Muted>
+          )}
+        </Fact>
+        <Fact label="Fulfil from">
+          <span className="text-destructive">Not on the sales order line</span>
+        </Fact>
+        <Fact label="Retail classification">
+          <Muted>Not read</Muted>
+        </Fact>
+      </div>
+
+      <div className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <p className="min-w-0 text-sm text-destructive break-words">
+          No fulfilment location on the sales order line, so nothing can be composed for it.
+        </p>
+        {salesOrderHref ? (
+          <Button asChild variant="outline" size="sm" className="shrink-0">
+            <Link href={salesOrderHref}>Open the sales order</Link>
+          </Button>
+        ) : null}
+      </div>
     </article>
   );
 }

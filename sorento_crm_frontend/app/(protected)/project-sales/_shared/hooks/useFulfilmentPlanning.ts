@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  adoptSalesOrder,
   confirmSupply,
   getReconciliation,
   getSupply,
@@ -11,6 +12,7 @@ import {
   rerunReconciliation,
 } from '../services/fulfilmentPlanningService';
 import type {
+  AdoptSalesOrderResult,
   ConfirmSupplyBody,
   FulfilmentPlanningListParams,
 } from '../types/fulfilmentPlanning.types';
@@ -35,6 +37,37 @@ export function useFulfilmentPlanning(params: FulfilmentPlanningListParams = {})
     // until the next one answers.
     placeholderData: keepPreviousData,
   });
+}
+
+/**
+ * Start planning an outstanding core sales order.
+ *
+ * Separate from `useReconciliationMutations` because it is the only mutation on this screen
+ * that a row can carry before any planning record exists, and it is the only one whose
+ * success has to hand the caller an id it did not have (the sheet opens on the record that
+ * was just created).
+ *
+ * No toast on the idempotent path beyond the truth: pressing Start planning on an order
+ * somebody else already started is not an error and must not read like one.
+ */
+export function useFulfilmentPlanningMutations() {
+  const queryClient = useQueryClient();
+
+  const adopt = useMutation({
+    mutationFn: (salesOrderId: string) => adoptSalesOrder(salesOrderId),
+    onSuccess: (result: AdoptSalesOrderResult) => {
+      queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
+      queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY] });
+      toast.success(
+        result.already_adopted
+          ? `${result.so_number} is already being planned.`
+          : `${result.so_number} is ready to plan.`,
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { adopt };
 }
 
 /**

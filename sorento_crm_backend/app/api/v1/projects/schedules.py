@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -27,10 +27,12 @@ from app.schemas.project_schedule import (
     DeliveryScheduleVersionListRow,
     DeliveryScheduleVersionResponse,
     ScheduleCellsUpdate,
+    ScheduleColumnDismiss,
     ScheduleConfirmRequest,
     ScheduleProductResolve,
 )
 from app.services import project_po_service as po_svc
+from app.services import project_record_navigation as record_nav
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_schedule_service import ProjectScheduleService
@@ -207,6 +209,25 @@ def _page_count(content: bytes, mime: str) -> Optional[int]:
         return None
 
 
+@router.get("/delivery-schedule-versions/neighbours")
+async def get_delivery_schedule_version_neighbours(
+    id: str = Query(..., description="Schedule version id to resolve neighbours for"),
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Prev/next of one version within its own schedule's revision history.
+
+    BEFORE `/delivery-schedule-versions/{version_id}`, or that route captures `neighbours`
+    as a version id. The same set, in the same order, `/delivery-schedules/{id}/versions`
+    lists: newest first, circular, `{total, index, prev_id, next_id}`.
+    """
+    try:
+        validate_uuid_path(id, resource="Delivery schedule version")
+        return record_nav.schedule_version_neighbours(db, version_id=id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.get(
     "/delivery-schedule-versions/{version_id}",
     response_model=DeliveryScheduleVersionResponse,
@@ -296,6 +317,40 @@ async def resolve_delivery_schedule_product(
             version.id,
             product_index,
             payload.product_id,
+            actor_user_id=current_user["id"],
+        )
+        db.commit()
+        return service.get_version_detail(version_id)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/delivery-schedule-versions/{version_id}/columns/{column_index}/dismissal",
+    response_model=DeliveryScheduleVersionResponse,
+)
+async def dismiss_delivery_schedule_column(
+    version_id: str,
+    column_index: int,
+    payload: ScheduleColumnDismiss,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Overrule ONE column's failing check as a false signal, with a reason.
+
+    The whole-sheet acknowledgement at confirm stays and is unchanged; this is the same
+    judgement taken per column, at the point a person is looking at that column. Sending
+    `dismissed: false` puts it back under its verdict.
+    """
+    try:
+        version = _version_for_edit(db, version_id, current_user)
+        service = _service(db)
+        service.dismiss_column_verdict(
+            version.id,
+            column_index,
+            dismissed=payload.dismissed,
+            reason=payload.reason,
             actor_user_id=current_user["id"],
         )
         db.commit()

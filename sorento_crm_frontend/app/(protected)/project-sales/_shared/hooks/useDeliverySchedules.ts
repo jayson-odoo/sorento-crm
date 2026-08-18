@@ -3,7 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  useRecordNeighbours,
+  type RecordNeighboursResult,
+} from '@/hooks/useRecordNeighbours';
+import {
   confirmDeliveryScheduleVersion,
+  DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH,
+  dismissDeliveryScheduleColumn,
   getDeliveryScheduleVersion,
   listDeliverySchedules,
   listDeliveryScheduleVersions,
@@ -75,6 +81,20 @@ export function useDeliveryScheduleVersion(
 }
 
 /**
+ * Prev/next within this schedule's own revision history, so a reviewer can step from R2 to
+ * R1 without going back to the project tab. Newest first, the order the versions grid uses.
+ */
+export function useDeliveryScheduleVersionNeighbours(
+  versionId: string | undefined,
+  options: { enabled?: boolean } = {},
+): RecordNeighboursResult {
+  return useRecordNeighbours(
+    DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH,
+    options.enabled === false ? null : (versionId ?? null),
+  );
+}
+
+/**
  * Upload invalidates the PROJECT too: the schedule binds delivery phases to it, so the
  * header and the phase list downstream both change once extraction lands.
  */
@@ -138,6 +158,26 @@ export function useDeliveryScheduleVersionMutations(
   });
 
   /**
+   * Overrule one column's failing check, or put it back under it.
+   *
+   * The response carries the recomputed verdict for the whole version, so `adopt` is what
+   * moves the column out of the blocking list and the count with it.
+   */
+  const dismissColumn = useMutation({
+    mutationFn: ({
+      columnIndex,
+      dismissed,
+      reason,
+    }: {
+      columnIndex: number;
+      dismissed: boolean;
+      reason?: string | null;
+    }) => dismissDeliveryScheduleColumn(versionId, columnIndex, dismissed, reason),
+    onSuccess: adopt,
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  /**
    * Read the same version again.
    *
    * `adopt` puts the version back on `queued`, which is what turns the poll back on, so
@@ -164,5 +204,5 @@ export function useDeliveryScheduleVersionMutations(
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { saveCells, resolveProduct, confirm, retryExtraction };
+  return { saveCells, resolveProduct, dismissColumn, confirm, retryExtraction };
 }

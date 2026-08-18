@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
-import { AlertTriangle, CheckCircle2, FileDiff, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ExternalLink, FileDiff, RefreshCw } from 'lucide-react';
 import {
   Alert,
   AlertContent,
@@ -106,8 +106,15 @@ function ExceptionRow({ exception }: { exception: ReconciliationException }) {
 }
 
 /**
- * The reconciliation of one Project SO, as a right slide-over off the planning row
- * (journey step 2).
+ * The reconciliation of one sales order, as a right slide-over off the planning row
+ * (journey steps 2 and 3).
+ *
+ * Two origins share this sheet. An ADOPTED order came straight out of the AutoCount
+ * sales-order book, so there is no separately authored Project SO to compare it against and
+ * reconciliation is a one-way sync: the card says so in one sentence and offers Re-sync. An
+ * AUTHORED order is Stage 1B's two-document mapping, unchanged. The card is rendered either
+ * way - "there is nothing to compare" is the answer CS came for, and a card that disappears
+ * reads as a screen that has not finished loading.
  *
  * Every section renders whatever the answer is (AC-G02): a sales order with no lines, no
  * core order or no exceptions each states that in place rather than dropping the section,
@@ -128,7 +135,7 @@ export function FulfilmentPlanningSheet({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const reconciliation = useReconciliation(row?.id, open);
+  const reconciliation = useReconciliation(row?.id ?? undefined, open);
   const { rerun } = useReconciliationMutations();
 
   const summary = reconciliation.data;
@@ -243,11 +250,18 @@ export function FulfilmentPlanningSheet({
     [],
   );
 
-  if (!row) return null;
+  // No planning record, nothing to show: a not-started row is adopted first, and Start
+  // planning on the worklist is what does that.
+  if (!row || !row.id) return null;
 
-  const reference = docNo || summary?.provisional_ref || row.provisional_ref;
+  const psoId = row.id;
+  const reference =
+    row.so_number || docNo || summary?.provisional_ref || row.provisional_ref || '';
   const headerOutcome = summary?.header.outcome;
   const reviewState = summary?.review_state ?? row.review_state;
+  // The sheet knows the origin before the read lands (the row carries it), so the header
+  // and the footer button do not flip labels a beat after opening.
+  const isAdopted = headerOutcome === 'adopted' || row.origin === 'adopted';
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -259,7 +273,7 @@ export function FulfilmentPlanningSheet({
         <SheetHeader className="border-b p-4 pe-12 sm:p-6 sm:pe-12">
           <SheetTitle className="min-w-0 break-words">{reference}</SheetTitle>
           <SheetDescription className="min-w-0 break-words">
-            AutoCount reconciliation
+            {isAdopted ? 'Fulfilment planning' : 'AutoCount reconciliation'}
           </SheetDescription>
         </SheetHeader>
 
@@ -273,25 +287,42 @@ export function FulfilmentPlanningSheet({
               />
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <Meta label="Project SO">
-                <span className="tabular-nums">
-                  {summary?.provisional_ref ?? row.provisional_ref}
-                </span>
-              </Meta>
-              <Meta label="AutoCount doc">
-                {docNo ? (
-                  <span className="tabular-nums">{docNo}</span>
+              {/* The CORE sales order's number, not whatever the sheet is titled: an
+                  authored order with no core order yet has to be able to say so. */}
+              <Meta label="Sales order">
+                {row.so_number || docNo ? (
+                  <span className="tabular-nums">{row.so_number || docNo}</span>
                 ) : (
-                  <Absent>Not uploaded</Absent>
+                  <Absent>Not linked yet</Absent>
+                )}
+              </Meta>
+              {/* Never the same number twice: an adopted order's own reference IS the
+                  sales-order number, so the Project SO cell states that nobody authored
+                  one here rather than repeating it. */}
+              <Meta label="Project SO">
+                {isAdopted ? (
+                  <Absent>Not authored here</Absent>
+                ) : (summary?.provisional_ref ?? row.provisional_ref) ? (
+                  <span className="tabular-nums">
+                    {summary?.provisional_ref ?? row.provisional_ref}
+                  </span>
+                ) : (
+                  <Absent>None</Absent>
                 )}
               </Meta>
               <Meta label="Project">
-                {projectName ? (
-                  <span title={projectCode ? `${projectName} (${projectCode})` : projectName}>
-                    {projectName}
+                {projectName || row.project_label ? (
+                  <span
+                    title={
+                      projectCode && projectName
+                        ? `${projectName} (${projectCode})`
+                        : (projectName ?? row.project_label ?? '')
+                    }
+                  >
+                    {projectName ?? row.project_label}
                   </span>
                 ) : (
-                  <Absent>-</Absent>
+                  <Absent>Not named on the order</Absent>
                 )}
               </Meta>
               <Meta label="Customer">
@@ -384,7 +415,9 @@ export function FulfilmentPlanningSheet({
                   {exceptions.length === 0 ? (
                     <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
                       <CheckCircle2 className="size-4 shrink-0" aria-hidden />
-                      Every line is linked, and nothing on the AutoCount document is spare.
+                      {isAdopted
+                        ? 'Every line is in step with the sales order book.'
+                        : 'Every line is linked, and nothing on the AutoCount document is spare.'}
                     </div>
                   ) : (
                     <ul className="divide-y-0">
@@ -398,13 +431,22 @@ export function FulfilmentPlanningSheet({
                   )}
                 </div>
 
-                {headerOutcome === 'no_document' && (
+                {headerOutcome === 'no_document' && row.project_id && (
                   <Button asChild variant="outline" size="sm">
                     <Link
-                      href={`/project-sales/${row.project_id}/sales-orders/${row.id}/divergence`}
+                      href={`/project-sales/${row.project_id}/sales-orders/${psoId}/divergence`}
                     >
                       <FileDiff className="size-4" aria-hidden />
                       Upload the AutoCount document
+                    </Link>
+                  </Button>
+                )}
+
+                {isAdopted && row.sales_order_id && (
+                  <Button asChild variant="outline" size="sm">
+                    <Link href={`/scm/sales-orders/${row.sales_order_id}`}>
+                      <ExternalLink className="size-4" aria-hidden />
+                      Open the sales order
                     </Link>
                   </Button>
                 )}
@@ -431,7 +473,7 @@ export function FulfilmentPlanningSheet({
                   commits all of them. Rendered whatever the state is: an order still
                   mapping its lines says so here rather than dropping the section. */}
               {reviewState === 'needs_cs_review' || reviewState === 'confirmed' ? (
-                <SupplyCompositionSection psoId={row.id} reference={reference} open={open} />
+                <SupplyCompositionSection psoId={psoId} reference={reference} open={open} />
               ) : (
                 <section aria-label="Supply composition" className="space-y-3">
                   <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -457,11 +499,13 @@ export function FulfilmentPlanningSheet({
           </Button>
           <Button
             type="button"
-            onClick={() => rerun.mutate(row.id)}
+            onClick={() => rerun.mutate(psoId)}
             disabled={rerun.isPending || reconciliation.isLoading}
           >
             <RefreshCw className="size-4" aria-hidden />
-            Re-run reconciliation
+            {/* An adopted order has nothing to reconcile against, so the same idempotent
+                press is named for what it actually does to it. */}
+            {isAdopted ? 'Re-sync' : 'Re-run reconciliation'}
           </Button>
         </SheetFooter>
       </SheetContent>

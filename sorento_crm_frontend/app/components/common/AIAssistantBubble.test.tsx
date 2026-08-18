@@ -8,6 +8,11 @@ import { fireEvent, render, screen } from '@testing-library/react';
  * at z-[120] - above every Sheet (z-50) - so it covered a drawer's bottom
  * controls. What is pinned here is the geometry and the stacking, at both
  * widths, plus that opening/closing still works.
+ *
+ * UPDATED 2026-08-18: the tab collapses to the side. Collapsed is a 32px-wide
+ * VERTICAL handle (the horizontal pill was ~130px wide and sat on table rows),
+ * the panel carries an explicit collapse control, and the choice is persisted so
+ * it survives navigation and reload - collapsed for a first-time user.
  */
 const hasPermission = vi.fn(() => true);
 vi.mock('@/hooks/usePermissions', () => ({
@@ -33,13 +38,20 @@ vi.mock('@/lib/aiPageSnapshot', () => ({
 
 import AIAssistantBubble from './AIAssistantBubble';
 
-function tab() {
+const OPEN_STORAGE_KEY = 'sorento.ai.bubbleOpen';
+
+function handle() {
   return screen.getByTestId('ai-assistant-tab');
+}
+
+function collapseButton() {
+  return screen.getByTestId('ai-assistant-collapse');
 }
 
 describe('AIAssistantBubble edge-tab launcher (AC-N5c)', () => {
   beforeEach(() => {
     hasPermission.mockReturnValue(true);
+    window.localStorage.clear();
   });
 
   it('renders nothing without the assistant permission', () => {
@@ -60,33 +72,92 @@ describe('AIAssistantBubble edge-tab launcher (AC-N5c)', () => {
     expect(rootClass).not.toContain('z-[120]');
   });
 
-  it('is a 40px tall tab hugging the edge, not a round FAB', () => {
+  it('is a slim 32px vertical handle hugging the edge, not a wide pill or a FAB', () => {
     render(<AIAssistantBubble />);
-    const cls = tab().getAttribute('class') ?? '';
-    expect(cls).toContain('h-10');
-    expect(cls).toContain('rounded-s-full');
+    const cls = handle().getAttribute('class') ?? '';
+    expect(cls).toContain('w-8');
+    expect(cls).toContain('flex-col');
+    expect(cls).toContain('rounded-s-lg');
     expect(cls).not.toContain('rounded-full');
   });
 
-  it('shows the label from sm up and the icon alone at phone width', () => {
+  it('rotates the label into the handle from sm up and shows the icon alone at phone width', () => {
     render(<AIAssistantBubble />);
     const label = screen.getByText('AI assistant');
     const cls = label.getAttribute('class') ?? '';
-    // 375px: `hidden`. 1280px: `sm:inline`.
+    // 375px: `hidden`. 1280px: `sm:inline`, running down the handle.
     expect(cls).toContain('hidden');
     expect(cls).toContain('sm:inline');
+    expect(cls).toContain('[writing-mode:vertical-rl]');
+  });
+});
+
+describe('AIAssistantBubble collapse to the side', () => {
+  beforeEach(() => {
+    hasPermission.mockReturnValue(true);
+    window.localStorage.clear();
   });
 
-  it('toggles the assistant panel open and closed', () => {
+  it('is collapsed for a first-time user: handle only, no panel', () => {
     render(<AIAssistantBubble />);
-    expect(tab().getAttribute('aria-expanded')).toBe('false');
+    expect(handle().getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByTestId('ai-assistant-panel')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'AI assistant' })).toBeNull();
+  });
 
-    fireEvent.click(tab());
-    expect(tab().getAttribute('aria-expanded')).toBe('true');
+  it('expands on click, replacing the handle with the panel', () => {
+    render(<AIAssistantBubble />);
+    fireEvent.click(handle());
+
+    expect(screen.getByTestId('ai-assistant-panel')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'AI assistant' })).toBeDefined();
+    // The handle unmounts while expanded, so the two can never overlap.
+    expect(screen.queryByTestId('ai-assistant-tab')).toBeNull();
+    expect(collapseButton().getAttribute('aria-expanded')).toBe('true');
+  });
 
-    fireEvent.click(tab());
-    expect(tab().getAttribute('aria-expanded')).toBe('false');
+  it('collapses again from the panel control, returning the handle', () => {
+    render(<AIAssistantBubble />);
+    fireEvent.click(handle());
+    fireEvent.click(collapseButton());
+
+    expect(screen.queryByTestId('ai-assistant-panel')).toBeNull();
+    expect(handle().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('persists expanding and collapsing to localStorage', () => {
+    render(<AIAssistantBubble />);
+    expect(window.localStorage.getItem(OPEN_STORAGE_KEY)).toBeNull();
+
+    fireEvent.click(handle());
+    expect(window.localStorage.getItem(OPEN_STORAGE_KEY)).toBe('1');
+
+    fireEvent.click(collapseButton());
+    expect(window.localStorage.getItem(OPEN_STORAGE_KEY)).toBe('0');
+  });
+
+  it('restores the expanded panel from localStorage', () => {
+    window.localStorage.setItem(OPEN_STORAGE_KEY, '1');
+    render(<AIAssistantBubble />);
+
+    expect(screen.getByTestId('ai-assistant-panel')).toBeDefined();
+    expect(screen.queryByTestId('ai-assistant-tab')).toBeNull();
+  });
+
+  it('stays collapsed when localStorage says collapsed', () => {
+    window.localStorage.setItem(OPEN_STORAGE_KEY, '0');
+    render(<AIAssistantBubble />);
+
+    expect(screen.queryByTestId('ai-assistant-panel')).toBeNull();
+    expect(handle().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('moves focus with the toggle so a keyboard user is never dropped on the body', () => {
+    render(<AIAssistantBubble />);
+    fireEvent.click(handle());
+    expect(document.activeElement).toBe(screen.getByTestId('ai-assistant-panel'));
+
+    fireEvent.click(collapseButton());
+    expect(document.activeElement).toBe(handle());
   });
 });

@@ -49,7 +49,6 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
   const { remove } = usePurchaseOrderMutations(project.id);
 
   const [creating, setCreating] = React.useState(false);
-  const [editing, setEditing] = React.useState<ProjectPurchaseOrder | null>(null);
   const [deleting, setDeleting] = React.useState<ProjectPurchaseOrder | null>(null);
   // A `po` of null means "a PO we have no row for yet"; a PO means "another version of this
   // one", which is how a re-scanned PO stays one commitment instead of becoming two.
@@ -219,11 +218,16 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
                   >
                     <Upload className="size-3.5" />
                   </Button>
+                  {/* Edit is the PO's own PAGE in edit mode, not a modal that collects the
+                      same fields a second time. One editing surface per record, and it is the
+                      one the reader already knows the layout of. */}
                   <Button
                     mode="icon"
                     variant="ghost"
                     size="sm"
-                    onClick={() => setEditing(row.original)}
+                    onClick={() =>
+                      router.push(`/project-sales/${project.id}/pos/${row.original.id}?edit=1`)
+                    }
                     aria-label={`Edit ${row.original.po_number}`}
                   >
                     <Pencil className="size-3.5" />
@@ -246,7 +250,7 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
           ]
         : []),
     ],
-    [project.can_edit],
+    [project.can_edit, project.id, router],
   );
 
   return (
@@ -306,15 +310,8 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         />
       )}
 
-      {(creating || editing) && (
-        <PurchaseOrderDialog
-          project={project}
-          po={editing}
-          onDone={() => {
-            setCreating(false);
-            setEditing(null);
-          }}
-        />
+      {creating && (
+        <PurchaseOrderDialog project={project} onDone={() => setCreating(false)} />
       )}
 
       <ConfirmDeleteDialog

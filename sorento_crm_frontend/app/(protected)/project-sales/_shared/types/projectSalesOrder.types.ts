@@ -21,8 +21,21 @@ export type SalesOrderStatus =
   | 'published'
   | 'amended';
 
-/** Where the area split came from. The split is a proposal, never a rule (AC-F4a). */
-export type GroupingOrigin = 'area' | 'learned' | 'manual' | 'subset';
+/** Where the split came from. The split is a proposal, never a rule (AC-F4a). */
+export type GroupingOrigin =
+  | 'area'
+  | 'learned'
+  | 'manual'
+  | 'subset'
+  | 'delivery_date'
+  | 'delivery_month';
+
+/**
+ * How the builder cuts the drafted lines into sales orders. Chosen per build: the schedule
+ * area is the default because the schedule already names it, but a customer who orders
+ * against dates rather than areas gets one order per delivery date or per month instead.
+ */
+export type SalesOrderSplitBy = 'area' | 'delivery_date' | 'delivery_month';
 
 export type FindingSeverity = 'hard' | 'warn' | 'info';
 
@@ -192,6 +205,20 @@ export interface SalesOrderPublishResult {
   /** The same gate the row and the worksheet carry. Absent on an older backend. */
   can_export?: boolean;
   autocount_doc_no?: string | null;
+  /** How many hard findings this publish waved through. 0 on the ordinary path. */
+  acknowledged_findings?: number;
+}
+
+/**
+ * The publish ask. Omitted entirely on the ordinary path.
+ *
+ * `acknowledge_blocking` is the one-decision form of the per-finding override: it needs the
+ * sales-manager grant (403 without it) and a reason (422 without one), and that reason is
+ * recorded on every hard finding it clears.
+ */
+export interface SalesOrderPublishBody {
+  acknowledge_blocking?: boolean;
+  reason?: string;
 }
 
 export interface SalesOrderLineUpdateBody {
@@ -206,6 +233,68 @@ export interface SalesOrderLineUpdateBody {
 export interface SalesOrderRegroupGroup {
   area_group: string;
   line_ids: string[];
+}
+
+// ------------------------------------------------- the whole-document save (edit view)
+
+/**
+ * One line inside a whole-document save.
+ *
+ * `id` is what tells a stored line from a new one: a line already stored carries the id the
+ * API gave it, a line added in the session arrives without one, and an id that is not on this
+ * order is refused rather than treated as new (which would duplicate the row the client meant
+ * to move). `line_no` is NOT sent: position in the array is the order.
+ *
+ * `amount` is absent on purpose, exactly as it is on the per-line body: it is always
+ * `qty * unit_price`, and letting a third number be typed would create a line that fails our
+ * own arithmetic check.
+ */
+export interface SalesOrderLineWriteBody {
+  id?: string;
+  product_id?: string | null;
+  description?: string | null;
+  qty: string;
+  uom?: string | null;
+  unit_price: string;
+  delivery_date?: string | null;
+  stock_location?: string | null;
+}
+
+/**
+ * The body of `PUT /sales-orders/{pso_id}`: the header, and the FULL desired line set.
+ *
+ * `lines` absent leaves the lines exactly as they are. When present it is a REPLACE, so a
+ * stored line whose id is missing from it is deleted - the caller must always send the whole
+ * set it is showing.
+ */
+export interface SalesOrderDocumentSaveBody {
+  area_group?: string | null;
+  lines?: SalesOrderLineWriteBody[];
+}
+
+/** What `DELETE /sales-orders/{pso_id}` answers: the reference, and what actually went. */
+export interface SalesOrderDeleteResult {
+  success: boolean;
+  provisional_ref: string;
+  deleted: Record<string, number>;
+}
+
+/**
+ * One line as the edit session holds it, between Edit and Save.
+ *
+ * Mirrors `StagedQuotationLine`: the stored row is kept beside the draft because the flags
+ * only the server can decide (the phase label, the PO line it exploded from, its findings)
+ * are read off it, and a line added in the session simply has none.
+ */
+export interface StagedSalesOrderLine {
+  /** The stored line's id, or null for one added in this session. */
+  id: string | null;
+  /** The row's identity for as long as the session lasts. Minted by the line table. */
+  key: string;
+  line: ProjectSalesOrderLine | null;
+  draft: Record<string, string>;
+  /** Staged for removal: struck through on screen, and gone only once Save runs. */
+  removed: boolean;
 }
 
 // ------------------------------------------------------------------ amendments

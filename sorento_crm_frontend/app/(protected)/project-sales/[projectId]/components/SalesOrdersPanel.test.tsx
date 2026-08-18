@@ -292,7 +292,10 @@ describe('SalesOrdersPanel', () => {
       within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Build drafts' }),
     );
 
-    await waitFor(() => expect(buildSalesOrders).toHaveBeenCalledWith('po-1', 'sched-v1'));
+    // The schedule-area split is the default, so an untouched dialog builds as it always did.
+    await waitFor(() =>
+      expect(buildSalesOrders).toHaveBeenCalledWith('po-1', 'sched-v1', 'area'),
+    );
   });
 
   it('hides the build control on a project the user may not edit', async () => {

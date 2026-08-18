@@ -1,6 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
+  AdoptSalesOrderResult,
   ConfirmResult,
   ConfirmSupplyBody,
   FulfilmentPlanningListEnvelope,
@@ -10,25 +11,75 @@ import type {
   SupplyFailingLine,
   SupplyProposal,
 } from '../types/fulfilmentPlanning.types';
+import {
+  mockAdopt,
+  mockReconciliation,
+  mockSupply,
+  mockWorklist,
+} from './__mocks__/fulfilmentPlanning.fixtures';
 
 /**
- * Fulfilment Planning: the AutoCount reconciliation of a published Project SO (Stage 1B),
- * and the supply composition CS confirms on top of it (Stage 1C).
+ * Fulfilment Planning: the worklist of everything that needs planning, the reconciliation
+ * behind one order, and the supply composition CS confirms on top of it.
  *
- * API CONTRACT (`documentation/plans/scm/STAGE1B-scm-front-planning-reconciliation.md`
- * section 3 and `STAGE1C-scm-front-planning-promising.md` section 6; a deviation updates
- * that file and both sides in the same change). Every route hangs off the existing
- * `/api/v1/project-sales` router, reads with `projects.projects.view`, writes with
- * `projects.projects.edit`.
+ * API CONTRACT. Source of truth is
+ * `documentation/plans/scm/PLAN-fulfilment-planning-from-autocount-so.md` section 6, which
+ * amends `STAGE1B-scm-front-planning-reconciliation.md` section 3 and
+ * `STAGE1C-scm-front-planning-promising.md` section 6. A deviation updates that file and
+ * both sides in the same change. Every route hangs off the existing `/api/v1/project-sales`
+ * router, reads with `projects.projects.view`, writes with `projects.projects.edit`, and no
+ * new permission is introduced.
  *
- *   GET  /project-sales/fulfilment-planning?page&limit&query&review_state&project_id
+ *   GET  /project-sales/fulfilment-planning
+ *        ?page&limit&query&review_state&project_id&sales_order_id
  *        -> { data: FulfilmentPlanningRow[], pagination: { total, page, limit } }
- *        review_state is a closed set: awaiting_reconciliation | needs_cs_review | confirmed
+ *
+ *        review_state is a CLOSED set, and the first value is the new one:
+ *          not_started | awaiting_reconciliation | needs_cs_review | confirmed
+ *        An unknown value is a 422, never an empty 200.
+ *
+ *        The list is a UNION of two arms, one row per subject, disjoint by construction:
+ *          arm 1 `row_kind = 'sales_order'`   - an outstanding project-class CORE sales
+ *                order, whether or not anybody has planned it. Unplanned reads not_started
+ *                and carries no `id`, no `provisional_ref` and no `status`, because no
+ *                planning record exists to carry them.
+ *          arm 2 `row_kind = 'planning_record'` - a Project SO authored here that has no
+ *                core sales order yet (Stage 1B's Awaiting reconciliation).
+ *        Ordered by `earliest_required_date` ascending, NULLS LAST, tie-broken on the
+ *        sales-order number so the order is total and no row lands on two pages (AC-FP04).
+ *        `query` matches sales-order number, customer name, the project string, project code
+ *        and title, provisional ref, AutoCount doc no and area group.
+ *
+ *   POST /project-sales/fulfilment-planning/adopt
+ *        body { sales_order_id }
+ *        -> { project_sales_order_id, so_number, review_state, already_adopted }
+ *        This is Start planning, and it is the whole of journey step 2: it writes one
+ *        planning record plus one mirror line per open core line and asks nothing else. It
+ *        is IDEMPOTENT (a second press, a retry or a second user answers with the record
+ *        that exists and `already_adopted: true`), which is why it takes no confirmation
+ *        dialog - it destroys nothing and it repeats safely.
+ *        409 when another planning record already holds that core order, naming its
+ *        reference; 404 when the sales order is out of the caller's company scope.
  *
  *   GET  /project-sales/sales-orders/{pso_id}/reconciliation -> ReconciliationSummary
  *   POST /project-sales/sales-orders/{pso_id}/reconcile      -> ReconciliationSummary
+ *        Same route for both origins, dispatching on the record's status. For an ADOPTED
+ *        order it is a one-way SYNC rather than a diff: `header.outcome` is `adopted` and
+ *        its `reason` is the sentence the card shows, because there is no separately
+ *        authored document to disagree with. Idempotent either way.
  *
  *   GET  /project-sales/sales-orders/{pso_id}/supply  -> SupplyProposal
+ *        Additive to Stage 1C: `SupplyProposal.sales_order_number` (the human key),
+ *        `SupplyProposal.sales_order_id` (addressing only, for the /scm link), nullable
+ *        `project_id`, and per line `fulfilment_location_missing`.
+ *
+ *        THE FULFILMENT LOCATION IS THE CORE SALES-ORDER LINE'S OWN `warehouse_id`, per
+ *        line (captain's decision, plan section 11 question 2). There is no endpoint to set
+ *        it, no order-level "Fulfil from" question and no default: a line whose core line
+ *        states no warehouse comes back with `fulfilment_location_missing: true`, no
+ *        proposed component of any kind, and is refused by Confirm by name. It is fixed on
+ *        the SCM sales order, which this screen links to.
+ *
  *   POST /project-sales/sales-orders/{pso_id}/confirm -> ConfirmResult
  *        body ConfirmSupplyBody; 409/422 -> the shared AppException envelope plus the
  *        list: { message, detail, code, failing_lines: [{line_no, item_code, reason}] },
@@ -38,9 +89,17 @@ import type {
  * from `line_no` and `item_code` ("Line 2, SRT501-CP"), so a message that repeats it reads
  * as the same fact twice.
  *
- * The reconcile POST is idempotent. The confirm POST is not a retry of a partial write:
- * it either commits every line or writes nothing at all.
+ * The confirm POST is not a retry of a partial write: it either commits every line or
+ * writes nothing at all.
+ *
+ * PHASE 1. `NEXT_PUBLIC_FULFILMENT_MOCK=1` serves `__mocks__/fulfilmentPlanning.fixtures.ts`
+ * instead of calling any of the above, which is how the worklist union, the Not started
+ * pill, Start planning and the adopted sheet are clickable while their backend is still
+ * being written. The same switch idiom as `NEXT_PUBLIC_PROJECT_SO_MOCK`. Unset (the
+ * default), every function below is the real call and nothing changes. Both the flag branch
+ * and the fixtures are deleted when Phase 2 lands.
  */
+export const FULFILMENT_MOCK = process.env.NEXT_PUBLIC_FULFILMENT_MOCK === '1';
 
 const BASE = '/api/v1/project-sales';
 
@@ -69,20 +128,28 @@ function normaliseEnvelope(
   };
 }
 
-/** Every published or amended Project SO across projects, one row each. */
+/**
+ * Everything that needs planning, one row each: the outstanding core sales orders (planned
+ * or not) and the Project SOs authored here that have no core order yet.
+ */
 export async function listFulfilmentPlanning(
   params: FulfilmentPlanningListParams = {},
 ): Promise<FulfilmentPlanningListEnvelope> {
+  if (FULFILMENT_MOCK) return mockWorklist(params);
   const limit = params.limit ?? 25;
   const search = buildDataGridParams(
     {
       pageIndex: (params.page ?? 1) - 1,
       pageSize: limit,
-      // No `sorting`: the worklist is server-ordered by last update and offers no
-      // sortable column, so there is no sort to carry.
+      // No `sorting`: the worklist is server-ordered by earliest outstanding required date
+      // and offers no sortable column, so there is no sort to carry.
       searchQuery: params.query ?? '',
     },
-    { review_state: params.review_state, project_id: params.project_id },
+    {
+      review_state: params.review_state,
+      project_id: params.project_id,
+      sales_order_id: params.sales_order_id,
+    },
   );
   const response = await apiFetch(`${BASE}/fulfilment-planning?${search.toString()}`);
   if (!response.ok)
@@ -92,8 +159,28 @@ export async function listFulfilmentPlanning(
   return normaliseEnvelope(await response.json(), limit);
 }
 
+/**
+ * Start planning an outstanding core sales order (journey step 2).
+ *
+ * One decision, no form in between: the lines, products, quantities, required dates,
+ * locations and customer are all derived from the order itself. Idempotent, so the button
+ * is safe to press twice and safe for two people to press at once.
+ */
+export async function adoptSalesOrder(salesOrderId: string): Promise<AdoptSalesOrderResult> {
+  if (FULFILMENT_MOCK) return mockAdopt(salesOrderId);
+  const response = await apiFetch(`${BASE}/fulfilment-planning/adopt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sales_order_id: salesOrderId }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to start planning this sales order'));
+  return response.json();
+}
+
 /** What reconciliation currently makes of one order. A pure read: it writes nothing. */
 export async function getReconciliation(psoId: string): Promise<ReconciliationSummary> {
+  if (FULFILMENT_MOCK) return mockReconciliation(psoId);
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/reconciliation`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the reconciliation'));
@@ -106,6 +193,7 @@ export async function getReconciliation(psoId: string): Promise<ReconciliationSu
  * number). Idempotent, so the button is safe to press on an order that is already clean.
  */
 export async function rerunReconciliation(psoId: string): Promise<ReconciliationSummary> {
+  if (FULFILMENT_MOCK) return mockReconciliation(psoId);
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/reconcile`, {
     method: 'POST',
   });
@@ -119,6 +207,7 @@ export async function rerunReconciliation(psoId: string): Promise<Reconciliation
  * decision when one exists. A pure read: opening the sheet claims no stock.
  */
 export async function getSupply(psoId: string): Promise<SupplyProposal> {
+  if (FULFILMENT_MOCK) return mockSupply(psoId);
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/supply`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the supply composition'));

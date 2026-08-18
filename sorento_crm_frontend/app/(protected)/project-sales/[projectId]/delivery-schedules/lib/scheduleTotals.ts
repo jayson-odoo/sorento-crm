@@ -116,7 +116,15 @@ export type ColumnBlockerCode =
   | 'needs_product'
   | 'not_on_po'
   | 'po_mismatch'
-  | 'reported_mismatch';
+  | 'reported_mismatch'
+  /**
+   * The backend refused this column for a reason this file does not derive.
+   *
+   * A safety net, not a normal outcome: the rules below mirror the server's `_verdict`, so
+   * this only fires if the two ever drift. Being laxer than the server is the bad direction
+   * - the screen would invite a confirm the server then rejects.
+   */
+  | 'server';
 
 export interface ColumnBlocker {
   code: ColumnBlockerCode;
@@ -142,6 +150,21 @@ export interface ColumnState {
   poQty: string | null;
   reconciled: boolean;
   blockers: ColumnBlocker[];
+  /**
+   * A person overruled the blockers below as a false signal. They are still computed and
+   * still shown, because the check was not withdrawn; the column just stops blocking.
+   */
+  dismissed: boolean;
+  dismissedReason: string | null;
+  dismissedByName: string | null;
+  /**
+   * Something worth saying about a column that still reconciles, and never blocks it.
+   *
+   * A shortfall against the PO is the main one: a partial schedule is the normal state of a
+   * live project. Computed here so it tracks what is being typed, and taken from the server's
+   * own `warning` on a column nobody has edited.
+   */
+  warning: string | null;
 }
 
 /**
@@ -174,6 +197,13 @@ interface ProductLike {
   reported_total: string | null;
   po_qty: string | null;
   product_index?: number | null;
+  dismissed?: boolean;
+  dismissed_reason?: string | null;
+  dismissed_by_name?: string | null;
+  warning?: string | null;
+  /** The server's own verdict, used only as a backstop to the rules computed here. */
+  reconciled?: boolean;
+  reason?: string | null;
 }
 
 interface PhaseLike {
@@ -218,12 +248,16 @@ export function buildCellMap(cells: CellLike[]): CellMap {
 }
 
 /**
- * The three numbers per column and whether they agree.
+ * The three numbers per column, and whether they agree.
  *
- * Mirrors the contract's rule exactly: reconciled when our total equals the PO quantity and,
- * where the document carries one, equals the schedule's own TOTAL QTY. `drafts` are the
- * reviewer's unsaved edits, applied over the stored cells so a correction flips the column
- * the instant it is typed rather than after a round trip.
+ * Mirrors the server's `_verdict` rule for rule, because the two verdicts appear side by side
+ * and the screen must never ask for work the server would not: what BLOCKS is an unmatched
+ * product, a column with no PO quantity to check against, a column asking for MORE than the
+ * PO ordered, or phases that do not add up to the sheet's own TOTAL QTY row. Asking for LESS
+ * is a partial schedule, which is normal, and reads as a warning.
+ *
+ * `drafts` are the reviewer's unsaved edits, applied over the stored cells so a correction
+ * flips the column the instant it is typed rather than after a round trip.
  */
 export function buildColumnStates(
   products: ProductLike[],
@@ -268,14 +302,36 @@ export function buildColumnStates(
           `The PO version does not order this item, but the schedule asks for ${ourTotal}. ` +
           'Check the column is the right product, or amend the PO.',
       });
-    } else if (!qtyEquals(ourTotal, poQty)) {
-      const gap = describeGap(subtractQty(ourTotal, poQty));
-      blockers.push({
-        code: 'po_mismatch',
-        detail:
-          `The schedule asks for ${ourTotal} and the PO orders ${poQty}${gap}. ` +
-          'Correct a phase quantity, or amend the PO.',
-      });
+    }
+    /**
+     * A SHORTFALL is a WARNING, not a blocker, and this is the same rule as the server's
+     * `_verdict` (captain, 2026-08-18).
+     *
+     * A delivery schedule is routinely PARTIAL: the customer schedules part of what they
+     * ordered now and the rest on a later document, so "asks for 195 of the 200 ordered" is
+     * the normal state of a live project. Blocking on it made the screen demand a correction
+     * to something that was never wrong - and worse, disagree with the backend, which would
+     * confirm the same schedule happily.
+     *
+     * Asking for MORE than was ordered still blocks: the schedule cannot commit quantity
+     * nobody bought.
+     */
+    let shortfall: string | null = null;
+    if (poQty !== null && !qtyEquals(ourTotal, poQty)) {
+      const delta = subtractQty(ourTotal, poQty);
+      if (delta !== null && delta.startsWith('-')) {
+        shortfall =
+          `The schedule asks for ${ourTotal} of the ${poQty} on the purchase order; ` +
+          `the remaining ${delta.slice(1)} is expected on a later schedule.`;
+      } else {
+        const gap = describeGap(delta);
+        blockers.push({
+          code: 'po_mismatch',
+          detail:
+            `The schedule asks for ${ourTotal} and the PO orders ${poQty}${gap}. ` +
+            'Correct a phase quantity, or amend the PO.',
+        });
+      }
     }
     if (reportedTotal !== null && !qtyEquals(ourTotal, reportedTotal)) {
       blockers.push({
@@ -284,6 +340,42 @@ export function buildColumnStates(
           `The phases add up to ${ourTotal} but the schedule's own TOTAL QTY row says ` +
           `${reportedTotal}. One of the two was misread, so check the cells against the paper.`,
       });
+    }
+
+    const dismissed = product.dismissed === true;
+
+    /**
+     * Whether the reviewer has this column part-typed.
+     *
+     * It decides who gets the last word. The sentences here are recomputed on every
+     * keystroke, so while a column is being edited only they can be right; the server's
+     * `warning` and `reason` describe the numbers as they were SAVED and would contradict
+     * what is on screen. Untouched, the server's wording is the better of two identical
+     * facts and leads.
+     */
+    const edited = phases.some((phase) => drafts.has(cellMapKey(phase.id, key)));
+
+    /**
+     * The backstop: never be laxer than the server. A refusal we cannot derive is still a
+     * refusal, and it is shown as what the server said it was.
+     *
+     * Except over a shortfall, and that exception is load-bearing. Verdicts are STORED with
+     * the version, so a schedule read before a shortfall became a warning still carries the
+     * old refusal ("the column adds up to 53, the purchase order says 1777") until something
+     * recomputes it. Trusting that would put the blocker straight back and undo the rule this
+     * file was just changed to match - measured on the live stack, all 21 blocked columns of
+     * HQ/26/01/121 came back that way. Where we have derived the shortfall ourselves, our
+     * verdict is the current one and it wins.
+     */
+    if (
+      blockers.length === 0 &&
+      shortfall === null &&
+      !edited &&
+      product.reconciled === false &&
+      !dismissed &&
+      product.reason
+    ) {
+      blockers.push({ code: 'server', detail: product.reason });
     }
 
     return {
@@ -297,8 +389,15 @@ export function buildColumnStates(
       ourTotal,
       reportedTotal,
       poQty,
-      reconciled: blockers.length === 0,
+      // A dismissed column counts as reconciled, which is the whole point of dismissing it:
+      // it stops being work to do and stops holding up the confirm. `blockers` is left
+      // populated so the screen can still say what the check found.
+      reconciled: blockers.length === 0 || dismissed,
       blockers,
+      dismissed,
+      dismissedReason: product.dismissed_reason ?? null,
+      dismissedByName: product.dismissed_by_name ?? null,
+      warning: shortfall ?? (edited ? null : (product.warning ?? null)),
     };
   });
 }

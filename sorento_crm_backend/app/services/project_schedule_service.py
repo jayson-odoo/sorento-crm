@@ -39,15 +39,17 @@ document, which is the fallback working rather than a degradation.
 """
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.order import Customer
 from app.models.product import Product
@@ -1153,13 +1155,31 @@ class ProjectScheduleService:
         existing = version.reconciliation_json or {}
         if existing.get("acknowledgement"):
             payload["acknowledgement"] = existing["acknowledgement"]
-        version.reconciliation_json = payload
+        self._store_reconciliation(version, payload)
         version.reconciled_columns = payload["reconciled_columns"]
         version.total_columns = payload["total_columns"]
         return {
             "reconciled_columns": payload["reconciled_columns"],
             "total_columns": payload["total_columns"],
         }
+
+    def _store_reconciliation(
+        self, version: DeliveryScheduleVersion, payload: dict
+    ) -> None:
+        """Write the verdict back, and TELL SQLAlchemy it changed.
+
+        ``reconciliation_json`` is a plain ``Column(JSONB)``, not a ``MutableDict``, so
+        the only change detection it has is comparing the value against the snapshot
+        taken when the row was loaded. Every writer here mutates the loaded dict in
+        place (a column entry gains a product id, say) and assigns it back, and that
+        snapshot IS the object being mutated: the comparison finds them equal, no UPDATE
+        is emitted, and the endpoint returns 200 over a row the database never took.
+        Measured on the live stack: two 200s from ``PUT .../products/{index}`` left
+        ``product_id`` null on the column. Assignment alone is NOT enough,
+        ``flag_modified`` is what makes it flush.
+        """
+        version.reconciliation_json = payload
+        flag_modified(version, "reconciliation_json")
 
     def _column_entry(
         self,
@@ -1171,7 +1191,7 @@ class ProjectScheduleService:
     ) -> dict:
         po_qty = po_row["qty"] if po_row else None
         cancelled = po_row["cancelled"] if po_row else Decimal(0)
-        reconciled, reason = _verdict(total, column.reported_total, po_qty)
+        reconciled, reason, warning = _verdict(total, column.reported_total, po_qty)
         note = None
         if cancelled and cancelled > 0:
             # AC-E3a: the cancellation stays visible instead of quietly changing the
@@ -1199,6 +1219,8 @@ class ProjectScheduleService:
             "cancelled_qty": qty_str(cancelled) if cancelled else None,
             "reconciled": reconciled,
             "reason": reason,
+            # Reconciled, and still worth saying: the commonest one is a partial schedule.
+            "warning": warning,
             "note": note,
         }
 
@@ -1247,8 +1269,26 @@ class ProjectScheduleService:
         return quantities, ("po_row" if quantities else None)
 
     def _recompute(self, version: DeliveryScheduleVersion) -> None:
-        """Re-run the verdict from the CELL ROWS after a person edited them."""
-        payload = version.reconciliation_json or {}
+        """Re-run the verdict from the CELL ROWS after a person edited them, and store it."""
+        payload, _changed = self._recomputed_payload(version)
+        self._store_reconciliation(version, payload)
+        version.reconciled_columns = payload["reconciled_columns"]
+        version.total_columns = payload["total_columns"]
+        self.db.add(version)
+        self.db.flush()
+
+    def _recomputed_payload(
+        self, version: DeliveryScheduleVersion
+    ) -> Tuple[dict, bool]:
+        """The verdict this version's CELL ROWS deserve right now, and whether it moved.
+
+        Deep-copied rather than mutated in place, so a caller may ask what the current
+        rules make of a version WITHOUT touching the session's copy of it. That is what
+        lets the read path refresh a confirmed version's numbers for display and still
+        never write to what was agreed.
+        """
+        payload = copy.deepcopy(version.reconciliation_json or {})
+        stored = version.reconciliation_json or {}
         entries: List[dict] = list(payload.get("columns") or [])
         schedule = self.schedule_for(version)
         po_quantities, po_source = self._po_quantities(schedule, version)
@@ -1291,25 +1331,63 @@ class ProjectScheduleService:
             po_row = po_quantities.get(entry["product_id"]) if entry.get("product_id") else None
             reported = to_decimal(entry.get("reported_total"))
             po_qty = po_row["qty"] if po_row else None
-            reconciled, reason = _verdict(total, reported, po_qty)
+            reconciled, reason, warning = _verdict(total, reported, po_qty)
             entry["column_total"] = qty_str(total)
             entry["po_qty"] = qty_str(po_qty)
             entry["po_qty_source"] = po_source if po_qty is not None else None
             cancelled = po_row["cancelled"] if po_row else Decimal(0)
             entry["cancelled_qty"] = qty_str(cancelled) if cancelled else None
-            entry["reconciled"] = reconciled
+            # A dismissed column stops blocking, but it keeps the reason the check gave:
+            # the verdict was not withdrawn, a person overruled it, and the screen has to
+            # be able to show both halves of that.
+            entry["reconciled"] = bool(reconciled or entry.get("dismissed"))
             entry["reason"] = reason
+            entry["warning"] = warning
 
         payload["columns"] = entries
         payload["reconciled_columns"] = sum(1 for entry in entries if entry["reconciled"])
         payload["total_columns"] = len(entries)
-        version.reconciliation_json = payload
-        version.reconciled_columns = payload["reconciled_columns"]
-        version.total_columns = payload["total_columns"]
-        # JSONB reassignment is what tells SQLAlchemy the value changed; mutating the
-        # dict in place would not flush.
-        self.db.add(version)
-        self.db.flush()
+        return payload, payload != stored
+
+    def _refreshed_reconciliation(self, version: DeliveryScheduleVersion) -> dict:
+        """The stored verdict, brought up to the CURRENT rules before anybody reads it.
+
+        The payload is only ever recomputed on a WRITE, so a version read today still
+        served the refusals it was given when the document was read: after the shortfall
+        became a warning, a live version kept reporting "the column adds up to 53, the
+        purchase order says 1777" and 31 of 44 reconciled, and the numbers only moved when
+        an unrelated dismissal happened to write the row (measured 2026-08-18).
+
+        So the read path refreshes too. An OPEN version is persisted, deliberately
+        committed, so the stored payload converges and the confirm agrees with the screen;
+        the write is best effort, because a verdict we could not save is not worth a 500 on
+        a GET and the caller is served the fresh numbers either way. A CONFIRMED version is
+        computed for display and never written: what was agreed, and the acknowledgement
+        that carried it, are the record.
+        """
+        stored = version.reconciliation_json or {}
+        if not (stored.get("columns") or []):
+            # Nothing has been read yet. The review screen POLLS this every three seconds
+            # while a document is being read, and an empty payload would differ from a
+            # freshly computed one on every one of those polls: a write per poll for a
+            # version that has no columns to judge.
+            return stored
+        payload, changed = self._recomputed_payload(version)
+        if not changed:
+            return stored
+        if version.confirmed_at is not None:
+            return payload
+        try:
+            self._store_reconciliation(version, payload)
+            version.reconciled_columns = payload["reconciled_columns"]
+            version.total_columns = payload["total_columns"]
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - the same reasoning as reconcile_one (S20)
+            logger.exception(
+                "could not store the refreshed verdict for schedule version %s", version.id
+            )
+            self.db.rollback()
+        return payload
 
     # ------------------------------------------------------------------ editing
 
@@ -1323,6 +1401,7 @@ class ProjectScheduleService:
         """
         version = self.get_version(version_id)
         self._assert_open(version)
+        touched: Set[str] = set()
         for payload in cells:
             phase_id = _clean(payload.get("phase_id"), 64)
             product_id = _clean(payload.get("product_id"), 64)
@@ -1354,6 +1433,9 @@ class ProjectScheduleService:
                     message="That delivery phase is not on this project.",
                     code="delivery_phase_not_found",
                 )
+            touched.add(
+                f"product:{product_id}" if product_id else f"raw:{(raw_code or '').upper()}"
+            )
             query = self.db.query(DeliveryScheduleCell).filter(
                 DeliveryScheduleCell.version_id == version.id,
                 DeliveryScheduleCell.phase_id == phase_id,
@@ -1385,8 +1467,29 @@ class ProjectScheduleService:
                 )
             )
         self.db.flush()
+        self._clear_dismissals(version, touched)
         self._recompute(version)
         return version
+
+    def _clear_dismissals(
+        self, version: DeliveryScheduleVersion, keys: Set[str]
+    ) -> None:
+        """A column whose numbers just changed is judged again from scratch.
+
+        A dismissal says "the check is wrong about THESE numbers". Edit the numbers and
+        it is a statement about something else, so it goes.
+        """
+        if not keys:
+            return
+        payload = version.reconciliation_json or {}
+        entries: List[dict] = list(payload.get("columns") or [])
+        cleared = [
+            _clear_dismissal(entry) for entry in entries if entry.get("key") in keys
+        ]
+        if not any(cleared):
+            return
+        payload["columns"] = entries
+        self._store_reconciliation(version, payload)
 
     def _column_at(
         self, version: DeliveryScheduleVersion, product_index: Any
@@ -1484,8 +1587,12 @@ class ProjectScheduleService:
         entry["product_id"] = product_id
         entry["key"] = f"product:{product_id}"
         entry["resolution_source"] = _RESOLUTION_MANUAL
+        # This column now means a different product, so it is measured against a
+        # different PO quantity. Any dismissal of the old verdict is about numbers that
+        # no longer apply.
+        _clear_dismissal(entry)
         payload["columns"] = entries
-        version.reconciliation_json = payload
+        self._store_reconciliation(version, payload)
         self.db.add(version)
         self.db.flush()
         logger.info(
@@ -1495,6 +1602,67 @@ class ProjectScheduleService:
 
         self._remember_code(version, entry.get("customer_code_raw"), product_id, actor_user_id)
         self._recompute(version)
+        return version
+
+    def dismiss_column_verdict(
+        self,
+        version_id: str,
+        column_index: int,
+        *,
+        dismissed: bool,
+        reason: Optional[str] = None,
+        actor_user_id: Optional[str] = None,
+    ) -> DeliveryScheduleVersion:
+        """Set ONE column's failing verdict aside as a false signal, with a reason.
+
+        The checksum reads somebody else's paper and is sometimes wrong about a column
+        that is fine: the TOTAL QTY row is transcribed from a print that may itself be
+        wrong, and a product the PO never ordered can still legitimately be scheduled.
+        The whole-sheet acknowledgement at confirm already covers "I know, bind it
+        anyway", but it names no column and is taken at the last moment. This is the
+        same judgement made per column, where the person is already looking.
+
+        A dismissal does not withdraw the verdict: the computed reason stays on the
+        entry so the screen shows both halves, and only ``reconciled`` flips, which is
+        what stops the column blocking the confirm. Anything that CHANGES the column
+        clears it -- its product (``resolve_product_column``), its cells
+        (``update_cells``) or a re-read of the document -- because the dismissal was
+        about the numbers as they stood.
+        """
+        version = self.get_version(version_id)
+        self._assert_open(version)
+        payload = version.reconciliation_json or {}
+        entries: List[dict] = list(payload.get("columns") or [])
+        entry = next((item for item in entries if item.get("index") == column_index), None)
+        if entry is None:
+            raise AppException(
+                status_code=404,
+                message="That column is not on this schedule.",
+                code="schedule_column_not_found",
+            )
+        if dismissed:
+            note = (reason or "").strip()
+            if not note:
+                raise AppException(
+                    status_code=422,
+                    message="Dismissing a column's verdict needs a reason.",
+                    code="schedule_dismissal_reason_required",
+                )
+            entry["dismissed"] = True
+            entry["dismissed_reason"] = note[:500]
+            entry["dismissed_by"] = actor_user_id
+            entry["dismissed_at"] = datetime.utcnow().isoformat()
+        else:
+            _clear_dismissal(entry)
+        payload["columns"] = entries
+        self._store_reconciliation(version, payload)
+        self._recompute(version)
+        logger.info(
+            "column %s on schedule version %s %s",
+            column_index,
+            version.id,
+            "dismissed as a false signal" if dismissed else "put back under its verdict",
+        )
         return version
 
     def _remember_code(
@@ -1565,9 +1733,16 @@ class ProjectScheduleService:
 
         Refused while any column is unreconciled unless a person acknowledges it with a
         reason, which is then kept on the version forever.
+
+        The verdict is re-run first, so what is judged here is the CURRENT rules applied
+        to the current cells rather than a verdict cached when the document was read. A
+        version read before the shortfall became a warning would otherwise keep blocking
+        on a column the screen no longer shows as work, and only an unrelated cell edit
+        would have cleared it.
         """
         version = self.get_version(version_id)
         self._assert_open(version)
+        self._recompute(version)
         payload = version.reconciliation_json or {}
         entries: List[dict] = list(payload.get("columns") or [])
         if not entries:
@@ -1623,7 +1798,7 @@ class ProjectScheduleService:
                 "partial_read": version.extraction_state == STATE_PARTIAL,
             }
             payload["acknowledgement"] = acknowledgement
-        version.reconciliation_json = dict(payload)
+        self._store_reconciliation(version, payload)
         version.confirmed_by = actor_user_id
         version.confirmed_at = datetime.utcnow()
         self.db.add(version)
@@ -1670,7 +1845,9 @@ class ProjectScheduleService:
         # task's own error handling, so nothing inside it could have said so (S20).
         self.reconcile_stranded([version])
         schedule = self.schedule_for(version)
-        payload = version.reconciliation_json or {}
+        # The stored verdict is only written on a WRITE, so it can be older than the rules.
+        # Refreshed here, and persisted when the version is still open.
+        payload = self._refreshed_reconciliation(version)
         po = self.db.get(ProjectPurchaseOrder, schedule.purchase_order_id)
         project = self.db.get(Project, schedule.project_id)
         po_version = (
@@ -1729,7 +1906,12 @@ class ProjectScheduleService:
                     "qty_source": entry.get("qty_source"),
                     "reconciled": bool(entry.get("reconciled")),
                     "reason": entry.get("reason"),
+                    "warning": entry.get("warning"),
                     "note": entry.get("note"),
+                    "dismissed": bool(entry.get("dismissed")),
+                    "dismissed_reason": entry.get("dismissed_reason"),
+                    "dismissed_by_name": self._user_name(entry.get("dismissed_by")),
+                    "dismissed_at": entry.get("dismissed_at"),
                 }
             )
 
@@ -1793,9 +1975,17 @@ class ProjectScheduleService:
             "cells": cells,
             "date_warnings": payload.get("date_warnings") or [],
             "acknowledgement": payload.get("acknowledgement"),
+            # From the payload being SERVED, not from the row's own counters: a confirmed
+            # version is refreshed for display without being written, so the counters can
+            # legitimately still hold what was agreed. The header must agree with the
+            # columns underneath it.
             "reconciliation": {
-                "reconciled_columns": int(version.reconciled_columns or 0),
-                "total_columns": int(version.total_columns or 0),
+                "reconciled_columns": int(
+                    payload.get("reconciled_columns", version.reconciled_columns) or 0
+                ),
+                "total_columns": int(
+                    payload.get("total_columns", version.total_columns) or 0
+                ),
             },
             "uploaded_by_name": self._uploader_name(version),
             "confirmed_by_name": self._user_name(version.confirmed_by),
@@ -1952,6 +2142,16 @@ class ProjectScheduleService:
 
 # ----------------------------------------------------------------- free helpers
 
+_DISMISSAL_FIELDS = ("dismissed", "dismissed_reason", "dismissed_by", "dismissed_at")
+
+
+def _clear_dismissal(entry: dict) -> bool:
+    """Forget a column's dismissal. True when there was one to forget."""
+    had = bool(entry.get("dismissed"))
+    for field_name in _DISMISSAL_FIELDS:
+        entry.pop(field_name, None)
+    return had
+
 
 def _as_int(value: Any) -> Optional[int]:
     try:
@@ -1998,24 +2198,49 @@ def _code_candidates(header_code: Optional[str], customer_code: Optional[str]) -
 
 def _verdict(
     total: Decimal, reported: Optional[Decimal], po_qty: Optional[Decimal]
-) -> Tuple[bool, Optional[str]]:
-    """A column is reconciled when every checksum available agrees, and there is one.
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """``(reconciled, reason, warning)`` for one column.
 
-    Silence is not agreement: a column with no PO quantity to compare against is not
-    reconciled, it is unchecked, and saying so is the whole point of the screen.
+    A SHORTFALL against the purchase order is a WARNING, not a blocker (captain,
+    2026-08-18): a delivery schedule is routinely PARTIAL. The customer schedules part of
+    what they ordered now and the rest on a later document, so "the schedule asks for 195
+    of the 200 ordered" is the normal state of a live project, and blocking on it made the
+    screen demand a correction to something that was never wrong.
+
+    What still blocks is the reverse and the internal disagreement:
+
+    - the column asks for MORE than the purchase order ordered: the schedule cannot
+      commit quantity nobody bought,
+    - the phases do not add up to the schedule's own TOTAL QTY row: one of the two was
+      misread and neither number can be trusted until that is settled,
+    - there is no purchase order quantity at all. Silence is not agreement: the column is
+      unchecked, not clean, and saying so is the whole point of the screen.
+
+    The ceiling is the quantity the named PO version PRINTS, cancelled lines included.
+    That is deliberate and is AC-E3a: a schedule drawn before a handwritten cancellation
+    reconciles as printed, and netting the cancellation out of the target would reject a
+    document the customer considers correct (finding G1). The cancelled portion is
+    reported separately as the column's note.
     """
     if reported is not None and total != reported:
         return False, (
             f"the column adds up to {qty_str(total)}, the schedule's own total says "
             f"{qty_str(reported)}"
-        )
+        ), None
     if po_qty is None:
-        return False, "no purchase order quantity to reconcile against"
-    if total != po_qty:
+        return False, "no purchase order quantity to reconcile against", None
+    if total > po_qty:
         return False, (
-            f"the column adds up to {qty_str(total)}, the purchase order says {qty_str(po_qty)}"
+            f"the column adds up to {qty_str(total)}, more than the "
+            f"{qty_str(po_qty)} the purchase order orders"
+        ), None
+    if total < po_qty:
+        return True, None, (
+            f"The schedule asks for {qty_str(total)} of the {qty_str(po_qty)} on the "
+            f"purchase order; the remaining {qty_str(po_qty - total)} is expected on a "
+            "later schedule."
         )
-    return True, None
+    return True, None, None
 
 
 def _date_warnings(phases: List[_Phase]) -> List[dict]:

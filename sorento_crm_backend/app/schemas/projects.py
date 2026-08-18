@@ -1414,6 +1414,15 @@ class ProjectPurchaseOrderCreate(ProjectPurchaseOrderBase):
 
 
 class ProjectPurchaseOrderUpdate(BaseModel):
+    """The header, and optionally the WHOLE line set, in one save.
+
+    ``lines`` is what makes the PO detail screen an edit view rather than a table that
+    writes on every blur: absent means "header only", which is the shape the record-a-PO
+    modal sends and must keep working. Present, it is the full desired set and a stored
+    line whose id is missing from it is DELETED, so a client must send every line it is
+    showing the user. See ``project_po_service.replace_lines``.
+    """
+
     po_number: Optional[str] = Field(None, min_length=1, max_length=100)
     po_source: Optional[str] = None
     quotation_version_id: Optional[str] = None
@@ -1421,6 +1430,13 @@ class ProjectPurchaseOrderUpdate(BaseModel):
     po_date: Optional[date] = None
     po_amount: Optional[Decimal] = None
     notes: Optional[str] = None
+    lines: Optional[List["ProjectPurchaseOrderLineWrite"]] = Field(
+        None,
+        description=(
+            "Every line the PO should end up with, in display order. Omit the key to leave "
+            "the lines untouched; an empty array clears them. Array position IS sort_order."
+        ),
+    )
 
 
 class ProjectPurchaseOrderResponse(BaseModel):
@@ -1447,6 +1463,10 @@ class ProjectPurchaseOrderResponse(BaseModel):
     status: Optional[str] = None
     po_confirmed: bool = False
     schedule_confirmed: bool = False
+    # Sales orders already OUT of this PO. Editing it stays allowed - corrections are the
+    # normal case - but the screen has to be able to say so before somebody saves over it,
+    # because those orders do not follow the change.
+    published_sales_order_count: int = 0
     model_mismatch_count: int = 0
     price_mismatch_count: int = 0
 
@@ -1492,6 +1512,24 @@ class ProjectPurchaseOrderLineUpdate(BaseModel):
     uom: Optional[str] = None
     sort_order: Optional[int] = None
     notes: Optional[str] = None
+
+
+class ProjectPurchaseOrderLineWrite(ProjectPurchaseOrderLineBase):
+    """One line inside a whole-PO save.
+
+    ``id`` is what tells an existing line from a new one: a line already stored carries the
+    id the API gave it, a new one arrives without one, and an id that is not on this PO is
+    refused rather than treated as new (which would duplicate the row the client meant to
+    move). ``sort_order`` is inherited from the base for shape compatibility but is IGNORED --
+    position in the array is the order.
+    """
+
+    id: Optional[str] = None
+
+
+# The header schema references the line schema by name, and the line schema needs the base
+# that is declared below it. Resolved here, once both exist.
+ProjectPurchaseOrderUpdate.model_rebuild()
 
 
 class ProjectPurchaseOrderLineResponse(BaseModel):

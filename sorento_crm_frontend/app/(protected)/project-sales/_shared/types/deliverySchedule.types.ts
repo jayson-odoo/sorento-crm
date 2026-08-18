@@ -66,6 +66,22 @@ export interface DeliveryScheduleProduct {
    * this only matters if the backend ever reorders the array.
    */
   product_index?: number | null;
+
+  /**
+   * A person overruled this column's failing check as a false signal. The check itself is
+   * not withdrawn, so the sentences describing it are still shown; the column simply stops
+   * blocking the confirm. Cleared by anything that changes the column.
+   */
+  dismissed?: boolean;
+  dismissed_reason?: string | null;
+  dismissed_by_name?: string | null;
+
+  /**
+   * Something worth saying about a column that still reconciles: it agrees with the PO and is
+   * nonetheless worth a second look. Never blocks the confirm, so the screen renders it amber
+   * rather than red, and there is nothing to fix.
+   */
+  warning?: string | null;
 }
 
 /**
@@ -193,6 +209,12 @@ export interface DeliveryScheduleCellInput {
 export interface DeliveryScheduleConfirmBody {
   acknowledge_unreconciled?: boolean;
   reason?: string;
+}
+
+/** `reason` is required when dismissing; the server answers 422 without it. */
+export interface DeliveryScheduleDismissBody {
+  dismissed: boolean;
+  reason?: string | null;
 }
 
 /**

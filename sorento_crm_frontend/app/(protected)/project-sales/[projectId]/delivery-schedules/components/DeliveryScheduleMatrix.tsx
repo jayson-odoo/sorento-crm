@@ -4,6 +4,7 @@ import * as React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import type { DeliverySchedulePhase } from '../../../_shared/types/deliverySchedule.types';
 import type { ColumnState } from '../lib/scheduleTotals';
 import { phaseRowLabel } from '../lib/scheduleTotals';
@@ -53,6 +54,11 @@ export interface ScheduleGridController {
   setDraft: (phaseId: string, columnKey: string, value: string) => void;
   commit: (phaseId: string, column: ColumnState) => void;
   resolveProduct: (columnIndex: number, productId: string) => void;
+  /**
+   * The products the PO this schedule is checked against orders, for the column pickers.
+   * Empty when there is no PO version to read, which sends the pickers to the catalogue.
+   */
+  poOptions: SearchableSelectOption[];
   canEdit: boolean;
   /** Column indexes whose product was just identified, so the map note is shown once. */
   learnedColumns: number[];
@@ -338,6 +344,7 @@ function ColumnHeading({
             customerCode={column.customerCode}
             action={column.productId ? 'Change the product' : 'Pick the product'}
             variant={column.productId ? 'compact' : 'field'}
+            poOptions={controller.poOptions}
             onPick={(productId) => controller.resolveProduct(column.index, productId)}
           />
         </div>

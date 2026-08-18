@@ -11,9 +11,13 @@ import type {
   ProjectSalesOrderDetail,
   ProjectSalesOrderListParams,
   ProjectSalesOrderRow,
+  SalesOrderDeleteResult,
+  SalesOrderDocumentSaveBody,
   SalesOrderLineUpdateBody,
+  SalesOrderPublishBody,
   SalesOrderPublishResult,
   SalesOrderRegroupGroup,
+  SalesOrderSplitBy,
   SalesOrderWorksheet,
   ScheduleVersionOption,
 } from '../types/projectSalesOrder.types';
@@ -65,20 +69,41 @@ function normaliseEnvelope(
 
 // ------------------------------------------------------------------ P7: drafts
 
-/** Builds (or rebuilds) the drafts for one PO version plus schedule version pair. */
+/**
+ * Builds (or rebuilds) the drafts for one PO version plus schedule version pair.
+ *
+ * `splitBy` picks the key the drafted lines are cut on. It defaults to `area` so every
+ * existing caller keeps the schedule-area split it had.
+ */
 export async function buildSalesOrders(
   poId: string,
   scheduleVersionId: string,
+  splitBy: SalesOrderSplitBy = 'area',
 ): Promise<SalesOrderListEnvelope> {
   if (PROJECT_SO_MOCK) return mockList();
   const response = await apiFetch(`${BASE}/purchase-orders/${poId}/build-sales-orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ schedule_version_id: scheduleVersionId }),
+    body: JSON.stringify({ schedule_version_id: scheduleVersionId, split_by: splitBy }),
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to build the sales order drafts'));
   return normaliseEnvelope(await response.json(), 50);
+}
+
+/**
+ * Prev/next neighbours of a sales order within its project's list - the same set, in the
+ * same order, that `/projects/{id}/sales-orders` returns. Read by the generic
+ * `useRecordNeighbours` hook.
+ *
+ *   GET /api/v1/project-sales/projects/{project_id}/sales-orders/neighbours?id=<pso_id>
+ *   200 { total, index, prev_id, next_id }
+ *       - index is 1-based, null when the order belongs to another project.
+ *       - prev_id/next_id wrap circularly; null only when total <= 1.
+ *   404 when the project or the sales order id names nothing.
+ */
+export function salesOrderNeighboursPath(projectId: string): string {
+  return `${BASE}/projects/${projectId}/sales-orders/neighbours`;
 }
 
 export async function listProjectSalesOrders(
@@ -145,6 +170,80 @@ export async function updateSalesOrderLine(
   return response.json();
 }
 
+/**
+ * The whole sales order in ONE write: the header, and the full desired line set.
+ *
+ * API CONTRACT (SO edit view). The same shape the customer PO's own edit view already saves
+ * through (`PUT /purchase-orders/{po_id}`, `project_po_service.save_po_document`), because
+ * the two screens are the same screen with different columns and a second dialect would be a
+ * second thing to keep in step.
+ *
+ *   PUT /api/v1/project-sales/sales-orders/{pso_id}
+ *   {
+ *     area_group?: string | null,          // absent leaves it alone; null clears it
+ *     lines?: [                            // absent leaves the lines alone
+ *       { id?, product_id?, description?, qty, uom?, unit_price, delivery_date?,
+ *         stock_location? }
+ *     ]
+ *   }
+ *   200 ProjectSalesOrderDetail            // the same body GET /sales-orders/{id} answers
+ *
+ * What the backend guarantees, each pinned by a test in
+ * `sorento_crm_backend/tests/test_project_so_document_save.py`:
+ * - `lines` is the FULL set. A stored line whose id is absent is DELETED, so a caller that
+ *   sends only the rows it touched wipes the rest.
+ * - `line_no` is array position; any sent is ignored. `amount` is recomputed as
+ *   `qty * unit_price` and cannot be supplied.
+ * - the order's `total_amount` and `status` are recomputed once, at the end.
+ * - `provisional_ref`, `purchase_order_id`, `schedule_version_id`, and every line's
+ *   `phase_id` / `source_po_line_id` / `quotation_line_id` / `core_sales_order_line_id` are
+ *   preserved on a kept line: only the fields above are written.
+ * - renaming `area_group` moves `grouping_origin` to `manual`, exactly as Move lines does,
+ *   because the origin is what says which namespace the group name lives in.
+ * - a PUBLISHED or AMENDED order is refused 409 `so_not_editable`: it is in AutoCount, and
+ *   the way to change it is an amendment carrying an order change notice.
+ * - an empty `lines` array is refused 422 `so_lines_required`: an order with no lines is not
+ *   a proposal.
+ */
+export async function saveSalesOrderDocument(
+  psoId: string,
+  body: SalesOrderDocumentSaveBody,
+): Promise<ProjectSalesOrderDetail> {
+  const response = await apiFetch(`${BASE}/sales-orders/${psoId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save this sales order'));
+  return response.json();
+}
+
+/**
+ * Hard delete, so a draft that was built wrong can be built again.
+ *
+ *   DELETE /api/v1/project-sales/sales-orders/{pso_id}
+ *   200 { success: true, provisional_ref, deleted: { "<table>": <rows> } }
+ *
+ * It takes the order's lines and everything hanging off them with it (findings,
+ * allocations, claims, inquiries and their rows, amendments and their change notices,
+ * divergences and their compared rows, superseded supply decisions).
+ *
+ * It REFUSES, 409, anything that is a live commitment rather than a proposal: a published or
+ * amended order (`so_published_not_deletable`), one linked to an AutoCount document
+ * (`so_autocount_linked`), one carrying a published amendment (`so_amendment_published`), and
+ * one whose supply has been confirmed (`so_supply_confirmed`). Those are amended, never
+ * deleted.
+ */
+export async function deleteProjectSalesOrder(
+  psoId: string,
+): Promise<SalesOrderDeleteResult> {
+  const response = await apiFetch(`${BASE}/sales-orders/${psoId}`, { method: 'DELETE' });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to delete this sales order'));
+  return response.json();
+}
+
 export async function regroupSalesOrder(
   psoId: string,
   groups: SalesOrderRegroupGroup[],
@@ -158,9 +257,30 @@ export async function regroupSalesOrder(
   return normaliseEnvelope(await response.json(), 50);
 }
 
-/** 409 when a hard finding is unacknowledged; the message lists what is blocking. */
-export async function publishSalesOrder(psoId: string): Promise<SalesOrderPublishResult> {
-  const response = await apiFetch(`${BASE}/sales-orders/${psoId}/publish`, { method: 'POST' });
+/**
+ * 409 when a hard finding is unacknowledged; the message lists what is blocking.
+ *
+ * API CONTRACT
+ *
+ *   POST /api/v1/project-sales/sales-orders/{pso_id}/publish
+ *   { acknowledge_blocking?: boolean, reason?: string }   // body optional
+ *   200 { status, provisional_ref, import_file_url, can_export, total_amount, line_count,
+ *         acknowledged_findings }
+ *
+ * With `acknowledge_blocking` every open hard finding is acknowledged under the given reason
+ * and the order publishes: 403 without the sales-manager grant, 422 on a reason under 3
+ * characters. Already published, awaiting costing and no lines still refuse either way.
+ */
+export async function publishSalesOrder(
+  psoId: string,
+  body?: SalesOrderPublishBody,
+): Promise<SalesOrderPublishResult> {
+  const response = await apiFetch(`${BASE}/sales-orders/${psoId}/publish`, {
+    method: 'POST',
+    ...(body
+      ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : {}),
+  });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to publish this sales order'));
   return response.json();
