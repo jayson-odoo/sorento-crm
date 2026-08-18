@@ -149,6 +149,31 @@ def _customer(db, name: str, *, credit_limit: str | None = None) -> Customer:
     return row
 
 
+def _numbering_rule(db, company_id: str) -> None:
+    """The provisional-ref counter as production carries it: enabled, and monotonic."""
+    from app.models.numbering import DocumentNumberingRule
+    from app.services.project_so_draft_service import NUMBERING_DOC_TYPE
+
+    rule = (
+        db.query(DocumentNumberingRule)
+        .filter(DocumentNumberingRule.doc_type == NUMBERING_DOC_TYPE)
+        .first()
+    )
+    if rule is None:
+        rule = DocumentNumberingRule(id=_uid(), doc_type=NUMBERING_DOC_TYPE)
+        if hasattr(DocumentNumberingRule, "company_id"):
+            rule.company_id = company_id
+        db.add(rule)
+    rule.enabled = True
+    rule.prefix_template = "PSO-"
+    rule.number_digits = 6
+    rule.next_value = 1
+    rule.start_value = 1
+    rule.reset_policy = "none"
+    rule.last_reset_key = None
+    db.flush()
+
+
 def _party(db, company_id: str, *, customer: Customer | None = None) -> ProjectParty:
     row = ProjectParty(
         id=_uid(),
@@ -660,6 +685,173 @@ def test_the_area_split_produces_one_sales_order_per_area_and_records_its_origin
     assert {row["grouping_origin"] for row in result["data"]} == {"area"}
     # Distinct provisional refs, and no UUID is the only identifier of either.
     assert len({row["provisional_ref"] for row in result["data"]}) == 2
+
+
+# ------------------------------------------------- the split key is a choice
+
+
+def _split_fixture(db, company_id, owner):
+    """One PO cut three ways: two July phases, one August phase, one undated area.
+
+    The same rows answer all three splits, which is the point: the drafted lines do not
+    change, only the key they are cut on.
+    """
+    project = _project(db, company_id, owner)
+    tower_product = _product(db, "SRTWC8613-RL")
+    common_product = _product(db, "SRTUB206-BI")
+    quotation = _quotation(
+        db, project, lines=[(tower_product, "30", "392.85"), (common_product, "5", "295.85")]
+    )
+    party = _party(db, company_id)
+    po = _po(db, project, party=party, quotation_version=quotation)
+    po_version = _po_version(
+        db,
+        po,
+        lines=[
+            (1, tower_product, "SRTWC8613-RL", "30", "UNIT", "392.85", "11785.50", False),
+            (2, common_product, "SRTUB206-BI", "5", "NOS", "295.85", "1479.25", False),
+        ],
+    )
+    schedule = _schedule(db, project, po, po_version=po_version)
+    july_1 = _phase(
+        db,
+        project,
+        area_group="TOWER",
+        sequence=1,
+        label="Level 2 & 7",
+        delivery_date=date(2026, 7, 1),
+        version=schedule,
+    )
+    july_2 = _phase(
+        db,
+        project,
+        area_group="TOWER",
+        sequence=2,
+        label="Level 8 & 10",
+        delivery_date=date(2026, 7, 15),
+        version=schedule,
+    )
+    august = _phase(
+        db,
+        project,
+        area_group="TOWER",
+        sequence=3,
+        label="Level 11 to 13",
+        delivery_date=date(2026, 8, 3),
+        version=schedule,
+    )
+    # An area the customer has not dated yet. It is the only source of an undated line
+    # here, so the None group is exercised without inventing a short schedule.
+    undated = _phase(
+        db,
+        project,
+        area_group="COMMON AREA",
+        sequence=4,
+        label=None,
+        delivery_date=None,
+        version=schedule,
+    )
+    _cell(db, schedule, july_1, tower_product, "10")
+    _cell(db, schedule, july_2, tower_product, "10")
+    _cell(db, schedule, august, tower_product, "10")
+    _cell(db, schedule, undated, common_product, "5")
+    return po, schedule
+
+
+def test_the_split_key_defaults_to_the_schedule_area(seeded):
+    db, company_id, owner = seeded
+    po, schedule = _split_fixture(db, company_id, owner)
+
+    result = ProjectSODraftService(db).build(po.id, schedule.id)
+
+    by_group = {row["area_group"]: row for row in result["data"]}
+    assert set(by_group) == {"TOWER", "COMMON AREA"}
+    assert by_group["TOWER"]["line_count"] == 3
+    assert {row["grouping_origin"] for row in result["data"]} == {"area"}
+
+
+def test_splitting_by_delivery_month_gives_one_sales_order_per_month(seeded):
+    db, company_id, owner = seeded
+    po, schedule = _split_fixture(db, company_id, owner)
+
+    result = ProjectSODraftService(db).build(
+        po.id, schedule.id, split_by="delivery_month"
+    )
+
+    by_group = {row["area_group"]: row for row in result["data"]}
+    # Two July phases collapse into one order; the undated line keeps its own.
+    assert set(by_group) == {"2026-07", "2026-08", None}
+    assert by_group["2026-07"]["line_count"] == 2
+    assert by_group["2026-08"]["line_count"] == 1
+    assert by_group[None]["line_count"] == 1
+    assert {row["grouping_origin"] for row in result["data"]} == {"delivery_month"}
+    # Ascending by month, undated last, which is the order the list reads in.
+    assert [row["area_group"] for row in result["data"]] == ["2026-07", "2026-08", None]
+    assert len({row["provisional_ref"] for row in result["data"]}) == 3
+
+
+def test_splitting_by_delivery_date_gives_one_sales_order_per_date(seeded):
+    db, company_id, owner = seeded
+    po, schedule = _split_fixture(db, company_id, owner)
+
+    result = ProjectSODraftService(db).build(po.id, schedule.id, split_by="delivery_date")
+
+    assert [row["area_group"] for row in result["data"]] == [
+        "2026-07-01",
+        "2026-07-15",
+        "2026-08-03",
+        None,
+    ]
+    assert {row["line_count"] for row in result["data"]} == {1}
+    assert {row["grouping_origin"] for row in result["data"]} == {"delivery_date"}
+
+
+def test_a_line_with_no_delivery_date_lands_in_its_own_group(seeded):
+    db, company_id, owner = seeded
+    po, schedule = _split_fixture(db, company_id, owner)
+
+    result = ProjectSODraftService(db).build(
+        po.id, schedule.id, split_by="delivery_month"
+    )
+
+    undated = next(row for row in result["data"] if row["area_group"] is None)
+    order = ProjectSODraftService(db).get_order(undated["id"])
+    lines = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.project_sales_order_id == order.id)
+        .all()
+    )
+    assert [line.delivery_date for line in lines] == [None]
+
+
+def test_rebuilding_under_a_different_split_replaces_the_previous_drafts(seeded):
+    db, company_id, owner = seeded
+    po, schedule = _split_fixture(db, company_id, owner)
+    service = ProjectSODraftService(db)
+
+    first = service.build(po.id, schedule.id)
+    assert len(first["data"]) == 2
+
+    second = service.build(po.id, schedule.id, split_by="delivery_month")
+    assert second["replaced_drafts"] == 2
+    assert second["skipped_published"] == 0
+
+    live = (
+        db.query(ProjectSalesOrder)
+        .filter(ProjectSalesOrder.purchase_order_id == po.id)
+        .all()
+    )
+    # Nothing from the area build survives: the two key spaces are not merged.
+    assert sorted(row.area_group or "" for row in live) == ["", "2026-07", "2026-08"]
+
+
+def test_an_unknown_split_key_is_refused(seeded):
+    db, company_id, owner = seeded
+    po, schedule = _split_fixture(db, company_id, owner)
+
+    with pytest.raises(AppException) as exc:
+        ProjectSODraftService(db).build(po.id, schedule.id, split_by="by_vibes")
+    assert exc.value.status_code == 422
 
 
 # ----------------------------------------------------- the five hard stops
@@ -1237,6 +1429,183 @@ def test_rebuilding_replaces_its_own_drafts_and_leaves_published_orders_alone(se
     ]
 
 
+def _two_area_build(db, company_id, owner, *, numbering_rule: bool = False):
+    """One PO, one schedule, two area groups: the smallest thing a rebuild can replace."""
+    if numbering_rule:
+        _numbering_rule(db, company_id)
+    project = _project(db, company_id, owner)
+    tower_product = _product(db, "SRTWC8613-RL")
+    common_product = _product(db, "SRTUB206-BI")
+    quotation = _quotation(
+        db, project, lines=[(tower_product, "10", "392.85"), (common_product, "5", "295.85")]
+    )
+    party = _party(db, company_id)
+    po = _po(db, project, party=party, quotation_version=quotation)
+    po_version = _po_version(
+        db,
+        po,
+        lines=[
+            (1, tower_product, "SRTWC8613-RL", "10", "UNIT", "392.85", "3928.50", False),
+            (2, common_product, "SRTUB206-BI", "5", "NOS", "295.85", "1479.25", False),
+        ],
+    )
+    schedule = _schedule(db, project, po, po_version=po_version)
+    tower = _phase(
+        db,
+        project,
+        area_group="TOWER",
+        sequence=1,
+        label="Level 2 & 7",
+        delivery_date=date(2026, 7, 1),
+        version=schedule,
+    )
+    common = _phase(
+        db,
+        project,
+        area_group="COMMON AREA",
+        sequence=13,
+        label=None,
+        delivery_date=date(2027, 6, 1),
+        version=schedule,
+    )
+    tower_cell = _cell(db, schedule, tower, tower_product, "10")
+    _cell(db, schedule, common, common_product, "5")
+
+    return {
+        "project": project,
+        "po": po,
+        "schedule": schedule,
+        "tower_product": tower_product,
+        "tower_cell": tower_cell,
+        "service": ProjectSODraftService(db),
+    }
+
+
+def _rebuild_shape(db, po):
+    """Every order this PO carries, as (ref, area group, lines) in reference order."""
+    orders = (
+        db.query(ProjectSalesOrder)
+        .filter(ProjectSalesOrder.purchase_order_id == po.id)
+        .order_by(ProjectSalesOrder.provisional_ref.asc())
+        .all()
+    )
+    return [
+        (
+            order.provisional_ref,
+            order.area_group,
+            [
+                (line.line_no, line.product_id, line.qty, line.delivery_date)
+                for line in _lines(db, order.id)
+            ],
+        )
+        for order in orders
+    ]
+
+
+def test_rebuilding_from_the_same_inputs_is_a_no_op(seeded):
+    """Re-uploading the same PO and schedule must produce the SAME orders, not new ones.
+
+    "Repeat upload is a no-op" is only true if the reference survives it: a rebuild that
+    replaces PSO-000123 with PSO-000125 leaves CS looking at a number nobody wrote down,
+    and every reference to the old one (an email, a printed worksheet) now points at a row
+    that no longer exists. The rows are genuinely deleted and re-inserted -- that is what
+    makes the rebuild correct when the schedule DID change -- so the provisional ref is
+    carried across per area group instead.
+
+    NO numbering rule is seeded, because production has none for this doc type: nothing
+    seeds `project_sales_order`, so the real install takes ``_next_ref``'s fallback branch
+    ("the highest existing PSO- reference plus one"). That is the path this test has to
+    exercise. The fallback's own hazard -- the deleted drafts are gone from the count by
+    the time a NEW group asks for a number -- is pinned separately below.
+    """
+    db, company_id, owner = seeded
+    built = _two_area_build(db, company_id, owner)
+    service, po, schedule = built["service"], built["po"], built["schedule"]
+
+    service.build(po.id, schedule.id)
+    before = _rebuild_shape(db, po)
+    assert len(before) == 2
+
+    second = service.build(po.id, schedule.id)
+    assert second["replaced_drafts"] == 2
+    assert second["skipped_published"] == 0
+
+    assert _rebuild_shape(db, po) == before
+
+
+def test_rebuilding_is_still_a_no_op_when_a_numbering_rule_is_configured(seeded):
+    """The same guarantee on the other branch of ``_next_ref``.
+
+    An install that DOES seed a `project_sales_order` numbering rule takes the counter
+    instead of the fallback, and that counter only ever goes up: without the carry across
+    the rebuild the second build would hand back PSO-000003 and PSO-000004.
+    """
+    db, company_id, owner = seeded
+    built = _two_area_build(db, company_id, owner, numbering_rule=True)
+    service, po, schedule = built["service"], built["po"], built["schedule"]
+
+    service.build(po.id, schedule.id)
+    before = _rebuild_shape(db, po)
+    assert len(before) == 2
+
+    service.build(po.id, schedule.id)
+
+    assert _rebuild_shape(db, po) == before
+
+
+def test_an_area_group_that_appears_in_a_rebuild_gets_its_own_reference(seeded):
+    """A group added by a revised schedule must never be handed a carried reference.
+
+    On the fallback path (which is production's, no numbering rule is seeded anywhere)
+    ``_next_ref`` counts the highest PSO- reference in the table. The rebuild deletes the
+    drafts it is replacing BEFORE minting, so those numbers are no longer in the table
+    while it is still owing them back to their area groups -- and the groups are minted in
+    alphabetical order, so a new group sorting FIRST is offered exactly the number the
+    group after it is about to take back. Both rows then claim one reference, which the
+    unique index on (company_id, provisional_ref) refuses in production.
+    """
+    db, company_id, owner = seeded
+    built = _two_area_build(db, company_id, owner)
+    service, po, schedule = built["service"], built["po"], built["schedule"]
+    project, tower_product = built["project"], built["tower_product"]
+
+    first = service.build(po.id, schedule.id)
+    carried = {row["area_group"]: row["provisional_ref"] for row in first["data"]}
+    assert set(carried) == {"TOWER", "COMMON AREA"}
+
+    # The revised schedule moves 4 of the tower's 10 units into a new area group whose
+    # name sorts before every group already drafted.
+    built["tower_cell"].qty = Decimal("6")
+    alpha = _phase(
+        db,
+        project,
+        area_group="ALPHA BLOCK",
+        sequence=2,
+        label="Block A",
+        delivery_date=date(2026, 8, 3),
+        version=schedule,
+    )
+    _cell(db, schedule, alpha, tower_product, "4")
+    db.flush()
+
+    second = service.build(po.id, schedule.id)
+    refs = {row["area_group"]: row["provisional_ref"] for row in second["data"]}
+
+    assert set(refs) == {"ALPHA BLOCK", "TOWER", "COMMON AREA"}
+    # The groups that were already drafted keep the number CS has written down.
+    assert refs["TOWER"] == carried["TOWER"]
+    assert refs["COMMON AREA"] == carried["COMMON AREA"]
+    # And the new one is genuinely new, rather than a second claim on a carried number.
+    assert len(set(refs.values())) == 3
+    stored = {
+        row.provisional_ref
+        for row in db.query(ProjectSalesOrder)
+        .filter(ProjectSalesOrder.purchase_order_id == po.id)
+        .all()
+    }
+    assert len(stored) == 3
+
+
 def test_a_published_order_cannot_be_edited_in_place(seeded):
     db, company_id, owner = seeded
     _project_row, _product_row, po, schedule = _minimal(db, company_id, owner)
@@ -1272,3 +1641,155 @@ def test_the_import_file_carries_the_real_document_header_and_columns(seeded):
     assert "***TOWER***" in body
     assert "Item,Description,Reserve Qty,Qty,Delivery Date,UOM,U/Price,Disc.,Total" in body
     assert "SRTWC8613-RL" in body
+
+
+# ------------------------------------------------------------ publish anyway
+#
+# Clearing 30 findings one at a time to publish an order the manager has already decided to
+# publish is the constraint, not the check itself. The override is the SAME override
+# `acknowledge_finding` carries -- the reason is recorded on every finding it waves through --
+# only asked once instead of once per finding.
+
+
+def _blocked_pair(db, company_id, owner):
+    """A draft carrying TWO hard findings, so the bulk part of the override is real."""
+    _project_row, _product_row, po, schedule = _minimal(
+        db, company_id, owner, scheduled="90", extracted_total="40000.00"
+    )
+    service = ProjectSODraftService(db)
+    order = service.get_order(service.build(po.id, schedule.id)["data"][0]["id"])
+    assert len(service.blocking_findings(order)) >= 2
+    return service, order
+
+
+def test_publish_anyway_clears_every_hard_finding_and_publishes(seeded):
+    db, company_id, owner = seeded
+    service, order = _blocked_pair(db, company_id, owner)
+    expected = len(service.blocking_findings(order))
+
+    body = service.publish(
+        order,
+        actor_user_id=owner,
+        acknowledge_blocking=True,
+        reason="Manager signed it off in the room, 18 August.",
+        permissions={"projects.projects.edit", OVERRIDE_PERMISSION},
+    )
+    assert body["status"] == "published"
+    assert body["acknowledged_findings"] == expected
+    assert not service.blocking_findings(order)
+
+
+def test_publish_anyway_records_the_reason_and_the_actor_on_each_finding(seeded):
+    db, company_id, owner = seeded
+    service, order = _blocked_pair(db, company_id, owner)
+    ids = [finding.id for finding in service.blocking_findings(order)]
+
+    service.publish(
+        order,
+        actor_user_id=owner,
+        acknowledge_blocking=True,
+        reason="Manager signed it off in the room, 18 August.",
+        permissions={OVERRIDE_PERMISSION},
+    )
+    for finding in _findings(db, [order.id]):
+        if finding.id not in ids:
+            continue
+        assert finding.acknowledged_by == owner
+        assert finding.acknowledged_at is not None
+        # The record says it was waved through on the way out, not cleared one by one.
+        assert "Published anyway" in finding.acknowledged_reason
+        assert "Manager signed it off in the room" in finding.acknowledged_reason
+
+
+def test_publish_without_the_flag_still_refuses(seeded):
+    """The default path is byte-identical to what it was: a hard stop is a stop."""
+    db, company_id, owner = seeded
+    service, order = _blocked_pair(db, company_id, owner)
+
+    with pytest.raises(AppException) as excinfo:
+        service.publish(order, actor_user_id=owner)
+    assert excinfo.value.status_code == 409
+    assert len(service.blocking_findings(order)) >= 2
+
+
+def test_publish_anyway_needs_a_reason(seeded):
+    db, company_id, owner = seeded
+    service, order = _blocked_pair(db, company_id, owner)
+
+    with pytest.raises(AppException) as excinfo:
+        service.publish(
+            order,
+            actor_user_id=owner,
+            acknowledge_blocking=True,
+            reason="  ",
+            permissions={OVERRIDE_PERMISSION},
+        )
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.detail["code"] == "finding_reason_required"
+    # Nothing was acknowledged on the way to the refusal.
+    assert all(f.acknowledged_at is None for f in service.blocking_findings(order))
+    assert order.status != "published"
+
+
+def test_publish_anyway_needs_the_override_permission(seeded):
+    db, company_id, owner = seeded
+    service, order = _blocked_pair(db, company_id, owner)
+
+    with pytest.raises(AppException) as excinfo:
+        service.publish(
+            order,
+            actor_user_id=owner,
+            acknowledge_blocking=True,
+            reason="Manager signed it off in the room, 18 August.",
+            permissions={"projects.projects.edit"},
+        )
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.detail["code"] == "finding_override_denied"
+    assert all(f.acknowledged_at is None for f in service.blocking_findings(order))
+    assert order.status != "published"
+
+
+# The three refusals the override does NOT touch (D28, AC-K3): they are states, not
+# findings, and there is nothing to acknowledge. One test each because the seed helpers
+# create the product by code, so two builds in one transaction collide.
+_OVERRIDE = {
+    "acknowledge_blocking": True,
+    "reason": "Manager signed it off in the room, 18 August.",
+    "permissions": {OVERRIDE_PERMISSION},
+}
+
+
+def test_publish_anyway_still_refuses_an_already_published_order(seeded):
+    db, company_id, owner = seeded
+    service, order = _blocked_pair(db, company_id, owner)
+    service.publish(order, actor_user_id=owner, **_OVERRIDE)
+
+    with pytest.raises(AppException) as excinfo:
+        service.publish(order, actor_user_id=owner, **_OVERRIDE)
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail["code"] == "so_already_published"
+
+
+def test_publish_anyway_still_refuses_an_order_awaiting_costing(seeded):
+    db, company_id, owner = seeded
+    service, order = _blocked_pair(db, company_id, owner)
+    order.status = "awaiting_costing"
+    db.flush()
+
+    with pytest.raises(AppException) as excinfo:
+        service.publish(order, actor_user_id=owner, **_OVERRIDE)
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail["code"] == "so_awaiting_costing"
+
+
+def test_publish_anyway_still_refuses_an_order_with_no_lines(seeded):
+    db, company_id, owner = seeded
+    service, order = _blocked_pair(db, company_id, owner)
+    for line in _lines(db, order.id):
+        db.delete(line)
+    db.flush()
+
+    with pytest.raises(AppException) as excinfo:
+        service.publish(order, actor_user_id=owner, **_OVERRIDE)
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.detail["code"] == "so_has_no_lines"

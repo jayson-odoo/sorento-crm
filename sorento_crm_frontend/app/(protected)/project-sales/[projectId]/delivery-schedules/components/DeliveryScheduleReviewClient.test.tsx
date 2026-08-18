@@ -25,10 +25,62 @@ if (!window.matchMedia) {
   });
 }
 
+// The reconciliation section is the shared DataGrid, and under jsdom nothing answers the
+// column-preferences fetch, so the grid would render skeletons instead of rows (CLAUDE.md).
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
+/**
+ * The gear is rendered open, the way the dealer-kit gear tests do it: Radix opens its menu on
+ * a pointer sequence into a portal, and what has to hold here is what the menu CONTAINS.
+ */
+vi.mock('@/components/common/DetailActionsMenu', () => ({
+  DetailActionsMenu: ({
+    children,
+    ariaLabel,
+  }: {
+    children: React.ReactNode;
+    ariaLabel?: string;
+  }) => (
+    <div data-testid="gear-menu" aria-label={ariaLabel}>
+      {children}
+    </div>
+  ),
+}));
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenuItem: (props: React.ComponentProps<'div'> & { asChild?: boolean }) => {
+    // `asChild` is a Radix concern and must not reach the DOM.
+    const { children, asChild, ...rest } = props;
+    void asChild;
+    return (
+      <div role="menuitem" {...rest}>
+        {children}
+      </div>
+    );
+  },
+}));
+
+const push = vi.fn();
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1/delivery-schedules/v2',
   useSearchParams: () => new URLSearchParams(''),
+}));
+
+/**
+ * The header's prev/next pager, which walks this schedule's own revisions. Mocked at the
+ * shared hook so nothing is fetched and the arguments the feature hook passes can be read.
+ */
+const recordNeighbours = vi.fn((..._args: unknown[]) => ({
+  prevId: 'v3',
+  nextId: 'v1',
+  index: 2,
+  total: 3,
+  isLoading: false,
+}));
+vi.mock('@/hooks/useRecordNeighbours', () => ({
+  useRecordNeighbours: (...args: unknown[]) => recordNeighbours(...args),
 }));
 
 const getDeliveryScheduleVersion = vi.fn();
@@ -36,6 +88,8 @@ const saveDeliveryScheduleCells = vi.fn();
 const resolveDeliveryScheduleProduct = vi.fn();
 const confirmDeliveryScheduleVersion = vi.fn();
 vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
+  DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH:
+    '/api/v1/project-sales/delivery-schedule-versions/neighbours',
   listDeliverySchedules: vi.fn(),
   listDeliveryScheduleVersions: vi.fn(),
   uploadDeliverySchedule: vi.fn(),
@@ -54,6 +108,15 @@ vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
   return { ...actual, getProject: (...args: unknown[]) => getProject(...args) };
 });
 
+// The pickers offer the PO's own products, so the review screen reads the PO version the
+// schedule was checked against. Mocked at the service, like every other network call here.
+const getPOVersion = vi.fn();
+vi.mock('../../../_shared/services/poIntakeService', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../_shared/services/poIntakeService')>();
+  return { ...actual, getPOVersion: (...args: unknown[]) => getPOVersion(...args) };
+});
+
 const getProductsForVariantSelect = vi.fn();
 vi.mock('@/app/(protected)/master-data-management/products/services/productService', () => ({
   getProductsForVariantSelect: (...args: unknown[]) => getProductsForVariantSelect(...args),
@@ -68,9 +131,14 @@ import { DeliveryScheduleReviewClient } from './DeliveryScheduleReviewClient';
  * (the list, the phone cards, the confirm dialog) and because what is being pinned is that
  * each one still ends in the thing to do next.
  */
-const PO_MISMATCH_MESSAGE =
-  'The schedule asks for 8 and the PO orders 16, 8 short. ' +
-  'Correct a phase quantity, or amend the PO.';
+/**
+ * The flush valve asks for 8 of the 16 ordered, and that is a partial schedule - normal on a
+ * live project, a WARNING rather than something to fix, and the same verdict the server
+ * reaches. It used to be a blocker on this screen alone.
+ */
+const SHORTFALL_WARNING =
+  'The schedule asks for 8 of the 16 on the purchase order; the remaining 8 is expected ' +
+  'on a later schedule.';
 const REPORTED_MISMATCH_MESSAGE =
   "The phases add up to 8 but the schedule's own TOTAL QTY row says 16. " +
   'One of the two was misread, so check the cells against the paper.';
@@ -89,6 +157,7 @@ function version(overrides: Partial<DeliveryScheduleVersion> = {}): DeliverySche
     issuer_party_label: 'SLG Construction Sdn Bhd',
     po_version_id: 'pv1',
     po_version_no: 1,
+    purchase_order_id: 'po1',
     extraction_state: 'done',
     document_url: 'https://example.test/schedule.pdf',
     schedule_date: '2026-07-23',
@@ -168,9 +237,40 @@ function renderReview() {
 
 const matrix = () => within(screen.getByTestId('schedule-matrix'));
 
+/** The PO version 'pv1' is checked against: three lines, all resolved to a product. */
+function poVersion() {
+  return {
+    id: 'pv1',
+    lines: [
+      {
+        id: 'l1',
+        line_no: 1,
+        description_raw: 'ONE-PIECE WC',
+        resolved_product_id: 'p1',
+        resolved_product_code: 'SRTWC8613-RL',
+      },
+      {
+        id: 'l2',
+        line_no: 2,
+        description_raw: 'SENSOR URINAL FLUSH VALVE',
+        resolved_product_id: 'p2',
+        resolved_product_code: 'SRTFV1001',
+      },
+      {
+        id: 'l3',
+        line_no: 3,
+        description_raw: 'COUNTER-TOP BASIN',
+        resolved_product_id: 'p6',
+        resolved_product_code: 'SRTWB7055',
+      },
+    ],
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   getDeliveryScheduleVersion.mockResolvedValue(version());
+  getPOVersion.mockResolvedValue(poVersion());
   getProject.mockResolvedValue({ id: 'p1', project_code: 'PRJ-1', title: 'Tuju', can_edit: true });
   getProductsForVariantSelect.mockResolvedValue([
     { id: 'p6', product_code: 'SRTWB7055', product_name: 'Counter-Top Basin' },
@@ -300,9 +400,11 @@ describe('DeliveryScheduleReviewClient', () => {
     expect(grid.getByText('Schedule TOTAL QTY')).toBeInTheDocument();
     expect(grid.getByText('PO quantity')).toBeInTheDocument();
 
-    // The reconciled column and the misread one read differently at a glance.
+    // The reconciled column and the misread ones read differently at a glance. The flush
+    // valve has ONE thing to fix (its own TOTAL QTY row), the unmatched column two.
     expect(grid.getAllByText('Reconciled')).toHaveLength(1);
-    expect(grid.getAllByText('2 to fix')).toHaveLength(2);
+    expect(grid.getByText('1 to fix')).toBeInTheDocument();
+    expect(grid.getByText('2 to fix')).toBeInTheDocument();
 
     // The column the PO never ordered says so where the number would be.
     expect(grid.getByText('Not on the PO')).toBeInTheDocument();
@@ -313,7 +415,7 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    expect(screen.getByText(PO_MISMATCH_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByText(REPORTED_MISMATCH_MESSAGE)).toBeInTheDocument();
     expect(screen.getByText(NEEDS_PRODUCT_MESSAGE)).toBeInTheDocument();
     // In the grid too, not only in the message.
     expect(matrix().getAllByText('BUI-HB-SRTWB7055').length).toBeGreaterThan(0);
@@ -330,35 +432,73 @@ describe('DeliveryScheduleReviewClient', () => {
     ).toBeInTheDocument();
   });
 
-  it('lists the reconciliations full width, whole sentence, every blocker', async () => {
+  it('tables the reconciliation, one row per column, every finding in it', async () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
     const list = within(screen.getByTestId('reconciliation-list'));
-    // One row per column that does not reconcile, not a tile per column.
-    expect(list.getAllByRole('listitem')).toHaveLength(2);
+    // Two blocked columns and the shortfall warning, one row each. The reconciled column
+    // with nothing to say is not listed.
+    const rows = list
+      .getAllByRole('row')
+      .filter((node) => node.querySelector('td') !== null);
+    expect(rows).toHaveLength(2);
 
-    // Both blockers on the flush valve, not only the first of them, and every sentence
-    // whole: cut to "The PO version does not order this item, but the sched..." the part
-    // that says what to do about it is the part that goes missing.
-    expect(list.getByText(PO_MISMATCH_MESSAGE)).toBeInTheDocument();
+    // Every sentence the check wrote, in the Problem column, whichever row it belongs to.
     expect(list.getByText(REPORTED_MISMATCH_MESSAGE)).toBeInTheDocument();
     expect(list.getByText(NOT_ON_PO_MESSAGE)).toBeInTheDocument();
+    expect(list.getByText(NEEDS_PRODUCT_MESSAGE)).toBeInTheDocument();
+    // The shortfall is stated as a warning rather than as something to fix. This row is
+    // blocked all the same, by its own TOTAL QTY row, and the pill says the worst of the two.
+    expect(list.getByTestId('reconciliation-warning')).toHaveTextContent(SHORTFALL_WARNING);
+    expect(list.getAllByText('Blocked')).toHaveLength(2);
 
-    // The SENTENCES are what must never be cut, and the assertion says so directly now
-    // that the rows also carry controls: a picker's own trigger label truncates, which is
-    // right for a control and would make a blanket sweep of the list fail for the wrong
-    // reason.
-    // Four sentences over the two rows: the flush valve disagrees with both the PO and its
-    // own TOTAL QTY, and the unmatched column is both unmatched and absent from the PO.
-    const details = screen.getAllByTestId('reconciliation-detail');
-    expect(details).toHaveLength(4);
+    // Truncated with the whole sentence on `title`: the numbers it quotes are in their own
+    // columns beside it, so what is cut is the wording rather than the facts.
+    const details = list.getAllByTestId('reconciliation-detail');
+    expect(details).toHaveLength(3);
     details.forEach((node) => {
-      expect(String(node.className)).not.toContain('truncate');
-      Array.from(node.querySelectorAll('*')).forEach((child) =>
-        expect(String(child.className)).not.toContain('truncate'),
-      );
+      expect(String(node.className)).toContain('truncate');
+      expect(node).toHaveAttribute('title', node.textContent);
     });
+  });
+
+  /**
+   * "You just need a gear button at top right, with view PO as one of the dropdown."
+   *
+   * The header used to carry a button per destination and a PO link on every reconciliation
+   * row - three links to the same page, next to sentences they do not answer.
+   */
+  it('puts the ways out behind one gear, and opens the PO in a new tab', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    // Nothing standing in the header but Confirm: no button per destination.
+    expect(screen.queryByRole('button', { name: /View document/ })).toBeNull();
+
+    const gear = within(screen.getByTestId('gear-menu'));
+    expect(screen.getByTestId('gear-menu')).toHaveAttribute('aria-label', 'Schedule actions');
+
+    const po = gear.getByRole('link', { name: /View PO/ });
+    // The PO RECORD, not the document confirm screen: amending the PO is what the reviewer
+    // comes here to do. New tab, because leaving loses the cells they have typed.
+    expect(po).toHaveAttribute('href', '/project-sales/p1/pos/po1');
+    expect(po).toHaveAttribute('target', '_blank');
+    expect(po).toHaveAttribute('rel', expect.stringContaining('noopener'));
+
+    const document = gear.getByRole('link', { name: /View document/ });
+    expect(document).toHaveAttribute('href', 'https://example.test/schedule.pdf');
+    expect(document).toHaveAttribute('target', '_blank');
+  });
+
+  it('offers no gear when there is nothing behind it', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(
+      version({ purchase_order_id: null, po_version_id: null, document_url: null }),
+    );
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.queryByTestId('gear-menu')).toBeNull();
   });
 
   it('takes a reconciliation row to its column in the grid', async () => {
@@ -658,6 +798,37 @@ describe('DeliveryScheduleReviewClient', () => {
 
     fireEvent.click(phone.getAllByRole('button', { expanded: false })[1]);
     expect(phone.getByLabelText('Phase 3, SRTFV1001')).toHaveValue('8');
-    expect(phone.getByText(PO_MISMATCH_MESSAGE)).toBeInTheDocument();
+    expect(phone.getByText(REPORTED_MISMATCH_MESSAGE)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The header standard, shared with the sales order and the customer PO: ONE call to action
+ * (Confirm, which is what this screen is for), everything else behind the gear, and a pager
+ * so a reviewer can walk the revisions without going back to the project tab.
+ */
+describe('DeliveryScheduleReviewClient header', () => {
+  it('walks this schedule own revisions', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(recordNeighbours).toHaveBeenCalledWith(
+      '/api/v1/project-sales/delivery-schedule-versions/neighbours',
+      'v2',
+    );
+    expect(screen.getByText('2 / 3')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next schedule version' }));
+
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/delivery-schedules/v1');
+  });
+
+  it('keeps Confirm as the one call to action beside the pager', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+    // The pager is chevrons, not a third and fourth thing to read.
+    expect(screen.getByRole('button', { name: 'Previous schedule version' })).toBeInTheDocument();
   });
 });

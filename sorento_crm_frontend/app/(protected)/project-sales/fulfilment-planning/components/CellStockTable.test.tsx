@@ -1,0 +1,345 @@
+/**
+ * The stock position behind a cell, as a TABLE (captain, 18 August 2026).
+ *
+ * > "the representation of the BRW-BB on hand quantity, so quantity, PO quantity etc can be more
+ * > tabulated and structured like AutoCount, with expandable details instead of clicking in"
+ *
+ * The strip it replaces printed one location as a run-on sentence
+ * ("BRW-BB · 316 owed · On hand 478 · SO qty 47009 · SPO qty 0 · Available -46531"), which two
+ * locations turned into two sentences nobody could compare column by column. So: a row per
+ * location, AutoCount's own words as the headers, and the documents behind a location expanding
+ * UNDER it rather than opening a second dialog.
+ */
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
+const getStockDetail = vi.fn();
+
+vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
+  getStockDetail: (...args: unknown[]) => getStockDetail(...args),
+}));
+
+import { CellStockTable } from './CellStockTable';
+import type { BoardCellLocation } from '../../_shared/types/fulfilmentPlanning.types';
+
+/** The captain's own location, as the live board sends it. */
+function position(overrides: Partial<BoardCellLocation> = {}): BoardCellLocation {
+  return {
+    location: 'BRW-BB',
+    product_id: 'prod-1',
+    warehouse_id: 'wh-1',
+    qty: '316',
+    qty_demand: '316',
+    qty_on_hand: '478',
+    qty_reserved: '0',
+    qty_free: '478',
+    so_qty: '47009',
+    spo_qty: '0',
+    available_qty: '-46531',
+    incoming: [],
+    ...overrides,
+  };
+}
+
+function renderTable(locations: BoardCellLocation[]) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <CellStockTable locations={locations} itemCode="B2155-NL-BLUE" />
+    </QueryClientProvider>,
+  );
+}
+
+function headers(): string[] {
+  return [...screen.getByRole('table').querySelectorAll('thead th')].map(
+    (cell) => cell.textContent ?? '',
+  );
+}
+
+function cellsOf(location: string): string[] {
+  return [...screen.getByTestId(`cell-location-${location}`).querySelectorAll('td, th')].map(
+    (cell) => cell.textContent ?? '',
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('CellStockTable: the position, tabulated', () => {
+  it('carries AutoCount’s own words as its headers, in AutoCount’s order', () => {
+    renderTable([position()]);
+
+    expect(headers()).toEqual([
+      '',
+      'Location',
+      'Owed here',
+      'On hand',
+      'Reserved',
+      'Free',
+      'SO qty',
+      'SPO qty',
+      'Available',
+    ]);
+  });
+
+  it('renders one row per location, with the figures the server sent', () => {
+    renderTable([
+      position(),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-2',
+        qty: '9',
+        qty_demand: '9',
+        qty_on_hand: '1015',
+        qty_reserved: '12',
+        qty_free: '1003',
+        so_qty: '9028',
+        spo_qty: '500',
+        available_qty: '-7513',
+      }),
+    ]);
+
+    expect(screen.getByRole('table').querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(cellsOf('BRW-BB')).toEqual([
+      '',
+      'BRW-BB',
+      '316',
+      '478',
+      '0',
+      '478',
+      '47009',
+      '0',
+      '-46531',
+    ]);
+    expect(cellsOf('BRW')).toEqual([
+      '',
+      'BRW',
+      '9',
+      '1015',
+      '12',
+      '1003',
+      '9028',
+      '500',
+      '-7513',
+    ]);
+  });
+
+  it('reads the numbers as numbers: right-aligned tabular figures', () => {
+    renderTable([position()]);
+
+    const available = screen.getByTestId('stock-available-BRW-BB');
+    expect(available.className).toContain('tabular-nums');
+    expect(available.className).toContain('text-end');
+  });
+
+  /**
+   * A negative Available IS the shortfall. It is never clamped, and it is coloured, because it
+   * is the one number on the row that says "this cannot be met from here".
+   */
+  it('colours a negative Available, and leaves a positive one alone', () => {
+    renderTable([
+      position(),
+      position({ location: 'BRW', warehouse_id: 'wh-2', available_qty: '120' }),
+    ]);
+
+    expect(screen.getByTestId('stock-available-BRW-BB').className).toContain('text-destructive');
+    expect(screen.getByTestId('stock-available-BRW').className).not.toContain('text-destructive');
+  });
+
+  /**
+   * The opposite instruction: 0 free means do not look here, nothing stated means nobody has
+   * said where to look. A line whose sales order names no location has every figure null by
+   * construction.
+   */
+  it('says NOT STATED, never 0, when the sales order named no location', () => {
+    renderTable([
+      {
+        location: null,
+        qty: '24',
+        qty_on_hand: null,
+        qty_reserved: null,
+        qty_free: null,
+        so_qty: null,
+        spo_qty: null,
+        available_qty: null,
+      },
+    ]);
+
+    const cells = cellsOf('none');
+    expect(cells[1]).toBe('No location');
+    expect(cells[2]).toBe('24');
+    expect(cells.slice(3)).toEqual([
+      'Not stated',
+      'Not stated',
+      'Not stated',
+      'Not stated',
+      'Not stated',
+      'Not stated',
+    ]);
+    expect(cells).not.toContain('0');
+  });
+
+  /** Measured live: a location can carry `so_qty` while `qty_on_hand` is null. */
+  it('shows whichever figure the server stated, not all-or-nothing', () => {
+    renderTable([
+      position({
+        location: 'BRW-IB',
+        qty_on_hand: null,
+        qty_reserved: null,
+        qty_free: null,
+        so_qty: '10805',
+        spo_qty: '0',
+        available_qty: null,
+      }),
+    ]);
+
+    const cells = cellsOf('BRW-IB');
+    expect(cells[3]).toBe('Not stated');
+    expect(cells[6]).toBe('10805');
+    expect(cells[7]).toBe('0');
+    expect(cells[8]).toBe('Not stated');
+  });
+
+  it('scrolls inside its own container, so the dialog never scrolls sideways', () => {
+    renderTable([position()]);
+
+    expect(screen.getByTestId('cell-stock-table').className).toContain('overflow-x-auto');
+    // Fixed cell widths on a `w-max` table, never `table-fixed`, which overlaps its columns as
+    // soon as the content is wider than the declared width.
+    const table = screen.getByRole('table');
+    expect(table.className).toContain('w-max');
+    expect(table.className).not.toContain('table-fixed');
+  });
+
+  it('states an empty position rather than rendering an empty table', () => {
+    renderTable([]);
+
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.getByText('No stock position for this cell')).toBeInTheDocument();
+  });
+});
+
+describe('CellStockTable: the totals row', () => {
+  it('totals the quantities once there is more than one location to add up', () => {
+    renderTable([
+      position(),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-2',
+        qty: '9',
+        qty_on_hand: '1015',
+        so_qty: '9028',
+        spo_qty: '500',
+        available_qty: '-7513',
+      }),
+    ]);
+
+    const footer = [...(screen.getByRole('table').querySelectorAll('tfoot td, tfoot th') ?? [])].map(
+      (cell) => cell.textContent ?? '',
+    );
+    expect(footer).toContain('Total');
+    expect(footer).toContain('325');
+    expect(footer).toContain('1493');
+    expect(footer).toContain('56037');
+    expect(footer).toContain('500');
+    expect(footer).toContain('-54044');
+  });
+
+  /** One row IS its own total, and a totals row that repeats it is a row saying nothing. */
+  it('has no totals row for a single location', () => {
+    renderTable([position()]);
+
+    expect(screen.getByRole('table').querySelector('tfoot')).toBeNull();
+  });
+});
+
+describe('CellStockTable: the documents, expanded in place', () => {
+  const detail = {
+    product_id: 'prod-1',
+    item_code: 'B2155-NL-BLUE',
+    warehouse_id: 'wh-1',
+    location: 'BRW-BB',
+    qty_on_hand: '478',
+    so_qty: '47009',
+    spo_qty: '0',
+    available_qty: '-46531',
+    qty_reserved: '0',
+    qty_held_by_decisions: '0',
+    qty_free: '478',
+    sales_orders: [
+      {
+        sales_order_id: 'so-a',
+        so_number: 'SO391698',
+        customer_name: 'OIB CONSTRUCTION SDN BHD',
+        doc_date: '2026-01-05',
+        delivery_date: '2026-09-04',
+        so_qty: '47009',
+        is_covered: false,
+      },
+    ],
+    incoming: [],
+  };
+
+  it('opens the documents under the row, addressed by the ids the server sent', async () => {
+    getStockDetail.mockResolvedValue(detail);
+    renderTable([position()]);
+
+    expect(screen.queryByTestId('stock-documents-panel')).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Show documents behind BRW-BB' }),
+    );
+
+    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1'));
+    const expansion = await screen.findByTestId('stock-expansion-BRW-BB');
+    expect(within(expansion).getByTestId('stock-documents-panel')).toBeInTheDocument();
+    expect(await within(expansion).findByText('SO391698')).toBeInTheDocument();
+  });
+
+  it('closes again on a second press, without navigating anywhere', async () => {
+    getStockDetail.mockResolvedValue(detail);
+    renderTable([position()]);
+
+    fireEvent.click(screen.getByTestId('stock-expand-BRW-BB'));
+    await screen.findByTestId('stock-expansion-BRW-BB');
+
+    fireEvent.click(screen.getByTestId('stock-expand-BRW-BB'));
+    expect(screen.queryByTestId('stock-expansion-BRW-BB')).not.toBeInTheDocument();
+  });
+
+  it('lets two locations stand open at once, because comparing them is the point', async () => {
+    getStockDetail.mockResolvedValue(detail);
+    renderTable([
+      position(),
+      position({ location: 'BRW', warehouse_id: 'wh-2' }),
+    ]);
+
+    fireEvent.click(screen.getByTestId('stock-expand-BRW-BB'));
+    fireEvent.click(screen.getByTestId('stock-expand-BRW'));
+
+    await screen.findByTestId('stock-expansion-BRW-BB');
+    expect(screen.getByTestId('stock-expansion-BRW')).toBeInTheDocument();
+    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-2'));
+  });
+
+  /**
+   * Two products on the live book share the code B2155-NL-BLUE, so a position the server did
+   * not address by ids cannot be drilled into at all - resolving one from the code would answer
+   * confidently about the wrong product.
+   */
+  it('offers no chevron for a position the server cannot address, and says why', () => {
+    renderTable([position({ product_id: null, warehouse_id: null })]);
+
+    expect(screen.queryByTestId('stock-expand-BRW-BB')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Not addressable')).toBeInTheDocument();
+  });
+});

@@ -4,9 +4,10 @@ import * as React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import type { DeliverySchedulePhase } from '../../../_shared/types/deliverySchedule.types';
 import type { ColumnState } from '../lib/scheduleTotals';
-import { phaseRowLabel } from '../lib/scheduleTotals';
+import { phaseRowLabel, sumQty } from '../lib/scheduleTotals';
 import { DeliveryScheduleProductPicker } from './DeliveryScheduleProductPicker';
 
 /**
@@ -53,6 +54,11 @@ export interface ScheduleGridController {
   setDraft: (phaseId: string, columnKey: string, value: string) => void;
   commit: (phaseId: string, column: ColumnState) => void;
   resolveProduct: (columnIndex: number, productId: string) => void;
+  /**
+   * The products the PO this schedule is checked against orders, for the column pickers.
+   * Empty when there is no PO version to read, which sends the pickers to the catalogue.
+   */
+  poOptions: SearchableSelectOption[];
   canEdit: boolean;
   /** Column indexes whose product was just identified, so the map note is shown once. */
   learnedColumns: number[];
@@ -68,13 +74,19 @@ export interface ScheduleGridController {
   focusRequest: ColumnFocusRequest;
 }
 
-const PHASE_COL = 'w-[200px] min-w-[200px] max-w-[200px]';
-const DATA_COL = 'w-[172px] min-w-[172px] max-w-[172px]';
+/**
+ * The identity column, and it is wide because it carries the picker as well as the code.
+ */
+const PRODUCT_COL = 'w-[240px] min-w-[240px] max-w-[240px]';
+/** One per delivery phase, sized for a date plus the phase it belongs to. */
+const DATE_COL = 'w-[136px] min-w-[136px] max-w-[136px]';
+/** The three numbers that close every product row. */
+const TOTAL_COL = 'w-[124px] min-w-[124px] max-w-[124px]';
 
 /**
  * Two paint layers, and every pinned cell names the one it is on.
  *
- * A cell pinned on BOTH axes (the "Phase" heading, each totals label) has to beat a cell
+ * A cell pinned on BOTH axes (the "Product" heading, the totals-row label) has to beat a cell
  * pinned on one, because those are the only two that ever cover the same pixels, and with
  * equal z-index the winner is whichever the DOM happened to put last rather than whichever
  * a reader expects to see.
@@ -86,27 +98,36 @@ const Z_CORNER = 'z-30';
  * A pinned cell has to be OPAQUE, and this is the whole of the "stray number in the header"
  * report.
  *
- * `bg-destructive/10` is ninety percent transparent, so an unreconciled column's header and
- * totals band were tinted glass: a quantity scrolling underneath showed straight through
- * them and read as a number appearing in the header row. Nothing about the z-index was
- * wrong, the header simply had almost no paint on it. `color-mix` gives the same tint as a
- * solid colour, which is what a pinned cell needs. It is also the only way to tint these
- * tokens: the theme resolves them to `oklch(...)`, so `hsl(var(--destructive) / 0.1)` would
- * be dropped by the browser as invalid.
+ * `bg-destructive/10` is ninety percent transparent, so an unreconciled product's pinned cells
+ * were tinted glass: a quantity scrolling underneath showed straight through them and read as
+ * a number appearing where it did not belong. Nothing about the z-index was wrong, the cell
+ * simply had almost no paint on it. `color-mix` gives the same tint as a solid colour, which is
+ * what a pinned cell needs. It is also the only way to tint these tokens: the theme resolves
+ * them to `oklch(...)`, so `hsl(var(--destructive) / 0.1)` would be dropped as invalid.
  */
 const UNRECONCILED_BG = 'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
 
 /**
- * The schedule as the customer drew it: phase rows down, product columns across, grouped by
- * area, with the three totals at the foot of every column.
+ * The schedule, TRANSPOSED: dates across the top, products down the side.
  *
- * NOT a DataGrid, because here the COLUMNS ARE DATA: there are as many of them as the customer
- * has products, and no column config, sort or resize applies. What DataGrid would otherwise
- * give us is solved explicitly: the whole table scrolls inside this container so the page body
- * never scrolls sideways, the phase column is sticky so a reviewer twenty columns in still
- * knows which phase they are on, and every cell carries a fixed width on a `w-max` table
- * (rather than `table-fixed`, which overlaps its columns the moment content exceeds the
- * declared width).
+ * The customer's printed sheet runs the other way (a column per product, a row per delivery
+ * phase) and this grid used to mirror it. It now reads the way people ask about it instead -
+ * "what goes out on the first of July" is a column, "how much of this basin is scheduled" is a
+ * row - which is the axis the captain asked for. Nothing about the DATA changed with it.
+ *
+ * A NOTE ON THE WORD "COLUMN", because it now means two things. In the reconciliation payload
+ * and everywhere in this code, a `column` (`ColumnState`, `columnIndex`, `data-column-key`,
+ * `registerColumnRef`) is a PRODUCT - it is the customer's own word for the vertical strip on
+ * their sheet, and the API addresses products by `product_index` under exactly that name. On
+ * screen that same thing is now a ROW. The domain word is deliberately left alone: renaming it
+ * would put the UI's vocabulary at odds with the API's for a purely visual change.
+ *
+ * NOT a DataGrid, because here the COLUMNS ARE DATA: there is one per delivery phase, and no
+ * column config, sort or resize applies to them. What DataGrid would otherwise give us is
+ * solved explicitly: the whole table scrolls inside this container so the page body never
+ * scrolls sideways, the product column is sticky so a reviewer eight dates in still knows which
+ * product they are on, and every cell carries a fixed width on a `w-max` table (rather than
+ * `table-fixed`, which overlaps its columns the moment content exceeds the declared width).
  *
  * A BLANK CELL IS NOT A ZERO. It means this phase does not take this product, so it renders
  * blank and stays blank.
@@ -128,6 +149,26 @@ export function DeliveryScheduleMatrix({
     cell.scrollIntoView?.({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }, [focusRequest]);
 
+  /**
+   * The dates, left to right, in the sheet's own order.
+   *
+   * Which is area group then sequence, and that is chronological WITHIN an area - the order
+   * the customer wrote and the order the phase numbers follow. Sorting the whole row by date
+   * instead would interleave TOWER with COMMON AREA and lose the grouping, so the area is
+   * named on the first column of each group and the boundary is drawn there.
+   */
+  const dateColumns = React.useMemo(
+    () =>
+      phaseGroups.flatMap((group) =>
+        group.phases.map((phase, index) => ({
+          phase,
+          area: group.area,
+          startsGroup: index === 0,
+        })),
+      ),
+    [phaseGroups],
+  );
+
   return (
     <div
       ref={rootRef}
@@ -140,148 +181,274 @@ export function DeliveryScheduleMatrix({
             <th
               scope="col"
               className={cn(
-                PHASE_COL,
+                PRODUCT_COL,
                 Z_CORNER,
                 'sticky left-0 top-0 border-b border-e border-border bg-muted px-2 py-2 text-start align-bottom font-medium',
               )}
             >
-              Phase
+              Product
             </th>
-            {columns.map((column) => (
+
+            {dateColumns.map(({ phase, area, startsGroup }) => (
               <th
-                key={column.key}
+                key={phase.id}
                 scope="col"
-                ref={(node) => controller.registerColumnRef(column.key, node)}
                 className={cn(
-                  DATA_COL,
+                  DATE_COL,
                   Z_PINNED,
-                  'sticky top-0 border-b border-e border-border px-2 py-2 text-start align-bottom font-medium',
-                  column.reconciled ? 'bg-muted' : UNRECONCILED_BG,
+                  'sticky top-0 border-b border-e border-border bg-muted px-2 py-2 text-start align-bottom font-medium',
+                  // Where one area ends and the next begins, drawn once rather than repeated
+                  // as a label on every column under it.
+                  startsGroup && 'border-s border-s-border',
                 )}
               >
-                <ColumnHeading column={column} controller={controller} />
+                <span
+                  className="block truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+                  title={area ?? 'Ungrouped'}
+                >
+                  {startsGroup ? (area ?? 'Ungrouped') : ' '}
+                </span>
+                <span
+                  className="block truncate"
+                  title={
+                    phase.delivery_date
+                      ? formatDateInMalaysia(phase.delivery_date)
+                      : 'No date'
+                  }
+                >
+                  {phase.delivery_date
+                    ? formatDateInMalaysia(phase.delivery_date)
+                    : 'No date'}
+                </span>
+                <span
+                  className="block truncate text-[11px] font-normal text-muted-foreground"
+                  title={phaseRowLabel(phase)}
+                >
+                  {phaseRowLabel(phase)}
+                </span>
               </th>
             ))}
+
+            {/* The three numbers the reconciliation rests on, closing every row. Not pinned to
+                the right: four sticky columns need hand-computed offsets, and these same three
+                numbers are already side by side in the reconciliation table above. */}
+            <TotalsHeading label="Our total" />
+            <TotalsHeading label="Schedule TOTAL QTY" />
+            <TotalsHeading label="PO quantity" />
           </tr>
         </thead>
 
         <tbody>
-          {phaseGroups.map((group) => (
-            <React.Fragment key={group.area ?? '__none__'}>
-              <tr>
-                <th
-                  scope="colgroup"
-                  className={cn(
-                    PHASE_COL,
-                    Z_PINNED,
-                    'sticky left-0 border-b border-e border-border bg-accent px-2 py-1.5 text-start text-[11px] font-semibold uppercase tracking-wide',
-                  )}
-                >
-                  {group.area ?? 'Ungrouped'}
-                </th>
-                <td
-                  colSpan={columns.length}
-                  className="border-b border-border bg-accent px-2 py-1.5"
-                />
-              </tr>
+          {columns.map((column) => (
+            /**
+             * The ROW is what "go to this product" scrolls to, not the cell heading it.
+             *
+             * Chrome refuses to auto-scroll a `position: sticky` element and says so in the
+             * console ("Skipping auto-scroll behavior due to position: sticky"), so pointing
+             * the jump at the pinned identity cell made the reconciliation table's row links
+             * silently do nothing. The row is not pinned, and it is the thing being gone to.
+             */
+            <tr key={column.key} ref={(node) => controller.registerColumnRef(column.key, node)}>
+              <th
+                scope="row"
+                className={cn(
+                  PRODUCT_COL,
+                  Z_PINNED,
+                  'sticky left-0 border-b border-e border-border px-2 py-2 text-start align-top font-normal',
+                  column.reconciled ? 'bg-background' : UNRECONCILED_BG,
+                )}
+              >
+                <ProductHeading column={column} controller={controller} />
+              </th>
 
-              {group.phases.map((phase) => (
-                <tr key={phase.id}>
-                  <th
-                    scope="row"
+              {dateColumns.map(({ phase, startsGroup }) => {
+                const editable = controller.canEdit && Boolean(column.productId);
+                const value = controller.valueFor(phase.id, column.key);
+                return (
+                  <td
+                    key={phase.id}
                     className={cn(
-                      PHASE_COL,
-                      Z_PINNED,
-                      'sticky left-0 border-b border-e border-border bg-background px-2 py-1.5 text-start font-normal',
+                      DATE_COL,
+                      'border-b border-e border-border p-0',
+                      startsGroup && 'border-s border-s-border',
+                      column.reconciled ? '' : 'bg-destructive/5',
                     )}
                   >
-                    <span
-                      className="block truncate font-medium"
-                      title={phaseRowLabel(phase)}
-                    >
-                      {phaseRowLabel(phase)}
-                    </span>
-                    <span className="block truncate text-[11px] text-muted-foreground">
-                      {phase.delivery_date
-                        ? formatDateInMalaysia(phase.delivery_date)
-                        : 'No date'}
-                    </span>
-                  </th>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      data-column-key={column.key}
+                      // Quantities stay strings end to end (contract convention): the
+                      // value is never parsed here, only echoed back to the API.
+                      value={value}
+                      disabled={!editable}
+                      // Unchanged, phase first: it is what every other view calls this cell,
+                      // and the axis it is drawn on is not part of its name.
+                      aria-label={`${phaseRowLabel(phase)}, ${
+                        column.productCode ?? column.customerCode ?? 'unidentified column'
+                      }`}
+                      onChange={(event) =>
+                        controller.setDraft(phase.id, column.key, event.target.value)
+                      }
+                      onBlur={() => controller.commit(phase.id, column)}
+                      className="h-8 w-full bg-transparent px-2 text-end tabular-nums outline-none focus:bg-primary/5 focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:text-muted-foreground"
+                    />
+                  </td>
+                );
+              })}
 
-                  {columns.map((column) => {
-                    const editable = controller.canEdit && Boolean(column.productId);
-                    const value = controller.valueFor(phase.id, column.key);
-                    return (
-                      <td
-                        key={column.key}
-                        className={cn(
-                          DATA_COL,
-                          'border-b border-e border-border p-0',
-                          column.reconciled ? '' : 'bg-destructive/5',
-                        )}
-                      >
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          data-column-key={column.key}
-                          // Quantities stay strings end to end (contract convention): the
-                          // value is never parsed here, only echoed back to the API.
-                          value={value}
-                          disabled={!editable}
-                          aria-label={`${phaseRowLabel(phase)}, ${
-                            column.productCode ?? column.customerCode ?? 'unidentified column'
-                          }`}
-                          onChange={(event) =>
-                            controller.setDraft(phase.id, column.key, event.target.value)
-                          }
-                          onBlur={() => controller.commit(phase.id, column)}
-                          className="h-8 w-full bg-transparent px-2 text-end tabular-nums outline-none focus:bg-primary/5 focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:text-muted-foreground"
-                        />
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </React.Fragment>
+              <TotalCell column={column} value={column.ourTotal} emphasise />
+              <TotalCell
+                column={column}
+                value={column.reportedTotal}
+                missingLabel="Not printed"
+                wrong={column.blockers.some(
+                  (blocker) => blocker.code === 'reported_mismatch',
+                )}
+              />
+              <TotalCell
+                column={column}
+                value={column.poQty}
+                missingLabel="Not on the PO"
+                wrong={column.blockers.some(
+                  (blocker) =>
+                    blocker.code === 'po_mismatch' || blocker.code === 'not_on_po',
+                )}
+              />
+            </tr>
           ))}
         </tbody>
 
-        {/* The comparison, at the foot of every column, all three numbers side by side. */}
+        {/* What leaves the yard on each date, which is the question the horizontal axis now
+            asks. Our sum of what is on screen, edits included - the sheet prints no such row,
+            so it is labelled as ours. */}
         <tfoot>
-          <TotalsRow
-            label="Our total"
-            columns={columns}
-            valueOf={(column) => column.ourTotal}
-            emphasise
-          />
-          <TotalsRow
-            label="Schedule TOTAL QTY"
-            columns={columns}
-            valueOf={(column) => column.reportedTotal}
-            missingLabel="Not printed"
-            wrongWhen={(column) =>
-              column.blockers.some((blocker) => blocker.code === 'reported_mismatch')
-            }
-          />
-          <TotalsRow
-            label="PO quantity"
-            columns={columns}
-            valueOf={(column) => column.poQty}
-            missingLabel="Not on the PO"
-            wrongWhen={(column) =>
-              column.blockers.some(
-                (blocker) =>
-                  blocker.code === 'po_mismatch' || blocker.code === 'not_on_po',
-              )
-            }
-          />
+          <tr>
+            <th
+              scope="row"
+              className={cn(
+                PRODUCT_COL,
+                Z_CORNER,
+                'sticky bottom-0 left-0 border-t border-e border-border bg-muted px-2 py-1.5 text-start text-[11px] font-semibold',
+              )}
+            >
+              Our total for the date
+            </th>
+            {dateColumns.map(({ phase, startsGroup }) => (
+              <td
+                key={phase.id}
+                className={cn(
+                  DATE_COL,
+                  Z_PINNED,
+                  'sticky bottom-0 border-t border-e border-border bg-muted px-2 py-1.5 text-end font-semibold tabular-nums',
+                  startsGroup && 'border-s border-s-border',
+                )}
+              >
+                <DateTotal
+                  values={columns.map((column) =>
+                    controller.valueFor(phase.id, column.key),
+                  )}
+                />
+              </td>
+            ))}
+            <td
+              className={cn(
+                TOTAL_COL,
+                Z_PINNED,
+                'sticky bottom-0 border-t border-e border-border bg-muted px-2 py-1.5 text-end font-semibold tabular-nums',
+              )}
+            >
+              {sumQty(columns.map((column) => column.ourTotal))}
+            </td>
+            {/* Nothing to total: the schedule's own TOTAL QTY row and the PO quantity are
+                per product, and adding them across products would invent a number. */}
+            <td
+              className={cn(
+                TOTAL_COL,
+                Z_PINNED,
+                'sticky bottom-0 border-t border-e border-border bg-muted px-2 py-1.5',
+              )}
+            />
+            <td
+              className={cn(
+                TOTAL_COL,
+                Z_PINNED,
+                'sticky bottom-0 border-t border-e border-border bg-muted px-2 py-1.5',
+              )}
+            />
+          </tr>
         </tfoot>
       </table>
     </div>
   );
 }
 
-function ColumnHeading({
+/**
+ * What goes out on one date, or nothing at all.
+ *
+ * A blank is not a zero here either: a date nothing is scheduled against renders empty rather
+ * than as `0`, which would read as a decision to deliver none of it.
+ */
+function DateTotal({ values }: { values: string[] }) {
+  const scheduled = values.some((value) => value.trim() !== '');
+  return <>{scheduled ? sumQty(values) : ''}</>;
+}
+
+function TotalsHeading({ label }: { label: string }) {
+  return (
+    <th
+      scope="col"
+      className={cn(
+        TOTAL_COL,
+        Z_PINNED,
+        'sticky top-0 border-b border-e border-border bg-muted px-2 py-2 text-end align-bottom text-[11px] font-semibold',
+      )}
+    >
+      {label}
+    </th>
+  );
+}
+
+function TotalCell({
+  column,
+  value,
+  missingLabel,
+  wrong,
+  emphasise,
+}: {
+  column: ColumnState;
+  value: string | null;
+  missingLabel?: string;
+  wrong?: boolean;
+  emphasise?: boolean;
+}) {
+  return (
+    <td
+      className={cn(
+        TOTAL_COL,
+        'border-b border-e border-border px-2 py-1.5 text-end align-top tabular-nums',
+        // One background class, never two to be resolved later: which of two competing
+        // `bg-*` utilities wins is decided by stylesheet order, not by the order they are
+        // listed here.
+        column.reconciled ? 'bg-muted/40' : UNRECONCILED_BG,
+        emphasise && 'font-semibold',
+        wrong && 'text-destructive',
+      )}
+    >
+      {value ?? (
+        <span className="text-[11px] font-normal text-muted-foreground">
+          {missingLabel ?? 'Not given'}
+        </span>
+      )}
+    </td>
+  );
+}
+
+/**
+ * A product, as the head of its own row: what it is, whether it reconciles, and the way to
+ * correct it when the code was matched to the wrong thing.
+ */
+function ProductHeading({
   column,
   controller,
 }: {
@@ -291,7 +458,7 @@ function ColumnHeading({
   return (
     <div className="space-y-1">
       <span
-        className="block truncate"
+        className="block truncate font-medium"
         title={column.productCode ?? 'Not identified'}
       >
         {column.productCode ?? 'Not identified'}
@@ -305,30 +472,40 @@ function ColumnHeading({
         </span>
       )}
 
-      {column.reconciled ? (
-        <Badge variant="success" appearance="light" size="sm">
-          Reconciled
-        </Badge>
-      ) : (
-        <Badge variant="destructive" appearance="light" size="sm">
-          {column.blockers.length === 1
-            ? '1 to fix'
-            : `${column.blockers.length} to fix`}
-        </Badge>
-      )}
+      <div className="flex flex-wrap items-center gap-1">
+        {column.dismissed ? (
+          <Badge variant="secondary" size="sm">
+            Dismissed
+          </Badge>
+        ) : column.blockers.length > 0 ? (
+          <Badge variant="destructive" appearance="light" size="sm">
+            {column.blockers.length === 1
+              ? '1 to fix'
+              : `${column.blockers.length} to fix`}
+          </Badge>
+        ) : column.warning ? (
+          <Badge variant="warning" appearance="light" size="sm">
+            Warning
+          </Badge>
+        ) : (
+          <Badge variant="success" appearance="light" size="sm">
+            Reconciled
+          </Badge>
+        )}
 
-      {column.fromRememberedMap && (
-        <Badge variant="secondary" size="sm" className="font-normal">
-          Remembered code
-        </Badge>
-      )}
+        {column.fromRememberedMap && (
+          <Badge variant="secondary" size="sm" className="font-normal">
+            Remembered code
+          </Badge>
+        )}
+      </div>
 
       {/**
-       * A column that HAS a product can still have the wrong one, and that is the usual
+       * A product that HAS a match can still have the wrong one, and that is the usual
        * reason a PO looks like it never ordered the item. Offering the picker only to the
-       * unidentified columns made a wrong match unfixable without deleting something. So:
-       * no product, a field to fill; wrong product, a quiet "Change the product" that does
-       * not spend a 172px header on a select box. A reconciled column is left alone.
+       * unidentified rows made a wrong match unfixable without deleting something. So:
+       * no product, a field to fill; wrong product, a quiet "Change the product". A row
+       * that agrees with the PO is left alone.
        */}
       {controller.canEdit && !column.reconciled && (
         <div className="pt-0.5 font-normal">
@@ -338,6 +515,7 @@ function ColumnHeading({
             customerCode={column.customerCode}
             action={column.productId ? 'Change the product' : 'Pick the product'}
             variant={column.productId ? 'compact' : 'field'}
+            poOptions={controller.poOptions}
             onPick={(productId) => controller.resolveProduct(column.index, productId)}
           />
         </div>
@@ -351,62 +529,5 @@ function ColumnHeading({
         </p>
       )}
     </div>
-  );
-}
-
-function TotalsRow({
-  label,
-  columns,
-  valueOf,
-  missingLabel,
-  wrongWhen,
-  emphasise,
-}: {
-  label: string;
-  columns: ColumnState[];
-  valueOf: (column: ColumnState) => string | null;
-  missingLabel?: string;
-  wrongWhen?: (column: ColumnState) => boolean;
-  emphasise?: boolean;
-}) {
-  return (
-    <tr>
-      <th
-        scope="row"
-        className={cn(
-          PHASE_COL,
-          Z_CORNER,
-          'sticky bottom-0 left-0 border-t border-e border-border bg-muted px-2 py-1.5 text-start text-[11px] font-semibold',
-        )}
-      >
-        {label}
-      </th>
-      {columns.map((column) => {
-        const value = valueOf(column);
-        const wrong = wrongWhen?.(column) ?? false;
-        return (
-          <td
-            key={column.key}
-            className={cn(
-              DATA_COL,
-              Z_PINNED,
-              'sticky bottom-0 border-t border-e border-border px-2 py-1.5 text-end tabular-nums',
-              // One background class, never two to be resolved later: which of two
-              // competing `bg-*` utilities wins is decided by stylesheet order, not by
-              // the order they are listed here.
-              column.reconciled ? 'bg-muted' : UNRECONCILED_BG,
-              emphasise && 'font-semibold',
-              wrong && 'text-destructive',
-            )}
-          >
-            {value ?? (
-              <span className="text-[11px] font-normal text-muted-foreground">
-                {missingLabel ?? 'Not given'}
-              </span>
-            )}
-          </td>
-        );
-      })}
-    </tr>
   );
 }

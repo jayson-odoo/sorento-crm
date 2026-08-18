@@ -76,10 +76,12 @@ class World:
             self.warehouses[key] = w
         return self.warehouses[key]
 
-    def po(self, suffix: str, lines, *, issue_date: date) -> PurchaseOrder:
+    def po(
+        self, suffix: str, lines, *, issue_date: date, status: str = "active"
+    ) -> PurchaseOrder:
         po = PurchaseOrder(
             id=str(uuid.uuid4()), po_number=f"{MARKER}-PO{suffix}-{self.tag}",
-            supplier_id=self.supplier.id, issue_date=issue_date, status="active",
+            supplier_id=self.supplier.id, issue_date=issue_date, status=status,
         )
         self.db.add(po)
         self.db.flush()
@@ -187,6 +189,24 @@ def test_another_supplier_s_order_is_not_a_candidate_at_all():
         line = svc.suggest(db, str(shipment.id))["lines"][0]
 
         assert line["suggestion"] is None
+
+
+def test_a_draft_purchase_order_is_not_a_candidate_either():
+    # G1b. A draft the supplier has never seen cannot be what a container shipped against, so
+    # offering it as the suggestion would invite a link to an order that was never placed.
+    with pg_session() as db:
+        w = World(db)
+        w.po("1", [("A", 10, 0, "BRW")], issue_date=date(2026, 1, 1),
+             status="draft_recommendation")
+        w.po("2", [("A", 10, 0, "BRW")], issue_date=date(2026, 2, 1), status="draft")
+        placed = w.po("3", [("A", 10, 0, "BRW")], issue_date=date(2026, 6, 1))
+        shipment = w.shipment([("A", 10)])
+
+        line = svc.suggest(db, str(shipment.id))["lines"][0]
+
+        assert line["suggestion"]["po_number"] == placed.po_number
+        assert line["reason"] == "only_open_order"
+        assert line["alternatives"] == []
 
 
 def test_the_proposal_never_exceeds_what_the_order_still_has_outstanding():

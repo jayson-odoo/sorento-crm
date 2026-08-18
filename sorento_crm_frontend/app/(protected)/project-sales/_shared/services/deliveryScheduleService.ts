@@ -8,6 +8,9 @@
  *   PUT  /delivery-schedule-versions/{version_id}/products/{product_index}
  *   POST /delivery-schedule-versions/{version_id}/confirm
  *
+ * Added after the contract, on the same shape as the two PUTs above:
+ *   PUT  /delivery-schedule-versions/{version_id}/columns/{column_index}/dismissal
+ *
  * Two endpoints below are NOT in the contract and are marked GUESS. Section 4 gives no way
  * to find a version id from a project, and the tab has to list something. They mirror the
  * quotation pair phase 1 already ships (`/projects/{id}/quotations` and
@@ -54,6 +57,19 @@ export async function listDeliveryScheduleVersions(
   const body: ListEnvelope<DeliveryScheduleVersionSummary> = await response.json();
   return body.data;
 }
+
+/**
+ * Prev/next neighbours of a schedule VERSION within its own schedule's revision history -
+ * the same set, in the same order, that `/delivery-schedules/{id}/versions` lists (newest
+ * first). Read by the generic `useRecordNeighbours` hook.
+ *
+ *   GET /api/v1/project-sales/delivery-schedule-versions/neighbours?id=<version_id>
+ *   200 { total, index, prev_id, next_id }
+ *       - index is 1-based, null when the version is not in the set.
+ *       - prev_id/next_id wrap circularly; null only when total <= 1.
+ *   404 when the version id names nothing.
+ */
+export const DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH = `${BASE}/delivery-schedule-versions/neighbours`;
 
 export async function getDeliveryScheduleVersion(
   versionId: string,
@@ -127,6 +143,34 @@ export async function resolveDeliveryScheduleProduct(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to set the product'));
+  return response.json();
+}
+
+/**
+ * Overrules ONE column's failing check as a false signal, with a reason, so it stops
+ * blocking the confirm.
+ *
+ * `PUT /delivery-schedule-versions/{id}/columns/{column_index}/dismissal` -> the whole
+ * version. `dismissed: false` puts the column back under its verdict. 422 when dismissing
+ * without a reason. Anything that CHANGES the column (its product, its cells, a re-read of
+ * the document) clears the dismissal server-side, so the verdict is live again.
+ */
+export async function dismissDeliveryScheduleColumn(
+  versionId: string,
+  columnIndex: number,
+  dismissed: boolean,
+  reason?: string | null,
+): Promise<DeliveryScheduleVersion> {
+  const response = await apiFetch(
+    `${BASE}/delivery-schedule-versions/${versionId}/columns/${columnIndex}/dismissal`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dismissed, reason: reason ?? null }),
+    },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to dismiss the warning'));
   return response.json();
 }
 

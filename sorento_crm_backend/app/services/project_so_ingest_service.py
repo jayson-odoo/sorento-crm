@@ -39,6 +39,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -198,8 +199,36 @@ class ProjectSOIngestService:
         # document that agrees still has to leave our record able to name its counterpart.
         if document.doc_no:
             order.autocount_doc_no = document.doc_no
-            self._reconcile_core_order(order, document.doc_no)
+            self.reconcile_core_order(order, document.doc_no)
             self.db.flush()
+
+        # AC-A01: the line half, in the SAME call. The upload is the moment both documents
+        # are in hand, so leaving the lines to a second step somebody has to remember is how
+        # an order sits unreconciled with nothing on screen saying why. Imported here rather
+        # than at module scope because that service calls back into this one for the header.
+        if order.so_id:
+            from app.services.project_so_reconciliation_service import (
+                ProjectSOReconciliationService,
+            )
+
+            # Best effort, and inside a savepoint. Adopting the document number and
+            # recording the divergence are what the upload was FOR; a line write that
+            # loses a race on `uq_projects_so_line_core_line` must not take those down
+            # with it, and re-running the reconciliation from the sheet is one button.
+            # The savepoint is what makes that survivable: an IntegrityError leaves the
+            # transaction unusable otherwise, so the divergence write would fail too.
+            try:
+                with self.db.begin_nested():
+                    ProjectSOReconciliationService(self.db).reconcile(order)
+            except (AppException, SQLAlchemyError) as exc:
+                logger.warning(
+                    "Reconciling the lines of sales order %s against AutoCount document "
+                    "%s failed (%s). The document number and the comparison stand; the "
+                    "lines can be re-run from the sales order.",
+                    order.provisional_ref,
+                    document.doc_no,
+                    exc,
+                )
 
         report = compare(*self._ours(order), *self._theirs(document))
         existing = self._open_divergence(order.id)
@@ -227,7 +256,7 @@ class ProjectSOIngestService:
 
     # ------------------------------------------------------- the two numbers
 
-    def _reconcile_core_order(self, order: ProjectSalesOrder, doc_no: str) -> None:
+    def reconcile_core_order(self, order: ProjectSalesOrder, doc_no: str) -> None:
         """Make the real number and the provisional one name ONE piece of demand.
 
         Four outcomes, and the last two are the ones that have to be written down (AC-F5):
@@ -328,6 +357,11 @@ class ProjectSOIngestService:
             # are left where they are: they are a pairing somebody already made, and the
             # line they name still exists.
             self._repoint_claims(order, doc_no, unresolved_only=True)
+
+    #: The name this was written under. Public since Stage 1B, because the reconciliation
+    #: service attempts the header link before mapping the lines; the old name stays so an
+    #: existing caller (or a note pointing at it) still resolves.
+    _reconcile_core_order = reconcile_core_order
 
     def _repoint_claims(
         self, order: ProjectSalesOrder, doc_no: str, *, unresolved_only: bool

@@ -21,7 +21,22 @@
  *     products (cover derivable for 62% of them, volume for 16%). A volume of 0
  *     reads as "no space needed" and a cover of 0 reads as "already out of
  *     stock", and both would be decisions taken on a figure nobody measured.
+ *
+ * Stage 2 (front planning) adds three things to the same shapes, and adds no row
+ * identity: the product row is still exactly one row per product (AC-E03).
+ *
+ *   - **Channel is analysis inside the row, never row identity.** Project, Retail
+ *     and Unclassified are separate DEMAND readings; stock, incoming SPO, PO supply
+ *     and the reorder level stay single shared facts counted once (AC-F07).
+ *   - **The run's stamped grain travels with the report.** `decision_grain` says
+ *     which grain owns the decision, and it is a property of the run rather than a
+ *     control offered to the buyer (AC-F01).
+ *   - **Precision is frozen, not live.** `uom_decimal_places` is the product's base
+ *     UOM divisibility as it was when the run was calculated, and it is what both
+ *     the quantity field and the location split obey (AC-F12).
  */
+
+import type { PlanGrain } from '../lib/planGrain';
 
 /** One product, network wide (AC-C2.1). */
 export interface OrderSummaryRow {
@@ -31,10 +46,24 @@ export interface OrderSummaryRow {
   uom: string | null;
 
   on_hand: number;
-  /** Committed project demand, the sum of the lines behind the project drill. */
+  /**
+   * Open PROJECT-class SO quantity, classified by the SO's persisted `demand_class`
+   * (AC-E03). One of the row's two Project measures - the other is `project_buy_qty` -
+   * and they are shown side by side because they answer different questions: what the
+   * projects have ordered, and what CS has confirmed we must buy for them.
+   */
   project_demand: number;
-  /** Outstanding dealer and retail orders, the sum of the lines behind that drill. */
-  dealer_outstanding: number;
+  /**
+   * Open RETAIL-class SO quantity. The stored column is still `dealer_outstanding`;
+   * the API and every screen call it retail, which is the user's word (AC-E03).
+   */
+  retail_outstanding: number;
+  /**
+   * Demand whose SO carries no persisted `demand_class`. Visible as an exception and
+   * excluded from the actionable suggestion until it is classified (AC-E06). NULL on
+   * a legacy run, which has no breakdown and is never backfilled.
+   */
+  unclassified_demand_qty: number | null;
   /** Open Supply PO lines. Still negotiable: can be re-dated or cancelled. */
   qty_on_order: number;
   /** Inbound shipment lines. Loaded, so no longer negotiable. */
@@ -46,8 +75,35 @@ export interface OrderSummaryRow {
    * that lifts it is dated after the demand it is read as covering.
    */
   shortfall: number;
-  /** What the engine proposes, after MOQ and order-multiple rounding (AC-C3). */
+  /**
+   * What the engine proposes for the PRODUCT, after MOQ and the order multiple are
+   * applied ONCE to the product total (AC-E06 / AC-F11) at `uom_decimal_places`.
+   * Never the sum of per-location rounded quantities.
+   */
   suggested_qty: number;
+  /**
+   * Confirmed unplaced Buy on Project-class lines, summed across fulfilment
+   * locations (AC-E04). Firm demand: Retail free-supply netting never reduces it.
+   * NULL on a legacy run.
+   */
+  project_buy_qty: number | null;
+  /** Normally netted Retail replenishment, summed across locations. NULL on legacy. */
+  retail_replenishment_qty: number | null;
+  /** Earliest required date behind `project_buy_qty`. NULL when it is 0 or legacy. */
+  earliest_project_need_date: string | null;
+  /**
+   * The product's base-UOM `decimal_places`, FROZEN when the run was calculated
+   * (AC-F12). Chosen-quantity validation and the location split read this snapshot,
+   * never live UOM master data, so editing the UOM later cannot change a frozen run.
+   * NULL during rollout and on legacy runs, which resolves to 0.
+   */
+  uom_decimal_places: number | null;
+  /**
+   * The chosen quantity split back to locations by the allocator rerun (AC-F08).
+   * The quantities sum EXACTLY to `chosen_qty`. NULL until a quantity is chosen, and
+   * on a run whose decisions are owned by the per-location grain.
+   */
+  location_allocations: OrderSummaryLocationAllocation[] | null;
 
   /** What a person decided. Null until they decide (AC-C2.1). */
   chosen_qty: number | null;
@@ -74,7 +130,9 @@ export interface OrderSummaryRow {
 
   /** How many lines each aggregate opens to, so the icon can carry a count. */
   project_demand_line_count: number;
-  dealer_outstanding_line_count: number;
+  retail_outstanding_line_count: number;
+  /** How many SO lines carry no demand class, so the exception can be opened. */
+  unclassified_line_count: number;
   /** Worst ageing in the dealer drill, so the row can flag it without listing it. */
   max_days_outstanding: number | null;
 }
@@ -90,19 +148,111 @@ export interface OrderSummaryReport {
   as_of: string | null;
   /** Naive Malaysia wall-clock ISO timestamp of the computation. Null with `as_of`. */
   generated_at: string | null;
+  /**
+   * The grain STAMPED on this run when it was created, from the admin plan-grain
+   * policy setting (AC-F01). Not the current policy value, and not a choice offered
+   * here: the run keeps it forever. NULL only on a legacy run.
+   */
+  decision_grain: PlanGrain | null;
+  /**
+   * A run created before the front-planning contract. Its channel breakdown is
+   * unavailable, is never inferred or backfilled, and it accepts no decision in
+   * either grain (AC-F10).
+   */
+  is_legacy: boolean;
   rows: OrderSummaryRow[];
 }
 
-/** Which aggregate a drill decomposes. */
-export type OrderSummaryDemandKind = 'project' | 'dealer';
+/** One location's share of a chosen product quantity. Sums exactly to `chosen_qty`. */
+export interface OrderSummaryLocationAllocation {
+  warehouse_code: string;
+  warehouse_name: string;
+  allocated_qty: number;
+}
 
-/** One contributing project line (AC-C2.3). */
+/**
+ * One member location behind a product row (AC-F08).
+ *
+ * Demand is split by channel; supply is NOT. Stock, incoming SPO, PO and the reorder
+ * level are single shared facts of the product-location and are counted once, which
+ * is why they carry no channel dimension here (AC-F07).
+ */
+export interface OrderSummaryLocationRow {
+  warehouse_code: string;
+  warehouse_name: string;
+  /** Channel demand at this location. NULL on a legacy run. */
+  project_need: number | null;
+  retail_need: number | null;
+  unclassified_need: number | null;
+  /**
+   * The unconfirmed sheet-origin Project leg, already netted inside `retail_need` and
+   * never an addend of it. Optional because a run frozen before the confirmed/sheet split
+   * never stated it.
+   */
+  project_sheet_need?: number | null;
+  /** Shared supply, counted once. */
+  on_hand: number;
+  incoming_spo: number;
+  on_order_po: number;
+  /** The location's own reorder level. NULL means nobody has set one, which is not 0. */
+  reorder_level: number | null;
+  /** Velocity behind the Retail netting. NULL where the product has no statistic. */
+  avg_daily_demand: number | null;
+  /** This location's share of the chosen quantity. NULL until a quantity is chosen. */
+  allocated_qty: number | null;
+}
+
+/** What a product row's Locations drill opens to. */
+export interface OrderSummaryLocations {
+  product_code: string;
+  /** The run's stamped grain, so the drill can say who owns the decision. */
+  decision_grain: PlanGrain | null;
+  is_legacy: boolean;
+  uom: string | null;
+  uom_decimal_places: number | null;
+  /** The once-rounded product figure, repeated here so the drill reconciles. */
+  suggested_qty: number;
+  chosen_qty: number | null;
+  locations: OrderSummaryLocationRow[];
+}
+
+/**
+ * Which aggregate a drill decomposes.
+ *
+ * `dealer` is the legacy name of `retail` and is accepted on the wire so an older
+ * caller keeps working; every screen says retail.
+ */
+export type OrderSummaryDemandKind = 'project' | 'retail' | 'unclassified' | 'dealer';
+
+/** One contributing project line (AC-C2.3 / AC-D06 / AC-E07). */
 export interface ProjectDemandLine {
   project_name: string;
   so_number: string;
   qty: number;
   /** ISO date the line is required on site. Null when the SO carries no date. */
   required_date: string | null;
+  /** Human SO line number, so Purchasing can find the line it is looking at. */
+  line_no: number | null;
+  /** The fulfilment location the line's need sits at. */
+  warehouse_code: string | null;
+  /**
+   * The decision revision and inquiry the Buy came from, as a human reference
+   * ("Rev 2 / INQ-2026-0188") - never a UUID (AC-D06). Null on a line whose SO has
+   * no confirmed decision, which is counted through the sheet leg instead.
+   */
+  decision_ref: string | null;
+}
+
+/** One SO line whose demand class is missing, shown as an exception (AC-E02). */
+export interface UnclassifiedDemandLine {
+  customer_name: string;
+  so_number: string;
+  line_no: number | null;
+  qty: number;
+  /** ISO date the order was raised. */
+  ordered_date: string | null;
+  /** Why it has no class, in the words the exception is recorded with. */
+  exception: string;
 }
 
 /** One contributing dealer or retail line (AC-C2.4). */
@@ -131,8 +281,12 @@ export interface OrderSummaryDemandDrill {
   total_qty: number;
   /** Populated when `kind` is `project`, empty otherwise. */
   project_lines: ProjectDemandLine[];
-  /** Populated when `kind` is `dealer`, empty otherwise. */
-  dealer_lines: DealerDemandLine[];
+  /** Populated when `kind` is `retail`, empty otherwise. */
+  retail_lines: DealerDemandLine[];
+  /** Legacy name of `retail_lines`, kept so an older payload still renders. */
+  dealer_lines?: DealerDemandLine[];
+  /** Populated when `kind` is `unclassified`, empty otherwise. */
+  unclassified_lines: UnclassifiedDemandLine[];
 }
 
 /**
@@ -153,6 +307,14 @@ export interface SupplierCandidate {
   last_po_number: string | null;
   /** Incoming cost, stamped from the packing list at allocation (AC-C3.2). */
   last_incoming_cost: number | null;
+  /**
+   * ISO 4217 code `last_incoming_cost` is quoted in, from the shipment line itself. NOT
+   * `currency`, which is the PO's: a supplier's pre-loading list prices in their own money
+   * (often CNY) while the order sits in another, so labelling the incoming figure with the
+   * PO's code states a price that was never quoted. Null when the shipment line states
+   * none, and then the figure is shown without a currency rather than under a guess.
+   */
+  last_incoming_currency: string | null;
   last_incoming_date: string | null;
   /**
    * Incoming minus ordered, in `currency`. A first-class output: a supplier whose
@@ -189,6 +351,11 @@ export interface OrderSummarySuppliers {
 export interface OrderSummaryDecisionInput {
   /** Which report the decision belongs to. Opaque, never rendered. */
   run_id: string;
+  /**
+   * The chosen quantity, at most `uom_decimal_places` fractional digits (AC-F12).
+   * A finer figure is refused with 422; a write against a run decided at the other
+   * grain, or a legacy run, is refused with 409.
+   */
   chosen_qty: number;
   supplier_code: string;
 }
@@ -203,4 +370,11 @@ export interface OrderSummaryDecisionResult {
   chosen_supplier_name: string;
   decided_by: string;
   decided_at: string;
+  /**
+   * The chosen quantity split back to locations by the allocator rerun (AC-F12).
+   * The quantities sum EXACTLY to `chosen_qty` - no rescaling formula is applied -
+   * and they are returned with the decision so the split is visible the moment it
+   * is recorded.
+   */
+  location_allocations: OrderSummaryLocationAllocation[];
 }

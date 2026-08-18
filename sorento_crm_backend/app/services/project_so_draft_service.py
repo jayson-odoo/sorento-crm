@@ -48,6 +48,8 @@ from sqlalchemy.orm import Session
 from app.models.order import Customer
 from app.models.product import Product
 from app.models.project_so import (
+    AMENDMENT_PUBLISHED,
+    DECISION_ACTIVE,
     SEVERITY_HARD,
     SEVERITY_INFO,
     SEVERITY_WARN,
@@ -57,15 +59,24 @@ from app.models.project_so import (
     SO_STATUS_DRAFT,
     SO_STATUS_PUBLISHED,
     SO_STATUS_READY,
+    AllocationClaim,
     DeliverySchedule,
     DeliveryScheduleCell,
     DeliveryScheduleVersion,
+    OrderChangeNotice,
+    OrderInquiry,
+    OrderInquiryRow,
     ProjectDeliveryPhase,
     ProjectPOLine,
     ProjectPOVersion,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    ProjectSODivergence,
+    ProjectSODivergenceLine,
+    SOAmendment,
     SODraftFinding,
+    SOLineAllocation,
+    SOSupplyDecision,
 )
 from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
 from app.models.projects import (
@@ -79,6 +90,9 @@ from app.models.projects import (
 )
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.project_so_reconciliation_service import (
+    ProjectSOReconciliationService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +122,23 @@ GROUPING_AREA = "area"
 GROUPING_LEARNED = "learned"
 GROUPING_MANUAL = "manual"
 GROUPING_SUBSET = "subset"
+GROUPING_DELIVERY_DATE = "delivery_date"
+GROUPING_DELIVERY_MONTH = "delivery_month"
+
+# What the caller may cut the drafted lines on. The schedule area is the default because
+# the schedule already names it, but a customer who orders against dates rather than areas
+# gets one sales order per delivery date or per delivery month instead.
+SPLIT_BY_AREA = "area"
+SPLIT_BY_DELIVERY_DATE = "delivery_date"
+SPLIT_BY_DELIVERY_MONTH = "delivery_month"
+SPLIT_BY_MODES = (SPLIT_BY_AREA, SPLIT_BY_DELIVERY_DATE, SPLIT_BY_DELIVERY_MONTH)
+
+# The two date splits write their key into `area_group`, which is the same column the area
+# split writes an area name into. The strings therefore live in different namespaces, and
+# the origin is what says which one an existing order's key belongs to. Everything the area
+# split can produce (area, learned, a hand regroup, a product subset, a legacy NULL) shares
+# the area namespace.
+_DATE_GROUPING_ORIGINS = frozenset({GROUPING_DELIVERY_DATE, GROUPING_DELIVERY_MONTH})
 
 EXPLOSION_PACKAGE = "package"
 EXPLOSION_QUOTATION = "quotation"
@@ -250,6 +281,11 @@ def _norm_code(value: Optional[str]) -> str:
     return (value or "").strip().upper().replace(" ", "")
 
 
+def _grouping_namespace(origin: Optional[str]) -> str:
+    """Which key space an order's ``area_group`` string was written in."""
+    return origin if origin in _DATE_GROUPING_ORIGINS else GROUPING_AREA
+
+
 class ProjectSODraftService:
     """Builds, gates and publishes project sales order drafts."""
 
@@ -263,6 +299,7 @@ class ProjectSODraftService:
         purchase_order_id: str,
         schedule_version_id: str,
         *,
+        split_by: str = SPLIT_BY_AREA,
         actor_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Draft one or more sales orders from a PO version and a schedule version.
@@ -272,7 +309,19 @@ class ProjectSODraftService:
         pair produced before. A PUBLISHED order is never touched -- it is already in
         AutoCount, and quietly rewriting it would make the two systems disagree without
         anybody being told.
+
+        ``split_by`` picks the key the drafted lines are cut on. The lines themselves are
+        identical whichever key is chosen: only the sales order they land in changes.
         """
+        if split_by not in SPLIT_BY_MODES:
+            raise AppException(
+                status_code=422,
+                message=(
+                    "Sales orders can be split by schedule area, delivery date or "
+                    "delivery month."
+                ),
+                code="so_split_by_unknown",
+            )
         po = self._po_or_404(purchase_order_id)
         project = self._project_or_404(po.project_id)
         schedule_version = self._schedule_version_or_404(schedule_version_id)
@@ -290,7 +339,9 @@ class ProjectSODraftService:
                 code="po_has_no_lines",
             )
 
-        replaced, skipped, committed_areas = self._clear_previous_drafts(po, schedule_version)
+        replaced, skipped, committed_areas, reusable_refs = self._clear_previous_drafts(
+            po, schedule_version, split_by=split_by
+        )
 
         quotation_version = self._quotation_version(po)
         findings: List[_PendingFinding] = []
@@ -299,7 +350,10 @@ class ProjectSODraftService:
         slices = self._spread_across_phases(
             po=po, schedule_version=schedule_version, source_lines=source_lines, findings=findings
         )
-        learned = self._learned_area_map(po)
+        # What this customer regrouped by hand last time is an AREA proposal, so it has
+        # nothing to say about a build keyed on dates: applying it there would move a line
+        # into an area name inside a date namespace.
+        learned = self._learned_area_map(po) if split_by == SPLIT_BY_AREA else {}
         drafts = self._draft_lines(
             slices=slices,
             quotation_version=quotation_version,
@@ -310,18 +364,29 @@ class ProjectSODraftService:
         used_learned = any(
             learned.get(_norm_code(draft.product_code)) is not None for draft in drafts
         )
+        if split_by == SPLIT_BY_DELIVERY_DATE:
+            grouping_origin = GROUPING_DELIVERY_DATE
+        elif split_by == SPLIT_BY_DELIVERY_MONTH:
+            grouping_origin = GROUPING_DELIVERY_MONTH
+        else:
+            grouping_origin = GROUPING_LEARNED if used_learned else GROUPING_AREA
         orders = self._persist(
             po=po,
             project=project,
             schedule_version=schedule_version,
             drafts=drafts,
             findings=findings,
-            grouping_origin=GROUPING_LEARNED if used_learned else GROUPING_AREA,
+            grouping_origin=grouping_origin,
+            split_by=split_by,
             committed_areas=committed_areas,
+            reusable_refs=reusable_refs,
         )
         self.db.flush()
+        states = self.review_states_for(orders)
         return {
-            "data": [self.serialize_row(order) for order in orders],
+            "data": [
+                self.serialize_row(order, review_states=states) for order in orders
+            ],
             "replaced_drafts": replaced,
             "skipped_published": skipped,
         }
@@ -1130,6 +1195,20 @@ class ProjectSODraftService:
 
     # --------------------------------------------------------------- the split
 
+    def _group_key(self, draft: _LineDraft, split_by: str) -> Optional[str]:
+        """The sales order this drafted line belongs to, as a string.
+
+        All three keys go into the same ``area_group`` column, so the list, the import
+        file's ``***key***`` sheet header, the worksheet and a hand regroup keep working
+        unchanged. ``None`` is a real answer for both date splits: a line with no delivery
+        date is grouped with the other undated lines rather than hidden or guessed at.
+        """
+        if split_by == SPLIT_BY_DELIVERY_DATE:
+            return draft.delivery_date.isoformat() if draft.delivery_date else None
+        if split_by == SPLIT_BY_DELIVERY_MONTH:
+            return draft.delivery_date.strftime("%Y-%m") if draft.delivery_date else None
+        return draft.area_group
+
     def _learned_area_map(self, po: ProjectPurchaseOrder) -> Dict[str, str]:
         """What this customer's last hand-regrouped order looked like (AC-F4b).
 
@@ -1179,14 +1258,33 @@ class ProjectSODraftService:
     # ------------------------------------------------------------- persistence
 
     def _clear_previous_drafts(
-        self, po: ProjectPurchaseOrder, schedule_version: DeliveryScheduleVersion
-    ) -> Tuple[int, int, set]:
+        self,
+        po: ProjectPurchaseOrder,
+        schedule_version: DeliveryScheduleVersion,
+        *,
+        split_by: str = SPLIT_BY_AREA,
+    ) -> Tuple[int, int, set, Dict[Optional[str], str]]:
         """Replace what this pair drafted before; leave anything committed alone.
 
         Returns the area groups that are already published as well as the counts. Those
         groups are then NOT re-drafted: a second TOWER draft beside a published TOWER order
         would be a duplicate commitment, and the way to change a published order is an
         amendment.
+
+        That skip compares group KEYS, so it only means anything while both builds cut on
+        the same thing. A committed order keyed in the other namespace ('TOWER' against a
+        rebuild by month) is still counted in ``skipped_published`` -- it is still left
+        alone, and the caller is still told -- but it is not offered as a key to skip,
+        because a match between an area name and a month string would be a coincidence
+        rather than the same commitment.
+
+        Also returns the provisional ref each deleted draft was carrying, keyed by area
+        group, so ``_persist`` can give the replacement the SAME reference. Re-uploading the
+        same PO and schedule is meant to be a no-op, and it is not one if PSO-000123 comes
+        back as PSO-000125: every note, email and printed worksheet quoting the old number
+        now points at a row that no longer exists. The rows really are deleted and rebuilt,
+        because that is what makes the rebuild correct when the schedule DID change, so the
+        reference is carried across rather than the row kept.
         """
         existing = (
             self.db.query(ProjectSalesOrder)
@@ -1194,20 +1292,31 @@ class ProjectSODraftService:
                 ProjectSalesOrder.purchase_order_id == po.id,
                 ProjectSalesOrder.schedule_version_id == schedule_version.id,
             )
+            .order_by(ProjectSalesOrder.provisional_ref.asc())
             .all()
         )
+        # The two date modes are named after the origin they write, so the same helper
+        # reads both sides of the comparison.
+        requested_namespace = _grouping_namespace(split_by)
         replaced = 0
         skipped = 0
         committed: set = set()
+        reusable_refs: Dict[Optional[str], str] = {}
         for order in existing:
             if order.status in (SO_STATUS_DRAFT, SO_STATUS_BLOCKED, SO_STATUS_READY):
+                # Ordered by ref above, so two drafts sharing an area group hand on the
+                # lower of the two rather than whichever the database returned first.
+                # Keyed by the group string, so a rebuild in another namespace simply
+                # finds no match and mints a new reference.
+                reusable_refs.setdefault(order.area_group, order.provisional_ref)
                 self.db.delete(order)
                 replaced += 1
             else:
                 skipped += 1
-                committed.add(order.area_group)
+                if _grouping_namespace(order.grouping_origin) == requested_namespace:
+                    committed.add(order.area_group)
         self.db.flush()
-        return replaced, skipped, committed
+        return replaced, skipped, committed, reusable_refs
 
     def _persist(
         self,
@@ -1218,13 +1327,16 @@ class ProjectSODraftService:
         drafts: Sequence[_LineDraft],
         findings: List[_PendingFinding],
         grouping_origin: str,
+        split_by: str = SPLIT_BY_AREA,
         committed_areas: set,
+        reusable_refs: Optional[Dict[Optional[str], str]] = None,
     ) -> List[ProjectSalesOrder]:
         grouped: Dict[Optional[str], List[_LineDraft]] = {}
         for draft in drafts:
-            if draft.area_group in committed_areas:
+            key = self._group_key(draft, split_by)
+            if key in committed_areas:
                 continue
-            grouped.setdefault(draft.area_group, []).append(draft)
+            grouped.setdefault(key, []).append(draft)
         if not grouped and committed_areas:
             return []
         if not grouped:
@@ -1240,21 +1352,33 @@ class ProjectSODraftService:
                 code="so_nothing_to_draft",
             )
 
+        carried = dict(reusable_refs or {})
         orders: List[ProjectSalesOrder] = []
-        for area_group in sorted(grouped, key=lambda value: (value is None, value or "")):
+        # Ascending, undated last. ISO dates and `YYYY-MM` months sort chronologically as
+        # strings, so one comparison serves all three keys.
+        for group_key in sorted(grouped, key=lambda value: (value is None, value or "")):
+            # The ref this group already had, when the rebuild replaced a draft carrying
+            # one. A genuinely new group takes the next number -- and must be told which
+            # refs are still owed to the groups after it in this loop: the drafts carrying
+            # them were deleted before this ran, so `_next_ref` cannot see them, and the
+            # groups are minted in name order, so a new group sorting first would
+            # otherwise be handed the very number the group after it takes back.
+            provisional_ref = carried.pop(group_key, None) or self._next_ref(
+                project.company_id, reserved=carried.values()
+            )
             order = ProjectSalesOrder(
                 company_id=project.company_id,
                 project_id=project.id,
                 purchase_order_id=po.id,
                 schedule_version_id=schedule_version.id,
-                area_group=area_group,
-                provisional_ref=self._next_ref(project.company_id),
+                area_group=group_key,
+                provisional_ref=provisional_ref,
                 status=SO_STATUS_DRAFT,
                 grouping_origin=grouping_origin,
             )
             self.db.add(order)
             self.db.flush()
-            self._write_lines(order, grouped[area_group])
+            self._write_lines(order, grouped[group_key])
             orders.append(order)
 
         # Totals BEFORE the findings that read them: the credit warning compares this
@@ -1359,19 +1483,28 @@ class ProjectSODraftService:
         )
         return int(row[0]) if row else None
 
-    def _next_ref(self, company_id: str) -> str:
+    def _next_ref(
+        self, company_id: str, *, reserved: Optional[Iterable[str]] = None
+    ) -> str:
         """A provisional reference, from the numbering rule when one is configured.
 
         Falls back to the highest existing reference plus one rather than refusing: this
         is an INTERNAL handle that the customer never sees, and blocking a whole build on
-        an unseeded settings row would be a rule with no purpose behind it.
+        an unseeded settings row would be a rule with no purpose behind it. Nothing seeds
+        a `project_sales_order` rule today, so the fallback IS the path production takes.
+
+        ``reserved`` are references that are NOT in the table but are already spoken for:
+        the refs a rebuild is carrying from drafts it deleted a moment ago. Counted here
+        as though they were still stored, because otherwise the fallback re-mints one of
+        them and two orders claim the same reference.
         """
         from app.services.numbering_service import NumberingService
 
+        taken = {ref for ref in (reserved or ()) if ref}
         configured = NumberingService(self.db).get_next_number(
             NUMBERING_DOC_TYPE, commit_rule=False
         )
-        if configured:
+        if configured and configured not in taken:
             return configured
 
         highest = 0
@@ -1383,8 +1516,10 @@ class ProjectSODraftService:
             )
             .all()
         )
-        for (ref,) in rows:
-            tail = (ref or "")[len(_REF_PREFIX) :]
+        for ref in [row[0] for row in rows] + sorted(taken):
+            if not (ref or "").startswith(_REF_PREFIX):
+                continue
+            tail = ref[len(_REF_PREFIX) :]
             if tail.isdigit():
                 highest = max(highest, int(tail))
         return f"{_REF_PREFIX}{highest + 1:0{_REF_DIGITS}d}"
@@ -1587,6 +1722,390 @@ class ProjectSODraftService:
         self._recompute(order)
         return line
 
+    # -------------------------------------------------- the whole document, at once
+
+    def save_document(
+        self, order: ProjectSalesOrder, payload: Dict[str, Any]
+    ) -> ProjectSalesOrder:
+        """The header and, when the payload carries them, the whole line set.
+
+        The order is the point, and it is why this is one service call rather than two from
+        the route: the group name decides which sales order the lines belong to, so it is
+        applied BEFORE they are written, and the total is recomputed once at the end rather
+        than per line.
+
+        ``lines`` ABSENT leaves the lines exactly as they are -- a header-only save sends
+        exactly that shape, and reading it as "an empty set" would wipe the order.
+
+        Refuses a PUBLISHED or AMENDED order before touching anything: it is in AutoCount, and
+        the way to change it is an amendment carrying an order change notice (finding G9). The
+        refusal cannot be reached half-way through a set of writes.
+        """
+        self._assert_editable(order)
+
+        if "area_group" in payload:
+            requested = (payload["area_group"] or None)
+            if isinstance(requested, str):
+                requested = requested.strip() or None
+            if requested != order.area_group:
+                order.area_group = requested
+                # A hand-chosen group name is a MANUAL grouping, which is exactly what
+                # `regroup` records for the same act. The origin is not decoration: it says
+                # which namespace `area_group` holds (an area name, an ISO date, a month), and
+                # leaving it as `delivery_date` under a typed area name would make the next
+                # rebuild compare a date against a place.
+                order.grouping_origin = GROUPING_MANUAL
+        self.db.flush()
+
+        if payload.get("lines") is not None:
+            self.replace_lines(order, payload["lines"])
+        return order
+
+    def replace_lines(
+        self, order: ProjectSalesOrder, lines: Sequence[Dict[str, Any]]
+    ) -> List[ProjectSalesOrderLine]:
+        """The whole desired line set of one order, written in ONE transaction.
+
+        **This is a REPLACE, not a merge.** ``lines`` is the full desired set, and a stored
+        line whose id is absent from it is DELETED. A caller that sends only the rows it
+        happened to touch will therefore wipe every row it left out, so it must always send
+        the whole set it is showing the user.
+
+        **Identity.** A stored line carries its ``id``; a new one arrives without one. An id
+        that is not on this order is refused rather than treated as new -- treating it as new
+        would duplicate the row the caller meant to move.
+
+        **Order** is array position, and it is written to ``line_no``: the printed sales order
+        is read in that order, so reordering is just sending a different order.
+
+        **What is NOT written.** Only the fields on the body. Everything a kept line was told
+        by the build -- the phase it belongs to, the PO line it exploded from, the quotation
+        line it consumed balance from, the reconciled core line -- survives an edit, because a
+        hand correction to a price is not a statement about where the line came from.
+        """
+        if not lines:
+            # The same answer the builder gives when every line is cancelled: a sales order
+            # with no lines is not a proposal, and a findings list with no line to hang on
+            # cannot be shown to anybody.
+            raise AppException(
+                status_code=422,
+                message=(
+                    "A sales order needs at least one line. Delete the order instead of "
+                    "emptying it."
+                ),
+                code="so_lines_required",
+            )
+
+        stored = {row.id: row for row in self._lines_of(order.id)}
+        kept: set = set()
+        written: List[ProjectSalesOrderLine] = []
+
+        for index, incoming in enumerate(lines, start=1):
+            payload = dict(incoming)
+            line_id = payload.pop("id", None)
+            target: Optional[ProjectSalesOrderLine] = None
+            if line_id:
+                line_id = str(line_id)
+                if line_id in kept:
+                    raise AppException(
+                        status_code=422,
+                        message="The same line appears twice in this save.",
+                        code="so_line_duplicate",
+                    )
+                target = stored.get(line_id)
+                if target is None:
+                    raise AppException(
+                        status_code=404,
+                        message="One of these lines is not on this sales order.",
+                        code="so_line_foreign_order",
+                    )
+                kept.add(line_id)
+            if target is None:
+                target = ProjectSalesOrderLine(
+                    company_id=order.company_id,
+                    project_sales_order_id=order.id,
+                    line_no=index,
+                    qty=_ZERO,
+                    # A line somebody typed came from no explosion. Stated rather than left
+                    # null, so the worksheet and the delta can tell it from a line the build
+                    # produced and could not classify.
+                    explosion_source="direct",
+                )
+                self.db.add(target)
+            target.line_no = index
+            target.product_id = payload.get("product_id") or None
+            target.description = payload.get("description")
+            target.qty = _dec(payload.get("qty"))
+            target.uom = payload.get("uom")
+            target.unit_price = _dec(payload.get("unit_price"))
+            target.delivery_date = payload.get("delivery_date")
+            target.stock_location = payload.get("stock_location")
+            # Never accepted from the caller. Three numbers where two would do is how a line
+            # comes to fail our own arithmetic check.
+            target.amount = _money(_dec(target.qty) * _dec(target.unit_price))
+            self.db.flush()
+            written.append(target)
+
+        for line_id, row in stored.items():
+            if line_id not in kept:
+                self.db.delete(row)
+
+        self.db.flush()
+        self._recompute(order)
+        return written
+
+    # ---------------------------------------------------------------- hard delete
+
+    def delete_order(self, order: ProjectSalesOrder) -> Dict[str, int]:
+        """Remove one drafted sales order and everything hanging off it.
+
+        Why this exists, in the client's words: *"the sales order must be able to get deleted
+        so the process of building the draft SO can be repeated"*. The build is idempotent per
+        (PO version, schedule version) and replaces the drafts it made before, but a draft cut
+        on the wrong key, or against the wrong schedule row, has to be able to simply go. The
+        purchase order and its delivery schedule are untouched, which is what makes the
+        rebuild possible.
+
+        Children first over the REAL foreign key graph, in the same order
+        ``app/modules/projects/purge.py`` deletes them. Most of those edges are CASCADE and
+        Postgres would take the children anyway, but each gets its own statement so the
+        returned counts say what was actually removed rather than under-reporting whatever the
+        database quietly swept up.
+
+        Returns ``{schema.table: rows_deleted}``. The caller commits.
+        """
+        self._assert_deletable(order)
+
+        line_ids = [line.id for line in self._lines_of(order.id)]
+        divergence_ids = [
+            row.id
+            for row in self.db.query(ProjectSODivergence.id)
+            .filter(ProjectSODivergence.project_sales_order_id == order.id)
+            .all()
+        ]
+        inquiry_ids = [
+            row.id
+            for row in self.db.query(OrderInquiry.id)
+            .filter(OrderInquiry.project_sales_order_id == order.id)
+            .all()
+        ]
+        # Read BEFORE the amendments go: `so_amendments.ocn_id` is the only pointer from an
+        # amendment to the notice that carried it, so the notice has to be identified while
+        # that pointer still exists.
+        ocn_ids = {
+            row.ocn_id
+            for row in self.db.query(SOAmendment.ocn_id)
+            .filter(
+                SOAmendment.project_sales_order_id == order.id,
+                SOAmendment.ocn_id.isnot(None),
+            )
+            .all()
+            if row.ocn_id
+        }
+
+        deleted: Dict[str, int] = {}
+
+        def _wipe(model, predicate) -> None:
+            label = model.__table__.fullname
+            removed = self.db.query(model).filter(predicate).delete(synchronize_session=False)
+            deleted[label] = deleted.get(label, 0) + int(removed or 0)
+
+        if divergence_ids:
+            _wipe(
+                ProjectSODivergenceLine,
+                ProjectSODivergenceLine.divergence_id.in_(divergence_ids),
+            )
+        else:
+            deleted[ProjectSODivergenceLine.__table__.fullname] = 0
+        _wipe(ProjectSODivergence, ProjectSODivergence.project_sales_order_id == order.id)
+
+        if inquiry_ids:
+            _wipe(OrderInquiryRow, OrderInquiryRow.order_inquiry_id.in_(inquiry_ids))
+        else:
+            deleted[OrderInquiryRow.__table__.fullname] = 0
+        _wipe(OrderInquiry, OrderInquiry.project_sales_order_id == order.id)
+
+        _wipe(SOAmendment, SOAmendment.project_sales_order_id == order.id)
+        # The notices this order's amendments carried, plus any raised against the order
+        # itself. `order_change_notices.project_sales_order_id` is SET NULL, so a notice left
+        # behind would be a change notice for a document that no longer exists.
+        notice_predicate = OrderChangeNotice.project_sales_order_id == order.id
+        if ocn_ids:
+            notice_predicate = notice_predicate | OrderChangeNotice.id.in_(list(ocn_ids))
+        _wipe(OrderChangeNotice, notice_predicate)
+
+        _wipe(SODraftFinding, SODraftFinding.project_sales_order_id == order.id)
+
+        if line_ids:
+            _wipe(SOLineAllocation, SOLineAllocation.so_line_id.in_(line_ids))
+            # The claims this order raised against other projects. `so_line_id` is SET NULL,
+            # so leaving them would leave another project's CS holding a request for a line
+            # nobody can look up.
+            _wipe(AllocationClaim, AllocationClaim.so_line_id.in_(line_ids))
+        else:
+            deleted[SOLineAllocation.__table__.fullname] = 0
+            deleted[AllocationClaim.__table__.fullname] = 0
+
+        # After the allocations and the inquiry rows that point at it, both SET NULL.
+        _wipe(SOSupplyDecision, SOSupplyDecision.project_sales_order_id == order.id)
+        _wipe(
+            ProjectSalesOrderLine,
+            ProjectSalesOrderLine.project_sales_order_id == order.id,
+        )
+        _wipe(ProjectSalesOrder, ProjectSalesOrder.id == order.id)
+        self.db.flush()
+        return deleted
+
+    def describe_delete_refusals(
+        self, orders: Sequence[ProjectSalesOrder]
+    ) -> List[Dict[str, Any]]:
+        """Which of these orders may NOT be deleted, and why, one entry each.
+
+        The same gate the single delete raises, asked as a question instead. The reviewer
+        selected several rows and has to be able to correct that selection in one pass, which
+        means seeing every refusal at once rather than the first one - so this reports the
+        whole set rather than stopping at the earliest.
+
+        ``provisional_ref`` rides along because that is what the screen shows: no id ever
+        reaches the UI, and "PSO-000004 is published" is the only form of the sentence the
+        reviewer can act on.
+        """
+        refusals: List[Dict[str, Any]] = []
+        for order in orders:
+            try:
+                self._assert_deletable(order)
+            except AppException as exc:
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                refusals.append(
+                    {
+                        "id": order.id,
+                        "provisional_ref": order.provisional_ref,
+                        "code": detail.get("code") or "so_not_deletable",
+                        "message": detail.get("message") or "This sales order cannot be deleted.",
+                    }
+                )
+        return refusals
+
+    def delete_orders(self, orders: Sequence[ProjectSalesOrder]) -> Dict[str, int]:
+        """Several drafts in ONE transaction, all or nothing.
+
+        Every order is checked BEFORE any of them is touched. A half-applied bulk delete is
+        the failure worth designing against: the reviewer would be left with a selection that
+        is partly gone and no way to say which part, and the natural next move (select the
+        same rows and retry) would then be wrong. So one undeletable order refuses the whole
+        call, and the caller is told which ones and why.
+
+        Counts are summed ACROSS the batch, keyed by ``schema.table``, so the answer says what
+        was removed rather than repeating a per-order breakdown nobody reads.
+
+        Duplicates are collapsed: a payload naming one order twice deletes it once and counts
+        it once. The caller commits.
+        """
+        seen: set = set()
+        unique: List[ProjectSalesOrder] = []
+        for order in orders:
+            if order.id in seen:
+                continue
+            seen.add(order.id)
+            unique.append(order)
+
+        refusals = self.describe_delete_refusals(unique)
+        if refusals:
+            # Belt to the route's braces. The route answers the structured 409 (it can name
+            # every refusal, which an AppException cannot carry), but the gate lives here so a
+            # future caller cannot delete past it by not asking first.
+            raise AppException(
+                status_code=409,
+                message=self.describe_refusals_sentence(refusals),
+                code="so_bulk_not_deletable",
+            )
+
+        totals: Dict[str, int] = {}
+        for order in unique:
+            for label, count in self.delete_order(order).items():
+                totals[label] = totals.get(label, 0) + count
+        return totals
+
+    @staticmethod
+    def describe_refusals_sentence(refusals: Sequence[Dict[str, Any]]) -> str:
+        """The refusals as ONE sentence, for the toast the reviewer actually sees.
+
+        The frontend's ``extractApiError`` is string-only by design, so the structured list
+        beside it would never be read aloud. Every reference is named: "fix the selection and
+        retry" is only actionable if the rows to un-tick are named.
+        """
+        named = "; ".join(
+            f"{item['provisional_ref']}: {item['message']}" for item in refusals
+        )
+        count = len(refusals)
+        # "sales orders" stays plural whatever the count: it is the SELECTION being described,
+        # and "1 of the selected sales order" is not a sentence.
+        leading = "One" if count == 1 else str(count)
+        return (
+            f"{leading} of the selected sales orders cannot be deleted, so none were. {named}"
+        )
+
+    def _assert_deletable(self, order: ProjectSalesOrder) -> None:
+        """A live commitment is amended, never deleted.
+
+        Four separate facts, because any one of them can be true while the others are not: a
+        row an ingest matched to an AutoCount document can still read `draft`, and a published
+        amendment can sit on an order whose own status was never moved.
+        """
+        if order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED):
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{order.provisional_ref} is published. Raise an amendment with an order "
+                    "change notice instead of deleting it."
+                ),
+                code="so_published_not_deletable",
+            )
+        if order.autocount_doc_no or order.so_id:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{order.provisional_ref} is linked to AutoCount document "
+                    f"{order.autocount_doc_no or 'already raised'}. It has to be amended, not "
+                    "deleted."
+                ),
+                code="so_autocount_linked",
+            )
+        published_amendment = (
+            self.db.query(SOAmendment.id)
+            .filter(
+                SOAmendment.project_sales_order_id == order.id,
+                SOAmendment.status == AMENDMENT_PUBLISHED,
+            )
+            .first()
+        )
+        if published_amendment is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{order.provisional_ref} carries a published amendment, so the change has "
+                    "already gone out. It cannot be deleted."
+                ),
+                code="so_amendment_published",
+            )
+        confirmed_supply = (
+            self.db.query(SOSupplyDecision.id)
+            .filter(
+                SOSupplyDecision.project_sales_order_id == order.id,
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .first()
+        )
+        if confirmed_supply is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"Supply is confirmed for {order.provisional_ref} and stock is being held "
+                    "against it. Supersede that decision before deleting the order."
+                ),
+                code="so_supply_confirmed",
+            )
+
     def regroup(
         self, order: ProjectSalesOrder, groups: Sequence[Dict[str, Any]]
     ) -> List[ProjectSalesOrder]:
@@ -1716,8 +2235,23 @@ class ProjectSODraftService:
     # ---------------------------------------------------------------- publish
 
     def publish(
-        self, order: ProjectSalesOrder, *, actor_user_id: str
+        self,
+        order: ProjectSalesOrder,
+        *,
+        actor_user_id: str,
+        acknowledge_blocking: bool = False,
+        reason: Optional[str] = None,
+        permissions: Iterable[str] = (),
     ) -> Dict[str, Any]:
+        """Publish, optionally waving every open hard stop through in one decision.
+
+        ``acknowledge_blocking`` is the same override ``acknowledge_finding`` carries, asked
+        once instead of once per finding: a reviewer facing 30 hard findings on an order the
+        manager has already decided to publish was clearing them one at a time. It needs the
+        same grant and the same reason, and the reason lands on EVERY finding it clears, so
+        nothing is waved through silently. The other three refusals (already published,
+        awaiting costing, no lines) are not findings and are not overridable.
+        """
         if order.status == SO_STATUS_PUBLISHED:
             raise AppException(
                 status_code=409,
@@ -1749,6 +2283,16 @@ class ProjectSODraftService:
         self.db.flush()
 
         blocking = self.blocking_findings(order)
+        acknowledged = 0
+        if blocking and acknowledge_blocking:
+            acknowledged = self._acknowledge_all_blocking(
+                order,
+                blocking,
+                reason=reason,
+                actor_user_id=actor_user_id,
+                permissions=permissions,
+            )
+            blocking = self.blocking_findings(order)
         if blocking:
             raise AppException(
                 status_code=409,
@@ -1766,27 +2310,72 @@ class ProjectSODraftService:
         order.published_at = datetime.utcnow()
         self.db.flush()
 
-        # P10 (AC-I1): publishing is the moment purchasing is told what to do about the
-        # quantity that has just been committed. Derived here rather than in the route
-        # so an amendment, a corrective publish or a future caller all raise it the same
-        # way. Idempotent on its own, so a second publish cannot double the rows.
-        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-
-        inquiry = ProjectOrderInquiryService(self.db).derive_for_sales_order(
-            order, actor_user_id=actor_user_id
-        )
+        # Publishing raises NO order inquiry (PLAN-scm-front-planning.md section 4,
+        # AC-D01). It used to, on the reading that a published order is committed demand,
+        # but a published order has not been reconciled to AutoCount and CS has not
+        # composed its supply yet: Reserve, Borrow and timely SPO cover may account for all
+        # of it, and telling purchasing to buy the whole quantity here is how the same
+        # units get bought twice. The inquiry is created inside the atomic Project SO
+        # confirmation, carrying the confirmed Buy residual only. Until then the whole SO
+        # is Needs CS review and contributes zero purchase requirement.
 
         return {
             "status": order.status,
             "provisional_ref": order.provisional_ref,
-            "order_inquiry_id": inquiry.id,
             # Stage 1 (D3): an AutoCount import file carrying our own reference. The
             # returned document number is adopted later, and the ESB call replaces this
             # transport in stage 2 without changing a table or a status.
             "import_file_url": f"/api/v1/project-sales/sales-orders/{order.id}/import-file",
+            "can_export": self.can_export(order),
             "total_amount": _money(_dec(order.total_amount)),
             "line_count": len(lines),
+            # How many hard stops this publish waved through, so the screen can say it out
+            # loud. Zero on the ordinary path.
+            "acknowledged_findings": acknowledged,
         }
+
+    def _acknowledge_all_blocking(
+        self,
+        order: ProjectSalesOrder,
+        blocking: Sequence[SODraftFinding],
+        *,
+        reason: Optional[str],
+        actor_user_id: str,
+        permissions: Iterable[str],
+    ) -> int:
+        """Clear every open hard finding under one reason, or refuse before writing any.
+
+        Both refusals are raised up front rather than from inside the loop: a half
+        acknowledged order would leave a reason on some findings and not others, and the
+        caller would have to guess how far it got.
+        """
+        cleaned = (reason or "").strip()
+        if len(cleaned) < 3:
+            raise AppException(
+                status_code=422,
+                message="A reason of at least 3 characters is required.",
+                code="finding_reason_required",
+            )
+        if OVERRIDE_PERMISSION not in set(permissions):
+            raise AppException(
+                status_code=403,
+                message=(
+                    "This is a hard stop. Only a sales manager can acknowledge it, and "
+                    "the reason stays on the sales order."
+                ),
+                code="finding_override_denied",
+            )
+        # Prefixed so the record shows the reason was given once for the whole order rather
+        # than typed against this particular finding.
+        stamped = f"Published anyway ({len(blocking)} blocking findings): {cleaned}"
+        for finding in blocking:
+            self.acknowledge_finding(
+                finding.id,
+                reason=stamped,
+                actor_user_id=actor_user_id,
+                permissions=permissions,
+            )
+        return len(blocking)
 
     # ------------------------------------------------------------- sponsorship
     #
@@ -1999,13 +2588,21 @@ class ProjectSODraftService:
             self.db.query(Product).filter(Product.product_code.ilike(cleaned)).first()
         )
 
-    def import_file(self, order: ProjectSalesOrder) -> Tuple[str, str]:
-        """The stage 1 AutoCount import file, as CSV. Returns (filename, body).
+    def worksheet(self, order: ProjectSalesOrder) -> Dict[str, Any]:
+        """The AutoCount SO worksheet as data (Stage 1A, J02).
+
+        The one place the document is assembled. ``import_file`` renders THIS into CSV and
+        the worksheet screen renders it as a table, so the file CS downloads and the sheet
+        they were looking at cannot describe different orders.
 
         The columns and header refs are the real document's (SO397450): `Your Ref No.` is
         the customer PO number, `Our Ref No.` is the project, the area prints as a section
         header, and `Reserve Qty` is a real column distinct from `Qty`. Reserve is zero
         until allocation confirms a source (P9), which is honest rather than blank.
+
+        Quantities and money are the FORMATTED strings, not Decimals, because the CSV cell
+        is the contract: ``_qty_str`` writes 927 where a Decimal would render 927.0000, and
+        an import line reading 1E+2 would be taken for a price list error.
         """
         project = self._project_or_404(order.project_id)
         po = (
@@ -2016,17 +2613,97 @@ class ProjectSODraftService:
             else None
         )
         customer = self._customer_for(order)
+        published = order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
+        lines = self._lines_of(order.id)
+        # One query for every code on the document. Asked per line, a 101-line order (the
+        # real SO397450 shape) is 101 round trips to render one screen.
+        codes = self._product_codes(line.product_id for line in lines)
+        return {
+            "id": order.id,
+            "provisional_ref": order.provisional_ref,
+            "autocount_doc_no": order.autocount_doc_no,
+            "status": order.status,
+            "area_group": order.area_group,
+            "po_number": po.po_number if po else None,
+            "customer_name": customer.customer_name if customer else None,
+            "header": {
+                "debtor": customer.customer_name if customer else None,
+                "your_ref_no": po.po_number if po else None,
+                "our_ref_no": project.title,
+                "our_qt_ref_no": self._quotation_ref(po) or None,
+                "terms": f"*Net {po.term_days} days" if po and po.term_days else None,
+            },
+            "lines": [
+                {
+                    "line_no": line.line_no,
+                    "item_code": codes.get(line.product_id) or None,
+                    "description": line.description,
+                    "reserve_qty": "0",
+                    "qty": _qty_str(_dec(line.qty)),
+                    "delivery_date": line.delivery_date,
+                    "uom": line.uom,
+                    "unit_price": str(_money(_dec(line.unit_price))),
+                    "discount": "",
+                    "total": str(_money(_dec(line.amount))),
+                }
+                for line in lines
+            ],
+            "total_amount": str(_money(_dec(order.total_amount))),
+            "findings": self.serialize_findings(order),
+            "can_export": self.can_export(order),
+            "import_file_url": (
+                f"/api/v1/project-sales/sales-orders/{order.id}/import-file"
+                if published
+                else None
+            ),
+        }
+
+    def can_export(self, order: ProjectSalesOrder) -> bool:
+        """May this order's document leave the building (AC-A01)?
+
+        The one owner of the rule: an unpublished order is not a document yet, and a
+        published one still carrying an unacknowledged hard stop must not reach AutoCount.
+        Read by the worksheet, by the sales order row the screens gate their buttons on,
+        and by the import-file route, which refuses the fetch outright -- a frontend that
+        respects the answer is not enforcement.
+        """
+        published = order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
+        return published and not self.blocking_findings(order)
+
+    def assert_can_export(self, order: ProjectSalesOrder) -> None:
+        if self.can_export(order):
+            return
+        if order.status not in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED):
+            message = (
+                f"{order.provisional_ref} is not published yet, so there is no import "
+                "file to take. Publish it first."
+            )
+        else:
+            message = (
+                f"{order.provisional_ref} still carries an unacknowledged hard finding. "
+                "Clear it with a reason before the import file leaves for AutoCount."
+            )
+        raise AppException(status_code=422, message=message, code="so_export_blocked")
+
+    def import_file(self, order: ProjectSalesOrder) -> Tuple[str, str]:
+        """The stage 1 AutoCount import file, as CSV. Returns (filename, body).
+
+        Nothing but layout: every value comes from ``worksheet`` above. An absent value is
+        CSV's blank cell, which is the only difference between the two renderings.
+        """
+        sheet = self.worksheet(order)
+        header = sheet["header"]
         buffer = io.StringIO()
         writer = csv.writer(buffer)
-        writer.writerow(["Provisional Ref", order.provisional_ref])
-        writer.writerow(["Debtor", customer.customer_name if customer else ""])
-        writer.writerow(["Your Ref No.", po.po_number if po else ""])
-        writer.writerow(["Our Ref No.", project.title])
-        writer.writerow(["Our QT Ref No.", self._quotation_ref(po)])
-        writer.writerow(["Terms", f"*Net {po.term_days} days" if po and po.term_days else ""])
+        writer.writerow(["Provisional Ref", sheet["provisional_ref"]])
+        writer.writerow(["Debtor", header["debtor"] or ""])
+        writer.writerow(["Your Ref No.", header["your_ref_no"] or ""])
+        writer.writerow(["Our Ref No.", header["our_ref_no"] or ""])
+        writer.writerow(["Our QT Ref No.", header["our_qt_ref_no"] or ""])
+        writer.writerow(["Terms", header["terms"] or ""])
         writer.writerow([])
-        if order.area_group:
-            writer.writerow([f"***{order.area_group}***"])
+        if sheet["area_group"]:
+            writer.writerow([f"***{sheet['area_group']}***"])
         writer.writerow(
             [
                 "Item",
@@ -2040,23 +2717,23 @@ class ProjectSODraftService:
                 "Total",
             ]
         )
-        for line in self._lines_of(order.id):
+        for line in sheet["lines"]:
             writer.writerow(
                 [
-                    self._product_code(line.product_id),
-                    line.description or "",
-                    "0",
-                    _qty_str(_dec(line.qty)),
-                    line.delivery_date.isoformat() if line.delivery_date else "",
-                    line.uom or "",
-                    str(_money(_dec(line.unit_price))),
-                    "",
-                    str(_money(_dec(line.amount))),
+                    line["item_code"] or "",
+                    line["description"] or "",
+                    line["reserve_qty"],
+                    line["qty"],
+                    line["delivery_date"].isoformat() if line["delivery_date"] else "",
+                    line["uom"] or "",
+                    line["unit_price"],
+                    line["discount"] or "",
+                    line["total"],
                 ]
             )
         writer.writerow([])
-        writer.writerow(["Total", "", "", "", "", "", "", "", str(_money(_dec(order.total_amount)))])
-        return f"{order.provisional_ref}.csv", buffer.getvalue()
+        writer.writerow(["Total", "", "", "", "", "", "", "", sheet["total_amount"]])
+        return f"{sheet['provisional_ref']}.csv", buffer.getvalue()
 
     def _quotation_ref(self, po: Optional[ProjectPurchaseOrder]) -> str:
         if po is None or not po.quotation_version_id:
@@ -2153,6 +2830,22 @@ class ProjectSODraftService:
             or 0
         )
 
+    def _product_codes(self, product_ids: Iterable[Any]) -> Dict[str, str]:
+        """Every code in one query, for a caller that needs a whole document's worth.
+
+        ``Any`` because callers pass model attributes, which the type checker reads as
+        ``Column[str]`` rather than ``str`` on this codebase's SQLAlchemy version.
+        """
+        wanted = {product_id for product_id in product_ids if product_id}
+        if not wanted:
+            return {}
+        rows = (
+            self.db.query(Product.id, Product.product_code)
+            .filter(Product.id.in_(wanted))
+            .all()
+        )
+        return {row[0]: row[1] or "" for row in rows}
+
     def _product_code(self, product_id: Optional[str]) -> str:
         if not product_id:
             return ""
@@ -2232,7 +2925,15 @@ class ProjectSODraftService:
             "total_amount": ProjectSalesOrder.total_amount,
         }
         column = sortable.get(sort, ProjectSalesOrder.created_at)
-        rows = rows.order_by(column.desc() if direction == "desc" else column.asc())
+        # The reference breaks the tie, and it is not decoration: one build stamps every
+        # order it creates with the same `created_at` to the microsecond, so ordering on
+        # that alone lets Postgres return them in any order it likes - and the detail
+        # pager (project_record_navigation.sales_order_neighbours, which carries the same
+        # tie-breaker) would then disagree with the list it is standing on.
+        rows = rows.order_by(
+            column.desc() if direction == "desc" else column.asc(),
+            ProjectSalesOrder.provisional_ref.asc(),
+        )
         total = rows.count()
         page = max(page, 1)
         return rows.offset((page - 1) * limit).limit(limit).all(), total
@@ -2278,7 +2979,25 @@ class ProjectSODraftService:
             for version, schedule in rows
         ]
 
-    def serialize_row(self, order: ProjectSalesOrder) -> Dict[str, Any]:
+    def review_states_for(
+        self, orders: Sequence[ProjectSalesOrder]
+    ) -> Dict[str, Dict[str, Any]]:
+        """The Stage 1B review state for a whole page, so a list is not N evaluations."""
+        return ProjectSOReconciliationService(self.db).review_states_for(
+            [order.id for order in orders]
+        )
+
+    def serialize_row(
+        self,
+        order: ProjectSalesOrder,
+        *,
+        review_states: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """``review_states`` is the caller's page-wide answer from ``review_states_for``.
+
+        Passed in rather than derived per row because deriving it here for a 50-row list
+        would run the line mapping fifty times over; omitted, one order derives its own.
+        """
         lines = self._lines_of(order.id)
         findings = (
             self.db.query(SODraftFinding.severity, func.count(SODraftFinding.id))
@@ -2306,6 +3025,15 @@ class ProjectSODraftService:
             if po and po.issuing_party_id
             else None
         )
+        states = (
+            review_states
+            if review_states is not None
+            else self.review_states_for([order])
+        )
+        # Absent from the map means the order has no review state at all: a draft or a
+        # blocked order is reconciled against nothing, so it reads as no state rather
+        # than an "awaiting reconciliation" it has not earned (AC-A03).
+        state = states.get(str(order.id), {"review_state": None, "exception_count": 0})
         return {
             "id": order.id,
             "provisional_ref": order.provisional_ref,
@@ -2322,6 +3050,11 @@ class ProjectSODraftService:
                 if order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
                 else None
             ),
+            # Whether that url may actually be fetched, which is NOT the same question:
+            # a published order carrying an unacknowledged hard finding keeps its file's
+            # address and loses permission to take it. The screens gate their download on
+            # this; the route enforces it (`assert_can_export`).
+            "can_export": self.can_export(order),
             "line_count": len(lines),
             "total_amount": _money(_dec(order.total_amount)),
             "hard_findings": counts.get(SEVERITY_HARD, 0),
@@ -2340,10 +3073,21 @@ class ProjectSODraftService:
             # Both this and the schema field are needed: a manual dict builder drops
             # anything not listed here, whatever the schema inherits.
             "updated_at": order.updated_at,
+            # Stage 1B. Derived, never a column: the whole SO's one pre-confirmation state
+            # (AC-A03) and how many exceptions stand between it and Needs CS review, so the
+            # project's SO list and the SO detail header read what Fulfilment Planning does.
+            # Null until the order is published or amended - see above.
+            "review_state": state["review_state"],
+            "exception_count": state["exception_count"],
         }
 
-    def serialize_detail(self, order: ProjectSalesOrder) -> Dict[str, Any]:
-        body = self.serialize_row(order)
+    def serialize_detail(
+        self,
+        order: ProjectSalesOrder,
+        *,
+        review_states: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        body = self.serialize_row(order, review_states=review_states)
         po = (
             self.db.query(ProjectPurchaseOrder)
             .filter(ProjectPurchaseOrder.id == order.purchase_order_id)

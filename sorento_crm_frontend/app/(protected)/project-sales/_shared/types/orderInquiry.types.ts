@@ -18,7 +18,13 @@ export type OrderInquiryVerb =
   | 'CHANGE_SO'
   | 'CANCEL_BALANCE'
   | 'PRE_ORDERED_DO_NOT_ORDER'
-  | 'ALREADY_INBOUND';
+  | 'ALREADY_INBOUND'
+  /**
+   * A confirmed borrow left the DONOR location oversold, so the hole it opened is
+   * buying work at that location (PLAN-fulfilment-planning 13.11). Its own verb: the
+   * quantity belongs to the donor's location, not to the borrowing line's.
+   */
+  | 'BORROW_SHORTFALL';
 
 export type OrderInquiryState = 'raised' | 'actioned' | 'cancelled';
 
@@ -29,6 +35,15 @@ export interface OrderInquiryRow {
   project_sales_order_id?: string | null;
   /** The AutoCount document number when it has been adopted, else our own reference. */
   sales_order_ref?: string | null;
+  /**
+   * The trace back to the decision that raised the row (AC-D06), added by Stage 1C: the
+   * sales order LINE number, the Project SO's own reference, and which confirmed revision
+   * decided the quantity. Human identifiers only - a buyer expanding a Project
+   * contribution reads the same words CS confirmed it with, never an id.
+   */
+  line_no?: number | null;
+  project_so_ref?: string | null;
+  decision_revision?: number | null;
   so_date?: string | null;
   project_customer?: string | null;
   is_amendment?: boolean;
@@ -88,4 +103,108 @@ export interface OrderInquiryListEnvelope {
   total: number;
   page: number;
   limit: number;
+}
+
+/* -------------------------------------------------------------- the worklist
+ *
+ * Purchasing's own list, across every project AND every adopted AutoCount order. The
+ * per-project list above answers "what did this project raise"; this one answers "what
+ * do I have to buy", which is a different question with a different owner, and the rows
+ * an adopted order raises belong to no project at all so they appear on no other screen.
+ *
+ * The columns are the ones on the spreadsheet purchasing already works from
+ * (`JAN - DEC 2026 ORDER.xlsx`, one sheet per delivery month), in its order, so the
+ * screen and the file can be read side by side.
+ */
+
+export interface OrderInquiryWorklistRow {
+  id: string;
+  /** The core sales order's order date. The date on the document, not the raise date. */
+  so_date?: string | null;
+  so_number?: string | null;
+  item_code?: string | null;
+  product_name?: string | null;
+  qty: string;
+  delivery_date?: string | null;
+  /** `BUIMACO / TUJU RESIDENCE`, or the core order's customer when there is no project. */
+  project_customer?: string | null;
+  /** Blank until a purchase order the row can be traced to exists. Never a guess. */
+  supplier?: string | null;
+  supplier_id?: string | null;
+  po_number?: string | null;
+  /**
+   * Where the PO gets placed for: the donor an order-back row left oversold, the
+   * confirmed allocation's warehouse for a plan/confirmed row, otherwise the line's own
+   * fulfilment location. Blank when neither is known.
+   */
+  location?: string | null;
+  state: OrderInquiryState | string;
+  /** When purchasing was told. The spreadsheet's per-day tabs are this date. */
+  raised_at?: string | null;
+  verb: OrderInquiryVerb | string;
+  note?: string | null;
+
+  /** Addressing only, never rendered: how the row reaches its sales order. */
+  project_id?: string | null;
+  project_sales_order_id?: string | null;
+  core_sales_order_id?: string | null;
+  /** Came from the AutoCount book rather than a document authored here. */
+  is_adopted?: boolean;
+}
+
+export interface OrderInquiryWorklistParams {
+  query?: string;
+  /** `YYYY-MM`, the delivery month, which is the sheet tab. */
+  delivery_month?: string;
+  /** `YYYY-MM-DD`, the day the rows were raised, which is the per-day tab. */
+  raised_date?: string;
+  state?: string;
+  project_id?: string;
+  supplier_id?: string;
+  page?: number;
+  limit?: number;
+  sort?: string;
+  dir?: 'asc' | 'desc';
+}
+
+export interface OrderInquiryWorklistEnvelope {
+  data: OrderInquiryWorklistRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface OrderInquiryMonthTotal {
+  /** `2026-01`. */
+  month: string;
+  /** `JAN 26`, spelled the way the sheet tab is. */
+  label: string;
+  rows: number;
+  qty: string;
+}
+
+export interface OrderInquiryFacet {
+  id: string;
+  label: string;
+  rows: number;
+}
+
+export interface OrderInquiryWorklistSummary {
+  /** The visible set: every filter applied, the month included. */
+  total_rows: number;
+  total_qty: string;
+  by_state: {
+    raised: number;
+    actioned: number;
+    cancelled: number;
+    total: number;
+  };
+  /**
+   * The three axes the screen's own controls are built from. Each is computed with every
+   * filter EXCEPT its own, because a control that empties itself the moment you use it
+   * cannot be used a second time.
+   */
+  by_month: OrderInquiryMonthTotal[];
+  suppliers: OrderInquiryFacet[];
+  projects: OrderInquiryFacet[];
 }

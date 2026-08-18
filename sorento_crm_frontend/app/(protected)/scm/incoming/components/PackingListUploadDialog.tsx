@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { LoaderCircle, TestTube } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -13,6 +14,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FileDropzone } from '@/components/common/FileDropzone';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { MAX_SIZE_MB, useTwoStepUpload } from '../../reorder/hooks/useTwoStepUpload';
 import { CountTile } from '../../reorder/components/UploadCountTile';
 import { UploadTestVerdict } from '../../reorder/components/UploadTestVerdict';
@@ -30,7 +33,24 @@ import {
  * containers. A count of lines would hide it: five blocks of seven read as "35 rows", and the
  * user would find out it created five shipments afterwards. So the blocks are listed, each with
  * its own container number, and a block with none says so rather than showing a blank.
+ *
+ * The supplier is not optional. One container holds two or three factories' lines, and a file
+ * uploaded without saying whose it is speaks for the whole container - which is how the first
+ * factory's lines used to disappear. The server refuses it; this dialog does not offer it, and
+ * names the factory it will be filed under.
+ *
+ * Currency is asked for LAST and usually not at all. These files price what they ship, and the
+ * price is stored with the money it is in - but the document normally states that itself
+ * (`RMB`, `单价(元)`) and the supplier's price list often does too, so the field is the last
+ * resort rather than the first question. Where one of them answered, the read says which.
  */
+
+/** Where the currency came from, in the words the operator would use. */
+const CURRENCY_SOURCE: Record<string, string> = {
+  form: 'as entered above',
+  document: 'stated by the file',
+  supplier_price_list: "from the supplier's price list",
+};
 
 interface ImportedShipment {
   shipment_id: string;
@@ -57,20 +77,39 @@ export function PackingListUploadDialog({
   open,
   onOpenChange,
   supplierId,
+  supplierName,
   onImported,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
   supplierId: string | null;
+  /** Shown in the header so the factory the lines will be filed under is never a guess. */
+  supplierName?: string | null;
   onImported?: (shipments: ImportedShipment[]) => void;
 }) {
+  const [currency, setCurrency] = useState('');
+  const trimmedCurrency = currency.trim() || null;
+
+  // Cleared on every open, like the file and the verdict: a currency left over from the last
+  // upload would silently override what the NEXT file states.
+  useEffect(() => {
+    if (open) setCurrency('');
+  }, [open]);
+
   const upload = useTwoStepUpload<PackingListPreview, ApplyResult>({
     open,
-    preview: (file) => previewPackingList(file),
+    preview: (file) => previewPackingList(file, { supplierId, currency: trimmedCurrency }),
     apply: (file) =>
-      applyPackingList(file, { supplierId }) as unknown as Promise<ApplyResult>,
+      applyPackingList(file, {
+        supplierId,
+        currency: trimmedCurrency,
+      }) as unknown as Promise<ApplyResult>,
     test: (file) =>
-      applyPackingList(file, { supplierId, validateOnly: true }) as unknown as Promise<never>,
+      applyPackingList(file, {
+        supplierId,
+        currency: trimmedCurrency,
+        validateOnly: true,
+      }) as unknown as Promise<never>,
     onApplied: (result) =>
       onImported?.(
         (result.results ?? [])
@@ -93,6 +132,7 @@ export function PackingListUploadDialog({
           <DialogTitle>Upload packing list</DialogTitle>
           <DialogDescription>
             Every container block in the file becomes its own shipment.
+            {supplierName ? ` Uploading as ${supplierName}.` : ''}
           </DialogDescription>
         </DialogHeader>
 
@@ -106,6 +146,25 @@ export function PackingListUploadDialog({
             disabled={upload.previewing || upload.applying}
             aria-label="Packing list file"
           />
+
+          <div>
+            <Label htmlFor="packing-list-currency" className="mb-1 block text-xs">
+              Currency
+            </Label>
+            <Input
+              id="packing-list-currency"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value.toUpperCase().slice(0, 3))}
+              maxLength={3}
+              placeholder="MYR"
+              autoComplete="off"
+              className="w-28 uppercase"
+              disabled={upload.previewing || upload.applying}
+            />
+            <p className="mt-1 text-2xs text-muted-foreground">
+              Only needed when the file does not state one.
+            </p>
+          </div>
 
           {upload.previewing ? (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -136,6 +195,13 @@ export function PackingListUploadDialog({
                 <CountTile label="Lines" value={preview.line_count} />
                 <CountTile label="Not in catalogue" value={preview.unmatched_items} />
               </div>
+              {preview.priced_lines ? (
+                <p className="text-2xs text-muted-foreground">
+                  {preview.currency
+                    ? `Priced in ${preview.currency} (${CURRENCY_SOURCE[preview.currency_source ?? 'none'] ?? preview.currency_source}).`
+                    : 'Nothing states which money these prices are in - enter a currency above.'}
+                </p>
+              ) : null}
               <div className="divide-y divide-border rounded-lg border">
                 {preview.blocks.map((b) => (
                   <div
@@ -194,7 +260,8 @@ export function PackingListUploadDialog({
           <Button
             variant="outline"
             onClick={() => void upload.runTest()}
-            disabled={!upload.file || upload.testing || upload.applying}
+            disabled={!supplierId || !upload.file || upload.testing || upload.applying}
+            title={!supplierId ? 'Choose a supplier first' : undefined}
           >
             {upload.testing ? (
               <LoaderCircle className="size-4 animate-spin" />
@@ -207,7 +274,11 @@ export function PackingListUploadDialog({
             {result ? 'Close' : 'Cancel'}
           </Button>
           {!result ? (
-            <Button onClick={() => void upload.confirm()} disabled={!upload.canConfirm}>
+            <Button
+              onClick={() => void upload.confirm()}
+              disabled={!supplierId || !upload.canConfirm}
+              title={!supplierId ? 'Choose a supplier first' : undefined}
+            >
               {upload.applying ? <LoaderCircle className="size-4 animate-spin" /> : null}
               Confirm
             </Button>

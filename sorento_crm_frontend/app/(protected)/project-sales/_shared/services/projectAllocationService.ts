@@ -2,12 +2,24 @@ import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type {
   AllocationCandidateList,
-  AllocationClaimBody,
   AllocationClaimListParams,
   AllocationClaimRow,
-  AllocationConfirmBody,
   AllocationLineRow,
 } from '../types/projectAllocation.types';
+
+/**
+ * Allocation READS (P9), and nothing else.
+ *
+ * Stage 1C moved the writing: a Project SO's supply is composed and committed in ONE
+ * atomic transaction in Fulfilment Planning, so per-line confirmation, clearing a line's
+ * source, and the raise / accept / refuse claim handshake are gone from the backend and
+ * from here. A cross-project Borrow is written straight to `accepted` inside that same
+ * transaction by the CS actor who confirms, which is why there is nothing left to answer.
+ *
+ * What survives is what the supply sheet and its audit read: the ranked candidates it
+ * offers as Borrow sources, the components of an order's active decision, and the claims
+ * history.
+ */
 
 const BASE = '/api/v1/project-sales';
 
@@ -57,41 +69,7 @@ export async function listAllocationCandidates(
   return response.json();
 }
 
-export async function confirmAllocation(
-  lineId: string,
-  body: AllocationConfirmBody,
-): Promise<AllocationLineRow> {
-  const response = await apiFetch(`${BASE}/sales-order-lines/${lineId}/allocation`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the source'));
-  return response.json();
-}
-
-export async function clearAllocation(lineId: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/sales-order-lines/${lineId}/allocation`, {
-    method: 'DELETE',
-  });
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to clear the source'));
-}
-
-/** Ask the holding project's CS for stock. Grants nothing until they answer (AC-H4). */
-export async function raiseAllocationClaim(
-  lineId: string,
-  body: AllocationClaimBody,
-): Promise<AllocationClaimRow> {
-  const response = await apiFetch(`${BASE}/sales-order-lines/${lineId}/allocation-claims`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to raise the claim'));
-  return response.json();
-}
-
+/** The Borrows that were written, as audit history. Nothing here is answered. */
 export async function listAllocationClaims(
   params: AllocationClaimListParams = {},
 ): Promise<AllocationListEnvelope<AllocationClaimRow>> {
@@ -105,26 +83,4 @@ export async function listAllocationClaims(
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the stock claims'));
   return normaliseEnvelope<AllocationClaimRow>(await response.json(), limit);
-}
-
-export async function acceptAllocationClaim(claimId: string): Promise<AllocationClaimRow> {
-  const response = await apiFetch(`${BASE}/allocation-claims/${claimId}/accept`, {
-    method: 'POST',
-  });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to release the stock'));
-  return response.json();
-}
-
-/** A refusal always carries a reason. The backend rejects a blank one. */
-export async function refuseAllocationClaim(
-  claimId: string,
-  reason: string,
-): Promise<AllocationClaimRow> {
-  const response = await apiFetch(`${BASE}/allocation-claims/${claimId}/refuse`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reason }),
-  });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to refuse the claim'));
-  return response.json();
 }

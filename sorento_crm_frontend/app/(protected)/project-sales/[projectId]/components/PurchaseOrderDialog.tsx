@@ -23,11 +23,7 @@ import {
   versionsKey,
 } from '../../_shared/hooks/useProjects';
 import { listQuotationVersions } from '../../_shared/services/projectService';
-import type {
-  PoSource,
-  Project,
-  ProjectPurchaseOrder,
-} from '../../_shared/types/project.types';
+import type { PoSource, Project } from '../../_shared/types/project.types';
 
 const SOURCES: { value: PoSource; label: string; description: string }[] = [
   {
@@ -43,7 +39,12 @@ const SOURCES: { value: PoSource; label: string; description: string }[] = [
 ];
 
 /**
- * Record or edit a customer PO.
+ * Record a customer PO. CREATE only.
+ *
+ * Editing one is the PO's own page in edit mode (`pos/[poId]`), where the same fields sit in the
+ * same order the reader already knows them in. This dialog used to do both, which meant a PO's
+ * header had two editing surfaces with two layouts - the thing the view-and-edit-are-the-same
+ * rule exists to stop.
  *
  * Every version is offered here, including superseded ones -- unlike the sample dialog.
  * The contractor buys off the document they were given, which is frequently not the
@@ -52,14 +53,12 @@ const SOURCES: { value: PoSource; label: string; description: string }[] = [
  */
 export function PurchaseOrderDialog({
   project,
-  po,
   onDone,
 }: {
   project: Project;
-  po: ProjectPurchaseOrder | null;
   onDone: () => void;
 }) {
-  const { create, update } = usePurchaseOrderMutations(project.id);
+  const { create } = usePurchaseOrderMutations(project.id);
   const quotations = useQuotations(project.id);
   const parties = useProjectParties({ limit: 200 });
 
@@ -71,16 +70,15 @@ export function PurchaseOrderDialog({
     })),
   });
 
-  const [poNumber, setPoNumber] = React.useState(po?.po_number ?? '');
-  const [source, setSource] = React.useState<string>(po?.po_source ?? 'contractor_direct');
-  const [versionId, setVersionId] = React.useState(po?.quotation_version_id ?? '');
-  const [issuerId, setIssuerId] = React.useState(po?.issuing_party_id ?? '');
-  const [poDate, setPoDate] = React.useState(po?.po_date ?? '');
-  const [amount, setAmount] = React.useState(po?.po_amount ?? '');
-  const [notes, setNotes] = React.useState(po?.notes ?? '');
+  const [poNumber, setPoNumber] = React.useState('');
+  const [source, setSource] = React.useState<string>('contractor_direct');
+  const [versionId, setVersionId] = React.useState('');
+  const [issuerId, setIssuerId] = React.useState('');
+  const [poDate, setPoDate] = React.useState('');
+  const [amount, setAmount] = React.useState('');
+  const [notes, setNotes] = React.useState('');
 
-  const isEdit = Boolean(po);
-  const pending = create.isPending || update.isPending;
+  const pending = create.isPending;
 
   const versionOptions = React.useMemo(
     () =>
@@ -98,18 +96,16 @@ export function PurchaseOrderDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>{isEdit ? `Edit ${po?.po_number}` : 'Record a purchase order'}</DialogTitle>
+          <DialogTitle>Record a purchase order</DialogTitle>
           <DialogDescription>
-            {isEdit
-              ? 'Changing the bound version rechecks every line against the new one.'
-              : 'The first PO on this project moves it to PO Received.'}
+            The first PO on this project moves it to PO Received.
           </DialogDescription>
         </DialogHeader>
 
         <form
           onSubmit={async (event) => {
             event.preventDefault();
-            const body = {
+            await create.mutateAsync({
               po_number: poNumber.trim(),
               po_source: source as PoSource,
               quotation_version_id: versionId || null,
@@ -117,12 +113,7 @@ export function PurchaseOrderDialog({
               po_date: poDate || null,
               po_amount: amount.trim() || null,
               notes: notes.trim() || null,
-            };
-            if (po) {
-              await update.mutateAsync({ id: po.id, body });
-            } else {
-              await create.mutateAsync(body);
-            }
+            });
             onDone();
           }}
         >
@@ -226,7 +217,7 @@ export function PurchaseOrderDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!poNumber.trim() || pending}>
-              {isEdit ? 'Save changes' : 'Record PO'}
+              Record PO
             </Button>
           </DialogFooter>
         </form>

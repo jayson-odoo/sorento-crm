@@ -280,9 +280,15 @@ describe('OrderInquiryClient', () => {
     renderClient();
 
     expect(await screen.findByText('Nothing has been raised yet')).toBeInTheDocument();
+    // Stage 1C: a row is raised by the CONFIRMATION, not by publishing the sales order.
     expect(
-      screen.getByText(/Publishing a sales order raises the rows purchasing acts on/i),
+      screen.getByText(
+        /Confirming a Project SO in Fulfilment Planning raises the rows purchasing acts on/i,
+      ),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /open fulfilment planning/i }),
+    ).toHaveAttribute('href', '/project-sales/fulfilment-planning');
   });
 
   it('says the filters emptied the list rather than that nothing exists', async () => {
@@ -367,6 +373,62 @@ describe('OrderInquiryClient', () => {
     await waitFor(() =>
       expect(markOrderInquiryRows).toHaveBeenCalledWith(['row-1'], 'actioned'),
     );
+  });
+
+  // ------------------------------------------------- AC-D06: the trace to the decision
+  it('traces a Buy row to the Project SO, its line number and the decision revision', async () => {
+    listOrderInquiryRows.mockResolvedValue(
+      envelope([
+        row({
+          project_so_ref: 'PSO-000123',
+          line_no: 4,
+          decision_revision: 2,
+        }),
+      ]),
+    );
+
+    renderClient();
+
+    expect(await screen.findByText('PSO-000123')).toBeInTheDocument();
+    expect(screen.getByText('4')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    // The item code and the required date are the other two halves of the same trace.
+    expect(screen.getByText('CB6633')).toBeInTheDocument();
+  });
+
+  it('states an amendment row as belonging to no project decision, rather than blank', async () => {
+    listOrderInquiryRows.mockResolvedValue(
+      envelope([
+        row({ project_so_ref: null, line_no: null, decision_revision: null }),
+      ]),
+    );
+
+    renderClient();
+
+    expect(await screen.findByText('No line')).toBeInTheDocument();
+    expect(screen.getByText('Not from a project')).toBeInTheDocument();
+    expect(screen.getByText('Not from a decision')).toBeInTheDocument();
+  });
+
+  it('renders no UUID-looking id on the trace columns, only the human identifiers', async () => {
+    listOrderInquiryRows.mockResolvedValue(
+      envelope([
+        row({
+          id: 'f1e2d3c4-5678-4a90-b123-456789abcdef',
+          order_inquiry_id: 'a1b2c3d4-5678-4a90-b123-456789abcdef',
+          so_line_id: 'b2c3d4e5-5678-4a90-b123-456789abcdef',
+          project_sales_order_id: 'c3d4e5f6-5678-4a90-b123-456789abcdef',
+          project_so_ref: 'PSO-000123',
+          line_no: 4,
+          decision_revision: 2,
+        }),
+      ]),
+    );
+
+    const { container } = renderClient();
+
+    await screen.findByText('PSO-000123');
+    expect(container.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
   });
 
   it('offers no way to author a row, because instructions are derived', async () => {

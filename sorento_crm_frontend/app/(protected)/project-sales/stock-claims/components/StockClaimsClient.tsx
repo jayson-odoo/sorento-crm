@@ -9,7 +9,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Handshake, Search, X } from 'lucide-react';
+import { ClipboardList, Handshake, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -23,19 +23,14 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import {
-  useAllocationClaimMutations,
-  useAllocationClaims,
-} from '../../_shared/hooks/useProjectAllocations';
+import { useAllocationClaims } from '../../_shared/hooks/useProjectAllocations';
 import type {
   AllocationClaimDirection,
   AllocationClaimRow,
   AllocationClaimState,
 } from '../../_shared/types/projectAllocation.types';
 import { ALLOCATION_CLAIM_STATE_LABEL } from '../../_shared/types/projectAllocation.types';
-import { InfoHint } from '../../[projectId]/components/InfoHint';
 import { formatQty } from '../../[projectId]/components/SalesOrderMoney';
-import { ClaimRefuseDialog } from './ClaimRefuseDialog';
 
 const STATE_BADGE: Record<AllocationClaimState, 'warning' | 'success' | 'destructive'> = {
   requested: 'warning',
@@ -44,31 +39,31 @@ const STATE_BADGE: Record<AllocationClaimState, 'warning' | 'success' | 'destruc
 };
 
 const DIRECTION_OPTIONS = [
-  { value: 'incoming', label: 'Waiting on me' },
-  { value: 'outgoing', label: 'I asked for' },
+  { value: 'incoming', label: 'Lent by my projects' },
+  { value: 'outgoing', label: 'Borrowed by my projects' },
   { value: 'all', label: 'Both' },
 ];
 
 const STATE_OPTIONS = [
-  { value: 'all', label: 'Any answer' },
-  { value: 'requested', label: ALLOCATION_CLAIM_STATE_LABEL.requested },
+  { value: 'all', label: 'Any outcome' },
   { value: 'accepted', label: ALLOCATION_CLAIM_STATE_LABEL.accepted },
+  { value: 'requested', label: ALLOCATION_CLAIM_STATE_LABEL.requested },
   { value: 'refused', label: ALLOCATION_CLAIM_STATE_LABEL.refused },
 ];
 
 /**
- * The claims inbox (AC-H4).
+ * The Borrow history (AC-H4). A READ.
  *
- * One project asking another for stock it is holding. Nothing moves while a claim sits in
- * "waiting", so this list is the only thing standing between a request and a phone call.
- * Refusing always opens a dialog, because a refusal without a reason sends the asker back
- * to that phone call.
+ * One project taking stock another was holding. Since Stage 1C the taking happens inside
+ * the confirmation of a sales order in Fulfilment Planning, by the CS actor who confirms
+ * it, and the row is written already released - so this list is the record of what moved
+ * and who moved it, not an inbox with a decision left in it. Rows still reading "Waiting"
+ * or "Refused" were raised before that, and they keep their answer.
  */
 export function StockClaimsClient() {
-  const [direction, setDirection] = React.useState<AllocationClaimDirection>('incoming');
-  const [stateFilter, setStateFilter] = React.useState('requested');
+  const [direction, setDirection] = React.useState<AllocationClaimDirection>('all');
+  const [stateFilter, setStateFilter] = React.useState('all');
   const [search, setSearch] = React.useState('');
-  const [refusing, setRefusing] = React.useState<AllocationClaimRow | null>(null);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -80,7 +75,6 @@ export function StockClaimsClient() {
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
   });
-  const { accept, refuse } = useAllocationClaimMutations();
 
   const all = React.useMemo(() => claims.data?.data ?? [], [claims.data]);
   const rows = React.useMemo(() => {
@@ -203,7 +197,7 @@ export function StockClaimsClient() {
       },
       {
         id: 'state',
-        header: ({ column }) => <DataGridColumnHeader title="Answer" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Outcome" column={column} />,
         cell: ({ row }) => (
           <div className="flex min-w-0 flex-col gap-0.5">
             <Badge
@@ -223,61 +217,34 @@ export function StockClaimsClient() {
         ),
         size: 200,
         minSize: 140,
-        meta: { headerTitle: 'Answer', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Outcome', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
-        id: 'actions',
-        header: '',
-        enableHiding: false,
+        id: 'decided_by',
+        header: ({ column }) => <DataGridColumnHeader title="Decided by" column={column} />,
+        // Who moved the stock and when. On a Stage 1C Borrow that is the CS actor who
+        // confirmed the sales order, stamped in the same transaction.
         cell: ({ row }) => {
-          // Gated on the server's own answer, not on which tab is showing. The outgoing
-          // view used to offer Release and Refuse on the viewer's OWN request: buttons
-          // the server rejects, and with the filter on "all" the list holds both
-          // directions at once, so the tab could never have decided it correctly.
-          if (row.original.state === 'requested' && row.original.can_answer === false) {
-            return (
-              <span className="block truncate text-xs text-muted-foreground">
-                Waiting on {row.original.to_project_code}
-              </span>
-            );
+          if (!row.original.decided_by_name && !row.original.decided_at) {
+            return <span className="text-muted-foreground">Not decided</span>;
           }
-          if (row.original.state !== 'requested') {
-            return (
-              <span className="block truncate text-xs text-muted-foreground">
-                {row.original.decided_by_name
-                  ? `Answered by ${row.original.decided_by_name}`
-                  : 'Answered'}
-              </span>
-            );
-          }
+          const text = `${row.original.decided_by_name ?? 'Someone'}${
+            row.original.decided_at
+              ? ` on ${formatDateInMalaysia(row.original.decided_at)}`
+              : ''
+          }`;
           return (
-            <div className="flex justify-end gap-1">
-              <Button
-                type="button"
-                size="sm"
-                disabled={accept.isPending}
-                onClick={() => accept.mutate(row.original.id)}
-              >
-                Release
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="text-destructive border-destructive/50 hover:bg-destructive/10"
-                onClick={() => setRefusing(row.original)}
-              >
-                Refuse
-              </Button>
-            </div>
+            <span className="block truncate" title={text}>
+              {text}
+            </span>
           );
         },
         size: 190,
-        minSize: 170,
-        meta: { headerTitle: 'Actions' },
+        minSize: 140,
+        meta: { headerTitle: 'Decided by', skeleton: <Skeleton className="h-4 w-24" /> },
       },
     ],
-    [accept],
+    [],
   );
 
   const table = useReactTable({
@@ -293,19 +260,23 @@ export function StockClaimsClient() {
     columnResizeMode: 'onChange',
   });
 
-  const filtersActive = (direction !== 'incoming' ? 1 : 0) + (stateFilter !== 'requested' ? 1 : 0);
+  const filtersActive = (direction !== 'all' ? 1 : 0) + (stateFilter !== 'all' ? 1 : 0);
 
   return (
     <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold break-words">Stock claims</h1>
-          <InfoHint label="About stock claims">
-            A claim is one project asking another for stock it is holding. Nothing moves
-            while a claim is waiting: the asking line keeps no stock location until it is
-            released. A refusal always carries a reason.
-          </InfoHint>
+          <p className="text-sm text-muted-foreground break-words">
+            Stock one project took from another. Supply is composed in Fulfilment Planning.
+          </p>
         </div>
+        <Button asChild variant="outline">
+          <Link href="/project-sales/fulfilment-planning">
+            <ClipboardList className="size-4" aria-hidden />
+            Open Fulfilment Planning
+          </Link>
+        </Button>
       </div>
 
       <DataGrid
@@ -363,7 +334,7 @@ export function StockClaimsClient() {
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <p className="text-sm font-medium">Answer</p>
+                      <p className="text-sm font-medium">Outcome</p>
                       <SearchableSelect
                         value={stateFilter}
                         onChange={(value) => {
@@ -399,24 +370,26 @@ export function StockClaimsClient() {
               <div className="px-6 py-10 text-center">
                 <Handshake className="mx-auto size-6 text-muted-foreground" aria-hidden />
                 {/* The two directions are opposite facts, so one sentence cannot be true
-                    of both. Outgoing used to read "nothing is waiting on you" while
-                    showing the list of things you are waiting on. */}
+                    of both: "nobody has borrowed from us" is not "we have borrowed from
+                    nobody". */}
                 <h3 className="mt-2 text-sm font-semibold">
                   {direction === 'outgoing'
-                    ? 'You have not asked for anyone else\u2019s stock'
+                    ? 'Your projects have borrowed nothing'
                     : direction === 'all'
-                      ? 'No claims either way'
-                      : 'Nothing is waiting on you'}
+                      ? 'No stock has been borrowed either way'
+                      : 'Nothing has been borrowed from your projects'}
                 </h3>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                   {direction === 'outgoing'
-                    ? 'Raise one from a sales order line under Allocation, when the stock you need is held for another project.'
+                    ? 'A row appears here when a Borrow on one of your sales orders is confirmed in Fulfilment Planning.'
                     : direction === 'all'
-                      ? 'Claims appear here when a project asks another for stock it is holding. Raise one from a sales order line under Allocation.'
-                      : 'Claims appear here when another project asks for stock one of yours is holding. Raise one from a sales order line under Allocation.'}
+                      ? 'A row appears here when a Borrow is confirmed in Fulfilment Planning, on either side of it.'
+                      : 'A row appears here when another project borrows stock one of yours is holding.'}
                 </p>
                 <Button asChild variant="outline" className="mt-4">
-                  <Link href="/project-sales/pipeline">Open the pipeline</Link>
+                  <Link href="/project-sales/fulfilment-planning">
+                    Open Fulfilment Planning
+                  </Link>
                 </Button>
               </div>
             ) : (
@@ -434,15 +407,6 @@ export function StockClaimsClient() {
           )}
         </Card>
       </DataGrid>
-
-      {refusing && (
-        <ClaimRefuseDialog
-          claim={refusing}
-          submitting={refuse.isPending}
-          onDone={() => setRefusing(null)}
-          onRefuse={(reason) => refuse.mutateAsync({ claimId: refusing.id, reason })}
-        />
-      )}
     </>
   );
 }

@@ -20,6 +20,7 @@ against the client's own committed schedule, and is skipped without a key.
 """
 from __future__ import annotations
 
+import copy
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -27,6 +28,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.order import Customer
 from app.models.product import Product, ProductCategory, UnitOfMeasure
@@ -334,6 +336,240 @@ def test_a_failing_column_is_flagged_without_failing_the_others(scenario):
     assert version.total_columns == 2
 
 
+def test_a_schedule_short_of_the_po_is_a_warning_and_not_a_blocker(scenario):
+    """Captain, 2026-08-18: "for short quantity is okay though, cause schedule can be
+    partial".
+
+    The customer schedules part of what they ordered now and the rest on a later
+    document, so a column asking for less than the PO ordered is the NORMAL state of a
+    live project. It says so, and it does not hold up the confirm.
+    """
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    # The document's own TOTAL QTY row agrees with the cells: nothing was misread, the
+    # sheet simply schedules 150 of the 200 ordered.
+    page = _two_column_page(
+        wc_cells=[(1, 100), (2, 50)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=150, basin_total=100,
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+
+    detail = service.get_version_detail(scenario["version"].id)
+    wc = _columns(detail)["BUI-HB-SRTWC8613-RL"]
+    assert wc["reconciled"] is True
+    assert wc["reason"] is None
+    assert wc["warning"] == (
+        "The schedule asks for 150 of the 200 on the purchase order; the remaining 50 "
+        "is expected on a later schedule."
+    )
+    # It counts as reconciled, so the confirm goes through with no acknowledgement.
+    assert detail["reconciliation"] == {"reconciled_columns": 2, "total_columns": 2}
+    service.confirm(scenario["version"].id, actor_user_id=scenario["owner"])
+    db.flush()
+    assert db.get(DeliveryScheduleVersion, scenario["version"].id).confirmed_at is not None
+
+
+def _staleify(db, version, *, index: int = 0, reason: str | None = None) -> None:
+    """Put a version back in the state a read done under the OLD rules left behind.
+
+    A blocking verdict on a column that is merely short, no ``warning`` key at all, and the
+    counts to match. This is exactly what the live version held: the payload is written only
+    on a WRITE, so the sentence the reader stored survives every later rule change.
+    """
+    payload = copy.deepcopy(version.reconciliation_json or {})
+    entry = payload["columns"][index]
+    entry["reconciled"] = False
+    entry["reason"] = reason or (
+        "the column adds up to 150, the purchase order says 200"
+    )
+    entry.pop("warning", None)
+    payload["reconciled_columns"] = sum(
+        1 for item in payload["columns"] if item.get("reconciled")
+    )
+    version.reconciliation_json = payload
+    flag_modified(version, "reconciliation_json")
+    version.reconciled_columns = payload["reconciled_columns"]
+    db.flush()
+
+
+def test_a_stale_stored_refusal_is_read_back_under_the_current_rules(scenario):
+    """The bug the screen owner measured: reading a version nobody has written to served
+    the refusal it was given when the document was read.
+
+    The stored payload only ever changed on a write, so 31 of 44 columns "reconciled"
+    until an unrelated dismissal happened to save the row. The read path refreshes now, and
+    an OPEN version converges so the confirm cannot disagree with the screen.
+    """
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _two_column_page(
+        wc_cells=[(1, 100), (2, 50)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=150, basin_total=100,
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+    _staleify(db, scenario["version"])
+
+    # What the screen was being told before the read path refreshed anything.
+    stale = db.get(DeliveryScheduleVersion, scenario["version"].id)
+    assert stale.reconciliation_json["columns"][0]["reconciled"] is False
+    assert stale.reconciled_columns == 1
+
+    detail = service.get_version_detail(scenario["version"].id)
+    wc = _columns(detail)["BUI-HB-SRTWC8613-RL"]
+    assert wc["reconciled"] is True
+    assert wc["reason"] is None
+    assert "remaining 50" in (wc["warning"] or "")
+    assert detail["reconciliation"] == {"reconciled_columns": 2, "total_columns": 2}
+
+    # The open version converged, so the confirm sees what the screen saw.
+    db.expire_all()
+    stored = (
+        db.query(DeliveryScheduleVersion)
+        .filter(DeliveryScheduleVersion.id == scenario["version"].id)
+        .one()
+    )
+    assert stored.reconciliation_json["columns"][0]["reconciled"] is True
+    assert stored.reconciled_columns == 2
+
+
+def test_polling_a_version_that_has_not_been_read_writes_nothing(scenario):
+    """The review screen polls this every three seconds while a document is being read.
+    An empty payload must not be "refreshed" into a written one on every poll."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+
+    detail = service.get_version_detail(scenario["version"].id)
+    assert detail["products"] == []
+    assert detail["reconciliation"] == {"reconciled_columns": 0, "total_columns": 0}
+
+    db.expire_all()
+    stored = (
+        db.query(DeliveryScheduleVersion)
+        .filter(DeliveryScheduleVersion.id == scenario["version"].id)
+        .one()
+    )
+    assert stored.reconciliation_json is None
+
+
+def test_reading_a_confirmed_version_refreshes_the_display_and_writes_nothing(scenario):
+    """What was agreed is the record. A confirmed version reports the current reading of
+    its numbers, and the row it was bound as stays exactly as it was bound."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _two_column_page(
+        wc_cells=[(1, 100), (2, 50)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=150, basin_total=100,
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    service.confirm(scenario["version"].id, actor_user_id=scenario["owner"])
+    db.flush()
+    _staleify(db, scenario["version"])
+
+    detail = service.get_version_detail(scenario["version"].id)
+    wc = _columns(detail)["BUI-HB-SRTWC8613-RL"]
+    assert wc["reconciled"] is True
+    assert "remaining 50" in (wc["warning"] or "")
+
+    db.expire_all()
+    stored = (
+        db.query(DeliveryScheduleVersion)
+        .filter(DeliveryScheduleVersion.id == scenario["version"].id)
+        .one()
+    )
+    assert stored.reconciliation_json["columns"][0]["reconciled"] is False
+    assert stored.reconciled_columns == 1
+
+
+def test_a_dismissal_survives_the_read_path_recompute(scenario):
+    """The recompute re-judges the numbers; it does not re-open a decision a person made
+    about them."""
+    db = scenario["db"]
+    service = _failing_scenario(scenario)
+    service.dismiss_column_verdict(
+        scenario["version"].id, 0, dismissed=True, reason="Confirmed by email",
+        actor_user_id=scenario["owner"],
+    )
+    db.flush()
+    # A stale entry that still carries the dismissal, which is what an old payload holds
+    # once the rules underneath it have moved.
+    _staleify(db, scenario["version"], reason="the column adds up to 195, the schedule's own total says 200")
+
+    column = _columns(service.get_version_detail(scenario["version"].id))[
+        "BUI-HB-SRTWC8613-RL"
+    ]
+    assert column["dismissed"] is True
+    assert column["dismissed_reason"] == "Confirmed by email"
+    assert column["reconciled"] is True
+    # Still a genuine disagreement underneath, still reported.
+    assert "own total" in (column["reason"] or "")
+
+
+def test_a_schedule_asking_for_more_than_the_po_ordered_still_blocks(scenario):
+    """The other direction is the one that is a concern: a schedule cannot commit
+    quantity nobody bought."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _two_column_page(
+        wc_cells=[(1, 120), (2, 100)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=220, basin_total=100,
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+
+    detail = service.get_version_detail(scenario["version"].id)
+    wc = _columns(detail)["BUI-HB-SRTWC8613-RL"]
+    assert wc["reconciled"] is False
+    assert wc["warning"] is None
+    assert "more than" in (wc["reason"] or "")
+    assert detail["reconciliation"] == {"reconciled_columns": 1, "total_columns": 2}
+
+    with pytest.raises(AppException) as excinfo:
+        service.confirm(scenario["version"].id, actor_user_id=scenario["owner"])
+    assert excinfo.value.status_code == 409
+
+
+def test_phases_disagreeing_with_the_schedules_own_total_still_blocks(scenario):
+    """Not a partial schedule: the cells and the TOTAL QTY row on the SAME document
+    disagree, so one of the two was misread and neither can be trusted yet."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _two_column_page(
+        wc_cells=[(1, 120), (2, 75)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=200, basin_total=100,
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+
+    wc = _columns(service.get_version_detail(scenario["version"].id))[
+        "BUI-HB-SRTWC8613-RL"
+    ]
+    assert wc["reconciled"] is False
+    assert wc["warning"] is None
+    assert "own total" in (wc["reason"] or "")
+
+
+def test_a_column_with_no_po_quantity_still_blocks(scenario):
+    """Silence is not agreement. An unmatched column is unchecked, not clean."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _page(
+        products=[{"col": 1, "customer_code": "BUI-HB-XX9931", "code": None, "name": "Mystery"}],
+        phases=[{"row": 1, "area_group": "TOWER", "label": "Level 2 & 7",
+                 "delivery_date": "2026-07-01"}],
+        cells=[{"row": 1, "col": 1, "qty": 200}],
+        totals=[{"col": 1, "qty": 200}],
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+
+    column = service.get_version_detail(scenario["version"].id)["products"][0]
+    assert column["reconciled"] is False
+    assert column["warning"] is None
+    assert "no purchase order quantity" in (column["reason"] or "")
+
+
 def test_an_empty_cell_is_never_stored_as_a_zero(scenario):
     """A blank means this phase does not take this product. Writing zeroes would make
     every phase look like it was planned for every product."""
@@ -580,6 +816,46 @@ def test_every_cell_says_which_column_it_belongs_to(scenario):
     assert detail["products"][0]["product_id"] is None
     assert detail["cells"][0]["product_index"] == 0
     assert detail["cells"][0]["product_id"] is None
+
+
+def test_naming_a_columns_product_reaches_the_database(scenario):
+    """The correction has to survive the request, not just the response.
+
+    ``reconciliation_json`` is a plain JSONB column, so mutating the loaded dict and
+    assigning the SAME object back leaves SQLAlchemy comparing the value against a
+    snapshot that IS the mutated object: equal, therefore no UPDATE. The PUT answered
+    200 twice on the live stack while the column kept ``product_id`` null. Everything
+    in-memory agrees with itself, so only a read that goes back to the row catches it.
+    """
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _page(
+        products=[{"col": 1, "customer_code": "BUI-HB-XX9931", "code": None, "name": "Mystery"}],
+        phases=[{"row": 1, "area_group": "TOWER", "label": "Level 2 & 7",
+                 "delivery_date": "2026-07-01"}],
+        cells=[{"row": 1, "col": 1, "qty": 200}],
+        totals=[{"col": 1, "qty": 200}],
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+
+    service.resolve_product_column(
+        scenario["version"].id, 0, scenario["wc"].id, actor_user_id=scenario["owner"]
+    )
+    db.flush()
+
+    # Throw away every in-memory value and read the row again.
+    version_id = scenario["version"].id
+    db.expire_all()
+    stored = (
+        db.query(DeliveryScheduleVersion)
+        .filter(DeliveryScheduleVersion.id == version_id)
+        .one()
+    )
+    column = (stored.reconciliation_json or {})["columns"][0]
+    assert column["product_id"] == scenario["wc"].id
+    assert column["key"] == f"product:{scenario['wc'].id}"
+    assert column["resolution_source"] == "manual"
 
 
 def test_an_unidentified_column_can_be_corrected_by_its_index(scenario):
@@ -846,6 +1122,316 @@ def test_confirm_promotes_the_dates_this_version_carries(scenario):
     db.flush()
     db.refresh(phase)
     assert phase.delivery_date == date(2027, 1, 7)
+
+
+# ------------------------------------------------------- dismissing a false signal
+
+
+def _failing_scenario(scenario):
+    """Two columns, one of which fails: the WC column's cells sum to 195 against a
+    printed total of 200 and a PO quantity of 200."""
+    service = ProjectScheduleService(scenario["db"])
+    page = _two_column_page(
+        wc_cells=[(1, 120), (2, 75)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=200, basin_total=100,
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    scenario["db"].flush()
+    return service
+
+
+def test_a_dismissed_column_stops_blocking_the_confirm(scenario):
+    """The checksum reads somebody else's paper and is sometimes wrong about a column
+    that is fine. Overruling THAT column is not the same as acknowledging the sheet."""
+    db = scenario["db"]
+    service = _failing_scenario(scenario)
+
+    detail = service.get_version_detail(scenario["version"].id)
+    assert detail["reconciliation"] == {"reconciled_columns": 1, "total_columns": 2}
+    failing = _columns(detail)["BUI-HB-SRTWC8613-RL"]
+    assert failing["reconciled"] is False
+
+    service.dismiss_column_verdict(
+        scenario["version"].id,
+        failing["product_index"],
+        dismissed=True,
+        reason="Customer confirmed 195 by email on 4 March",
+        actor_user_id=scenario["owner"],
+    )
+    db.flush()
+
+    detail = service.get_version_detail(scenario["version"].id)
+    column = _columns(detail)["BUI-HB-SRTWC8613-RL"]
+    assert column["reconciled"] is True
+    assert column["dismissed"] is True
+    assert column["dismissed_reason"] == "Customer confirmed 195 by email on 4 March"
+    assert column["dismissed_by_name"] == f"{MARKER} Yana"
+    # The verdict is overruled, not withdrawn: the screen still shows what it found.
+    assert column["reason"]
+    assert detail["reconciliation"] == {"reconciled_columns": 2, "total_columns": 2}
+
+    # It was the only failing column, so confirm no longer needs the whole-sheet
+    # acknowledgement.
+    service.confirm(scenario["version"].id, actor_user_id=scenario["owner"])
+    db.flush()
+    version = db.get(DeliveryScheduleVersion, scenario["version"].id)
+    assert version.confirmed_at is not None
+    assert version.reconciliation_json.get("acknowledgement") is None
+
+
+def test_dismissing_a_column_without_a_reason_is_refused(scenario):
+    """Same rule as the whole-sheet acknowledgement: overruling a check is on the record."""
+    service = _failing_scenario(scenario)
+    with pytest.raises(AppException) as excinfo:
+        service.dismiss_column_verdict(
+            scenario["version"].id, 0, dismissed=True, reason="   ",
+            actor_user_id=scenario["owner"],
+        )
+    assert excinfo.value.status_code == 422
+
+
+def test_a_dismissal_survives_the_request(scenario):
+    """``reconciliation_json`` is a plain JSONB column: without flag_modified the write
+    is never flushed and the 200 is a lie."""
+    db = scenario["db"]
+    service = _failing_scenario(scenario)
+    service.dismiss_column_verdict(
+        scenario["version"].id, 0, dismissed=True, reason="Confirmed by email",
+        actor_user_id=scenario["owner"],
+    )
+    db.flush()
+
+    version_id = scenario["version"].id
+    db.expire_all()
+    stored = (
+        db.query(DeliveryScheduleVersion)
+        .filter(DeliveryScheduleVersion.id == version_id)
+        .one()
+    )
+    column = stored.reconciliation_json["columns"][0]
+    assert column["dismissed"] is True
+    assert column["dismissed_reason"] == "Confirmed by email"
+    assert column["reconciled"] is True
+    assert stored.reconciled_columns == 2
+
+
+def test_undismissing_puts_the_column_back_under_its_verdict(scenario):
+    db = scenario["db"]
+    service = _failing_scenario(scenario)
+    service.dismiss_column_verdict(
+        scenario["version"].id, 0, dismissed=True, reason="Confirmed by email",
+        actor_user_id=scenario["owner"],
+    )
+    db.flush()
+    service.dismiss_column_verdict(scenario["version"].id, 0, dismissed=False)
+    db.flush()
+
+    column = _columns(service.get_version_detail(scenario["version"].id))[
+        "BUI-HB-SRTWC8613-RL"
+    ]
+    assert column["dismissed"] is False
+    assert column["dismissed_reason"] is None
+    assert column["reconciled"] is False
+    with pytest.raises(AppException) as excinfo:
+        service.confirm(scenario["version"].id, actor_user_id=scenario["owner"])
+    assert excinfo.value.status_code == 409
+
+
+def test_correcting_a_cell_clears_the_dismissal_on_that_column(scenario):
+    """The dismissal said the check was wrong about THOSE numbers. Change them and it
+    is a statement about something else."""
+    db = scenario["db"]
+    service = _failing_scenario(scenario)
+    service.dismiss_column_verdict(
+        scenario["version"].id, 0, dismissed=True, reason="Confirmed by email",
+        actor_user_id=scenario["owner"],
+    )
+    db.flush()
+
+    detail = service.get_version_detail(scenario["version"].id)
+    phase_two = _phase(detail, "TOWER", 2)
+    service.update_cells(
+        scenario["version"].id,
+        [{"phase_id": phase_two["id"], "product_index": 0, "qty": "80"}],
+    )
+    db.flush()
+
+    column = _columns(service.get_version_detail(scenario["version"].id))[
+        "BUI-HB-SRTWC8613-RL"
+    ]
+    assert column["dismissed"] is False
+    # Judged again from scratch, and this time it genuinely adds up.
+    assert column["reconciled"] is True
+    assert column["column_total"] == "200"
+
+
+def test_naming_the_columns_product_clears_the_dismissal(scenario):
+    """A different product means a different PO quantity, so the old verdict, and the
+    overruling of it, are both about numbers that no longer apply."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _page(
+        products=[{"col": 1, "customer_code": "BUI-HB-XX9931", "code": None, "name": "Mystery"}],
+        phases=[{"row": 1, "area_group": "TOWER", "label": "Level 2 & 7",
+                 "delivery_date": "2026-07-01"}],
+        cells=[{"row": 1, "col": 1, "qty": 200}],
+        totals=[{"col": 1, "qty": 200}],
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    db.flush()
+    service.dismiss_column_verdict(
+        scenario["version"].id, 0, dismissed=True, reason="Not on the PO, ordered verbally",
+        actor_user_id=scenario["owner"],
+    )
+    db.flush()
+
+    service.resolve_product_column(
+        scenario["version"].id, 0, scenario["wc"].id, actor_user_id=scenario["owner"]
+    )
+    db.flush()
+
+    column = service.get_version_detail(scenario["version"].id)["products"][0]
+    assert column["dismissed"] is False
+    assert column["dismissed_reason"] is None
+
+
+def test_a_column_that_is_not_on_the_schedule_cannot_be_dismissed(scenario):
+    service = _failing_scenario(scenario)
+    with pytest.raises(AppException) as excinfo:
+        service.dismiss_column_verdict(
+            scenario["version"].id, 99, dismissed=True, reason="Whatever",
+            actor_user_id=scenario["owner"],
+        )
+    assert excinfo.value.status_code == 404
+
+
+def test_a_confirmed_version_cannot_have_a_column_dismissed(scenario):
+    """Editing what was agreed is what a revision is for."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    page = _two_column_page(
+        wc_cells=[(1, 120), (2, 80)], basin_cells=[(3, 60), (4, 40)],
+        wc_total=200, basin_total=100,
+    )
+    service.persist_pages(scenario["version"], [(1, page)])
+    service.confirm(scenario["version"].id, actor_user_id=scenario["owner"])
+    db.flush()
+
+    with pytest.raises(AppException) as excinfo:
+        service.dismiss_column_verdict(
+            scenario["version"].id, 0, dismissed=True, reason="Too late",
+            actor_user_id=scenario["owner"],
+        )
+    assert excinfo.value.status_code == 409
+
+
+def _client(db, user_id: str):
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+    from app.services.company_scope_resolver import apply_company_scope
+    from app.services.user_service import UserPermissionService
+
+    actor = {"id": user_id, "email": f"{user_id}@zzt.test", "role": "user"}
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: dict(actor)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+    app.dependency_overrides[apply_company_scope] = lambda: None
+
+    originals = (
+        UserPermissionService.check_user_has_permission,
+        UserPermissionService.get_user_permission_slugs,
+    )
+    UserPermissionService.check_user_has_permission = lambda self, uid, slug: True
+    UserPermissionService.get_user_permission_slugs = lambda self, uid: [
+        "projects.projects.view",
+        "projects.projects.edit",
+    ]
+    return TestClient(app), originals
+
+
+def _restore(originals) -> None:
+    from app.main import app
+    from app.services.user_service import UserPermissionService
+
+    UserPermissionService.check_user_has_permission = originals[0]
+    UserPermissionService.get_user_permission_slugs = originals[1]
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def api(scenario):
+    """The same world, reached over HTTP: the dismissal is a route as well as a rule."""
+    from app.models.base import company_scope
+
+    db = scenario["db"]
+    _failing_scenario(scenario)
+    db.commit()
+    client, originals = _client(db, scenario["owner"])
+    try:
+        with company_scope(db, frozenset({scenario["project"].company_id})):
+            yield client, scenario
+    finally:
+        _restore(originals)
+
+
+def test_the_dismissal_route_overrules_one_column(api):
+    client, scenario = api
+    response = client.put(
+        f"/api/v1/project-sales/delivery-schedule-versions/{scenario['version'].id}/columns/0/dismissal",
+        json={"dismissed": True, "reason": "Customer confirmed 195 by email"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    column = next(
+        item for item in body["products"] if item["customer_code_raw"] == "BUI-HB-SRTWC8613-RL"
+    )
+    assert column["dismissed"] is True
+    assert column["reconciled"] is True
+    assert column["dismissed_reason"] == "Customer confirmed 195 by email"
+    assert body["reconciliation"]["reconciled_columns"] == 2
+
+    undone = client.put(
+        f"/api/v1/project-sales/delivery-schedule-versions/{scenario['version'].id}/columns/0/dismissal",
+        json={"dismissed": False},
+    )
+    assert undone.status_code == 200, undone.text
+    column = next(
+        item for item in undone.json()["products"]
+        if item["customer_code_raw"] == "BUI-HB-SRTWC8613-RL"
+    )
+    assert column["dismissed"] is False
+    assert column["reconciled"] is False
+
+
+def test_the_dismissal_route_refuses_a_reasonless_dismissal(api):
+    client, scenario = api
+    response = client.put(
+        f"/api/v1/project-sales/delivery-schedule-versions/{scenario['version'].id}/columns/0/dismissal",
+        json={"dismissed": True},
+    )
+    assert response.status_code == 422
+
+
+def test_the_dismissal_route_is_refused_without_the_edit_right(api):
+    """Rights live on the PROJECT: another salesperson's pursuit is not editable."""
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+
+    client, scenario = api
+    stranger = _user(scenario["db"], f"{MARKER} Farah")
+    scenario["db"].commit()
+    actor = {"id": stranger, "email": f"{stranger}@zzt.test", "role": "user"}
+    app.dependency_overrides[get_current_user] = lambda: dict(actor)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+
+    response = client.put(
+        f"/api/v1/project-sales/delivery-schedule-versions/{scenario['version'].id}/columns/0/dismissal",
+        json={"dismissed": True, "reason": "Not mine to say"},
+    )
+    assert response.status_code == 403
 
 
 # --------------------------------------------------------------- the text layer

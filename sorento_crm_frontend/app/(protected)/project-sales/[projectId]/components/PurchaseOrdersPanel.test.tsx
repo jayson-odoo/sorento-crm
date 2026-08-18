@@ -31,8 +31,12 @@ const listPurchaseOrders = vi.fn();
 const listPurchaseOrderLines = vi.fn();
 const listSamples = vi.fn();
 
+// A STABLE push, not a fresh `vi.fn()` per render: the way in to a PO is a navigation, so it
+// has to be assertable. A per-call mock silently makes every "did it navigate" test vacuous.
+const push = vi.fn();
+
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1',
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -225,10 +229,9 @@ describe('PurchaseOrdersPanel', () => {
 
     renderLines();
 
-    // The ordered price is now an editable cell, so it reads as a value rather than as text.
-    expect(
-      await screen.findByRole('textbox', { name: 'Ordered at on SRT-WC-01' }),
-    ).toHaveValue('820.00');
+    // A READ by default now (the edit view owns the inputs), so the ordered price reads as
+    // money with what was quoted underneath it.
+    expect(await screen.findByText('RM 820.00')).toBeInTheDocument();
     expect(screen.getByText('Quoted RM 900.00')).toBeInTheDocument();
     expect(screen.getByText('Price differs')).toBeInTheDocument();
   });
@@ -288,6 +291,38 @@ describe('PurchaseOrdersPanel', () => {
     expect(await screen.findByText(/1 - 1 of 1/)).toBeInTheDocument();
     expect(screen.getByText(/Rows per page/i)).toBeInTheDocument();
     expect(screen.queryByText(/on this project/i)).toBeNull();
+  });
+
+  /**
+   * The two ways in to a PO, both navigations, both easy to break silently.
+   *
+   * The pencil used to open a modal; it opens the record's own page in edit mode now, and the
+   * row opens it to read. Neither shows anything when it fails - no error, no request, the page
+   * simply sits there - so the assertion has to be on the push itself.
+   */
+  it('opens the PO on its own page when the row is clicked', async () => {
+    listPurchaseOrders.mockResolvedValue([po()]);
+
+    const { container } = renderPos();
+
+    fireEvent.click((await screen.findByText('PO-9001')).closest('tr') as HTMLElement);
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/pos/po1');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('opens the PO already in edit mode when the row Edit is clicked', async () => {
+    listPurchaseOrders.mockResolvedValue([po()]);
+
+    renderPos();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit PO-9001' }));
+
+    // Once, not twice: the actions cell stops the click reaching the row underneath, or the
+    // user would land on the read view a beat after landing on the edit one.
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/pos/po1?edit=1');
   });
 
   it('offers no write affordance to a reader', async () => {

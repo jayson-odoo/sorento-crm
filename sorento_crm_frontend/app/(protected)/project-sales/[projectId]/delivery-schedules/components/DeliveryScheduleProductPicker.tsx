@@ -2,10 +2,12 @@
 
 import * as React from 'react';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
 // The shared products `/select` mapper. Its name says "variant" because that screen needed
 // it first; the endpoint and the shape are the generic ones.
 import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
+import type { POVersionLine } from '../../../_shared/types/poIntake.types';
 
 /**
  * Our code, hiding inside theirs, as a search term.
@@ -30,6 +32,42 @@ export function productSearchSeed(customerCode: string | null): string {
 }
 
 /**
+ * The products this PO actually orders, in the order the document lists them.
+ *
+ * A schedule column has to end up on a line of the PO it is checked against, so the whole
+ * product catalogue is the wrong list to choose from: it offers thousands of items, all but
+ * a couple of dozen of which can only produce a column that does not reconcile. Lines the
+ * resolver never matched to a product carry no id to pick, and the same product ordered on
+ * two lines is one choice, not two.
+ */
+export function poProductOptions(lines: POVersionLine[]): SearchableSelectOption[] {
+  const seen = new Set<string>();
+  const options: SearchableSelectOption[] = [];
+  for (const line of lines) {
+    const productId = line.resolved_product_id;
+    if (!productId || seen.has(productId)) continue;
+    seen.add(productId);
+    options.push({
+      value: productId,
+      label: line.resolved_product_code ?? line.stock_code_raw ?? `Line ${line.line_no}`,
+      description: line.description_raw ?? undefined,
+    });
+  }
+  return options;
+}
+
+/**
+ * Every word typed has to appear somewhere in the option, which is the same rule
+ * `SearchableSelect` applies to a static list. Keeping the two the same means a PO list and a
+ * catalogue list answer a search identically.
+ */
+function optionMatches(option: SearchableSelectOption, tokens: string[]): boolean {
+  if (tokens.length === 0) return true;
+  const haystack = `${option.label} ${option.description ?? ''}`.toLowerCase();
+  return tokens.every((token) => haystack.includes(token));
+}
+
+/**
  * Identifies, or corrects, the product a schedule column means.
  *
  * Offered in three places for one reason: the reviewer has to be able to fix a column from
@@ -43,6 +81,7 @@ export function DeliveryScheduleProductPicker({
   customerCode,
   action = 'Pick the product',
   variant = 'field',
+  poOptions,
   disabled,
   onPick,
 }: {
@@ -61,10 +100,20 @@ export function DeliveryScheduleProductPicker({
   action?: string;
   /** `field` is a select box; `compact` is a small text button for a place with no room. */
   variant?: 'field' | 'compact';
+  /**
+   * The products the PO this schedule was checked against actually orders.
+   *
+   * The ONLY list to choose from when there is one. Empty or absent (a schedule checked
+   * against no PO version, or a PO whose lines resolved to nothing) is the one case that
+   * searches the catalogue, because then it is the only list left.
+   */
+  poOptions?: SearchableSelectOption[];
   disabled?: boolean;
   onPick: (productId: string) => void;
 }) {
-  const fetchProducts = React.useCallback(async (query: string) => {
+  const hasPoOptions = Boolean(poOptions && poOptions.length > 0);
+
+  const fetchCatalogue = React.useCallback(async (query: string) => {
     const rows = await getProductsForVariantSelect(query || undefined);
     return rows.map((row) => ({
       value: row.id,
@@ -73,11 +122,42 @@ export function DeliveryScheduleProductPicker({
     }));
   }, []);
 
+  /**
+   * A PO list is the WHOLE list. The catalogue is never consulted beside it.
+   *
+   * It was, at first: a search matching no PO line fell through to the catalogue so that an
+   * item genuinely missing from the PO could still be picked. What that produced on screen is
+   * the thing it was meant to avoid - type two letters, and thousands of catalogue items are
+   * back, indistinguishable from the PO's own. A column that names a product the PO does not
+   * order is not fixed by pointing it at another product the PO does not order either; it is
+   * fixed by amending the PO, which the gear menu opens.
+   */
+  const fetchProducts = React.useCallback(
+    async (query: string) => {
+      const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      if (poOptions && poOptions.length > 0)
+        return poOptions.filter((option) => optionMatches(option, tokens));
+      return fetchCatalogue(query);
+    },
+    [fetchCatalogue, poOptions],
+  );
+
+  const emptyMessage = hasPoOptions ? 'No PO line matches' : 'No products match';
+
   const id = `${idPrefix}-column-product-${columnIndex}`;
   const name = customerCode
     ? `${action} for ${customerCode}`
     : `${action} for column ${columnIndex + 1}`;
-  const seed = productSearchSeed(customerCode);
+  /**
+   * A PO list opens whole, never narrowed.
+   *
+   * The seed exists because a catalogue of thousands is unusable unnarrowed, and it is the
+   * wrong move against a list of forty-odd: the printed code often appears nowhere on the PO,
+   * which is precisely why the column did not reconcile, and the picker would open on an
+   * empty list with the reviewer having to clear the box to see the lines they came to
+   * choose from. Catalogue mode keeps the seed, where it earns its place.
+   */
+  const seed = hasPoOptions ? '' : productSearchSeed(customerCode);
 
   if (variant === 'compact') {
     return (
@@ -87,7 +167,7 @@ export function DeliveryScheduleProductPicker({
         disabled={disabled}
         fetchOptions={fetchProducts}
         initialQuery={seed}
-        emptyMessage="No products match"
+        emptyMessage={emptyMessage}
         className="min-w-[280px]"
         renderTrigger={({ disabled: isDisabled }) => (
           <button
@@ -122,7 +202,7 @@ export function DeliveryScheduleProductPicker({
         fetchOptions={fetchProducts}
         initialQuery={seed}
         placeholder={action}
-        emptyMessage="No products match"
+        emptyMessage={emptyMessage}
         triggerClassName="w-full"
         className="min-w-[280px]"
       />

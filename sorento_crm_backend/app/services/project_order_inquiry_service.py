@@ -6,7 +6,14 @@ covering pools come from, where the stock location comes from, how the rows are 
 once and only once, how purchasing is handed them, and how they leave the system as the
 spreadsheet the client already reads.
 
-Four things worth knowing before changing anything here.
+Five things worth knowing before changing anything here.
+
+**The standard demand row is the confirmed Buy residual, and only that**
+(`PLAN-scm-front-planning.md` section 4). `refresh_for_decision` is its ONLY writer and it
+runs inside the atomic CS confirmation. Publish writes no inquiry and reconciliation writes
+none (AC-D01), because a published order may be covered entirely by Reserve, Borrow or
+timely SPO cover and ordering all of it would buy it twice. The netting engine below still
+serves AMENDMENTS, whose exception verbs are a different thing from new demand.
 
 **The inquiry is never a second source of demand** (AC-I6). Committed quantity lives on
 `sales_order_lines` and the SCM reorder engine reads that, exactly as it does today.
@@ -18,6 +25,8 @@ to, not a record of what anybody has ordered.
 second sales order against a project whose pre-order is already spoken for must not net
 against the same 5,950 twice, so the pool is reduced by every row that already claims
 it. ``covered_by`` is the key for that: the engine writes a stable label, not free text.
+It stays NULL on a confirmed-Buy row: nothing covers it, because CS already removed the
+covered part of the line.
 
 **The stock location is never invented** (AC-H5). It is the warehouse on a CONFIRMED
 allocation from slice P9. No confirmation yet means the column is empty, and the screen
@@ -40,7 +49,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
-from app.models.order import Customer
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import InboundShipment, SPOAllocation
 from app.models.product import Product
 from app.models.project_so import (
@@ -49,6 +58,7 @@ from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ADVANCE,
     IV_ALREADY_INBOUND,
+    IV_BORROW_SHORTFALL,
     IV_CANCEL_BALANCE,
     IV_CHANGE_SO,
     IV_DELAY,
@@ -76,7 +86,6 @@ from app.services.error_handler import AppException
 from app.services.project_order_inquiry_engine import (
     CHANGE_DATE_EARLIER,
     CHANGE_DATE_LATER,
-    CHANGE_NEW,
     CHANGE_QTY_DECREASE,
     CHANGE_QTY_INCREASE,
     CHANGE_REPOINT,
@@ -109,6 +118,8 @@ REMARK_SPELLING = {
     IV_CANCEL_BALANCE: "CANCEL BALANCE",
     IV_PRE_ORDERED: "PRE-ORDERED, DO NOT ORDER",
     IV_ALREADY_INBOUND: "ALREADY INBOUND",
+    # Not a spelling of theirs: this row is new to them, and it says what it is.
+    IV_BORROW_SHORTFALL: "BORROW SHORTFALL",
 }
 
 # The headings on `(04).03.2026 MARYAM TUJU RESIDENCE.xlsx`, committed to the golden set
@@ -156,6 +167,28 @@ def _qty_str(value: Decimal) -> str:
     return format(_dec(value).normalize(), "f")
 
 
+def project_customer_label(
+    customer_name: Optional[str],
+    project_title: Optional[str],
+    is_pre_order: Optional[bool] = False,
+) -> Optional[str]:
+    """`BUIMACO / TUJU RESIDENCE`, the way purchasing reads the column.
+
+    The billed party first because that is who the document is against, then the project,
+    then the parking note when the order is a pre-order rather than a real commercial
+    commitment (D18).
+
+    A module-level function rather than a method because TWO screens print this column -
+    the per-project inquiry and purchasing's cross-project worklist - and two screens
+    spelling the same customer differently is a support call. Each supplies the three
+    facts its own query already has; the rule for turning them into words lives here.
+    """
+    parts = [part for part in (customer_name, project_title) if part]
+    if is_pre_order:
+        parts.append("PRE-ORDER")
+    return " / ".join(parts) if parts else None
+
+
 def _as_date(value: Any) -> Optional[date]:
     if value is None or value == "":
         return None
@@ -177,34 +210,252 @@ class ProjectOrderInquiryService:
 
     # ------------------------------------------------------------- derivation
 
-    def derive_for_sales_order(
-        self, order: ProjectSalesOrder, *, actor_user_id: Optional[str] = None
-    ) -> OrderInquiry:
-        """Every line of a freshly published sales order is new demand (AC-I1).
+    def refresh_for_decision(
+        self,
+        order: ProjectSalesOrder,
+        decision: Any,
+        buy_lines: Sequence[Dict[str, Any]],
+        *,
+        actor_user_id: Optional[str] = None,
+        borrow_shortfalls: Sequence[Dict[str, Any]] = (),
+    ) -> Dict[str, Any]:
+        """The Buy-only handoff, written INSIDE the atomic confirmation (PLAN section 4).
 
-        Idempotent: the second call returns the inquiry the first one wrote. Publishing
-        already refuses a second time, but derivation must not depend on that, because
-        a corrective publish path added later would otherwise double what purchasing is
-        told to buy.
+        The only creator of standard demand rows. Publish creates none and reconciliation
+        creates none (AC-D01): a published-but-unconfirmed order may be covered entirely by
+        Reserve, Borrow or timely SPO cover, and ordering all of it would buy it twice.
+
+        What reaches purchasing is the confirmed Buy residual and nothing else - no netting
+        pass, no coverage verbs, `covered_by` NULL. The evidence for why the rest of the
+        line needs nothing bought belongs to the decision, not to a purchasing instruction.
+
+        Three lifecycle rules, all of them AC-C07/AC-D05:
+
+        * a still-unplaced row from a superseded revision is CANCELLED with the revision
+          that replaced it named, never edited in place;
+        * a row purchasing already actioned STAYS. Placed supply is in the ledger and this
+          service does not get to rewrite history;
+        * when the new need is lower than what was already placed, the difference becomes a
+          `CANCEL_BALANCE` exception row stating both figures, so somebody answers it.
+
+        Since partial confirmation (PLAN-fulfilment-planning-from-autocount-so.md 13.4) a
+        revision covers the lines the planner chose. A line the previous revision covered
+        and this confirmation did not name is CARRIED into the new revision by
+        `ProjectSupplyService.confirm` and arrives here in `buy_lines` like any other, so
+        its Buy stays on purchasing's list. `_retire_uncovered_rows` still cancels the
+        still-raised rows of a line genuinely absent from the revision (one no longer on
+        the order): that line is undecided again and its whole open quantity goes back to
+        counting as demand, so a raised Buy row left behind would be the same requirement
+        told to purchasing twice. Cancelled by the same rule and with the same words as
+        any other superseded row - never deleted, because they are what purchasing was
+        told.
+
+        `borrow_shortfalls` is the fourth thing purchasing is handed, and the only one that
+        is not about the borrowing line's own quantity: a borrow that pushed a DONOR
+        location below zero availability opened a hole at THAT location, and it is raised
+        there under its own verb (PLAN 13.11). A donor the borrow left covered raises
+        nothing.
+
+        `created` counts the rows this confirmation ADDED to purchasing's list. A carried
+        line (`carried: True`) has its still-raised row moved under this revision - a
+        cancel and a re-raise, so `confirmed_unplaced_buy_rows` keeps seeing it under the
+        ACTIVE decision - but purchasing already had that row, so it is not counted.
         """
-        existing = self._existing(order.id, None)
-        if existing is not None:
-            return existing
-
-        lines = self._lines_of(order.id)
-        demand = [
-            DemandRow(
-                line_id=line.id,
-                product_id=str(line.product_id) if line.product_id else "",
-                item_code=self._product_code(line.product_id),
-                qty=_dec(line.qty),
-                delivery_date=line.delivery_date,
-                stock_location=self._stock_location(line.id),
-                change=CHANGE_NEW,
+        inquiry = self._existing(order.id, None)
+        if inquiry is None:
+            inquiry = OrderInquiry(
+                company_id=order.company_id,
+                project_sales_order_id=order.id,
+                amendment_id=None,
+                state=INQUIRY_RAISED,
+                raised_by=actor_user_id,
             )
-            for line in lines
-        ]
-        return self._write(order, None, demand, actor_user_id=actor_user_id)
+            self.db.add(inquiry)
+            self.db.flush()
+
+        created = 0
+        raised = 0
+        exceptions: List[Dict[str, Any]] = []
+        for entry in buy_lines:
+            line = entry["line"]
+            need = _dec(entry.get("buy_qty"))
+            carried = bool(entry.get("carried"))
+            # This sales order's OWN inquiry only. An amendment raises its exception verbs
+            # under its own inquiry (`amendment_id`), and cancelling those here would
+            # delete an instruction purchasing is still working from.
+            rows = (
+                self.db.query(OrderInquiryRow)
+                .filter(
+                    OrderInquiryRow.order_inquiry_id == inquiry.id,
+                    OrderInquiryRow.so_line_id == line.id,
+                    OrderInquiryRow.verb.in_((IV_ORDER, IV_CANCEL_BALANCE)),
+                )
+                .all()
+            )
+            # A still-raised CANCEL_BALANCE exception is superseded like a raised ORDER
+            # row, or every reconfirm at the same lower need would stack another copy.
+            # `placed` sums ORDER rows only: the exception row is a message, not supply.
+            placed = _ZERO
+            for row in rows:
+                if row.state == INQUIRY_RAISED:
+                    row.state = INQUIRY_CANCELLED
+                    row.note = f"Superseded by revision {decision.revision_no}"
+                elif row.state == INQUIRY_ACTIONED and row.verb == IV_ORDER:
+                    placed += _dec(row.qty)
+
+            outstanding = need - placed
+            if outstanding > _ZERO:
+                self.db.add(
+                    OrderInquiryRow(
+                        company_id=order.company_id,
+                        order_inquiry_id=inquiry.id,
+                        so_line_id=line.id,
+                        item_code=entry.get("item_code") or None,
+                        qty=outstanding,
+                        delivery_date=entry.get("required_date"),
+                        stock_location=entry.get("stock_location"),
+                        verb=IV_ORDER,
+                        # No netting on this path, so nothing covers this row: the coverage
+                        # decision was CS's and is recorded on the supply decision.
+                        covered_by=None,
+                        supply_decision_id=decision.id,
+                        state=INQUIRY_RAISED,
+                    )
+                )
+                raised += 1
+                if not carried:
+                    created += 1
+            elif placed > need:
+                message = (
+                    f"Placed {_qty_str(placed)}, new need {_qty_str(need)}"
+                )
+                self.db.add(
+                    OrderInquiryRow(
+                        company_id=order.company_id,
+                        order_inquiry_id=inquiry.id,
+                        so_line_id=line.id,
+                        item_code=entry.get("item_code") or None,
+                        qty=placed - need,
+                        delivery_date=entry.get("required_date"),
+                        stock_location=entry.get("stock_location"),
+                        verb=IV_CANCEL_BALANCE,
+                        note=message,
+                        supply_decision_id=decision.id,
+                        state=INQUIRY_RAISED,
+                    )
+                )
+                exceptions.append(
+                    {
+                        "line_no": entry.get("line_no"),
+                        "item_code": entry.get("item_code"),
+                        "message": message,
+                    }
+                )
+
+        self._retire_uncovered_rows(inquiry, decision, buy_lines)
+        shortfalls = self._raise_borrow_shortfalls(
+            order, inquiry, decision, borrow_shortfalls
+        )
+        created += shortfalls
+        raised += shortfalls
+        self.db.flush()
+        if raised and self.task_for(inquiry.id) is None:
+            self._hand_to_purchasing(order, inquiry, raised)
+        return {"inquiry": inquiry, "created": created, "exceptions": exceptions}
+
+    def _raise_borrow_shortfalls(
+        self,
+        order: ProjectSalesOrder,
+        inquiry: OrderInquiry,
+        decision: Any,
+        shortfalls: Sequence[Dict[str, Any]],
+    ) -> int:
+        """One row per donor location this confirmation left oversold (PLAN 13.11).
+
+        Its own verb rather than `ORDER`, and that is not cosmetic: the quantity belongs to
+        the DONOR's location while the row hangs off the borrowing line, so counted as
+        `ORDER` it would reach `confirmed_unplaced_buy_rows` attributed to the borrowing
+        line's warehouse and be cancelled by the Buy-residual rules on the next re-confirm.
+
+        The lifecycle is the same as every other row here: a still-raised one from an
+        earlier revision is CANCELLED and kept, never edited in place, and one purchasing
+        has already actioned stays - AND is netted, exactly as an actioned ORDER row is
+        netted off the line's next Buy. A hole of 10 that purchasing placed is not
+        raised again by the next revision; a hole that has widened to 15 raises the 5
+        still outstanding. Netted per (item, donor location), which is the pile the hole
+        is in: a donor short of two products has two holes.
+        """
+        rows = (
+            self.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.order_inquiry_id == inquiry.id,
+                OrderInquiryRow.verb == IV_BORROW_SHORTFALL,
+            )
+            .all()
+        )
+        placed: Dict[Tuple[Optional[str], Optional[str]], Decimal] = {}
+        for row in rows:
+            if row.state == INQUIRY_RAISED:
+                row.state = INQUIRY_CANCELLED
+                row.note = f"Superseded by revision {decision.revision_no}"
+            elif row.state == INQUIRY_ACTIONED:
+                key = (row.item_code or None, row.stock_location or None)
+                placed[key] = placed.get(key, _ZERO) + _dec(row.qty)
+
+        created = 0
+        for entry in shortfalls:
+            key = (entry.get("item_code") or None, entry.get("stock_location") or None)
+            qty = _dec(entry.get("qty")) - placed.get(key, _ZERO)
+            if qty <= _ZERO:
+                continue
+            line = entry.get("line")
+            self.db.add(
+                OrderInquiryRow(
+                    company_id=order.company_id,
+                    order_inquiry_id=inquiry.id,
+                    so_line_id=line.id if line is not None else None,
+                    item_code=entry.get("item_code") or None,
+                    qty=qty,
+                    delivery_date=entry.get("required_date"),
+                    #: The DONOR's location, which is where the hole is.
+                    stock_location=entry.get("stock_location"),
+                    verb=IV_BORROW_SHORTFALL,
+                    note=entry.get("note"),
+                    covered_by=None,
+                    supply_decision_id=decision.id,
+                    state=INQUIRY_RAISED,
+                )
+            )
+            created += 1
+        return created
+
+    def _retire_uncovered_rows(
+        self, inquiry: OrderInquiry, decision: Any, buy_lines: Sequence[Dict[str, Any]]
+    ) -> None:
+        """Cancel still-raised rows of an EARLIER revision on lines this one dropped.
+
+        Scoped to rows that carry a `supply_decision_id` other than this decision's: a row
+        with none belongs to the amendment path, which is a different instruction to
+        purchasing and is not this method's to touch. An `actioned` row stays, exactly as
+        it does on a covered line - placed supply is in the ledger.
+        """
+        covered = {str(entry["line"].id) for entry in buy_lines}
+        stale = (
+            self.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.order_inquiry_id == inquiry.id,
+                OrderInquiryRow.state == INQUIRY_RAISED,
+                OrderInquiryRow.verb.in_((IV_ORDER, IV_CANCEL_BALANCE)),
+                OrderInquiryRow.supply_decision_id.isnot(None),
+                OrderInquiryRow.supply_decision_id != decision.id,
+            )
+            .all()
+        )
+        for row in stale:
+            if str(row.so_line_id) in covered:
+                continue
+            row.state = INQUIRY_CANCELLED
+            row.note = f"Superseded by revision {decision.revision_no}"
 
     def derive_for_amendment(
         self, amendment: SOAmendment, *, actor_user_id: Optional[str] = None
@@ -510,34 +761,39 @@ class ProjectOrderInquiryService:
     ) -> None:
         """A task on the project's delivery phase, with the rows attached (AC-I4).
 
-        Best-effort on purpose. The sales order is already published and its rows are
-        already written when this runs, so a notification backend that is down must not
-        turn a successful publish into a 500 the retry cannot repair.
+        Best-effort on purpose. The rows this task points at are already written when
+        this runs, so a notification backend that is down must not turn that success
+        into a 500 the retry cannot repair. The write sits in a SAVEPOINT because this
+        now also runs INSIDE the atomic confirmation transaction: a swallowed DB error
+        without one would leave that transaction aborted, and the caller's commit would
+        then fail for an operation that had already succeeded (the post-commit
+        side-effect lesson in CLAUDE.md, applied pre-commit).
         """
         try:
-            project = (
-                self.db.query(Project).filter(Project.id == order.project_id).first()
-            )
-            if project is None:
-                return
-            reference = order.autocount_doc_no or order.provisional_ref
-            to_buy = self._buying_count(inquiry.id)
-            task = ProjectTask(
-                company_id=order.company_id,
-                project_id=project.id,
-                name=f"Order inquiry {reference}",
-                description=(
-                    f"{row_count} instruction{'' if row_count == 1 else 's'} from "
-                    f"{reference}, {to_buy} of which still need buying."
-                ),
-                task_phase=TASK_PHASE_DELIVERY,
-                category="Purchasing",
-                linked_entity_type=TASK_LINK_ORDER_INQUIRY,
-                linked_entity_id=inquiry.id,
-            )
-            self.db.add(task)
-            self.db.flush()
-            self._notify_purchasing(project, order, inquiry, row_count, to_buy)
+            with self.db.begin_nested():
+                project = (
+                    self.db.query(Project).filter(Project.id == order.project_id).first()
+                )
+                if project is None:
+                    return
+                reference = order.autocount_doc_no or order.provisional_ref
+                to_buy = self._buying_count(inquiry.id)
+                task = ProjectTask(
+                    company_id=order.company_id,
+                    project_id=project.id,
+                    name=f"Order inquiry {reference}",
+                    description=(
+                        f"{row_count} instruction{'' if row_count == 1 else 's'} from "
+                        f"{reference}, {to_buy} of which still need buying."
+                    ),
+                    task_phase=TASK_PHASE_DELIVERY,
+                    category="Purchasing",
+                    linked_entity_type=TASK_LINK_ORDER_INQUIRY,
+                    linked_entity_id=inquiry.id,
+                )
+                self.db.add(task)
+                self.db.flush()
+                self._notify_purchasing(project, order, inquiry, row_count, to_buy)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "order inquiry %s raised, but the purchasing task was not created (%s)",
@@ -607,7 +863,11 @@ class ProjectOrderInquiryService:
             self.db.query(func.count(OrderInquiryRow.id))
             .filter(
                 OrderInquiryRow.order_inquiry_id == inquiry_id,
-                OrderInquiryRow.verb.in_([IV_ORDER, IV_RESERVE_AND_ORDER]),
+                # A borrow shortfall is buying work too: the donor is oversold and
+                # somebody has to buy the hole (PLAN 13.11).
+                OrderInquiryRow.verb.in_(
+                    [IV_ORDER, IV_RESERVE_AND_ORDER, IV_BORROW_SHORTFALL]
+                ),
             )
             .scalar()
             or 0
@@ -731,9 +991,11 @@ class ProjectOrderInquiryService:
         if not rows:
             return []
         context, names = self._context_for(rows)
+        traces = self._decision_traces(rows)
         out: List[Dict[str, Any]] = []
         for row in rows:
             meta = context.get(row.order_inquiry_id, {})
+            trace = traces.get(row.id, {})
             out.append(
                 {
                     "id": row.id,
@@ -741,6 +1003,12 @@ class ProjectOrderInquiryService:
                     "so_line_id": row.so_line_id,
                     "sales_order_ref": meta.get("sales_order_ref"),
                     "project_sales_order_id": meta.get("project_sales_order_id"),
+                    # AC-D06: the buyer traces a Buy back to the Project SO, the line
+                    # number and the revision that decided it, in identifiers a person
+                    # reads - never an id.
+                    "project_so_ref": meta.get("project_so_ref"),
+                    "line_no": trace.get("line_no"),
+                    "decision_revision": trace.get("decision_revision"),
                     "so_date": meta.get("so_date"),
                     "project_customer": meta.get("project_customer"),
                     "is_amendment": meta.get("is_amendment", False),
@@ -781,6 +1049,10 @@ class ProjectOrderInquiryService:
             context[inquiry.id] = {
                 "project_sales_order_id": order.id,
                 "sales_order_ref": order.autocount_doc_no or order.provisional_ref,
+                # The Project SO's OWN reference, beside the AutoCount number the
+                # sales_order_ref prefers: they are two different documents and the buyer
+                # tracing a Buy back to a project needs the one this system minted.
+                "project_so_ref": order.provisional_ref,
                 "so_date": (order.published_at or order.created_at),
                 "project_customer": labels.get(order.id),
                 "is_amendment": bool(inquiry.amendment_id),
@@ -793,12 +1065,55 @@ class ProjectOrderInquiryService:
         )
         return context, names
 
-    def _project_customer_labels(self, pso_ids: set) -> Dict[str, str]:
-        """`BUIMACO / TUJU RESIDENCE`, the way purchasing reads the column.
+    def _decision_traces(
+        self, rows: Sequence[OrderInquiryRow]
+    ) -> Dict[str, Dict[str, Any]]:
+        """The line number and decision revision behind each row (AC-D06).
 
-        The billed party first because that is who the document is against, then the
-        project, then the parking note when the order is a pre-order rather than a real
-        commercial commitment (D18).
+        Both are absent on an amendment exception row and on anything raised before
+        Stage 1C, which is honest: those rows were not decided by a supply revision.
+        """
+        from app.models.project_so import SOSupplyDecision
+
+        line_ids = {row.so_line_id for row in rows if row.so_line_id}
+        decision_ids = {row.supply_decision_id for row in rows if row.supply_decision_id}
+        line_nos = (
+            dict(
+                self.db.query(
+                    ProjectSalesOrderLine.id, ProjectSalesOrderLine.line_no
+                )
+                .filter(ProjectSalesOrderLine.id.in_(list(line_ids)))
+                .all()
+            )
+            if line_ids
+            else {}
+        )
+        revisions = (
+            dict(
+                self.db.query(SOSupplyDecision.id, SOSupplyDecision.revision_no)
+                .filter(SOSupplyDecision.id.in_(list(decision_ids)))
+                .all()
+            )
+            if decision_ids
+            else {}
+        )
+        return {
+            row.id: {
+                "line_no": line_nos.get(row.so_line_id),
+                "decision_revision": revisions.get(row.supply_decision_id),
+            }
+            for row in rows
+        }
+
+    def _project_customer_labels(self, pso_ids: set) -> Dict[str, Optional[str]]:
+        """`BUIMACO / TUJU RESIDENCE` per sales order, via `project_customer_label`.
+
+        The join to `Project` is OUTER, and that is a fix rather than a style choice: an
+        order ADOPTED from the AutoCount book has no project registration by design, so an
+        inner join answered nothing for it and the column came back blank on a row that
+        plainly has a customer. When there is no project party to bill, the CORE sales
+        order's own customer is that customer - it is the same document, read through the
+        table it was imported into.
         """
         if not pso_ids:
             return {}
@@ -809,23 +1124,28 @@ class ProjectOrderInquiryService:
                 Project.title,
                 Customer.customer_name,
             )
-            .join(Project, Project.id == ProjectSalesOrder.project_id)
+            .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
                 ProjectPurchaseOrder,
                 ProjectPurchaseOrder.id == ProjectSalesOrder.purchase_order_id,
             )
             .outerjoin(ProjectParty, ProjectParty.id == ProjectPurchaseOrder.issuing_party_id)
-            .outerjoin(Customer, Customer.id == ProjectParty.customer_id)
+            .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            # ONE join through a coalesce rather than two aliases of `customers`: the
+            # company-scope listener emits an UNALIASED `customers.company_id` into an
+            # aliased ON clause, which Postgres refuses outright.
+            .outerjoin(
+                Customer,
+                Customer.id
+                == func.coalesce(ProjectParty.customer_id, SalesOrder.customer_id),
+            )
             .filter(ProjectSalesOrder.id.in_(list(pso_ids)))
             .all()
         )
-        out: Dict[str, str] = {}
-        for pso_id, is_pre_order, title, customer_name in rows:
-            parts = [part for part in (customer_name, title) if part]
-            if is_pre_order:
-                parts.append("PRE-ORDER")
-            out[pso_id] = " / ".join(parts)
-        return out
+        return {
+            pso_id: project_customer_label(customer_name, title, is_pre_order)
+            for pso_id, is_pre_order, title, customer_name in rows
+        }
 
     def _remark(self, row: OrderInquiryRow) -> str:
         """The REMARK column, spelled the way the client's own file spells it.
@@ -1017,3 +1337,48 @@ class ProjectOrderInquiryService:
             return ""
         row = self.db.query(Product.product_code).filter(Product.id == product_id).first()
         return row[0] if row else ""
+
+
+def confirmed_unplaced_buy_rows(
+    db: Session,
+    *,
+    product_id: Optional[str] = None,
+    warehouse_id: Optional[str] = None,
+) -> List[OrderInquiryRow]:
+    """Confirmed, still-unplaced Project Buy - the one thing SCM reads (AC-D04).
+
+    Counts the current `raised` ORDER rows of ACTIVE decisions DIRECTLY. No re-netting
+    against pre-order or inbound pools, and no subtracting customer deliveries a second
+    time: CS already decided what still has to be bought, and repeating that arithmetic
+    downstream is how the same requirement gets bought twice or vanishes entirely.
+
+    The join to core stock facts runs through
+    `projects.sales_order_lines.core_sales_order_line_id` (front planning section 4),
+    never through a reference, a document number or an item code.
+    """
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    query = (
+        db.query(OrderInquiryRow)
+        .join(
+            SOSupplyDecision, SOSupplyDecision.id == OrderInquiryRow.supply_decision_id
+        )
+        .join(
+            ProjectSalesOrderLine,
+            ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+        )
+        .join(
+            SalesOrderLine,
+            SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+        )
+        .filter(
+            SOSupplyDecision.state == DECISION_ACTIVE,
+            OrderInquiryRow.verb == IV_ORDER,
+            OrderInquiryRow.state == INQUIRY_RAISED,
+        )
+    )
+    if product_id:
+        query = query.filter(SalesOrderLine.product_id == product_id)
+    if warehouse_id:
+        query = query.filter(SalesOrderLine.warehouse_id == warehouse_id)
+    return query.all()

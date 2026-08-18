@@ -71,7 +71,13 @@ function row(over: Partial<PoWorklistRow> = {}): PoWorklistRow {
 
 function state(over: Record<string, unknown> = {}) {
   return {
-    data: { run_id: 'run-2026-w32', as_of: '2026-08-04', rows: [row()] },
+    data: {
+      run_id: 'run-2026-w32',
+      as_of: '2026-08-04',
+      decision_grain: 'product',
+      front_planning_contract_version: 1,
+      rows: [row()],
+    },
     isLoading: false,
     isError: false,
     error: null,
@@ -325,6 +331,48 @@ describe('PoWorklistView - the keyed status (AC-E2.2 / E2.3 / E2.4)', () => {
     });
   });
 
+  it('keys a location-grain row on its own location, and gives each location its own control', () => {
+    // One product decided at two locations is two purchase orders. Keying one must post
+    // that location, and the two selects cannot share a DOM id.
+    renderView(
+      state({
+        data: {
+          run_id: 'run-2026-w32',
+          as_of: '2026-08-04',
+          decision_grain: 'location',
+          front_planning_contract_version: 1,
+          rows: [
+            row({ warehouse_code: 'WH-A', warehouse_name: 'Warehouse A', location_allocations: null }),
+            row({ warehouse_code: 'WH-B', warehouse_name: 'Warehouse B', location_allocations: null }),
+          ],
+        },
+      }),
+    );
+    const a = document.getElementById('keyed-status-SRTWC8613-RL-WH-A');
+    const b = document.getElementById('keyed-status-SRTWC8613-RL-WH-B');
+    expect(a).toBeInTheDocument();
+    expect(b).toBeInTheDocument();
+    expect(a).not.toBe(b);
+    expect(document.getElementById('keyed-status-SRTWC8613-RL')).toBeNull();
+
+    fireEvent.click(b!);
+    fireEvent.click(screen.getByText('Keyed'));
+    expect(mockMutate).toHaveBeenCalledTimes(1);
+    expect(mockMutate).toHaveBeenCalledWith({
+      productCode: 'SRTWC8613-RL',
+      input: { run_id: 'run-2026-w32', keyed_status: 'keyed', warehouse_code: 'WH-B' },
+    });
+  });
+
+  it('posts no location for a product-grain row', () => {
+    renderView(state());
+    const r = rowFor('SRTWC8613-RL');
+    fireEvent.click(within(r).getByRole('combobox'));
+    fireEvent.click(screen.getByText('Keyed'));
+    const [{ input }] = mockMutate.mock.calls[0] as [{ input: Record<string, unknown> }];
+    expect('warehouse_code' in input).toBe(false);
+  });
+
   it('names who set the status and when, once it has been set', () => {
     renderView(
       state({
@@ -340,6 +388,40 @@ describe('PoWorklistView - the keyed status (AC-E2.2 / E2.3 / E2.4)', () => {
     // Through the row: "Keying" also appears in the toolbar filter's own option list.
     const r = rowFor('SRTWC8613-RL');
     expect(within(r).getByText(/Joey/)).toBeInTheDocument();
+  });
+});
+
+describe('PoWorklistView - the grain chip reads the run, never infers it', () => {
+  it('says legacy when the contract version is null, even with a grain stamped', () => {
+    // `lib/planGrain.ts`: a legacy run is identified by its NULL contract version. The
+    // planning view says "Legacy run" for this run, and this chip has to agree with it.
+    renderView(
+      state({
+        data: {
+          run_id: 'run-legacy',
+          as_of: '2026-08-04',
+          decision_grain: 'product',
+          front_planning_contract_version: null,
+          rows: [row()],
+        },
+      }),
+    );
+    expect(screen.getByTestId('worklist-grain-chip')).toHaveTextContent('Legacy run');
+  });
+
+  it('names the grain on a front-planning run', () => {
+    renderView(
+      state({
+        data: {
+          run_id: 'run-2026-w32',
+          as_of: '2026-08-04',
+          decision_grain: 'location',
+          front_planning_contract_version: 1,
+          rows: [row({ warehouse_code: 'WH-A', warehouse_name: 'Warehouse A' })],
+        },
+      }),
+    );
+    expect(screen.getByTestId('worklist-grain-chip')).toHaveTextContent('Plan grain: Location');
   });
 });
 

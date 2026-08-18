@@ -85,13 +85,17 @@ const PREVIEW = {
   problems: [],
 };
 
-function openDialog(supplierId: string | null = 'sup-1') {
+function openDialog(
+  supplierId: string | null = 'sup-1',
+  supplierName: string | null = 'KAILU HARDWARE FACTORY',
+) {
   const onImported = vi.fn();
   render(
     <PackingListUploadDialog
       open
       onOpenChange={() => {}}
       supplierId={supplierId}
+      supplierName={supplierName}
       onImported={onImported}
     />,
   );
@@ -143,11 +147,17 @@ describe('PackingListUploadDialog - the inherited two-step flow', () => {
     const file = pickFile();
     fireEvent.click(testButton());
 
-    await waitFor(() => expect(previewPackingList).toHaveBeenCalledWith(file));
+    await waitFor(() =>
+      expect(previewPackingList).toHaveBeenCalledWith(file, {
+        supplierId: 'sup-1',
+        currency: null,
+      }),
+    );
     // Test runs the `validate_only` read too - it writes nothing - and never the real apply.
     await waitFor(() =>
       expect(applyPackingList).toHaveBeenCalledWith(file, {
         supplierId: 'sup-1',
+        currency: null,
         validateOnly: true,
       }),
     );
@@ -184,6 +194,29 @@ describe('PackingListUploadDialog - the inherited two-step flow', () => {
   });
 });
 
+describe('PackingListUploadDialog - whose lines these are', () => {
+  it('names the factory the file will be filed under', () => {
+    openDialog();
+
+    expect(screen.getByText(/Uploading as KAILU HARDWARE FACTORY\./)).toBeInTheDocument();
+  });
+
+  it('offers neither Test nor Confirm with no supplier, rather than sending an unowned file',
+    () => {
+      // An upload that does not say whose lines it is speaks for the WHOLE container, which
+      // is how the other factory's lines used to disappear. The server refuses it with a 422;
+      // this dialog does not get that far.
+      openDialog(null, null);
+      pickFile();
+
+      expect(testButton()).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+      expect(testButton()).toHaveAttribute('title', 'Choose a supplier first');
+      expect(applyPackingList).not.toHaveBeenCalled();
+      expect(previewPackingList).not.toHaveBeenCalled();
+    });
+});
+
 describe('PackingListUploadDialog - Confirm, which is still synchronous here', () => {
   const RESULT = {
     shipments_created: 2,
@@ -212,7 +245,10 @@ describe('PackingListUploadDialog - Confirm, which is still synchronous here', (
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
     await waitFor(() =>
-      expect(applyPackingList).toHaveBeenCalledWith(file, { supplierId: 'sup-1' }),
+      expect(applyPackingList).toHaveBeenCalledWith(file, {
+        supplierId: 'sup-1',
+        currency: null,
+      }),
     );
     expect(await screen.findByText(/Created 2 containers/)).toBeInTheDocument();
     expect(screen.getByText(/1 line skipped for having no product we hold/)).toBeInTheDocument();
@@ -234,6 +270,19 @@ describe('PackingListUploadDialog - Confirm, which is still synchronous here', (
     expect(previewPackingList).not.toHaveBeenCalled();
   });
 
+  it('shows the failure and leaves the dialog open when the apply is refused, 422 included',
+    async () => {
+      // The server's own message, whatever it says - including the 422 an upload with no
+      // supplier earns - reaches the user through this one path.
+      applyPackingList.mockRejectedValue(new Error('supplier_id is required'));
+      openDialog();
+      pickFile();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+      expect(await screen.findByText('supplier_id is required')).toBeInTheDocument();
+    });
+
   it('shows the failure and leaves the dialog open when the apply is refused', async () => {
     applyPackingList.mockRejectedValue(new Error('Select a single company before uploading.'));
     openDialog();
@@ -245,5 +294,119 @@ describe('PackingListUploadDialog - Confirm, which is still synchronous here', (
       await screen.findByText('Select a single company before uploading.'),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+  });
+});
+
+describe('PackingListUploadDialog - the currency, asked for only when nothing else says', () => {
+  function currencyField(): HTMLInputElement {
+    return screen.getByLabelText('Currency') as HTMLInputElement;
+  }
+
+  it('sends no currency at all when the field is left empty', async () => {
+    // Empty must not travel as an empty string: the file usually states its own currency
+    // ("RMB", "单价(元)") and a blank form value would be a value that overrides nothing.
+    applyPackingList.mockResolvedValue({ shipments_created: 1, shipments_updated: 0, lines_skipped: 0, results: [] });
+    openDialog();
+    const file = pickFile();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(applyPackingList).toHaveBeenCalledWith(file, {
+        supplierId: 'sup-1',
+        currency: null,
+      }),
+    );
+  });
+
+  it('upper-cases what is typed and caps it at a three-letter code', () => {
+    openDialog();
+
+    fireEvent.change(currencyField(), { target: { value: 'cnyx' } });
+
+    expect(currencyField().value).toBe('CNY');
+  });
+
+  it('carries the typed currency on the read, the test and the apply', async () => {
+    // One mock for both jobs the endpoint does: `validate_only` answers with the standard
+    // verdict, the real apply with what it wrote.
+    applyPackingList.mockImplementation((_file: File, opts: { validateOnly?: boolean }) =>
+      opts?.validateOnly
+        ? Promise.resolve({ valid: true, errors: [], warnings: [], summary: {} })
+        : Promise.resolve({
+            shipments_created: 1,
+            shipments_updated: 0,
+            lines_skipped: 0,
+            results: [],
+          }),
+    );
+    openDialog();
+    const file = pickFile();
+    fireEvent.change(currencyField(), { target: { value: 'usd' } });
+
+    fireEvent.click(testButton());
+    await waitFor(() =>
+      expect(previewPackingList).toHaveBeenCalledWith(file, {
+        supplierId: 'sup-1',
+        currency: 'USD',
+      }),
+    );
+    expect(applyPackingList).toHaveBeenCalledWith(file, {
+      supplierId: 'sup-1',
+      currency: 'USD',
+      validateOnly: true,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() =>
+      expect(applyPackingList).toHaveBeenLastCalledWith(file, {
+        supplierId: 'sup-1',
+        currency: 'USD',
+      }),
+    );
+  });
+
+  it('says which currency the read resolved, and where it came from', async () => {
+    previewPackingList.mockResolvedValue({
+      ...PREVIEW,
+      priced_lines: 11,
+      currency: 'CNY',
+      currency_source: 'document',
+    });
+    openDialog();
+    pickFile();
+
+    fireEvent.click(testButton());
+
+    expect(await screen.findByText(/Priced in CNY \(stated by the file\)/)).toBeInTheDocument();
+  });
+
+  it('says so when the file is priced and nothing states the money', async () => {
+    previewPackingList.mockResolvedValue({
+      ...PREVIEW,
+      priced_lines: 11,
+      currency: null,
+      currency_source: 'none',
+    });
+    openDialog();
+    pickFile();
+
+    fireEvent.click(testButton());
+
+    expect(
+      await screen.findByText(/Nothing states which money these prices are in/),
+    ).toBeInTheDocument();
+  });
+
+  it('says nothing about currency for a file with no prices in it', async () => {
+    previewPackingList.mockResolvedValue({ ...PREVIEW, priced_lines: 0, currency: null, currency_source: 'none' });
+    openDialog();
+    pickFile();
+
+    fireEvent.click(testButton());
+
+    expect(await screen.findByText('TEMU1234567')).toBeInTheDocument();
+    expect(screen.queryByText(/Priced in/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nothing states which money/)).not.toBeInTheDocument();
   });
 });

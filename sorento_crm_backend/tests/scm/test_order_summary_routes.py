@@ -32,8 +32,14 @@ from app.models.user import (
     UserRolePermission,
 )
 from app.services.scm import summary_order_service as svc
+from app.services.scm.demand import ORDER_INQUIRY_ORIGIN
+from app.services.scm.demand_class import class_of
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
-from tests.scm.conftest import requires_pg, scm_app  # noqa: F401  (fixture)
+from tests.scm.conftest import (  # noqa: F401  (scm_app is a fixture)
+    requires_pg,
+    scm_app,
+    single_location_plan_basis,
+)
 
 pytestmark = requires_pg
 
@@ -177,7 +183,15 @@ def chain(scm_app):  # noqa: F811
     db.flush()
     so = SalesOrder(
         id=_u(), so_number=_code("SO")[:50], customer_id=cust.id, status="open",
-        order_type="project", order_date=_today() - timedelta(days=3),
+        # Classified the way every stamp point classifies one (front planning 5.2): the
+        # persisted `demand_class` is what the split and the demand drill read, and a
+        # fixture that set only the source order type would be testing a row the importer
+        # cannot produce. Inquiry-created because project demand reaches the plan ONLY
+        # through the Order Inquiry (S13b) - without the origin this line would be set
+        # aside and the dated shortfall below would not exist.
+        order_type="project", demand_class=class_of("project"),
+        demand_origin=ORDER_INQUIRY_ORIGIN,
+        order_date=_today() - timedelta(days=3),
     )
     db.add(so)
     db.flush()
@@ -191,6 +205,9 @@ def chain(scm_app):  # noqa: F811
         id=_u(), status="completed", buy_scope="warehouse",
         started_at=to_naive_datetime(datetime.now(MALAYSIA_TZ)),
         source_system="scm", source_ref=_code("RUN"),
+        # Stamped as a CURRENT product-grain run (front planning 5.4): `record_decision`
+        # IS the Product-grain decision, and a run with no stamp is legacy and read-only.
+        decision_grain="product", front_planning_contract_version=1,
     )
     db.add(run)
     db.flush()
@@ -204,6 +221,81 @@ def chain(scm_app):  # noqa: F811
     return {
         "app": app, "db": db, "gcu": gcu, "gcuk": gcuk,
         "product": product, "supplier": supplier, "run": run, "pool": pool,
+    }
+
+
+@pytest.fixture()
+def channel_chain(scm_app):  # noqa: F811
+    """A product-grain run frozen WITH the channel breakdown (project confirmed, retail,
+    unclassified, and the unconfirmed sheet leg), at two warehouses, dp-0 UOM.
+
+    `chain` above predates front planning: its one recommendation carries no `inputs`, so
+    `write_rows` takes the legacy branch and freezes no channel field at all. The locations
+    drill and the precision/grain-mismatch decision routes need a row that actually HAS a
+    channel basis to reconcile against - that is what this fixture is for.
+    """
+    app, db, gcu, gcuk = scm_app
+    _company(app, db)
+
+    cat = ProductCategory(
+        id=_u(), category_code=_code("CAT")[:40], category_name=_code("cat")
+    )
+    uom = UnitOfMeasure(
+        id=_u(), uom_name=_code("uom"), uom_code=_code("U")[:20], decimal_places=0,
+    )
+    db.add_all([cat, uom])
+    db.flush()
+    product = Product(
+        id=_u(), product_code=_code("SKU"), product_name="wall hung wc",
+        category_id=cat.id, base_uom_id=uom.id, list_price=0,
+        is_active=True, is_discontinued=False,
+    )
+    brw = Warehouse(
+        id=_u(), warehouse_code=_code("BRW")[:30], warehouse_name="brw",
+        is_active=True, counts_as_available=True,
+    )
+    jb = Warehouse(
+        id=_u(), warehouse_code=_code("JB")[:30], warehouse_name="jb",
+        is_active=True, counts_as_available=True,
+    )
+    db.add_all([product, brw, jb])
+    db.flush()
+
+    supplier = Supplier(
+        id=_u(), supplier_code=_code("S")[:30], supplier_name="guangdong sw",
+    )
+    db.add(supplier)
+    db.flush()
+
+    run = ReorderRun(
+        id=_u(), status="completed", buy_scope="warehouse",
+        started_at=to_naive_datetime(datetime.now(MALAYSIA_TZ)),
+        source_system="scm", source_ref=_code("RUN"),
+        decision_grain="product", front_planning_contract_version=1,
+    )
+    db.add(run)
+    db.flush()
+    # The CANONICAL frozen shape: every buy carries the basis of the sizing group it was
+    # netted over (`reorder_run_service._plan_basis`), which for a per-warehouse buy is
+    # its own single location. Building these in the old row-only shape is what let the
+    # network and pool freeze defects through.
+    for warehouse, rounded, channel in (
+        (brw, 6, {"project_need": 4, "retail_need": 2, "unclassified_need": 1,
+                  "project_sheet_need": 5}),
+        (jb, 5, {"project_need": 0, "retail_need": 3, "unclassified_need": 2}),
+    ):
+        db.add(ReorderRecommendation(
+            id=_u(), run_id=run.id, rec_type="buy", product_id=product.id,
+            warehouse_id=warehouse.id, rounded_qty=rounded, status="proposed",
+            inputs={**channel, "plan_basis": single_location_plan_basis(
+                channel, warehouse, rounded=rounded)},
+        ))
+    db.flush()
+    svc.write_rows(db, run.id)
+
+    return {
+        "app": app, "db": db, "gcu": gcu, "gcuk": gcuk,
+        "product": product, "supplier": supplier, "run": run, "brw": brw, "jb": jb,
     }
 
 
@@ -434,6 +526,170 @@ def test_a_negative_quantity_is_rejected_by_the_endpoint(chain):
     )
 
     assert res.status_code == 422, res.text
+
+
+# --------------------------------------------------------------------------- #
+# the locations drill (AC-F08), and precision/grain over HTTP (AC-F09, F12)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_locations_drill_serialises_the_channel_breakdown_including_the_sheet_leg(
+    channel_chain,
+):
+    """AC-F08: member locations, the channel split, the unconfirmed sheet leg named as
+    evidence, and the once-rounded suggested figure the drill reconciles against."""
+    f = channel_chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM])
+    client = TestClient(f["app"])
+
+    res = client.get(
+        f"/api/v1/scm/order-summary/{f['product'].product_code}/locations",
+        params={"run_id": str(f["run"].id)},
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["product_code"] == f["product"].product_code
+    assert body["decision_grain"] == "product"
+    assert body["is_legacy"] is False
+    assert body["uom_decimal_places"] == 0
+    assert len(body["locations"]) == 2
+    brw_loc = next(
+        l for l in body["locations"] if l["warehouse_code"] == f["brw"].warehouse_code
+    )
+    assert brw_loc["project_need"] == 4
+    assert brw_loc["retail_need"] == 2
+    assert brw_loc["unclassified_need"] == 1
+    assert brw_loc["project_sheet_need"] == 5, "the sheet leg must reach the drill too"
+    assert sum(l["project_need"] for l in body["locations"]) == 4
+    assert sum(l["retail_need"] for l in body["locations"]) == 5
+    assert sum(l["unclassified_need"] for l in body["locations"]) == 3
+
+
+def test_the_locations_drill_on_a_legacy_run_returns_none_channel_fields_not_zero(
+    channel_chain,
+):
+    """AC-F10: a run with no `front_planning_contract_version` has no channel breakdown to
+    show and none is inferred - the drill's locations come back empty and its precision
+    field is NULL, never 0."""
+    f = channel_chain
+    legacy_run = ReorderRun(
+        id=_u(), status="completed", buy_scope="warehouse",
+        started_at=to_naive_datetime(datetime.now(MALAYSIA_TZ)),
+        source_system="scm", source_ref=_code("RUN"),
+        # no decision_grain / front_planning_contract_version -> legacy
+    )
+    f["db"].add(legacy_run)
+    f["db"].flush()
+    f["db"].add(ReorderRecommendation(
+        id=_u(), run_id=legacy_run.id, rec_type="buy", product_id=f["product"].id,
+        warehouse_id=f["brw"].id, rounded_qty=6, status="proposed",
+    ))
+    f["db"].flush()
+    svc.write_rows(f["db"], legacy_run.id)
+
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM])
+    client = TestClient(f["app"])
+
+    res = client.get(
+        f"/api/v1/scm/order-summary/{f['product'].product_code}/locations",
+        params={"run_id": str(legacy_run.id)},
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["is_legacy"] is True
+    assert body["decision_grain"] is None
+    assert body["uom_decimal_places"] is None
+    assert body["locations"] == []
+
+
+def test_the_report_does_not_ship_the_per_location_basis_on_every_row(channel_chain):
+    """The evidence belongs to the drill, not to the book.
+
+    The report is returned unpaginated, so a row carrying its whole
+    `channel_calculation_basis` multiplies out: one real run shipped 2,043 location
+    entries across 507 rows to every reader, for a panel most of them never open. The
+    stored column and the drill are untouched - this pins that the LIST does not carry it.
+    """
+    f = channel_chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM])
+    client = TestClient(f["app"])
+
+    row = next(
+        r for r in client.get(
+            f"/api/v1/scm/order-summary?run_id={f['run'].id}"
+        ).json()["rows"]
+        if r["product_code"] == f["product"].product_code
+    )
+    assert "channel_calculation_basis" not in row
+
+    # ... and the same evidence is still one request away, per product.
+    drill = client.get(
+        f"/api/v1/scm/order-summary/{f['product'].product_code}/locations",
+        params={"run_id": str(f["run"].id)},
+    ).json()
+    assert len(drill["locations"]) == 2
+
+
+def test_reading_the_locations_drill_requires_the_view_permission(channel_chain):
+    """A principal holding only the write permission must not read the drill."""
+    f = channel_chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_RUN_PERM])
+    client = TestClient(f["app"])
+
+    res = client.get(
+        f"/api/v1/scm/order-summary/{f['product'].product_code}/locations",
+        params={"run_id": str(f["run"].id)},
+    )
+
+    assert res.status_code == 403, res.text
+
+
+def test_recording_a_decision_over_http_refuses_a_fraction_finer_than_the_frozen_uom(
+    channel_chain,
+):
+    """AC-F12 at the wire: a dp-0 row refuses `2.5` with the precision code, not a generic
+    422 - `test_a_negative_quantity_is_rejected_by_the_endpoint` above already covers the
+    generic 422, this is the specific one."""
+    f = channel_chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM, _RUN_PERM])
+    client = TestClient(f["app"])
+
+    res = client.post(
+        f"/api/v1/scm/order-summary/{f['product'].product_code}/decision",
+        json={
+            "run_id": str(f["run"].id),
+            "chosen_qty": 2.5,
+            "supplier_code": f["supplier"].supplier_code,
+        },
+    )
+
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "chosen_qty_precision"
+
+
+def test_recording_a_decision_over_http_refuses_a_location_grain_run(channel_chain):
+    """AC-F09 at the wire: a run decided at Location grain must refuse the Product-grain
+    write with 409, not silently accept it into the wrong grain's ownership."""
+    f = channel_chain
+    f["run"].decision_grain = "location"
+    f["db"].add(f["run"])
+    f["db"].commit()
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM, _RUN_PERM])
+    client = TestClient(f["app"])
+
+    res = client.post(
+        f"/api/v1/scm/order-summary/{f['product'].product_code}/decision",
+        json={
+            "run_id": str(f["run"].id),
+            "chosen_qty": 4,
+            "supplier_code": f["supplier"].supplier_code,
+        },
+    )
+
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "decision_grain_mismatch"
 
 
 # --------------------------------------------------------------------------- #

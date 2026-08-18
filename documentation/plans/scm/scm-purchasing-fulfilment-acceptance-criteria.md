@@ -306,7 +306,9 @@ recoverable, or the decision cannot be reviewed.
 **AC-C3.2** Incoming cost is captured from the packing list at the moment an SPO allocation is
 approved and stamped on the inbound shipment line. The column exists and is populated in 0 of
 1,015 existing rows, and the table has **no currency column**, so both the write and a currency
-migration are in scope.
+migration are in scope. (Met since 17 Aug 2026: the currency column landed with S3b and the
+Excel packing-list ingest now fills both columns at upload. Contract and known limits:
+`scm-proforma-invoice-acceptance-criteria.md` AC-P5.)
 
 **AC-C3.3** Ordered cost is never overwritten by incoming cost. The variance between them is a
 first-class output, since a supplier whose incoming cost drifts above its ordered cost has repriced
@@ -495,10 +497,14 @@ allocation IS the supply, so there is no path by which an approved allocation is
 
 **AC-H1** Priority is a weighted policy row, per tenant, not a rule in code.
 
-**AC-H2** The seeded default reproduces today's behaviour: PO document sequence dominant. Day-one
-output is checkable against the manual answer.
+**AC-H2** The seeded default ranks by outstanding customer demand first (project, then retail,
+then nothing owed) and by PO document sequence within each demand band. Superseded 2026-08-17 by
+the captain's decision (`decision-loading-plan-demand-source.md`, gap G1a): the original seed
+reproduced the manual answer (sequence only) with demand weighted 0.0; migration 374 raises
+demand to 3.0. A line owed to nobody scores demand 0.0 (present), never absent.
 
-**AC-H3** A need-by-date-and-demand-class weighting ships in the same release, off by default.
+**AC-H3** The weighting is a policy row (`scm.priority_policy`) editable in the FE; need-by-date
+still ships weighted 0.0 by default.
 
 **AC-H4** Switching weights shows a side-by-side preview of which lines change rank and by how
 much, before committing.

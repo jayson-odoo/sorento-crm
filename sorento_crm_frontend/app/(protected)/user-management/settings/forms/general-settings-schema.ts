@@ -34,6 +34,8 @@ export const GeneralSettingsSchema = z.object({
   defaultProductStandardLeadTimeDays: z.coerce.number().int().min(0).max(10950),
   takeoverCooldownSeconds: z.coerce.number().int().min(0).max(3600),
   formSlaGraceSeconds: z.coerce.number().int().min(0).max(600),
+  /** SCM front planning: the grain new plans are decided at (AC-F01). */
+  planGrain: z.enum(['product', 'location']),
   purchaseRequestDefaultApproverUserId: z.string(),
   sponsorshipFormDefaultApproverUserId: z.string(),
 });

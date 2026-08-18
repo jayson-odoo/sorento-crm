@@ -51,11 +51,15 @@ def _shipment_or_404(db: Session, shipment_id: str) -> InboundShipment:
 
 
 def _candidates(db: Session, product_ids: set[str], supplier_id: Optional[str]) -> list[dict]:
-    """Open purchase-order lines that could be what this container is shipping against.
+    """Open lines on PLACED purchase orders that these lines could be shipping against.
 
-    Restricted to the shipment's supplier when it has one. A container from one supplier
+    Restricted to the LINE's supplier when it has one. A container from one supplier
     drawing down another supplier's order is not a ranking mistake to be corrected further
-    down; it is not a candidate at all.
+    down; it is not a candidate at all. Same for a draft the supplier has never seen.
+
+    Per line rather than per container because a container carries several factories: the
+    header supplier of a mixed container is NULL, and taking it as the filter would have
+    offered every supplier's orders to every line.
     """
     if not product_ids:
         return []
@@ -78,6 +82,9 @@ def _candidates(db: Session, product_ids: set[str], supplier_id: Optional[str]) 
               FROM purchase_order_lines pol
               JOIN purchase_orders po ON po.id = pol.purchase_order_id
              WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
+               -- Placed, not drafted. `draft_recommendation` is a plan the engine staged
+               -- and nobody has sent, so a container cannot be shipping against it.
+               AND po.status NOT IN ('draft', 'draft_recommendation')
                AND COALESCE(pol.qty_ordered, 0) - COALESCE(pol.qty_received, 0) > 0
                {supplier_clause}
                AND {predicate or 'true'}
@@ -136,15 +143,41 @@ def suggest(db: Session, shipment_id: str) -> dict:
         .filter(InboundShipmentLine.shipment_id == shipment.id)
         .all()
     )
-    product_ids = {str(ln.product_id) for ln in lines if ln.product_id}
-    candidates = _candidates(db, product_ids, str(shipment.supplier_id) if shipment.supplier_id else None)
+    header_supplier = str(shipment.supplier_id) if shipment.supplier_id else None
+
+    def supplier_of(ln: InboundShipmentLine) -> Optional[str]:
+        """Whose line this is. Its own supplier, else the container's.
+
+        The fallback is a no-op after every packing-list write and is kept for the one
+        case where it is not: the header is DERIVED from the lines (one distinct supplier
+        across them, otherwise NULL), so an unattributed line normally sits on a container
+        whose header is NULL too and the fallback returns None either way. Only a header
+        set by hand on an unattributed container makes it fire, and there the header is
+        the only statement of whose goods these are, so following it is right.
+        """
+        return str(ln.supplier_id) if ln.supplier_id else header_supplier
+
+    # One candidate query per supplier on this container, because the supplier is what
+    # narrows the orders and a mixed container has more than one of them.
+    products_by_supplier: dict[Optional[str], set[str]] = {}
+    for ln in lines:
+        if not ln.product_id:
+            continue
+        products_by_supplier.setdefault(supplier_of(ln), set()).add(str(ln.product_id))
+
+    candidates: list[dict] = []
+    for supplier, product_ids in products_by_supplier.items():
+        for c in _candidates(db, product_ids, supplier):
+            candidates.append({**c, "_for_supplier": supplier})
 
     factors = priority.factors_for_candidates(db, candidates)
-    scored: dict[str, list[dict]] = {}
+    # Keyed by (supplier, product): the same product from two factories is two lines with
+    # two different sets of open orders behind them.
+    scored: dict[tuple[Optional[str], str], list[dict]] = {}
     for c in candidates:
         line_id = str(c["po_line_id"])
         f = factors.get(line_id, [])
-        scored.setdefault(str(c["product_id"]), []).append(
+        scored.setdefault((c["_for_supplier"], str(c["product_id"])), []).append(
             {
                 "po_line_id": line_id,
                 "po_number": c["po_number"],
@@ -166,7 +199,7 @@ def suggest(db: Session, shipment_id: str) -> dict:
     out_lines: list[dict] = []
     for ln in lines:
         options = sorted(
-            scored.get(str(ln.product_id), []),
+            scored.get((supplier_of(ln), str(ln.product_id)), []),
             key=lambda o: (-o["score"], o["po_number"] or "", o["po_line_id"]),
         )
         shipped = float(ln.quantity_shipped or 0)
@@ -189,6 +222,9 @@ def suggest(db: Session, shipment_id: str) -> dict:
             {
                 "shipment_line_id": str(ln.id),
                 "product_id": str(ln.product_id),
+                # Whose line this is, so the screen can group a mixed container by factory
+                # without asking a second endpoint.
+                "supplier_id": supplier_of(ln),
                 "quantity_shipped": shipped,
                 "quantity_allocated": allocated,
                 # What is left to decide. The suggestion covers this, never the whole line

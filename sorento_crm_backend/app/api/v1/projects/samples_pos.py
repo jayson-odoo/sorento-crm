@@ -41,6 +41,7 @@ from app.schemas.projects import (
     SponsorshipConversionResponse,
 )
 from app.services import project_po_service as po_svc
+from app.services import project_record_navigation as record_nav
 from app.services import project_sample_service as sample_svc
 from app.services import project_service as projects
 from app.services.error_handler import handle_internal_error
@@ -185,6 +186,28 @@ async def list_purchase_orders(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.get("/projects/{project_id}/purchase-orders/neighbours")
+async def get_purchase_order_neighbours(
+    project_id: str,
+    id: str = Query(..., description="Purchase order id to resolve neighbours for"),
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Prev/next of one PO within this project's POs.
+
+    The same set, in the same order, the list above returns - so the detail pager and the
+    tab the user came from cannot disagree. Returns ``{total, index, prev_id, next_id}``
+    with a 1-based ``index`` and circular neighbours.
+    """
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        validate_uuid_path(id, resource="Purchase order")
+        projects.get_project_or_404(db, project_id)
+        return record_nav.purchase_order_neighbours(db, project_id=project_id, po_id=id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.post(
     "/projects/{project_id}/purchase-orders",
     response_model=ProjectPurchaseOrderResponse,
@@ -230,13 +253,36 @@ async def update_purchase_order(
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
+    """The PO's header and, when the body carries ``lines``, its WHOLE line set at once.
+
+    **Why one route.** The PO detail screen is an edit view: nothing is written while somebody
+    types, and one Save covers the header and every line. Two requests could half-land -- a
+    renamed PO whose lines never moved -- so the save is one request in one transaction.
+
+    **``lines`` is the full desired set, in display order.** A line already stored carries its
+    ``id``; a new one arrives without one. **Anything stored whose id is absent from the array
+    is DELETED**, so a client must always send everything it is showing the user. Array
+    position is ``sort_order``; any sort_order in the payload is ignored. Omitting the key
+    leaves the lines untouched, which is what the record-a-PO modal sends; an empty array is
+    the real intent "every line was removed" and does clear them.
+
+    A mismatch against the bound version is still FLAGGED, never refused (AC-F9). The
+    refusals are structural: a line naming neither a product nor a code (422), the same line
+    twice (422), or an id belonging to another PO (404) -- and any of them rolls the whole
+    save back rather than leaving half of it applied.
+    """
     try:
         validate_uuid_path(po_id, resource="Purchase order")
         po = po_svc.get_po(db, po_id)
         _project_for_edit(db, po.project_id, current_user)
-        po = po_svc.update_po(db, po=po, payload=payload.model_dump(exclude_unset=True))
+        body = payload.model_dump(exclude_unset=True)
+        lines = po_svc.save_po_document(db, po=po, payload=body)
         db.commit()
         db.refresh(po)
+        # Mismatch alerts on a whole-set save are raised ONCE for the PO, not once per line:
+        # a 90-line PO would otherwise send the owner 90 notifications for one button press.
+        if body.get("lines") is not None:
+            _notify_po_mismatches(db, po, lines)
         return po_svc.serialize_pos(db, [po])[0]
     except Exception as exc:
         db.rollback()
@@ -317,6 +363,42 @@ def _notify_po_mismatch(db: Session, po, line) -> None:
         db.commit()
     except Exception as exc:  # noqa: BLE001
         logger.warning("PO mismatch notify failed for po=%s line=%s: %s", po.id, line.id, exc)
+
+
+def _notify_po_mismatches(db: Session, po, lines) -> None:
+    """The same alert as ``_notify_po_mismatch``, for a whole-set save.
+
+    ONE notification naming every flagged line, not one per line: a 90-line PO saved in a
+    single request would otherwise send the owner 90 emails for one button press, which is how
+    people learn to filter the alert away. Best-effort, and after the commit, for the reason
+    the singular version states.
+    """
+    flagged = [line for line in lines if line.model_mismatch or line.price_mismatch]
+    if not flagged:
+        return
+    try:
+        from app.models.projects import Project
+        from app.services import project_notify_service as notify
+
+        project = db.query(Project).filter(Project.id == po.project_id).first()
+        if project is None:
+            return
+        notify.notify_po_mismatch(
+            db,
+            project=project,
+            po=po,
+            mismatches=[
+                {
+                    "kind": "model mismatch" if line.model_mismatch else "price mismatch",
+                    "product_code": line.product_code,
+                    "description": line.description,
+                }
+                for line in flagged
+            ],
+        )
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("PO mismatch notify failed for po=%s: %s", po.id, exc)
 
 
 @router.post(

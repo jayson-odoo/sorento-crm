@@ -10,9 +10,10 @@ import json
 import logging
 import re
 import secrets
+import uuid
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, exists, false, func, select
 from sqlalchemy import inspect
 from decimal import Decimal, InvalidOperation
 from typing import Optional, List, Dict, Any
@@ -389,6 +390,163 @@ def compute_inbound_shipment_line_status(
     return "in_transit"
 
 
+def shipment_supplier_predicate(supplier_id):
+    """Containers this supplier is ON: the header names them, or any of their lines does.
+
+    A container filled by two factories has NO header supplier (a mixed container has no
+    single one), so a filter that reads the header alone hides that container from both of
+    the suppliers actually on it - exactly the containers the per-supplier line was added
+    for. One helper rather than the same OR written out at each call site, because a filter
+    that drifts from the others is a screen that quietly disagrees with its neighbour.
+
+    Takes one id or an iterable of them (the identifier resolver hands back a list).
+    A single id may be a `uuid.UUID` as well as a string - the ORM hands back UUID objects,
+    and iterating one of those is a TypeError rather than a filter on that supplier.
+    """
+    if isinstance(supplier_id, (str, uuid.UUID)):
+        ids = [str(supplier_id)]
+    else:
+        ids = [str(s) for s in supplier_id]
+    if not ids:
+        return false()
+    if len(ids) == 1:
+        header = InboundShipment.supplier_id == ids[0]
+        line = InboundShipmentLine.supplier_id == ids[0]
+    else:
+        header = InboundShipment.supplier_id.in_(ids)
+        line = InboundShipmentLine.supplier_id.in_(ids)
+    return or_(
+        header,
+        exists(
+            select(1)
+            .where(
+                InboundShipmentLine.shipment_id == InboundShipment.id,
+                line,
+            )
+            # Correlate to the shipment EXPLICITLY. Auto-correlation looks at whatever
+            # query this predicate is dropped into, and in the incoming listings - which
+            # already select from `inbound_shipment_lines` through a subquery - it
+            # correlated the lines table away too and left the EXISTS with no FROM at all
+            # ("returned no FROM clauses due to auto-correlation").
+            .correlate(InboundShipment)
+        ),
+    )
+
+
+def _effective_line_supplier(line_dict: dict, header_supplier_id: Optional[str]) -> Optional[str]:
+    """Whose line this is: what the line says, else what the header says.
+
+    A packing list is sent per factory, so the upload states the supplier once on the
+    header and every line on it belongs to that factory. A caller that knows better says
+    so on the line and wins.
+    """
+    return line_dict.get("supplier_id") or header_supplier_id
+
+
+def _is_superseded_line(
+    line: InboundShipmentLine,
+    incoming_suppliers: set[Optional[str]],
+    incoming_products: set[str],
+) -> bool:
+    """Does this upload speak for a line that is already on the container?
+
+    Two ways it does. The obvious one is that the line belongs to a supplier this upload
+    names, so the upload is that supplier's corrected list and replaces it. The second is
+    an UNATTRIBUTED line for a product this upload carries: the n8n PDF path writes lines
+    with no supplier, and a later Excel upload of the same container from the factory that
+    actually packed them is the same goods described twice. Keeping both doubles the
+    quantity on the container, which is the number the whole screen is read for.
+
+    An unattributed line for a product this upload does NOT carry is a different item that
+    nobody has claimed yet, and it stays.
+    """
+    line_supplier = str(line.supplier_id) if line.supplier_id else None
+    if line_supplier is not None:
+        return line_supplier in incoming_suppliers
+    # Product-scoped, always. A payload that states NO supplier anywhere speaks for the whole
+    # container and never reaches here (the caller replaces every line for it); a payload that
+    # states one somewhere is a factory's list, so the only unattributed lines it speaks for
+    # are the products it actually carries - including when some of its own lines happen to
+    # name no supplier of their own.
+    return str(line.product_id) in incoming_products
+
+
+def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list[dict]:
+    """One dict per (product, supplier) in this payload, quantities summed, price averaged.
+
+    The merge key carries the supplier because a container legitimately carries the same
+    product from two factories; merging those two rows into one would lose which factory
+    packed what, which is the whole point of the per-supplier line.
+
+    Dumped with `exclude_unset`, so a field the payload never mentioned stays out of the
+    dict. `cartons_count` is the one field on the line schema with a non-None default (1),
+    and dumping it unconditionally turned "not stated" into a stated 1: the procurement
+    edit form sends `{product_id, quantity_shipped}`, and `_upsert_shipment_lines` then
+    wrote that 1 over the carton count the packing list had actually given. Inserts are
+    unaffected because the column carries the same default.
+
+    A packing list also names the same product twice at two prices, because a price was
+    renegotiated part way through the order. Quantities and cartons add up. The PRICE
+    cannot: keeping the first line's `unit_cost` silently values the whole merged quantity
+    at whichever price happened to be listed first, and the difference is invisible
+    afterwards because the two lines no longer exist separately. So the merged cost is the
+    QUANTITY-WEIGHTED average, which is what the container actually cost per unit. It is
+    only computed when both sides carry a cost in the SAME currency; a currency mismatch is
+    not arithmetic, so the first line's cost is kept and the disagreement is logged rather
+    than averaged into a meaningless number.
+    """
+    merged: dict[tuple[str, Optional[str]], dict] = {}
+    for line_data in lines_data or []:
+        if hasattr(line_data, "model_dump"):
+            d = line_data.model_dump(exclude_unset=True)
+        else:
+            d = dict(line_data)
+        d["supplier_id"] = _effective_line_supplier(d, header_supplier_id)
+        key = (d["product_id"], d["supplier_id"])
+        if key not in merged:
+            merged[key] = dict(d)
+            continue
+
+        kept = merged[key]
+        kept_qty = kept.get("quantity_shipped") or 0
+        add_qty = d.get("quantity_shipped") or 0
+        kept["quantity_shipped"] = kept_qty + add_qty
+        # Only a STATED carton count adds to the total. A duplicate row that says nothing
+        # about cartons means "unknown", not "one more carton", and adding a phantom 1 per
+        # silent row is how a save with no cartons on it ends up restating them.
+        if "cartons_count" in d:
+            kept["cartons_count"] = (kept.get("cartons_count") or 0) + d["cartons_count"]
+
+        kept_cost, add_cost = kept.get("unit_cost"), d.get("unit_cost")
+        if kept_cost is None and add_cost is None:
+            # Neither row priced. Say nothing rather than writing a None over the key
+            # `exclude_unset` deliberately left out.
+            continue
+        if kept_cost is None or add_cost is None:
+            # One side priced and the other not: there is nothing to average against, and
+            # inventing a zero for the unpriced half would halve the cost of the line.
+            kept["unit_cost"] = kept_cost if kept_cost is not None else add_cost
+            kept["currency"] = kept.get("currency") or d.get("currency")
+            continue
+        if (kept.get("currency") or None) != (d.get("currency") or None):
+            logger.warning(
+                "Shipment line merge: product %s appears twice in different currencies "
+                "(%s and %s). Keeping the first line's cost rather than averaging.",
+                d["product_id"], kept.get("currency"), d.get("currency"),
+            )
+            continue
+
+        total_qty = Decimal(str(kept_qty)) + Decimal(str(add_qty))
+        if total_qty == 0:
+            continue
+        kept["unit_cost"] = (
+            Decimal(str(kept_cost)) * Decimal(str(kept_qty))
+            + Decimal(str(add_cost)) * Decimal(str(add_qty))
+        ) / total_qty
+
+    return list(merged.values())
+
+
 class SupplierService:
     """Service for supplier operations."""
     
@@ -567,7 +725,7 @@ class InboundShipmentService:
             if not supplier_ids:
                 # Supplier filter supplied but resolved to nothing -> empty set.
                 return q.filter(InboundShipment.id.is_(None)), True
-            filters.append(InboundShipment.supplier_id.in_(supplier_ids))
+            filters.append(shipment_supplier_predicate(supplier_ids))
 
         status_norm = (shipment_status or "").strip().lower()
         if status_norm and status_norm != "all":
@@ -905,7 +1063,152 @@ class InboundShipmentService:
             elif (shipment.shipment_status or "").strip().lower() in ("received", "fully_received"):
                 shipment.shipment_status = "in_transit"
         self.db.commit()
-    
+
+    def _derive_header_supplier(
+        self, shipment: InboundShipment, payload_supplier_id: Optional[str] = None
+    ) -> None:
+        """The header's supplier is whatever its lines agree on, and nothing when they do not.
+
+        Derived rather than stated, so it never lies, and TOTAL - every case sets the header
+        rather than leaving a stale one behind:
+
+        * no lines at all -> whatever the payload said (which may be nothing). There is
+          nothing to derive from, so the caller's word is all there is.
+        * exactly one distinct non-null supplier across the lines -> that supplier.
+        * anything else (two or more, or every line unattributed) -> NULL. A mixed container
+          has no single supplier, and an unattributed container is not owned by whoever
+          happened to upload it last.
+
+        The last case is why this is total: an n8n resend that names no supplier onto a
+        container the header called Kailu used to leave "Kailu" on a header whose lines no
+        longer say so, and every supplier filter believed it.
+        """
+        lines = (
+            self.db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == shipment.id)
+            .all()
+        )
+        suppliers = {str(line.supplier_id) for line in lines if line.supplier_id}
+        if not lines:
+            shipment.supplier_id = payload_supplier_id
+        elif len(suppliers) == 1:
+            shipment.supplier_id = next(iter(suppliers))
+        else:
+            shipment.supplier_id = None
+
+    def _upsert_shipment_lines(self, shipment: InboundShipment, incoming: list[dict]) -> None:
+        """Apply an explicit line set to a container without throwing its attribution away.
+
+        An edit form states the whole line set, so a line nobody stated is gone. But it does
+        NOT restate everything ABOUT a line: the procurement edit form sends
+        `{product_id, quantity_shipped}`, and deleting-then-inserting on that payload set
+        every line's supplier, cbm and remark to NULL - one save on a mixed container erased
+        which factory packed what, which is exactly the loss the per-supplier line exists to
+        stop. So an incoming line is matched to the one already there and UPDATED: what the
+        payload states wins, what it leaves out is kept.
+
+        Matching:
+
+        * a line that names a supplier matches on `(product, supplier)` - it says precisely
+          which of the two factories' rows it is;
+        * failing that, it CLAIMS the container's one unattributed line for that product:
+          the n8n PDF path writes lines with no supplier at all, so on such a container
+          every pair lookup missed and the save deleted-and-reinserted the lot, wiping the
+          cbm and remarks the PDF had given. The row is the same goods; it gets the
+          supplier the save states and keeps everything else;
+        * a line that names none (nothing on it, nothing on the header) matches the one
+          existing line for that product, and keeps that line's supplier;
+        * when two factories both shipped that product there is no one line it could mean.
+          Guessing would move a quantity from one factory to the other silently, so it is
+          refused and the caller is told to say which. Same refusal when a supplier-stated
+          line finds two unattributed rows to claim.
+
+        Attributed lines are resolved before unattributed ones, so a payload that mixes the
+        two claims the named rows first rather than by payload order.
+        """
+        existing = list(shipment.shipment_lines)
+        by_pair: dict[tuple[str, Optional[str]], InboundShipmentLine] = {}
+        by_product: dict[str, list[InboundShipmentLine]] = {}
+        for line in existing:
+            product_id = str(line.product_id)
+            supplier_id = str(line.supplier_id) if line.supplier_id else None
+            by_pair[(product_id, supplier_id)] = line
+            by_product.setdefault(product_id, []).append(line)
+
+        claimed: set[str] = set()
+        updates: list[tuple[InboundShipmentLine, dict]] = []
+        inserts: list[dict] = []
+
+        def unclaimed(product_id: str, *, unattributed_only: bool) -> list[InboundShipmentLine]:
+            return [
+                line
+                for line in by_product.get(product_id, [])
+                if str(line.id) not in claimed
+                and (not unattributed_only or line.supplier_id is None)
+            ]
+
+        def ambiguous(product_id: str):
+            code = (
+                self.db.query(Product.product_code)
+                .filter(Product.id == product_id)
+                .scalar()
+            ) or product_id
+            return handle_conflict(
+                f"Product {code} is on this container from more than one supplier; "
+                "state supplier_id per line"
+            )
+
+        # Attributed first: see the docstring.
+        for d in sorted(incoming, key=lambda d: d.get("supplier_id") is None):
+            product_id = str(d["product_id"])
+            supplier_id = str(d["supplier_id"]) if d.get("supplier_id") else None
+            if supplier_id is not None:
+                target = by_pair.get((product_id, supplier_id))
+                if target is None:
+                    # Nothing on this container under that supplier yet. Claim the
+                    # unattributed row for the product rather than replacing it, so an
+                    # n8n-created container survives its first edit-form save with its
+                    # cbm and remarks. Rows belonging to ANOTHER supplier are never
+                    # candidates - that would move goods between factories.
+                    candidates = unclaimed(product_id, unattributed_only=True)
+                    # Belt and braces: the unique index is NULLS NOT DISTINCT, so one
+                    # product has at most one unattributed row and this cannot fire
+                    # today. If that index ever changes, refuse rather than guess.
+                    if len(candidates) > 1:
+                        raise ambiguous(product_id)
+                    if candidates:
+                        target = candidates[0]
+                        target.supplier_id = supplier_id
+            else:
+                candidates = unclaimed(product_id, unattributed_only=False)
+                if len(candidates) > 1:
+                    raise ambiguous(product_id)
+                target = candidates[0] if candidates else None
+            if target is None:
+                inserts.append(d)
+            else:
+                claimed.add(str(target.id))
+                updates.append((target, d))
+
+        # Delete before insert: the unique index on (shipment, product, supplier) treats
+        # NULL as a value, so an insert that reuses a departing row's key would collide if
+        # the unit of work flushed the save first.
+        for line in existing:
+            if str(line.id) not in claimed:
+                self.db.delete(line)
+        self.db.flush()
+
+        for line, d in updates:
+            for field, value in d.items():
+                # None means "the payload did not state it", never "clear it": supplier,
+                # cbm and remarks are read off the packing list, not typed into the edit
+                # form that is saving over them.
+                if value is not None:
+                    setattr(line, field, value)
+        for d in inserts:
+            self.db.add(InboundShipmentLine(**d, shipment_id=shipment.id))
+        self.db.flush()
+
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
         """Create or update-in-place an inbound shipment with lines.
 
@@ -976,23 +1279,37 @@ class InboundShipmentService:
             for k, v in shipment_dict.items():
                 if v is not None:
                     setattr(existing, k, v)
-            # Replace lines
+            # Replace lines, but only the ones this upload speaks for. One container
+            # carries several factories and each sends its own packing list, so replacing
+            # every line on a supplier-stated upload deleted the other factories' lines -
+            # the data-loss this rule exists to end. An upload that names NO supplier
+            # (the n8n PDF path, legacy callers) still speaks for the whole container, as
+            # it always did.
+            merged_lines = _merge_shipment_lines(
+                shipment_data.shipment_lines, shipment_data.supplier_id
+            )
+            incoming_suppliers = {
+                str(d["supplier_id"]) if d["supplier_id"] else None for d in merged_lines
+            }
+            incoming_products = {str(d["product_id"]) for d in merged_lines}
+            if not merged_lines and shipment_data.supplier_id:
+                # No lines at all: the upload clears what that supplier had on the container.
+                incoming_suppliers = {str(shipment_data.supplier_id)}
+            states_supplier = bool(shipment_data.supplier_id) or any(
+                (line.supplier_id or None) for line in (shipment_data.shipment_lines or [])
+            )
             for line in existing.shipment_lines[:]:
+                if states_supplier and not _is_superseded_line(
+                    line, incoming_suppliers, incoming_products
+                ):
+                    continue
                 self.db.delete(line)
             self.db.flush()
-            if shipment_data.shipment_lines:
-                merged: dict[str, dict] = {}
-                for line_data in shipment_data.shipment_lines:
-                    d = line_data.model_dump()
-                    pid = d["product_id"]
-                    if pid in merged:
-                        merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
-                        merged[pid]["cartons_count"] += d.get("cartons_count", 1)
-                    else:
-                        merged[pid] = dict(d)
-                for d in merged.values():
-                    line = InboundShipmentLine(**d, shipment_id=existing.id)
-                    self.db.add(line)
+            for d in merged_lines:
+                line = InboundShipmentLine(**d, shipment_id=existing.id)
+                self.db.add(line)
+            self.db.flush()
+            self._derive_header_supplier(existing, shipment_data.supplier_id)
             self.db.commit()
             self.db.refresh(existing)
             self.refresh_shipment_line_statuses(existing.id)
@@ -1009,21 +1326,17 @@ class InboundShipmentService:
         self.db.add(shipment)
         self.db.flush()  # Get the ID
         
-        # Create lines if provided (one row per product per shipment; merge duplicates by product_id)
+        # Create lines if provided (one row per product PER SUPPLIER on this shipment;
+        # duplicates within the payload are merged on that same pair)
         if shipment_data.shipment_lines:
-            merged: dict[str, dict] = {}  # product_id -> merged line dict
-            for line_data in shipment_data.shipment_lines:
-                d = line_data.model_dump()
-                pid = d["product_id"]
-                if pid in merged:
-                    merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
-                    merged[pid]["cartons_count"] += d.get("cartons_count", 1)
-                else:
-                    merged[pid] = dict(d)
-            for d in merged.values():
+            for d in _merge_shipment_lines(
+                shipment_data.shipment_lines, shipment_data.supplier_id
+            ):
                 line = InboundShipmentLine(**d, shipment_id=shipment.id)
                 self.db.add(line)
-        
+            self.db.flush()
+            self._derive_header_supplier(shipment, shipment_data.supplier_id)
+
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment.id)
@@ -1042,25 +1355,18 @@ class InboundShipmentService:
             setattr(shipment, key, value)
         
         if "shipment_lines" in shipment_data.model_dump(exclude_unset=True):
-            # Replace lines: delete existing, add new (grouped by product)
-            for line in shipment.shipment_lines[:]:
-                self.db.delete(line)
-            self.db.flush()
-            lines_data = shipment_data.shipment_lines or []
-            if lines_data:
-                merged: dict[str, dict] = {}
-                for line_data in lines_data:
-                    d = line_data.model_dump()
-                    pid = d["product_id"]
-                    if pid in merged:
-                        merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
-                        merged[pid]["cartons_count"] += d.get("cartons_count", 1)
-                    else:
-                        merged[pid] = dict(d)
-                for d in merged.values():
-                    line = InboundShipmentLine(**d, shipment_id=shipment.id)
-                    self.db.add(line)
-        
+            # The whole line set, upserted onto what is already there (grouped by product
+            # AND supplier - the same key `create_shipment` merges on, because the same
+            # product from two factories is two rows).
+            header_supplier = getattr(shipment, "supplier_id", None)
+            self._upsert_shipment_lines(
+                shipment, _merge_shipment_lines(shipment_data.shipment_lines, header_supplier)
+            )
+            # The lines just changed, so the header has to be re-derived from them or it
+            # keeps naming a supplier that is no longer on the container.
+            self._derive_header_supplier(shipment, header_supplier)
+
+
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment_id)
@@ -1596,6 +1902,10 @@ class SPOAllocationService:
                     InboundShipmentLine.shipment_id == allocation.inbound_shipment_id,
                     InboundShipmentLine.product_id == allocation.product_id,
                 )
+                # Two factories can ship the same product code in one container, so order
+                # before taking one: an arbitrary pick makes the cost land on a different
+                # line from one run to the next.
+                .order_by(InboundShipmentLine.created_at, InboundShipmentLine.id)
                 .first()
             )
             if line is None:

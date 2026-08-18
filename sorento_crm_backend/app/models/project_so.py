@@ -389,6 +389,26 @@ SO_STATUS_AMENDED = "amended"
 # attend to it before it reaches AutoCount, so this status GATES the publish rather than
 # merely labelling the row. A commercial draft never enters it.
 SO_STATUS_AWAITING_COSTING = "awaiting_costing"
+#: Adopted from the AutoCount sales-order book rather than authored here
+#: (`PLAN-fulfilment-planning-from-autocount-so.md` section 4). A status VALUE and not an
+#: `origin` column, because fifteen sites already branch on the `(published, amended)` pair
+#: and every one of them needs a verdict on adopted either way: a value costs one sweep and
+#: no new column. `published_by` / `published_at` stay NULL on such a row, which is the
+#: truth - nobody published it.
+SO_STATUS_ADOPTED = "adopted"
+
+#: The statuses a fulfilment-planning record can be in: it has left the building, so there
+#: is an AutoCount sales order behind it. A draft is reconciled against nothing.
+#: Consolidated here rather than restated per call site, because fifteen copies of one
+#: tuple is a latent drift bug (plan section 4).
+LIVE_SO_STATUSES = (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED, SO_STATUS_ADOPTED)
+
+#: The live statuses of a document THIS SYSTEM AUTHORED. Named rather than spelled out at
+#: each site so "why is adopted not here" is answered by the name: an adopted record was
+#: never drafted, never costed, never exported to AutoCount and cannot be amended, so every
+#: authoring, worksheet, draft-findings and publish path reads this tuple and not
+#: `LIVE_SO_STATUSES`.
+AUTHORED_LIVE_STATUSES = (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
 
 SEVERITY_HARD = "hard"
 SEVERITY_WARN = "warn"
@@ -409,8 +429,13 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    # NULLABLE since migration 383: an ADOPTED order came out of the AutoCount book and has
+    # no project registration. Inventing one would put 605 registrations nobody asked for
+    # into the pipeline and collide with ADR-0004 registration exclusivity; asking CS to
+    # pick one would be a decision per order for a fact the source document does not carry.
+    # An AUTHORED order still always has one.
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="RESTRICT"), nullable=True
     )
     purchase_order_id = Column(
         UUID(as_uuid=False),
@@ -438,7 +463,10 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("purchase_requests.id", ondelete="SET NULL"), nullable=True
     )
     # How the lines were grouped, so the next PO from this customer proposes what CS did (G2).
-    grouping_origin = Column(String(32), nullable=True)  # area | manual | learned
+    # It also says which namespace `area_group` holds: an area name for area/learned/manual/
+    # subset, an ISO date for delivery_date, `YYYY-MM` for delivery_month.
+    # area | learned | manual | subset | delivery_date | delivery_month
+    grouping_origin = Column(String(32), nullable=True)
 
     total_amount = Column(Numeric(15, 2), nullable=True)
     published_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -452,6 +480,16 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
         UniqueConstraint("company_id", "provisional_ref", name="uq_project_so_provisional_ref"),
         Index("ix_project_so_project", "project_id"),
         Index("ix_project_so_status", "status"),
+        # One planning record per CORE sales order (AC-FP10). Partial, because NULL is the
+        # normal state for every authored order that has not been published yet. This is
+        # what makes a doubly-counted confirmed leg in `scm.committed_v` impossible rather
+        # than merely unlikely.
+        Index(
+            "uq_projects_so_core_order",
+            "so_id",
+            unique=True,
+            postgresql_where=text("so_id IS NOT NULL"),
+        ),
         {"schema": "projects"},
     )
 
@@ -470,6 +508,16 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
+    )
+    # The reconciled CORE line (PLAN-scm-front-planning.md 6.1). Unqualified on purpose,
+    # so this is `public.sales_order_lines`, not the module table of the same bare name.
+    #
+    # Nullable, because reconciliation is a later step: the AutoCount upload in stage 1B is
+    # what fills it, and a line with no link is simply not confirmable yet. `SET NULL`
+    # rather than CASCADE because losing the core line loses the LINK, never the project
+    # record of what was committed.
+    core_sales_order_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("sales_order_lines.id", ondelete="SET NULL"), nullable=True
     )
     line_no = Column(Integer, nullable=False)
     product_id = Column(
@@ -501,6 +549,15 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_project_so_lines_order", "project_sales_order_id"),
+        # One Project line per core line: the "unique reconciled link" the atomic SO
+        # confirmation is written against. Partial, because NULL is the normal state for
+        # every unreconciled line and there is no reason to index them.
+        Index(
+            "uq_projects_so_line_core_line",
+            "core_sales_order_line_id",
+            unique=True,
+            postgresql_where=text("core_sales_order_line_id IS NOT NULL"),
+        ),
         {"schema": "projects"},
     )
 
@@ -616,6 +673,16 @@ class SOAmendment(Base, CompanyScopedMixin):
     )
 
 
+# NOTE (merge, Stage 1C + Stage 2): `SOSupplyDecision` used to be declared HERE too.
+# Both stages needed `projects.so_supply_decisions` and, with neither merged, each wrote
+# its own copy of the class and its own DDL. Stage 2's own docstring named the owner
+# ("Stage 1C owns the atomic confirmation that writes it; nothing in SCM writes it"), so
+# the Stage 1C declaration further down is the one that survives and Stage 2's duplicate
+# is gone. Two mappers on one `__tablename__` is an import-time error, not a style
+# problem. Stage 2 still only READS the table, through raw SQL in `scm.committed_v`, and
+# that view needs `id` / `project_sales_order_id` / `state`, all of which 1C's table has.
+
+
 # --------------------------------------------------------------------- order inquiry
 
 INQUIRY_RAISED = "raised"
@@ -630,6 +697,12 @@ IV_CHANGE_SO = "CHANGE_SO"
 IV_CANCEL_BALANCE = "CANCEL_BALANCE"
 IV_PRE_ORDERED = "PRE_ORDERED_DO_NOT_ORDER"
 IV_ALREADY_INBOUND = "ALREADY_INBOUND"
+#: A borrow left the DONOR location oversold, so the hole it opened is buying work
+#: (PLAN-fulfilment-planning-from-autocount-so.md 13.11). Its own verb rather than
+#: `ORDER`, because the quantity belongs to the donor's location and not to the
+#: borrowing line's: counted as ORDER it would be attributed to the wrong warehouse by
+#: `confirmed_unplaced_buy_rows` and cancelled by the Buy-residual rules on re-confirm.
+IV_BORROW_SHORTFALL = "BORROW_SHORTFALL"
 
 
 class OrderInquiry(Base, CompanyScopedMixin):
@@ -705,6 +778,18 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     stock_location = Column(String(80), nullable=True)
     verb = Column(String(32), nullable=False)
     spo_ref = Column(String(80), nullable=True)
+    # The confirmed supply decision this Buy residual came from (front planning 6.3).
+    # Nullable, because amendment exception rows and every row raised before Stage 1C
+    # belong to no decision. SET NULL rather than CASCADE: a decision that is deleted
+    # must not take purchasing's ledger with it.
+    #
+    # Stage 2 reads it: SCM counts Project demand as the qty on rows pointing at an ACTIVE
+    # decision, which is what stops a superseded revision's Buy being bought again.
+    supply_decision_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.so_supply_decisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     covered_by = Column(Text, nullable=True)
     note = Column(Text, nullable=True)
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
@@ -717,6 +802,10 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_order_inquiry_rows_inquiry", "order_inquiry_id"),
         Index("ix_project_order_inquiry_rows_state", "state"),
+        # Stage 1C's name, because 1C's `374_so_supply_decisions` is the migration that
+        # creates this index; Stage 2 proposed `..._supply_decision` for the same column
+        # and its duplicate DDL is dropped with the duplicate model above.
+        Index("ix_project_order_inquiry_rows_decision", "supply_decision_id"),
         {"schema": "projects"},
     )
 
@@ -727,10 +816,99 @@ ALLOC_SOURCE_BRW = "brw"
 ALLOC_SOURCE_OWN = "own"
 ALLOC_SOURCE_OTHER_PROJECT = "other_project"
 ALLOC_SOURCE_ORDER = "order"
+#: Free stock at a location outside the Reserve pool (front planning 6.1). Borrow like
+#: `other_project`, but there is no donor project to ask, so it carries no claim row.
+#: A model constant, not a database enum: `source_type` is a plain String(16).
+ALLOC_SOURCE_OTHER_LOCATION = "other_location"
+
+#: UI mapping, stated once: `own`/`brw` are Reserve, `other_project`/`other_location` are
+#: Borrow, `order` is Buy.
+ALLOC_RESERVE_SOURCES = (ALLOC_SOURCE_OWN, ALLOC_SOURCE_BRW)
+ALLOC_BORROW_SOURCES = (ALLOC_SOURCE_OTHER_PROJECT, ALLOC_SOURCE_OTHER_LOCATION)
 
 CLAIM_REQUESTED = "requested"
 CLAIM_ACCEPTED = "accepted"
 CLAIM_REFUSED = "refused"
+
+# ------------------------------------------------------- the SO supply decision (1C)
+
+DECISION_ACTIVE = "active"
+DECISION_SUPERSEDED = "superseded"
+DECISION_CHALLENGED = "challenged"
+
+
+class SOSupplyDecision(Base, CompanyScopedMixin):
+    """One atomic promise about a Project SO (PLAN-scm-front-planning.md 3.1, 6.2).
+
+    Confirmation is at SO level and never per line: there is one active revision per order
+    and no line carries a workflow state of its own. What a revision COVERS is the set of
+    lines the planner confirmed, which since
+    ``PLAN-fulfilment-planning-from-autocount-so.md`` 13.4 may be a SUBSET of the order's
+    lines - the planner decides the lines they are sure about and deliberately leaves the
+    rest undecided, so that demand keeps flowing to reorder planning. A stale line among
+    the chosen ones still rolls back the lot, and deciding more lines later is a new
+    revision covering the union, which is what revisions already did.
+
+    A line is covered iff ``line_snapshots`` holds an object for it. That JSONB is
+    therefore load-bearing rather than display evidence: ``scm.committed_v`` reads
+    ``core_line_id`` out of it to decide which sales-order lines have left the sheet leg.
+
+    ``line_snapshots`` freezes what was decided, in the words it was decided in: line
+    number, the Project and core line ids, product, location, required date, open quantity,
+    each component's quantity AND the deterministic reason string that produced it
+    (section 3.2), the suggestion basis, the lifecycle warning, and the reasons CS typed.
+    The normalized `so_line_allocations` rows remain the components; this is the header
+    that groups them and the evidence that survives a later fact change.
+
+    Two uniqueness rules, both in the database rather than in a remembered check: a partial
+    unique index makes ONE active revision per Project SO (so the second racer's insert
+    fails and it loses cleanly instead of double-claiming stock), and `(order, revision_no)`
+    makes the revision chain a chain.
+    """
+
+    __tablename__ = "so_supply_decisions"
+    __audit_entity_type__ = "project_so_supply_decisions"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_sales_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.sales_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision_no = Column(Integer, nullable=False)
+    state = Column(String(16), nullable=False, server_default=DECISION_ACTIVE)
+    #: The order's status and `updated_at` at confirmation, as text. Display evidence
+    #: only: what the revision was decided against, in a form a person can read.
+    source_revision = Column(String(120), nullable=True)
+    line_snapshots = Column(JSONB, nullable=False)
+
+    confirmed_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    confirmed_at = Column(DateTime(timezone=False), nullable=True)
+
+    supersedes_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.so_supply_decisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    superseded_at = Column(DateTime(timezone=False), nullable=True)
+    superseded_reason = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_so_supply_decisions_order", "project_sales_order_id"),
+        Index(
+            "uq_so_supply_decisions_active",
+            "project_sales_order_id",
+            unique=True,
+            postgresql_where=text("state = 'active'"),
+        ),
+        UniqueConstraint(
+            "project_sales_order_id", "revision_no", name="uq_so_supply_decisions_revision"
+        ),
+        {"schema": "projects"},
+    )
 
 
 class SOLineAllocation(Base, CompanyScopedMixin):
@@ -765,12 +943,28 @@ class SOLineAllocation(Base, CompanyScopedMixin):
     claim_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.allocation_claims.id", ondelete="SET NULL"), nullable=True
     )
+    # Which atomic SO decision wrote this component (front planning 6.1/6.2). NULL on
+    # every row written before Stage 1C, which is why the free-stock reader treats a NULL
+    # decision as a live hold: a legacy confirmed allocation still holds its stock.
+    decision_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.so_supply_decisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: What CS typed. Required on Borrow, which is the one component nobody may write in
+    #: silence (AC-B09), and carried here beside the quantity it justifies.
+    reason = Column(Text, nullable=True)
+    #: The donor's position at the moment the Borrow was confirmed: free before, free
+    #: after the whole borrow, and what was already committed there. Frozen because the
+    #: live figure a month later cannot say what the decision was taken against.
+    donor_impact_snapshot = Column(JSONB, nullable=True)
     confirmed_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     confirmed_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_so_line_allocations_line", "so_line_id"),
+        Index("ix_so_line_allocations_decision", "decision_id"),
         {"schema": "projects"},
     )
 

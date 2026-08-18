@@ -12,6 +12,7 @@ import {
   getRecommendations,
   getProductImage,
   getProductImages,
+  getTodayRun,
   listReorderRuns,
 } from './reorderRunService';
 
@@ -115,6 +116,69 @@ describe('reorderRunService - getReorderRun', () => {
   });
 });
 
+describe('reorderRunService - getTodayRun (AC-F01 / AC-F10, Stage 2 grain pass-through)', () => {
+  it('returns decision_grain and front_planning_contract_version VERBATIM off a front-planning run', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        run_id: 'run-today',
+        status: 'completed',
+        buy_scope: 'network',
+        decision_grain: 'location',
+        front_planning_contract_version: 1,
+        warehouse_codes: ['WH-KL'],
+        warehouse_count: 1,
+        started_at: '2026-08-03T02:00:00',
+        finished_at: '2026-08-03T02:05:00',
+        summary: null,
+        is_today: true,
+        in_progress: false,
+      }),
+    );
+    const run = await getTodayRun();
+    expect(calledUrl().pathname).toBe('/api/v1/scm/reorder-runs/today');
+    expect(run).not.toBeNull();
+    expect(run?.decision_grain).toBe('location');
+    expect(run?.front_planning_contract_version).toBe(1);
+  });
+
+  it('does NOT fill in a grain on a legacy run - both fields stay null, verbatim', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        run_id: 'run-legacy',
+        status: 'completed',
+        buy_scope: 'network',
+        decision_grain: null,
+        front_planning_contract_version: null,
+        warehouse_codes: ['WH-KL'],
+        warehouse_count: 1,
+        started_at: '2026-06-01T02:00:00',
+        finished_at: '2026-06-01T02:05:00',
+        summary: null,
+        is_today: false,
+        in_progress: false,
+      }),
+    );
+    const run = await getTodayRun();
+    expect(run?.decision_grain).toBeNull();
+    expect(run?.front_planning_contract_version).toBeNull();
+  });
+
+  it('returns null - not a default run object - when no run exists yet', async () => {
+    apiFetch.mockResolvedValue(ok(null));
+    expect(await getTodayRun()).toBeNull();
+  });
+
+  it('surfaces the backend message when the read fails', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ message: 'Database unavailable' }),
+    } as unknown as Response);
+    await expect(getTodayRun()).rejects.toThrow('Database unavailable');
+  });
+});
+
 describe('reorderRunService - getRecommendations', () => {
   it('sends page/limit + sort/dir + type + query as server-side params', async () => {
     apiFetch.mockResolvedValue(
@@ -146,6 +210,45 @@ describe('reorderRunService - getRecommendations', () => {
     expect(u.searchParams.get('type')).toBeNull();
     expect(u.searchParams.get('sort')).toBeNull();
     expect(u.searchParams.get('query')).toBeNull();
+  });
+
+  it("returns each row's project_need / retail_need / unclassified_need / decisions_read_only UNTOUCHED (Stage 2)", async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        data: [
+          {
+            id: 'rec-1',
+            project_need: 120,
+            retail_need: 55,
+            unclassified_need: 12,
+            project_sheet_need: 0,
+            decisions_read_only: true,
+          },
+          {
+            id: 'rec-2',
+            // NULL on a legacy row - the service must not coerce this to 0.
+            project_need: null,
+            retail_need: null,
+            unclassified_need: null,
+            decisions_read_only: false,
+          },
+        ],
+        pagination: { page: 1, limit: 25, total: 2, total_pages: 1 },
+      }),
+    );
+    const page = await getRecommendations('run-9', { pageIndex: 0, pageSize: 25 });
+    expect(page.data[0]).toMatchObject({
+      project_need: 120,
+      retail_need: 55,
+      unclassified_need: 12,
+      decisions_read_only: true,
+    });
+    expect(page.data[1]).toMatchObject({
+      project_need: null,
+      retail_need: null,
+      unclassified_need: null,
+      decisions_read_only: false,
+    });
   });
 });
 
@@ -183,6 +286,46 @@ describe('reorderRunService - listReorderRuns', () => {
     expect(page.data[0].run_id).toBe('run-b');
     expect(page.data[0].warehouse_codes).toEqual(['WH-KL', 'WH-JB']);
     expect(page.data[0].summary?.recommendation_count).toBe(5);
+  });
+
+  it("preserves each history row's OWN stamped grain, so a past run is never relabelled with today's policy (AC-F10)", async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        data: [
+          {
+            run_id: 'run-old-location',
+            status: 'completed',
+            buy_scope: 'network',
+            decision_grain: 'location',
+            front_planning_contract_version: 1,
+            warehouse_codes: ['WH-KL'],
+            warehouse_count: 1,
+            started_at: '2026-07-01T02:00:00',
+            finished_at: '2026-07-01T02:05:00',
+            summary: null,
+          },
+          {
+            run_id: 'run-legacy',
+            status: 'completed',
+            buy_scope: 'network',
+            decision_grain: null,
+            front_planning_contract_version: null,
+            warehouse_codes: ['WH-KL'],
+            warehouse_count: 1,
+            started_at: '2026-01-01T02:00:00',
+            finished_at: '2026-01-01T02:05:00',
+            summary: null,
+          },
+        ],
+        pagination: { page: 1, limit: 8, total: 2, total_pages: 1 },
+      }),
+    );
+    const page = await listReorderRuns(1, 8);
+    expect(page.data[0].decision_grain).toBe('location');
+    expect(page.data[0].front_planning_contract_version).toBe(1);
+    // The legacy row is not backfilled to today's default grain.
+    expect(page.data[1].decision_grain).toBeNull();
+    expect(page.data[1].front_planning_contract_version).toBeNull();
   });
 });
 

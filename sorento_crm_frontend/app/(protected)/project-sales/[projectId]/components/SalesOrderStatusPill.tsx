@@ -41,6 +41,8 @@ export const GROUPING_ORIGIN_LABEL: Record<GroupingOrigin, string> = {
   learned: 'Split as last time for this customer',
   manual: 'Split by hand',
   subset: 'Product subset, no area',
+  delivery_date: 'Split by delivery date',
+  delivery_month: 'Split by delivery month',
 };
 
 export function GroupingOriginNote({ origin }: { origin: GroupingOrigin }) {

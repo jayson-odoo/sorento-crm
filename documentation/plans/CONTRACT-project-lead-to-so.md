@@ -483,9 +483,20 @@ shape for that customer so the next PO proposes it.
 
 ### `POST /sales-orders/{pso_id}/publish`
 
-No body. 409 with the blocking findings listed if any hard finding is unacknowledged.
+Body optional. 409 with the blocking findings listed if any hard finding is unacknowledged.
 Stage 1 is an AutoCount import file plus adoption of the returned document number, so the
 response carries `{"status": "published", "provisional_ref": "…", "import_file_url": "…"}`.
+
+`{"acknowledge_blocking": true, "reason": "required"}` publishes past every open hard
+finding in one decision (ADDED 2026-08-18). It is the same override the per-finding
+acknowledge carries, asked once: the override permission is required (403 without it), the
+reason must be at least 3 characters (422), and it is recorded on EVERY finding it clears
+alongside the actor and the timestamp, prefixed `Published anyway (N blocking findings):`.
+The response adds `acknowledged_findings`, how many were waved through (0 on the ordinary
+path). Clearing 15 to 30 findings one at a time to publish an order the manager had already
+decided to publish was the constraint this removes. The other three refusals are NOT
+overridable, because none of them is a finding: already published, awaiting costing (D28)
+and no lines.
 
 ---
 

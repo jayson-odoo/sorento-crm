@@ -18,6 +18,7 @@ export const VERB_LABEL: Record<string, string> = {
   CANCEL_BALANCE: 'CANCEL BALANCE',
   PRE_ORDERED_DO_NOT_ORDER: 'PRE-ORDERED, DO NOT ORDER',
   ALREADY_INBOUND: 'ALREADY INBOUND',
+  BORROW_SHORTFALL: 'BORROW SHORTFALL',
 };
 
 /**
@@ -34,10 +35,15 @@ const PALETTE_KEY: Record<string, string> = {
   DELAY: 'submitted',
   CHANGE_SO: 'submitted',
   CANCEL_BALANCE: 'rejected',
+  // Money about to be spent, like an ORDER: the donor is short and somebody must buy it.
+  BORROW_SHORTFALL: 'pending',
 };
 
-/** The verbs that still cost money. */
-export const BUYING_VERBS = ['ORDER', 'RESERVE_AND_ORDER'];
+/**
+ * The verbs that still cost money. `BORROW_SHORTFALL` is one of them: a borrow left its
+ * donor location oversold, and the hole has to be bought (PLAN-fulfilment-planning 13.11).
+ */
+export const BUYING_VERBS = ['ORDER', 'RESERVE_AND_ORDER', 'BORROW_SHORTFALL'];
 
 export function OrderInquiryVerbPill({ verb }: { verb: string }) {
   const label = VERB_LABEL[verb] ?? verb;

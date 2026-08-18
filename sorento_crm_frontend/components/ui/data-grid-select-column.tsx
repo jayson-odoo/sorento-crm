@@ -18,6 +18,23 @@ import { Checkbox } from '@/components/ui/checkbox';
 export function buildSelectColumn<TData>(options?: {
   /** Disable per-row selection for some rows (e.g. locked records). */
   enableRow?: (row: Row<TData>) => boolean;
+  /**
+   * WHY a disabled row cannot be selected, as a tooltip on its own checkbox.
+   *
+   * A box that is simply greyed out teaches nothing, and the reason is usually already
+   * written on that row's own destructive action ("Published orders are amended, not
+   * deleted"). Passing the SAME string here keeps the two from drifting into two
+   * explanations of one rule. Returns undefined for a row that is selectable.
+   */
+  disabledReason?: (row: Row<TData>) => string | undefined;
+  /**
+   * Names the record in the checkbox's accessible label, e.g. `Select PSO-000123`.
+   *
+   * Defaults to the generic "Select row", which is all a grid of anonymous rows can say -
+   * but on a list where every row has a reference, a screen reader (and a test) should hear
+   * which one is being ticked.
+   */
+  rowLabel?: (row: Row<TData>) => string;
   size?: number;
 }): ColumnDef<TData> {
   const size = options?.size ?? 44;
@@ -32,15 +49,28 @@ export function buildSelectColumn<TData>(options?: {
         aria-label="Select all rows on this page"
       />
     ),
-    cell: ({ row }: { row: Row<TData> }) => (
-      <Checkbox
-        checked={row.getIsSelected()}
-        disabled={!row.getCanSelect()}
-        onCheckedChange={(value) => row.toggleSelected(!!value)}
-        aria-label="Select row"
-        onClick={(e: React.MouseEvent) => e.stopPropagation()}
-      />
-    ),
+    cell: ({ row }: { row: Row<TData> }) => {
+      const blocked = !row.getCanSelect();
+      const reason = blocked ? options?.disabledReason?.(row) : undefined;
+      const box = (
+        <Checkbox
+          checked={row.getIsSelected()}
+          disabled={blocked}
+          onCheckedChange={(value) => row.toggleSelected(!!value)}
+          aria-label={options?.rowLabel?.(row) ?? 'Select row'}
+          onClick={(e: React.MouseEvent) => e.stopPropagation()}
+        />
+      );
+      if (!reason) return box;
+      // The reason goes on a WRAPPER, not on the box: a disabled control does not reliably
+      // receive the hover that would show its own tooltip, and the box would then be greyed
+      // out with no way to learn why.
+      return (
+        <span title={reason} className="inline-flex">
+          {box}
+        </span>
+      );
+    },
     enableSorting: false,
     enableHiding: false,
     enableResizing: false,

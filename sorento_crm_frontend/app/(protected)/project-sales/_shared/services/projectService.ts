@@ -32,6 +32,7 @@ import type {
   ProjectSampleBody,
   ProjectPurchaseOrder,
   ProjectPurchaseOrderBody,
+  ProjectPurchaseOrderSaveBody,
   PurchaseOrderLine,
   PurchaseOrderLineBody,
   ProjectLead,
@@ -1090,6 +1091,21 @@ export async function listPurchaseOrders(
   return body.data;
 }
 
+/**
+ * Prev/next neighbours of a customer PO within its project's PO list - the same set, in the
+ * same order, that `/projects/{id}/purchase-orders` returns. Read by the generic
+ * `useRecordNeighbours` hook.
+ *
+ *   GET /api/v1/project-sales/projects/{project_id}/purchase-orders/neighbours?id=<po_id>
+ *   200 { total, index, prev_id, next_id }
+ *       - index is 1-based, null when the PO belongs to another project.
+ *       - prev_id/next_id wrap circularly; null only when total <= 1.
+ *   404 when the project or the PO id names nothing.
+ */
+export function purchaseOrderNeighboursPath(projectId: string): string {
+  return `${BASE}/projects/${projectId}/purchase-orders/neighbours`;
+}
+
 export async function createPurchaseOrder(
   projectId: string,
   body: ProjectPurchaseOrderBody,
@@ -1102,9 +1118,20 @@ export async function createPurchaseOrder(
   return response.json();
 }
 
+/**
+ * The PO's header and, when `body.lines` is set, its WHOLE line set in one request.
+ *
+ * One request rather than a header PUT followed by a line write: two could half-land, leaving
+ * a renamed PO whose lines never moved, and the edit view promises that a Save is the
+ * arrangement the user made or nothing at all.
+ *
+ * The sharp edge, at the call site: **a stored line whose id is missing from `lines` is
+ * DELETED**. Send everything on screen, never only what changed. Position in the array is the
+ * order, so `sort_order` is not sent. Omit `lines` entirely for a header-only save.
+ */
 export async function updatePurchaseOrder(
   poId: string,
-  body: Partial<ProjectPurchaseOrderBody>,
+  body: ProjectPurchaseOrderSaveBody,
 ): Promise<ProjectPurchaseOrder> {
   const response = await apiFetch(`${BASE}/purchase-orders/${poId}`, {
     method: 'PUT',

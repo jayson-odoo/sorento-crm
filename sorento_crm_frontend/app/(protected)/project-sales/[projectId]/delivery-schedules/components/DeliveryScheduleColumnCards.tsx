@@ -150,6 +150,7 @@ export function DeliveryScheduleColumnCards({
                     columnIndex={column.index}
                     customerCode={column.customerCode}
                     action={column.productId ? 'Change the product' : 'Pick the product'}
+                    poOptions={controller.poOptions}
                     onPick={(productId) =>
                       controller.resolveProduct(column.index, productId)
                     }

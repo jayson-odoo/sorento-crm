@@ -105,12 +105,18 @@ def get_inbound_shipment_by_container_number(
 def get_shipment_line_by_product(
     db: Session, shipment_id: str, product_id: str
 ) -> Optional[InboundShipmentLine]:
-    """Find first inbound shipment line for this shipment and product."""
+    """Find first inbound shipment line for this shipment and product.
+
+    Ordered oldest first: two factories can ship the same product code in one container,
+    so "first" has to mean the same row on every call rather than whatever the planner
+    happened to return.
+    """
     return (
         db.query(InboundShipmentLine)
         .filter(
             InboundShipmentLine.shipment_id == shipment_id,
             InboundShipmentLine.product_id == product_id,
         )
+        .order_by(InboundShipmentLine.created_at, InboundShipmentLine.id)
         .first()
     )

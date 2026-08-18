@@ -2465,6 +2465,9 @@ class UnitOfMeasureService:
                 "uom_name": u.uom_name,
                 "base_uom_id": str(u.base_uom_id) if u.base_uom_id else None,
                 "conversion_factor": u.conversion_factor,
+                # Manual dict builder: a column that is not listed here never reaches
+                # the FE, however faithfully the response schema inherits it.
+                "decimal_places": getattr(u, "decimal_places", 0) or 0,
                 "description": u.description,
                 "is_active": getattr(u, "is_active", True),
                 "created_at": u.created_at,

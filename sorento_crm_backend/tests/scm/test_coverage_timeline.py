@@ -172,10 +172,16 @@ def test_peak_deficit_is_deeper_than_the_first_gap():
     assert res.peak_deficit == 50        # what actually has to be covered
 
 
-def test_same_day_demand_is_ordered_before_supply():
-    """Being pessimistic on a tie is the right direction: a container clearing customs in
-    the morning is not stock a lorry can load at 9am, so a same-day arrival must not be
-    assumed to rescue a same-day despatch."""
+def test_same_day_supply_is_ordered_before_demand_and_covers_it():
+    """PLAN-scm-front-planning.md 3.5: incoming SPO is DATED location supply, not a CS
+    decision, and an SPO arriving on the required date "counts at that date". Stage 1C
+    flips the shared ``_sort_key`` from demand-first to supply-first on a same-day tie, so
+    a container that clears and is put away the same morning covers a despatch due that
+    same day, instead of the despatch being treated as though the stock never arrived.
+
+    This test and ``_sort_key`` change together (PLAN 3.5's own instruction); until the
+    flip lands this reports a shortfall that the new contract says must not exist.
+    """
     res = build_timeline(
         0,
         [
@@ -183,8 +189,123 @@ def test_same_day_demand_is_ordered_before_supply():
             _demand(date(2026, 7, 1), 100, "SO"),
         ],
     )
-    assert res.shortfall is not None, "the tie must report a shortfall, not hide one"
+    assert res.shortfall is None, "same-day supply must cover same-day demand, not miss it"
     assert res.closing_balance == 0
+
+
+# --------------------------------------------------------------------------- #
+# PLAN 3.5's full tie-break chain: date, kind (supply before demand), ref, line_no
+# (missing last), line_id. ``line_no`` / ``line_id`` do not exist on ``TimelineEvent``
+# yet, so every test below fails with a TypeError on construction until Stage 1C adds
+# them alongside the ``_sort_key`` flip -- which is the point: these fail for the same
+# reason the pinned test above fails, not for an unrelated fixture bug.
+# --------------------------------------------------------------------------- #
+
+
+def _demand_line(d: date, qty: float, ref: str, *, line_no=None, line_id=None) -> TimelineEvent:
+    return TimelineEvent(
+        at=d, qty=-abs(qty), kind=DEMAND, ref=ref, line_no=line_no, line_id=line_id
+    )
+
+
+def _supply_line(d: date, qty: float, ref: str, *, line_no=None, line_id=None) -> TimelineEvent:
+    return TimelineEvent(
+        at=d, qty=abs(qty), kind=SUPPLY, ref=ref, line_no=line_no, line_id=line_id
+    )
+
+
+def test_ac_b02_two_line_worked_case_orders_opening_stock_before_the_same_day_spo():
+    """PLAN 3.5's worked attribution, walked through the shared timeline rather than the
+    engine: eligible opening stock 10, one same-day SPO of 10, and SO-100's two 10-unit
+    lines at line numbers 10 and 20, both due that date. The timeline proves the ordering
+    that lets line 10 take the opening stock and line 20 take the SPO: the SPO row sorts
+    ahead of both demand rows (supply before demand), and line 10 sorts ahead of line 20
+    (line_no order) so it is offered the balance first.
+    """
+    required_date = date(2027, 3, 1)
+    events = [
+        _supply_line(required_date, 10, "202703-S0011"),
+        _demand_line(
+            required_date, 10, "SO-100", line_no=10,
+            line_id="aaaaaaaa-0000-0000-0000-000000000010",
+        ),
+        _demand_line(
+            required_date, 10, "SO-100", line_no=20,
+            line_id="aaaaaaaa-0000-0000-0000-000000000020",
+        ),
+    ]
+
+    res = build_timeline(10, events)
+
+    ordered = [(r.event.kind, r.event.line_no) for r in res.rows[1:]]
+    assert ordered == [(SUPPLY, None), (DEMAND, 10), (DEMAND, 20)]
+    assert [r.balance for r in res.rows] == [10, 20, 10, 0]
+    assert res.shortfall is None
+    assert res.closing_balance == 0
+
+
+def test_ac_b02_worked_case_is_identical_when_event_input_order_is_reversed():
+    """AC-B02 / AC-B04: "database return order never participates". The same three events
+    handed to ``build_timeline`` in the opposite order must sort back to the identical
+    sequence and the identical running balance.
+    """
+    required_date = date(2027, 3, 1)
+    forward = [
+        _supply_line(required_date, 10, "202703-S0011"),
+        _demand_line(
+            required_date, 10, "SO-100", line_no=10,
+            line_id="aaaaaaaa-0000-0000-0000-000000000010",
+        ),
+        _demand_line(
+            required_date, 10, "SO-100", line_no=20,
+            line_id="aaaaaaaa-0000-0000-0000-000000000020",
+        ),
+    ]
+    backward = list(reversed(forward))
+
+    res_forward = build_timeline(10, forward)
+    res_backward = build_timeline(10, backward)
+
+    assert [r.balance for r in res_backward.rows] == [r.balance for r in res_forward.rows]
+    assert [(r.event.kind, r.event.line_no) for r in res_backward.rows] == [
+        (r.event.kind, r.event.line_no) for r in res_forward.rows
+    ]
+
+
+def test_a_missing_line_no_sorts_after_a_present_one_on_the_same_day_and_ref():
+    """PLAN 3.5: "then line_no with missing numbers last". Two demand lines tied on date
+    and SO number, one carrying a line number and one without, must not let the blank one
+    jump ahead of the numbered one.
+    """
+    d = date(2027, 3, 1)
+    events = [
+        _demand_line(d, 5, "SO-400", line_no=None, line_id="cccccccc-0000-0000-0000-000000000099"),
+        _demand_line(d, 5, "SO-400", line_no=7, line_id="cccccccc-0000-0000-0000-000000000007"),
+    ]
+
+    res = build_timeline(0, events)
+
+    ordered_line_nos = [r.event.line_no for r in res.rows[1:]]
+    assert ordered_line_nos == [7, None]
+
+
+def test_a_tied_line_no_is_broken_by_the_internal_line_id():
+    """PLAN 3.5: line_no ties break on "the internal SO-line ID" as the final stable key.
+    The id is never displayed, so this only proves the sort order, not any UI concern.
+    """
+    d = date(2027, 3, 1)
+    events = [
+        _demand_line(d, 5, "SO-400", line_no=10, line_id="bbbbbbbb-0000-0000-0000-000000000020"),
+        _demand_line(d, 5, "SO-400", line_no=10, line_id="bbbbbbbb-0000-0000-0000-000000000010"),
+    ]
+
+    res = build_timeline(0, events)
+
+    ordered_ids = [r.event.line_id for r in res.rows[1:]]
+    assert ordered_ids == [
+        "bbbbbbbb-0000-0000-0000-000000000010",
+        "bbbbbbbb-0000-0000-0000-000000000020",
+    ]
 
 
 def test_horizon_excludes_later_events_without_touching_earlier_ones():

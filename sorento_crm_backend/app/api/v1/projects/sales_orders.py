@@ -21,6 +21,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -40,13 +41,20 @@ from app.schemas.project_sales_order import (
     ProjectSalesOrderDetail,
     ProjectSalesOrderLineRow,
     ProjectSalesOrderRow,
+    PublishRequest,
     PublishResponse,
     RegroupRequest,
+    SalesOrderBulkDeleteRequest,
+    SalesOrderBulkDeleteResponse,
+    SalesOrderDeleteResponse,
+    SalesOrderDocumentSave,
     SalesOrderLineUpdate,
+    SalesOrderWorksheet,
     ScheduleVersionOption,
     SODraftFindingRow,
 )
 from app.services import project_po_service as po_svc
+from app.services import project_record_navigation as record_nav
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_so_delta_service import ProjectSODeltaService
@@ -59,17 +67,33 @@ router = APIRouter()
 
 VIEW = "projects.projects.view"
 EDIT = "projects.projects.edit"
+# Deleting a draft is its own grant, the way it is on the customer PO beside it: correcting an
+# order and removing it are different privileges even though both act on a proposal.
+DELETE = "projects.projects.delete"
 
 
-def _order_for_edit(db: Session, pso_id: str, current_user: dict):
-    """Ownership is the PROJECT's rule, re-checked in the service that owns it."""
-    validate_uuid_path(pso_id, resource="Sales order")
-    service = ProjectSODraftService(db)
-    order = service.get_order(pso_id)
+def _assert_can_act_on(db: Session, order, current_user: dict) -> None:
+    """Write authorisation for one order, whether or not it has a project.
+
+    Ownership is the PROJECT's rule, re-checked in the service that owns it - for an order
+    that HAS a project. An order adopted from the AutoCount book has none by design
+    (`PLAN-fulfilment-planning-from-autocount-so.md` section 2, "Authorisation with no
+    project"), so there the module permission on the route is the whole gate; company scope
+    is enforced by the mixin either way. Same shape as `fulfilment_planning._assert_can_act_on`.
+    """
+    if not order.project_id:
+        return
     project = projects.get_project_or_404(db, order.project_id)
     projects.assert_can_edit_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
+
+
+def _order_for_edit(db: Session, pso_id: str, current_user: dict):
+    validate_uuid_path(pso_id, resource="Sales order")
+    service = ProjectSODraftService(db)
+    order = service.get_order(pso_id)
+    _assert_can_act_on(db, order, current_user)
     return service, order
 
 
@@ -140,7 +164,10 @@ async def build_sales_orders(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = ProjectSODraftService(db).build(
-            po_id, payload.schedule_version_id, actor_user_id=current_user["id"]
+            po_id,
+            payload.schedule_version_id,
+            split_by=payload.split_by,
+            actor_user_id=current_user["id"],
         )
         db.commit()
         return body
@@ -180,11 +207,36 @@ async def list_project_sales_orders(
             sort=sort,
             direction=dir,
         )
+        # One derivation for the whole page: the review state is computed, not stored, and
+        # asking per row would run the line mapping once per sales order.
+        states = service.review_states_for(rows)
         return {
-            "data": [service.serialize_row(row) for row in rows],
+            "data": [service.serialize_row(row, review_states=states) for row in rows],
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/projects/{project_id}/sales-orders/neighbours")
+async def get_sales_order_neighbours(
+    project_id: str,
+    id: str = Query(..., description="Sales order id to resolve neighbours for"),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Prev/next of one order within this project's sales orders.
+
+    The same set, in the same order, the list above returns unfiltered - so the detail
+    pager and the tab the user came from cannot disagree. Returns
+    ``{total, index, prev_id, next_id}`` with a 1-based ``index`` and circular neighbours.
+    """
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        validate_uuid_path(id, resource="Sales order")
+        projects.get_project_or_404(db, project_id)
+        return record_nav.sales_order_neighbours(db, project_id=project_id, pso_id=id)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -198,12 +250,169 @@ async def get_sales_order(
     try:
         validate_uuid_path(pso_id, resource="Sales order")
         service = ProjectSODraftService(db)
-        return service.serialize_detail(service.get_order(pso_id))
+        order = service.get_order(pso_id)
+        # The one-order map, passed in rather than left to the row serializer's fallback,
+        # so the detail derives its review state exactly once.
+        return service.serialize_detail(
+            order, review_states=service.review_states_for([order])
+        )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 # ------------------------------------------------------------------ draft edits
+
+
+@router.put("/sales-orders/{pso_id}", response_model=ProjectSalesOrderDetail)
+async def save_sales_order(
+    pso_id: str,
+    payload: SalesOrderDocumentSave,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Save the WHOLE sales order in one request: the header, and the full line set.
+
+    **Why this exists.** The detail screen is an edit VIEW now, the way the quotation document
+    and the customer PO already are. Writing per line meant a ten-line correction was ten
+    requests, each able to half-land and leave an order in a state nobody typed. One request
+    makes a Save atomic: either the arrangement the reviewer made is what is stored, or nothing
+    moved.
+
+    **The body's ``lines`` is the full desired set, in display order.** A stored line carries
+    its ``id``; a new one arrives without one. **Anything stored whose id is absent from the
+    body is DELETED**, so a client that omits the lines it did not touch will silently wipe
+    them and must always send everything it is showing. ``line_no`` comes from array position,
+    and ``amount`` is recomputed as ``qty * unit_price`` rather than accepted.
+
+    **``lines`` absent leaves the lines alone**, which is what a header-only save sends. An
+    empty array is refused (422 ``so_lines_required``): an order with no lines is not a
+    proposal, and deleting the order is the honest way to say that.
+
+    A PUBLISHED or AMENDED order is refused 409 ``so_not_editable``, before anything is
+    written. It is in AutoCount, and the way to change it is an amendment carrying an order
+    change notice (finding G9) - the amendment path computes its delta between two DOCUMENT
+    versions, so a free-hand correction cannot be routed through it and is refused instead.
+
+    Answers the same body ``GET /sales-orders/{pso_id}`` does, so the client reads one shape.
+    """
+    try:
+        service, order = _order_for_edit(db, pso_id, current_user)
+        service.save_document(order, payload.model_dump(exclude_unset=True))
+        db.commit()
+        db.refresh(order)
+        return service.serialize_detail(
+            order, review_states=service.review_states_for([order])
+        )
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.delete("/sales-orders/{pso_id}", response_model=SalesOrderDeleteResponse)
+async def delete_sales_order(
+    pso_id: str,
+    current_user: dict = Depends(require_permission(DELETE)),
+    db: Session = Depends(get_db),
+):
+    """Hard delete, so building the draft can be repeated.
+
+    The build is idempotent per (PO version, schedule version), which corrects a draft that
+    was rebuilt - but not one that should never have existed, or one cut on the wrong key. So
+    the draft goes, its lines go, and everything hanging off them goes with it: findings,
+    allocations and the claims they raised, the order inquiry and its rows, amendments and the
+    change notices they carried, divergences and their compared rows, and superseded supply
+    decisions. The purchase order and its delivery schedule are untouched, which is what makes
+    the rebuild possible.
+
+    It REFUSES, 409, anything that is a live commitment rather than a proposal: a published or
+    amended order, one linked to an AutoCount document, one carrying a published amendment, and
+    one whose supply has been confirmed. Those are amended, never deleted. Every refusal comes
+    from the service.
+    """
+    try:
+        service, order = _order_for_edit(db, pso_id, current_user)
+        reference = order.provisional_ref
+        deleted = service.delete_order(order)
+        db.commit()
+        return {"success": True, "provisional_ref": reference, "deleted": deleted}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/sales-orders/bulk-delete", response_model=SalesOrderBulkDeleteResponse)
+async def bulk_delete_sales_orders(
+    payload: SalesOrderBulkDeleteRequest,
+    current_user: dict = Depends(require_permission(DELETE)),
+    db: Session = Depends(get_db),
+):
+    """Delete several selected drafts in ONE transaction, all or nothing.
+
+    **Why a batch endpoint and not N calls.** N calls half-apply: the first refusal leaves the
+    reviewer with a selection that is partly gone and no way to say which part, and the
+    obvious next move (re-select the same rows and retry) is then wrong. One call either
+    removes the whole selection or removes none of it.
+
+    **Every id must belong to one project** (422 ``so_bulk_cross_project``). The ids came from
+    one project's list and the right being checked is that project's, so a payload mixing two
+    would delete another project's drafts under this one's permission.
+
+    **The refusal is a 409 carrying every offender**, before anything is deleted:
+
+        {"message": "...", "code": "so_bulk_not_deletable",
+         "refused": [{"id", "provisional_ref", "code", "message"}, ...]}
+
+    Written as a raw ``JSONResponse`` rather than through ``AppException``, which carries one
+    message and cannot hold a list - the same shape the prompt registry's save-validation
+    already uses. ``message`` still names every reference, because the frontend's
+    ``extractApiError`` is string-only and that sentence is what the reviewer actually reads.
+
+    On success the body mirrors the single delete, with the counts summed across the batch.
+    """
+    try:
+        for pso_id in payload.ids:
+            validate_uuid_path(pso_id, resource="Sales order")
+        service = ProjectSODraftService(db)
+        # Ordered and de-duplicated, so the answer is stable and an order named twice is
+        # deleted (and counted) once.
+        orders = [service.get_order(pso_id) for pso_id in dict.fromkeys(payload.ids)]
+
+        project_ids = {order.project_id for order in orders}
+        if len(project_ids) > 1:
+            raise AppException(
+                status_code=422,
+                message=(
+                    "These sales orders belong to more than one project. A selection is "
+                    "deleted from one project's list at a time."
+                ),
+                code="so_bulk_cross_project",
+            )
+        _assert_can_act_on(db, orders[0], current_user)
+
+        refusals = service.describe_delete_refusals(orders)
+        if refusals:
+            # Nothing has been written, so there is nothing to roll back; the 409 is the
+            # answer rather than an error path.
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "message": service.describe_refusals_sentence(refusals),
+                    "code": "so_bulk_not_deletable",
+                    "refused": refusals,
+                },
+            )
+
+        deleted = service.delete_orders(orders)
+        db.commit()
+        return {
+            "success": True,
+            "deleted_count": len(orders),
+            "deleted": deleted,
+            "refused": [],
+        }
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.post(
@@ -266,7 +475,9 @@ async def update_sales_order_line(
         service.update_line(order, line_id, payload.model_dump(exclude_unset=True))
         db.commit()
         db.refresh(order)
-        detail = service.serialize_detail(order)
+        detail = service.serialize_detail(
+            order, review_states=service.review_states_for([order])
+        )
         body = next((row for row in detail["lines"] if row["id"] == line_id), None)
         if body is None:
             raise AppException(
@@ -293,7 +504,8 @@ async def regroup_sales_order(
         orders = service.regroup(
             order, [group.model_dump() for group in payload.groups]
         )
-        rows = [service.serialize_row(row) for row in orders]
+        states = service.review_states_for(orders)
+        rows = [service.serialize_row(row, review_states=states) for row in orders]
         db.commit()
         return rows
     except Exception as exc:
@@ -307,13 +519,25 @@ async def regroup_sales_order(
 @router.post("/sales-orders/{pso_id}/publish", response_model=PublishResponse)
 async def publish_sales_order(
     pso_id: str,
+    payload: Optional[PublishRequest] = None,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
-    """409 listing the blocking findings when any hard stop is unacknowledged."""
+    """409 listing the blocking findings when any hard stop is unacknowledged.
+
+    `acknowledge_blocking` waves them all through under one reason, on the sales-manager
+    grant: 403 without it, 422 without a reason. Body-less POSTs keep the old behaviour.
+    """
     try:
         service, order = _order_for_edit(db, pso_id, current_user)
-        body = service.publish(order, actor_user_id=current_user["id"])
+        ask = payload or PublishRequest()
+        body = service.publish(
+            order,
+            actor_user_id=current_user["id"],
+            acknowledge_blocking=ask.acknowledge_blocking,
+            reason=ask.reason,
+            permissions=permission_slugs(db, current_user["id"]),
+        )
         db.commit()
         return body
     except Exception as exc:
@@ -351,7 +575,9 @@ async def build_sponsorship_sales_order(
         projects.assert_can_edit_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
-        body = service.serialize_detail(order)
+        body = service.serialize_detail(
+            order, review_states=service.review_states_for([order])
+        )
         db.commit()
         return body
     except Exception as exc:
@@ -371,7 +597,9 @@ async def confirm_sales_order_costing(
     try:
         service, order = _order_for_edit(db, pso_id, current_user)
         service.confirm_costing(order, actor_user_id=current_user["id"])
-        body = service.serialize_detail(order)
+        body = service.serialize_detail(
+            order, review_states=service.review_states_for([order])
+        )
         db.commit()
         return body
     except Exception as exc:
@@ -379,8 +607,31 @@ async def confirm_sales_order_costing(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.get("/sales-orders/{pso_id}/worksheet", response_model=SalesOrderWorksheet)
+def sales_order_worksheet(
+    pso_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The AutoCount worksheet as data (Stage 1A, J02): the same document the CSV carries.
+
+    Read-only, and the same grant as the detail beside it. ``can_export`` is answered here
+    rather than on the screen so the publish gate has one owner.
+
+    Plain ``def``, so FastAPI runs the whole handler in a threadpool: everything below is
+    synchronous SQLAlchemy over a 100-line order, and on the event loop it holds up every
+    other request the worker is serving (CLAUDE.md, the flyer-read measurement).
+    """
+    try:
+        validate_uuid_path(pso_id, resource="Sales order")
+        service = ProjectSODraftService(db)
+        return service.worksheet(service.get_order(pso_id))
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.get("/sales-orders/{pso_id}/import-file")
-async def sales_order_import_file(
+def sales_order_import_file(
     pso_id: str,
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -390,11 +641,18 @@ async def sales_order_import_file(
     Generated per request so it always matches the order as it stands: a stored file goes
     stale the moment an amendment publishes, and a stale import file is how a wrong
     document reaches AutoCount.
+
+    The export gate is enforced here, not merely reported: `can_export` false means this
+    document must not reach AutoCount, and a bookmarked url or a tab opened before the
+    finding was raised would otherwise walk it straight out. Plain ``def`` for the same
+    reason as the worksheet above.
     """
     try:
         validate_uuid_path(pso_id, resource="Sales order")
         service = ProjectSODraftService(db)
-        filename, body = service.import_file(service.get_order(pso_id))
+        order = service.get_order(pso_id)
+        service.assert_can_export(order)
+        filename, body = service.import_file(order)
         return Response(
             content=body,
             media_type="text/csv",

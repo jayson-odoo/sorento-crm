@@ -43,6 +43,8 @@ from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import OrderSummaryRow, ReorderRecommendation, ReorderRun
 from app.services.error_handler import AppException
 from app.services.scm import summary_order_service as svc
+from app.services.scm.demand import ORDER_INQUIRY_ORIGIN
+from app.services.scm.demand_class import class_of
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 from tests._pg_fixture import pg_session
 
@@ -105,6 +107,9 @@ def chain(db):
         id=_u(), status="completed", buy_scope="warehouse",
         started_at=to_naive_datetime(datetime.now(MALAYSIA_TZ)),
         source_system="scm", source_ref=_code("RUN"),
+        # Stamped as a CURRENT product-grain run (front planning 5.4): `record_decision`
+        # IS the Product-grain decision, and a run with no stamp is legacy and read-only.
+        decision_grain="product", front_planning_contract_version=1,
     )
     db.add(run)
     db.flush()
@@ -129,13 +134,30 @@ def _stock(db, product, wh, qty):
     db.flush()
 
 
-def _so(db, product, wh, qty, *, order_type, ordered_days_ago=3, required_in=10):
+def _so(db, product, wh, qty, *, order_type, ordered_days_ago=3, required_in=10,
+        from_inquiry=False):
+    """One open SO line, classified the way the IMPORT classifies one.
+
+    `demand_class` is stamped here through the shared mapper rather than left NULL,
+    because that is what every stamp point does (front planning 5.2): the persisted class
+    is the semantic owner planning reads, and `order_type` is only one of the four sources
+    it is derived from. A fixture that set the source and not the stamp would be testing a
+    row the importer cannot produce.
+
+    `from_inquiry` stamps the Order Inquiry origin. It matters only to project-class
+    orders: S13b (`demand.is_plan_demand_order`, `scm.committed_v`) counts project demand
+    ONLY where the Order Inquiry created it, so a project line without the origin is
+    deliberately absent from the coverage timeline and produces no dated shortfall. The
+    report's own split is unaffected either way - it reads the class, not the origin.
+    """
     cust = Customer(id=_u(), customer_code=_code("C")[:30], customer_name=f"{order_type} co")
     db.add(cust)
     db.flush()
     so = SalesOrder(
         id=_u(), so_number=_code("SO")[:50], customer_id=cust.id, status="open",
-        order_type=order_type, order_date=_today() - timedelta(days=ordered_days_ago),
+        order_type=order_type, demand_class=class_of(order_type),
+        demand_origin=ORDER_INQUIRY_ORIGIN if from_inquiry else None,
+        order_date=_today() - timedelta(days=ordered_days_ago),
     )
     db.add(so)
     db.flush()
@@ -204,7 +226,9 @@ def test_the_report_states_the_dated_position_the_run_froze(db, chain):
     """The row's figures come off the frozen snapshot, not off a live read."""
     f = chain
     _stock(db, f["product"], f["bin"], 40)
-    _so(db, f["product"], f["bin"], 100, order_type="project")
+    # Created by the Order Inquiry, which is the only way project demand reaches the plan
+    # (S13b); a project line the inquiry never named is set aside and dates nothing.
+    _so(db, f["product"], f["bin"], 100, order_type="project", from_inquiry=True)
     _po(db, f["product"], f["bin"], 25, supplier=_supplier(db))
 
     assert svc.write_rows(db, f["run"].id) == 1
@@ -286,12 +310,15 @@ def test_an_unknown_run_is_a_404_rather_than_an_empty_report(db, chain):
 # =========================================================================== #
 
 
-def test_the_split_reads_order_type_and_leaves_an_unset_row_in_neither(db, chain):
+def test_the_split_reads_the_demand_class_and_leaves_an_unset_row_in_neither(db, chain):
     """A split nobody stated is not a split.
 
-    `demand_class` is populated in 0 of 17 rows, so `order_type` is the source of truth. A
-    line whose order carries no type is real demand, and folding it into the bigger bucket
-    would state a classification the data does not hold.
+    The persisted `sales_orders.demand_class` is the source of truth (front planning 5.2 /
+    AC-E01): it is stamped by one shared mapper from stored order type, stated order type,
+    market segment, then sales agent, so planning reads one classification rather than a
+    second one of its own. A line whose order carries no class is real demand and is
+    counted as unclassified; folding it into the bigger bucket would state a
+    classification the data does not hold.
     """
     f = chain
     _so(db, f["product"], f["bin"], 30, order_type="project")
@@ -305,6 +332,7 @@ def test_the_split_reads_order_type_and_leaves_an_unset_row_in_neither(db, chain
     assert row["dealer_outstanding"] == 12
     assert row["project_demand_line_count"] == 1
     assert row["dealer_outstanding_line_count"] == 1
+    assert row["unclassified_line_count"] == 1
 
 
 def test_the_worst_dealer_ageing_reaches_the_row(db, chain):
@@ -427,6 +455,50 @@ def test_a_drill_total_equals_the_row_aggregate(db, chain):
     assert drill["total_qty"] == row["project_demand"] == 75
 
 
+def _reconcile_to_project_line(db, so, *, line_no):
+    """The AutoCount upload's reconciliation: a project SO line pointing at the core line.
+
+    `public.sales_order_lines` carries no line number; the human one lives here, and it is
+    the only place a drill can read it from.
+    """
+    from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
+    from tests.scm.conftest import SORENTO_COMPANY_ID
+
+    core_line = db.query(SalesOrderLine).filter(SalesOrderLine.sales_order_id == so.id).one()
+    pso = ProjectSalesOrder(
+        id=_u(), company_id=SORENTO_COMPANY_ID, provisional_ref=_code("PSO"), so_id=so.id,
+    )
+    db.add(pso)
+    db.flush()
+    db.add(ProjectSalesOrderLine(
+        id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=pso.id,
+        line_no=line_no, product_id=core_line.product_id, qty=core_line.qty_ordered,
+        core_sales_order_line_id=core_line.id,
+    ))
+    db.flush()
+
+
+def test_an_unclassified_line_carries_its_human_line_number_when_it_has_one(db, chain):
+    """The exception names the line to fix, not just the order: an SO with three lines and
+    no class is a different job from one line, and the number is what the person opens."""
+    f = chain
+    so, _cust = _so(db, f["product"], f["bin"], 99, order_type=None)
+    _reconcile_to_project_line(db, so, line_no=30)
+
+    out = svc.demand_drill(db, f["product"].product_code, kind="unclassified")
+
+    assert [l["line_no"] for l in out["unclassified_lines"]] == [30]
+
+
+def test_an_unreconciled_unclassified_line_has_no_line_number_rather_than_an_index(db, chain):
+    f = chain
+    _so(db, f["product"], f["bin"], 99, order_type=None)
+
+    out = svc.demand_drill(db, f["product"].product_code, kind="unclassified")
+
+    assert [l["line_no"] for l in out["unclassified_lines"]] == [None]
+
+
 def test_an_unknown_drill_kind_is_refused(db, chain):
     with pytest.raises(AppException) as e:
         svc.demand_drill(db, chain["product"].product_code, kind="everything")
@@ -532,6 +604,10 @@ def test_an_incoming_cost_in_another_currency_produces_no_variance(db, chain):
 
     assert c["last_incoming_cost"] == 95
     assert c["cost_variance"] is None, "a cross-currency subtraction is not a variance"
+    # The figure travels with the currency it is actually in. `currency` is the PO's, and a
+    # screen labelling 95 MYR as USD states a price the supplier never quoted.
+    assert c["last_incoming_currency"] == "MYR"
+    assert c["currency"] == "USD"
 
 
 def test_an_incoming_cost_above_the_ordered_cost_is_a_positive_variance(db, chain):
@@ -897,9 +973,11 @@ def test_a_place_by_date_is_need_by_minus_the_lead_time(db, chain):
     place-by would sit beside a current lead time and disagree with it.
     """
     f = chain
-    # Dated short in 60 days: 100 due then against 40 on hand.
+    # Dated short in 60 days: 100 due then against 40 on hand. Inquiry-created, so the
+    # project line is demand the plan sees (S13b).
     _stock(db, f["product"], f["bin"], 40)
-    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=60)
+    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=60,
+        from_inquiry=True)
     sup = _supplier(db)
     _link(db, f["product"], sup, cost=10, lead=45)
     _decide(db, f, qty=100, supplier=sup)
@@ -918,7 +996,8 @@ def test_a_place_by_date_already_past_is_flagged_late(db, chain):
     Flagged rather than listed silently among the ones still in time.
     """
     f = chain
-    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=7)
+    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=7,
+        from_inquiry=True)
     sup = _supplier(db)
     _link(db, f["product"], sup, cost=10, lead=45)
     _decide(db, f, qty=100, supplier=sup)
@@ -952,7 +1031,8 @@ def test_no_dated_shortfall_means_no_need_by_and_no_place_by(db, chain):
 def test_an_unknown_lead_time_leaves_the_place_by_date_underivable(db, chain):
     """A place-by date from a guessed lead time is worse than none, because it is acted on."""
     f = chain
-    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=30)
+    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=30,
+        from_inquiry=True)
     sup = _supplier(db)
     _decide(db, f, qty=100, supplier=sup)  # no product_suppliers link at all
 
@@ -1014,7 +1094,8 @@ def test_the_server_orders_the_worklist_late_first(db, chain):
     db.flush()
     _link(db, calm, sup, cost=10, lead=14)
     # The marker product is dated short next week against a 45-day lead: late.
-    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=7)
+    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=7,
+        from_inquiry=True)
     svc.write_rows(db, f["run"].id)
     for p in (f["product"], calm):
         svc.record_decision(

@@ -159,6 +159,9 @@ class ProductSupplierResponse(ProductSupplierBase):
 class InboundShipmentLineBase(BaseModel):
     product_id: str
     quantity_shipped: int
+    # Whose line this is, when the caller knows. Left unset it falls back to the header's
+    # supplier at write time, so an existing single-supplier payload is unchanged.
+    supplier_id: Optional[str] = None
     uom_id: Optional[str] = None
     batch_number: Optional[str] = None
     serial_number_range_from: Optional[str] = None
@@ -167,6 +170,17 @@ class InboundShipmentLineBase(BaseModel):
     cartons_count: int = 1
     weight_per_carton: Optional[Decimal] = None
     unit_cost: Optional[Decimal] = None
+    # What `unit_cost` is stated in. The column has existed since S3b; the packing-list
+    # upload had no way to fill it, so a price parsed out of the file could only be stored
+    # as a number with no meaning. Optional and never defaulted (AC-P5.1).
+    #
+    # On the BASE, not on `...Create` alone, so it travels back out with the price it
+    # denominates: a read that returns `unit_cost` and no currency hands its caller the same
+    # meaningless number the write path exists to prevent.
+    currency: Optional[str] = None
+    # Volume as the packing list stated it, and the supplier's own note on the line.
+    cbm: Optional[Decimal] = None
+    remarks: Optional[str] = None
 
 
 class InboundShipmentLineCreate(InboundShipmentLineBase):

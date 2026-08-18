@@ -1028,6 +1028,18 @@ Journey addition:
   drawer's controls; z-40 keeps it above the header (z-10) and sidebar (z-20) and
   under any open sheet. Both widths are pinned by class assertions in
   `AIAssistantBubble.test.tsx` (no browser).
+
+  **UPDATED 2026-08-18 (c) - the tab collapses to the side.** The 40px HORIZONTAL tab
+  was ~130px wide with its label out and still sat on page content (reported against a
+  delivery-schedule reconciliation table). Collapsed is now a 32px-wide VERTICAL handle
+  (`w-8 flex-col rounded-s-lg`, label rotated via `[writing-mode:vertical-rl]` from `sm`
+  up, icon alone below) at the same `fixed bottom-6 end-0 z-40` root, so the anchor and
+  the stacking of this AC are unchanged. The handle unmounts while the panel is open (the
+  panel carries an explicit `ChevronsRight` **Collapse** control in its header, replacing
+  the `X`), so handle and panel can never overlap, and focus follows the swap. The choice
+  persists in `localStorage['sorento.ai.bubbleOpen']`: absent = collapsed, so a first-time
+  user is never covered, and a user who left it expanded gets it back across navigations
+  and reloads. Pinned by `AIAssistantBubble.test.tsx`.
 - **AC-N6 [FE][T]** Given the drawer header's quoted enquiry message, When clicked, Then
   the thread scrolls to that message (loading the surrounding page via `around=` when it
   is outside the loaded window) and flash-highlights it - same mechanism as a search

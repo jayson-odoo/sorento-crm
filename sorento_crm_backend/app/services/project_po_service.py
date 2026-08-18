@@ -379,6 +379,93 @@ def upsert_line(
     return line
 
 
+def replace_lines(
+    db: Session, *, po: ProjectPurchaseOrder, lines: Sequence[Dict[str, Any]]
+) -> List[ProjectPurchaseOrderLine]:
+    """The whole desired line set of one PO, written in ONE transaction.
+
+    **Why this exists.** The lines used to be written per row, so entering a ten-line PO was
+    ten requests, each with its own confirmation on the way out, and a sequence that
+    half-failed left a PO in a state nobody typed. The screen is an edit view now: one Save
+    covers the header and every line, so either the arrangement the user made is what is
+    stored or nothing moved.
+
+    **This is a REPLACE, not a merge.** ``lines`` is the full desired set, and a stored line
+    whose id is absent from it is DELETED. A caller that sends only the rows it happened to
+    touch will therefore wipe every row it left out, so it must always send the whole set it
+    is showing the user.
+
+    **Identity.** A line already stored carries its ``id``; a new one arrives without one. An
+    id that is not on this PO is refused rather than treated as new -- treating it as new
+    would duplicate the row the caller meant to move.
+
+    **Order** is array position, so reordering is just sending a different order and any
+    ``sort_order`` in the payload is ignored.
+
+    Every line still goes through ``upsert_line``, so the product snapshot and the two
+    mismatch flags are computed by the one implementation the per-row path uses. The refusals
+    all fire before any row is touched or on the row that is wrong, and the route's rollback
+    is what makes the whole save atomic.
+    """
+    # Keyed by the id as a STRING, which is what the payload carries: the column is a
+    # `UUID(as_uuid=False)`, so this is a no-op at runtime and stops the two sides of the
+    # comparison being different types on paper.
+    stored = {str(row.id): row for row in list_lines(db, po_id=str(po.id))}
+    kept: set = set()
+    written: List[ProjectPurchaseOrderLine] = []
+
+    for index, incoming in enumerate(lines):
+        payload = dict(incoming)
+        line_id = payload.pop("id", None)
+        target: Optional[ProjectPurchaseOrderLine] = None
+        if line_id:
+            line_id = str(line_id)
+            if line_id in kept:
+                raise AppException(
+                    status_code=422,
+                    message="The same line appears twice in this save.",
+                    code="po_line_duplicate",
+                )
+            target = stored.get(line_id)
+            if target is None:
+                raise AppException(
+                    status_code=404,
+                    message="One of these lines is not on this purchase order.",
+                    code="po_line_not_found",
+                )
+            kept.add(line_id)
+        payload["sort_order"] = index
+        written.append(upsert_line(db, po=po, payload=payload, line=target))
+
+    for line_id, row in stored.items():
+        if line_id not in kept:
+            db.delete(row)
+
+    db.flush()
+    return written
+
+
+def save_po_document(
+    db: Session, *, po: ProjectPurchaseOrder, payload: Dict[str, Any]
+) -> List[ProjectPurchaseOrderLine]:
+    """The header and, when the payload carries them, the whole line set.
+
+    The order is the point, and it is why this is a service function rather than two calls
+    from the route: the quotation binding decides what every line is compared against, so it
+    has to be applied BEFORE the lines are written or the flags would answer for the version
+    that was bound a moment ago.
+
+    ``lines`` absent leaves the lines exactly as they are -- the record-a-PO modal sends only
+    header fields, and reading that as "an empty set" would wipe the PO. An empty ARRAY is a
+    real intent (the user removed every line) and does clear them.
+    """
+    header = {key: value for key, value in payload.items() if key != "lines"}
+    update_po(db, po=po, payload=header)
+    if payload.get("lines") is None:
+        return list_lines(db, po_id=str(po.id))
+    return replace_lines(db, po=po, lines=payload["lines"])
+
+
 def delete_line(db: Session, *, line: ProjectPurchaseOrderLine) -> None:
     db.delete(line)
     db.flush()
@@ -476,6 +563,11 @@ def list_pos(db: Session, *, project_id: str) -> List[ProjectPurchaseOrder]:
         .order_by(
             ProjectPurchaseOrder.po_date.desc().nullslast(),
             ProjectPurchaseOrder.created_at.desc(),
+            # The number breaks the tie, so two POs imported in one pass cannot come back
+            # in a different order each time - the detail pager
+            # (project_record_navigation.purchase_order_neighbours) carries the same
+            # tie-breaker and has to walk the list it came from.
+            ProjectPurchaseOrder.po_number.asc(),
         )
         .all()
     )
@@ -527,11 +619,18 @@ def serialize_pos(
     # set lookups rather than a query per row: this list renders every PO on a project.
     confirmed_po_ids: set = set()
     scheduled_po_ids: set = set()
+    # How many sales orders are already OUT of each PO. Editing a PO stays allowed -- a
+    # correction is the normal case -- but the screen has to be able to say this before
+    # somebody saves over it, because the orders already published do not follow the change.
+    published_so_counts: Dict[str, int] = {}
     if ids:
         from app.models.project_so import (
+            SO_STATUS_AMENDED,
+            SO_STATUS_PUBLISHED,
             DeliverySchedule,
             DeliveryScheduleVersion,
             ProjectPOVersion,
+            ProjectSalesOrder,
         )
 
         confirmed_po_ids = {
@@ -554,6 +653,19 @@ def serialize_pos(
                 DeliverySchedule.purchase_order_id.in_(ids),
                 DeliveryScheduleVersion.confirmed_at.isnot(None),
             )
+            .all()
+        }
+        published_so_counts = {
+            str(row[0]): int(row[1])
+            for row in db.query(
+                ProjectSalesOrder.purchase_order_id, func.count(ProjectSalesOrder.id)
+            )
+            .filter(
+                ProjectSalesOrder.purchase_order_id.in_(ids),
+                # Amended counts too: it was published and then changed, so it is still out.
+                ProjectSalesOrder.status.in_((SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)),
+            )
+            .group_by(ProjectSalesOrder.purchase_order_id)
             .all()
         }
 
@@ -610,6 +722,7 @@ def serialize_pos(
                 "status": po.status,
                 "po_confirmed": bool(confirmed_po_ids and po.id in confirmed_po_ids),
                 "schedule_confirmed": bool(scheduled_po_ids and po.id in scheduled_po_ids),
+                "published_sales_order_count": published_so_counts.get(str(po.id), 0),
                 "model_mismatch_count": model_flags.get(po.id, 0),
                 "price_mismatch_count": price_flags.get(po.id, 0),
                 "v1_total": drift["v1_total"],

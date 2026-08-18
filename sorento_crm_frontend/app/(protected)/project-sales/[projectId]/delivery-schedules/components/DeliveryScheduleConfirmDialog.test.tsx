@@ -38,6 +38,10 @@ function column(overrides: Partial<ColumnState> = {}): ColumnState {
     blockers: [
       { code: 'po_mismatch', detail: 'Our total is 8, the PO orders 16 (-8).' },
     ],
+    dismissed: false,
+    dismissedReason: null,
+    dismissedByName: null,
+    warning: null,
     ...overrides,
   };
 }

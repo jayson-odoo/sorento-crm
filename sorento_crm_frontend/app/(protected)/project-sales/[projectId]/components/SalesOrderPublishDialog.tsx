@@ -13,8 +13,12 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import type {
   ProjectSalesOrderFinding,
+  SalesOrderPublishBody,
   SalesOrderPublishResult,
 } from '../../_shared/types/projectSalesOrder.types';
 
@@ -25,6 +29,12 @@ import type {
  * an irreversible step, and the outcome, which is the reference the order is known by plus
  * the import file. Warnings without a recorded reason are named in the confirmation rather
  * than hidden, because that reason is the only trace of the decision afterwards.
+ *
+ * The refusal is not a dead end. Clearing thirty findings one at a time to publish an order
+ * the manager has already decided to publish was the constraint, so the same override the
+ * per-finding acknowledgement carries is offered here once: a reason, recorded on every
+ * finding it waves through. Whether the user may use it is the backend's call, so the
+ * control is always shown and its refusal is rendered in place.
  */
 export function SalesOrderPublishDialog({
   reference,
@@ -32,18 +42,45 @@ export function SalesOrderPublishDialog({
   unacknowledgedWarnings,
   onDone,
   onPublish,
+  onDownloadImportFile,
   submitting,
+  downloading,
 }: {
   reference: string;
   blocking: ProjectSalesOrderFinding[];
   unacknowledgedWarnings: ProjectSalesOrderFinding[];
   onDone: () => void;
-  onPublish: () => Promise<SalesOrderPublishResult>;
+  onPublish: (body?: SalesOrderPublishBody) => Promise<SalesOrderPublishResult>;
+  onDownloadImportFile: () => void;
   submitting: boolean;
+  downloading?: boolean;
 }) {
   const [result, setResult] = React.useState<SalesOrderPublishResult | null>(null);
+  const [acknowledge, setAcknowledge] = React.useState(false);
+  const [reason, setReason] = React.useState('');
+  const [error, setError] = React.useState<string | null>(null);
 
-  if (blocking.length > 0) {
+  // The server's gate, read off the publish response rather than re-derived here. A
+  // response from before `can_export` shipped falls back to the url being there at all,
+  // which is what this button used to go on.
+  const canDownload = result
+    ? (result.can_export ?? Boolean(result.import_file_url))
+    : false;
+
+  const publish = async (body?: SalesOrderPublishBody) => {
+    setError(null);
+    try {
+      setResult(await onPublish(body));
+    } catch (caught) {
+      // The backend's own sentence (extracted in the service): who may override, or that a
+      // reason is required. Shown here rather than as a toast, so it sits beside the field
+      // it is about.
+      setError(caught instanceof Error ? caught.message : 'Failed to publish this sales order');
+    }
+  };
+
+  if (blocking.length > 0 && !result) {
+    const waved = acknowledge && reason.trim().length >= 3;
     return (
       <AlertDialog open onOpenChange={(next) => !next && onDone()}>
         <AlertDialogContent className="max-h-[90vh] overflow-y-auto">
@@ -73,8 +110,60 @@ export function SalesOrderPublishDialog({
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          <div className="space-y-3">
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={acknowledge}
+                onCheckedChange={(next) => setAcknowledge(next === true)}
+                aria-label={`Publish despite ${blocking.length} blocking finding${
+                  blocking.length === 1 ? '' : 's'
+                }`}
+                className="mt-0.5"
+              />
+              <span>
+                {`Publish despite ${blocking.length} blocking finding${
+                  blocking.length === 1 ? '' : 's'
+                }`}
+              </span>
+            </label>
+
+            {acknowledge && (
+              <div className="space-y-1.5">
+                <Label htmlFor="so-publish-override-reason">
+                  Reason <span className="text-destructive">*</span>
+                </Label>
+                <Textarea
+                  id="so-publish-override-reason"
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                  rows={3}
+                  placeholder="Who decided to publish past these, and why"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Recorded on every one of these findings.
+                </p>
+              </div>
+            )}
+
+            {error && (
+              <p className="rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-sm text-destructive">
+                {error}
+              </p>
+            )}
+          </div>
+
           <AlertDialogFooter>
-            <AlertDialogCancel>Back to the findings</AlertDialogCancel>
+            <AlertDialogCancel disabled={submitting}>Back to the findings</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!waved || submitting}
+              onClick={async (event) => {
+                event.preventDefault();
+                await publish({ acknowledge_blocking: true, reason: reason.trim() });
+              }}
+            >
+              {submitting ? 'Publishing…' : 'Publish anyway'}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -92,12 +181,24 @@ export function SalesOrderPublishDialog({
                 <p>
                   {`This sales order is ${result.autocount_doc_no || result.provisional_ref}.`}
                 </p>
+                {result.acknowledged_findings ? (
+                  <p>
+                    {`${result.acknowledged_findings} blocking finding${
+                      result.acknowledged_findings === 1 ? '' : 's'
+                    } published anyway, with the reason recorded on each.`}
+                  </p>
+                ) : null}
                 {result.import_file_url ? (
-                  <Button asChild variant="outline" size="sm">
-                    <a href={result.import_file_url} download>
-                      <Download className="size-4" aria-hidden />
-                      Download the import file
-                    </a>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onDownloadImportFile}
+                    disabled={!canDownload || downloading}
+                    title={canDownload ? undefined : 'Clear the blocking findings first'}
+                  >
+                    <Download className="size-4" aria-hidden />
+                    Download the import file
                   </Button>
                 ) : (
                   <p className="text-sm">
@@ -147,14 +248,18 @@ export function SalesOrderPublishDialog({
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {error && (
+          <p className="rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             disabled={submitting}
             onClick={async (event) => {
               event.preventDefault();
-              const published = await onPublish();
-              setResult(published);
+              await publish();
             }}
           >
             {submitting ? 'Publishing…' : 'Publish'}

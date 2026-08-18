@@ -453,7 +453,8 @@ stated fallback if it slips.
 3. **WeChat Official Account in Respond.io.** Not procured. Chat stays dark by design; email
    ships. No rework when it lands.
 4. **Ms Tee's manual answer for one real shipment**, to check the seeded priority default
-   reproduces it (AC-H2). Without this the day-one validation claim is untested.
+   against it (AC-H2). Since 2026-08-17 the seed ranks demand owed first and document sequence
+   within each band, so her answer is the within-band check, not the whole order.
 5. **Mr Loo on the cost basis** (latest, average, landed). Parked in UAC Group K, but the buy row
    shows last purchase cost regardless, which answers his usual question.
 
@@ -599,6 +600,14 @@ Handled in two parts, so the code stops being the blocker:
 sales-order export. Until then the classification only covers orders the CRM already knows.
 
 ## Amendment: incoming cost has no source, so C3 splits in two (4 Aug 2026)
+
+> Superseded on 17 Aug 2026 by `PLAN-scm-proforma-invoice.md` (gap G3c). The source this
+> section says does not exist now does: the Excel packing-list channel parses `unit_price` and
+> `packing_list_service.apply` writes it to `inbound_shipment_lines.unit_cost` with its resolved
+> currency, so the stamp and the variance below are live rather than inert. The "ask for the
+> business" it ends on is answered inside the CRM, not by n8n. The n8n ingest still cannot
+> supply a price, so a packing list arriving that way is unchanged. Contract:
+> `scm-proforma-invoice-acceptance-criteria.md` AC-P5.
 
 AC-C3.2 says incoming cost is captured from the packing list when an SPO allocation is
 approved. Traced end to end before implementing, the slot exists at every point and is empty

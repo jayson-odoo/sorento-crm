@@ -100,6 +100,18 @@ export function fmtSupplierCost(
   return `${currencyLabel(currency)} ${costFmt.format(value)}`;
 }
 
+/**
+ * The same figure with NO currency label, for a price whose currency is genuinely unknown.
+ *
+ * `fmtSupplierCost` reads a blank code as base and writes `RM`, which is right for the old
+ * single-currency rows and wrong for a price that arrived without one: the label would be a
+ * claim nobody made. An unlabelled number says only what is known.
+ */
+export function fmtCostNoCurrency(value: number | null | undefined): string {
+  if (value === null || value === undefined) return EM_DASH;
+  return costFmt.format(value);
+}
+
 /** Short relative "days ago" for last-movement; null → em dash. */
 export function fmtDaysAgo(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;
@@ -211,4 +223,17 @@ export function fmtDateTime(iso: string | null | undefined): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return EM_DASH;
   return `${d.toLocaleDateString(DATE_LOCALE, DATE_PARTS)}, ${d.toLocaleTimeString(DATE_LOCALE, TIME_PARTS)}`;
+}
+
+/**
+ * A quantity rendered at its own precision: never padded, never truncated. `dp` is the
+ * frozen `uom_decimal_places` of the row (0-4). Lives here, not next to its callers,
+ * because this file is the one home for number formatting (see format.guard.test.ts).
+ */
+export function fmtQty(value: number | null | undefined, dp = 0): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return EM_DASH;
+  return new Intl.NumberFormat('en-GB', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: Math.min(Math.max(dp, 0), 4),
+  }).format(value);
 }

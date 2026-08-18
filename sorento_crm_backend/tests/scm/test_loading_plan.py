@@ -18,6 +18,7 @@ from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import LoadingPlanLine, SupplierInventory
 from app.services.scm import loading_plan_service as svc
+from app.services.scm import priority
 from tests._pg_fixture import pg_session
 
 MARKER = "ZZLP"
@@ -81,13 +82,20 @@ class World:
         self.products[key] = p
         return p
 
-    def po(self, number_suffix: str, lines, *, issue_date: date | None = None) -> PurchaseOrder:
+    def po(
+        self,
+        number_suffix: str,
+        lines,
+        *,
+        issue_date: date | None = None,
+        status: str = "active",
+    ) -> PurchaseOrder:
         po = PurchaseOrder(
             id=str(uuid.uuid4()),
             po_number=f"{MARKER}-PO{number_suffix}-{self.tag}",
             supplier_id=self.supplier.id,
             issue_date=issue_date or date(2026, 1, 1),
-            status="active",
+            status=status,
         )
         self.db.add(po)
         self.db.flush()
@@ -520,3 +528,144 @@ def test_the_demand_class_factor_reads_through_the_so_to_po_linkage():
         # because its demand class was resolved.
         assert by_code[w.product("B").product_code].rank == 1
         assert by_code[w.product("A").product_code].status == "deferred"
+
+
+def _claim(db, w: World, po, klass: str, suffix: str) -> None:
+    """A sales order of `klass` claimed against `po`, which is how demand reaches a PO."""
+    from app.models.order import SalesOrder
+    from app.models.scm import OrderLinkClaim
+
+    so = SalesOrder(
+        id=str(uuid.uuid4()),
+        so_number=f"{MARKER}-SO{suffix}-{w.tag}",
+        order_date=date(2026, 1, 1),
+        status="open",
+        demand_class=klass,
+    )
+    db.add(so)
+    db.flush()
+    db.add(
+        OrderLinkClaim(
+            id=str(uuid.uuid4()),
+            so_number=so.so_number,
+            po_number=po.po_number,
+            source="manual",
+        )
+    )
+    db.flush()
+
+
+def test_a_line_owed_to_a_customer_outranks_an_older_line_owed_to_nobody():
+    # The defect this pins: an ABSENT demand factor drops out of both sums, so the older
+    # document's sequence value of 1.0 WAS the maximum score available and demand could never
+    # overtake it. No claim is a demand of 0.0 and PRESENT, so under the seeded weights the
+    # younger project order takes the only container slot.
+    with pg_session() as db:
+        w = World(db)
+        w.po("1", [("A", 10, 0)], issue_date=date(2026, 1, 1))
+        project_po = w.po("2", [("B", 10, 0)], issue_date=date(2026, 6, 1))
+        _claim(db, w, project_po, "project", "P")
+        w.stock("A", packed=10, cbm=1.0)
+        w.stock("B", packed=10, cbm=1.0)
+        _policy(db, priority.SEEDED_WEIGHTS, priority.SEEDED_CLASS_WEIGHTS)
+
+        plan = svc.build(db, supplier_id=str(w.supplier.id), container_count=1, container_cbm=10)
+
+        by_code = lines_of(db, plan)
+        owed_to_nobody = by_code[w.product("A").product_code]
+        assert by_code[w.product("B").product_code].rank == 1
+        assert by_code[w.product("B").product_code].status == "allocated"
+        assert owed_to_nobody.status == "deferred"
+        demand = next(
+            f for f in owed_to_nobody.factors_json if f["key"] == "demand_class"
+        )
+        assert demand["present"] is True
+        assert demand["value"] == 0.0
+
+
+def test_a_retail_line_still_outranks_an_older_line_owed_to_nobody():
+    # Retail is worth less than project but it is still a customer waiting. 0.30 beats 0.25,
+    # which is the narrowest case the seeded bands have to get right.
+    with pg_session() as db:
+        w = World(db)
+        w.po("1", [("A", 10, 0)], issue_date=date(2026, 1, 1))
+        retail_po = w.po("2", [("B", 10, 0)], issue_date=date(2026, 6, 1))
+        _claim(db, w, retail_po, "retail", "R")
+        w.stock("A", packed=10, cbm=1.0)
+        w.stock("B", packed=10, cbm=1.0)
+        _policy(db, priority.SEEDED_WEIGHTS, priority.SEEDED_CLASS_WEIGHTS)
+
+        plan = svc.build(db, supplier_id=str(w.supplier.id), container_count=1, container_cbm=10)
+
+        by_code = lines_of(db, plan)
+        assert by_code[w.product("B").product_code].rank == 1
+        assert by_code[w.product("B").product_code].status == "allocated"
+        assert by_code[w.product("A").product_code].status == "deferred"
+
+
+def test_a_draft_purchase_order_is_not_a_candidate():
+    # G1b. A draft the supplier has never seen has nothing at the supplier to load against it,
+    # and listing it as deferred would put a decision on screen nobody has taken yet.
+    with pg_session() as db:
+        w = World(db)
+        w.po("1", [("A", 5, 0)], status="draft_recommendation")
+        w.po("2", [("B", 5, 0)], status="draft")
+        w.po("3", [("C", 5, 0)], status="active")
+        for key in ("A", "B", "C"):
+            w.stock(key, packed=5, cbm=1.0)
+
+        plan = svc.build(db, supplier_id=str(w.supplier.id), container_count=1, container_cbm=100)
+
+        assert list(lines_of(db, plan)) == [w.product("C").product_code]
+        assert plan.line_count == 1
+
+
+def test_the_migration_turns_the_seeded_demand_weight_on():
+    # Existing databases were seeded with the weight at 0.0, so a fresh-install seed change
+    # alone would leave every live tenant ranking by document sequence only.
+    with pg_session() as db:
+        from app.models.scm import PriorityPolicy
+
+        spec = importlib.util.spec_from_file_location(
+            "m374", "alembic/versions/374_loading_plan_demand_weight.py"
+        )
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+
+        db.query(PriorityPolicy).filter(PriorityPolicy.is_active.is_(True)).update(
+            {"is_active": False}, synchronize_session=False
+        )
+        # Inactive so it cannot collide with the one-active partial unique index; the update
+        # under test keys off the name, not the flag.
+        seeded = PriorityPolicy(
+            id=str(uuid.uuid4()),
+            name="Today's rule (PO document sequence)",
+            is_active=False,
+            factors={
+                "po_document_sequence": 1.0,
+                "demand_class": 0.0,
+                "need_by_date": 0.0,
+                "document_age": 0.0,
+            },
+            demand_class_weights={"project": 1.0, "retail": 0.4},
+        )
+        db.add(seeded)
+        db.flush()
+
+        # At least one row, not exactly one: a database restored from production already
+        # carries the seeded policy, and asserting a global count would pass on empty CI and
+        # fail on a real copy.
+        assert m.apply(db.connection()) >= 1
+        db.expire(seeded)
+        assert seeded.factors["demand_class"] == 3.0
+        assert seeded.name == "Today's rule (demand owed, then PO document sequence)"
+
+        # Idempotent: the already-raised weight no longer matches.
+        assert m.apply(db.connection()) == 0
+        db.expire(seeded)
+        assert seeded.factors["demand_class"] == 3.0
+
+        assert m.revert(db.connection()) >= 1
+        db.expire(seeded)
+        assert seeded.factors["demand_class"] == 0.0
+        assert seeded.name == "Today's rule (PO document sequence)"

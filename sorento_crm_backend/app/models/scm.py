@@ -24,6 +24,7 @@ from sqlalchemy import (
     Numeric,
     Date,
     Index,
+    SmallInteger,
     UniqueConstraint,
     text,
 )
@@ -271,6 +272,16 @@ class ReorderRun(Base, CompanyScopedMixin):
     overview = Column(Text, nullable=True)  # LLM (M5) — lazy-cached run-level AI overview
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # Front planning (plan 5.1 / 5.4). `decision_grain` is the ONE grain this run may be
+    # decided at - `product` (the order_summary_row chosen quantity) or `location` (the
+    # recommendation decisions and overrides) - stamped from the admin plan-grain policy
+    # when the run is created and never changed, so a later policy edit cannot move a
+    # frozen run and the two grains can never order the same requirement.
+    # `front_planning_contract_version` is 1 on every run created under the contract and
+    # NULL on every run that predates it; NULL is what makes a run legacy and read-only,
+    # and neither column is backfilled.
+    decision_grain = Column(String(20), nullable=True)
+    front_planning_contract_version = Column(SmallInteger, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     recommendations = relationship(
@@ -318,6 +329,15 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     market_advisory = Column(Text, nullable=True)  # LLM (M5)
     funding_status = Column(String(20), nullable=True)  # funded | deferred
     status = Column(String(20), default="proposed", nullable=False)  # proposed | accepted | adjusted | dismissed
+    # Whether THIS location's purchase order has been keyed into AutoCount (AC-E2.2), for a
+    # run decided at LOCATION grain, where the decision lives here rather than on the
+    # product summary row. Same three values and the same manual semantics as
+    # `OrderSummaryRow.keyed_status`; exactly one of the two applies to a run (AC-F09).
+    keyed_status = Column(
+        String(20), nullable=False, default="not_keyed", server_default=text("'not_keyed'")
+    )
+    keyed_by = Column(String, nullable=True)
+    keyed_at = Column(DateTime(timezone=False), nullable=True)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -332,6 +352,11 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_reorder_recommendation_run_id", "run_id"),
         Index("ix_scm_reorder_recommendation_product_id", "product_id"),
+        Index("ix_scm_reorder_recommendation_run_keyed", "run_id", "keyed_status"),
+        CheckConstraint(
+            "keyed_status IN ('not_keyed', 'keying', 'keyed')",
+            name="ck_scm_reorder_recommendation_keyed_status",
+        ),
         {"schema": "scm"},
     )
 
@@ -630,8 +655,39 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
 
     project_demand_line_count = Column(Integer, nullable=False, default=0)
     dealer_outstanding_line_count = Column(Integer, nullable=False, default=0)
+    # How many open SO lines carry no persisted demand class, so the exception can be
+    # opened rather than only counted. Sits beside its two siblings rather than inside
+    # `channel_calculation_basis`: it is a diagnostic of the open order book, computed on
+    # every run including a legacy one, not part of the channel arithmetic that a legacy
+    # run has none of.
+    unclassified_line_count = Column(Integer, nullable=False, default=0,
+                                     server_default=text("0"))
     # NULL when nothing is outstanding, which is not the same as 0 days outstanding.
     max_days_outstanding = Column(Integer, nullable=True)
+
+    # --- front planning: the channel breakdown of ONE product row (plan 5.3 / 6.4) ---
+    # Channel is analysis INSIDE the row, never row identity: the key stays
+    # (run_id, product_id) and stock / SPO / PO / reorder level remain single shared
+    # facts. All six are nullable because a run created before the contract has no
+    # breakdown at all, and a legacy NULL is a durable marker rather than a gap waiting
+    # to be backfilled (AC-F10).
+    #: Confirmed unplaced Buy on Project-class lines, summed across locations (AC-E04).
+    #: FIRM: Retail free-supply netting never reduces it.
+    project_buy_qty = Column(Numeric, nullable=True)
+    #: Normally netted Retail replenishment, summed across locations.
+    retail_replenishment_qty = Column(Numeric, nullable=True)
+    #: Demand whose SO carries no persisted class. Visible, and excluded from the
+    #: actionable suggestion until somebody classifies it (AC-E06).
+    unclassified_demand_qty = Column(Numeric, nullable=True)
+    #: Required only when `project_buy_qty > 0`; NULL says there is no firm Buy to date.
+    earliest_project_need_date = Column(Date, nullable=True)
+    #: The frozen arithmetic behind `suggested_qty`, plus the per-location facts it was
+    #: summed from, so the Locations drill reconciles without re-deriving anything.
+    channel_calculation_basis = Column(JSONB, nullable=True)
+    #: The product's base-UOM divisibility AS IT WAS when the run was calculated.
+    #: Chosen-quantity validation and the allocator rerun read THIS, never live UOM
+    #: master data, so a later UOM edit cannot change a frozen run (AC-F12).
+    uom_decimal_places = Column(SmallInteger, nullable=True)
 
     chosen_qty = Column(Numeric, nullable=True)
     chosen_supplier_id = Column(
@@ -668,6 +724,61 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
         CheckConstraint(
             "keyed_status IN ('not_keyed', 'keying', 'keyed')",
             name="ck_scm_order_summary_row_keyed_status",
+        ),
+        {"schema": "scm"},
+    )
+
+
+class OrderSummaryLocationAllocation(Base, CompanyScopedMixin):
+    """One location's share of a Product-grain chosen quantity (plan 5.4 / 6.4).
+
+    A product-grain decision is ONE quantity for the company, and a purchase order still
+    has to say where the stock lands. So the accepted quantity is replayed through the
+    existing `reorder_engine.allocate` against the run's frozen location inputs, in the
+    row's frozen UOM minor units, and the resulting decimal quantities are persisted here.
+
+    Narrow on purpose: this is persistence for the PO worklist, not a second allocator.
+    These STORED quantities sum exactly to the parent's `chosen_qty` because the allocator
+    apportions integer minor units of the frozen precision - no rescaling formula is
+    applied, and a re-decision REPLACES the split rather than scaling the old one. The
+    exactness is a property of the persisted decimals: the allocator hands its shares back
+    as floats, and at a non-zero precision a float sum of them can differ from `chosen_qty`
+    in the last bit, so reconcile against these columns rather than against that sum.
+
+    `reorder_recommendation_id` is nullable: a product-grain split has no single owning
+    recommendation row, and naming one would imply a location decision that was never made.
+    """
+
+    __tablename__ = "order_summary_location_allocation"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str,
+                server_default=text("gen_random_uuid()"))
+    order_summary_row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.order_summary_row.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    reorder_recommendation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.reorder_recommendation.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="CASCADE"), nullable=False
+    )
+    allocated_qty = Column(Numeric, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "uq_scm_order_summary_location_alloc",
+            "order_summary_row_id",
+            "warehouse_id",
+            unique=True,
+        ),
+        CheckConstraint(
+            "allocated_qty >= 0",
+            name="ck_scm_order_summary_location_alloc_qty",
         ),
         {"schema": "scm"},
     )
@@ -1078,5 +1189,125 @@ class CurrencyRate(Base):
         # A non-positive rate would zero out a real cost or invert it. The service refuses
         # one too; this holds when something writes around the service.
         CheckConstraint("rate_to_base > 0", name="ck_currency_rate_positive"),
+        {"schema": "scm"},
+    )
+
+
+class ProformaInvoice(Base, CompanyScopedMixin):
+    """The supplier's own priced document, as they sent it (G3b).
+
+    A document of record rather than a derived view: it is what the next task verifies a
+    purchase order against, so it has to survive the file it came from being deleted and the
+    order book moving underneath it.
+
+    Identity is `(company, supplier, pi_number)`, which is why `pi_number` is NOT NULL even
+    on the documents that state none - the pre-loading list's five blocks carry no invoice
+    number at all, and a positional one (`PI-<file stem>-<block>`) is derived so a re-upload
+    lands on the same five invoices instead of a second set (AC-P1.4, AC-P2.5).
+
+    `currency` is nullable and never defaulted. It is NULL only on a document with no priced
+    line at all: a price with no currency is a number with no meaning, so a PRICED document
+    whose currency resolves to nothing is refused before it is written rather than stored in
+    a house default nobody would ever question (AC-P3.2).
+
+    `container_ref` / `bl_ref` are nullable and never invented: at proforma time the
+    container usually has not been assigned, and the pre-loading list leaves both cells blank.
+    """
+    __tablename__ = "proforma_invoice"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
+    )
+    pi_number = Column(String(100), nullable=False)
+    invoice_date = Column(Date, nullable=True)
+    # NULL only for a document with no priced line at all: a priced one is refused before
+    # it is written unless the currency resolved (AC-P3.2). Never a house default.
+    currency = Column(String(3), nullable=True)
+
+    container_ref = Column(String(100), nullable=True)
+    bl_ref = Column(String(100), nullable=True)
+
+    #: What the document totals ITSELF to when it states a total, else the sum of its lines.
+    #: Stored rather than summed on read so the verification screen compares like with like.
+    total_amount = Column(Numeric, nullable=True)
+    line_count = Column(Integer, nullable=False, server_default=text("0"))
+
+    source_ref = Column(String, nullable=True)
+    block_index = Column(Integer, nullable=True)
+    uploaded_by = Column(String, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    lines = relationship(
+        "ProformaInvoiceLine", back_populates="invoice", cascade="all, delete-orphan",
+        order_by="ProformaInvoiceLine.line_no",
+    )
+
+    __table_args__ = (
+        Index("ix_scm_proforma_invoice_supplier", "supplier_id"),
+        # Declared on the MODEL as well as in migration 375, because a CI database is built
+        # with `create_all` and never runs a migration body: without it the guard against a
+        # doubled invoice exists in production and nowhere else (the supplier_inventory
+        # precedent).
+        Index(
+            "uq_scm_proforma_invoice_identity",
+            text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
+            "supplier_id",
+            "pi_number",
+            unique=True,
+        ),
+        {"schema": "scm"},
+    )
+
+
+class ProformaInvoiceLine(Base, CompanyScopedMixin):
+    """One priced line of a proforma, in the supplier's own spelling.
+
+    `item_code` is verbatim - trimmed of outer whitespace and nothing else. Kailu writes
+    `SRTWT8258\\n-GM` with a newline inside it, and normalising that away would quietly make
+    the document disagree with the paper the supplier sent.
+
+    `product_id` is nullable and set ONLY on an exact, case-insensitive, company-scoped match
+    of `products.product_code` (AC-P1.3). An unmatched line is still stored and named in the
+    preview: it is a real charge, and dropping it would make the invoice total wrong.
+
+    `po_ref` is what the line says it is against, when it says anything. It is null on most
+    lines and indexed anyway, because the verification task reads it across invoices.
+    """
+    __tablename__ = "proforma_invoice_line"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    invoice_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    line_no = Column(Integer, nullable=False)
+    #: Where in the file this line was, so a question about it can be taken back to the row.
+    row_number = Column(Integer, nullable=True)
+
+    item_code = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    qty = Column(Numeric, nullable=False)
+    uom = Column(String(20), nullable=True)
+    unit_price = Column(Numeric, nullable=True)
+    amount = Column(Numeric, nullable=True)
+    po_ref = Column(String(100), nullable=True)
+    remark = Column(Text, nullable=True)
+
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    invoice = relationship("ProformaInvoice", back_populates="lines")
+
+    __table_args__ = (
+        Index("ix_scm_proforma_invoice_line_invoice", "invoice_id"),
+        Index("ix_scm_proforma_invoice_line_po_ref", "po_ref"),
         {"schema": "scm"},
     )

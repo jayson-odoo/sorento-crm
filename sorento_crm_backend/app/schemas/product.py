@@ -79,6 +79,10 @@ class UnitOfMeasureBase(BaseModel):
     uom_name: str
     base_uom_id: Optional[str] = None
     conversion_factor: Optional[Decimal] = None
+    # Canonical divisibility, 0..4 (front-planning plan 6.4, AC-F12). Omitted on CREATE
+    # resolves to 0 - the same fallback a missing rollout value takes - so a unit is
+    # whole-units until someone says otherwise.
+    decimal_places: int = Field(0, ge=0, le=4)
     description: Optional[str] = None
     is_active: bool = True
 
@@ -91,6 +95,9 @@ class UnitOfMeasureUpdate(BaseModel):
     uom_name: Optional[str] = None
     base_uom_id: Optional[str] = None
     conversion_factor: Optional[Decimal] = None
+    # Omitted PRESERVES the stored value (the update applies `exclude_unset`), so a
+    # partial edit cannot silently reset a measure unit back to whole numbers.
+    decimal_places: Optional[int] = Field(None, ge=0, le=4)
     description: Optional[str] = None
     is_active: Optional[bool] = None
 

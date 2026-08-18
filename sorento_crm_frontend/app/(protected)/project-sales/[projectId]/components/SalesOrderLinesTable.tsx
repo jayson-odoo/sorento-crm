@@ -24,6 +24,10 @@ import type {
   ProjectSalesOrderLine,
 } from '../../_shared/types/projectSalesOrder.types';
 import { formatMoney, formatQty, formatUnitPrice, isZeroMoney } from './SalesOrderMoney';
+import {
+  SalesOrderLinesEditor,
+  type SalesOrderLinesEditing,
+} from './SalesOrderLinesEditor';
 
 export interface ExplodedLineGroup {
   key: string;
@@ -88,16 +92,69 @@ interface DisplayRow {
   sourcePoLineNo: number | null;
 }
 
+/**
+ * The section's own heading, shared by the read and the edit.
+ *
+ * Declared once and rendered by both branches below, so the two views cannot drift apart: the
+ * read view is what teaches somebody where the lines section is, and an edit that redrew its
+ * heading, its count or its "Show all lines" control would make every edit start with
+ * re-finding them.
+ */
+function LinesSectionHeader({
+  lineCount,
+  explodedSets,
+  focused,
+  onClearFocus,
+}: {
+  lineCount: number;
+  explodedSets: number;
+  focused: boolean;
+  onClearFocus?: () => void;
+}) {
+  return (
+    <CardHeader className="block space-y-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 break-words">
+          <p className="text-sm font-medium">Lines</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {`${lineCount.toLocaleString()} line${lineCount === 1 ? '' : 's'}${
+              explodedSets > 0
+                ? `, ${explodedSets} set${explodedSets === 1 ? '' : 's'} exploded`
+                : ''
+            }`}
+          </p>
+        </div>
+        {focused && (
+          <Button type="button" variant="outline" size="sm" onClick={onClearFocus}>
+            <X className="size-4" aria-hidden />
+            Show all lines
+          </Button>
+        )}
+      </div>
+    </CardHeader>
+  );
+}
+
 export function SalesOrderLinesTable({
   lines,
   findings = [],
   focusLineId = null,
   onClearFocus,
+  editing,
+  reference,
 }: {
   lines: ProjectSalesOrderLine[];
   findings?: ProjectSalesOrderFinding[];
   focusLineId?: string | null;
   onClearFocus?: () => void;
+  /**
+   * Set while the screen's edit session is open. The section keeps its Card, its heading and
+   * its counts; only the table inside it becomes a spreadsheet. See `SalesOrderLinesEditor`
+   * for why an editor cannot be the DataGrid.
+   */
+  editing?: SalesOrderLinesEditing | null;
+  /** The order's reference, for the editor's row labels. */
+  reference?: string;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -183,8 +240,10 @@ export function SalesOrderLinesTable({
         cell: ({ row }) => {
           const code = row.original.line.product_code || 'Not resolved';
           const flagged = findingsByLine.get(row.original.line.id) ?? [];
+          // `acknowledged_at` is the backend's own gate; the name is a display field that
+          // goes null when the acknowledger no longer resolves.
           const blocking = flagged.some(
-            (finding) => finding.severity === 'hard' && !finding.acknowledged_by_name,
+            (finding) => finding.severity === 'hard' && !finding.acknowledged_at,
           );
           return (
             <div className={`flex min-w-0 items-center gap-1 ${row.original.isCompanion ? 'pl-4' : ''}`}>
@@ -385,6 +444,45 @@ export function SalesOrderLinesTable({
     );
   };
 
+  /**
+   * The edit, in the same section as the read: same Card, same heading, same counts, and the
+   * columns in the same order (`SalesOrderLinesEditor` declares them, and a test asserts the
+   * two header lists agree). Only the table inside becomes a spreadsheet.
+   *
+   * Returned before the DataGrid rather than nested inside it, because the grid holds skeleton
+   * rows until the column-preferences query settles and would flash them over an editor that
+   * has nothing to fetch.
+   */
+  if (editing) {
+    return (
+      <div ref={containerRef}>
+        <Card>
+          <LinesSectionHeader
+            lineCount={lines.length}
+            explodedSets={explodedSets}
+            focused={Boolean(focusedGroupKey)}
+            onClearFocus={onClearFocus}
+          />
+          {/* `min-w-0` on BOTH boxes, and it is load-bearing rather than tidiness: the editor
+              scrolls a wide line table inside its own gutter, and a flex/grid ancestor that
+              forgets it lets the table's intrinsic width (about 1,700px) become the page's, so
+              the whole screen scrolls sideways at 375px. Measured: 1709px against a 375px
+              viewport before this was added, 375px after. */}
+          <CardTable className="min-w-0">
+            <div className="min-w-0 px-4 pb-4">
+              <SalesOrderLinesEditor
+                lines={lines}
+                findings={findings}
+                editing={editing}
+                reference={reference}
+              />
+            </div>
+          </CardTable>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div ref={containerRef}>
       <DataGrid
@@ -396,26 +494,12 @@ export function SalesOrderLinesTable({
         renderGroupHeader={renderSetHeader}
       >
         <Card>
-          <CardHeader className="block space-y-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0 break-words">
-                <p className="text-sm font-medium">Lines</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {`${lines.length.toLocaleString()} line${lines.length === 1 ? '' : 's'}${
-                    explodedSets > 0
-                      ? `, ${explodedSets} set${explodedSets === 1 ? '' : 's'} exploded`
-                      : ''
-                  }`}
-                </p>
-              </div>
-              {focusedGroupKey && (
-                <Button type="button" variant="outline" size="sm" onClick={onClearFocus}>
-                  <X className="size-4" aria-hidden />
-                  Show all lines
-                </Button>
-              )}
-            </div>
-          </CardHeader>
+          <LinesSectionHeader
+            lineCount={lines.length}
+            explodedSets={explodedSets}
+            focused={Boolean(focusedGroupKey)}
+            onClearFocus={onClearFocus}
+          />
 
           <CardTable>
             {lines.length === 0 ? (

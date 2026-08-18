@@ -1,0 +1,379 @@
+/**
+ * Amending one board row into a full composition (PLAN 13, the captain: "I should be able to
+ * amend the decision and quantity, like I can decide to reserve, or buy, or borrow").
+ *
+ * The board's amendment used to be ONE number - the Reserve - and everything the planner took
+ * off it was pushed into Buy by the caller. That is not a decision, it is half of one: a
+ * planner who can see a donor holding the stock cannot say "borrow it", and a planner whose
+ * line reserved nothing at its own location had no row to type into at all.
+ *
+ * So the editor composes the SAME four kinds the per-order sheet composes, on the same
+ * `DraftLine` shape and against the same `lineBalance` / `lineBlockers`, and these are the two
+ * conversions either side of it.
+ */
+import { describe, expect, it } from 'vitest';
+import {
+  amendDraftFrom,
+  amendSummary,
+  borrowCandidatesOf,
+  decisionFromAmendDraft,
+} from './boardAmend';
+import { buildBoard, type BoardDemandLine } from './__testsupport__/boardFixture';
+import type { BoardContribution } from '../types/fulfilmentPlanning.types';
+
+const TODAY = '2026-08-18';
+
+function line(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
+  return {
+    sales_order_id: 'so-1',
+    so_number: 'SO000001',
+    line_no: 1,
+    item_code: 'WESERP10B',
+    qty: '100',
+    required_date: '2026-09-04',
+    fulfilment_location: 'BRW-BB',
+    ...overrides,
+  };
+}
+
+function contributionOf(
+  freeStock: Record<string, string> = {},
+  overrides: Partial<BoardDemandLine> = {},
+): BoardContribution {
+  return buildBoard([line(overrides)], { today: TODAY, freeStock }).cells[0]
+    .contributions[0];
+}
+
+describe('amendDraftFrom: the proposal, as something a person can edit', () => {
+  it('opens on the engine’s own numbers rather than on an empty form', () => {
+    const draft = amendDraftFrom(contributionOf({ 'WESERP10B|BRW-BB': '40' }));
+
+    expect(draft.open_qty).toBe('100');
+    expect(draft.timely_spo_qty).toBe('0');
+    expect(draft.reserve).toEqual([
+      {
+        key: 'reserve-BRW-BB',
+        location: 'BRW-BB',
+        warehouse_id: 'wh-BRW-BB',
+        qty: '40',
+        reason: 'Free unclaimed stock at BRW-BB covers this much by the required date.',
+      },
+    ]);
+    expect(draft.borrow).toEqual([]);
+    expect(draft.buy_qty).toBe('60');
+  });
+
+  it('still offers the line’s OWN location when the proposal reserved nothing there', () => {
+    // The whole quantity is bought, so there is no Reserve source to read a warehouse off -
+    // and this is exactly the line a planner wants to move INTO a Reserve. A form with no row
+    // for it is a form that says "you may not".
+    const draft = amendDraftFrom(contributionOf({}));
+
+    expect(draft.reserve).toEqual([
+      {
+        key: 'reserve-BRW-BB',
+        location: 'BRW-BB',
+        warehouse_id: 'wh-BRW-BB',
+        qty: '0',
+        reason: '',
+      },
+    ]);
+    expect(draft.buy_qty).toBe('100');
+  });
+
+  it('keeps every warehouse the proposal drew on, each with its own id', () => {
+    // Own location plus the dealer pool: the pill reads one code, the payload needs two ids.
+    const base = contributionOf({});
+    const draft = amendDraftFrom({
+      ...base,
+      qty_proposed_reserve: '70',
+      qty_proposed_buy: '30',
+      sources: [
+        {
+          kind: 'reserve',
+          qty: '40',
+          location: 'BRW-BB',
+          warehouse_id: 'wh-own',
+          reason: 'Free stock at BRW-BB covers this much.',
+        },
+        {
+          kind: 'reserve',
+          qty: '30',
+          location: 'BRW',
+          warehouse_id: 'wh-pool',
+          reason: 'The dealer pool covers the rest.',
+        },
+        { kind: 'buy', qty: '30', location: null, reason: 'The residual is bought.' },
+      ],
+    });
+
+    expect(draft.reserve.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-own', '40'],
+      ['wh-pool', '30'],
+    ]);
+  });
+
+  it('states no reserve row at all for a line whose sales order names no warehouse', () => {
+    const draft = amendDraftFrom(contributionOf({}, { fulfilment_location: null }));
+    expect(draft.reserve).toEqual([]);
+  });
+
+  it('carries the server’s incoming cover through unedited', () => {
+    const base = contributionOf({});
+    const draft = amendDraftFrom({
+      ...base,
+      qty_proposed_incoming: '15',
+      qty_proposed_reserve: '0',
+      qty_proposed_buy: '85',
+    });
+    expect(draft.timely_spo_qty).toBe('15');
+  });
+
+  it('seeds the discontinued flag from the item facts the board stated', () => {
+    const base = contributionOf({});
+    const draft = amendDraftFrom({
+      ...base,
+      item_flags: {
+        dealer_hot_selling: false,
+        dealer_hot_selling_where: [],
+        discontinued: true,
+        retail_classification_available: true,
+      },
+    });
+    expect(draft.is_discontinued).toBe(true);
+    expect(draft.buy_reason).toBe('');
+  });
+
+  it('claims nothing about the lifecycle when the board stated no item facts', () => {
+    const base = contributionOf({});
+    expect(amendDraftFrom({ ...base, item_flags: null }).is_discontinued).toBe(false);
+  });
+});
+
+describe('amendDraftFrom on a covered line', () => {
+  const frozen = {
+    revision_no: 2,
+    timely_spo_qty: '0',
+    reserve: [],
+    borrow: [],
+    buy_qty: '100',
+    buy_reason: 'Last batch for the site, agreed with purchasing.',
+  };
+
+  it('seeds the discontinued flag and the buy reason the revision froze', () => {
+    const base = contributionOf({}, { decision: frozen });
+    const draft = amendDraftFrom({
+      ...base,
+      item_flags: {
+        dealer_hot_selling: false,
+        dealer_hot_selling_where: [],
+        discontinued: true,
+        retail_classification_available: true,
+      },
+    });
+    expect(draft.is_discontinued).toBe(true);
+    expect(draft.buy_reason).toBe('Last batch for the site, agreed with purchasing.');
+  });
+
+  it('opens with an empty buy reason when the revision carries none', () => {
+    const base = contributionOf({}, { decision: { ...frozen, buy_reason: undefined } });
+    expect(amendDraftFrom(base).buy_reason).toBe('');
+  });
+});
+
+describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
+  it('fills the sheet’s candidate shape from the board’s', () => {
+    const base = contributionOf({});
+    const candidates = borrowCandidatesOf({
+      ...base,
+      borrow_candidates: [
+        {
+          source: 'other_location',
+          warehouse_code: 'BRW-IB',
+          warehouse_id: 'wh-ib',
+          free_qty: '25',
+          qty_on_hand: '30',
+          so_qty: '10',
+          spo_qty: '5',
+          available_qty: '25',
+          qty_free: '25',
+          qty_committed: '0',
+          need_qty: '10',
+          available_after_need: '15',
+          recommended: true,
+          donor_impact: {
+            free_before: '25',
+            free_after_full_borrow: '0',
+            committed_qty: '0',
+          },
+        },
+      ],
+    });
+
+    // The donor's own position travels whole, including where the server ranked it: the
+    // dialog tabulates it, and a field dropped here is a field the screen cannot show.
+    expect(candidates).toEqual([
+      {
+        source: 'other_location',
+        warehouse_code: 'BRW-IB',
+        warehouse_id: 'wh-ib',
+        donor_project_ref: null,
+        donor_project_id: null,
+        free_qty: '25',
+        qty_on_hand: '30',
+        so_qty: '10',
+        spo_qty: '5',
+        available_qty: '25',
+        qty_free: '25',
+        qty_committed: '0',
+        need_qty: '10',
+        available_after_need: '15',
+        recommended: true,
+        donor_impact: {
+          free_before: '25',
+          free_after_full_borrow: '0',
+          committed_qty: '0',
+        },
+      },
+    ]);
+  });
+
+  it('states a donor position the server left out as absent, never as zero', () => {
+    const base = contributionOf({});
+
+    expect(
+      borrowCandidatesOf({
+        ...base,
+        borrow_candidates: [
+          {
+            source: 'other_location',
+            warehouse_code: 'BRW-IB',
+            warehouse_id: 'wh-ib',
+            free_qty: '25',
+          },
+        ],
+      })[0],
+    ).toMatchObject({
+      qty_on_hand: null,
+      so_qty: null,
+      spo_qty: null,
+      available_qty: null,
+      qty_free: null,
+      qty_committed: null,
+      need_qty: null,
+      available_after_need: null,
+      recommended: false,
+    });
+  });
+
+  it('leaves out a donor the server gave no warehouse id for, rather than inventing one', () => {
+    const base = contributionOf({});
+    expect(
+      borrowCandidatesOf({
+        ...base,
+        borrow_candidates: [
+          { source: 'other_location', warehouse_code: 'BRW-IB', free_qty: '25' },
+        ],
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe('decisionFromAmendDraft: what the draft carries away', () => {
+  it('carries the whole composition, not only the Reserve', () => {
+    const contribution = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+    const draft = amendDraftFrom(contribution);
+
+    const decision = decisionFromAmendDraft(
+      {
+        ...draft,
+        reserve: [{ ...draft.reserve[0], qty: '20' }],
+        borrow: [
+          {
+            key: 'borrow-1',
+            source: 'other_location',
+            warehouse_code: 'BRW-IB',
+            warehouse_id: 'wh-ib',
+            donor_project_ref: null,
+            donor_project_id: null,
+            qty: '10',
+            reason: 'The site next door can wait a week.',
+            donor_impact: {
+              free_before: '25',
+              free_after_full_borrow: '15',
+              committed_qty: '0',
+            },
+          },
+        ],
+        buy_qty: '70',
+      },
+      'Holding the rest for the late site.',
+    );
+
+    expect(decision).toEqual({
+      verdict: 'amended',
+      reserve_qty: '20',
+      timely_spo_qty: '0',
+      reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '20' }],
+      borrow: [
+        {
+          source: 'other_location',
+          warehouse_id: 'wh-ib',
+          warehouse_code: 'BRW-IB',
+          donor_project_ref: null,
+          donor_project_id: null,
+          qty: '10',
+          reason: 'The site next door can wait a week.',
+        },
+      ],
+      buy_qty: '70',
+      reason: 'Holding the rest for the late site.',
+    });
+  });
+
+  it('drops a component nobody put a quantity on: a zero decides nothing', () => {
+    const draft = amendDraftFrom(contributionOf({}));
+    const decision = decisionFromAmendDraft({ ...draft, buy_qty: '100' }, '');
+
+    expect(decision.reserve).toEqual([]);
+    expect(decision.borrow).toEqual([]);
+    expect(decision.reason).toBeUndefined();
+  });
+
+  it('carries the buy reason, trimmed, and leaves it off when nobody gave one', () => {
+    const draft = amendDraftFrom(contributionOf({}));
+    expect(
+      decisionFromAmendDraft({ ...draft, buy_reason: '  Last batch for the site.  ' }, '')
+        .buy_reason,
+    ).toBe('Last batch for the site.');
+    expect(decisionFromAmendDraft({ ...draft, buy_reason: '   ' }, '').buy_reason).toBeUndefined();
+  });
+});
+
+describe('amendSummary: what the decided row reads', () => {
+  it('states the composition rather than one number of it', () => {
+    expect(
+      amendSummary({
+        verdict: 'amended',
+        reserve: [{ warehouse_id: 'wh-own', location: 'BRW-BB', qty: '20' }],
+        borrow: [
+          {
+            source: 'other_location',
+            warehouse_id: 'wh-ib',
+            warehouse_code: 'BRW-IB',
+            qty: '10',
+            reason: 'Agreed with the other site.',
+          },
+        ],
+        buy_qty: '13',
+        timely_spo_qty: '0',
+      }),
+    ).toBe('Reserve 20 BRW-BB · Borrow 10 · Buy 13');
+  });
+
+  it('falls back to the one number a decision taken before the editor carries', () => {
+    expect(amendSummary({ verdict: 'amended', reserve_qty: '12' })).toBe(
+      'Amended to reserve 12',
+    );
+  });
+});

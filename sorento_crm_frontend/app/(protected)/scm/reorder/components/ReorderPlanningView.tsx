@@ -16,11 +16,13 @@ import {
   PlayCircle,
   RotateCcw,
 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { resetRunDecisions } from '../services/reorderRunService';
+import { decisionLockReason, planGrainLabel, isLegacyRun } from '../lib/planGrain';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PoWorklistView } from './PoWorklistView';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -152,6 +154,17 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const buildingFirstPlan = planInProgress && !!todayData && todayData.status !== 'completed';
 
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
+
+  /**
+   * Whether THIS run's per-location decisions are actionable (AC-F02 / AC-F09).
+   *
+   * Read off the run's own stamped grain, not off the current policy setting: an
+   * existing run keeps the grain it was created with, so changing the policy must
+   * not make an old run's decisions suddenly writable (AC-F10). Under Product
+   * policy the per-location view stays open as a read and drill view - it is never
+   * retired - and only its decision controls go quiet.
+   */
+  const locationLockReason = decisionLockReason(currentItem, 'location');
 
   const summary = currentItem?.summary ?? null;
   const { date: dateLabel, time: timeLabel } = labelsFor(currentItem?.started_at ?? null);
@@ -343,6 +356,18 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
           <h2 className="text-lg font-semibold">
             {isPastRun ? `Plan · ${dateLabel}, ${timeLabel}` : `Today's plan · ${dateLabel}`}
           </h2>
+          {/* The run's stamped Plan grain. A fact about the run, never a selector:
+              plan grain is admin policy and this run took it at creation (AC-F01). */}
+          {currentItem ? (
+            <Badge
+              variant={isLegacyRun(currentItem) ? 'secondary' : 'info'}
+              appearance="light"
+              size="sm"
+              data-testid="plan-grain-chip"
+            >
+              {planGrainLabel(currentItem)}
+            </Badge>
+          ) : null}
           <PlanMethodologySheet
             runContext={{
               dateLabel,
@@ -545,6 +570,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             onDecidedFilterChange={setDecidedFilter}
             onTotalsChange={setProgressTotals}
             secondaryActions={reportLinks}
+            decisionsReadOnly={!!locationLockReason}
+            readOnlyReason={locationLockReason}
           />
         </>
       )}

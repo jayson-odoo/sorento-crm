@@ -3,6 +3,12 @@ import { z } from 'zod';
 export const shipmentLineSchema = z.object({
   product_id: z.string().min(1, 'Product is required'),
   quantity_shipped: z.coerce.number().int().min(1, 'Quantity must be at least 1'),
+  /**
+   * Carried, never edited here. A mixed container's lines are the only record of which
+   * factory loaded what - zod strips a key it does not declare, so leaving this out would
+   * make every hand save of a mixed container an unattributed one.
+   */
+  supplier_id: z.string().optional(),
 });
 
 /**

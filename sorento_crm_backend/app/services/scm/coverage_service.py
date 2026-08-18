@@ -71,6 +71,7 @@ from app.services.scm.coverage_timeline import (
 )
 from app.services.scm.demand import (
     is_open_demand,
+    is_plan_demand_line,
     is_plan_demand_order,
     qty_of as demand_qty_of,
 )
@@ -357,6 +358,10 @@ class CoverageService:
         pids = [str(p) for p in product_ids]
         if not pids:
             return {}
+        # Imported here rather than at module scope: the projects module reads SCM
+        # services, and a top-level import both ways is a cycle.
+        from app.models.project_so import ProjectSalesOrderLine
+
         rows = (
             self.db.query(
                 SalesOrderLine.product_id,
@@ -370,20 +375,32 @@ class CoverageService:
                 Customer.customer_name,
                 Warehouse.warehouse_code,
                 Product.product_code,
+                # PLAN 3.5's last two ordering keys. The core line carries no human line
+                # number, so it comes from the reconciled Project line that names it; the
+                # core line's own id is the final stable key and is never displayed.
+                SalesOrderLine.id.label("core_line_id"),
+                ProjectSalesOrderLine.line_no.label("project_line_no"),
             )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
             .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
             .outerjoin(Product, Product.id == SalesOrderLine.product_id)
+            .outerjoin(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
             .filter(
                 SalesOrderLine.product_id.in_(pids),
                 SalesOrderLine.warehouse_id.in_(wh_ids),
                 SalesOrder.status == "open",
                 is_open_demand(),
-                # S13b: project demand exists only where the Order Inquiry created it. The
-                # timeline must eat the same demand as scm.committed_v or the chart
-                # contradicts the plan for reasons nobody can see.
+                # S13b: project demand exists only where the Order Inquiry created it,
+                # and a line CS has already confirmed reaches the plan as its Buy residual
+                # instead (13.4). The timeline must eat the same demand as
+                # scm.committed_v or the chart contradicts the plan for reasons nobody can
+                # see, so it applies BOTH halves of that rule.
                 is_plan_demand_order(),
+                is_plan_demand_line(),
             )
             .all()
         )
@@ -403,6 +420,7 @@ class CoverageService:
                 SalesOrder.status == "open",
                 is_open_demand(),
                 is_plan_demand_order(),
+                is_plan_demand_line(),
             )
             .all()
         )
@@ -435,6 +453,8 @@ class CoverageService:
                     ref=r.so_number or "",
                     label=r.customer_name or (r.demand_class or ""),
                     location=r.warehouse_code or "",
+                    line_no=r.project_line_no,
+                    line_id=str(r.core_line_id) if r.core_line_id else None,
                 )
             )
         unplaceable: dict[str, float] = {}
@@ -592,7 +612,14 @@ class CoverageService:
                 SPOAllocation.quantity_received.label("allocation_received"),
             )
             .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
-            .outerjoin(Supplier, Supplier.id == InboundShipment.supplier_id)
+            # Whose line this is, else whose container it is. A mixed container has no
+            # header supplier, so joining on the header alone left every line on it
+            # labelled with a blank factory.
+            .outerjoin(
+                Supplier,
+                Supplier.id
+                == func.coalesce(InboundShipmentLine.supplier_id, InboundShipment.supplier_id),
+            )
             .outerjoin(
                 SPOAllocation,
                 and_(

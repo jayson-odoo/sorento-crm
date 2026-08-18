@@ -19,6 +19,7 @@ from app.api.v1.scm import (
     plan_exceptions,
     outstanding_import,
     policies,
+    proforma_invoices,
     purchase_history,
     purchase_orders,
     reorder_levels,
@@ -45,4 +46,5 @@ router.include_router(order_summary.router)
 router.include_router(plan_exceptions.router)
 router.include_router(purchase_history.router)
 router.include_router(fulfilment.router)
+router.include_router(proforma_invoices.router)
 router.include_router(simulation.router)

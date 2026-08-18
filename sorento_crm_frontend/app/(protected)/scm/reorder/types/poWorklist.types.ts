@@ -17,12 +17,17 @@
  *     the "use the pool" answer, and it appears saying no PO is needed rather than
  *     being filtered out, so the worklist reconciles one-for-one against the
  *     decisions. A missing row is indistinguishable from a decision nobody made.
+ *   - **The worklist reads ONE grain**, the run's own stamped `decision_grain`
+ *     (AC-F09). Rows from the comparison grain are not merged in, because keying
+ *     both would buy the same requirement twice.
  *   - **A missing date is named, never filled in.** `need_by` comes from the frozen
  *     dated shortfall, and a product with no uncovered committed order genuinely has
  *     no need-by date - which is most of the book today. Sending today's date, or the
  *     place-by date computed from a guess, would manufacture urgency. Null, and the
  *     screen says so.
  */
+
+import type { PlanGrain } from '../lib/planGrain';
 
 /**
  * Whether the purchase order has been keyed into AutoCount (AC-E2.2).
@@ -44,6 +49,25 @@ export interface PoWorklistRow {
   product_code: string;
   product_name: string | null;
   uom: string | null;
+  /**
+   * The row's FROZEN `uom_decimal_places` (AC-F12), so a `kg` quantity is keyed at
+   * the precision it was decided at. Null during rollout, which resolves to 0.
+   */
+  uom_decimal_places?: number | null;
+  /**
+   * The location this row's decision belongs to, on a run decided at LOCATION
+   * grain. Null on a product-grain row, whose location split is
+   * `location_allocations` instead - the two are never both present, because a
+   * worklist reads only the run's own grain (AC-F09).
+   */
+  warehouse_code?: string | null;
+  warehouse_name?: string | null;
+  /**
+   * The chosen quantity split back to locations, on a run decided at PRODUCT grain
+   * (AC-F08). The quantities sum exactly to `chosen_qty`. Null on a location-grain
+   * row and on a legacy run.
+   */
+  location_allocations?: PoWorklistAllocation[] | null;
 
   /** What Mr Loo decided (AC-E2.1). Zero means use the pool: no PO is needed. */
   chosen_qty: number;
@@ -90,12 +114,31 @@ export interface PoWorklistRow {
   keyed_at: string | null;
 }
 
+/** One location's share of a product-grain decision. */
+export interface PoWorklistAllocation {
+  warehouse_code: string;
+  warehouse_name: string;
+  allocated_qty: number;
+}
+
 /** The worklist for one run. */
 export interface PoWorklist {
   /** Opaque run key. Never rendered. */
   run_id: string;
   /** ISO date the decisions were frozen against. Null when the run froze no rows. */
   as_of: string | null;
+  /**
+   * The run's stamped grain (AC-F09). The worklist reads ONLY this grain: a
+   * product-grain run lists product rows with their location split, a
+   * location-grain run lists the per-location recommendation decisions, and
+   * neither response gains a channel key. NULL on a legacy run.
+   */
+  decision_grain: PlanGrain | null;
+  /**
+   * `1` on a front-planning run, NULL on a legacy one. A legacy run is identified by
+   * THIS being null (`lib/planGrain.ts`), never inferred from the grain.
+   */
+  front_planning_contract_version: number | null;
   rows: PoWorklistRow[];
 }
 
@@ -103,11 +146,18 @@ export interface PoWorklist {
 export interface KeyedStatusInput {
   run_id: string;
   keyed_status: KeyedStatus;
+  /**
+   * Which location's order, on a run decided at LOCATION grain: each location there is
+   * its own purchase order, keyed on its own. Omitted on a product-grain row.
+   */
+  warehouse_code?: string;
 }
 
 /** What the server echoes back, so the row updates without a refetch. */
 export interface KeyedStatusResult {
   product_code: string;
+  /** Echoed on a location-grain write; null when the product row was keyed. */
+  warehouse_code?: string | null;
   keyed_status: KeyedStatus;
   keyed_by: string;
   keyed_at: string;

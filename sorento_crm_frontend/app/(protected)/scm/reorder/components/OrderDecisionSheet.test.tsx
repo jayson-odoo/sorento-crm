@@ -44,16 +44,21 @@ vi.mock('../hooks/useSummaryOrder', () => hooks);
 
 import { SUMMARY_ORDER_FIXTURES } from '../lib/summaryOrderMockStore';
 import { OrderDecisionSheet } from './OrderDecisionSheet';
-import type { OrderSummaryRow } from '../types/summaryOrder.types';
+import type { OrderSummaryDecisionResult, OrderSummaryRow } from '../types/summaryOrder.types';
 
 const OVER_SHORTFALL = SUMMARY_ORDER_FIXTURES.row('B2155-NL-BLUE'); // chosen 600, short 278
 const NO_DIMENSIONS = SUMMARY_ORDER_FIXTURES.row('SRTWT7408');
 const NEITHER = SUMMARY_ORDER_FIXTURES.row('SRTBS4832');
 const STALE_ROW = SUMMARY_ORDER_FIXTURES.row('SRTSK2210');
 const NO_SUPPLIER_ROW = SUMMARY_ORDER_FIXTURES.row('SRTAC0904');
+// AC-F12 pair: EA at 0 decimal places refuses 2.5; kg at 3 accepts it.
+const DP0_ROW = SUMMARY_ORDER_FIXTURES.row('SRTTB1120');
+const DP3_ROW = SUMMARY_ORDER_FIXTURES.row('SRTAD9002');
 
 const BLUE_SUPPLIERS = SUMMARY_ORDER_FIXTURES.suppliers('B2155-NL-BLUE');
 const STALE_SUPPLIERS = SUMMARY_ORDER_FIXTURES.suppliers('SRTSK2210');
+const DP0_SUPPLIERS = SUMMARY_ORDER_FIXTURES.suppliers('SRTTB1120');
+const DP3_SUPPLIERS = SUMMARY_ORDER_FIXTURES.suppliers('SRTAD9002');
 
 function state(over: Record<string, unknown> = {}) {
   return { data: undefined, isLoading: false, isError: false, error: null, refetch: vi.fn(), ...over };
@@ -64,6 +69,7 @@ const onSave = vi.fn();
 function renderSheet(
   hookState: ReturnType<typeof state>,
   row: OrderSummaryRow = OVER_SHORTFALL,
+  over: Partial<React.ComponentProps<typeof OrderDecisionSheet>> = {},
 ) {
   hooks.useOrderSummarySuppliers.mockReturnValue(hookState);
   render(
@@ -73,6 +79,7 @@ function renderSheet(
       onOpenChange={() => {}}
       onSave={onSave}
       isSaving={false}
+      {...over}
     />,
   );
   return hookState;
@@ -256,6 +263,37 @@ describe('OrderDecisionSheet - supplier is a choice, not a fixed value (AC-C2.5 
   });
 });
 
+describe('OrderDecisionSheet - the incoming cost is labelled with the SHIPMENT currency', () => {
+  function withIncoming(currency: string | null) {
+    const base = SUMMARY_ORDER_FIXTURES.suppliers('B2155-NL-BLUE');
+    return {
+      ...base,
+      candidates: base.candidates.map((c) =>
+        c.supplier_code === 'GDS'
+          ? { ...c, currency: 'MYR', last_incoming_cost: 250, last_incoming_currency: currency }
+          : c,
+      ),
+    };
+  }
+
+  it('uses the shipment line currency, not the purchase order one', () => {
+    // The packing-list ingest stores the supplier's own money (CNY) while the order sits in
+    // MYR, so borrowing the PO's code printed "RM 250.00" for a price of CNY 250.00.
+    renderSheet(state({ data: withIncoming('CNY') }));
+    const gds = screen.getByTestId('supplier-GDS');
+    expect(gds).toHaveTextContent('CNY 250.00');
+    expect(gds).not.toHaveTextContent('RM 250.00');
+  });
+
+  it('shows the figure unlabelled when the shipment states no currency', () => {
+    renderSheet(state({ data: withIncoming(null) }));
+    const gds = screen.getByTestId('supplier-GDS');
+    expect(gds).toHaveTextContent('250.00');
+    expect(gds).not.toHaveTextContent('RM 250.00');
+    expect(gds).not.toHaveTextContent('CNY 250.00');
+  });
+});
+
 describe('OrderDecisionSheet - a stale last PO date is flagged (AC-C2.6)', () => {
   it('flags the 2021 purchase as stale and says how long ago it was', () => {
     renderSheet(state({ data: STALE_SUPPLIERS }), STALE_ROW);
@@ -269,5 +307,131 @@ describe('OrderDecisionSheet - a stale last PO date is flagged (AC-C2.6)', () =>
     renderSheet(state({ data: BLUE_SUPPLIERS }));
     const gds = screen.getByTestId('supplier-GDS');
     expect(within(gds).queryByText('stale')).not.toBeInTheDocument();
+  });
+});
+
+describe('OrderDecisionSheet - the quantity obeys the row FROZEN uom_decimal_places (AC-F12)', () => {
+  it('a whole-unit (dp 0) field strips the decimal point as it is typed, so 2.5 lands as 25', () => {
+    // `sanitizeQtyInput` is the first line of defence: at dp 0 the separator can never
+    // even be typed, so a fractional quantity cannot be entered by accident.
+    renderSheet(state({ data: DP0_SUPPLIERS }), DP0_ROW);
+    fireEvent.change(screen.getByLabelText(/Order quantity/i), { target: { value: '2.5' } });
+    expect(screen.getByLabelText(/Order quantity/i)).toHaveValue('25');
+    expect(screen.getByTestId('precision-hint')).toHaveTextContent('Whole units only (EA)');
+  });
+
+  it('refuses an already-invalid precision it did not sanitize itself, and disables save', () => {
+    // The second line of defence: a row that ARRIVES with a value finer than its own
+    // frozen precision (e.g. `chosen_qty` set before the row's dp was known) is still
+    // caught, because the initial fill in `useEffect` reads `row.chosen_qty` directly
+    // and does not run it through `sanitizeQtyInput`.
+    const badRow: OrderSummaryRow = { ...DP0_ROW, chosen_qty: 2.5 };
+    renderSheet(state({ data: DP0_SUPPLIERS }), badRow);
+    expect(screen.getByLabelText(/Order quantity/i)).toHaveValue('2.5');
+    expect(screen.getByTestId('precision-error')).toHaveTextContent(
+      'Whole units only for EA. Remove the decimals.',
+    );
+    fireEvent.click(screen.getByTestId('supplier-ZQH'));
+    expect(screen.getByRole('button', { name: 'Record decision' })).toBeDisabled();
+  });
+
+  it('a measure unit at dp 3 accepts 2.75 as typed, with no digits stripped', () => {
+    renderSheet(state({ data: DP3_SUPPLIERS }), DP3_ROW);
+    fireEvent.change(screen.getByLabelText(/Order quantity/i), { target: { value: '2.75' } });
+    expect(screen.getByLabelText(/Order quantity/i)).toHaveValue('2.75');
+    expect(screen.queryByTestId('precision-error')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('supplier-IPM'));
+    expect(screen.getByRole('button', { name: 'Record decision' })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Record decision' }));
+    expect(onSave).toHaveBeenCalledWith({ chosen_qty: 2.75, supplier_code: 'IPM' });
+  });
+
+  it('caps typing at dp 3 rather than letting a 4th fractional digit through', () => {
+    renderSheet(state({ data: DP3_SUPPLIERS }), DP3_ROW);
+    fireEvent.change(screen.getByLabelText(/Order quantity/i), { target: { value: '2.7555' } });
+    expect(screen.getByLabelText(/Order quantity/i)).toHaveValue('2.755');
+    expect(screen.getByTestId('precision-hint')).toHaveTextContent('Up to 3 decimal places (kg)');
+  });
+});
+
+describe('OrderDecisionSheet - decision-lock-reason (AC-F09 / AC-F10)', () => {
+  it('renders the lock reason and disables save on a run decided at the other grain', () => {
+    renderSheet(state({ data: BLUE_SUPPLIERS }), OVER_SHORTFALL, {
+      lockReason: 'Decided at Location grain',
+    });
+    expect(screen.getByTestId('decision-lock-reason')).toHaveTextContent(
+      'Decided at Location grain',
+    );
+    fireEvent.click(screen.getByTestId('supplier-GDS'));
+    expect(screen.getByRole('button', { name: 'Record decision' })).toBeDisabled();
+  });
+
+  it('renders the legacy-run lock reason and disables the quantity field too', () => {
+    renderSheet(state({ data: BLUE_SUPPLIERS }), OVER_SHORTFALL, {
+      lockReason: 'Legacy run - read only. Create a new plan to decide.',
+    });
+    expect(screen.getByTestId('decision-lock-reason')).toHaveTextContent(
+      'Legacy run - read only. Create a new plan to decide.',
+    );
+    expect(screen.getByLabelText(/Order quantity/i)).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Record decision' })).toBeDisabled();
+  });
+
+  it('renders no lock reason and an actionable save when the run accepts the decision', () => {
+    renderSheet(state({ data: BLUE_SUPPLIERS }));
+    expect(screen.queryByTestId('decision-lock-reason')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Record decision' })).not.toBeDisabled();
+  });
+});
+
+describe('OrderDecisionSheet - split back to locations (AC-F08 / AC-F12)', () => {
+  const SAVED_RESULT: OrderSummaryDecisionResult = {
+    product_code: 'B2155-NL-BLUE',
+    chosen_qty: 600,
+    suggested_qty: 300,
+    chosen_supplier_code: 'GDS',
+    chosen_supplier_name: 'Guangdong Sanitary Ware',
+    decided_by: 'Loo Keng Hoe',
+    decided_at: '2026-08-03T10:14:00',
+    location_allocations: [
+      { warehouse_code: 'BRW', warehouse_name: 'Bandar Baru Warehouse', allocated_qty: 400 },
+      { warehouse_code: 'JB', warehouse_name: 'Johor Bahru Branch', allocated_qty: 200 },
+    ],
+  };
+
+  it('renders the returned location split the moment a decision is recorded', () => {
+    renderSheet(state({ data: BLUE_SUPPLIERS }), OVER_SHORTFALL, { saved: SAVED_RESULT });
+    expect(screen.getByText('Split back to locations')).toBeInTheDocument();
+    expect(screen.getByTestId('split-BRW')).toHaveTextContent('BRW');
+    expect(screen.getByTestId('split-BRW')).toHaveTextContent('400');
+    expect(screen.getByTestId('split-JB')).toHaveTextContent('200');
+    // The quantities sum EXACTLY to the chosen total.
+    expect(screen.getByText('Total').closest('div')).toHaveTextContent('600');
+  });
+
+  it('closes the field and swaps the footer to Close / Recorded once saved', () => {
+    renderSheet(state({ data: BLUE_SUPPLIERS }), OVER_SHORTFALL, { saved: SAVED_RESULT });
+    expect(screen.getByLabelText(/Order quantity/i)).toBeDisabled();
+    // "Close" is ambiguous with the sheet's own sr-only dismiss button, so match the
+    // footer's visible-text one specifically.
+    expect(screen.getByText('Close', { selector: 'button' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Recorded' })).toBeDisabled();
+  });
+
+  it('states there is nothing to split when the plan holds no location facts for the product', () => {
+    renderSheet(state({ data: BLUE_SUPPLIERS }), OVER_SHORTFALL, {
+      saved: { ...SAVED_RESULT, location_allocations: [] },
+    });
+    expect(
+      screen.getByText(
+        'This plan holds no location facts for the product, so there is nothing to split the quantity across.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('renders no split section before a decision has been recorded', () => {
+    renderSheet(state({ data: BLUE_SUPPLIERS }));
+    expect(screen.queryByText('Split back to locations')).not.toBeInTheDocument();
   });
 });

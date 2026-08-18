@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm.customer_label import CUSTOMER_JOIN_ON, CUSTOMER_LABEL_SQL
-from app.services.scm.demand import PLAN_DEMAND_ORDER_SQL
+from app.services.scm.demand import PLAN_DEMAND_LINE_SQL, PLAN_DEMAND_ORDER_SQL
 
 # One screen's worth. A pool with thousands of lines is a reading problem, not a listing
 # problem, and the total is reported separately so the cap is never silent.
@@ -140,7 +140,10 @@ def demand_for_recommendation(db: Session, rec_id: str,
     qty = ("GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
            "         - COALESCE(sol.qty_delivered, 0), 0)")
     where_loc = "sol.warehouse_id::text = ANY(:members)"
-    plan_demand = PLAN_DEMAND_ORDER_SQL
+    # Both halves of the rule: which orders the sheet speaks for, and which of their lines
+    # CS has already decided (`demand.py`). Applying only the first would show a buyer the
+    # sheet quantity of a line whose confirmed Buy is already in the plan beside it.
+    plan_demand = f"{PLAN_DEMAND_ORDER_SQL} AND {PLAN_DEMAND_LINE_SQL}"
     if include_unlocated:
         where_loc = f"({where_loc} OR sol.warehouse_id IS NULL)"
 

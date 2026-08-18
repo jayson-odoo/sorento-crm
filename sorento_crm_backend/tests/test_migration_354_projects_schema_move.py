@@ -37,6 +37,11 @@ from tests._pg_fixture import blank_schema_engine, blank_session, unique_code
 
 SORENTO = "00000000-0000-0000-0000-000000000001"
 
+# Tables that declare the `projects` schema but were CREATED after the move, so revision
+# 354 has never heard of them: they have no pre-move name, no derived-index rename, and
+# both of 354's directions leave them exactly where their own migration put them.
+BORN_AFTER_THE_MOVE = frozenset({"so_supply_decisions"})
+
 MIGRATION = (
     Path(__file__).resolve().parents[1]
     / "alembic"
@@ -198,7 +203,7 @@ def _derived_index_map_from_metadata() -> set[tuple[str, str]]:
     old_by_new = {new: old for old, new in _module().TABLES}
     pairs: set[tuple[str, str]] = set()
     for table in Base.metadata.tables.values():
-        if table.schema != "projects":
+        if table.schema != "projects" or table.name in BORN_AFTER_THE_MOVE:
             continue
         old = old_by_new[table.name]
         for index in table.indexes:
@@ -229,7 +234,7 @@ def test_the_mapping_covers_exactly_the_models_that_declare_the_projects_schema(
         table.name
         for table in Base.metadata.tables.values()
         if table.schema == "projects"
-    }
+    } - BORN_AFTER_THE_MOVE
 
     assert len(module.TABLES) == 47
     assert {new for _, new in module.TABLES} == declared
@@ -278,10 +283,17 @@ def test_upgrade_moves_and_renames_when_the_tables_are_in_the_default_schema(db)
     _run(db, "downgrade")
 
     after_down = _tables(db)
-    assert after_down == {f"{default}.{old}" for old, _ in module.TABLES}, (
+    # A table born after the move stays in the projects schema through 354's downgrade:
+    # the revision's TABLES list has never heard of it.
+    stayed = {f"{target}.{name}" for name in BORN_AFTER_THE_MOVE}
+    assert after_down == {f"{default}.{old}" for old, _ in module.TABLES} | stayed, (
         "downgrade did not produce the pre-move schema"
     )
-    assert not [name for name in after_down if name.startswith(f"{target}.")]
+    assert not [
+        name
+        for name in after_down
+        if name.startswith(f"{target}.") and name not in stayed
+    ]
 
     _run(db, "upgrade")
 

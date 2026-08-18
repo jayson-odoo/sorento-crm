@@ -30,6 +30,8 @@ vi.mock('next/navigation', () => ({
 
 const getDeliveryScheduleVersion = vi.fn();
 vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
+  DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH:
+    '/api/v1/project-sales/delivery-schedule-versions/neighbours',
   listDeliverySchedules: vi.fn(),
   listDeliveryScheduleVersions: vi.fn(),
   uploadDeliverySchedule: vi.fn(),

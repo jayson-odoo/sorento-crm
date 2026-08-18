@@ -31,7 +31,11 @@ export function SalesOrderFindingsSection({
   const warn = findings.filter((finding) => finding.severity === 'warn');
   const info = findings.filter((finding) => finding.severity === 'info');
 
-  const blocking = hard.filter((finding) => !finding.acknowledged_by_name);
+  // Acknowledged is `acknowledged_at`, which is what the backend's own gate reads. The
+  // name beside it is a display field and is absent whenever the acknowledger no longer
+  // resolves, which would silently turn a cleared finding back into a blocking one.
+  const blocking = hard.filter((finding) => !finding.acknowledged_at);
+  const unreasonedWarnings = warn.filter((finding) => !finding.acknowledged_at);
 
   return (
     <div className="space-y-4">
@@ -76,9 +80,9 @@ export function SalesOrderFindingsSection({
             <TriangleAlert className="size-4 shrink-0 text-muted-foreground" aria-hidden />
             <span className="break-words">Warnings</span>
           </CardTitle>
-          {warn.filter((finding) => !finding.acknowledged_by_name).length > 0 && (
+          {unreasonedWarnings.length > 0 && (
             <Badge variant="warning" appearance="light">
-              {`${warn.filter((finding) => !finding.acknowledged_by_name).length} without a reason`}
+              {`${unreasonedWarnings.length} without a reason`}
             </Badge>
           )}
         </CardHeader>
@@ -145,7 +149,8 @@ function FindingRow({
   onAcknowledge: (finding: ProjectSalesOrderFinding) => void;
   onFocusLine: (lineId: string) => void;
 }) {
-  const acknowledged = Boolean(finding.acknowledged_by_name);
+  // Same keying as the section above: the timestamp decides, the name only labels.
+  const acknowledged = Boolean(finding.acknowledged_at);
   const border =
     tone === 'hard' && !acknowledged
       ? 'border-destructive/50 bg-destructive/5'
@@ -173,7 +178,9 @@ function FindingRow({
             {acknowledged && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <CheckCircle2 className="size-3.5" aria-hidden />
-                {`Cleared by ${finding.acknowledged_by_name}`}
+                {finding.acknowledged_by_name
+                  ? `Cleared by ${finding.acknowledged_by_name}`
+                  : 'Acknowledged'}
               </span>
             )}
           </div>

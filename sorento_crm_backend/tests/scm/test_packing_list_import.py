@@ -13,6 +13,7 @@ from io import BytesIO
 
 import pytest
 
+from app.models.import_alias import ImportFieldAlias
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.error_handler import AppException
@@ -204,9 +205,9 @@ def test_validate_names_the_codes_it_could_not_match():
 
 def test_a_file_that_is_not_a_packing_list_is_refused_with_the_reason():
     with pg_session() as db:
-        World(db)
+        w = World(db)
         with pytest.raises(AppException) as e:
-            svc.apply(db, workbook([["a", "b"], ["c", "d"]]))
+            svc.apply(db, workbook([["a", "b"], ["c", "d"]]), supplier_id=str(w.supplier.id))
         assert e.value.status_code == 422
 
 
@@ -249,17 +250,18 @@ def test_a_code_another_company_also_uses_resolves_to_ours():
     allocate, because that product has no purchase order of ours to draw down - a failure that
     looks like missing data rather than the wrong row.
     """
-    from sqlalchemy import text
+    from app.models.company import Company
 
     with pg_session() as db:
         w = World(db)
         mine = w.product("A")
-        other_company = db.execute(
-            text("SELECT id FROM companies WHERE id <> :sorento LIMIT 1"),
-            {"sorento": "00000000-0000-0000-0000-000000000001"},
-        ).scalar()
-        if other_company is None:
-            pytest.skip("this database has only one company, so there is nothing to confuse")
+        other_company = Company(
+            id=str(uuid.uuid4()),
+            name=f"{MARKER} other company",
+            code=f"{MARKER}-{uuid.uuid4().hex[:6]}",
+        )
+        db.add(other_company)
+        db.flush()
 
         # Stamped explicitly: the auto-stamp fills Sorento when company_id is None, which
         # would collide with `mine` on (company_id, product_code) before the point is made.
@@ -267,7 +269,7 @@ def test_a_code_another_company_also_uses_resolves_to_ours():
             id=str(uuid.uuid4()), product_code=mine.product_code,
             product_name=f"{MARKER} twin", category_id=w.cat.id, base_uom_id=w.uom.id,
             list_price=0, is_active=True, is_discontinued=False,
-            company_id=str(other_company),
+            company_id=str(other_company.id),
         )
         db.add(twin)
         db.flush()
@@ -280,3 +282,162 @@ def test_a_code_another_company_also_uses_resolves_to_ours():
             .one()
         )
         assert str(line.product_id) == str(mine.id)
+
+
+# --------------------------------------------------------------------------------- #
+# G3c / AC-P5 - the pre-loading list stops dropping its prices.
+# --------------------------------------------------------------------------------- #
+
+
+def _priced_file(w: World, container: str, items: list[tuple[str, float, float]]) -> bytes:
+    """Like `_file`, but with an RMB unit-price column, priced per line."""
+    rows: list[list] = []
+    if container:
+        rows.append([f"货柜号：{container}"])
+    rows.append(HEADER + ["RMB"])
+    rows.extend([w.code(k), "座厕", qty, 2, 0.21, price] for k, qty, price in items)
+    rows.append([])
+    return workbook(rows)
+
+
+def test_the_shipment_line_carries_the_unit_price_and_currency_the_file_stated():
+    # AC-P5.1. "RMB" in the header states CNY; the price is no longer parsed and dropped.
+    with pg_session() as db:
+        w = World(db)
+        data = _priced_file(w, f"{MARKER}U1", [("A", 10, 25.5)])
+
+        svc.apply(db, data, supplier_id=str(w.supplier.id))
+
+        line = (
+            db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
+            .one()
+        )
+        assert float(line.unit_cost) == 25.5
+        assert line.currency == "CNY"
+
+
+def test_a_priced_file_with_no_resolvable_currency_is_refused():
+    # AC-P5.2. A price with no currency anywhere is refused, not stored guessing one.
+    # The real packing-list aliases (RMB / 金额（rmb）) always hint CNY, so a NEUTRAL
+    # unit-price header is seeded here, scoped to this test, to reproduce the file that
+    # states a price under a column name that names no currency at all.
+    with pg_session() as db:
+        w = World(db)
+        alias = f"{MARKER}COST"
+        db.add(ImportFieldAlias(doc_type="packing_list", field="unit_price", alias=alias))
+        db.flush()
+
+        rows = [HEADER + [alias], [w.code("A"), "座厕", 10, 2, 0.21, 25.5]]
+        data = workbook(rows)
+
+        result = svc.validate(db, data)
+        assert result["valid"] is False
+        assert any("curren" in e.lower() for e in result["errors"])
+
+        with pytest.raises(AppException) as exc:
+            svc.apply(db, data, supplier_id=str(w.supplier.id))
+        assert exc.value.status_code == 422
+        assert _shipments(db, w) == []
+
+
+def test_an_unpriced_file_is_unaffected():
+    # AC-P5.2, second half: no price anywhere means no currency is demanded, and the
+    # existing (pre-price) behaviour of this whole file keeps passing unchanged.
+    with pg_session() as db:
+        w = World(db)
+        data = _file(w, [(f"{MARKER}U1", [("A", 10)])])
+
+        svc.apply(db, data, supplier_id=str(w.supplier.id))
+
+        line = (
+            db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
+            .one()
+        )
+        assert line.unit_cost is None
+        assert line.currency is None
+
+
+def test_a_blank_bill_of_lading_label_does_not_swallow_the_next_label():
+    # AC-P2.4, pinned at the packing-list channel too: the shared `_labelled` helper's
+    # fix lives once and must not read a candidate that itself resolves to a KNOWN field
+    # (here "货柜号：..." after a blank "提单号：") as if it were a value.
+    with pg_session() as db:
+        w = World(db)
+        rows = [
+            ["提单号：", None, f"货柜号：{MARKER}U9"],
+            HEADER,
+            [w.code("A"), "座厕", 5, 1, 0.2],
+        ]
+
+        svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
+
+        shipment = _shipments(db, w)[0]
+        assert shipment.bill_of_lading_number is None
+        assert shipment.shipping_container_number == f"{MARKER}U9"
+
+
+def test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average():
+    """The same product twice in one block is merged into one shipment line (the row is
+    one per product), and the merged line used to keep whichever price came FIRST.
+
+    That silently values the whole quantity at one of the two prices - here 100 units would
+    have been costed at 10.00 instead of 12.00 - and the difference is invisible afterwards
+    because the two lines no longer exist separately. The honest merged figure is the
+    quantity-weighted average, which is what the container actually cost per unit.
+    """
+    with pg_session() as db:
+        w = World(db)
+        rows = [
+            [f"货柜号：{MARKER}U5"],
+            HEADER + ["RMB"],
+            [w.code("A"), "座厕", 40, 2, 0.21, 10],
+            [w.code("A"), "座厕", 60, 2, 0.21, 13.5],
+        ]
+
+        svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
+
+        line = (
+            db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
+            .one()
+        )
+        assert float(line.quantity_shipped) == 100
+        # (40 x 10 + 60 x 13.5) / 100
+        assert float(line.unit_cost) == pytest.approx(12.1)
+        assert line.currency == "CNY"
+
+
+def test_a_supplier_id_that_is_not_an_id_is_a_422_not_a_500():
+    """The packing-list channel takes the supplier on the form, and the currency resolution it
+    now runs consults that supplier's price list - a UUID column comparison. A typed value that
+    is not an id reached it raw and came back as a 500 with the session aborted, while the same
+    value on the proforma channel was a 422 naming the field. Both channels answer the same way
+    now, on all three entry points, because the guard is one function.
+    """
+    with pg_session() as db:
+        w = World(db)
+        data = _file(w, [(f"{MARKER}U9", [("A", 4)])])
+
+        for call in (
+            lambda: svc.preview(db, data, supplier_id="not-a-uuid"),
+            lambda: svc.validate(db, data, supplier_id="not-a-uuid"),
+            lambda: svc.apply(db, data, supplier_id="not-a-uuid"),
+        ):
+            with pytest.raises(AppException) as exc:
+                call()
+            assert exc.value.status_code == 422
+            assert exc.value.detail["detail"] == "supplier_id"
+
+
+def test_a_supplier_we_do_not_hold_is_refused_before_anything_is_read():
+    with pg_session() as db:
+        w = World(db)
+        data = _file(w, [(f"{MARKER}UA", [("A", 4)])])
+
+        with pytest.raises(AppException) as exc:
+            svc.apply(db, data, supplier_id=str(uuid.uuid4()))
+
+        assert exc.value.status_code == 422
+        assert not _shipments(db, w)

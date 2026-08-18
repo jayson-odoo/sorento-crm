@@ -14,8 +14,19 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -24,6 +35,7 @@ from app.dependencies import require_permission
 from app.models.scm import ContainerSize, LoadingPlan
 from app.services.scm import (
     allocation_suggestion_service,
+    consolidated_packing_list,
     loading_plan_service,
     packing_list_service,
     supplier_inventory_service,
@@ -456,20 +468,37 @@ class AllocationApproval(BaseModel):
 @router.post("/packing-lists/preview")
 async def preview_packing_list(
     file: UploadFile = File(..., description="The pre-load list or packing list"),
+    supplier_id: Optional[str] = Form(None),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Every container block the file holds, and what each would create. Writes nothing."""
+    """Every container block the file holds, and what each would create. Writes nothing.
+
+    Takes the supplier and the currency the apply will take, so the preview can say which
+    money the prices are in before anything is written rather than after.
+    """
     return packing_list_service.preview(
-        db, await read_upload(file), source_ref=file.filename
+        db,
+        await read_upload(file),
+        source_ref=file.filename,
+        supplier_id=supplier_id,
+        currency=currency,
     )
 
 
 @router.post("/packing-lists/apply")
 async def apply_packing_list(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
-    supplier_id: Optional[str] = Form(None),
+    supplier_id: Optional[str] = Form(
+        None, description="Whose packing list this is. Required unless validate_only."
+    ),
     shipment_date: Optional[str] = Form(None),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
     validate_only: bool = Query(
         False,
         description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
@@ -477,10 +506,28 @@ async def apply_packing_list(
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """One inbound shipment per container block. Re-uploading the same file updates in place."""
+    """One inbound shipment per container block. Re-uploading the same file updates in place.
+
+    The supplier is required on the writing path and refused before the file is even read.
+    A packing list arrives from one factory, and an upload that will not say which one
+    cannot be told apart from the container's whole contents - so it would replace the
+    other factories' lines, which is the data loss the per-supplier line exists to end.
+    `validate_only` writes nothing and may therefore omit it.
+    """
+    supplier = (supplier_id or "").strip()
+    if not validate_only and not supplier:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "supplier_id is required: a packing list is uploaded as one supplier so it "
+                "can never replace another supplier's lines"
+            ),
+        )
     data = await read_upload(file)
     if validate_only:
-        return packing_list_service.validate(db, data, source_ref=file.filename)
+        return packing_list_service.validate(
+            db, data, source_ref=file.filename, supplier_id=supplier_id, currency=currency
+        )
 
     parsed_date = None
     if shipment_date:
@@ -495,8 +542,9 @@ async def apply_packing_list(
     out = packing_list_service.apply(
         db,
         data,
-        supplier_id=supplier_id,
+        supplier_id=supplier,
         shipment_date=parsed_date,
+        currency=currency,
         source_ref=file.filename,
         actor_id=current_user.get("id"),
     )
@@ -516,12 +564,81 @@ def list_inbound_shipments(
     The screen had only what the last upload returned, so a refresh emptied it and the work
     looked lost. A container is read once and decided later, often not in the same sitting.
     """
-    from app.models.procurement import InboundShipment, InboundShipmentLine
+    from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
+    from app.services.procurement_service import shipment_supplier_predicate
 
     q = db.query(InboundShipment)
     if supplier_id:
-        q = q.filter(InboundShipment.supplier_id == supplier_id)
+        # Header OR any line, shared with every other supplier filter: a container that
+        # carries two factories has a NULL header supplier, so filtering on the header
+        # alone hid the mixed containers from both of the suppliers actually on them.
+        q = q.filter(shipment_supplier_predicate(supplier_id))
     rows = q.order_by(InboundShipment.created_at.desc()).limit(limit).all()
+
+    shipment_ids = [r.id for r in rows]
+    # Who is ON each container, in one query rather than one per row.
+    suppliers_by_shipment: dict[str, list[dict]] = {}
+    if shipment_ids:
+        pairs = (
+            db.query(
+                InboundShipmentLine.shipment_id,
+                Supplier.id,
+                Supplier.supplier_code,
+                Supplier.supplier_name,
+            )
+            .join(Supplier, Supplier.id == InboundShipmentLine.supplier_id)
+            .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
+            .distinct()
+            .order_by(Supplier.supplier_name)
+            .all()
+        )
+        for ship_id, sup_id, code, name in pairs:
+            suppliers_by_shipment.setdefault(str(ship_id), []).append(
+                {
+                    "supplier_id": str(sup_id),
+                    "supplier_code": code,
+                    "supplier_name": name,
+                }
+            )
+        # A container read before the per-supplier line existed - or read with no lines at
+        # all - has its factory on the header and nowhere else. Reading the lines alone
+        # printed no supplier under those containers, which says "we do not know" about a
+        # container we do know.
+        header_only = {
+            str(r.supplier_id)
+            for r in rows
+            if r.supplier_id is not None and not suppliers_by_shipment.get(str(r.id))
+        }
+        if header_only:
+            header_suppliers = {
+                str(s.id): {
+                    "supplier_id": str(s.id),
+                    "supplier_code": s.supplier_code,
+                    "supplier_name": s.supplier_name,
+                }
+                for s in db.query(Supplier).filter(Supplier.id.in_(header_only)).all()
+            }
+            for r in rows:
+                key = str(r.id)
+                if suppliers_by_shipment.get(key):
+                    continue
+                entry = (
+                    header_suppliers.get(str(r.supplier_id))
+                    if r.supplier_id is not None
+                    else None
+                )
+                if entry is not None:
+                    suppliers_by_shipment[key] = [entry]
+    line_counts: dict[str, int] = {}
+    if shipment_ids:
+        for ship_id, count in (
+            db.query(InboundShipmentLine.shipment_id, func.count(InboundShipmentLine.id))
+            .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
+            .group_by(InboundShipmentLine.shipment_id)
+            .all()
+        ):
+            line_counts[str(ship_id)] = int(count)
+
     return {
         "data": [
             {
@@ -530,9 +647,8 @@ def list_inbound_shipments(
                 "container_no": r.shipping_container_number,
                 "bl_no": r.bill_of_lading_number,
                 "status": r.shipment_status,
-                "lines": db.query(InboundShipmentLine)
-                .filter(InboundShipmentLine.shipment_id == r.id)
-                .count(),
+                "lines": line_counts.get(str(r.id), 0),
+                "suppliers": suppliers_by_shipment.get(str(r.id), []),
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in rows
@@ -549,6 +665,32 @@ def allocation_suggestion(
 ):
     """Per shipment line, the proposed Supply PO line and location, with its alternatives."""
     return allocation_suggestion_service.suggest(db, shipment_id)
+
+
+@router.get("/inbound-shipments/{shipment_id}/packing-list")
+def consolidated_packing_list_for_shipment(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The Sorento packing list: every factory on this container, subtotalled and split."""
+    return consolidated_packing_list.build(db, shipment_id)
+
+
+@router.get("/inbound-shipments/{shipment_id}/packing-list/export")
+def export_consolidated_packing_list(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The same list as a workbook, named after the container rather than after its id."""
+    payload = consolidated_packing_list.build(db, shipment_id)
+    filename = consolidated_packing_list.export_filename(payload)
+    return Response(
+        content=consolidated_packing_list.to_xlsx(payload),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/inbound-shipments/{shipment_id}/allocations")

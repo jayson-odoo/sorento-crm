@@ -388,17 +388,39 @@ def _apportion(total: int, weights: list[float]) -> list[int]:
     return floors
 
 
-def allocate(buy_qty: float, warehouses: list[dict]) -> dict[str, int]:
-    """Split a network buy across warehouses: each warehouse's deficit first, then the
-    rounding surplus velocity-proportional (by demand). When buy < Σdeficit the whole
-    buy is apportioned proportional to deficit. Result sums EXACTLY to round(buy_qty).
+def allocate(buy_qty: float, warehouses: list[dict],
+             decimal_places: int = 0) -> dict[str, float]:
+    """Split a buy across warehouses: each warehouse's deficit first, then the rounding
+    surplus velocity-proportional (by demand). When buy < Σdeficit the whole buy is
+    apportioned proportional to deficit. The apportionment is exact: no minor unit of the
+    total is created or lost.
 
     ``warehouses``: [{warehouse_id, deficit, demand_rate}].
+
+    ``decimal_places`` is the UOM divisibility the split has to respect (front planning
+    5.4 / AC-F12). The allocator works in INTEGER MINOR UNITS of that precision: the total
+    and the deficits are scaled by ``10**decimal_places``, only the total is rounded to an
+    integer, and the same largest-remainder apportionment then runs unchanged before the
+    children are converted back to decimals. Demand-rate weights are left unconverted,
+    because they only ever decide proportions, so branch selection and the surplus split
+    are identical at any precision.
+
+    That is what keeps the children summing to the parent: 2.75 kg at three places is 2750
+    thousandths, and 2750 apportioned as integers cannot lose a unit to rounding the way a
+    proportional rescale of 2.75 would. The default 0 is today's behaviour byte for byte -
+    whole units in, whole units out.
+
+    The exactness is in the MINOR UNITS, and therefore in the `Numeric` the caller stores:
+    the children are returned as `parts[i] / scale`, so at a non-zero precision a Python
+    float sum of them can land an ulp off `buy_qty` (0.1 + 0.2 is not 0.3 in binary) while
+    the persisted decimal sum is exact. Reconcile a split against the stored quantities, or
+    compare in minor units - never by summing the returned floats and testing equality.
     """
-    total = int(round(float(buy_qty)))
+    scale = 10 ** max(int(decimal_places or 0), 0)
+    total = int(round(float(buy_qty) * scale))
     if total <= 0 or not warehouses:
-        return {w["warehouse_id"]: 0 for w in warehouses}
-    deficits = [max(float(w.get("deficit") or 0.0), 0.0) for w in warehouses]
+        return {w["warehouse_id"]: 0 if scale == 1 else 0.0 for w in warehouses}
+    deficits = [max(float(w.get("deficit") or 0.0), 0.0) * scale for w in warehouses]
     demands = [float(w.get("demand_rate") or 0.0) for w in warehouses]
     total_deficit = sum(deficits)
     if total <= total_deficit:
@@ -425,7 +447,10 @@ def allocate(buy_qty: float, warehouses: list[dict]) -> dict[str, int]:
             extra = {i: even for i in short}
         weights = [deficits[i] + extra.get(i, 0.0) for i in range(len(warehouses))]
     parts = _apportion(total, weights)
-    return {warehouses[i]["warehouse_id"]: parts[i] for i in range(len(warehouses))}
+    if scale == 1:
+        return {warehouses[i]["warehouse_id"]: parts[i] for i in range(len(warehouses))}
+    return {warehouses[i]["warehouse_id"]: parts[i] / scale
+            for i in range(len(warehouses))}
 
 
 def aggregate_network(warehouses: list[dict], *, lead_time_days: float,

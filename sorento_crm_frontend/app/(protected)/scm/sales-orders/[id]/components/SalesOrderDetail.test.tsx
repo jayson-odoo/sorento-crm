@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 
 class ResizeObserverStub {
   observe() {}
@@ -51,7 +51,7 @@ vi.mock('../../../hooks/useSalesOrders', () => ({
 }));
 
 import { SalesOrderDetail } from './SalesOrderDetail';
-import type { SalesOrder } from '../../../types/scm.types';
+import type { SalesOrder, SalesOrderLine } from '../../../types/scm.types';
 
 function so(over: Partial<SalesOrder> = {}): SalesOrder {
   return {
@@ -235,6 +235,84 @@ describe('SalesOrderDetail - delivery panel', () => {
     });
     renderDetail();
     expect(screen.getByText('delivered in full')).toBeInTheDocument();
+  });
+});
+
+describe('SalesOrderDetail - sorting the lines', () => {
+  /**
+   * A header that carries a sort arrow and does nothing is worse than a header that offers
+   * no sort at all: the user reads the reordered arrow as a reordered table and trusts the
+   * top row. These lines arrive in an order that is ascending in NO column, so a grid that
+   * quietly ignores the click cannot pass by accident.
+   */
+  const SORT_LINES: SalesOrderLine[] = [
+    {
+      id: 'l-b', sku: 'SKU-B', product_name: 'Beta basin', qty_ordered: 320,
+      qty_delivered: 300, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'open',
+      required_date: '2026-09-01',
+    },
+    {
+      id: 'l-c', sku: 'SKU-C', product_name: 'Gamma tap', qty_ordered: 45,
+      qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'open',
+      required_date: '2026-07-04',
+    },
+    {
+      id: 'l-a', sku: 'SKU-A', product_name: 'Alpha pan', qty_ordered: 1200,
+      qty_delivered: 1100, uom: 'PCS', warehouse_code: 'KL-01', line_status: 'open',
+      required_date: '2026-08-15',
+    },
+  ];
+
+  const skuOrder = () =>
+    screen
+      .getAllByRole('row')
+      .map((row) => row.textContent ?? '')
+      .filter((text) => text.includes('SKU-'))
+      .map((text) => text.match(/SKU-[A-Z]/)?.[0] ?? '');
+
+  beforeEach(() => {
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: SORT_LINES, line_count: 3, open_line_count: 3 }),
+      isLoading: false,
+      isError: false,
+    });
+  });
+
+  it('orders by quantity, ascending then descending, when the header is clicked', () => {
+    renderDetail();
+    expect(skuOrder()).toEqual(['SKU-B', 'SKU-C', 'SKU-A']);
+
+    // 45 < 320 < 1200 - a numeric order, not the alphabetical one a formatted string gives.
+    fireEvent.click(screen.getByRole('button', { name: 'Qty ordered' }));
+    expect(skuOrder()).toEqual(['SKU-C', 'SKU-B', 'SKU-A']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Qty ordered' }));
+    expect(skuOrder()).toEqual(['SKU-A', 'SKU-B', 'SKU-C']);
+  });
+
+  it('orders by what has been delivered', () => {
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: 'Qty delivered' }));
+    expect(skuOrder()).toEqual(['SKU-C', 'SKU-B', 'SKU-A']);
+  });
+
+  it('orders "Still owed" by the figure it shows, not by the order the lines arrived in', () => {
+    // The computed column: 20, 45, 100 owed. Its order differs from every other column's,
+    // so this fails if the header sorts on anything but the number in the cell.
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: 'Still owed' }));
+    expect(skuOrder()).toEqual(['SKU-B', 'SKU-C', 'SKU-A']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Still owed' }));
+    expect(skuOrder()).toEqual(['SKU-A', 'SKU-C', 'SKU-B']);
+  });
+
+  it('orders the required date chronologically, not by how it is printed', () => {
+    // Printed as 04 Jul / 15 Aug / 01 Sep, so a sort on the displayed text would read
+    // 01, 04, 15 and put September first.
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: 'Required' }));
+    expect(skuOrder()).toEqual(['SKU-C', 'SKU-A', 'SKU-B']);
   });
 });
 

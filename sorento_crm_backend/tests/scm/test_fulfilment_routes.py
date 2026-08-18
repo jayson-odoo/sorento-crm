@@ -16,7 +16,13 @@ from io import BytesIO
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import (
+    InboundShipment,
+    InboundShipmentLine,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    Supplier,
+)
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from tests.scm.conftest import as_user, requires_pg, seed_user
 from tests.scm.test_outstanding_import_routes import as_company_user
@@ -454,3 +460,116 @@ def test_editing_a_size_requires_the_operator_permission(scm_app):
     r = TestClient(app).post("/api/v1/scm/container-sizes", json={"code": "ZZX", "cbm": 4})
 
     assert r.status_code == 403, r.text
+
+
+# --------------------------------------------------------------------------- #
+# the packing list: whose it is, is not optional
+# --------------------------------------------------------------------------- #
+
+
+def test_a_packing_list_upload_that_names_no_supplier_is_refused(scm_app):
+    # A container is filled by two or three factories and each sends its own list, so an
+    # upload that will not say which one speaks for the whole container - and would delete
+    # the other factories' lines. Refused before the file is read.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+
+    r = TestClient(app).post(
+        "/api/v1/scm/packing-lists/apply",
+        files={"file": ("packing.xlsx", _workbook([["X", "a", 1, 1, 0.2, ""]]), _XLSX)},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "supplier_id is required" in r.json()["detail"]
+
+
+def test_validate_only_may_omit_the_supplier_because_it_writes_nothing(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+
+    r = TestClient(app).post(
+        "/api/v1/scm/packing-lists/apply?validate_only=true",
+        files={"file": ("packing.xlsx", _workbook([["X", "a", 1, 1, 0.2, ""]]), _XLSX)},
+    )
+
+    assert r.status_code == 200, r.text
+    assert set(r.json()) == {"valid", "errors", "warnings", "summary"}
+
+
+# --------------------------------------------------------------------------- #
+# who is on a container                                                        #
+# --------------------------------------------------------------------------- #
+
+
+def _shipment(db, supplier_id=None) -> InboundShipment:
+    row = InboundShipment(
+        id=_u(),
+        shipment_number=f"{MARKER}-{uuid.uuid4().hex[:8]}".upper(),
+        supplier_id=supplier_id,
+        shipment_date=date(2026, 1, 1),
+        shipping_container_number=f"{MARKER}U{uuid.uuid4().hex[:7]}".upper(),
+        shipment_status="in_transit",
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_a_container_whose_factory_is_only_on_the_header_still_names_it(scm_app):
+    """The factory of a container read before the per-supplier line is on the header alone.
+
+    Reading `suppliers[]` off the lines only printed nothing under those containers, which
+    says "we do not know whose this is" about a container we do know.
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    supplier_id, _code = _seed(db)
+    shipment = _shipment(db, supplier_id=supplier_id)
+
+    r = TestClient(app).get(
+        "/api/v1/scm/inbound-shipments", params={"supplier_id": supplier_id}
+    )
+
+    assert r.status_code == 200, r.text
+    row = next(x for x in r.json()["data"] if x["shipment_id"] == str(shipment.id))
+    assert [s["supplier_id"] for s in row["suppliers"]] == [supplier_id]
+    assert row["suppliers"][0]["supplier_name"]
+
+
+def test_a_mixed_container_names_every_factory_on_its_lines(scm_app):
+    """Two factories, one container: the header names nobody, so the lines have to.
+
+    It is also the container that must not disappear from either supplier's filter.
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    supplier_a, code = _seed(db)
+    supplier_b = Supplier(
+        id=_u(),
+        supplier_code=f"{MARKER}-CR-{uuid.uuid4().hex[:6]}".upper(),
+        supplier_name=f"{MARKER} second supplier",
+        is_active=True,
+    )
+    db.add(supplier_b)
+    db.flush()
+    product_id = str(db.query(Product.id).filter(Product.product_code == code).scalar())
+    shipment = _shipment(db)
+    for supplier in (supplier_a, str(supplier_b.id)):
+        db.add(
+            InboundShipmentLine(
+                id=_u(),
+                shipment_id=shipment.id,
+                product_id=product_id,
+                supplier_id=supplier,
+                quantity_shipped=1,
+                cartons_count=1,
+            )
+        )
+    db.flush()
+
+    client = TestClient(app)
+    for supplier in (supplier_a, str(supplier_b.id)):
+        r = client.get("/api/v1/scm/inbound-shipments", params={"supplier_id": supplier})
+        assert r.status_code == 200, r.text
+        row = next(x for x in r.json()["data"] if x["shipment_id"] == str(shipment.id))
+        assert {s["supplier_id"] for s in row["suppliers"]} == {supplier_a, str(supplier_b.id)}

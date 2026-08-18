@@ -38,6 +38,15 @@
  *    of the screen (AC-E2.4) but urgency is what decides which not-keyed row to do
  *    first, and a client free to re-sort could disagree with the late flag beside it.
  *
+ *    Stage 2 adds the run's stamped `decision_grain` to the response and reads ONLY
+ *    that grain (AC-F09): a `product` run lists product decisions, each carrying
+ *    `location_allocations` (its split back to locations, summing exactly to
+ *    `chosen_qty`); a `location` run lists the per-location recommendation
+ *    decisions, each naming its `warehouse_code` and carrying no split. Neither
+ *    shape gains a channel key, and rows from the comparison grain are never
+ *    merged in - keying both would buy the same requirement twice. A legacy run
+ *    carries a null grain and no split.
+ *
  *    Three nullable fields are load-bearing and must NOT be defaulted by the server.
  *    `need_by` is absent whenever nothing committed is uncovered, which is most of the
  *    book (the committed order book is 17 sales orders); `place_by` and
@@ -47,7 +56,7 @@
  * 2) Set the keyed-into-AutoCount status
  *
  *      POST /api/v1/scm/po-worklist/{product_code}/keyed-status
- *          { run_id, keyed_status }
+ *          { run_id, keyed_status, warehouse_code? }
  *
  *      -> 200  KeyedStatusResult
  *      Auth: `scm.reorder.run` (this one writes), matching the decision route.
@@ -59,6 +68,12 @@
  *    Any transition is allowed, including backwards. A person who marked a row keyed
  *    by mistake has to be able to unmark it, and a state machine that only moves
  *    forward would leave them editing the database.
+ *
+ *    The write lands at the run's own grain (AC-F09). On a LOCATION-grain run every
+ *    row is its own purchase order, so `warehouse_code` names which one and the
+ *    status is per (product, location); the server 422s a location-grain write that
+ *    names none and 404s a location the run never decided for. On a product-grain
+ *    run it is omitted and the product row is keyed, exactly as before.
  *
  * -- ERROR SHAPE -------------------------------------------------------------
  * Every failure is the standard `AppException` envelope the global handler in

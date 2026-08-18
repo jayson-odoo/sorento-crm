@@ -33,6 +33,8 @@ export function PlanLinesSection({
   onDecidedFilterChange,
   onTotalsChange,
   secondaryActions,
+  decisionsReadOnly = false,
+  readOnlyReason = null,
 }: {
   runId: string | null;
   statusFilter?: PlanLineStatus | null;
@@ -47,6 +49,9 @@ export function PlanLinesSection({
   /** Forwarded to `PlanLinesGrid`'s own toolbar (quiet links to Order summary / Plan
    *  exceptions / PO worklist, next to Filters / Columns / Export). */
   secondaryActions?: ToolbarAction[];
+  /** The run is decided at the Product grain, or is legacy: read and drill only. */
+  decisionsReadOnly?: boolean;
+  readOnlyReason?: string | null;
 }) {
   const [ownStatusFilter, setOwnStatusFilter] = useState<PlanLineStatus | null>(null);
   const statusFilter = statusFilterProp !== undefined ? statusFilterProp : ownStatusFilter;
@@ -128,6 +133,8 @@ export function PlanLinesSection({
         decidedFilter={decidedFilter}
         onDecidedFilterChange={setDecidedFilter}
         secondaryActions={secondaryActions}
+        decisionsReadOnly={decisionsReadOnly}
+        readOnlyReason={readOnlyReason}
         lines={visibleLines}
         decisions={planLines.decisions}
         onDecide={(line, next) => planLines.decide(line, next)}

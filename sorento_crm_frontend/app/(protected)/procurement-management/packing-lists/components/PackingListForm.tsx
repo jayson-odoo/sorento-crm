@@ -145,6 +145,7 @@ export default function PackingListForm({
           ? packingList.shipment_lines.map((l) => ({
               product_id: l.product_id,
               quantity_shipped: l.quantity_shipped,
+              supplier_id: l.supplier_id ?? undefined,
             }))
           : [{ product_id: '', quantity_shipped: 1 }],
       ...(Object.fromEntries(
@@ -173,6 +174,11 @@ export default function PackingListForm({
           .map((l) => ({
             product_id: l.product_id,
             quantity_shipped: l.quantity_shipped,
+            // Whose line it already was. There is no per-line picker here on purpose -
+            // the attribution comes from the packing list that was uploaded - but a save
+            // that dropped it would hand a mixed container's lines to the header supplier.
+            // A new line leaves it unset and the backend falls back to the header.
+            supplier_id: l.supplier_id ?? undefined,
           })),
         // Blank clears the field: send null, not undefined. `exclude_unset` on the
         // backend drops undefined entirely, so omitting it would make a cleared

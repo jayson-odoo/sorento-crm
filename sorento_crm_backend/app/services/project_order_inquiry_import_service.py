@@ -53,6 +53,7 @@ from app.services import import_outcome_codes as oc
 from app.services.import_outcome import ImportOutcome
 from app.services.project_order_inquiry_reader import OrderInquiryResult, read_order_inquiry
 from app.services.scm import upload_validation as val
+from app.services.scm.demand_class import class_of
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
 logger = logging.getLogger(__name__)
@@ -438,6 +439,10 @@ def _create_orders(db: Session, parsed, now: datetime,
         if order is None:
             project = next((r.project for r in rows if r.project), "")
             dates = [r.delivery_date for r in rows if r.delivery_date]
+            # This sheet's rows ARE project demand, so a row naming a project states the
+            # order type `project`; a row naming none states nothing, which is not the same
+            # as retail and must not be written as one.
+            order_type = "project" if project else None
             order = SalesOrder(
                 so_number=number,
                 customer_id=customers.get(project.lower()) if project else None,
@@ -447,8 +452,13 @@ def _create_orders(db: Session, parsed, now: datetime,
                 ) else None,
                 order_date=next((r.so_date for r in rows if r.so_date), None),
                 requested_delivery_date=min(dates) if dates else None,
-                order_type="project" if project else None,
-                demand_class="project" if project else None,
+                order_type=order_type,
+                # Through the shared mapper, never a second literal (front planning 5.2,
+                # AC-E01). This is one of the two stamp points and the only one that used
+                # to write the class by hand, so a change to what counts as project work
+                # reached the outstanding import and silently missed this sheet. Same
+                # answer today; one owner from now on.
+                demand_class=class_of(order_type),
                 status="open",
                 source_system=SOURCE_SYSTEM,
                 # Origin survives adoption; source_system does not. Project demand is keyed

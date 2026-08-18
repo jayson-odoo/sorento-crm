@@ -91,7 +91,7 @@ describe('buildColumnStates', () => {
     expect(column.blockers).toHaveLength(0);
   });
 
-  it('names both disagreements with their numbers', () => {
+  it('blocks on the sheet disagreeing with itself, and names the numbers', () => {
     const [column] = buildColumnStates(
       [product({ reported_total: '16', po_qty: '16' })],
       phases,
@@ -99,19 +99,137 @@ describe('buildColumnStates', () => {
     );
 
     expect(column.reconciled).toBe(false);
+    // ONE blocker: the phases not adding up to the sheet's own TOTAL QTY. Asking for 8 of
+    // the 16 ordered is a partial schedule, which the server treats as a warning, so the
+    // screen must not report it as a second thing to fix.
     expect(column.blockers.map((blocker) => blocker.code)).toEqual([
-      'po_mismatch',
       'reported_mismatch',
     ]);
-    // The numbers, the size of the gap in words rather than as a sign to decode, and what
-    // to do about it.
     expect(column.blockers[0].detail).toBe(
-      'The schedule asks for 8 and the PO orders 16, 8 short. ' +
-        'Correct a phase quantity, or amend the PO.',
-    );
-    expect(column.blockers[1].detail).toBe(
       "The phases add up to 8 but the schedule's own TOTAL QTY row says 16. " +
         'One of the two was misread, so check the cells against the paper.',
+    );
+  });
+
+  /**
+   * A partial schedule is the normal state of a live project.
+   *
+   * The customer schedules part of what they ordered now and the rest on a later document,
+   * and the server says so too (`_verdict`: a shortfall is `(reconciled, None, warning)`).
+   * Blocking on it demanded a correction to something that was never wrong, and disagreed
+   * with the backend, which confirms the same schedule happily.
+   */
+  it('reads a shortfall against the PO as a warning, not a blocker', () => {
+    const [column] = buildColumnStates(
+      [product({ reported_total: null, po_qty: '927' })],
+      phases,
+      [{ phase_id: 'ph1', product_id: 'p1', qty: '855' }],
+    );
+
+    expect(column.reconciled).toBe(true);
+    expect(column.blockers).toHaveLength(0);
+    expect(column.warning).toBe(
+      'The schedule asks for 855 of the 927 on the purchase order; the remaining 72 is ' +
+        'expected on a later schedule.',
+    );
+  });
+
+  it('still blocks a column asking for MORE than the PO ordered', () => {
+    const [column] = buildColumnStates(
+      [product({ reported_total: null, po_qty: '900' })],
+      phases,
+      [{ phase_id: 'ph1', product_id: 'p1', qty: '927' }],
+    );
+
+    expect(column.reconciled).toBe(false);
+    expect(column.blockers.map((blocker) => blocker.code)).toEqual(['po_mismatch']);
+    expect(column.blockers[0].detail).toBe(
+      'The schedule asks for 927 and the PO orders 900, 27 over. ' +
+        'Correct a phase quantity, or amend the PO.',
+    );
+    expect(column.warning).toBeNull();
+  });
+
+  it("prefers the server's own warning on a column nobody has edited", () => {
+    const [column] = buildColumnStates(
+      [
+        product({
+          reported_total: null,
+          po_qty: '927',
+          warning: 'Matched by description, not by code.',
+        }),
+      ],
+      phases,
+      [{ phase_id: 'ph1', product_id: 'p1', qty: '927' }],
+    );
+
+    expect(column.reconciled).toBe(true);
+    expect(column.warning).toBe('Matched by description, not by code.');
+  });
+
+  it('drops a stale server warning as soon as the column is being typed into', () => {
+    const [column] = buildColumnStates(
+      [
+        product({
+          reported_total: null,
+          po_qty: '927',
+          warning: 'The schedule asks for 855 of the 927 on the purchase order.',
+        }),
+      ],
+      phases,
+      [{ phase_id: 'ph1', product_id: 'p1', qty: '855' }],
+      new Map([['ph1|p1', '927']]),
+    );
+
+    // The sentence describes the SAVED numbers; on screen the column now adds to 927.
+    expect(column.ourTotal).toBe('927');
+    expect(column.warning).toBeNull();
+  });
+
+  /**
+   * Measured on the live stack: every one of HQ/26/01/121's 21 blocked columns came back
+   * carrying a refusal written before a shortfall became a warning, because verdicts are
+   * STORED with the version. Trusting it put the blocker straight back.
+   */
+  it('ignores a stored server refusal that is only the shortfall it already explains', () => {
+    const [column] = buildColumnStates(
+      [
+        product({
+          reported_total: null,
+          po_qty: '1777',
+          reconciled: false,
+          reason: 'the column adds up to 53, the purchase order says 1777',
+        }),
+      ],
+      phases,
+      [{ phase_id: 'ph1', product_id: 'p1', qty: '53' }],
+    );
+
+    expect(column.blockers).toHaveLength(0);
+    expect(column.reconciled).toBe(true);
+    expect(column.warning).toContain('the remaining 1724 is expected on a later schedule');
+  });
+
+  it("carries a server refusal this file cannot derive, rather than reading as clean", () => {
+    const [column] = buildColumnStates(
+      [
+        product({
+          reported_total: null,
+          po_qty: '927',
+          reconciled: false,
+          reason: 'the PO line was cancelled after this schedule was drawn',
+        }),
+      ],
+      phases,
+      [{ phase_id: 'ph1', product_id: 'p1', qty: '927' }],
+    );
+
+    // Being laxer than the server is the bad direction: the screen would invite a confirm
+    // the server then rejects.
+    expect(column.reconciled).toBe(false);
+    expect(column.blockers.map((blocker) => blocker.code)).toEqual(['server']);
+    expect(column.blockers[0].detail).toBe(
+      'the PO line was cancelled after this schedule was drawn',
     );
   });
 

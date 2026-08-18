@@ -5,6 +5,7 @@ from app.api.v1.projects import (
     allocations,
     divergences,
     forecast,
+    fulfilment_planning,
     leads,
     order_inquiries,
     parties,
@@ -55,6 +56,9 @@ router.include_router(schedules.router, tags=["project-delivery-schedules"])
 # `/sales-orders/ingest` and `/sales-orders/{pso_id}` are the same shape to the router, so
 # declaring the sales-order router first would capture `ingest` as a sales order id.
 router.include_router(divergences.router, tags=["project-so-divergence"])
+# Fulfilment planning (Stage 1B) hangs off `/sales-orders/{pso_id}` too, so it joins the
+# routers declared ahead of the plain sales-order one for the same reason.
+router.include_router(fulfilment_planning.router, tags=["project-fulfilment-planning"])
 router.include_router(sales_orders.router, tags=["project-sales-orders"])
 # Allocation (P9) hangs off sales order LINES and off claims between projects, so it is
 # root-mounted alongside sales orders. Its paths add a segment to the sales-order ones

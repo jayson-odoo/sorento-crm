@@ -19,11 +19,34 @@ const getProjectSalesOrder = vi.fn();
 const acknowledgeFinding = vi.fn();
 const publishSalesOrder = vi.fn();
 const regroupSalesOrder = vi.fn();
+const downloadSalesOrderImportFile = vi.fn();
+const saveBlobAs = vi.fn();
+const toastError = vi.fn();
 
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: (...args: unknown[]) => toastError(...args) },
+}));
+
+const push = vi.fn();
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1/sales-orders/so-1',
   useSearchParams: () => new URLSearchParams(),
+}));
+
+/**
+ * The pager's data. Mocked at the shared hook so no fetch is attempted and the arguments
+ * the feature hook passes (the neighbours path, and the id) can be asserted.
+ */
+const recordNeighbours = vi.fn((..._args: unknown[]) => ({
+  prevId: 'so-0',
+  nextId: 'so-2',
+  index: 2,
+  total: 3,
+  isLoading: false,
+}));
+vi.mock('@/hooks/useRecordNeighbours', () => ({
+  useRecordNeighbours: (...args: unknown[]) => recordNeighbours(...args),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -39,12 +62,20 @@ vi.mock('../../../../_shared/services/projectSalesOrderService', () => ({
   updateSalesOrderLine: vi.fn(),
   regroupSalesOrder: (...args: unknown[]) => regroupSalesOrder(...args),
   publishSalesOrder: (...args: unknown[]) => publishSalesOrder(...args),
+  downloadSalesOrderImportFile: (...args: unknown[]) => downloadSalesOrderImportFile(...args),
   previewAmendment: vi.fn(),
   createAmendment: vi.fn(),
   getAmendment: vi.fn(),
   publishAmendment: vi.fn(),
   listScheduleVersions: vi.fn(async () => []),
   listPoVersions: vi.fn(async () => []),
+  salesOrderNeighboursPath: (projectId: string) =>
+    `/api/v1/project-sales/projects/${projectId}/sales-orders/neighbours`,
+}));
+
+vi.mock('../../../../_shared/services/fileDownload', () => ({
+  saveBlobAs: (...args: unknown[]) => saveBlobAs(...args),
+  filenameFromContentDisposition: vi.fn(() => null),
 }));
 
 const listDivergences = vi.fn();
@@ -56,8 +87,13 @@ vi.mock('../../../../_shared/services/soDivergenceService', () => ({
   downloadCorrectiveImportFile: vi.fn(),
 }));
 
+let canEditProject = true;
 vi.mock('../../../../_shared/hooks/useProjects', () => ({
-  useProject: () => ({ data: { id: 'p1', can_edit: true }, isLoading: false, isError: false }),
+  useProject: () => ({
+    data: { id: 'p1', can_edit: canEditProject },
+    isLoading: false,
+    isError: false,
+  }),
   usePurchaseOrders: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
@@ -202,10 +238,30 @@ function openDivergence(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * Into the gear, which is where everything that is not the one call to action now lives.
+ * Radix opens its menus on pointerdown, which fireEvent.click does not send.
+ */
+async function openGear() {
+  fireEvent.pointerDown(
+    await screen.findByRole('button', { name: 'Sales order actions' }),
+    { button: 0, ctrlKey: false },
+  );
+  return within(await screen.findByRole('menu'));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  canEditProject = true;
   // Default: AutoCount agrees, so the amend path is open.
   listDivergences.mockResolvedValue({ data: [], total: 0, page: 1, limit: 100 });
+  recordNeighbours.mockReturnValue({
+    prevId: 'so-0',
+    nextId: 'so-2',
+    index: 2,
+    total: 3,
+    isLoading: false,
+  });
 });
 
 describe('SalesOrderDetailClient', () => {
@@ -318,6 +374,7 @@ describe('SalesOrderDetailClient', () => {
             ...WARN,
             acknowledged_by_name: 'Eling',
             acknowledged_reason: 'Customer agreed the revised price on 01/04.',
+            acknowledged_at: '2026-04-01T09:12:00',
           },
         ],
       }),
@@ -327,6 +384,7 @@ describe('SalesOrderDetailClient', () => {
       provisional_ref: 'PSO-000123',
       autocount_doc_no: 'SO397450',
       import_file_url: 'https://example.test/import.csv',
+      can_export: true,
     });
 
     renderDetail();
@@ -345,9 +403,17 @@ describe('SalesOrderDetailClient', () => {
 
     await waitFor(() => expect(publishSalesOrder).toHaveBeenCalledWith('so-1'));
     expect(await screen.findByText('This sales order is SO397450.')).toBeInTheDocument();
-    expect(
-      screen.getByRole('link', { name: 'Download the import file' }),
-    ).toHaveAttribute('href', 'https://example.test/import.csv');
+
+    // Fetched through the service, not linked to: the url is a backend path and an anchor
+    // would resolve it against this origin.
+    downloadSalesOrderImportFile.mockResolvedValue({
+      blob: new Blob(['csv']),
+      filename: 'SO397450.csv',
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Download the import file' }));
+
+    await waitFor(() => expect(downloadSalesOrderImportFile).toHaveBeenCalledWith('so-1'));
+    expect(saveBlobAs.mock.calls[0][1]).toBe('SO397450.csv');
   });
 
   it('names the warnings that have no reason before an irreversible publish', async () => {
@@ -409,8 +475,115 @@ describe('SalesOrderDetailClient', () => {
     // Twice on purpose: the page heading and the AutoCount document field.
     expect(await screen.findAllByText('SO397450')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: 'Publish' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Move lines' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Import file' })).toBeInTheDocument();
+
+    const gear = await openGear();
+    expect(gear.queryByRole('menuitem', { name: /Move lines/ })).not.toBeInTheDocument();
+    // The export survives publication - it is how the order reaches AutoCount.
+    expect(gear.getByRole('menuitem', { name: /Import file/ })).toBeInTheDocument();
+  });
+
+  it('refuses the import file the server has not cleared, whatever the url says', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        status: 'published',
+        autocount_doc_no: 'SO397450',
+        // Published, so the file has an address; blocked, so it may not be taken. The
+        // route 422s this fetch, and the button has to say so before it is clicked.
+        import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
+        can_export: false,
+        hard_findings: 1,
+        findings: [HARD],
+      }),
+    );
+
+    renderDetail();
+
+    const gear = await openGear();
+    const item = gear.getByRole('menuitem', { name: /Import file/ });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    // The reason is on the item, not in a tooltip: a hover cannot be read on a phone.
+    expect(within(item).getByText('Clear the blocking findings first')).toBeInTheDocument();
+    expect(downloadSalesOrderImportFile).not.toHaveBeenCalled();
+  });
+
+  it('offers the import file when the server has cleared the export', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        status: 'published',
+        autocount_doc_no: 'SO397450',
+        import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
+        can_export: true,
+      }),
+    );
+
+    renderDetail();
+
+    const gear = await openGear();
+    expect(gear.getByRole('menuitem', { name: /Import file/ })).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+  });
+
+  it('fetches the import file through the service and names it as the backend did', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        status: 'published',
+        autocount_doc_no: 'SO397450',
+        // No `can_export`: a row cached from before the field shipped falls back to the
+        // url being there, which is what the button used to go on.
+        import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
+      }),
+    );
+    downloadSalesOrderImportFile.mockResolvedValue({
+      blob: new Blob(['csv']),
+      filename: 'SO397450.csv',
+    });
+
+    renderDetail();
+
+    fireEvent.click((await openGear()).getByRole('menuitem', { name: /Import file/ }));
+
+    await waitFor(() => expect(downloadSalesOrderImportFile).toHaveBeenCalledWith('so-1'));
+    expect(saveBlobAs).toHaveBeenCalledTimes(1);
+    expect(saveBlobAs.mock.calls[0][1]).toBe('SO397450.csv');
+  });
+
+  it('falls back to the provisional reference when the response names no file', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        status: 'published',
+        import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
+      }),
+    );
+    downloadSalesOrderImportFile.mockResolvedValue({
+      blob: new Blob(['csv']),
+      filename: null,
+    });
+
+    renderDetail();
+
+    fireEvent.click((await openGear()).getByRole('menuitem', { name: /Import file/ }));
+
+    await waitFor(() => expect(saveBlobAs).toHaveBeenCalledTimes(1));
+    expect(saveBlobAs.mock.calls[0][1]).toBe('PSO-000123.csv');
+  });
+
+  it('says why the import file could not be downloaded', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        status: 'published',
+        import_file_url: '/api/v1/project-sales/sales-orders/so-1/import-file',
+      }),
+    );
+    downloadSalesOrderImportFile.mockRejectedValue(new Error('That order was rebuilt'));
+
+    renderDetail();
+
+    fireEvent.click((await openGear()).getByRole('menuitem', { name: /Import file/ }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('That order was rebuilt'));
+    expect(saveBlobAs).not.toHaveBeenCalled();
   });
 
   it('re-splits the lines and says once that the shape is remembered', async () => {
@@ -419,7 +592,7 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Move lines' }));
+    fireEvent.click((await openGear()).getByRole('menuitem', { name: /Move lines/ }));
 
     const dialog = await screen.findByRole('dialog');
     expect(
@@ -457,10 +630,12 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    // Disabled rather than hidden: a button that vanished teaches nobody why.
-    const amend = await screen.findByRole('button', { name: /review a revision/i });
-    expect(amend).toBeDisabled();
-    expect(screen.queryByRole('link', { name: /review a revision/i })).not.toBeInTheDocument();
+    // Disabled rather than hidden: an item that vanished teaches nobody why.
+    const gear = await openGear();
+    const amend = gear.getByRole('menuitem', { name: /review a revision/i });
+    expect(amend).toHaveAttribute('aria-disabled', 'true');
+    // Not a link at all while it is refused: there is nowhere for it to go.
+    expect(amend).not.toHaveAttribute('href');
   });
 
   it('says how many rows differ and how long they have waited', async () => {
@@ -489,9 +664,173 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    expect(
-      await screen.findByRole('link', { name: /review a revision/i }),
-    ).toBeInTheDocument();
+    // `asChild` puts the menuitem role on the anchor itself, so the item IS the link.
+    const gear = await openGear();
+    expect(gear.getByRole('menuitem', { name: /review a revision/i })).toHaveAttribute(
+      'href',
+      '/project-sales/p1/sales-orders/so-1/revisions',
+    );
     expect(screen.queryByText(/autocount disagrees/i)).not.toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------- Stage 1B (AC-A03)
+
+  it('shows the review state pill beside the status once the backend has derived one', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({ review_state: 'awaiting_reconciliation', exception_count: 2 }),
+    );
+
+    renderDetail();
+
+    expect(
+      await screen.findByText('Awaiting reconciliation · 2 exceptions'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders no review state pill until the backend derives one', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail());
+
+    renderDetail();
+
+    await screen.findAllByText('PSO-000123');
+    expect(screen.queryByText('Needs CS review')).not.toBeInTheDocument();
+    expect(screen.queryByText('Awaiting reconciliation')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The header standard: ONE call to action, everything else behind the gear, and a pager.
+ *
+ * The client's words about the five buttons this replaced: "too many buttons up here, need a
+ * call to action, then the reset just put inside the gear". So what is pinned is that the
+ * screen never offers two things at once, that the one it does offer is the one the status is
+ * waiting for, and that nothing was dropped on the way into the menu.
+ */
+describe('SalesOrderDetailClient header', () => {
+  /** Every action that used to stand in the header, by the role it would have out here. */
+  function expectNoLooseActions() {
+    expect(screen.queryByRole('link', { name: 'Worksheet' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Move lines' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Import file' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Order inquiry' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /review a revision/i }),
+    ).not.toBeInTheDocument();
+  }
+
+  it('offers Publish, and nothing else, on a draft somebody may edit', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail());
+
+    renderDetail();
+
+    expect(await screen.findByRole('button', { name: 'Publish' })).toBeInTheDocument();
+    expectNoLooseActions();
+    expect(
+      screen.queryByRole('link', { name: /compare with autocount/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('offers Compare with AutoCount on a published order, and no Publish', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({ status: 'published', autocount_doc_no: 'SO397450' }),
+    );
+
+    renderDetail();
+
+    const cta = await screen.findByRole('link', { name: /compare with autocount/i });
+    expect(cta).toHaveAttribute('href', '/project-sales/p1/sales-orders/so-1/divergence');
+    expect(screen.queryByRole('button', { name: 'Publish' })).not.toBeInTheDocument();
+    expectNoLooseActions();
+  });
+
+  it('renames the call to action Reconcile while AutoCount disagrees', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail({ status: 'published' }));
+    listDivergences.mockResolvedValue(openDivergence());
+
+    renderDetail();
+
+    const cta = await screen.findByRole('link', { name: /reconcile autocount/i });
+    expect(cta).toHaveAttribute('href', '/project-sales/p1/sales-orders/so-1/divergence');
+  });
+
+  it('falls back to the worksheet for a reader, who can neither publish nor reconcile', async () => {
+    canEditProject = false;
+    getProjectSalesOrder.mockResolvedValue(detail());
+
+    renderDetail();
+
+    const cta = await screen.findByRole('link', { name: 'Worksheet' });
+    expect(cta).toHaveAttribute('href', '/project-sales/p1/sales-orders/so-1/worksheet');
+    expect(screen.queryByRole('button', { name: 'Publish' })).not.toBeInTheDocument();
+
+    // It is the call to action, so it is not ALSO a menu item.
+    const gear = await openGear();
+    expect(gear.queryByRole('menuitem', { name: 'Worksheet' })).not.toBeInTheDocument();
+    // A reader may not edit or delete, so neither is offered.
+    expect(gear.queryByRole('menuitem', { name: /Edit this sales order/ })).toBeNull();
+    expect(gear.queryByRole('menuitem', { name: /Delete this sales order/ })).toBeNull();
+    // The menu still has the revision review in it, so it is never an empty gear.
+    expect(gear.getByRole('menuitem', { name: /review a revision/i })).toBeInTheDocument();
+  });
+
+  it('keeps every other action in the gear', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail());
+
+    renderDetail();
+
+    const gear = await openGear();
+    expect(gear.getByRole('menuitem', { name: 'Worksheet' })).toHaveAttribute(
+      'href',
+      '/project-sales/p1/sales-orders/so-1/worksheet',
+    );
+    expect(gear.getByRole('menuitem', { name: /review a revision/i })).toBeInTheDocument();
+    expect(gear.getByRole('menuitem', { name: /Move lines/ })).toBeInTheDocument();
+    expect(gear.getByRole('menuitem', { name: /Edit this sales order/ })).toBeInTheDocument();
+    // Destructive last.
+    const items = gear.getAllByRole('menuitem');
+    expect(items[items.length - 1]).toHaveTextContent('Delete this sales order');
+  });
+
+  it('walks the project sales orders without going back to the list', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail());
+
+    renderDetail();
+
+    await screen.findAllByText('PSO-000123');
+    // The pager reads the project's own sequence, for THIS order.
+    expect(recordNeighbours).toHaveBeenCalledWith(
+      '/api/v1/project-sales/projects/p1/sales-orders/neighbours',
+      'so-1',
+    );
+    expect(screen.getByText('2 / 3')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next sales order' }));
+
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/sales-orders/so-2');
+  });
+
+  /**
+   * The pager stands down for the duration of an edit session, the same way the quotation
+   * document's does, and for the same reason: the staged work would in fact survive a step away,
+   * but a Next sitting beside Cancel and Save reads like it will discard it, and a control
+   * nobody dares press is worse than one that is absent.
+   */
+  it('stands the pager down while an edit session is open, and brings it back on Cancel', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail());
+
+    renderDetail();
+
+    expect(await screen.findByRole('button', { name: 'Next sales order' })).toBeInTheDocument();
+
+    const gear = await openGear();
+    fireEvent.click(gear.getByRole('menuitem', { name: /Edit this sales order/ }));
+    await screen.findByRole('button', { name: 'Save' });
+
+    expect(screen.queryByRole('button', { name: 'Next sales order' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Previous sales order' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(await screen.findByRole('button', { name: 'Next sales order' })).toBeInTheDocument();
   });
 });

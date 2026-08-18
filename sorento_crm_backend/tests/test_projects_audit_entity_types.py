@@ -52,8 +52,26 @@ def _mapped_classes():
     ]
 
 
+# Born after migration 354, so no pre-move name exists: these models chose their entity
+# type at birth and are pinned by their own test below, not by the rename contract.
+BORN_AFTER_THE_MOVE = frozenset({"so_supply_decisions"})
+
+
 def _projects_classes():
-    return [cls for cls in _mapped_classes() if cls.__table__.schema == "projects"]
+    return [
+        cls
+        for cls in _mapped_classes()
+        if cls.__table__.schema == "projects"
+        and cls.__tablename__ not in BORN_AFTER_THE_MOVE
+    ]
+
+
+def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_with():
+    """`so_supply_decisions` never wrote a pre-move audit row, so nothing constrains it
+    historically; it adopted its siblings' `project_` prefix and this pins that choice."""
+    from app.models.project_so import SOSupplyDecision
+
+    assert _audit_entity_type(SOSupplyDecision) == "project_so_supply_decisions"
 
 
 def test_every_renamed_model_pins_its_pre_move_audit_entity_type():
@@ -116,19 +134,42 @@ def test_the_two_services_that_hardcode_a_pre_move_entity_type_still_agree():
     `project_lead_service.LEAD_AUDIT_ENTITY_TYPE` and the `"project_tasks"` filter in
     `project_task_service` are the reason the docstring above says the two services "are
     correct only while this holds" - this is what makes that a test rather than a claim.
+    The task side is proved by reading: a row written under the pinned entity type is what
+    `task_history` returns, and one written under the bare table name is not.
     """
+    import uuid
+
+    from app.models.audit import AuditLog
     from app.models.projects import ProjectLead, ProjectTask
     from app.services.project_lead_service import LEAD_AUDIT_ENTITY_TYPE
+    from app.services.project_task_service import task_history
+    from tests._pg_fixture import blank_session
 
     assert LEAD_AUDIT_ENTITY_TYPE == _audit_entity_type(ProjectLead) == "project_leads"
-
-    source = (
-        Path(__file__).resolve().parents[1]
-        / "app"
-        / "services"
-        / "project_task_service.py"
-    ).read_text()
-    assert 'AuditLog.entity_type == "project_tasks"' in source, (
-        "the literal this test pins moved or changed shape; re-point it"
-    )
     assert _audit_entity_type(ProjectTask) == "project_tasks"
+
+    with blank_session() as db:
+        task_id = str(uuid.uuid4())
+        db.add(
+            AuditLog(
+                entity_type=_audit_entity_type(ProjectTask),
+                entity_id=task_id,
+                action="CREATE",
+                new_values={"name": "ZZT pinned task"},
+            )
+        )
+        db.add(
+            AuditLog(
+                entity_type=ProjectTask.__tablename__,
+                entity_id=task_id,
+                action="CREATE",
+                new_values={"name": "ZZT bare-name task"},
+            )
+        )
+        db.flush()
+
+        history = task_history(db, task_id)
+
+    assert [(row["action"], row["to_value"]) for row in history] == [
+        ("created", "ZZT pinned task")
+    ]

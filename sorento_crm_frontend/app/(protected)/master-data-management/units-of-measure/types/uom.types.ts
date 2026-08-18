@@ -8,5 +8,7 @@ export interface UOMFormData {
   description?: string;
   base_uom_id?: string;
   conversion_factor?: number;
+  /** `0..4`. Omitted on create resolves to 0; omitted on edit keeps the stored value. */
+  decimal_places?: number;
   is_active: boolean;
 }

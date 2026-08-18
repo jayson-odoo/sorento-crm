@@ -16,6 +16,7 @@ import {
   useDivergenceMutations,
   useOpenDivergenceForOrder,
 } from '../../../../../_shared/hooks/useSoDivergence';
+import { saveBlobAs } from '../../../../../_shared/services/fileDownload';
 import { downloadCorrectiveImportFile } from '../../../../../_shared/services/soDivergenceService';
 import {
   DIVERGENCE_FIELD_LABELS,
@@ -124,12 +125,7 @@ export function DivergenceReviewClient({
     if (!divergenceId) return;
     try {
       const blob = await downloadCorrectiveImportFile(divergenceId);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `${data?.provisional_ref ?? 'corrective'}.csv`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      saveBlobAs(blob, `${data?.provisional_ref ?? 'corrective'}.csv`);
       await detail.refetch();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to build the file');

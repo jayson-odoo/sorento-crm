@@ -5,7 +5,16 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, GitBranch, History, Loader2, Plus, SendHorizonal, Sparkles, X } from 'lucide-react';
+import {
+  Bot,
+  ChevronsRight,
+  GitBranch,
+  History,
+  Loader2,
+  Plus,
+  SendHorizonal,
+  Sparkles,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -20,6 +29,7 @@ import { getPageSnapshot } from '@/lib/aiPageSnapshot';
 import { useHasPermission } from '@/hooks/usePermissions';
 
 const SIZE_STORAGE_KEY = 'sorento.ai.bubbleSize';
+const OPEN_STORAGE_KEY = 'sorento.ai.bubbleOpen';
 const DEFAULT_SIZE = { width: 384, height: 600 };
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 400;
@@ -82,6 +92,9 @@ export default function AIAssistantBubble() {
   const [greeting, setGreeting] = useState<string>('Hi, how can I help you?');
   const [greetingSuggestions, setGreetingSuggestions] = useState<string[]>([]);
   const greetingFetchedRef = useRef(false);
+  const handleRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const focusAfterToggleRef = useRef<'handle' | 'panel' | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
@@ -103,6 +116,39 @@ export default function AIAssistantBubble() {
     lastMessage && lastMessage.role === 'assistant'
       ? (lastMessage.metadata_json?.suggestions || []).slice(0, 5)
       : [];
+
+  // Collapsed is the default: a first-time user gets the slim edge handle, not a
+  // panel over the page. A user who left the panel expanded gets it back, across
+  // navigations and reloads. Read in an effect, not in the useState initializer,
+  // because the server renders this component too.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (window.localStorage.getItem(OPEN_STORAGE_KEY) === '1') setOpen(true);
+    } catch {
+      // ignore unreadable storage
+    }
+  }, []);
+
+  const setOpenPersisted = useCallback((value: boolean) => {
+    // The handle and the panel swap places, so the element that was focused
+    // unmounts - hand focus to whichever replaced it or the keyboard user lands
+    // back on the document body.
+    focusAfterToggleRef.current = value ? 'panel' : 'handle';
+    setOpen(value);
+    try {
+      window.localStorage.setItem(OPEN_STORAGE_KEY, value ? '1' : '0');
+    } catch {
+      // ignore unwritable storage
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!focusAfterToggleRef.current) return;
+    if (focusAfterToggleRef.current === 'panel' && open) panelRef.current?.focus?.();
+    if (focusAfterToggleRef.current === 'handle' && !open) handleRef.current?.focus?.();
+    focusAfterToggleRef.current = null;
+  }, [open]);
 
   // Load persisted size on mount
   useEffect(() => {
@@ -313,7 +359,7 @@ export default function AIAssistantBubble() {
     const key = `${deepLinkConvId}::${deepLinkMsgId ?? ''}`;
     if (handledDeepLinkRef.current === key) return;
     handledDeepLinkRef.current = key;
-    setOpen(true);
+    setOpenPersisted(true);
     setHistoryOpen(false);
     (async () => {
       try {
@@ -345,6 +391,7 @@ export default function AIAssistantBubble() {
     pathname,
     router,
     searchParams,
+    setOpenPersisted,
   ]);
 
   const onSuggestionClick = async (s: string) => {
@@ -376,24 +423,34 @@ export default function AIAssistantBubble() {
     // z-[120], which floated over an open drawer's bottom controls - the reason
     // the ticket drawer's actions moved into its header in the same change.
     <div className="fixed bottom-6 end-0 z-40" data-ai-assistant-root>
-      {/* Slim edge tab ("envelope label") instead of a FAB: it hugs the screen
-          edge, is 40px tall, and takes almost no space over the page beneath.
-          Label from sm up, icon only at phone width. */}
-      <button
-        type="button"
-        data-testid="ai-assistant-tab"
-        aria-label="Open AI assistant"
-        aria-expanded={open}
-        className={`flex h-10 items-center gap-1.5 rounded-s-full border border-e-0 border-primary/20 bg-primary ps-3 pe-2.5 text-primary-foreground shadow-lg transition-all hover:ps-4 ${isSending ? 'animate-pulse' : ''}`}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <Sparkles className="size-4 shrink-0" />
-        <span className="hidden text-xs font-medium sm:inline">AI assistant</span>
-      </button>
+      {/* Collapsed: a slim vertical handle docked to the screen edge, 32px wide,
+          so the page beneath keeps its bottom-right corner (the old horizontal
+          pill was ~130px wide and sat on table rows). The label rotates into the
+          handle from sm up; at phone width it is the icon alone. Expanding
+          replaces the handle with the panel, so the two never overlap. */}
+      {open ? null : (
+        <button
+          ref={handleRef}
+          type="button"
+          data-testid="ai-assistant-tab"
+          aria-label="Open AI assistant"
+          aria-expanded={false}
+          className={`flex w-8 flex-col items-center justify-center gap-2 rounded-s-lg border border-e-0 border-primary/20 bg-primary py-3 text-primary-foreground shadow-lg transition-all hover:w-9 ${isSending ? 'animate-pulse' : ''}`}
+          onClick={() => setOpenPersisted(true)}
+        >
+          <Sparkles className="size-4 shrink-0" />
+          <span className="hidden text-xs font-medium [writing-mode:vertical-rl] sm:inline">
+            AI assistant
+          </span>
+        </button>
+      )}
 
       {open ? (
         <div
-          className="absolute bottom-12 end-3 flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm"
+          ref={panelRef}
+          tabIndex={-1}
+          data-testid="ai-assistant-panel"
+          className="absolute bottom-0 end-3 flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm outline-none"
           style={{
             width: `${bubbleSize.width}px`,
             height: `${bubbleSize.height}px`,
@@ -448,11 +505,13 @@ export default function AIAssistantBubble() {
                 variant="ghost"
                 size="icon"
                 className="size-8 rounded-full"
-                onClick={() => setOpen(false)}
-                aria-label="Close AI assistant"
-                title="Close"
+                data-testid="ai-assistant-collapse"
+                onClick={() => setOpenPersisted(false)}
+                aria-label="Collapse AI assistant"
+                aria-expanded
+                title="Collapse"
               >
-                <X className="size-4" />
+                <ChevronsRight className="size-4 rtl:rotate-180" />
               </Button>
             </div>
           </div>

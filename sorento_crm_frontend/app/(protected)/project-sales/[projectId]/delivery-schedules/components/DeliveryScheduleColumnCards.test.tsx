@@ -79,6 +79,7 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
     setDraft: vi.fn(),
     commit: vi.fn(),
     resolveProduct: vi.fn(),
+    poOptions: [],
     canEdit: true,
     learnedColumns: [],
     registerColumnRef: vi.fn(),
@@ -96,7 +97,11 @@ describe('DeliveryScheduleColumnCards', () => {
     expect(cards.getAllByText('Schedule')).toHaveLength(2);
     expect(cards.getAllByText('PO')).toHaveLength(2);
     expect(cards.getByText('Not on the PO')).toBeInTheDocument();
-    expect(cards.getAllByText('2 to fix')).toHaveLength(2);
+    // The flush valve has ONE thing to fix: the phases not adding up to the sheet's own
+    // TOTAL QTY. Asking for 8 of the 16 ordered is a partial schedule, not a fault.
+    // The unmatched column has two: no product, and nothing on the PO to check against.
+    expect(cards.getByText('1 to fix')).toBeInTheDocument();
+    expect(cards.getByText('2 to fix')).toBeInTheDocument();
   });
 
   it('mounts quantity fields only for the column that is open', () => {

@@ -1,8 +1,14 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import {
+  ColumnDef,
+  SortingState,
+  getCoreRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
 import { ArrowLeft, CheckCircle2, Truck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -85,6 +91,9 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const listSearch = searchParams.toString();
 
   const lines = useMemo<SalesOrderLine[]>(() => data?.lines ?? [], [data]);
+  // Sorted here rather than by the API: the lines come embedded in the order read, so there
+  // is no second request to spend and no page boundary to sort across.
+  const [sorting, setSorting] = useState<SortingState>([]);
 
   const columns = useMemo<ColumnDef<SalesOrderLine>[]>(
     () => [
@@ -106,7 +115,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'SKU' },
       },
       {
-        accessorKey: 'qty_ordered',
+        id: 'qty_ordered',
+        // The sort value is the NUMBER, never the printed string: a quantity read off the
+        // API as "1200.0000" would otherwise order before "45" the way a word does.
+        accessorFn: (line) => Number(line.qty_ordered),
         header: ({ column }) => <DataGridColumnHeader title="Qty ordered" column={column} />,
         cell: ({ row }) => fmtInt(row.original.qty_ordered),
         size: 130,
@@ -117,7 +129,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
         },
       },
       {
-        accessorKey: 'qty_delivered',
+        id: 'qty_delivered',
+        accessorFn: (line) => Number(line.qty_delivered),
         header: ({ column }) => <DataGridColumnHeader title="Qty delivered" column={column} />,
         cell: ({ row }) => fmtInt(row.original.qty_delivered),
         size: 130,
@@ -129,10 +142,14 @@ export function SalesOrderDetail({ id }: { id: string }) {
       },
       {
         id: 'outstanding',
-        header: ({ column }) => <DataGridColumnHeader title="Still owed" column={column} />,
         // Computed here rather than sent, so it cannot disagree with the two columns beside
         // it. A negative delivery (over-shipped) reads as 0 rather than as a negative
-        // commitment, which is what the committed figure does too.
+        // commitment, which is what the committed figure does too. The accessor is what the
+        // cell prints, so "sort by what is still owed" sorts by the figure on screen - an
+        // id-only column carries a sort arrow it cannot honour.
+        accessorFn: (line) =>
+          Math.max(Number(line.qty_ordered) - Number(line.qty_delivered), 0),
+        header: ({ column }) => <DataGridColumnHeader title="Still owed" column={column} />,
         cell: ({ row }) =>
           fmtInt(Math.max(row.original.qty_ordered - row.original.qty_delivered, 0)),
         size: 120,
@@ -150,7 +167,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Location' },
       },
       {
-        accessorKey: 'required_date',
+        id: 'required_date',
+        // The ISO date, not the printed "04 Jul 2026": the display form sorts by day-of-month
+        // and would put September before July. A line with no date sorts last either way.
+        accessorFn: (line) => line.required_date ?? undefined,
         header: ({ column }) => <DataGridColumnHeader title="Required" column={column} />,
         cell: ({ row }) =>
           row.original.required_date ? fmtDate(row.original.required_date) : '-',
@@ -186,7 +206,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
     columns,
     data: lines,
     getRowId: (row) => row.id,
+    state: { sorting },
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });

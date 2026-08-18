@@ -1,18 +1,17 @@
 /**
- * P9 - the ranked source picker (AC-H1 to AC-H4).
+ * P9 - the ranked sources, as evidence (AC-H1, AC-H2). Read-only since Stage 1C.
  *
- * The one thing that must never regress is the difference between stock nobody has spoken
- * for and stock held for another project. Free stock is USED: it takes a quantity and goes
- * into the basket. Held stock is ASKED for: it offers a Request and no quantity box at all,
- * because until that project's CS answers, nothing moves. A quantity box on a held pile is
- * the UI telling somebody they may take what they may not.
+ * The dialog answers "what could this line come from, and who is holding it". It takes no
+ * decision: supply is composed and confirmed for the whole sales order in Fulfilment
+ * Planning, so a quantity box or a Request button here would be a decision with nowhere to
+ * go - the backend routes behind them are gone.
  *
  * The ranking itself is the backend's; the dialog renders it in the order it arrived and
  * never re-sorts, so the order on screen is asserted against the order in the payload.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AllocationCandidate,
@@ -45,12 +44,7 @@ const listAllocationCandidates = vi.fn();
 vi.mock('../../../../_shared/services/projectAllocationService', () => ({
   listSalesOrderAllocations: vi.fn(),
   listAllocationCandidates: (...args: unknown[]) => listAllocationCandidates(...args),
-  confirmAllocation: vi.fn(),
-  clearAllocation: vi.fn(),
-  raiseAllocationClaim: vi.fn(),
   listAllocationClaims: vi.fn(),
-  acceptAllocationClaim: vi.fn(),
-  refuseAllocationClaim: vi.fn(),
 }));
 
 import { AllocationSourceDialog } from './AllocationSourceDialog';
@@ -152,24 +146,15 @@ function payload(overrides: Partial<AllocationCandidateList> = {}): AllocationCa
   };
 }
 
-const onConfirm = vi.fn();
-const onClaim = vi.fn();
 const onDone = vi.fn();
 
-function renderDialog(props: { canEdit?: boolean; submitting?: boolean } = {}) {
+function renderDialog() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <AllocationSourceDialog
-        line={LINE}
-        canEdit={props.canEdit ?? true}
-        submitting={props.submitting ?? false}
-        onDone={onDone}
-        onConfirm={onConfirm}
-        onClaim={onClaim}
-      />
+      <AllocationSourceDialog line={LINE} onDone={onDone} />
     </QueryClientProvider>,
   );
 }
@@ -191,8 +176,6 @@ function orderCard(): HTMLElement {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  onConfirm.mockResolvedValue(undefined);
-  onClaim.mockResolvedValue(undefined);
   listAllocationCandidates.mockResolvedValue(payload());
 });
 
@@ -233,7 +216,7 @@ describe('AllocationSourceDialog', () => {
 
     expect(await screen.findByText('No location holds this product')).toBeInTheDocument();
     expect(
-      screen.getByText('It has to be ordered. Put the full quantity against Order it below.'),
+      screen.getByText('It has to be bought. The Buy residual is decided in Fulfilment Planning.'),
     ).toBeInTheDocument();
   });
 
@@ -261,20 +244,6 @@ describe('AllocationSourceDialog', () => {
     expect(within(cardFor('BRW')).queryByText('This project')).not.toBeInTheDocument();
   });
 
-  it('held stock offers a request, not a quantity box', async () => {
-    renderDialog();
-    await screen.findByTitle('WH-KL');
-
-    const held = within(cardFor('WH-KL'));
-    expect(held.getByRole('button', { name: 'Request from PRJ-000042' })).toBeInTheDocument();
-    // The single most important assertion on this screen: held stock cannot be typed into.
-    expect(held.queryByLabelText('Take')).not.toBeInTheDocument();
-
-    const free = within(cardFor('BRW'));
-    expect(free.getByLabelText('Take')).toBeInTheDocument();
-    expect(free.queryByRole('button', { name: /^Request from/ })).not.toBeInTheDocument();
-  });
-
   it('names the project holding the stock, its CS, and shows nothing free there', async () => {
     renderDialog();
     await screen.findByTitle('WH-KL');
@@ -285,219 +254,54 @@ describe('AllocationSourceDialog', () => {
     expect(held.getByText('Held for another project')).toBeInTheDocument();
   });
 
-  it('asks the holding project only for what the line needs, not for their whole pile', async () => {
-    // The line needs 10 and PRJ-000042 is holding 40. Asking for 40 put a request for
-    // four times the requirement into another CS's inbox, and with two holders on one
-    // candidate both buttons asked for the same 40.
+  it('states what each location has free to take, and asks for nothing', async () => {
+    renderDialog();
+    await screen.findByTitle('BRW');
+
+    expect(within(cardFor('BRW')).getByText('100')).toBeInTheDocument();
+    expect(within(cardFor('WH-PRJ')).getByText('30')).toBeInTheDocument();
+    expect(screen.getAllByText('free to take').length).toBe(3);
+  });
+
+  it('says purchasing buys the order candidate, and gives it no shelf figure', async () => {
+    renderDialog();
+    await screen.findByTitle('BRW');
+
+    const order = within(orderCard());
+    expect(order.getByText('Nothing on the shelf covers this. Purchasing buys it.')).toBeInTheDocument();
+    expect(order.queryByText('free to take')).not.toBeInTheDocument();
+  });
+
+  it('takes no quantity and asks for nothing, on free stock or on held stock', async () => {
+    // The routes behind both are gone: a Take box or a Request button here would be a
+    // decision the backend has nowhere to put.
     renderDialog();
     await screen.findByTitle('WH-KL');
 
-    fireEvent.click(
-      within(cardFor('WH-KL')).getByRole('button', { name: 'Request from PRJ-000042' }),
-    );
-
-    await waitFor(() =>
-      expect(onClaim).toHaveBeenCalledWith({
-        warehouse_id: 'wh-kl',
-        to_project_id: 'p2',
-        qty: '10',
-      }),
-    );
-    await waitFor(() => expect(onDone).toHaveBeenCalled());
-    // Asking is not taking: nothing was confirmed onto the line.
-    expect(onConfirm).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Take')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Request from/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Confirm source/ })).not.toBeInTheDocument();
   });
 
-  it('will not let a location be drawn past what it actually holds', async () => {
-    // The line total was checked but the per-location figure was not, so 500 could be
-    // typed against a shelf holding 30 and Confirm stayed live. The server refuses it;
-    // finding that out after pressing Confirm is a worse way to learn.
+  it('says where supply is composed, and offers the way there', async () => {
     renderDialog();
     await screen.findByTitle('BRW');
 
-    fireEvent.change(within(cardFor('BRW')).getByLabelText('Take'), {
-      target: { value: '9999' },
-    });
-
-    expect(screen.getByRole('button', { name: /Confirm/i })).toBeDisabled();
-    expect(onConfirm).not.toHaveBeenCalled();
-  });
-
-  it('refuses a second ask while the first is unanswered, and says why', async () => {
-    listAllocationCandidates.mockResolvedValue(
-      payload({
-        candidates: [
-          BRW,
-          { ...HELD, open_claim_id: 'c1', open_claim_state: 'requested' },
-        ],
-      }),
-    );
-
-    renderDialog();
-    await screen.findByTitle('WH-KL');
-
-    const held = within(cardFor('WH-KL'));
-    expect(held.getByText('Already asked for. Waiting on an answer.')).toBeInTheDocument();
-    expect(held.getByRole('button', { name: 'Request from PRJ-000042' })).toBeDisabled();
-  });
-
-  it('pre-fills the proposal the backend planned so it is edited, not typed from nothing', async () => {
-    listAllocationCandidates.mockResolvedValue(
-      payload({ plan: [{ warehouse_id: 'wh-brw', warehouse_code: 'BRW', qty: '10' }] }),
-    );
-
-    renderDialog();
-    await screen.findByTitle('BRW');
-
-    await waitFor(() =>
-      expect(within(cardFor('BRW')).getByLabelText('Take')).toHaveValue('10'),
-    );
-    expect(await screen.findByText('All 10 sourced.')).toBeInTheDocument();
-  });
-
-  it('puts the shortfall against ordering it when the shelves cannot cover the line', async () => {
-    listAllocationCandidates.mockResolvedValue(
-      payload({
-        plan: [{ warehouse_id: 'wh-brw', warehouse_code: 'BRW', qty: '6' }],
-        shortfall: '4',
-      }),
-    );
-
-    renderDialog();
-    await screen.findByTitle('BRW');
-
-    await waitFor(() =>
-      expect(within(orderCard()).getByLabelText('Take')).toHaveValue('4'),
+    expect(screen.getByText('Supply is composed in Fulfilment Planning.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /open fulfilment planning/i })).toHaveAttribute(
+      'href',
+      '/project-sales/fulfilment-planning',
     );
   });
 
-  it('confirms one source with the location and quantity that was typed', async () => {
+  it('closes on Close', async () => {
     renderDialog();
     await screen.findByTitle('BRW');
 
-    fireEvent.change(within(cardFor('BRW')).getByLabelText('Take'), {
-      target: { value: '10' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /Confirm source/ }));
-
-    await waitFor(() =>
-      expect(onConfirm).toHaveBeenCalledWith([
-        { source_type: 'brw', warehouse_id: 'wh-brw', qty: '10' },
-      ]),
-    );
-    await waitFor(() => expect(onDone).toHaveBeenCalled());
-  });
-
-  it('sends both legs when a line is split across two locations', async () => {
-    renderDialog();
-    await screen.findByTitle('BRW');
-
-    fireEvent.change(within(cardFor('BRW')).getByLabelText('Take'), {
-      target: { value: '6' },
-    });
-    fireEvent.change(within(cardFor('WH-PRJ')).getByLabelText('Take'), {
-      target: { value: '4' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /Confirm source/ }));
-
-    await waitFor(() =>
-      expect(onConfirm).toHaveBeenCalledWith([
-        { source_type: 'brw', warehouse_id: 'wh-brw', qty: '6' },
-        { source_type: 'own', warehouse_id: 'wh-prj', qty: '4' },
-      ]),
-    );
-  });
-
-  it('sends ordering it as a source that carries no location', async () => {
-    renderDialog();
-    await screen.findByTitle('BRW');
-
-    fireEvent.change(within(orderCard()).getByLabelText('Take'), {
-      target: { value: '10' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /Confirm source/ }));
-
-    await waitFor(() =>
-      expect(onConfirm).toHaveBeenCalledWith([{ source_type: 'order', qty: '10' }]),
-    );
-  });
-
-  it('never puts held stock into the basket, whatever else is confirmed', async () => {
-    renderDialog();
-    await screen.findByTitle('WH-KL');
-
-    fireEvent.change(within(cardFor('BRW')).getByLabelText('Take'), {
-      target: { value: '10' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /Confirm source/ }));
-
-    await waitFor(() => expect(onConfirm).toHaveBeenCalled());
-    const sources = onConfirm.mock.calls[0][0] as { source_type: string }[];
-    expect(sources.some((row) => row.source_type === 'other_project')).toBe(false);
-  });
-
-  it('counts what is still open as the quantities are typed', async () => {
-    renderDialog();
-    await screen.findByTitle('BRW');
-
-    expect(screen.getByText('0 of 10 sourced, 10 still open.')).toBeInTheDocument();
-
-    fireEvent.change(within(cardFor('BRW')).getByLabelText('Take'), {
-      target: { value: '4' },
-    });
-    expect(screen.getByText('4 of 10 sourced, 6 still open.')).toBeInTheDocument();
-  });
-
-  it('refuses to confirm more than the line needs, and says by how much', async () => {
-    renderDialog();
-    await screen.findByTitle('BRW');
-
-    fireEvent.change(within(cardFor('BRW')).getByLabelText('Take'), {
-      target: { value: '12' },
-    });
-
-    expect(screen.getByText('That is 2 more than the line needs.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Confirm source/ })).toBeDisabled();
-    expect(onConfirm).not.toHaveBeenCalled();
-  });
-
-  it('confirms nothing while nothing has been chosen', async () => {
-    renderDialog();
-    await screen.findByTitle('BRW');
-
-    expect(screen.getByRole('button', { name: /Confirm source/ })).toBeDisabled();
-  });
-
-  it('lets a reader look at the ranking without taking or asking for anything', async () => {
-    renderDialog({ canEdit: false });
-    await screen.findByTitle('BRW');
-
-    expect(within(cardFor('BRW')).getByLabelText('Take')).toBeDisabled();
-    expect(
-      within(cardFor('WH-KL')).getByRole('button', { name: 'Request from PRJ-000042' }),
-    ).toBeDisabled();
-    expect(screen.getByRole('button', { name: /Confirm source/ })).toBeDisabled();
-  });
-
-  it('closes on cancel without writing anything', async () => {
-    renderDialog();
-    await screen.findByTitle('BRW');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    // The dialog chrome carries its own X, also named Close; the footer one is last.
+    const closes = screen.getAllByRole('button', { name: 'Close' });
+    fireEvent.click(closes[closes.length - 1]);
 
     expect(onDone).toHaveBeenCalled();
-    expect(onConfirm).not.toHaveBeenCalled();
-    expect(onClaim).not.toHaveBeenCalled();
-  });
-
-  it('blocks a second submit while the first is in flight', async () => {
-    renderDialog({ submitting: true });
-    await screen.findByTitle('BRW');
-
-    expect(screen.getByRole('button', { name: /Confirm source/ })).toBeDisabled();
-    expect(within(cardFor('BRW')).getByLabelText('Take')).toBeDisabled();
-    expect(
-      within(cardFor('WH-KL')).getByRole('button', { name: 'Request from PRJ-000042' }),
-    ).toBeDisabled();
   });
 });

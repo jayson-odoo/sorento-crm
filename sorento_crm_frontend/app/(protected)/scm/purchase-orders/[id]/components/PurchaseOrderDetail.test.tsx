@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 
 class ResizeObserverStub {
   observe() {}
@@ -40,7 +40,7 @@ vi.mock('../../../hooks/usePurchaseOrders', () => ({
 }));
 
 import { PurchaseOrderDetail } from './PurchaseOrderDetail';
-import type { PurchaseOrder } from '../../../types/scm.types';
+import type { PurchaseOrder, PurchaseOrderLine } from '../../../types/scm.types';
 
 function po(over: Partial<PurchaseOrder>): PurchaseOrder {
   return {
@@ -168,6 +168,58 @@ describe('PurchaseOrderDetail (AC-M4.6)', () => {
     });
     render(<PurchaseOrderDetail id="po-1" />);
     expect(screen.getByText('This purchase order has no lines.')).toBeInTheDocument();
+  });
+});
+
+describe('PurchaseOrderDetail - sorting the lines', () => {
+  /**
+   * The demand-side twin of the sales-order lines grid, and it carried the same defect: the
+   * headers offered a sort arrow and the rows never moved. Fixture order is ascending in no
+   * column, so a grid that ignores the click cannot pass by accident.
+   */
+  const SORT_LINES: PurchaseOrderLine[] = [
+    { id: 'l-b', sku: 'SKU-B', product_name: 'Beta basin', qty_ordered: 320, qty_received: 300, uom: 'PCS' },
+    { id: 'l-c', sku: 'SKU-C', product_name: 'Gamma tap', qty_ordered: 45, qty_received: 0, uom: 'PCS' },
+    { id: 'l-a', sku: 'SKU-A', product_name: 'Alpha pan', qty_ordered: 1200, qty_received: 1100, uom: 'PCS' },
+  ];
+
+  const skuOrder = () =>
+    screen
+      .getAllByRole('row')
+      .map((row) => row.textContent ?? '')
+      .filter((text) => text.includes('SKU-'))
+      .map((text) => text.match(/SKU-[A-Z]/)?.[0] ?? '');
+
+  beforeEach(() => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({ lines: SORT_LINES, line_count: 3 }),
+      isLoading: false,
+      isError: false,
+    });
+  });
+
+  it('orders by quantity, ascending then descending, when the header is clicked', () => {
+    render(<PurchaseOrderDetail id="po-1" />);
+    expect(skuOrder()).toEqual(['SKU-B', 'SKU-C', 'SKU-A']);
+
+    // 45 < 320 < 1200 - numeric, not the alphabetical order a formatted string would give.
+    fireEvent.click(screen.getByRole('button', { name: 'Qty ordered' }));
+    expect(skuOrder()).toEqual(['SKU-C', 'SKU-B', 'SKU-A']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Qty ordered' }));
+    expect(skuOrder()).toEqual(['SKU-A', 'SKU-B', 'SKU-C']);
+  });
+
+  it('orders by what has been received', () => {
+    render(<PurchaseOrderDetail id="po-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Qty received' }));
+    expect(skuOrder()).toEqual(['SKU-C', 'SKU-B', 'SKU-A']);
+  });
+
+  it('orders by SKU', () => {
+    render(<PurchaseOrderDetail id="po-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'SKU' }));
+    expect(skuOrder()).toEqual(['SKU-A', 'SKU-B', 'SKU-C']);
   });
 });
 

@@ -52,7 +52,12 @@ jobs:
           versions = pathlib.Path("sorento_crm_backend/alembic/versions")
           revs, downs = set(), set()
           for f in sorted(versions.glob("*.py")):
-              tree = ast.parse(f.read_text())
+              # encoding is explicit: ten migrations hold non-ASCII literals
+              # (151, 154, 155, 258, 259, 260, 305, 306, 307, 311m), and a bare
+              # read_text() decodes with the runner's locale, which is ASCII
+              # whenever LANG is unset. The gate then dies on a
+              # UnicodeDecodeError instead of reporting the head count.
+              tree = ast.parse(f.read_text(encoding="utf-8"))
               for node in tree.body:
                   if isinstance(node, ast.Assign) and len(node.targets) == 1 \
                           and isinstance(node.targets[0], ast.Name):

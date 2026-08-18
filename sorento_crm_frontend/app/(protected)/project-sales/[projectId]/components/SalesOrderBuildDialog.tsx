@@ -26,6 +26,13 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { usePurchaseOrders } from '../../_shared/hooks/useProjects';
 import { useScheduleVersions } from '../../_shared/hooks/useProjectSalesOrders';
+import type { SalesOrderSplitBy } from '../../_shared/types/projectSalesOrder.types';
+
+const SPLIT_BY_OPTIONS: { value: SalesOrderSplitBy; label: string }[] = [
+  { value: 'area', label: 'Schedule area' },
+  { value: 'delivery_date', label: 'Delivery date' },
+  { value: 'delivery_month', label: 'Delivery month' },
+];
 
 /**
  * Build drafts from one PO plus one confirmed delivery schedule version.
@@ -42,12 +49,17 @@ export function SalesOrderBuildDialog({
 }: {
   projectId: string;
   onDone: () => void;
-  onBuild: (input: { poId: string; scheduleVersionId: string }) => Promise<unknown>;
+  onBuild: (input: {
+    poId: string;
+    scheduleVersionId: string;
+    splitBy: SalesOrderSplitBy;
+  }) => Promise<unknown>;
   building: boolean;
 }) {
   const purchaseOrders = usePurchaseOrders(projectId);
   const [poId, setPoId] = React.useState('');
   const [scheduleVersionId, setScheduleVersionId] = React.useState('');
+  const [splitBy, setSplitBy] = React.useState<SalesOrderSplitBy>('area');
   const [confirming, setConfirming] = React.useState(false);
 
   const scheduleVersions = useScheduleVersions(poId || undefined);
@@ -86,7 +98,9 @@ export function SalesOrderBuildDialog({
             <AlertDialogDescription>
               {`${chosenPo?.po_number ?? 'This PO'} against ${
                 chosenVersion?.revision_label || `version ${chosenVersion?.version_no ?? ''}`
-              }. Drafts built earlier from the same pair are replaced, including any regrouping done on them. Published sales orders are left alone.`}
+              }, split by ${(
+                SPLIT_BY_OPTIONS.find((option) => option.value === splitBy)?.label ?? splitBy
+              ).toLowerCase()}. Drafts built earlier from the same pair are replaced, including any regrouping done on them. Published sales orders are left alone.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -95,7 +109,7 @@ export function SalesOrderBuildDialog({
               disabled={building}
               onClick={async (event) => {
                 event.preventDefault();
-                await onBuild({ poId, scheduleVersionId });
+                await onBuild({ poId, scheduleVersionId, splitBy });
                 onDone();
               }}
             >
@@ -172,6 +186,19 @@ export function SalesOrderBuildDialog({
                 placeholder="Select a schedule version"
               />
             )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="build-split-by">
+              Split by <span className="text-destructive">*</span>
+            </Label>
+            <SearchableSelect
+              id="build-split-by"
+              value={splitBy}
+              onChange={(next) => setSplitBy((next || 'area') as SalesOrderSplitBy)}
+              options={SPLIT_BY_OPTIONS}
+              placeholder="Select how to split"
+            />
           </div>
         </DialogBody>
 

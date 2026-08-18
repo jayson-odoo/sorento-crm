@@ -156,6 +156,7 @@ export function TemplateUploadDialog({
         </DialogHeader>
         <div className="space-y-4 min-h-0 flex-1 overflow-y-auto">
           <FileDropzone
+            id="file-upload"
             accept={accept}
             disabled={isUploading}
             files={file ? [file] : []}

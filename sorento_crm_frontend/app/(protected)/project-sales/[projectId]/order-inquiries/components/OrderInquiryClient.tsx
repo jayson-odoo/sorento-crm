@@ -34,6 +34,7 @@ import {
   useOrderInquirySummary,
 } from '../../../_shared/hooks/useOrderInquiry';
 import { useProject } from '../../../_shared/hooks/useProjects';
+import { saveBlobAs } from '../../../_shared/services/fileDownload';
 import { downloadOrderInquiryXlsx } from '../../../_shared/services/orderInquiryService';
 import type { OrderInquiryRow } from '../../../_shared/types/orderInquiry.types';
 import { InfoHint } from '../../components/InfoHint';
@@ -42,7 +43,7 @@ import {
   OrderInquiryStatePill,
   OrderInquiryVerbPill,
   VERB_LABEL,
-} from './OrderInquiryVerbPill';
+} from '../../../_shared/components/OrderInquiryVerbPill';
 
 const VERB_OPTIONS = Object.entries(VERB_LABEL).map(([value, label]) => ({ value, label }));
 
@@ -142,6 +143,55 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             </div>
           );
         },
+      },
+      {
+        id: 'line_no',
+        accessorFn: (row) => row.line_no ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="S/O line" column={column} />,
+        size: 100,
+        enableSorting: false,
+        meta: { headerTitle: 'S/O line', skeleton: <Skeleton className="h-4 w-8" /> },
+        // The line number is how CS and purchasing name the same requirement to each
+        // other (AC-D06); the id that addresses it is never printed.
+        cell: ({ row }) =>
+          row.original.line_no != null ? (
+            <span className="tabular-nums">{row.original.line_no}</span>
+          ) : (
+            <Muted>No line</Muted>
+          ),
+      },
+      {
+        id: 'project_so_ref',
+        accessorFn: (row) => row.project_so_ref ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Project SO" column={column} />,
+        size: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Project SO', skeleton: <Skeleton className="h-4 w-20" /> },
+        cell: ({ row }) =>
+          row.original.project_so_ref ? (
+            <span
+              className="block truncate tabular-nums"
+              title={row.original.project_so_ref}
+            >
+              {row.original.project_so_ref}
+            </span>
+          ) : (
+            <Muted>Not from a project</Muted>
+          ),
+      },
+      {
+        id: 'decision_revision',
+        accessorFn: (row) => row.decision_revision ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Revision" column={column} />,
+        size: 110,
+        enableSorting: false,
+        meta: { headerTitle: 'Revision', skeleton: <Skeleton className="h-4 w-10" /> },
+        cell: ({ row }) =>
+          row.original.decision_revision != null ? (
+            <span className="tabular-nums">{row.original.decision_revision}</span>
+          ) : (
+            <Muted>Not from a decision</Muted>
+          ),
       },
       {
         accessorKey: 'item_code',
@@ -295,14 +345,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
         verb: verbFilter || undefined,
         state: stateFilter || undefined,
       });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `order-inquiry-${project.data?.project_code ?? 'project'}.xlsx`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      saveBlobAs(blob, `order-inquiry-${project.data?.project_code ?? 'project'}.xlsx`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to export the order inquiry');
     } finally {
@@ -390,12 +433,12 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
               {filtered
                 ? 'Clear the filters to see everything raised on this project.'
-                : 'Publishing a sales order raises the rows purchasing acts on.'}
+                : 'Confirming a Project SO in Fulfilment Planning raises the rows purchasing acts on.'}
             </p>
             {!filtered && (
               <Button asChild variant="outline" className="mt-4">
-                <Link href={`/project-sales/${projectId}?tab=sales-orders`}>
-                  Go to the sales orders
+                <Link href="/project-sales/fulfilment-planning">
+                  Open Fulfilment Planning
                 </Link>
               </Button>
             )}
