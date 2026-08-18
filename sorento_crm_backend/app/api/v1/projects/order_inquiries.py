@@ -56,6 +56,7 @@ WorklistSort = Literal[
     "po_number",
     "state",
     "raised_at",
+    "location",
 ]
 
 WORKLIST_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

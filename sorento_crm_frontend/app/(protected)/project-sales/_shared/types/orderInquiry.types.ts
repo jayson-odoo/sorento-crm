@@ -132,6 +132,12 @@ export interface OrderInquiryWorklistRow {
   supplier?: string | null;
   supplier_id?: string | null;
   po_number?: string | null;
+  /**
+   * Where the PO gets placed for: the donor an order-back row left oversold, the
+   * confirmed allocation's warehouse for a plan/confirmed row, otherwise the line's own
+   * fulfilment location. Blank when neither is known.
+   */
+  location?: string | null;
   state: OrderInquiryState | string;
   /** When purchasing was told. The spreadsheet's per-day tabs are this date. */
   raised_at?: string | null;

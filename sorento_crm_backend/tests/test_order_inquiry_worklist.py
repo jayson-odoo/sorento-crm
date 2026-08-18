@@ -28,7 +28,7 @@ from sqlalchemy import text
 
 from app.models.company import Company
 from app.models.inventory import Warehouse
-from app.models.order import Customer, SalesOrder
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
     PurchaseOrder,
@@ -579,6 +579,79 @@ def test_the_supplier_and_po_are_the_ones_the_row_actually_links_to(api):
     assert [row["id"] for row in filtered["data"]] == [seeded["adopted_row"].id]
 
 
+# ------------------------------------------------------------------- location
+
+
+def test_a_row_with_a_stamped_stock_location_prints_it_unchanged(api):
+    """`stock_location` is stamped once at raise time - the donor an order-back row left
+    oversold, or a confirmed allocation's warehouse - and LOCATION just reads it back."""
+    client, db, _company_id, seeded = api
+    seeded["authored_row"].stock_location = "BRW-BB"
+    db.add(seeded["authored_row"])
+    db.commit()
+
+    body = client.get(LIST).json()
+    row = next(r for r in body["data"] if r["id"] == seeded["authored_row"].id)
+
+    assert row["location"] == "BRW-BB"
+
+
+def test_a_row_with_no_stamped_location_falls_back_to_its_lines_own_warehouse(api):
+    """A plain Buy row raised straight off the board has no confirmed allocation and no
+    donor, so the column falls back to the fulfilment warehouse already on the line's own
+    core sales order line - a real answer, just not one purchasing confirmed themselves."""
+    client, db, company_id, seeded = api
+    warehouse = Warehouse(
+        id=_uid(),
+        company_id=company_id,
+        warehouse_code=f"ZZT{_uid()[:6]}",
+        warehouse_name=f"{MARKER} fulfilment WH",
+    )
+    db.add(warehouse)
+    db.flush()
+    core_line = SalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        sales_order_id=seeded["core"].id,
+        product_id=_product(db, f"ZZT-COREP-{_uid()[:6]}", f"{MARKER} core line").id,
+        warehouse_id=warehouse.id,
+        qty_ordered=Decimal("85"),
+    )
+    db.add(core_line)
+    db.flush()
+    adopted_line = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.id == seeded["adopted_row"].so_line_id)
+        .one()
+    )
+    adopted_line.core_sales_order_line_id = core_line.id
+    seeded["adopted_row"].stock_location = None
+    db.add_all([adopted_line, seeded["adopted_row"]])
+    db.commit()
+
+    body = client.get(LIST).json()
+    row = next(r for r in body["data"] if r["id"] == seeded["adopted_row"].id)
+
+    assert row["location"] == warehouse.warehouse_code
+
+
+def test_a_row_with_neither_a_stamped_nor_a_line_location_prints_blank(api):
+    client, _db, _company_id, seeded = api
+
+    body = client.get(LIST).json()
+    row = next(r for r in body["data"] if r["id"] == seeded["authored_row"].id)
+
+    assert row["location"] is None
+
+
+def test_sorting_by_location_is_accepted(api):
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(LIST, params={"sort": "location"})
+
+    assert response.status_code == 200, response.text
+
+
 # ------------------------------------------------------------------- sorting
 
 
@@ -698,6 +771,7 @@ def test_the_workbook_is_one_sheet_per_delivery_month_with_their_heading_row(api
         "SUPPLIER",
         "PO NO ",
     ]
+    assert sheet.cell(row=2, column=10).value == "LOCATION"
     assert sheet.max_row == 3
 
 

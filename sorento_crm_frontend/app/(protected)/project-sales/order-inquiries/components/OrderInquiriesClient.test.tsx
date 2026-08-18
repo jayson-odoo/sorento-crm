@@ -134,6 +134,7 @@ describe('OrderInquiriesClient', () => {
       'Qty',
       'Delivery date',
       'Project / customer',
+      'Location',
       'Supplier',
       'PO no',
       'Instruction',
@@ -310,6 +311,16 @@ describe('OrderInquiriesClient', () => {
 
     expect(await screen.findByText('SO999999')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'SO999999' })).toBeNull();
+  });
+
+  it('prints the location it was stamped with, and nothing when it has none', async () => {
+    renderClient();
+
+    const donor = (await screen.findByText('SO385126')).closest('tr') as HTMLElement;
+    expect(within(donor).getByText('BRW-BB')).toBeInTheDocument();
+
+    const unlocated = screen.getByText('SO386461').closest('tr') as HTMLElement;
+    expect(within(unlocated).queryByText('BRW-BB')).not.toBeInTheDocument();
   });
 
   it('says "not placed" rather than inventing a supplier', async () => {

@@ -238,6 +238,21 @@ export function OrderInquiriesClient() {
           ),
       },
       {
+        accessorKey: 'location',
+        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+        size: 130,
+        meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-16" /> },
+        // Where the PO gets placed for, not where the item is bought TO. Blank when
+        // nobody has stamped a location and the line has no fulfilment warehouse either -
+        // never a dash standing in for "unknown".
+        cell: ({ row }) =>
+          row.original.location ? (
+            <span className="block truncate" title={row.original.location}>
+              {row.original.location}
+            </span>
+          ) : null,
+      },
+      {
         accessorKey: 'supplier',
         header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
         size: 150,

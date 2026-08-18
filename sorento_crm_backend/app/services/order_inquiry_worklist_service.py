@@ -38,7 +38,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from sqlalchemy import Date, String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.order import Customer, SalesOrder
+from app.models.inventory import Warehouse
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
 from app.models.product import Product
 from app.models.project_so import (
@@ -81,6 +82,7 @@ SORTABLE_FIELDS = frozenset(
         "po_number",
         "state",
         "raised_at",
+        "location",
     }
 )
 
@@ -123,6 +125,7 @@ EXPORT_HEADINGS = (
     "PROJECT/CUSTOMER",
     "SUPPLIER",
     "PO NO ",
+    "LOCATION",
 )
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
@@ -171,6 +174,14 @@ _RAISED_AT = OrderInquiryRow.created_at
 _RAISED_DAY = cast(
     func.timezone("Asia/Kuala_Lumpur", func.timezone("UTC", _RAISED_AT)), Date
 )
+# Where the PO gets placed for, not where the item is bought TO. `stock_location` on the
+# row is stamped once, at raise time: the DONOR the take left oversold for an order-back
+# row, or the confirmed allocation's warehouse for a plan/confirmed row
+# (`project_order_inquiry_service._stock_location`). A plain Buy row raised straight off
+# the board has neither, so it falls back to the fulfilment warehouse already on the
+# line's own core sales order line - still a real answer, just not one purchasing
+# confirmed themselves. Blank only when the row traces to no line at all.
+_LOCATION = func.coalesce(OrderInquiryRow.stock_location, Warehouse.warehouse_code)
 
 _SORT_EXPRESSIONS = {
     "so_date": _SO_DATE,
@@ -184,6 +195,7 @@ _SORT_EXPRESSIONS = {
     "po_number": PurchaseOrder.po_number,
     "state": OrderInquiryRow.state,
     "raised_at": _RAISED_AT,
+    "location": _LOCATION,
 }
 
 _COLUMNS = (
@@ -207,6 +219,7 @@ _COLUMNS = (
     Supplier.id.label("supplier_id"),
     Supplier.supplier_name.label("supplier"),
     PurchaseOrder.po_number.label("po_number"),
+    _LOCATION.label("location"),
 )
 
 
@@ -297,6 +310,14 @@ class OrderInquiryWorklistService:
                 ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
             )
             .outerjoin(Product, Product.id == ProjectSalesOrderLine.product_id)
+            # The LOCATION fallback: the line's own core sales order line, then the
+            # fulfilment warehouse on that line. Joined on primary keys throughout, so
+            # neither join can multiply a row.
+            .outerjoin(
+                SalesOrderLine,
+                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+            )
+            .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
             .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
             .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
@@ -412,6 +433,7 @@ class OrderInquiryWorklistService:
             "supplier": row.supplier,
             "supplier_id": row.supplier_id,
             "po_number": row.po_number,
+            "location": row.location,
             "state": row.state,
             "raised_at": row.raised_at,
             "verb": row.verb,
@@ -622,5 +644,6 @@ class OrderInquiryWorklistService:
                         # sheet.
                         row.get("supplier") or "",
                         row.get("po_number") or "",
+                        row.get("location") or "",
                     ]
                 )

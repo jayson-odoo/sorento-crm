@@ -90,6 +90,10 @@ class OrderInquiryWorklistRow(BaseModel):
     supplier: Optional[str] = None
     supplier_id: Optional[str] = None
     po_number: Optional[str] = None
+    # The location the PO is placed for: the donor to order back for an order-back row,
+    # the confirmed allocation's warehouse for a plan/confirmed row, otherwise the line's
+    # own fulfilment location. Blank when neither is known.
+    location: Optional[str] = None
     state: str
     raised_at: Optional[datetime] = None
     verb: str
