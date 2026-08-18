@@ -320,7 +320,7 @@ export function SalesOrderDetailClient({
         onClearFocus={() => setFocusLineId(null)}
       />
 
-      <AllocationPanel psoId={psoId} canEdit={canEdit} />
+      <AllocationPanel psoId={psoId} />
 
       {acknowledging && (
         <SalesOrderAcknowledgeDialog

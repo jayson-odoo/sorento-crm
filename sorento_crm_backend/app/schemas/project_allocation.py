@@ -6,6 +6,10 @@ argument nobody can win.
 
 Ranked candidates are NOT modelled as anything storable on purpose. They are recomputed on
 every request from the live `stock` rows, so no response here is ever written back.
+
+Every shape here is a RESPONSE. Stage 1C removed the per-line write routes these once had
+request bodies for: a Project SO's supply is composed and committed in one atomic
+transaction (`app/schemas/project_supply.py`), so there is nothing left to POST at a line.
 """
 from __future__ import annotations
 
@@ -13,9 +17,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
-ALLOWED_SOURCE_TYPES = ("brw", "own", "other_project", "order")
+#: The source values a component row carries. `other_location` joined them in Stage 1C
+#: (front planning 6.1): free stock outside the Reserve pool, borrowed with no donor
+#: project to ask. Read-only now - the values are written by the atomic confirmation.
+ALLOWED_SOURCE_TYPES = ("brw", "own", "other_project", "other_location", "order")
 
 
 # ------------------------------------------------------------------- candidates
@@ -78,43 +85,7 @@ class AllocationCandidateList(BaseModel):
     covered: bool
 
 
-# ------------------------------------------------------------ the decision itself
-
-
-class AllocationSourceInput(BaseModel):
-    source_type: str
-    warehouse_id: Optional[str] = None
-    #: Required for `other_project`: whose stock is being taken.
-    source_project_id: Optional[str] = None
-    qty: Decimal
-
-    @field_validator("source_type")
-    @classmethod
-    def _known_source(cls, value: str) -> str:
-        cleaned = (value or "").strip()
-        if cleaned not in ALLOWED_SOURCE_TYPES:
-            raise ValueError(
-                f"Unknown source. Use one of: {', '.join(ALLOWED_SOURCE_TYPES)}."
-            )
-        return cleaned
-
-    @field_validator("qty")
-    @classmethod
-    def _positive(cls, value: Decimal) -> Decimal:
-        if value is None or value <= 0:
-            raise ValueError("A source must carry a quantity above zero.")
-        return value
-
-
-class AllocationConfirmRequest(BaseModel):
-    sources: List[AllocationSourceInput]
-
-    @field_validator("sources")
-    @classmethod
-    def _at_least_one(cls, value: List[AllocationSourceInput]):
-        if not value:
-            raise ValueError("Name at least one source, or clear the allocation instead.")
-        return value
+# ------------------------------------------------------ the decision, as it reads
 
 
 class AllocationSourceRow(BaseModel):
@@ -155,34 +126,6 @@ class SalesOrderLineAllocationRow(BaseModel):
 
 
 # ------------------------------------------------------------------------ claims
-
-
-class AllocationClaimRequest(BaseModel):
-    warehouse_id: str
-    to_project_id: str
-    qty: Decimal
-
-    @field_validator("qty")
-    @classmethod
-    def _positive(cls, value: Decimal) -> Decimal:
-        if value is None or value <= 0:
-            raise ValueError("Ask for a quantity above zero.")
-        return value
-
-
-class AllocationRefuseRequest(BaseModel):
-    reason: str
-
-    @field_validator("reason")
-    @classmethod
-    def _reason_required(cls, value: str) -> str:
-        cleaned = (value or "").strip()
-        if len(cleaned) < 3:
-            raise ValueError(
-                "Say why the stock cannot be released. A refusal without a reason "
-                "sends the asker back to a phone call."
-            )
-        return cleaned
 
 
 class AllocationClaimRow(BaseModel):

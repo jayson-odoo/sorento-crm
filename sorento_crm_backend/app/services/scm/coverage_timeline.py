@@ -83,6 +83,12 @@ class TimelineEvent:
     label: str = ""             # human context: project or customer or supplier
     location: str = ""          # the bin or pool the movement sits in
     supply_stage: Optional[str] = None   # in_transit, for SUPPLY only (see above)
+    # The last two keys of PLAN-scm-front-planning.md 3.5's ordering. `line_no` is the
+    # human line number on the document (missing sorts last); `line_id` is the internal
+    # SO-line id, a final stable key that is NEVER displayed - two rows agreeing on
+    # everything a person can see still have to sort the same way on every run.
+    line_no: Optional[int] = None
+    line_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -121,17 +127,26 @@ class TimelineResult:
 
 
 def _sort_key(e: TimelineEvent) -> tuple:
-    """Date order, with a stable tie-break that is deliberately demand-before-supply.
+    """PLAN-scm-front-planning.md 3.5's ordering, and the ONLY one any consumer uses.
 
-    Same-day arrival does not reliably beat same-day despatch: a container clearing customs
-    in the morning is not stock a lorry can load at 9am. Ordering demand first is the
-    conservative reading, and being pessimistic on a tie is the right direction for a
-    planning tool - it over-reports a shortfall rather than hiding one.
+    Date, then kind with SUPPLY BEFORE DEMAND, then SO number, then line number with
+    missing numbers last, then the internal line id as a final stable key.
+
+    Supply-first on a same-day tie is Stage 1C's deliberate reversal of the earlier
+    demand-first order. Incoming SPO is dated location supply, and an SPO arriving on a
+    line's required date "counts at that date" (Q2): a container that clears and is put
+    away in the morning covers a despatch due the same day, and treating the despatch as
+    though the stock never arrived reports a shortfall that does not exist. There is one
+    ordering contract - the reorder engine, the Coverage Timeline panel, plan exceptions
+    and the coverage routes all inherit this, with no per-consumer divergence.
     """
     return (
         e.at or date.min,
-        0 if e.kind == OPENING else (1 if e.kind == DEMAND else 2),
+        0 if e.kind == OPENING else (1 if e.kind == SUPPLY else 2),
         e.ref,
+        e.line_no is None,
+        e.line_no if e.line_no is not None else 0,
+        e.line_id or "",
     )
 
 

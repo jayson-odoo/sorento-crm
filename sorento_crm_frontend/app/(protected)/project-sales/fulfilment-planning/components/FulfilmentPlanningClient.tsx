@@ -39,6 +39,7 @@ const REVIEW_STATE_OPTIONS = [
     label: REVIEW_STATE_LABELS.awaiting_reconciliation,
   },
   { value: 'needs_cs_review', label: REVIEW_STATE_LABELS.needs_cs_review },
+  { value: 'confirmed', label: REVIEW_STATE_LABELS.confirmed },
 ];
 
 /**
@@ -358,7 +359,9 @@ export function FulfilmentPlanningClient() {
                     ? 'No sales order has finished reconciling yet'
                     : reviewState === 'awaiting_reconciliation'
                       ? 'Every sales order here is reconciled'
-                      : 'No published Project SO yet'}
+                      : reviewState === 'confirmed'
+                        ? 'No sales order has been confirmed yet'
+                        : 'No published Project SO yet'}
                 </h3>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                   {reviewState === 'all'

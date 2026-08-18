@@ -13,8 +13,9 @@ const BASE = '/api/v1/project-sales';
 /**
  * Order inquiry rows (P10, contract section 7).
  *
- * Rows are never created from the browser. They are DERIVED when a sales order or an
- * amendment publishes, which is the only moment the instruction is true. What this
+ * Rows are never created from the browser. They are DERIVED when CS confirms a Project SO
+ * in Fulfilment Planning (the Buy residual of the confirmed revision, Stage 1C) or when an
+ * amendment publishes, which are the only moments the instruction is true. What this
  * service does is read them, export them and record what purchasing did about them.
  */
 

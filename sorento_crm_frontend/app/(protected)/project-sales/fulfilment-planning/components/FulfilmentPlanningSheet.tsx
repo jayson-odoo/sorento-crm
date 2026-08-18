@@ -36,6 +36,7 @@ import type {
   ReconciliationLine,
   ReconciliationLineLink,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import { SupplyCompositionSection } from './SupplyCompositionSection';
 
 /**
  * One line's core-SO link. The four outcomes of the section 2 mapping rule and nothing
@@ -246,6 +247,7 @@ export function FulfilmentPlanningSheet({
 
   const reference = docNo || summary?.provisional_ref || row.provisional_ref;
   const headerOutcome = summary?.header.outcome;
+  const reviewState = summary?.review_state ?? row.review_state;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -424,6 +426,27 @@ export function FulfilmentPlanningSheet({
                   }
                 />
               </section>
+
+              {/* Supply composition - what meets each line, and the one press that
+                  commits all of them. Rendered whatever the state is: an order still
+                  mapping its lines says so here rather than dropping the section. */}
+              {reviewState === 'needs_cs_review' || reviewState === 'confirmed' ? (
+                <SupplyCompositionSection psoId={row.id} reference={reference} open={open} />
+              ) : (
+                <section aria-label="Supply composition" className="space-y-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Supply composition
+                  </div>
+                  <div className="rounded-lg border border-border px-3 py-8 text-center">
+                    <h3 className="text-sm font-semibold">
+                      Nothing can be composed for this sales order yet
+                    </h3>
+                    <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                      Every line needs its core sales order line first.
+                    </p>
+                  </div>
+                </section>
+              )}
             </>
           )}
         </SheetBody>

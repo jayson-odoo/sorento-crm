@@ -17,7 +17,11 @@ import {
  * Mapped onto the shared palette's existing keys the way every other pill in this module
  * is: awaiting reconciliation is a wait, so it takes `pending`'s amber; needs CS review is
  * work that has come back to us and wants a decision, which is exactly what `submitted`'s
- * sky already means elsewhere.
+ * sky already means elsewhere; confirmed is a decision that stands, so it takes the same
+ * emerald `active` wears everywhere.
+ *
+ * Confirmed means an ACTIVE supply decision. A superseded or challenged one reads Needs CS
+ * review again, so the pill never states a decision the order no longer holds.
  *
  * Renders nothing when the state is absent, so the surfaces that merely carry it (the SO
  * list row, the SO detail header) are unchanged against a backend that has not shipped the
@@ -26,6 +30,7 @@ import {
 const PALETTE_KEY: Record<ReviewState, string> = {
   awaiting_reconciliation: 'pending',
   needs_cs_review: 'submitted',
+  confirmed: 'active',
 };
 
 export function ReviewStatePill({

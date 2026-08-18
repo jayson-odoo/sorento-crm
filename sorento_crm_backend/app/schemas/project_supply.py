@@ -1,0 +1,172 @@
+"""Supply composition and atomic confirmation (front planning section 6, Stage 1C).
+
+The wire shapes here are the ones the Phase 1 frontend was built against
+(`sorento_crm_frontend/app/(protected)/project-sales/_shared/types/fulfilmentPlanning.types.ts`),
+transcribed field for field. Two conventions carry over from the reconciliation schemas
+next door and are the reason a screen full of these renders no identifiers a person has to
+resolve:
+
+* **quantities are decimal STRINGS.** A float round trip loses the tail of a quantity a
+  customer signed for, and these numbers are compared for exact equality at confirmation.
+* **codes, not ids, everywhere the screen reads.** Warehouse CODE, item CODE, project
+  REFERENCE. The four id fields that do exist (`source_warehouse_id`, `donor_project_id`,
+  `warehouse_id` on a candidate, `project_id` on the proposal) are addressing only: the
+  confirm payload names a warehouse and a donor project by id while the sheet names them
+  by code, and the read had no other way to carry the pair. They are never rendered, the
+  same way `ReconciliationLine.id` is never rendered.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime
+from decimal import Decimal
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, Field
+
+SupplyComponentKind = Literal["timely_spo", "reserve", "borrow", "buy"]
+BorrowSource = Literal["other_location", "other_project"]
+SupplyDecisionState = Literal["active", "superseded", "challenged"]
+
+
+class SupplyComponent(BaseModel):
+    kind: SupplyComponentKind
+    qty: str
+    #: The sentence the rule that produced the quantity wrote (AC-B14). Deterministic,
+    #: never LLM-written, frozen with the snapshot at confirmation.
+    reason: str
+    source_location: Optional[str] = None
+    source_warehouse_id: Optional[str] = None
+    donor_project_ref: Optional[str] = None
+    donor_project_id: Optional[str] = None
+    #: What CS typed: the Borrow reason, or the reason a discontinued product is bought.
+    cs_reason: Optional[str] = None
+
+
+class SupplySpoRef(BaseModel):
+    spo_number: str
+    arrival_date: Optional[date] = None
+    qty: str
+
+
+class BorrowDonorImpact(BaseModel):
+    free_before: str
+    free_after_full_borrow: str
+    committed_qty: str
+
+
+class BorrowCandidate(BaseModel):
+    source: BorrowSource
+    warehouse_code: str
+    warehouse_id: str
+    donor_project_ref: Optional[str] = None
+    donor_project_id: Optional[str] = None
+    free_qty: str
+    donor_impact: BorrowDonorImpact
+
+
+class SupplyFrozenLine(BaseModel):
+    """What the active revision was balanced against, as it was frozen."""
+
+    open_qty: str
+    components: List[SupplyComponent] = []
+
+
+class SupplyLine(BaseModel):
+    project_line_id: str
+    line_no: int
+    item_code: Optional[str] = None
+    description: Optional[str] = None
+    uom: Optional[str] = None
+    open_qty: str
+    required_date: Optional[date] = None
+    fulfilment_location: Optional[str] = None
+    is_dealer_hot_selling: bool = False
+    classification_unavailable: bool = False
+    is_discontinued: bool = False
+    pool_location: Optional[str] = None
+    pool_cap: Optional[str] = None
+    pool_reorder_level: Optional[str] = None
+    components: List[SupplyComponent] = []
+    timely_spo: List[SupplySpoRef] = []
+    advisory_spo: List[SupplySpoRef] = []
+    borrow_candidates: List[BorrowCandidate] = []
+    frozen: Optional[SupplyFrozenLine] = None
+
+
+class SupplyDecisionOut(BaseModel):
+    revision_no: int
+    state: SupplyDecisionState
+    confirmed_by_name: Optional[str] = None
+    confirmed_at: Optional[datetime] = None
+    #: Why the active revision no longer matches the order. Present when challenged.
+    challenged_reason: Optional[str] = None
+
+
+class SupplyFailingLine(BaseModel):
+    """A line the server will not confirm, named the only way it may be (AC-C02)."""
+
+    line_no: Optional[int] = None
+    item_code: Optional[str] = None
+    reason: str
+
+
+class SupplyProposal(BaseModel):
+    project_sales_order_id: str
+    provisional_ref: str
+    autocount_doc_no: Optional[str] = None
+    project_id: str
+    project_code: Optional[str] = None
+    project_name: Optional[str] = None
+    status: str
+    review_state: Optional[str] = None
+    decision: Optional[SupplyDecisionOut] = None
+    lines: List[SupplyLine] = []
+    failing_lines: Optional[List[SupplyFailingLine]] = None
+
+
+# ------------------------------------------------------------------- the confirmation
+
+
+class ConfirmReserveComponent(BaseModel):
+    warehouse_id: str
+    qty: Decimal = Decimal("0")
+
+
+class ConfirmBorrowComponent(BaseModel):
+    source: BorrowSource
+    warehouse_id: str
+    donor_project_id: Optional[str] = None
+    qty: Decimal = Decimal("0")
+    #: Required, but NOT by the schema: an empty reason is a failing LINE, named by line
+    #: number and item code like every other refusal, rather than a field-level 422 the
+    #: sheet cannot attach to a row (AC-B09, AC-C02).
+    reason: str = ""
+
+
+class ConfirmLine(BaseModel):
+    project_line_id: str
+    timely_spo_qty: Decimal = Decimal("0")
+    reserve: List[ConfirmReserveComponent] = Field(default_factory=list)
+    borrow: List[ConfirmBorrowComponent] = Field(default_factory=list)
+    buy_qty: Decimal = Decimal("0")
+    buy_reason: Optional[str] = None
+
+
+class ConfirmSupplyBody(BaseModel):
+    lines: List[ConfirmLine] = Field(default_factory=list)
+
+
+class ConfirmException(BaseModel):
+    """An outcome purchasing has to answer, not a refusal of the confirmation."""
+
+    line_no: Optional[int] = None
+    item_code: Optional[str] = None
+    message: str
+
+
+class ConfirmResult(BaseModel):
+    revision_no: int
+    confirmed_at: Optional[datetime] = None
+    review_state: str = "confirmed"
+    inquiry_rows_created: int = 0
+    exceptions: List[ConfirmException] = []

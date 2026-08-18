@@ -386,10 +386,18 @@ def test_every_company_id_table_is_registered():
     # aimed at another request's person, which is exactly what those ownership checks
     # are for. Both are load-bearing; removing either is a real hole.
     #
-    # The number is the union of both lineages at this merge: main's 68 (67 plus the
-    # flyer proposal batch above) plus the 41 the project-sales branch brought (which
-    # were audited table by table at its own merge).
-    expected_owned = 109
+    # The number is the union of three lineages at this merge: main's 68 (67 plus the
+    # flyer proposal batch above), plus the 41 the project-sales branch brought (which
+    # were audited table by table at its own merge), plus Stage 1C's
+    # `projects.so_supply_decisions`. That last one is OWNED without question: a supply
+    # decision is one company's promise about one company's stock, and it is loaded by id
+    # on every read of the sheet it backs.
+    #
+    # Stage 1C branched before the flyer proposal batch landed, so it counted 67+41+1 and
+    # arrived at the same 109 main's 68+41 did. Both were right about their own lineage and
+    # wrong about the union; the merged total is 110, measured against the model set rather
+    # than reasoned from either arithmetic.
+    expected_owned = 110
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

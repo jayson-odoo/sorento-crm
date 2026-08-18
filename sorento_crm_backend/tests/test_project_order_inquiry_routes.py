@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import io
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import openpyxl
@@ -150,9 +150,46 @@ def _seed_inquiry(db, company_id: str, user_id: str):
             )
         )
     db.flush()
-    inquiry = ProjectOrderInquiryService(db).derive_for_sales_order(
-        order, actor_user_id=user_id
+    # Written the way Stage 1C writes it: one Buy row per line, inside what the atomic
+    # confirmation does (`refresh_for_decision`). The route tests are about the ROUTES,
+    # so the rows are made by the one writer rather than by a whole confirmation.
+    from app.models.project_so import SOSupplyDecision
+
+    lines = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.project_sales_order_id == order.id)
+        .order_by(ProjectSalesOrderLine.line_no.asc())
+        .all()
     )
+    decision = SOSupplyDecision(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=order.id,
+        revision_no=1,
+        state="active",
+        line_snapshots=[{"line_no": line.line_no} for line in lines],
+        confirmed_by=user_id,
+        confirmed_at=datetime.utcnow(),
+    )
+    db.add(decision)
+    db.flush()
+    service = ProjectOrderInquiryService(db)
+    inquiry = service.refresh_for_decision(
+        order,
+        decision,
+        [
+            {
+                "line": line,
+                "line_no": line.line_no,
+                "item_code": service._product_code(line.product_id),
+                "buy_qty": Decimal(str(line.qty)),
+                "required_date": line.delivery_date,
+                "stock_location": None,
+            }
+            for line in lines
+        ],
+        actor_user_id=user_id,
+    )["inquiry"]
     db.commit()
     return project, order, inquiry
 

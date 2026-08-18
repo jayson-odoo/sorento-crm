@@ -724,6 +724,15 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     stock_location = Column(String(80), nullable=True)
     verb = Column(String(32), nullable=False)
     spo_ref = Column(String(80), nullable=True)
+    # The confirmed supply decision this Buy residual came from (front planning 6.3).
+    # Nullable, because amendment exception rows and every row raised before Stage 1C
+    # belong to no decision. SET NULL rather than CASCADE: a decision that is deleted
+    # must not take purchasing's ledger with it.
+    supply_decision_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.so_supply_decisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     covered_by = Column(Text, nullable=True)
     note = Column(Text, nullable=True)
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
@@ -736,6 +745,7 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_order_inquiry_rows_inquiry", "order_inquiry_id"),
         Index("ix_project_order_inquiry_rows_state", "state"),
+        Index("ix_project_order_inquiry_rows_decision", "supply_decision_id"),
         {"schema": "projects"},
     )
 
@@ -746,10 +756,90 @@ ALLOC_SOURCE_BRW = "brw"
 ALLOC_SOURCE_OWN = "own"
 ALLOC_SOURCE_OTHER_PROJECT = "other_project"
 ALLOC_SOURCE_ORDER = "order"
+#: Free stock at a location outside the Reserve pool (front planning 6.1). Borrow like
+#: `other_project`, but there is no donor project to ask, so it carries no claim row.
+#: A model constant, not a database enum: `source_type` is a plain String(16).
+ALLOC_SOURCE_OTHER_LOCATION = "other_location"
+
+#: UI mapping, stated once: `own`/`brw` are Reserve, `other_project`/`other_location` are
+#: Borrow, `order` is Buy.
+ALLOC_RESERVE_SOURCES = (ALLOC_SOURCE_OWN, ALLOC_SOURCE_BRW)
+ALLOC_BORROW_SOURCES = (ALLOC_SOURCE_OTHER_PROJECT, ALLOC_SOURCE_OTHER_LOCATION)
 
 CLAIM_REQUESTED = "requested"
 CLAIM_ACCEPTED = "accepted"
 CLAIM_REFUSED = "refused"
+
+# ------------------------------------------------------- the SO supply decision (1C)
+
+DECISION_ACTIVE = "active"
+DECISION_SUPERSEDED = "superseded"
+DECISION_CHALLENGED = "challenged"
+
+
+class SOSupplyDecision(Base, CompanyScopedMixin):
+    """One atomic promise about a whole Project SO (PLAN-scm-front-planning.md 3.1, 6.2).
+
+    Confirmation is at SO level and never per line. The sheet is line-oriented because CS
+    inspects each line's composition, but no line carries a durable partial state: one
+    revision covers every line or none of them does, so a stale line rolls back the lot.
+
+    ``line_snapshots`` freezes what was decided, in the words it was decided in: line
+    number, the Project and core line ids, product, location, required date, open quantity,
+    each component's quantity AND the deterministic reason string that produced it
+    (section 3.2), the suggestion basis, the lifecycle warning, and the reasons CS typed.
+    The normalized `so_line_allocations` rows remain the components; this is the header
+    that groups them and the evidence that survives a later fact change.
+
+    Two uniqueness rules, both in the database rather than in a remembered check: a partial
+    unique index makes ONE active revision per Project SO (so the second racer's insert
+    fails and it loses cleanly instead of double-claiming stock), and `(order, revision_no)`
+    makes the revision chain a chain.
+    """
+
+    __tablename__ = "so_supply_decisions"
+    __audit_entity_type__ = "project_so_supply_decisions"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_sales_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.sales_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision_no = Column(Integer, nullable=False)
+    state = Column(String(16), nullable=False, server_default=DECISION_ACTIVE)
+    #: The order's status and `updated_at` at confirmation, as text. Display evidence
+    #: only: what the revision was decided against, in a form a person can read.
+    source_revision = Column(String(120), nullable=True)
+    line_snapshots = Column(JSONB, nullable=False)
+
+    confirmed_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    confirmed_at = Column(DateTime(timezone=False), nullable=True)
+
+    supersedes_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.so_supply_decisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    superseded_at = Column(DateTime(timezone=False), nullable=True)
+    superseded_reason = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_so_supply_decisions_order", "project_sales_order_id"),
+        Index(
+            "uq_so_supply_decisions_active",
+            "project_sales_order_id",
+            unique=True,
+            postgresql_where=text("state = 'active'"),
+        ),
+        UniqueConstraint(
+            "project_sales_order_id", "revision_no", name="uq_so_supply_decisions_revision"
+        ),
+        {"schema": "projects"},
+    )
 
 
 class SOLineAllocation(Base, CompanyScopedMixin):
@@ -784,12 +874,28 @@ class SOLineAllocation(Base, CompanyScopedMixin):
     claim_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.allocation_claims.id", ondelete="SET NULL"), nullable=True
     )
+    # Which atomic SO decision wrote this component (front planning 6.1/6.2). NULL on
+    # every row written before Stage 1C, which is why the free-stock reader treats a NULL
+    # decision as a live hold: a legacy confirmed allocation still holds its stock.
+    decision_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.so_supply_decisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: What CS typed. Required on Borrow, which is the one component nobody may write in
+    #: silence (AC-B09), and carried here beside the quantity it justifies.
+    reason = Column(Text, nullable=True)
+    #: The donor's position at the moment the Borrow was confirmed: free before, free
+    #: after the whole borrow, and what was already committed there. Frozen because the
+    #: live figure a month later cannot say what the decision was taken against.
+    donor_impact_snapshot = Column(JSONB, nullable=True)
     confirmed_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     confirmed_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_so_line_allocations_line", "so_line_id"),
+        Index("ix_so_line_allocations_decision", "decision_id"),
         {"schema": "projects"},
     )
 

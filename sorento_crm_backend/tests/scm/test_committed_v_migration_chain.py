@@ -46,7 +46,11 @@ def _normalize(sql: str) -> str:
 @requires_pg
 def test_migration_bodies_are_frozen_not_imported():
     """Neither view migration may import the live SQL - that import IS the outage."""
-    for name in ("340_scm_committed_reads_the_decision", "346_scm_demand_origin_split"):
+    for name in (
+        "340_scm_committed_reads_the_decision",
+        "346_scm_demand_origin_split",
+        "374_so_supply_decisions",
+    ):
         source = (_VERSIONS / f"{name}.py").read_text()
         assert "from app.services" not in source, (
             f"{name} imports live application code; freeze the SQL in the migration "
@@ -56,13 +60,26 @@ def test_migration_bodies_are_frozen_not_imported():
 
 @requires_pg
 def test_newest_view_migration_matches_the_live_body():
-    """Edit COMMITTED_V_SQL -> this goes red -> write a NEW migration with the new body."""
-    m346 = _load("346_scm_demand_origin_split")
-    assert _normalize(m346._AS_OF_346) == _normalize(COMMITTED_V_SQL), (
-        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 346; "
+    """Edit COMMITTED_V_SQL -> this goes red -> write a NEW migration with the new body.
+
+    The newest one is 374 (front planning section 4: the sheet leg stops counting once
+    the project SO holds an active confirmed decision). 346 stays exactly as it shipped -
+    that is the point of the guard - and is now what 374 restores on downgrade.
+    """
+    newest = _load("374_so_supply_decisions")
+    assert _normalize(newest._AS_OF_374) == _normalize(COMMITTED_V_SQL), (
+        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 374; "
         "add a new migration that freezes the new body (346's pattern), so a from-zero "
         "replay stays true to history."
     )
+
+
+@requires_pg
+def test_the_superseded_body_is_still_frozen_where_it_was_written():
+    """374's downgrade restores 346's body, so the two copies must not drift apart."""
+    m346 = _load("346_scm_demand_origin_split")
+    newest = _load("374_so_supply_decisions")
+    assert _normalize(newest._AS_OF_346) == _normalize(m346._AS_OF_346)
 
 
 @requires_pg

@@ -1,8 +1,9 @@
-"""Fulfilment Planning: the AutoCount reconciliation worklist and one order's mapping.
+"""Fulfilment Planning: the reconciliation worklist, the supply sheet, the confirmation.
 
-Contract: `documentation/plans/scm/STAGE1B-scm-front-planning-reconciliation.md` section 3.
+Contract: `documentation/plans/scm/STAGE1B-scm-front-planning-reconciliation.md` section 3
+and `STAGE1C-scm-front-planning-promising.md` section 6.
 
-Three routes, mounted on the same `/project-sales` root as the sales-order ones because
+Five routes, mounted on the same `/project-sales` root as the sales-order ones because
 they are addressed the same two ways: a cross-project worklist, and one order by id.
 
 Rights follow the rest of the module: reads take `projects.projects.view`, and the re-run
@@ -30,12 +31,14 @@ from app.schemas.project_so_reconciliation import (
     FulfilmentPlanningRow,
     ReconciliationSummary,
 )
+from app.schemas.project_supply import ConfirmResult, ConfirmSupplyBody, SupplyProposal
 from app.services import project_service as projects
 from app.services.error_handler import handle_internal_error
 from app.services.project_so_draft_service import ProjectSODraftService
 from app.services.project_so_reconciliation_service import (
     ProjectSOReconciliationService,
 )
+from app.services.project_supply_service import ProjectSupplyService
 from app.services.uuid_path_param import validate_uuid_path
 
 logger = logging.getLogger(__name__)
@@ -59,7 +62,7 @@ def list_fulfilment_planning(
     # the state is derived, and a filter nothing can equal reads on screen as "no work
     # to do" when the truth is "that is not a state".
     review_state: Optional[
-        Literal["awaiting_reconciliation", "needs_cs_review"]
+        Literal["awaiting_reconciliation", "needs_cs_review", "confirmed"]
     ] = Query(None),
     project_id: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
@@ -101,6 +104,62 @@ def get_reconciliation(
         order = ProjectSODraftService(db).get_order(pso_id)
         return ProjectSOReconciliationService(db).evaluate(order)
     except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/sales-orders/{pso_id}/supply", response_model=SupplyProposal)
+def get_supply_proposal(
+    pso_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The Supply composition section: what covers each line, and why (J04).
+
+    It writes at most one thing, and only ever the same thing: an active revision whose
+    frozen facts no longer match the live ones is flipped to `challenged` here, because a
+    sheet that reads Confirmed against quantities that have moved is a promise nobody can
+    keep. Committed on the way out for that reason.
+    """
+    try:
+        validate_uuid_path(pso_id, resource="Sales order")
+        service = ProjectSupplyService(db)
+        order = service.get_order(pso_id)
+        body = service.proposal_for(order)
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/sales-orders/{pso_id}/confirm", response_model=ConfirmResult)
+def confirm_supply(
+    pso_id: str,
+    payload: ConfirmSupplyBody,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Confirm the whole Project SO in one action (AC-C01).
+
+    Every line commits together or none of them does: the service rechecks each line
+    against authoritative facts, and one stale, unbalanced or unmapped line refuses the
+    lot with `failing_lines` naming each by line number and item code. The Order Inquiry
+    handoff runs inside this same transaction, so purchasing can never be told to buy
+    something that was not also promised.
+    """
+    try:
+        validate_uuid_path(pso_id, resource="Sales order")
+        service = ProjectSupplyService(db)
+        order = service.get_order(pso_id)
+        project = projects.get_project_or_404(db, order.project_id)
+        projects.assert_can_edit_project(
+            db, project, current_user["id"], permission_slugs(db, current_user["id"])
+        )
+        body = service.confirm(order, payload, actor_user_id=current_user["id"])
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 

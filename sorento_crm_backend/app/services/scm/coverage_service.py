@@ -357,6 +357,10 @@ class CoverageService:
         pids = [str(p) for p in product_ids]
         if not pids:
             return {}
+        # Imported here rather than at module scope: the projects module reads SCM
+        # services, and a top-level import both ways is a cycle.
+        from app.models.project_so import ProjectSalesOrderLine
+
         rows = (
             self.db.query(
                 SalesOrderLine.product_id,
@@ -370,11 +374,20 @@ class CoverageService:
                 Customer.customer_name,
                 Warehouse.warehouse_code,
                 Product.product_code,
+                # PLAN 3.5's last two ordering keys. The core line carries no human line
+                # number, so it comes from the reconciled Project line that names it; the
+                # core line's own id is the final stable key and is never displayed.
+                SalesOrderLine.id.label("core_line_id"),
+                ProjectSalesOrderLine.line_no.label("project_line_no"),
             )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
             .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
             .outerjoin(Product, Product.id == SalesOrderLine.product_id)
+            .outerjoin(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
             .filter(
                 SalesOrderLine.product_id.in_(pids),
                 SalesOrderLine.warehouse_id.in_(wh_ids),
@@ -435,6 +448,8 @@ class CoverageService:
                     ref=r.so_number or "",
                     label=r.customer_name or (r.demand_class or ""),
                     location=r.warehouse_code or "",
+                    line_no=r.project_line_no,
+                    line_id=str(r.core_line_id) if r.core_line_id else None,
                 )
             )
         unplaceable: dict[str, float] = {}

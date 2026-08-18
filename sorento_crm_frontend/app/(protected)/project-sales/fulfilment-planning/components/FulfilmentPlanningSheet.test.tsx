@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   FulfilmentPlanningRow,
   ReconciliationSummary,
+  SupplyProposal,
 } from '../../_shared/types/fulfilmentPlanning.types';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -23,12 +24,24 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 
 const getReconciliation = vi.fn();
 const rerunReconciliation = vi.fn();
+const getSupply = vi.fn();
+const confirmSupply = vi.fn();
 
-vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
-  listFulfilmentPlanning: vi.fn(),
-  getReconciliation: (...args: unknown[]) => getReconciliation(...args),
-  rerunReconciliation: (...args: unknown[]) => rerunReconciliation(...args),
-}));
+// The real module with its calls replaced, so the Supply composition section below the
+// reconciliation card reads a composition rather than an error, and still gets the real
+// ConfirmSupplyError it tells a refusal by.
+vi.mock('../../_shared/services/fulfilmentPlanningService', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../_shared/services/fulfilmentPlanningService')>();
+  return {
+    ...actual,
+    listFulfilmentPlanning: vi.fn(),
+    getReconciliation: (...args: unknown[]) => getReconciliation(...args),
+    rerunReconciliation: (...args: unknown[]) => rerunReconciliation(...args),
+    getSupply: (...args: unknown[]) => getSupply(...args),
+    confirmSupply: (...args: unknown[]) => confirmSupply(...args),
+  };
+});
 
 const toastSuccess = vi.fn();
 const toastWarning = vi.fn();
@@ -118,8 +131,57 @@ function renderSheet(
   );
 }
 
+const WH_BRW = 'a1000000-0000-4000-8000-000000000001';
+const PROJECT_LINE_ID = 'd4000000-0000-4000-8000-000000000001';
+
+function supply(overrides: Partial<SupplyProposal> = {}): SupplyProposal {
+  return {
+    project_sales_order_id: PSO_ID,
+    provisional_ref: 'PSO-000123',
+    autocount_doc_no: 'SO376201',
+    project_id: PROJECT_ID,
+    project_code: 'PRJ-0041',
+    project_name: 'Tuju Residences',
+    status: 'published',
+    review_state: 'needs_cs_review',
+    lines: [
+      {
+        project_line_id: PROJECT_LINE_ID,
+        line_no: 1,
+        item_code: 'CB6633',
+        description: 'CABANA S/STEEL FLOOR GRATING 6"',
+        uom: 'UNIT',
+        open_qty: '600',
+        required_date: '2026-07-01',
+        fulfilment_location: 'BRW-BB',
+        is_dealer_hot_selling: false,
+        classification_unavailable: false,
+        is_discontinued: false,
+        pool_location: 'BRW-BB',
+        pool_cap: null,
+        pool_reorder_level: '120',
+        components: [
+          {
+            kind: 'reserve',
+            qty: '200',
+            reason: 'Free stock at BRW-BB covers the need by the required date.',
+            source_location: 'BRW-BB',
+            source_warehouse_id: WH_BRW,
+          },
+          { kind: 'buy', qty: '400', reason: 'Remaining uncovered need.' },
+        ],
+        timely_spo: [],
+        advisory_spo: [],
+        borrow_candidates: [],
+      },
+    ],
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  getSupply.mockResolvedValue(supply());
 });
 
 describe('FulfilmentPlanningSheet', () => {
@@ -434,5 +496,102 @@ describe('FulfilmentPlanningSheet', () => {
     await within(dialog).findByText('Reconciliation');
 
     expect(container.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+  });
+
+  // ---------------------------------------------------- Stage 1C: the supply
+  it('composes the supply below the reconciliation once the lines are linked', async () => {
+    getReconciliation.mockResolvedValue(summary({ review_state: 'needs_cs_review' }));
+
+    renderSheet(row());
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Supply composition')).toBeInTheDocument();
+    expect(await within(dialog).findByText('Line 1 · CB6633')).toBeInTheDocument();
+    await waitFor(() => expect(getSupply).toHaveBeenCalledWith(PSO_ID));
+  });
+
+  it('composes nothing while the lines are still being reconciled, and says why', async () => {
+    getReconciliation.mockResolvedValue(summary({ review_state: 'awaiting_reconciliation' }));
+
+    renderSheet(row({ review_state: 'awaiting_reconciliation' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(
+      await within(dialog).findByText('Nothing can be composed for this sales order yet'),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Every line needs its core sales order line first.'),
+    ).toBeInTheDocument();
+    expect(getSupply).not.toHaveBeenCalled();
+  });
+
+  it('reads a confirmed sales order as Confirmed, and shows its frozen composition', async () => {
+    getReconciliation.mockResolvedValue(summary({ review_state: 'confirmed' }));
+    getSupply.mockResolvedValue(
+      supply({
+        review_state: 'confirmed',
+        decision: {
+          revision_no: 2,
+          state: 'active',
+          confirmed_by_name: 'Nurul Aina',
+          confirmed_at: '2026-08-16T09:30:00',
+        },
+        lines: [
+          {
+            ...supply().lines[0],
+            frozen: {
+              open_qty: '600',
+              components: [
+                {
+                  kind: 'reserve',
+                  qty: '200',
+                  reason: 'Free stock at BRW-BB covers the need by the required date.',
+                  source_location: 'BRW-BB',
+                  source_warehouse_id: WH_BRW,
+                },
+                { kind: 'buy', qty: '400', reason: 'Remaining uncovered need.' },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+
+    renderSheet(row({ review_state: 'confirmed' }));
+
+    const dialog = await screen.findByRole('dialog');
+    // The pill reads the whole SO's one state, and it is the only "Confirmed" here.
+    expect(await within(dialog).findByText('Confirmed')).toBeInTheDocument();
+    expect(await within(dialog).findByText('Revision 2')).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole('button', { name: 'Confirm Project SO' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders no UUID-looking id on a confirmed sales order either', async () => {
+    // The Confirmed pill is allowed; the ids the composition is addressed by are not. Every
+    // id in these fixtures is UUID-shaped on purpose, so this can only pass by not printing
+    // them: the line is named by number and item code, the location by its warehouse code.
+    getReconciliation.mockResolvedValue(summary({ review_state: 'confirmed' }));
+    getSupply.mockResolvedValue(
+      supply({
+        review_state: 'confirmed',
+        decision: {
+          revision_no: 2,
+          state: 'active',
+          confirmed_by_name: 'Nurul Aina',
+          confirmed_at: '2026-08-16T09:30:00',
+        },
+      }),
+    );
+
+    renderSheet(row({ review_state: 'confirmed' }));
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('Confirmed');
+    await within(dialog).findByText('Line 1 · CB6633');
+
+    expect(dialog.textContent).toContain('Confirmed');
+    expect(dialog.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
   });
 });

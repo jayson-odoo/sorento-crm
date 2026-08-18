@@ -1,17 +1,25 @@
 'use client';
 
+import { useEffect } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  confirmSupply,
   getReconciliation,
+  getSupply,
   listFulfilmentPlanning,
   rerunReconciliation,
 } from '../services/fulfilmentPlanningService';
-import type { FulfilmentPlanningListParams } from '../types/fulfilmentPlanning.types';
+import type {
+  ConfirmSupplyBody,
+  FulfilmentPlanningListParams,
+} from '../types/fulfilmentPlanning.types';
+import { ORDER_INQUIRY_ROWS_KEY, ORDER_INQUIRY_SUMMARY_KEY } from './useOrderInquiry';
 import { SALES_ORDERS_KEY, SALES_ORDER_KEY } from './useProjectSalesOrders';
 
 export const FULFILMENT_PLANNING_KEY = 'project-fulfilment-planning';
 export const RECONCILIATION_KEY = 'project-so-reconciliation';
+export const SUPPLY_KEY = 'project-so-supply';
 
 export const fulfilmentPlanningKey = (params: FulfilmentPlanningListParams) => [
   FULFILMENT_PLANNING_KEY,
@@ -49,6 +57,44 @@ export function useReconciliation(psoId: string | undefined, enabled = true) {
 }
 
 /**
+ * The composition for one order, fetched with the sheet for the same reason the
+ * reconciliation is: it reads live stock, claims and incoming per line, and running that
+ * for every row of the worklist would price the whole list on nobody's behalf.
+ */
+export function useSupply(psoId: string | undefined, enabled = true) {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: [SUPPLY_KEY, psoId ?? ''],
+    queryFn: () => getSupply(psoId as string),
+    enabled: Boolean(psoId) && enabled,
+    retry: 1,
+    // A focus refetch mid-composition churns the proposal under CS for no decision
+    // change; the confirm rechecks live facts anyway, so the sheet does not need to.
+    refetchOnWindowFocus: false,
+    staleTime: 15_000,
+  });
+
+  // The supply read is the one that notices an out-of-band change (it rechecks live
+  // facts and may flip the decision to challenged), so when its review_state disagrees
+  // with the cached reconciliation the pill sources are stale, not the sheet: refetch
+  // them rather than letting "Confirmed" sit over a composition that says otherwise.
+  const freshState = query.data?.review_state;
+  useEffect(() => {
+    if (!psoId || freshState === undefined) return;
+    const summary = queryClient.getQueryData<{ review_state?: string | null }>([
+      RECONCILIATION_KEY,
+      psoId,
+    ]);
+    if (summary && (summary.review_state ?? null) !== (freshState ?? null)) {
+      void queryClient.invalidateQueries({ queryKey: [RECONCILIATION_KEY, psoId] });
+      void queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
+    }
+  }, [psoId, freshState, queryClient]);
+
+  return query;
+}
+
+/**
  * Re-running writes the links it can prove, so it invalidates the sales-order queries too:
  * the review state is shown on the project's SO list and on the SO detail header, and a
  * stale one there says an order still needs reconciling after it has been cleared.
@@ -75,5 +121,35 @@ export function useReconciliationMutations() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { rerun };
+  /**
+   * One press confirms every line (AC-C01). It invalidates the same four key families the
+   * re-run does, plus the order inquiry: the confirmed Buy residual is what purchasing is
+   * handed, so a stale inquiry list is the one place the decision would look like it had
+   * not happened.
+   *
+   * The error toast is deliberately short. A refusal names each failing line, and that
+   * list belongs on the sheet beside the lines, not in a toast that scrolls away.
+   */
+  const confirm = useMutation({
+    mutationFn: ({ psoId, body }: { psoId: string; body: ConfirmSupplyBody }) =>
+      confirmSupply(psoId, body),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
+      queryClient.invalidateQueries({ queryKey: [RECONCILIATION_KEY] });
+      queryClient.invalidateQueries({ queryKey: [SUPPLY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [SALES_ORDER_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
+      const rows = result.inquiry_rows_created;
+      toast.success(
+        `Confirmed as revision ${result.revision_no}. ${rows} purchase row${
+          rows === 1 ? '' : 's'
+        } handed over.`,
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { rerun, confirm };
 }
