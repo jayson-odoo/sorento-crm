@@ -315,6 +315,7 @@ def attribute_sources(
     opening_stock: Any = ZERO,
     supply_events: Optional[Sequence[Mapping[str, Any]]] = None,
     demand_lines: Optional[Sequence[Mapping[str, Any]]] = None,
+    preserve_demand_order: bool = False,
 ) -> Dict[Tuple[str, Optional[int]], Tuple[Component, ...]]:
     """Share one product-location's dated supply across the lines asking for it.
 
@@ -326,6 +327,13 @@ def attribute_sources(
     line number (missing last) and finally the internal line id. An SPO arriving ON the
     required date counts; one arriving the day after contributes nothing at that date and
     is advisory evidence instead.
+
+    ``preserve_demand_order`` consumes the lines IN THE ORDER GIVEN instead. The multi-order
+    planning board serves them by the fulfilment-priority ranking rather than by date
+    (PLAN-fulfilment-planning-from-autocount-so 13.5), and WHO gets the pile is a different
+    question from HOW the pile is divided. Only the first question differs, so only the sort
+    is optional: sharing one location's stock and its dated incoming stays a single
+    implementation, which is the whole reason this function exists.
 
     ``product_code`` names the pile in a failure message and takes no part in the
     arithmetic; the caller has already narrowed the rows to one product and location.
@@ -342,8 +350,14 @@ def attribute_sources(
         for event in _sorted_supply(supply_events or [])
     ]
 
+    ordered = (
+        list(demand_lines or [])
+        if preserve_demand_order
+        else sorted(demand_lines or [], key=_demand_sort_key)
+    )
+
     out: Dict[Tuple[str, Optional[int]], Tuple[Component, ...]] = {}
-    for line in sorted(demand_lines or [], key=_demand_sort_key):
+    for line in ordered:
         remaining = max(_dec(line.get("open_qty")), ZERO)
         required_date = _as_date(line.get("required_date"))
         components: List[Component] = []

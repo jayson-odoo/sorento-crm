@@ -1457,6 +1457,26 @@ class ProjectSupplyService:
             else None
         )
 
+    def free_stock_by_location(
+        self, product_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """Free stock per `(product_id, warehouse_id)`, as THIS service computes it.
+
+        The public seam for readers outside one order's sheet - today the multi-order planning
+        board. It exists so the board asks this service what is free rather than growing a
+        second opinion about availability, which would be the same defect two rankings would
+        have been (`app/services/scm/priority.py`).
+
+        No order is excluded, because a cross-order reader is not composing any one order.
+
+        It carries `_free_stock`'s known limit, and the board is built to SHOW that limit
+        rather than hide it (PLAN 13.5.1): only CONFIRMED holds are netted off, so two orders
+        composed separately can both still be proposed the same stock. The board answers that
+        by serving one pile down the ranking and marking the rows it could not cover as
+        contested. The locking fix belongs to the confirmation path.
+        """
+        return self._free_stock(product_ids, exclude_order_id=None)
+
     def _free_stock(
         self, product_ids: Iterable[str], *, exclude_order_id: Optional[str]
     ) -> Dict[Tuple[str, str], Decimal]:
@@ -1603,6 +1623,18 @@ class ProjectSupplyService:
             )
             .all()
         }
+
+    def incoming_by_location(
+        self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], List[_SpoRow]]:
+        """Undelivered SPO allocations per `(product_id, warehouse_id)`.
+
+        The public seam beside `free_stock_by_location`, and there for the same reason: the
+        board shares one location's opening stock AND its dated incoming through the same
+        engine the sheet uses, so the two surfaces cannot come to differ about what is on the
+        water.
+        """
+        return self._spo_rows(product_ids, warehouse_ids)
 
     def _spo_rows(
         self, product_ids: Iterable[str], warehouse_ids: Iterable[str]

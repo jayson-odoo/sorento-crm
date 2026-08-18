@@ -614,6 +614,32 @@ longer guaranteed. Both were required in
 `app/(protected)/project-sales/_shared/types/fulfilmentPlanning.types.ts` and must be widened in
 Phase 1.
 
+### Amendments made while building Phase 2 seam A (adoption, worklist, routes)
+
+Two, both found by the tests and both recorded here rather than left as a difference between
+this file and the code.
+
+**1. Arm 2 is "not already carried by arm 1", not "`so_id IS NULL`".** Section 2's table words
+arm 2 as planning records with `so_id IS NULL`. That is the same set for every order this plan
+describes, and it silently loses one it does not: a published or amended order LINKED to a core
+sales order that is not project-class, or whose lines are all covered, is on neither arm and
+would disappear from the screen Stage 1B built it for - which AC-FP25 forbids and which two
+existing Stage 1B route tests catch. Implemented as **authored live records that no arm-1 row
+already carries**, which is a superset of both readings and still puts each subject on exactly
+one row (AC-FP03). No wire-shape change, so the Phase 1 mock stands as built.
+
+**2. `uq_projects_so_core_order` makes the Stage 1B `duplicate` LINE outcome unreachable by its
+old route, and two of its tests had to move.** AC-FP10's index means two planning records can
+never point at one core sales order at the same time - which is exactly how
+`tests/test_project_so_reconciliation.py` reached the state where one Project SO holds a core
+line another one wants. Those two tests (`..._is_reported_duplicate` and
+`..._core_line_closed_is_told_that_not_about_someone_elses`) now reach the same state the way
+that is still open: the other order holds the LINE without holding the header, which is what a
+re-pointed or detached record actually leaves behind. Every assertion in them is unchanged; only
+the seeding moved. **AC-FP25's claim that every Stage 1B test stays green UNTOUCHED is therefore
+wrong as written** for those two, and the index wins over it because AC-FP10 and AC-FP24's
+"one confirmed leg per core order" rest on the index and nothing else.
+
 ---
 
 ## 7. Frontend

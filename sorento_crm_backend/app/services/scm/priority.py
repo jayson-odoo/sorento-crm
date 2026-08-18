@@ -11,13 +11,15 @@ So the assembly lives here, and both callers import it. The generic scorer (`ran
 `Factor`) stays in `cash_ranking`; this module is the SCM-specific part - which factors exist,
 where their values come from, and how a purchase order's demand class is resolved.
 
-The four factors:
+The factors:
 
   * `po_document_sequence` - the order the buyer already reads off the list. Sequence, not date:
     two orders raised the same day still have an order.
   * `demand_class`        - project versus dealer, resolved through the SO<->PO claim.
   * `need_by_date`        - sooner is higher.
   * `document_age`        - older document is higher, which is the same helper read the other way.
+  * `customer_credit`     - shorter payment terms are higher. Only a SALES-ORDER demand row can
+    carry it (see `factors_for_demand_rows`); a purchase-order candidate never does.
 
 Every factor degrades gracefully: a value we do not have is ABSENT, not zero. `rank_score`
 divides by the weight of the factors actually present, so an absent factor lowers nobody's score
@@ -25,20 +27,35 @@ divides by the weight of the factors actually present, so an absent factor lower
 value rather than a gap: no claimed sales order behind a purchase order is a demand of 0.0 and
 PRESENT, because a purchase order owed to a customer has to be able to outrank one owed to
 nobody. Only a resolved class the policy does not weight is absent (see `demand_value`).
+
+**Two shapes, one policy.** `factors_for_candidates` assembles a PURCHASE-ORDER candidate
+(`po_line_id`, `po_number`, `expected_date`, `po_date`, class through `scm.order_link_claim`).
+`factors_for_demand_rows` assembles a SALES-ORDER demand row, which has no purchase order behind
+it at all. They are siblings on purpose: forcing sales-order demand through the PO-shaped
+signature would mean inventing a `po_line_id`, which is exactly the two-implementations defect
+this module exists to prevent. What they SHARE is the part that must never fork - the policy row,
+`rank_score`, and the absent-is-dropped rule.
 """
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from datetime import date
+from typing import Any, Mapping, Optional, Sequence
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.scm import PriorityPolicy
-from app.services.scm.cash_ranking import Factor
+from app.services.scm.cash_ranking import Factor, rank_score
 
 #: The factor keys a policy may weight. Adding a fifth is a row in `scm.priority_policy.factors`
 #: plus a value here; it is never a schema change (AC-H6 applies the same rule to demand classes).
-FACTOR_KEYS = ("po_document_sequence", "demand_class", "need_by_date", "document_age")
+FACTOR_KEYS = (
+    "po_document_sequence",
+    "demand_class",
+    "need_by_date",
+    "document_age",
+    "customer_credit",
+)
 
 #: What a policy-less database ranks by. Sequence only: with no policy row the tenant has said
 #: nothing about what demand is worth, so the fallback ranks by the order the buyer already
@@ -61,12 +78,49 @@ SEEDED_WEIGHTS = {
 #: What each resolved demand class is worth, seeded alongside `SEEDED_WEIGHTS`.
 SEEDED_CLASS_WEIGHTS = {"project": 1.0, "retail": 0.4}
 
+#: The named what-if the fulfilment board offers (PLAN 13.5, recommendation 3 then 2).
+#:
+#: It is NOT a second active policy - the partial unique index allows exactly one, and two
+#: policies for two moments is the defect this module prevents. It is a weighting a planner may
+#: ask the board to RANK BY so the captain can see what a fairer rule would do to real orders
+#: before anybody switches it on. A previewed ranking is labelled and is never persisted.
+#:
+#: Weighted only on what a sales-order demand row can carry. `demand_class` stays at zero on
+#: purpose: every board row is project-class by construction, so weighting it adds a constant to
+#: every score and separates nothing.
+BOARD_PREVIEW_NAME = "Fulfilment board preview (delivery date, document date, customer credit)"
+BOARD_PREVIEW_WEIGHTS = {
+    "po_document_sequence": 0.0,
+    "demand_class": 0.0,
+    "need_by_date": 3.0,
+    "document_age": 1.0,
+    "customer_credit": 1.0,
+}
+BOARD_PREVIEW_CLASS_WEIGHTS = dict(SEEDED_CLASS_WEIGHTS)
+
 
 def active_policy(db: Session) -> Optional[PriorityPolicy]:
     """The one active policy, or None. A partial unique index makes "one" true at the DB level."""
     return (
         db.query(PriorityPolicy)
         .filter(PriorityPolicy.is_active.is_(True))
+        .order_by(PriorityPolicy.created_at)
+        .first()
+    )
+
+
+def policy_by_name(db: Session, name: str) -> Optional[PriorityPolicy]:
+    """A policy by name, ACTIVE OR NOT.
+
+    The preview reads an inactive row (13.5): a what-if has to be readable without being
+    switched on, or asking "what would this do" means activating it for container loading and
+    stock assignment as well.
+    """
+    if not name:
+        return None
+    return (
+        db.query(PriorityPolicy)
+        .filter(PriorityPolicy.name == name)
         .order_by(PriorityPolicy.created_at)
         .first()
     )
@@ -207,3 +261,201 @@ def factors_for_candidates(db: Session, candidates: Sequence[dict]) -> dict[str,
             age=ages.get(line_id),
         )
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Sales-order demand rows (PLAN-fulfilment-planning-from-autocount-so 13.5)
+# --------------------------------------------------------------------------- #
+
+#: What a demand row can carry, in the order the board shows the chips. Two of these can never
+#: separate anything and are listed anyway, because leaving them out would hide WHY:
+#: `po_document_sequence` is structurally absent (a sales-order line has no purchase order), and
+#: `demand_class` is constant on a board whose population is project-class by construction.
+DEMAND_FACTOR_KEYS = (
+    "po_document_sequence",
+    "demand_class",
+    "need_by_date",
+    "document_age",
+    "customer_credit",
+)
+
+
+def _ascending_values(values: Sequence[Optional[float]]) -> list[Optional[float]]:
+    """Normalize so the SMALLEST present value scores 1.0 and the largest 0.0.
+
+    Absent stays absent - `None` in, `None` out - because `rank_score` drops it from both sums
+    and an unknown is not a bad score. When every present value is equal they all score 1.0
+    (span of zero), which is the same answer `date_values` gives a same-day set: a factor
+    nobody differs on separates nobody, and it must not invent an order.
+    """
+    present = [v for v in values if v is not None]
+    if not present:
+        return [None for _ in values]
+    lo, hi = min(present), max(present)
+    span = (hi - lo) or 1.0
+    return [None if v is None else 1.0 - ((v - lo) / span) for v in values]
+
+
+def _day_number(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return float(value.toordinal())
+    try:
+        return float(date.fromisoformat(str(value)[:10]).toordinal())
+    except ValueError:
+        return None
+
+
+def payment_terms_by_customer(
+    db: Session, customer_ids: Sequence[str]
+) -> dict[str, Optional[int]]:
+    """`customers.payment_terms_days`, which exists in the database but not on the ORM model.
+
+    Read the same guarded way `project_so_draft_service._credit_limit` reads `credit_limit`,
+    and for the same reason: a scratch schema built from the models alone does not have the
+    column, and an unguarded statement would poison the surrounding transaction rather than
+    answering "nobody has assessed this customer". A customer the column has no value for is
+    ABSENT, never best and never worst.
+
+    This is the ONE place the credit signal is sourced, so the AR-feed swap the captain
+    actually wants - `1 - (outstanding / credit_limit)` clamped to [0, 1], once an invoice or
+    receivables feed exists - changes this function and the weight in `factors`, and nothing
+    else. `credit_limit` is deliberately not used today: it reaches 8 of 11,166 open project
+    lines, so a factor keyed on it would rank essentially nothing.
+    """
+    ids = [str(cid) for cid in customer_ids if cid]
+    if not ids:
+        return {}
+    present = db.execute(
+        text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'customers' "
+            "AND column_name = 'payment_terms_days'"
+        )
+    ).first()
+    if not present:
+        return {}
+    # `id` is a real `uuid` column and the ids arrive as text, so the array is cast rather
+    # than compared straight: `uuid = text` has no operator and Postgres refuses it.
+    rows = db.execute(
+        text(
+            "SELECT id, payment_terms_days FROM customers "
+            "WHERE id = ANY(CAST(:ids AS uuid[]))"
+        ),
+        {"ids": ids},
+    ).all()
+    return {
+        str(row[0]): (int(row[1]) if row[1] is not None else None) for row in rows
+    }
+
+
+def factors_for_demand_rows(
+    db: Session,
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    weights: Optional[Mapping[str, Any]] = None,
+    class_weights: Optional[Mapping[str, Any]] = None,
+) -> dict[str, list[Factor]]:
+    """Factors per `row_key` for a set of competing SALES-ORDER demand rows.
+
+    The sibling of `factors_for_candidates`, and the whole assembly in one call for the same
+    reason: a caller that only wants "rank these demand rows by the policy" cannot accidentally
+    build three quarters of it.
+
+    Each row is a mapping carrying `row_key`, `required_date`, `order_date`,
+    `payment_terms_days` and `demand_class`. The mapping, decided by the captain:
+
+      * `need_by_date`    <- `sales_order_lines.required_date`, sooner is higher.
+      * `document_age`    <- `sales_orders.order_date`, OLDER is higher. The sales order's own
+        date, not the customer's PO date: that is the document the row IS, and the
+        AutoCount-sourced book carries no customer PO on the core order at all.
+      * `customer_credit` <- `customers.payment_terms_days`, SHORTER is higher. No terms
+        recorded is ABSENT: a customer nobody has assessed is not thereby the safest or the
+        riskiest, and silently treating an unknown as either is how a ranking starts lying.
+      * `demand_class`    <- the policy's weight for the row's class, ABSENT when the row has no
+        class or the policy does not weight it. Note the difference from the purchase-order
+        shape, where "no claimed sales order" is a real value of 0.0: a demand row IS the sales
+        order, so there is no "owed to nobody" case to score.
+      * `po_document_sequence` is ALWAYS absent. A sales-order line has no purchase order.
+
+    Values are normalized ACROSS THE ROWS PASSED IN, the way `date_values` normalizes across a
+    candidate set: a rank only ever means "against the others competing for this stock", and a
+    score normalized against the whole book would be dominated by orders not in the fight. So
+    the caller passes one cell's contributors, not the world.
+
+    `weights` / `class_weights` override the active policy. That is what a preview is: the
+    board ranks by a named alternative without activating it, and nothing is persisted.
+    """
+    if weights is None or class_weights is None:
+        policy_factors, policy_classes = policy_weights(active_policy(db))
+        weights = policy_factors if weights is None else weights
+        class_weights = policy_classes if class_weights is None else class_weights
+
+    need_by = _ascending_values([_day_number(r.get("required_date")) for r in rows])
+    # Older document is higher, and `_ascending_values` already gives 1.0 to the SMALLEST
+    # value, which for a date is the earliest one. So the day number goes straight in.
+    # Negating it hands the top score to the NEWEST document - the exact opposite of what
+    # "document age" means - and the ranking then reads plausibly while being backwards.
+    ages = _ascending_values([_day_number(r.get("order_date")) for r in rows])
+    credit = _ascending_values(
+        [
+            None if r.get("payment_terms_days") is None
+            else float(r["payment_terms_days"])
+            for r in rows
+        ]
+    )
+
+    out: dict[str, list[Factor]] = {}
+    for index, row in enumerate(rows):
+        klass = row.get("demand_class")
+        class_weight = class_weights.get(klass) if klass else None
+        values = {
+            "po_document_sequence": None,
+            "demand_class": None if class_weight is None else float(class_weight),
+            "need_by_date": need_by[index],
+            "document_age": ages[index],
+            "customer_credit": credit[index],
+        }
+        keys = list(DEMAND_FACTOR_KEYS) + [
+            key for key in weights if key not in DEMAND_FACTOR_KEYS
+        ]
+        out[str(row["row_key"])] = [
+            Factor(
+                key=key,
+                weight=float(weights.get(key, 0.0) or 0.0),
+                value=values.get(key),
+                present=values.get(key) is not None,
+            )
+            for key in keys
+        ]
+    return out
+
+
+def discriminates_nothing(factors_by_row: Mapping[str, Sequence[Factor]]) -> bool:
+    """True when this policy cannot separate these rows at all.
+
+    Two ways that happens, and the board has to report both rather than show a
+    plausible-looking order it did not earn:
+
+      * every weighted factor is ABSENT on every row - which is what the live seeded rule does
+        to a board, weighting only `po_document_sequence`, so `rank_score` divides by a zero
+        denominator and answers 0.0 for everybody;
+      * a weighted factor is present but holds the SAME value on every row, which is what
+        `demand_class` does on a board whose population is project-class by construction.
+
+    A single row is trivially unseparable and reports True, which is honest: there is nothing
+    for a ranking to have decided.
+    """
+    seen: dict[str, set[float]] = {}
+    for factors in factors_by_row.values():
+        for factor in factors:
+            if factor.weight <= 0 or not factor.present or factor.value is None:
+                continue
+            seen.setdefault(factor.key, set()).add(round(float(factor.value), 9))
+    return not any(len(values) > 1 for values in seen.values())
+
+
+def scores_for(factors_by_row: Mapping[str, Sequence[Factor]]) -> dict[str, float]:
+    """`rank_score` per row. The generic scorer, never a second copy of the arithmetic."""
+    return {key: rank_score(list(factors)) for key, factors in factors_by_row.items()}

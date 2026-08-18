@@ -593,10 +593,18 @@ def test_a_core_sales_order_outside_the_company_scope_reads_no_core_so(seeded):
 
 
 def test_a_core_line_already_taken_by_another_project_so_is_reported_duplicate(seeded):
-    """AC-A02. Two Project SOs adopted the same AutoCount document, so both point at
-    one core sales order and one core line. The first to reconcile keeps it; the
-    second must NAME the sales order holding it rather than dying on
-    `uq_projects_so_line_core_line`, and it cannot reach Needs CS review."""
+    """AC-A02. Two Project SOs adopted the same AutoCount document, so one of them holds
+    a core line the other's line would take. The holder keeps it; the second must NAME the
+    sales order holding it rather than dying on `uq_projects_so_line_core_line`, and it
+    cannot reach Needs CS review.
+
+    The SETUP moved when migration 383 added `uq_projects_so_core_order` (AC-FP10): two
+    planning records can no longer point at one core sales order at the same time, so the
+    first one releases the header (its `so_id` is cleared) while KEEPING the line link it
+    already wrote. That is the state a re-pointed or detached order actually leaves behind,
+    and the behaviour under test - who is named, and what the second order's line reads -
+    is unchanged.
+    """
     db, company_id, owner = seeded
     product = _product(db)
     project = _project(db, company_id, owner)
@@ -607,13 +615,17 @@ def test_a_core_line_already_taken_by_another_project_so_is_reported_duplicate(s
         db, project, autocount_doc_no=core_order.so_number, so_id=core_order.id
     )
     first_line = _project_line(db, first, product, line_no=1, delivery_date=D1)
+
+    service = ProjectSOReconciliationService(db)
+    service.reconcile(first)
+    first.so_id = None
+    db.flush()
+
     second = _project_order(
         db, project, autocount_doc_no=core_order.so_number, so_id=core_order.id
     )
     second_line = _project_line(db, second, product, line_no=7, delivery_date=D1)
 
-    service = ProjectSOReconciliationService(db)
-    service.reconcile(first)
     summary = service.reconcile(second)
 
     db.refresh(first_line)
@@ -639,6 +651,10 @@ def test_a_line_whose_own_core_line_closed_is_told_that_not_about_someone_elses(
     The two answers live in different places - "your line closed, look at the document"
     versus "go and look at sales order X" - so telling this line about a core line it
     never touched sends CS to the wrong screen. The reason it held one wins.
+
+    The other order holds its core line WITHOUT holding the header, because
+    `uq_projects_so_core_order` (migration 383, AC-FP10) allows one planning record per
+    core sales order. What is under test is which reason wins, and that is untouched.
     """
     db, company_id, owner = seeded
     product = _product(db)
@@ -650,7 +666,7 @@ def test_a_line_whose_own_core_line_closed_is_told_that_not_about_someone_elses(
     taken_line = _core_line(db, core_order, product, required_date=D1)
 
     theirs = _project_order(
-        db, project, autocount_doc_no=core_order.so_number, so_id=core_order.id
+        db, project, autocount_doc_no=core_order.so_number, so_id=None
     )
     _project_line(
         db,

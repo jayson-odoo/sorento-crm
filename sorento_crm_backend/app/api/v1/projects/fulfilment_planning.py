@@ -18,6 +18,7 @@ plain `/sales-orders/{pso_id}` one removes any question of shadowing.
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -27,13 +28,18 @@ from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.project_board import PlanningBoard
 from app.schemas.project_so_reconciliation import (
+    AdoptSalesOrderBody,
+    AdoptSalesOrderResult,
     FulfilmentPlanningRow,
     ReconciliationSummary,
 )
 from app.schemas.project_supply import ConfirmResult, ConfirmSupplyBody, SupplyProposal
 from app.services import project_service as projects
 from app.services.error_handler import handle_internal_error
+from app.services.project_fulfilment_board_service import FulfilmentBoardService
+from app.services.project_so_adoption_service import ProjectSOAdoptionService
 from app.services.project_so_draft_service import ProjectSODraftService
 from app.services.project_so_reconciliation_service import (
     ProjectSOReconciliationService,
@@ -54,23 +60,34 @@ def list_fulfilment_planning(
     query: Optional[str] = Query(
         None,
         description=(
-            "Matches provisional ref, AutoCount doc no, area group, project code, "
-            "project title or customer name"
+            "Matches the sales-order number, customer name, the Order Inquiry project "
+            "string, provisional ref, AutoCount doc no, area group, project code or "
+            "project title"
         ),
     ),
     # A closed set, so an unknown value is a 422 rather than a 200 with an empty list:
     # the state is derived, and a filter nothing can equal reads on screen as "no work
-    # to do" when the truth is "that is not a state".
+    # to do" when the truth is "that is not a state". `not_started` is the fourth value
+    # (AC-FP05) and means "an outstanding core sales order nobody has planned".
     review_state: Optional[
-        Literal["awaiting_reconciliation", "needs_cs_review", "confirmed"]
+        Literal[
+            "not_started", "awaiting_reconciliation", "needs_cs_review", "confirmed"
+        ]
     ] = Query(None),
     project_id: Optional[str] = Query(None),
+    sales_order_id: Optional[str] = Query(
+        None, description="Narrow to one core sales order. Addressing only."
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
-    """Every published or amended Project SO, with its one whole-SO review state (J03).
+    """Everything that needs planning, one row per subject (AC-FP01 to AC-FP06).
+
+    A union of the outstanding project-class sales-order book and the planning records
+    authored here that it does not already carry, ordered by the earliest still-owed
+    required date because that is the order the work is due in.
 
     Plain ``def``, so FastAPI runs the whole handler in a threadpool: the mapping is
     synchronous SQLAlchemy over a page of orders, and on the event loop it holds up every
@@ -79,12 +96,98 @@ def list_fulfilment_planning(
     try:
         if project_id:
             validate_uuid_path(project_id, resource="Project")
+        if sales_order_id:
+            validate_uuid_path(sales_order_id, resource="Sales order")
         return ProjectSOReconciliationService(db).list_fulfilment_planning(
             query=query,
             review_state=review_state,
             project_id=project_id,
+            sales_order_id=sales_order_id,
             page=page,
             limit=limit,
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/fulfilment-planning/adopt", response_model=AdoptSalesOrderResult)
+def adopt_sales_order(
+    payload: AdoptSalesOrderBody,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Start planning: journey step 2, and the whole of it (AC-FP07).
+
+    One decision - which order - and everything else is derived from the order itself: the
+    lines, the products, the quantities, the required dates, the fulfilment locations and
+    the customer. No project to choose, no reference to invent, no confirmation dialog,
+    because it destroys nothing and it repeats safely (AC-FP08): a second press, a retry or
+    a second CS answers with the record that already exists.
+
+    Gated on the module permission alone, with no `assert_can_edit_project`: an adopted
+    record has no project for that check to run against (plan section 2, an accepted
+    narrowing rather than an oversight). No new permission is introduced (AC-FP26).
+    """
+    try:
+        body = ProjectSOAdoptionService(db).adopt(
+            payload.sales_order_id, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/fulfilment-planning/board", response_model=PlanningBoard)
+def get_planning_board(
+    orders: str = Query(
+        ...,
+        description=(
+            "Comma-separated sales-order NUMBERS, never ids, so a board can be linked to "
+            "and reloaded. At most 50 (PLAN 13.2)."
+        ),
+    ),
+    granularity: Literal["day", "week", "month"] = Query("week"),
+    day_window: Optional[date] = Query(
+        None,
+        description=(
+            "First day of the day-granularity window. Defaults to the earliest still-future "
+            "date owed. A DISPLAY bound only: nothing is filtered out of the plan by it."
+        ),
+    ),
+    preview_policy: Optional[str] = Query(
+        None,
+        description=(
+            "Rank by a NAMED alternative policy instead of the live one, without activating "
+            "it. '1' or 'true' means the module's own board preview. Read-only: a previewed "
+            "ranking is labelled and may never be committed against."
+        ),
+    ),
+    as_of: Optional[date] = Query(
+        None, description="Build the board against this date instead of today."
+    ),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Several sales orders at once: dates across, products down, one pile per location.
+
+    A pure read (PLAN 13.4). The board writes no decision object of its own - the decision
+    stays per sales order, atomic across the lines that order is committing - so opening it
+    claims no stock and there is no board write endpoint to pair with this.
+
+    Plain ``def`` so FastAPI runs it in a threadpool: it is synchronous SQLAlchemy over a
+    selection of up to fifty orders, and on the event loop it would hold up every other
+    request the worker is serving.
+    """
+    try:
+        numbers = [part.strip() for part in (orders or "").split(",") if part.strip()]
+        return FulfilmentBoardService(db).build(
+            numbers,
+            granularity=granularity,
+            as_of=as_of,
+            day_window_start=day_window,
+            preview_policy=preview_policy,
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

@@ -25,26 +25,73 @@ from pydantic import BaseModel, ConfigDict
 
 
 class FulfilmentPlanningRow(BaseModel):
-    """One published or amended Project SO on the cross-project worklist."""
+    """One subject on the cross-project worklist, from either arm of the union.
+
+    The list is a UNION (PLAN-fulfilment-planning-from-autocount-so section 6): an
+    outstanding project-class CORE sales order, planned or not, and a planning record
+    authored here that no core-order row already carries. One row per subject.
+
+    **Everything a not-started row cannot have is optional, and that is the point.** No
+    planning record exists for it, so it has no `id`, no `provisional_ref`, no `status` and
+    no counts off a mirror nobody has written; stating that absence is what lets the screen
+    offer Start planning instead of Open. `project_id` is nullable for the same class of
+    reason: an adopted order has no project registration and must not invent one.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
-    provisional_ref: str
+    #: Which arm this row came from. ADDRESSING ONLY, never rendered.
+    row_kind: Optional[str] = None
+    #: The planning record's id. Absent on a not-started row: there is no record.
+    id: Optional[str] = None
+    #: The core `sales_orders` id, for addressing the SCM sales order. Never rendered.
+    sales_order_id: Optional[str] = None
+    #: The AutoCount / core sales-order number. The human key of a core-arm row.
+    so_number: Optional[str] = None
+    #: `authored` or `adopted`. Absent when nobody has planned this order yet.
+    origin: Optional[str] = None
+    provisional_ref: Optional[str] = None
     autocount_doc_no: Optional[str] = None
-    project_id: str
+    project_id: Optional[str] = None
     project_code: Optional[str] = None
     project_name: Optional[str] = None
+    #: The registered project's name when there is one, else the string the Order Inquiry
+    #: sheet wrote on the core order. Never an id.
+    project_label: Optional[str] = None
     customer_name: Optional[str] = None
     po_number: Optional[str] = None
     area_group: Optional[str] = None
-    #: The existing sales-order status (published, amended), never a review state.
-    status: str
+    #: The existing sales-order status (published, amended, adopted), never a review state.
+    status: Optional[str] = None
     line_count: int = 0
     lines_linked: int = 0
     exception_count: int = 0
+    #: Summed over the still-owed lines. ``Decimal``, which pydantic renders as a string.
+    outstanding_qty: Optional[Decimal] = None
+    #: The earliest still-owed required date across the lines: the order the work is due in.
+    earliest_required_date: Optional[date] = None
     review_state: str
     updated_at: Optional[datetime] = None
+
+
+class AdoptSalesOrderBody(BaseModel):
+    """What Start planning asks for, and the whole of it (AC-FP07)."""
+
+    sales_order_id: str
+
+
+class AdoptSalesOrderResult(BaseModel):
+    """What Start planning answers with.
+
+    ``already_adopted`` is what makes the button safe to press twice: adoption is
+    idempotent, so a retry or a second CS gets the record that exists rather than a second
+    one, and the screen can say so instead of pretending it just created it.
+    """
+
+    project_sales_order_id: str
+    so_number: str
+    review_state: Optional[str] = None
+    already_adopted: bool = False
 
 
 class ReconciliationHeader(BaseModel):
@@ -85,7 +132,9 @@ class ReconciliationSummary(BaseModel):
     project_sales_order_id: str
     provisional_ref: str
     autocount_doc_no: Optional[str] = None
-    project_id: str
+    #: None on an ADOPTED record: it came out of the AutoCount book and has no project
+    #: registration (plan section 4). Always set on an authored one.
+    project_id: Optional[str] = None
     project_code: Optional[str] = None
     project_name: Optional[str] = None
     customer_name: Optional[str] = None

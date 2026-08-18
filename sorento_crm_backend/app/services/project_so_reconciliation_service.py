@@ -55,19 +55,22 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.project_so import (
-    SO_STATUS_AMENDED,
-    SO_STATUS_PUBLISHED,
+    AUTHORED_LIVE_STATUSES,
+    LIVE_SO_STATUSES,
+    SO_STATUS_ADOPTED,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.services.error_handler import AppException
+from app.services.scm.demand import PROJECT_CLASS, demand_qty, is_open_demand
 
 # Per-line outcomes (slice note section 2). `linked` is the only one that writes.
 LINK_LINKED = "linked"
@@ -82,6 +85,10 @@ LINK_DUPLICATE = "duplicate"
 HEADER_NO_DOCUMENT = "no_document"
 HEADER_NO_CORE_SO = "no_core_so"
 HEADER_LINKED = "linked"
+#: The planning record WAS the core sales order (plan section 5.2). There is no separately
+#: authored document to disagree with, so reconciliation is a one-way SYNC rather than a
+#: diff and this outcome is what the card says instead of "linked".
+HEADER_ADOPTED = "adopted"
 
 # Exception kinds. `surplus` is the only one with no Project line behind it.
 KIND_HEADER = "header"
@@ -99,6 +106,10 @@ _KIND_OF_LINK = {
 
 # The whole SO's one state (AC-A03). No line ever carries a state of its own, and there is
 # no fourth value: a superseded or challenged decision reads `needs_cs_review` again.
+#: `not_started` belongs to a subject with NO planning record at all (AC-FP01), so no
+#: `_OrderOutcome` ever carries it: the worklist writes it for an outstanding core sales
+#: order nobody has adopted yet.
+REVIEW_NOT_STARTED = "not_started"
 REVIEW_AWAITING = "awaiting_reconciliation"
 REVIEW_NEEDS_CS = "needs_cs_review"
 #: Stage 1C. The Stage 1B conditions hold AND an active supply decision exists.
@@ -108,9 +119,30 @@ REVIEW_CONFIRMED = "confirmed"
 #: `project_so_ingest_service` retires a superseded row with.
 CORE_LINE_CLOSED = "closed"
 
-#: The statuses the worklist covers: a draft has not left the building yet, so there is no
-#: AutoCount document for it to disagree with.
-LIVE_SO_STATUSES = (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
+#: The header half of "outstanding" (plan section 3), beside `is_open_demand()`'s line half.
+#: It is what keeps a retired provisional row out of a planning screen.
+_CORE_SO_OPEN = "open"
+
+#: Which arm of the union a row came from. ADDRESSING ONLY, never rendered: the screen tells
+#: the two apart by what they carry, not by a code.
+ROW_KIND_SALES_ORDER = "sales_order"
+ROW_KIND_PLANNING_RECORD = "planning_record"
+
+#: Where the planning record came from. `adopted` is the AutoCount book, `authored` is a
+#: document somebody wrote here. Absent on a row with no planning record at all.
+ORIGIN_ADOPTED = "adopted"
+ORIGIN_AUTHORED = "authored"
+
+#: What the Order Inquiry sheet prefixes the project string on the core order with
+#: (`project_order_inquiry_import_service`). Stripped for display: the machine's word for
+#: where a fact came from is not part of the fact.
+_PROJECT_NOTE_PREFIX = "Order Inquiry project:"
+
+# `LIVE_SO_STATUSES` is imported from `app.models.project_so` above rather than restated
+# here. It is now `(published, amended, adopted)`, and it lives on the model so the fifteen
+# sites that branch on the status pair read ONE tuple instead of fifteen copies of it (plan
+# section 4). A site that means "a document this system authored" reads
+# `AUTHORED_LIVE_STATUSES` instead, and the name is the answer to "why is adopted not here".
 
 #: Who holds a core line: the Project SO's id, its provisional reference, and the line
 #: number on it. The reference and the line number are what an exception names.
@@ -132,6 +164,41 @@ def _duplicate_reason(other_ref: Optional[str], other_line_no: Optional[int]) ->
     if other_line_no is None:
         return f"This core line is already linked to Project SO {where}."
     return f"This core line is already linked to Project SO {where}, line {other_line_no}."
+
+
+def _project_string(internal_note: Optional[str]) -> Optional[str]:
+    """The project the Order Inquiry sheet named, without the prefix it wrote it under."""
+    text_value = (internal_note or "").strip()
+    if not text_value:
+        return None
+    if text_value.startswith(_PROJECT_NOTE_PREFIX):
+        text_value = text_value[len(_PROJECT_NOTE_PREFIX) :].strip()
+    return text_value or None
+
+
+def _origin_of(record: Optional[ProjectSalesOrder]) -> Optional[str]:
+    if record is None:
+        return None
+    return ORIGIN_ADOPTED if record.status == SO_STATUS_ADOPTED else ORIGIN_AUTHORED
+
+
+def _worklist_sort_key(row: Dict[str, Any]) -> tuple:
+    """AC-FP04, and TOTAL.
+
+    Earliest still-owed required date first, undated last, tie-broken on the human key -
+    the sales-order number, else the AutoCount document number, else our own reference,
+    which is the same fallback chain the screen names the row by. A non-total order is what
+    puts one row on two pages of a paged list and another on none.
+    """
+    when = row.get("earliest_required_date")
+    record: Optional[ProjectSalesOrder] = row.get("record")
+    reference = (
+        row.get("so_number")
+        or (record.autocount_doc_no if record is not None else None)
+        or (record.provisional_ref if record is not None else None)
+        or ""
+    )
+    return (when is None, when or date.min, reference, str(row.get("id") or ""))
 
 
 def _date_phrase(value: Optional[date]) -> str:
@@ -209,9 +276,17 @@ class _OrderOutcome:
         order whose mapping has since broken is back to awaiting reconciliation whatever
         its decision says, and a superseded or challenged decision is not an active one,
         so the order reads Needs CS review again (AC-C06).
+
+        An ADOPTED order never reads awaiting_reconciliation (AC-FP14): it IS the core
+        sales order, so there is nothing to wait for. It is reviewable the moment it is
+        adopted, and drops back only when a mirror line's core link goes away.
         """
         if self.order.status not in LIVE_SO_STATUSES:
             return None
+        if self.header_outcome == HEADER_ADOPTED:
+            if self.lines_total == 0 or self.lines_linked != self.lines_total:
+                return REVIEW_AWAITING
+            return REVIEW_CONFIRMED if self.has_active_decision else REVIEW_NEEDS_CS
         if self.header_outcome != HEADER_LINKED:
             return REVIEW_AWAITING
         if self.lines_total == 0 or self.lines_linked != self.lines_total:
@@ -223,7 +298,10 @@ class _OrderOutcome:
     @property
     def exceptions(self) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
-        if self.header_outcome != HEADER_LINKED:
+        # `adopted` is a clean header, not a problem to answer: the planning record IS the
+        # core sales order, so raising a header exception for it would put a permanent
+        # "unresolved" on a screen with nothing to resolve.
+        if self.header_outcome not in (HEADER_LINKED, HEADER_ADOPTED):
             rows.append(
                 {
                     "line_no": None,
@@ -331,7 +409,15 @@ class ProjectSOReconciliationService:
         An order that is not published or amended is READ and nothing else: it carries no
         review state (AC-A03), and linking its lines to a core sales order it has not been
         published against would be the system deciding something on its own.
+
+        An ADOPTED order is read and nothing else HERE, for a different reason: its
+        reconciliation is a one-way SYNC of the mirror against the book (plan section 5.1
+        `resync`), not the two-pass mapping below, and running the authored mapping over
+        mirror lines that already carry their core link would be answering a question
+        nobody asked. Until the sync lands, `evaluate` is the honest answer.
         """
+        if order.status == SO_STATUS_ADOPTED:
+            return self.evaluate(order)
         if order.status not in LIVE_SO_STATUSES:
             return self.evaluate(order)
         if order.so_id is None and order.autocount_doc_no:
@@ -502,6 +588,11 @@ class ProjectSOReconciliationService:
         stale: Dict[str, Optional[SalesOrderLine]],
         codes: Dict[str, str],
     ) -> _OrderOutcome:
+        if order.status == SO_STATUS_ADOPTED:
+            return self._adopted_outcome(
+                order, project_lines, core_lines, core_numbers=core_numbers, codes=codes
+            )
+
         header_outcome, header_reason, core_so_number = self._header(order, core_numbers)
 
         # A core line another Project SO already holds is not ours to take: the unique
@@ -604,6 +695,90 @@ class ProjectSOReconciliationService:
                 (str(line.id), codes.get(str(line.product_id or ""), ""))
                 for line in leftover_core
             ],
+        )
+
+    def _adopted_outcome(
+        self,
+        order: ProjectSalesOrder,
+        project_lines: Sequence[ProjectSalesOrderLine],
+        core_lines: Sequence[SalesOrderLine],
+        *,
+        core_numbers: Dict[str, Optional[str]],
+        codes: Dict[str, str],
+    ) -> _OrderOutcome:
+        """An adopted order's verdict: a SYNC report, not a diff (plan section 5.2).
+
+        There is no second document to disagree with, so there is no mapping rule to run
+        and nothing to be ambiguous about: every mirror line was written carrying the core
+        line it addresses. What CAN go wrong is that the core line went away - closed,
+        deleted, or covered - and then the mirror line addresses nothing. That is the only
+        exception this outcome raises, and it names the line by number and item code like
+        every other one.
+
+        `surplus` stays empty on purpose. A core line the mirror does not carry is not a
+        disagreement between two documents; it is a line to mirror, which is Re-sync's job
+        and not an exception a person has to answer.
+        """
+        candidate_ids = {str(line.id) for line in core_lines}
+        rows: List[_LineOutcome] = []
+        for line in project_lines:
+            item_code = codes.get(str(line.product_id or "")) or None
+            link_id = (
+                str(line.core_sales_order_line_id)
+                if line.core_sales_order_line_id
+                else None
+            )
+            if link_id and link_id in candidate_ids:
+                rows.append(
+                    _LineOutcome(
+                        line=line,
+                        link=LINK_LINKED,
+                        core_line_id=link_id,
+                        candidate_count=1,
+                        reason="Mirrored from this line on the sales order.",
+                        item_code=item_code,
+                    )
+                )
+            else:
+                rows.append(
+                    _LineOutcome(
+                        line=line,
+                        link=LINK_MISSING,
+                        core_line_id=None,
+                        candidate_count=0,
+                        reason=(
+                            "The sales-order line this was mirrored from is gone from "
+                            "the book. Remove this line to carry on planning."
+                        ),
+                        item_code=item_code,
+                    )
+                )
+
+        number = core_numbers.get(str(order.so_id)) if order.so_id else None
+        if order.so_id and str(order.so_id) not in core_numbers:
+            # The core order is out of this company's reach, so nothing about it can be
+            # asserted. Same answer the authored header gives, for the same reason.
+            return _OrderOutcome(
+                order=order,
+                header_outcome=HEADER_NO_CORE_SO,
+                header_reason="The linked core sales order is not visible to this company.",
+                core_so_number=None,
+                lines=rows,
+            )
+        return _OrderOutcome(
+            order=order,
+            header_outcome=HEADER_ADOPTED,
+            header_reason=(
+                f"This order came from the AutoCount sales-order book as {number}. "
+                "There is no separately authored Project SO to compare it against."
+                if number
+                else (
+                    "This order came from the AutoCount sales-order book. There is no "
+                    "separately authored Project SO to compare it against."
+                )
+            ),
+            core_so_number=number,
+            lines=rows,
         )
 
     def _header(
@@ -895,30 +1070,234 @@ class ProjectSOReconciliationService:
         query: Optional[str] = None,
         review_state: Optional[str] = None,
         project_id: Optional[str] = None,
+        sales_order_id: Optional[str] = None,
         page: int = 1,
         limit: int = 50,
     ) -> Dict[str, Any]:
-        """One row per published or amended Project SO, across projects (J03 step 1).
+        """Everything that needs planning, one row per subject (plan section 5.2, 6).
 
-        The review state is derived rather than stored, so FILTERING on it means deriving
-        it for every order the other filters leave, then paging what is left: a total that
-        counted unfiltered rows would be a lie, and there is no column to put in a WHERE.
-        That is the honest cost of a state with no column, and it is paid only when the
-        filter is actually used.
+        A UNION of two arms, disjoint by construction:
 
-        Without that filter the database can do the paging, so it does: the ORM query is
-        ordered and windowed first and only the page is derived, which keeps a worklist of
-        a thousand published sales orders to one page's worth of mapping. `id` breaks a
-        tie on `updated_at`, or two orders saved in the same moment could land on both
-        pages, or on neither.
+        * arm 1, `row_kind = 'sales_order'` - an OUTSTANDING project-class core sales
+          order, whether or not anybody has planned it. This is the arm that makes the
+          AutoCount book visible without a row being written for it (AC-FP01): an
+          unplanned order reads `not_started` and carries no planning record's fields,
+          because no planning record exists to carry them.
+        * arm 2, `row_kind = 'planning_record'` - a planning record this system authored
+          that arm 1 does NOT already carry. Stage 1B's Awaiting reconciliation.
+
+        The plan words arm 2 as "planning records with `so_id IS NULL`". That is the same
+        set for every order the plan describes, and it loses one the plan does not: a
+        published order LINKED to a core sales order that is not project-class, or whose
+        lines are all covered, is on neither arm and would silently vanish from the screen
+        Stage 1B built it for. So the rule implemented here is "not already represented by
+        arm 1", which is a superset of both and keeps each subject on exactly one row
+        (AC-FP03). Deviation recorded in the plan's section 6.
+
+        Ordering is earliest OUTSTANDING required date ascending, undated last, tie-broken
+        on the human key - the sales-order number, else the AutoCount document number, else
+        our own reference (AC-FP04). Total, so no row lands on two pages or on neither, and
+        it is the order the work is actually due in rather than the order somebody last
+        saved a record in.
+
+        Paging is done in Python, and this is a deliberate change from Stage 1B's SQL
+        paging. Two arms over two tables have no single SQL cursor to offset, and the
+        population is bounded by what is outstanding: 605 core orders and 16 planning
+        records on the live book (plan section 12). The alternative is a hand-built UNION
+        over `__table__`, which would leave the company predicate to be spliced in by hand
+        on both arms - fail-open exactly where AC-FP06 must be fail-closed.
+
+        The review state is DERIVED and has no column, so it is derived for as few subjects
+        as the filter allows: not at all for `not_started` (which is simply "no planning
+        record"), for every planning record when another state is filtered on, and for the
+        page alone when nothing is filtered.
         """
-        rows = (
-            self.db.query(ProjectSalesOrder)
-            .filter(ProjectSalesOrder.status.in_(LIVE_SO_STATUSES))
-        )
-        if project_id:
-            rows = rows.filter(ProjectSalesOrder.project_id == project_id)
+        page = max(page, 1)
+        offset = (page - 1) * limit
         needle = (query or "").strip()
+
+        core_rows = self._core_arm(needle=needle, sales_order_id=sales_order_id)
+        records = self._records_for([row["sales_order_id"] for row in core_rows])
+        authored_rows = self._authored_arm(
+            needle=needle, taken={str(row["sales_order_id"]) for row in core_rows}
+        )
+
+        rows = [self._core_row(row, records.get(str(row["sales_order_id"]))) for row in core_rows]
+        rows += authored_rows
+        if project_id:
+            # A not-started row belongs to no project registration, so filtering by one
+            # excludes it rather than guessing which project the sheet's string means.
+            rows = [row for row in rows if row["project_id"] == project_id]
+        if sales_order_id:
+            rows = [
+                row
+                for row in rows
+                if str(row.get("sales_order_id") or "") == str(sales_order_id)
+            ]
+        rows.sort(key=_worklist_sort_key)
+
+        if review_state == REVIEW_NOT_STARTED:
+            rows = [row for row in rows if row["id"] is None]
+            total = len(rows)
+            window = rows[offset : offset + limit]
+            outcomes = {}
+        elif review_state:
+            outcomes = self._outcomes_for(self._planning_records([row["id"] for row in rows]))
+            rows = [
+                row
+                for row in rows
+                if row["id"] and outcomes[str(row["id"])].review_state == review_state
+            ]
+            total = len(rows)
+            window = rows[offset : offset + limit]
+        else:
+            total = len(rows)
+            window = rows[offset : offset + limit]
+            outcomes = self._outcomes_for(
+                self._planning_records([row["id"] for row in window])
+            )
+
+        headers = self._header_rows([row["id"] for row in window if row["id"]])
+
+        data = []
+        for row in window:
+            data.append(self._worklist_row(row, outcomes, headers))
+        return {
+            "data": data,
+            "pagination": {"total": total, "page": page, "limit": limit},
+            # The whole result set, not this page: page 3 of 2 pages is empty of rows
+            # without the worklist being empty, and the siblings all read it this way.
+            "empty": total == 0,
+        }
+
+    # ------------------------------------------------------------- arm 1: the book
+
+    def _core_arm(
+        self, *, needle: str, sales_order_id: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """Outstanding project-class core sales orders, with the numbers the row prints.
+
+        The predicate is `is_open_demand()` VERBATIM plus `status = 'open'` plus
+        `demand_class = 'project'` (plan section 3), imported and never restated: it is
+        what `scm.committed_v` counts and what the SCM sales-order screen's
+        `outstanding = true` filter already means, so the two screens cannot disagree about
+        which orders are still owed. The inner join to the lines is what makes "has at
+        least one line still owed" a fact of the same query rather than a second one.
+
+        `Customer` is reached with `.has(...)` rather than an outer join on purpose: the
+        company-scope listener splices its predicate into the statement, and an outer join
+        carrying it can silently narrow to an inner one, which would drop every order that
+        has no customer at all.
+        """
+        aggregate = (
+            self.db.query(
+                SalesOrder.id,
+                SalesOrder.so_number,
+                SalesOrder.internal_note,
+                SalesOrder.customer_id,
+                func.min(SalesOrderLine.required_date),
+                func.sum(demand_qty()),
+                func.count(SalesOrderLine.id),
+            )
+            .join(SalesOrderLine, SalesOrderLine.sales_order_id == SalesOrder.id)
+            .filter(
+                SalesOrder.demand_class == PROJECT_CLASS,
+                SalesOrder.status == _CORE_SO_OPEN,
+                is_open_demand(),
+            )
+            .group_by(
+                SalesOrder.id,
+                SalesOrder.so_number,
+                SalesOrder.internal_note,
+                SalesOrder.customer_id,
+            )
+        )
+        if sales_order_id:
+            aggregate = aggregate.filter(SalesOrder.id == str(sales_order_id))
+        if needle:
+            like = f"%{needle}%"
+            aggregate = aggregate.filter(
+                SalesOrder.so_number.ilike(like)
+                | SalesOrder.internal_note.ilike(like)
+                | SalesOrder.customer.has(Customer.customer_name.ilike(like))
+            )
+        rows = aggregate.all()
+        names = self._customer_names([row[3] for row in rows])
+        return [
+            {
+                "sales_order_id": str(row[0]),
+                "so_number": row[1],
+                "project_string": _project_string(row[2]),
+                "customer_name": names.get(str(row[3] or "")),
+                "earliest_required_date": row[4],
+                "outstanding_qty": row[5],
+                "open_line_count": row[6] or 0,
+            }
+            for row in rows
+        ]
+
+    def _customer_names(self, customer_ids: Iterable[Any]) -> Dict[str, Optional[str]]:
+        wanted = {str(value) for value in customer_ids if value}
+        if not wanted:
+            return {}
+        return {
+            str(row[0]): row[1]
+            for row in self.db.query(Customer.id, Customer.customer_name)
+            .filter(Customer.id.in_(list(wanted)))
+            .all()
+        }
+
+    def _records_for(
+        self, sales_order_ids: Sequence[str]
+    ) -> Dict[str, ProjectSalesOrder]:
+        """The planning record holding each of those core orders, where one exists.
+
+        `uq_projects_so_core_order` allows exactly one, so this is a lookup and not a list.
+        The search needle is deliberately NOT applied here: an arm-1 row is found by what
+        the CORE order prints, and dropping its record because the record's own reference
+        does not match the search would turn a planned order into a Not started one on
+        screen, which is a lie about state rather than a narrower list.
+        """
+        ids = [str(value) for value in sales_order_ids if value]
+        if not ids:
+            return {}
+        return {
+            str(row.so_id): row
+            for row in self.db.query(ProjectSalesOrder)
+            .filter(ProjectSalesOrder.so_id.in_(ids))
+            .all()
+        }
+
+    def _core_row(
+        self, core: Dict[str, Any], record: Optional[ProjectSalesOrder]
+    ) -> Dict[str, Any]:
+        return {
+            "row_kind": ROW_KIND_SALES_ORDER,
+            "id": str(record.id) if record is not None else None,
+            "sales_order_id": core["sales_order_id"],
+            "so_number": core["so_number"],
+            "project_string": core["project_string"],
+            "core_customer_name": core["customer_name"],
+            "earliest_required_date": core["earliest_required_date"],
+            "outstanding_qty": core["outstanding_qty"],
+            "open_line_count": core["open_line_count"],
+            "record": record,
+            "project_id": str(record.project_id)
+            if record is not None and record.project_id
+            else None,
+        }
+
+    # --------------------------------------------------- arm 2: authored records
+
+    def _authored_arm(self, *, needle: str, taken: set) -> List[Dict[str, Any]]:
+        """Authored planning records arm 1 does not already carry.
+
+        Their quantities and dates come off their OWN lines, because there is no core sales
+        order to read them from - that absence is exactly what puts them on this arm.
+        """
+        rows = self.db.query(ProjectSalesOrder).filter(
+            ProjectSalesOrder.status.in_(AUTHORED_LIVE_STATUSES)
+        )
         if needle:
             # Everything the row PRINTS is searchable, through the same outer joins
             # `_header_rows` reads those columns with: the screen offers "sales order,
@@ -948,58 +1327,109 @@ class ProjectSOReconciliationService:
                     | ProjectParty.name.ilike(like)
                 )
             )
-        rows = rows.order_by(
-            ProjectSalesOrder.updated_at.desc(), ProjectSalesOrder.id.desc()
+        orders = [
+            order for order in rows.all() if str(order.so_id or "") not in taken
+        ]
+        totals = self._authored_line_totals([str(order.id) for order in orders])
+        return [
+            {
+                "row_kind": ROW_KIND_PLANNING_RECORD,
+                "id": str(order.id),
+                "sales_order_id": None,
+                "so_number": None,
+                "project_string": None,
+                "core_customer_name": None,
+                "earliest_required_date": totals.get(str(order.id), (None, None, 0))[0],
+                "outstanding_qty": totals.get(str(order.id), (None, None, 0))[1],
+                "open_line_count": totals.get(str(order.id), (None, None, 0))[2],
+                "record": order,
+                "project_id": str(order.project_id) if order.project_id else None,
+            }
+            for order in orders
+        ]
+
+    def _authored_line_totals(self, order_ids: Sequence[str]) -> Dict[str, Tuple]:
+        ids = [str(value) for value in order_ids if value]
+        if not ids:
+            return {}
+        rows = (
+            self.db.query(
+                ProjectSalesOrderLine.project_sales_order_id,
+                func.min(ProjectSalesOrderLine.delivery_date),
+                func.sum(ProjectSalesOrderLine.qty),
+                func.count(ProjectSalesOrderLine.id),
+            )
+            .filter(ProjectSalesOrderLine.project_sales_order_id.in_(ids))
+            .group_by(ProjectSalesOrderLine.project_sales_order_id)
+            .all()
+        )
+        return {str(row[0]): (row[1], row[2], row[3] or 0) for row in rows}
+
+    # ------------------------------------------------------------- row assembly
+
+    def _planning_records(
+        self, order_ids: Iterable[Any]
+    ) -> List[ProjectSalesOrder]:
+        ids = [str(value) for value in order_ids if value]
+        if not ids:
+            return []
+        return (
+            self.db.query(ProjectSalesOrder)
+            .filter(ProjectSalesOrder.id.in_(ids))
+            .all()
         )
 
-        page = max(page, 1)
-        offset = (page - 1) * limit
-        if review_state:
-            orders = rows.all()
-            outcomes = self._outcomes_for(orders)
-            orders = [
-                order
-                for order in orders
-                if outcomes[str(order.id)].review_state == review_state
-            ]
-            total = len(orders)
-            window = orders[offset : offset + limit]
+    def _worklist_row(
+        self,
+        row: Dict[str, Any],
+        outcomes: Dict[str, _OrderOutcome],
+        headers: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """One wire row, from whichever of the two subjects it actually has.
+
+        Everything a not-started row cannot have is `None` rather than a stand-in: there is
+        no planning record, so there is no reference, no status and no counts off a mirror
+        nobody has written, and stating that absence is what lets the screen offer Start
+        planning instead of Open.
+        """
+        record: Optional[ProjectSalesOrder] = row["record"]
+        outcome = outcomes.get(str(row["id"])) if row["id"] else None
+        display = headers.get(str(row["id"]), {}) if row["id"] else {}
+
+        if record is None:
+            state = REVIEW_NOT_STARTED
+        elif outcome is not None:
+            state = outcome.review_state
         else:
-            total = rows.count()
-            window = rows.offset(offset).limit(limit).all()
-            outcomes = self._outcomes_for(window)
+            state = None
 
-        headers = self._header_rows([str(order.id) for order in window])
-
-        data = []
-        for order in window:
-            outcome = outcomes[str(order.id)]
-            display = headers.get(str(order.id), {})
-            data.append(
-                {
-                    "id": order.id,
-                    "provisional_ref": order.provisional_ref,
-                    "autocount_doc_no": order.autocount_doc_no,
-                    "project_id": order.project_id,
-                    "project_code": display.get("project_code"),
-                    "project_name": display.get("project_name"),
-                    "customer_name": display.get("customer_name"),
-                    "po_number": display.get("po_number"),
-                    "area_group": order.area_group,
-                    "status": order.status,
-                    "line_count": outcome.lines_total,
-                    "lines_linked": outcome.lines_linked,
-                    "exception_count": len(outcome.exceptions),
-                    "review_state": outcome.review_state,
-                    "updated_at": order.updated_at,
-                }
-            )
+        project_name = display.get("project_name")
         return {
-            "data": data,
-            "pagination": {"total": total, "page": page, "limit": limit},
-            # The whole result set, not this page: page 3 of 2 pages is empty of rows
-            # without the worklist being empty, and the siblings all read it this way.
-            "empty": total == 0,
+            "row_kind": row["row_kind"],
+            "id": str(record.id) if record is not None else None,
+            "sales_order_id": row["sales_order_id"],
+            "so_number": row["so_number"],
+            "origin": _origin_of(record),
+            "provisional_ref": record.provisional_ref if record is not None else None,
+            "autocount_doc_no": record.autocount_doc_no if record is not None else None,
+            "project_id": row["project_id"],
+            "project_code": display.get("project_code"),
+            "project_name": project_name,
+            # The registered project's name when there is one, else the string the Order
+            # Inquiry sheet wrote on the core order. Never an id, and never blank when
+            # either source has an answer.
+            "project_label": project_name or row["project_string"],
+            "customer_name": display.get("customer_name") or row["core_customer_name"],
+            "po_number": display.get("po_number"),
+            "area_group": record.area_group if record is not None else None,
+            "status": record.status if record is not None else None,
+            "line_count": outcome.lines_total if outcome is not None else row["open_line_count"],
+            "lines_linked": outcome.lines_linked if outcome is not None else 0,
+            "exception_count": len(outcome.exceptions) if outcome is not None else 0,
+            "outstanding_qty": row["outstanding_qty"],
+            "earliest_required_date": row["earliest_required_date"],
+            "review_state": state,
+            "updated_at": record.updated_at if record is not None else None,
         }
 
 

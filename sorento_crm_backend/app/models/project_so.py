@@ -389,6 +389,26 @@ SO_STATUS_AMENDED = "amended"
 # attend to it before it reaches AutoCount, so this status GATES the publish rather than
 # merely labelling the row. A commercial draft never enters it.
 SO_STATUS_AWAITING_COSTING = "awaiting_costing"
+#: Adopted from the AutoCount sales-order book rather than authored here
+#: (`PLAN-fulfilment-planning-from-autocount-so.md` section 4). A status VALUE and not an
+#: `origin` column, because fifteen sites already branch on the `(published, amended)` pair
+#: and every one of them needs a verdict on adopted either way: a value costs one sweep and
+#: no new column. `published_by` / `published_at` stay NULL on such a row, which is the
+#: truth - nobody published it.
+SO_STATUS_ADOPTED = "adopted"
+
+#: The statuses a fulfilment-planning record can be in: it has left the building, so there
+#: is an AutoCount sales order behind it. A draft is reconciled against nothing.
+#: Consolidated here rather than restated per call site, because fifteen copies of one
+#: tuple is a latent drift bug (plan section 4).
+LIVE_SO_STATUSES = (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED, SO_STATUS_ADOPTED)
+
+#: The live statuses of a document THIS SYSTEM AUTHORED. Named rather than spelled out at
+#: each site so "why is adopted not here" is answered by the name: an adopted record was
+#: never drafted, never costed, never exported to AutoCount and cannot be amended, so every
+#: authoring, worksheet, draft-findings and publish path reads this tuple and not
+#: `LIVE_SO_STATUSES`.
+AUTHORED_LIVE_STATUSES = (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)
 
 SEVERITY_HARD = "hard"
 SEVERITY_WARN = "warn"
@@ -409,8 +429,13 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    # NULLABLE since migration 383: an ADOPTED order came out of the AutoCount book and has
+    # no project registration. Inventing one would put 605 registrations nobody asked for
+    # into the pipeline and collide with ADR-0004 registration exclusivity; asking CS to
+    # pick one would be a decision per order for a fact the source document does not carry.
+    # An AUTHORED order still always has one.
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="RESTRICT"), nullable=True
     )
     purchase_order_id = Column(
         UUID(as_uuid=False),
@@ -455,6 +480,16 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
         UniqueConstraint("company_id", "provisional_ref", name="uq_project_so_provisional_ref"),
         Index("ix_project_so_project", "project_id"),
         Index("ix_project_so_status", "status"),
+        # One planning record per CORE sales order (AC-FP10). Partial, because NULL is the
+        # normal state for every authored order that has not been published yet. This is
+        # what makes a doubly-counted confirmed leg in `scm.committed_v` impossible rather
+        # than merely unlikely.
+        Index(
+            "uq_projects_so_core_order",
+            "so_id",
+            unique=True,
+            postgresql_where=text("so_id IS NOT NULL"),
+        ),
         {"schema": "projects"},
     )
 
