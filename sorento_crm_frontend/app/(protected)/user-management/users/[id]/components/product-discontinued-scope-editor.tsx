@@ -195,19 +195,44 @@ const ProductDiscontinuedScopeEditor = ({
   );
   const allCompaniesTaken = rows.some((row) => row.companyId === null);
 
+  // A saved scope can name a company outside the acting admin's own grants. Merge
+  // those in from the rows themselves (same trick the brand chips use) or the
+  // select renders blank for a value the read view happily shows by name.
+  const companyOptions = useMemo(() => {
+    const byId = new Map<string, ScopeCompanyOption>();
+    for (const company of companies) byId.set(company.id, company);
+    for (const row of rows) {
+      if (!row.companyId || byId.has(row.companyId)) continue;
+      byId.set(row.companyId, {
+        id: row.companyId,
+        name: row.companyName || 'Unknown company',
+      });
+    }
+    return Array.from(byId.values());
+  }, [companies, rows]);
+
+  // With every company claimed and the all-companies row already present there is
+  // nothing left for a new row to mean, so Add is closed rather than appending a
+  // duplicate all-companies row.
+  const hasFreeCompany = companyOptions.some(
+    (company) => !takenCompanyIds.has(company.id),
+  );
+  const canAddRow = !allCompaniesTaken || hasFreeCompany;
+
   const addRow = () => {
     // A second all-companies row would be a duplicate, so a new row starts on the
     // first company still free.
-    const freeCompany = companies.find(
+    const freeCompany = companyOptions.find(
       (company) => !takenCompanyIds.has(company.id),
     );
+    if (allCompaniesTaken && !freeCompany) return;
     onChange([
       ...rows,
       allCompaniesTaken
         ? {
             key: nextScopeRowKey(),
-            companyId: freeCompany?.id ?? null,
-            companyName: freeCompany?.name ?? null,
+            companyId: freeCompany!.id,
+            companyName: freeCompany!.name,
             brandIds: [],
             brandLabels: {},
           }
@@ -224,7 +249,10 @@ const ProductDiscontinuedScopeEditor = ({
           variant="outline"
           size="sm"
           onClick={addRow}
-          disabled={disabled}
+          disabled={disabled || !canAddRow}
+          title={
+            canAddRow ? undefined : 'Every company already has a scope row.'
+          }
         >
           <Plus className="size-4" />
           Add scope
@@ -241,7 +269,7 @@ const ProductDiscontinuedScopeEditor = ({
             <ScopeRowFields
               key={row.key}
               row={row}
-              companies={companies}
+              companies={companyOptions}
               takenCompanyIds={takenCompanyIds}
               allCompaniesTaken={allCompaniesTaken}
               disabled={disabled}

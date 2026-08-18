@@ -192,11 +192,45 @@ def test_a_nonexistent_company_id_is_not_found_even_for_a_superadmin(api, db, mo
 
 
 def test_api_key_principal_is_unscoped(api, db):
-    client, caller = api
+    """The principal is built by the REAL resolver, not hand-written.
+
+    An invented ``{"auth_method": "api_key"}`` dict passes any check while
+    proving nothing: ``resolve_integration_principal`` actually emits
+    ``integration_api_key``, so a route matching on the shorter spelling would
+    404 an X-API-Key caller in production and still pass a hand-built test.
+    """
+    from app.models.integration import Integration
+    from app.services.integration_auth import resolve_integration_principal
+    from app.services.integration_key_service import IntegrationKeyService
+
+    client, _caller = api
     mocha = _second_company(db)
     _brand(db, company_id=mocha, name="MochaOnly")
+
+    name = unique_code("ZZTINT")
+    principal_user = User(
+        id=str(uuid.uuid4()),
+        email=f"{name}@integrations.local".lower(),
+        name=f"Integration {name}",
+        status=UserStatus.ACTIVE.value,
+        is_integration=True,
+    )
+    db.add(principal_user)
+    db.flush()
+    integration = Integration(
+        name=name,
+        type="autocount_esb",
+        act_as_user_id=principal_user.id,
+        is_active=True,
+    )
+    db.add(integration)
+    db.flush()
+    key = IntegrationKeyService(db).issue_key(integration)
     db.commit()
-    caller["auth_method"] = "api_key"
+
+    api_key_caller = resolve_integration_principal(db, key)
+    assert api_key_caller["auth_method"] == "integration_api_key"
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: api_key_caller
 
     resp = client.get(f"/api/v1/master-data/brands/select?company_id={mocha}")
 

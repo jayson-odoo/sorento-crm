@@ -32,7 +32,11 @@ def _assert_company_readable(db: Session, current_user: dict, company_id: str) -
     if not is_uuid(company_id):
         raise handle_not_found("Company", company_id)
 
-    if (current_user or {}).get("auth_method") == "api_key":
+    # ``integration_api_key`` is what an X-API-Key call actually carries
+    # (integration_auth.resolve_integration_principal); the bare ``api_key`` spelling
+    # is accepted too because several older routes assume it and a hand-built
+    # principal in a test may still use it.
+    if (current_user or {}).get("auth_method") in {"api_key", "integration_api_key"}:
         return
 
     user_id = str((current_user or {}).get("id") or "")

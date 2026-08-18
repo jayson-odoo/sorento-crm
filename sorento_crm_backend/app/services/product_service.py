@@ -219,7 +219,7 @@ from app.services.company_scope import stamp_lookup_companies
 from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
-from app.services.identifier_resolver import resolve_identifier
+from app.services.identifier_resolver import is_uuid, resolve_identifier
 
 
 class ProductService:
@@ -257,12 +257,40 @@ class ProductService:
             return None
 
         resolved: list[str] = []
+        seen: set[str] = set()
+        # Codes and names resolve in ONE query rather than one per token: the deep
+        # link from a discontinued notice can carry a dozen brands, and a query per
+        # brand is a query per brand on every page of that list.
+        lookups: list[str] = []
         for token in tokens:
-            ids = resolve_identifier(
-                self.db, token, Brand, code_fields=("brand_code", "brand_name")
+            # "all" resolves to no ids at all (resolve_identifier returns None for
+            # it), so it contributes nothing here either.
+            if token.lower() == "all":
+                continue
+            if is_uuid(token):
+                if token not in seen:
+                    seen.add(token)
+                    resolved.append(token)
+            else:
+                lowered = token.lower()
+                if lowered not in lookups:
+                    lookups.append(lowered)
+
+        if lookups:
+            rows = (
+                self.db.query(Brand.id)
+                .filter(
+                    or_(
+                        func.lower(Brand.brand_code).in_(lookups),
+                        func.lower(Brand.brand_name).in_(lookups),
+                    )
+                )
+                .all()
             )
-            for bid in ids or []:
-                if bid not in resolved:
+            for row in rows:
+                bid = str(row[0])
+                if bid not in seen:
+                    seen.add(bid)
                     resolved.append(bid)
         return resolved
 

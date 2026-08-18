@@ -220,6 +220,48 @@ describe('ProductDiscontinuedScopeEditor - a company already used elsewhere is d
   });
 });
 
+describe('ProductDiscontinuedScopeEditor - a saved company outside the admin grants', () => {
+  it('renders the saved company by name instead of a blank select', () => {
+    // The option list comes from the acting admin's own company grants, but the
+    // scope being edited can name a company they were never granted. Without the
+    // merge the select has no matching option and shows blank, while the read view
+    // two panels away shows the name - which reads as the value having been lost.
+    const rows: ScopeRow[] = [
+      {
+        key: 'k1',
+        companyId: 'co-9',
+        companyName: 'Ungranted Co',
+        brandIds: [],
+        brandLabels: {},
+      },
+    ];
+    renderEditor(rows);
+
+    const select = screen.getByLabelText('Select a company') as HTMLSelectElement;
+    expect(select.value).toBe('co-9');
+    const option = Array.from(select.options).find((o) => o.value === 'co-9');
+    expect(option?.textContent).toBe('Ungranted Co');
+  });
+
+  it('the merged company counts as taken, so another row cannot claim it', () => {
+    const rows: ScopeRow[] = [
+      {
+        key: 'k1',
+        companyId: 'co-9',
+        companyName: 'Ungranted Co',
+        brandIds: [],
+        brandLabels: {},
+      },
+      { key: 'k2', companyId: 'co-1', companyName: 'Sorento', brandIds: [], brandLabels: {} },
+    ];
+    renderEditor(rows);
+
+    const selects = screen.getAllByLabelText('Select a company') as HTMLSelectElement[];
+    const row2Ungranted = Array.from(selects[1].options).find((o) => o.value === 'co-9')!;
+    expect(row2Ungranted.disabled).toBe(true);
+  });
+});
+
 describe('ProductDiscontinuedScopeEditor - add / remove row', () => {
   it('"Add scope" appends an all-companies row when none is taken yet', () => {
     const { onChange } = renderEditor([]);
@@ -236,6 +278,22 @@ describe('ProductDiscontinuedScopeEditor - add / remove row', () => {
     const [calledWith] = onChange.mock.calls[0];
     expect(calledWith).toHaveLength(2);
     expect(calledWith[1]).toMatchObject({ companyId: 'co-1', companyName: 'Sorento' });
+  });
+
+  it('"Add scope" is disabled once all-companies AND every company are taken', () => {
+    // There is nothing left for a new row to mean, and appending a second
+    // all-companies row would be a duplicate the backend then dedupes away.
+    const rows: ScopeRow[] = [
+      createAllScopeRow(),
+      { key: 'k2', companyId: 'co-1', companyName: 'Sorento', brandIds: [], brandLabels: {} },
+      { key: 'k3', companyId: 'co-2', companyName: 'Mocha', brandIds: [], brandLabels: {} },
+    ];
+    const { onChange } = renderEditor(rows);
+    const addButton = screen.getByRole('button', { name: /add scope/i });
+
+    expect(addButton).toBeDisabled();
+    fireEvent.click(addButton);
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('removing the only row clears the list back to empty (re-shows the hint on re-render)', () => {

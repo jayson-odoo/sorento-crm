@@ -162,6 +162,49 @@ describe('UserProfileEditDialog - discontinued scope pre-population (AC-15)', ()
     expect(screen.getByTestId('scope-row-count')).toHaveTextContent('0');
   });
 
+  it('opening on an already-ON toggle with zero saved rows does NOT add a row', async () => {
+    // The user deliberately deleted every row and saved. "Toggle on and empty" is
+    // a legitimate saved state, so the pre-population must key on the off -> on
+    // transition, not on the toggle's value at open time.
+    const user: User = {
+      ...BASE_USER,
+      notifyEmailOnProductDiscontinued: true,
+      productDiscontinuedScopes: [],
+    } as unknown as User;
+    renderDialog(user);
+
+    await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('0'));
+
+    // An unrelated render pass must not resurrect it either.
+    fireEvent.click(screen.getByRole('checkbox', { name: /email on assignment/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: /email on assignment/i })).not.toBeChecked(),
+    );
+    expect(screen.getByTestId('scope-row-count')).toHaveTextContent('0');
+  });
+
+  it('closing and re-opening does not resurrect a deliberately emptied scope set', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user: User = {
+      ...BASE_USER,
+      notifyEmailOnProductDiscontinued: true,
+      productDiscontinuedScopes: [],
+    } as unknown as User;
+    const dialog = (open: boolean) => (
+      <QueryClientProvider client={client}>
+        <UserProfileEditDialog open={open} closeDialog={vi.fn()} user={user} />
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(dialog(true));
+    await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('0'));
+
+    rerender(dialog(false));
+    rerender(dialog(true));
+
+    await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('0'));
+  });
+
   it('a user opened with an existing scope keeps it (no forced all/all)', async () => {
     const user: User = {
       ...BASE_USER,
@@ -177,7 +220,62 @@ describe('UserProfileEditDialog - discontinued scope pre-population (AC-15)', ()
   });
 });
 
+async function putBody() {
+  const find = () =>
+    apiFetch.mock.calls.find(
+      (call) =>
+        typeof call[0] === 'string' &&
+        call[0] === '/api/user-management/users/user-1' &&
+        call[1]?.method === 'PUT',
+    );
+  await waitFor(() => expect(find()).toBeTruthy());
+  return JSON.parse(find()![1].body as string);
+}
+
 describe('UserProfileEditDialog - PUT body carries product_discontinued_scopes (AC-12 FE side)', () => {
+  it('omits product_discontinued_scopes entirely when the editor was never touched', async () => {
+    // Replace-all means an unconditional send REWRITES the scopes on any profile
+    // save, so an untouched editor must not appear in the body at all.
+    const user: User = {
+      ...BASE_USER,
+      notifyEmailOnProductDiscontinued: true,
+      productDiscontinuedScopes: [
+        { company_id: 'co-1', company_name: 'Sorento', brand_id: null },
+      ],
+    } as unknown as User;
+    renderDialog(user);
+    await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('1'));
+
+    // Dirty an unrelated field so Save is enabled without touching the editor.
+    fireEvent.click(screen.getByRole('checkbox', { name: /email on assignment/i }));
+    const saveButton = screen.getByRole('button', { name: /save changes/i });
+    await waitFor(() => expect(saveButton).not.toBeDisabled());
+    fireEvent.click(saveButton);
+
+    expect(await putBody()).not.toHaveProperty('product_discontinued_scopes');
+  });
+
+  it('sends an EMPTY list when the editor was cleared, so silence actually saves', async () => {
+    const user: User = {
+      ...BASE_USER,
+      notifyEmailOnProductDiscontinued: true,
+      productDiscontinuedScopes: [
+        { company_id: 'co-1', company_name: 'Sorento', brand_id: null },
+      ],
+    } as unknown as User;
+    renderDialog(user);
+    await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('1'));
+
+    fireEvent.click(screen.getByText('clear-all-rows'));
+    await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('0'));
+
+    const saveButton = screen.getByRole('button', { name: /save changes/i });
+    await waitFor(() => expect(saveButton).not.toBeDisabled());
+    fireEvent.click(saveButton);
+
+    expect((await putBody()).product_discontinued_scopes).toEqual([]);
+  });
+
   it('Save Changes sends product_discontinued_scopes built from the current rows', async () => {
     renderDialog();
     fireEvent.click(

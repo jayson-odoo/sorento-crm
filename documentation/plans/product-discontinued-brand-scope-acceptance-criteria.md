@@ -104,3 +104,14 @@ the catalogue, and the admin who manages user notification preferences.
 - **AC-19 [E2E]** Recorded agent-browser evidence run (no new Playwright spec): sidebar-click
   to Users -> edit a user's scopes -> save -> re-open shows them; products deep link with
   batch + brand filter renders the subset. 375px and 1280px.
+
+## Follow-ups (out of scope here, deliberately)
+
+- **Write-side company gating on `replace_scopes`.** The READ side already handles a company
+  outside the acting admin's grants: `GET /brands/select?company_id=` refuses one they cannot
+  reach, and the editor merges a saved-but-ungranted company into its option list so the value
+  renders by name rather than blank. The WRITE side does not check that the acting admin may
+  reach the company a scope names - it only checks that the company and brand exist and agree.
+  Adding that gate needs its own decision about which permission governs it (editing another
+  user's notification settings is already `user_management.users.edit`, which is not a
+  company-scoped permission), so it is a separate change rather than a silent tightening here.

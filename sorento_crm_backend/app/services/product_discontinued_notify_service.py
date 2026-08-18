@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -72,7 +72,21 @@ def _plural(n: int) -> str:
     return "" if n == 1 else "s"
 
 
-def _load_recipient_scopes(db: Session) -> tuple[list, dict[str, list]]:
+class Recipient(NamedTuple):
+    """A candidate recipient as plain values, deliberately NOT an ORM ``User``.
+
+    Every company batch commits the stamp before it sends, and a commit expires
+    every instance in the session - so an attribute read on a ``User`` held across
+    that commit is a fresh SELECT, once per recipient, once per batch. Reading the
+    three columns we need at load time is what makes "two queries per run" true.
+    """
+
+    id: str
+    name: Optional[str]
+    email: Optional[str]
+
+
+def _load_recipient_scopes(db: Session) -> tuple[list[Recipient], dict[str, list]]:
     """Candidate recipients (either toggle on, not trashed) and their scope rows.
 
     Loaded ONCE per run and shared by every company batch. The scopes are read as
@@ -80,8 +94,9 @@ def _load_recipient_scopes(db: Session) -> tuple[list, dict[str, list]]:
     already hold: no Brand query, which matters because brands are company-scoped
     and this runs under whatever scope the scheduled task carries.
     """
-    users = (
-        db.query(User)
+    users = [
+        Recipient(str(row[0]), row[1], row[2])
+        for row in db.query(User.id, User.name, User.email)
         .filter(
             User.is_trashed.is_(False),
             or_(
@@ -90,19 +105,23 @@ def _load_recipient_scopes(db: Session) -> tuple[list, dict[str, list]]:
             ),
         )
         .all()
-    )
+    ]
     scopes: dict[str, list] = {}
     if users:
         rows = (
-            db.query(UserProductDiscontinuedScope)
+            db.query(
+                UserProductDiscontinuedScope.user_id,
+                UserProductDiscontinuedScope.company_id,
+                UserProductDiscontinuedScope.brand_id,
+            )
             .filter(UserProductDiscontinuedScope.user_id.in_([u.id for u in users]))
             .all()
         )
-        for row in rows:
-            scopes.setdefault(str(row.user_id), []).append(
+        for user_id, company_id, brand_id in rows:
+            scopes.setdefault(str(user_id), []).append(
                 (
-                    str(row.company_id) if row.company_id is not None else None,
-                    str(row.brand_id) if row.brand_id is not None else None,
+                    str(company_id) if company_id is not None else None,
+                    str(brand_id) if brand_id is not None else None,
                 )
             )
     return users, scopes
@@ -198,7 +217,7 @@ def _run_for_company(
     company_name: Optional[str],
     label_with_company: bool,
     pending: list,
-    candidates: list,
+    candidates: list[Recipient],
     scopes_by_user: dict[str, list],
 ) -> dict:
     now = datetime.utcnow()
@@ -222,7 +241,7 @@ def _run_for_company(
     notifier = NotificationService(db)
     for user in candidates:
         subset, brand_ids = subset_for_scopes(
-            scopes_by_user.get(str(user.id), []), company_id, pending
+            scopes_by_user.get(user.id, []), company_id, pending
         )
         # Nothing of theirs in this batch: no in-app row, no delivery, no noise.
         if not subset:

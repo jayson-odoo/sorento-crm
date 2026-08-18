@@ -399,6 +399,30 @@ def test_ac11_scope_row_cascades_on_user_delete(db):
     ).first() is None
 
 
+def test_ac11_scope_row_cascades_on_company_delete(db):
+    """The third arm of the cascade, and the one most likely to be forgotten.
+
+    A company-scoped row is written for a company the install later drops; without
+    ON DELETE CASCADE the delete fails on the FK (an admin cannot remove a company)
+    or, worse, leaves a scope row pointing at nothing that the fan-out then matches
+    against a reused id.
+    """
+    company_id = str(uuid.uuid4())
+    db.add(Company(id=company_id, name="ZZT Cascade Co", code=unique_code("CSC")[:20]))
+    db.flush()
+    user = _user(db, email=f"{unique_code('cascadecompany')}@zzt.test")
+    scope = _scope(db, user.id, company_id=company_id, brand_id=None)
+    db.commit()
+    scope_id = scope.id
+
+    db.query(Company).filter(Company.id == company_id).delete()
+    db.commit()
+
+    assert db.query(UserProductDiscontinuedScope).filter(
+        UserProductDiscontinuedScope.id == scope_id
+    ).first() is None
+
+
 def test_ac11_scope_row_cascades_on_brand_delete(db):
     brand_id = _brand(db, company_id=SORENTO, name="Cascade")
     user = _user(db, email=f"{unique_code('cascadebrand')}@zzt.test")

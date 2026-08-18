@@ -1,5 +1,5 @@
 /**
- * ProductsList — product-discontinued deep-link `brand_id` preservation (AC-17).
+ * ProductsList - product-discontinued deep-link `brand_id` preservation (AC-17).
  *
  * The reload-clean effect (ProductsList.tsx ~line 120) strips every persisted
  * list param on a hard refresh EXCEPT a "products discontinued" deep link, which
@@ -84,7 +84,7 @@ afterEach(() => {
   cleanup();
 });
 
-describe('ProductsList — discontinued-notice deep link survives reload-clean', () => {
+describe('ProductsList - discontinued-notice deep link survives reload-clean', () => {
   it('keeps discontinued_batch_id AND brand_id, dropping every other param', async () => {
     getEntriesSpy.mockReturnValue([{ type: 'reload' }] as unknown as PerformanceEntryList);
     nav.params = new URLSearchParams(

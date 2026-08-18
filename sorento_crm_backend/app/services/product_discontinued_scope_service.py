@@ -108,6 +108,10 @@ def serialize_scopes(db: Session, user_id: str) -> list[dict]:
     return out
 
 
+_COMPANY_GONE = "That company no longer exists. Refresh and pick it again."
+_BRAND_GONE = "That brand no longer exists. Refresh and pick it again."
+
+
 def _field(item, name: str) -> Optional[str]:
     """One field of a scope item, whether it arrived as a schema or a plain dict.
 
@@ -116,6 +120,24 @@ def _field(item, name: str) -> Optional[str]:
     """
     value = item.get(name) if isinstance(item, dict) else getattr(item, name, None)
     return (str(value).strip() or None) if value else None
+
+
+def _uuid_field(item, name: str, on_malformed: str) -> Optional[str]:
+    """One id field, normalised to canonical (lowercase, hyphenated) UUID text.
+
+    The dedupe below compares strings, but the unique index compares uuid VALUES:
+    the same company sent once uppercase and once lowercase would survive dedupe
+    as two entries and then collide at flush, which reads to the user as a save
+    that failed for no reason. Normalising here is also where a malformed id is
+    caught, before it reaches a uuid column and aborts the transaction.
+    """
+    raw = _field(item, name)
+    if raw is None:
+        return None
+    try:
+        return str(uuid.UUID(raw))
+    except (ValueError, AttributeError, TypeError):
+        raise handle_unprocessable(on_malformed)
 
 
 def replace_scopes(db: Session, user_id: str, items) -> None:
@@ -128,8 +150,8 @@ def replace_scopes(db: Session, user_id: str, items) -> None:
     seen: set[tuple[Optional[str], Optional[str]]] = set()
 
     for item in items or []:
-        company_id = _field(item, "company_id")
-        brand_id = _field(item, "brand_id")
+        company_id = _uuid_field(item, "company_id", _COMPANY_GONE)
+        brand_id = _uuid_field(item, "brand_id", _BRAND_GONE)
         # All companies can only ever mean all brands: there is no brand that
         # exists in every company, so a brand here would be unsatisfiable.
         if company_id is None:
@@ -145,16 +167,12 @@ def replace_scopes(db: Session, user_id: str, items) -> None:
 
     for company_id, brand_id in pairs:
         if company_id is not None and company_id not in companies:
-            raise handle_unprocessable(
-                "That company no longer exists. Refresh and pick it again."
-            )
+            raise handle_unprocessable(_COMPANY_GONE)
         if brand_id is None:
             continue
         brand = brands.get(brand_id)
         if brand is None:
-            raise handle_unprocessable(
-                "That brand no longer exists. Refresh and pick it again."
-            )
+            raise handle_unprocessable(_BRAND_GONE)
         if str(getattr(brand, "company_id", "") or "") != company_id:
             raise handle_unprocessable(
                 f"Brand '{brand.brand_name}' does not belong to "

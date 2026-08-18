@@ -86,7 +86,22 @@ def _scope_rows(db, user_id: str) -> list[tuple]:
     return [(r[0], r[1]) for r in rows]
 
 
+def _drop_table(db):
+    """Let the migration's own DDL be what builds the table.
+
+    ``blank_session`` runs ``Base.metadata.create_all``, which already created
+    ``user_product_discontinued_scopes`` from the model - so the migration's
+    ``CREATE TABLE IF NOT EXISTS`` is a no-op and an assertion afterwards is
+    describing the MODEL, not the migration. Dropping it first is the difference
+    between testing the DDL and testing SQLAlchemy.
+    """
+    db.execute(text("DROP TABLE IF EXISTS user_product_discontinued_scopes CASCADE"))
+    db.flush()
+
+
 def test_table_created_with_expected_columns(db):
+    _drop_table(db)
+
     _run_upgrade(db)
 
     columns = {
@@ -103,6 +118,98 @@ def test_table_created_with_expected_columns(db):
     assert columns["user_id"] == "NO"
     assert columns["company_id"] == "YES"
     assert columns["brand_id"] == "YES"
+
+
+def test_table_created_with_cascading_foreign_keys(db):
+    """AC-11: a deleted user, company or brand takes its scope rows with it."""
+    _drop_table(db)
+
+    _run_upgrade(db)
+
+    fks = {
+        r[0]: r[1]
+        for r in db.execute(
+            text(
+                "SELECT ref.relname, pg_get_constraintdef(con.oid) "
+                "FROM pg_constraint con "
+                "JOIN pg_class cl ON cl.oid = con.conrelid "
+                "JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
+                "JOIN pg_class ref ON ref.oid = con.confrelid "
+                "WHERE con.contype = 'f' "
+                "AND ns.nspname = current_schema() "
+                "AND cl.relname = 'user_product_discontinued_scopes'"
+            )
+        )
+    }
+    assert set(fks) == {"users", "companies", "brands"}
+    assert "(user_id)" in fks["users"]
+    assert "(company_id)" in fks["companies"]
+    assert "(brand_id)" in fks["brands"]
+    for definition in fks.values():
+        assert "ON DELETE CASCADE" in definition
+
+
+def test_table_created_with_the_four_expected_indexes(db):
+    """Three lookup indexes plus the coalesce unique index that is what actually
+    stops a duplicate (company, brand) pair - a plain unique index would not,
+    because NULL is never equal to NULL in Postgres."""
+    _drop_table(db)
+
+    _run_upgrade(db)
+
+    indexes = {
+        r[0]: r[1]
+        for r in db.execute(
+            text(
+                "SELECT indexname, indexdef FROM pg_indexes "
+                "WHERE schemaname = current_schema() "
+                "AND tablename = 'user_product_discontinued_scopes'"
+            )
+        )
+    }
+    for name in (
+        "ix_user_product_discontinued_scopes_user_id",
+        "ix_user_product_discontinued_scopes_company_id",
+        "ix_user_product_discontinued_scopes_brand_id",
+        "uq_user_product_discontinued_scopes",
+    ):
+        assert name in indexes, sorted(indexes)
+
+    unique_def = indexes["uq_user_product_discontinued_scopes"]
+    assert "CREATE UNIQUE INDEX" in unique_def
+    assert "COALESCE" in unique_def.upper()
+    assert "user_id" in unique_def
+
+
+def test_the_unique_index_rejects_a_duplicate_all_all_row(db):
+    """The index is only worth having if it bites, so make it bite."""
+    _drop_table(db)
+    _run_upgrade(db)
+    uid = _user(db, email_pref=False)
+    db.flush()
+
+    db.execute(
+        text(
+            "INSERT INTO user_product_discontinued_scopes (id, user_id, company_id, brand_id) "
+            "VALUES (:i, :u, NULL, NULL)"
+        ),
+        {"i": str(uuid.uuid4()), "u": uid},
+    )
+    db.flush()
+
+    from sqlalchemy.exc import IntegrityError
+
+    # Inside a savepoint so the aborted statement does not poison the session the
+    # fixture still has to tear down.
+    with pytest.raises(IntegrityError):
+        with db.begin_nested():
+            db.execute(
+                text(
+                    "INSERT INTO user_product_discontinued_scopes "
+                    "(id, user_id, company_id, brand_id) VALUES (:i, :u, NULL, NULL)"
+                ),
+                {"i": str(uuid.uuid4()), "u": uid},
+            )
 
 
 def test_a_partial_prior_run_is_completed_not_doubled(db):

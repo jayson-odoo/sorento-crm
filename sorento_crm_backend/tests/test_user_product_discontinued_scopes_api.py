@@ -241,6 +241,52 @@ def test_put_replaces_the_whole_set_and_dedupes(api, db):
     assert scopes[0]["brand_id"] == brand_id
 
 
+def test_put_dedupes_case_differing_uuids_as_one_scope(api, db):
+    """Dedupe compares ids, not their spelling.
+
+    Postgres compares uuid VALUES, so ``ABC...`` and ``abc...`` are one row to the
+    unique index. String-comparing them here would let both through dedupe and then
+    collide at flush, which surfaces as a save that fails with no cause the user can
+    see or fix.
+    """
+    client, allow, _caller = api
+    allow.update({USERS_VIEW, USERS_EDIT})
+    uid = _target_user(db)
+    brand_id = _brand(db, company_id=SORENTO, name="Mocha")
+    db.commit()
+
+    resp = client.put(
+        f"/api/v1/user-management/users/{uid}",
+        json={
+            "product_discontinued_scopes": [
+                {"company_id": SORENTO, "brand_id": brand_id},
+                {"company_id": SORENTO.upper(), "brand_id": brand_id.upper()},
+            ]
+        },
+    )
+
+    assert resp.status_code == 200
+    scopes = resp.json()["product_discontinued_scopes"]
+    assert len(scopes) == 1
+    assert scopes[0]["brand_id"] == brand_id
+
+
+def test_put_a_malformed_scope_id_is_422_not_a_broken_transaction(api, db):
+    """A non-UUID id is caught before it reaches a uuid column, where it would
+    abort the transaction and surface as a 500."""
+    client, allow, _caller = api
+    allow.update({USERS_VIEW, USERS_EDIT})
+    uid = _target_user(db)
+    db.commit()
+
+    resp = client.put(
+        f"/api/v1/user-management/users/{uid}",
+        json={"product_discontinued_scopes": [{"company_id": "not-a-uuid"}]},
+    )
+
+    assert resp.status_code == 422
+
+
 def test_put_all_companies_forces_brand_null_even_if_one_was_sent(api, db):
     client, allow, _caller = api
     allow.update({USERS_VIEW, USERS_EDIT})

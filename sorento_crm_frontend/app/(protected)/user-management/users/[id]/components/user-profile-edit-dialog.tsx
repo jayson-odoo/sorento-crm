@@ -183,9 +183,23 @@ const UserProfileEditDialog = ({
   // Switching a discontinued channel on with no scopes at all would mean opting in
   // to silence, so the first row defaults to everything. Removing every row after
   // that is left alone - the editor says out loud that it means no notices.
+  //
+  // Only a real off -> on flick INSIDE this dialog pre-populates. Merely re-opening
+  // on an already-on toggle must not resurrect a scope set the user deliberately
+  // emptied and saved, which is what a plain "on and empty" condition would do.
+  const discontinuedWasOnRef = useRef<boolean | null>(null);
   useEffect(() => {
-    if (!open || !discontinuedNotifyOn) return;
-    setScopeRows((prev) => (prev.length ? prev : [createAllScopeRow()]));
+    if (!open) {
+      discontinuedWasOnRef.current = null;
+      return;
+    }
+    const wasOn = discontinuedWasOnRef.current;
+    discontinuedWasOnRef.current = discontinuedNotifyOn;
+    if (wasOn !== false || !discontinuedNotifyOn) return;
+    if (scopeRows.length) return;
+    setScopeRows([createAllScopeRow()]);
+    setScopesDirty(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on the toggle transition, not on row edits
   }, [open, discontinuedNotifyOn]);
 
   // Companies aren't carried on the `user` prop, so apply them once the grant fetch
@@ -310,8 +324,12 @@ const UserProfileEditDialog = ({
       profileData.notify_whatsapp_on_handling = Boolean(values.notify_whatsapp_on_handling);
       profileData.notify_email_on_product_discontinued = Boolean(values.notify_email_on_product_discontinued);
       profileData.notify_whatsapp_on_product_discontinued = Boolean(values.notify_whatsapp_on_product_discontinued);
-      // Replace-all: whatever the editor shows is the user's full scope set.
-      profileData.product_discontinued_scopes = rowsToScopePayload(scopeRows);
+      // Replace-all: whatever the editor shows is the user's full scope set. Sent
+      // only when the editor was actually touched - omitted means "leave scopes
+      // alone", so an unrelated profile save can never rewrite them.
+      if (scopesDirty) {
+        profileData.product_discontinued_scopes = rowsToScopePayload(scopeRows);
+      }
 
       const response = await apiFetch(`/api/user-management/users/${user.id}`, {
         method: 'PUT',
