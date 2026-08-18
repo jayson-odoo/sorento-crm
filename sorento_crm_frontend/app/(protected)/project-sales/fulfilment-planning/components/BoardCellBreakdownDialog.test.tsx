@@ -24,6 +24,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import type {
+  BoardCell,
   BoardContribution,
   BoardDraft,
 } from '../../_shared/types/fulfilmentPlanning.types';
@@ -149,8 +150,9 @@ describe('BoardCellBreakdownDialog: the table', () => {
     // number nobody can be held to.
     renderDialog([demand({ qty_ordered: null })]);
 
+    // Ordered and Delivered both state their absence rather than printing a 0.
     const row = screen.getByRole('table').querySelectorAll('tbody tr')[0];
-    expect(within(row as HTMLElement).getByText('Not stated')).toBeInTheDocument();
+    expect(within(row as HTMLElement).getAllByText('Not stated').length).toBeGreaterThan(0);
   });
 
   it('totals the quantity columns in a summary row inside the table', () => {
@@ -216,6 +218,118 @@ describe('BoardCellBreakdownDialog: the table', () => {
     expect(rank.textContent).toContain('Purchase order sequence');
     expect(rank.textContent).not.toContain('po_document_sequence');
     expect(rank.textContent).not.toContain('need_by_date');
+  });
+});
+
+/**
+ * The real backend fields, which arrived after this table was first built against assumed
+ * names. Three of them change what the screen may say rather than merely what it reads.
+ */
+describe('BoardCellBreakdownDialog: the facts the server sends', () => {
+  /** A cell with the location stock facts the server now carries. */
+  function stockedCell(location: Partial<BoardCell['locations'][number]>) {
+    const cell = cellOf([demand()]);
+    return { ...cell, locations: [{ ...cell.locations[0], ...location }] };
+  }
+
+  function renderCell(cell: BoardCell, rankingIsFlat = false) {
+    render(
+      <BoardCellBreakdownDialog
+        cell={cell}
+        bucketLabel="31 Aug 2026"
+        draft={{}}
+        rankingIsFlat={rankingIsFlat}
+        onDecide={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+  }
+
+  it('states what is actually at each location, on hand, free and incoming', () => {
+    renderCell(
+      stockedCell({
+        location: 'BRW-BB',
+        qty_on_hand: '500',
+        qty_free: '120',
+        qty_incoming: '80',
+        incoming: [{ spo_number: '202601-S0003', arrival_date: '2026-09-12', qty: '80' }],
+      }),
+    );
+
+    const strip = screen.getByTestId('cell-location-BRW-BB');
+    expect(strip.textContent).toContain('500 on hand');
+    expect(strip.textContent).toContain('120 free');
+    expect(strip.textContent).toContain('80 incoming');
+    // The document behind the incoming stock, because "80 incoming" from nowhere is a rumour.
+    expect(strip.getAttribute('title')).toContain('202601-S0003');
+  });
+
+  it('says NOT STATED, never 0, when the sales order named no location', () => {
+    // The opposite instruction: 0 free means do not look here, nothing is stated means
+    // nobody has said where to look.
+    renderCell(
+      stockedCell({
+        location: null,
+        qty_on_hand: null,
+        qty_free: null,
+        qty_incoming: null,
+      }),
+    );
+
+    const strip = screen.getByTestId('cell-location-none');
+    expect(strip.textContent).toContain('Stock not stated');
+    expect(strip.textContent).not.toContain('0 on hand');
+    expect(strip.textContent).not.toContain('0 free');
+  });
+
+  it('carries delivered beside ordered and owed', () => {
+    renderDialog([demand({ qty_ordered: '120', qty_delivered: '20', qty: '100' })]);
+
+    const table = screen.getByRole('table');
+    const headers = within(table)
+      .getAllByRole('columnheader')
+      .map((node) => node.textContent ?? '');
+    expect(headers.some((header) => header.includes('Delivered'))).toBe(true);
+    const row = table.querySelectorAll('tbody tr')[0];
+    expect(within(row as HTMLElement).getByText('20')).toBeInTheDocument();
+  });
+
+  it('leads a rank factor with the RAW fact, not the normalised number', () => {
+    const cell = cellOf([demand()]);
+    const withRaw = {
+      ...cell,
+      contributions: [
+        {
+          ...cell.contributions[0],
+          rank_score: 0.72,
+          rank_factors: [
+            { key: 'need_by_date', weight: 3, value: 1, raw: '2026-09-03', present: true },
+            { key: 'customer_credit', weight: 1, value: 0.5, raw: '45 days', present: true },
+          ],
+        },
+      ],
+    };
+    renderCell(withRaw);
+
+    const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
+    expect(rank.textContent).toContain('0.72');
+    expect(rank.textContent).toContain('2026-09-03');
+    expect(rank.textContent).toContain('45 days');
+    // The weight never sits beside the value as a bare number: "need_by_date 1.00 x3" reads
+    // to everybody as a weight of 1.00.
+    expect(rank.textContent).not.toContain('x3');
+    expect(rank.textContent).not.toContain('1.00');
+  });
+
+  it('prints no score at all when the server says the policy separates nothing', () => {
+    const cell = cellOf([demand()]);
+    renderCell(cell, true);
+
+    // The live policy scores every row 0.00, and a column of 0.00 reads as a considered
+    // ranking rather than as no ranking.
+    const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
+    expect(rank.textContent).not.toContain('0.00');
+    expect(rank.textContent).toContain('Not ranked');
   });
 });
 

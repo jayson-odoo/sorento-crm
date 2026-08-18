@@ -175,15 +175,29 @@ export function confirmLinesFor(
     if (!contribution.project_line_id) continue;
 
     const owed = toMinor(contribution.qty_outstanding ?? contribution.qty);
-    const incoming = sumSources(contribution, 'timely_spo');
-    const proposedReserve = sumSources(contribution, 'reserve');
+    // The engine's own numbers when it sends them. The board now proposes what the SHEET
+    // proposes - pool and borrow are considered, not just own-location reserve then buy - so
+    // re-deriving a composition from the source strip would be a second, worse allocator
+    // quietly disagreeing with the real one.
+    const incoming = numberOr(contribution.qty_proposed_incoming, () =>
+      sumSources(contribution, 'timely_spo'),
+    );
+    const proposedReserve = numberOr(contribution.qty_proposed_reserve, () =>
+      sumSources(contribution, 'reserve'),
+    );
     const reserveQty =
       decision.verdict === 'amended' && decision.reserve_qty !== undefined
         ? toMinor(decision.reserve_qty)
         : proposedReserve;
     // Whatever the Reserve and the incoming stock do not cover is bought. Derived rather than
     // read off the proposal so an amendment cannot leave a quantity owed by nobody.
-    const buy = Math.max(owed - incoming - reserveQty, 0);
+    // On an unchanged proposal the server's own Buy stands; an amendment moves the quantity
+    // the planner took off the Reserve into it, because that quantity is still owed.
+    const buy =
+      decision.verdict === 'amended' || contribution.qty_proposed_buy === undefined ||
+      contribution.qty_proposed_buy === null
+        ? Math.max(owed - incoming - reserveQty, 0)
+        : toMinor(contribution.qty_proposed_buy);
     const reserve = reserveWarehouses(contribution, reserveQty);
     // A Reserve nobody can address is not a Reserve. Dropping the line leaves it undecided,
     // which is recoverable; posting a Reserve with no warehouse would fail the whole
@@ -201,6 +215,11 @@ export function confirmLinesFor(
     });
   }
   return lines;
+}
+
+/** The server's figure when it sent one, else the fallback. Absent is not zero. */
+function numberOr(value: string | null | undefined, fallback: () => number): number {
+  return value === null || value === undefined ? fallback() : toMinor(value);
 }
 
 function sumSources(contribution: BoardContribution, kind: string): number {

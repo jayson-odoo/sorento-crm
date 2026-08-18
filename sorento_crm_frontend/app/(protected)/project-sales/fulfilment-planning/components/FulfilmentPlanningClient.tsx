@@ -507,6 +507,10 @@ export function FulfilmentPlanningClient() {
     return selectedRowIds(table)
       .map((id) => byKey.get(id)?.so_number)
       .filter((soNumber): soNumber is string => Boolean(soNumber));
+    // `rowSelection` is in the deps on purpose: `table` is a stable object whose selection
+    // state changes underneath it, so without it the memo would hold the first selection
+    // forever. The lint rule cannot see through the table instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, table, rowSelection]);
 
   const overCap = selected.length > MAX_BOARD_SELECTION;

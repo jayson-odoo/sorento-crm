@@ -505,8 +505,23 @@ export interface BoardContribution {
    * moved one of them. Absent renders as a stated absence, never as a guess.
    */
   qty_ordered?: string | null;
-  /** The owed quantity under its own name. Falls back to `qty`, which is the same figure. */
+  /** The owed quantity under its own name. `qty` is kept as an alias of it. */
   qty_outstanding?: string | null;
+  /** What has already been delivered against the line. Ordered - delivered = outstanding. */
+  qty_delivered?: string | null;
+  /**
+   * The engine's own proposal, as numbers rather than as a sum over `sources`.
+   *
+   * Read, never re-derived. The board now proposes what the SHEET proposes - pool and borrow
+   * are considered, not just own-location reserve then buy - so any client notion of "nothing
+   * free here, therefore buy" would be a second, worse allocator disagreeing with the real one.
+   */
+  qty_proposed_reserve?: string | null;
+  qty_proposed_incoming?: string | null;
+  qty_proposed_buy?: string | null;
+  /** How much could be borrowed for this line, across the donors below. */
+  qty_borrow_available?: string | null;
+  borrow_candidates?: BoardBorrowCandidate[];
   /**
    * The mirror line the confirmation names. Addressing only, never rendered.
    *
@@ -565,9 +580,16 @@ export interface BoardContribution {
  */
 export interface BoardRankFactor {
   key: string;
-  /** What the policy weights it at. A zero weight is still shown, so "this counted for nothing" is visible. */
+  /** What the policy weights it at. Shown in the tooltip, never as a bare number beside the
+   * normalised value: `demand_class 1.00 x0` reads to everybody as a weight of 1.00. */
   weight: number;
   value: number | null;
+  /**
+   * The absolute fact behind the normalised value, as text: "2026-09-03", "45 days",
+   * "project". This is what a planner recognises; the normalised 0-to-1 number is an artefact
+   * of the scoring and means nothing on its own, so the raw fact leads.
+   */
+  raw?: string | null;
   present: boolean;
 }
 
@@ -609,10 +631,44 @@ export interface BoardSource {
   arrival_date?: string | null;
 }
 
-/** How much of a cell comes out of one location. Drives the cell's source strip (13.7). */
+/** A donor the engine found for a line's Borrow. Named, never an id. */
+export interface BoardBorrowCandidate {
+  source: BorrowSource;
+  warehouse_code: string;
+  donor_project_ref?: string | null;
+  free_qty: string;
+}
+
+/** One incoming purchase leg at a location, with the document that carries it. */
+export interface BoardIncomingLeg {
+  spo_number: string;
+  arrival_date?: string | null;
+  qty: string;
+}
+
+/**
+ * What one cell owes at ONE location, and what is actually there - the captain's "where will I
+ * need to source to fulfil", answered with facts rather than with a proposal.
+ *
+ * EVERY STOCK FIGURE IS NULL, NEVER ZERO, when the sales order states no location. Rendering a
+ * null as "0" would tell the planner there is nothing in stock when the truth is that nobody
+ * said where to look, and those are opposite instructions.
+ */
 export interface BoardCellLocation {
   location: string | null;
+  /** What is owed here. `qty` is kept as an alias of it. */
   qty: string;
+  qty_demand?: string | null;
+  qty_on_hand?: string | null;
+  qty_reserved?: string | null;
+  qty_free?: string | null;
+  /** Free stock left AFTER this board's own proposals have drawn it down. */
+  qty_free_remaining?: string | null;
+  qty_incoming?: string | null;
+  incoming?: BoardIncomingLeg[];
+  qty_proposed_reserve?: string | null;
+  qty_proposed_incoming?: string | null;
+  qty_proposed_buy?: string | null;
 }
 
 /** One cell: this product, by this bucket, across every selected order. */

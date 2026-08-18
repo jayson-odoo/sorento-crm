@@ -20,6 +20,7 @@ import {
 } from '../../_shared/hooks/useFulfilmentPlanning';
 import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningService';
 import {
+  bucketLabelText,
   commitPreviewFor,
   confirmLinesFor,
   standingsFor,
@@ -222,7 +223,11 @@ export function FulfilmentBoardPanel({
 
   const bucketLabel = React.useMemo(() => {
     const map = new Map<string, string>();
-    for (const bucket of board.data?.dateBuckets ?? []) map.set(bucket.key, bucket.label);
+    // Through the same de-jargoning the column headers go through: the dialog title reads the
+    // same label, and it was still saying "w/c 24 Nov 2025" after the headers had stopped.
+    for (const bucket of board.data?.dateBuckets ?? []) {
+      map.set(bucket.key, bucketLabelText(bucket.label));
+    }
     return map;
   }, [board.data]);
 
@@ -426,6 +431,7 @@ export function FulfilmentBoardPanel({
           cell={liveCell}
           bucketLabel={bucketLabel.get(liveCell.bucket_key) ?? liveCell.bucket_key}
           draft={draft}
+          rankingIsFlat={board.data?.policy.discriminates_nothing ?? false}
           onDecide={decide}
           onClose={() => setOpenCell(null)}
         />

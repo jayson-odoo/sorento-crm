@@ -51,6 +51,8 @@ export interface BoardDemandLine {
   qty: string;
   /** What the sales order ordered on the line. A server fact, never derived here. */
   qty_ordered?: string | null;
+  /** What has already been delivered on the line. Ordered - delivered = outstanding. */
+  qty_delivered?: string | null;
   /** The mirror line the confirmation names. Addressing only. */
   project_line_id?: string | null;
   required_date?: string | null;
@@ -396,6 +398,7 @@ export function buildBoard(
       item_code: line.item_code,
       qty: line.qty,
       qty_ordered: line.qty_ordered ?? null,
+      qty_delivered: line.qty_delivered ?? null,
       qty_outstanding: line.qty,
       project_line_id: line.project_line_id ?? `pl-${line.sales_order_id}-${line.line_no}`,
       required_date: line.required_date ?? null,

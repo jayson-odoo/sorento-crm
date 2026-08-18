@@ -1674,6 +1674,95 @@ takes the same carve-out, with the same three obligations the matrix already mee
 blank and stays blank, exactly as the schedule matrix's blank means "this phase does not take this
 product".
 
+#### The cell breakdown is a TABLE (captain, 18 August 2026)
+
+> "this needs to be more table based instead of card based, so it is easier to see, and you need
+> to show me the SO order quantity, owed / outstanding quantity also in the table, when we show
+> table we must use datagrid table like the system existing design element, then need to show
+> summary row whenever relevant"
+
+So `BoardCellBreakdownDialog` renders the shared `PanelDataGrid` (fixed layout, resizable
+columns, `onChange` resize mode, explicit sizes, `truncate` + `title`) rather than a stack of
+cards. Columns: Sales order + line, Customer, Project, Ordered, Delivered, Owed, Required,
+Location, Sourced from, Rank, Decision. The quantity columns TOTAL in the table's own `tfoot`,
+which is the repo's existing total-inside-the-table idiom (`PurchaseOrdersPanel`), labelled
+"Total" under the first column. Approve / Amend / Reject are a row action; the amend form sits
+under the table, where a mandatory-reason box has the width it needs.
+
+The file's earlier argument FOR cards (a row carries a two-line explanation and a balance line)
+does not survive the ask, and is answered rather than overridden: the balance is stated ONCE for
+the whole cell at the TOP - the captain, "7 owed = 7 reserve + 0 incoming + 0 buy, you should
+show at the top" - and the per-row reasoning lives in the composition cell's `title`.
+
+**The location strip carries facts, not just demand.** Per `(product, location)`: owed, on hand,
+free, incoming, with the SPO documents behind the incoming in the tooltip. **Every stock figure
+is NULL, never zero, when the sales order states no location, and renders "Stock not stated"** -
+`0 free` means do not look here, nothing stated means nobody said where to look, and those are
+opposite instructions.
+
+**Rank reads facts first.** Each factor carries `raw` (the absolute fact as text: "2026-09-03",
+"45 days", "project"); the chip leads with the factor's plain-English name and that raw value.
+The WEIGHT is deliberately not beside it - `need_by_date 1.00 x3` reads to everybody as a weight
+of 1.00 - and lives in the tooltip, named. When `policy.discriminates_nothing` is true the score
+is suppressed entirely and reads "Not ranked", because a column of 0.00 looks like a considered
+ranking rather than the absence of one.
+
+**No jargon and no identifiers as labels.** The captain: "what does w/c 2 Nov 2026 mean? what
+does w/c mean?", then "just remove it". Week headers read "2 Nov 2026". Factor chips read
+"Required date", "Order date", "Payment terms", "Demand type", "Purchase order sequence", never
+`need_by_date` or `po_document_sequence`; an unknown key is humanised rather than printed raw.
+`bucketLabelText` strips a leading `w/c ` client-side as a bridge (idempotent, and a no-op once
+the server stops sending it) and is applied to the column header AND the dialog title.
+
+**The dialog footer overlap was a live blocker, now fixed.** Measured in the browser at a 560px
+window: `document.elementFromPoint` at the Approve button's own centre returned the dialog
+FOOTER, so a planner on a laptop could not decide a row at all. The dialog is now a flex column
+with its own max height, the body is the only scrolling region (`min-h-0 flex-1 overflow-y-auto`)
+and the footer is its SIBLING. Re-measured at 560: the action is reachable
+(`elementFromPoint` returns the button).
+
+#### Confirm on the board actually confirms
+
+The captain asked it as a question - "so now when i click the confirm 8 lines, it won't work and
+won't flow to order inquiries isit?" - and the answer was yes: the button had no `onClick`. It
+now posts to the SAME per-order endpoint the sheet uses,
+`POST /project-sales/sales-orders/{pso_id}/confirm`, so the board grows no second write path.
+
+- `confirmLinesFor` builds the body. A line the body does NOT name is left undecided and keeps
+  flowing to reorder planning (13.4), so a REJECTED line is omitted, as is any line the server
+  gave no `project_line_id` or no addressable warehouse for.
+- The proposal posted is the SERVER's (`qty_proposed_reserve` / `_incoming` / `_buy`), never
+  re-derived from the source strip: the board now proposes what the sheet proposes (pool and
+  borrow considered), so a client-side "nothing free here, therefore buy" would be a second,
+  worse allocator disagreeing with the real one. An AMENDMENT moves the difference into Buy,
+  because the quantity a planner takes off a Reserve is still owed.
+- `commitPreviewFor` counts `committing_count` (approved + amended), not every verdict: a button
+  reading "Confirm 2 lines" that posts one is a button that lies.
+- On success: the board and worklist queries are invalidated (a confirmation changes what every
+  other order on the same board can still be promised) and the confirmed keys leave the draft.
+  On `failing_lines`: **the draft is untouched** and the refused lines are named with their
+  reasons beside the order that owns them. Making a planner recompose after a refusal is the one
+  outcome that would teach them not to use the board.
+- Two consequences are stated on the commit card rather than discovered later: confirmed Buy rows
+  reach purchasing on the sales order itself, and an adopted order raises no purchasing task and
+  sends no notification. The Order Inquiry LIST is project-scoped, so an adopted order is absent
+  from it and **no link is rendered** - a link that opens a list without the thing it promised is
+  worse than no link.
+
+**STILL BLOCKED on three server fields** (measured against the live board payload, 18 August
+2026): `orders[].project_sales_order_id`, `contributions[].project_line_id`, and a warehouse id
+for the Reserve (either `sources[].warehouse_id` or `contributions[].fulfilment_warehouse_id`).
+Until they land, Confirm is disabled per order with "Nobody has started planning this sales order
+yet", and `confirmLinesFor` drops any line it cannot address rather than posting a null.
+
+**The worklist gains select-all** (captain: "need to have select all option also at the top left
+of table"), on the repo's own `buildSelectColumn` + `selectedRowIds` with `rowSelection` state, so
+the header checkbox and its indeterminate state are the ones every other bulk-action list uses. A
+row with no core sales order is unselectable with its reason as a tooltip. Over the 50-order cap
+the count is STATED ("60 ticked. A board takes at most 50 sales orders.") and Plan together is
+disabled: a planner who ticked everything and got a board of the first fifty would be planning a
+set they did not choose.
+
 **The board header is title left, actions right** (captain, 18 August 2026, with a screenshot of
 Back overlapping the title): the granularity control and then **Back to the worklist** sit together
 in the actions on the right, Back as `ghost` because returning is secondary to the control that

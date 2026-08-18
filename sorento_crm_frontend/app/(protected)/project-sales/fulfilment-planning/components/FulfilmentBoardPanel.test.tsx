@@ -214,6 +214,24 @@ describe('FulfilmentBoardPanel: the axes', () => {
     expect(header?.textContent).toBe('2 Nov 2026');
   });
 
+  it('strips the abbreviation from the cell dialog’s title too', async () => {
+    const board = boardOf([demand({ required_date: '2026-11-04', item_code: 'WESERP10B' })]);
+    getPlanningBoard.mockResolvedValue({
+      ...board,
+      dateBuckets: board.dateBuckets.map((bucket) => ({
+        ...bucket,
+        label: `w/c ${bucket.label}`,
+      })),
+    });
+
+    renderPanel(['SO403340']);
+    fireEvent.click(
+      await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }),
+    );
+
+    expect(await screen.findByText('WESERP10B · 2 Nov 2026')).toBeInTheDocument();
+  });
+
   it('strips the abbreviation even when the server is still sending it', async () => {
     // Bridge: the label is formatted server-side, so until that lane lands the client must not
     // put jargon on screen. Idempotent - it does nothing once the server stops sending it.

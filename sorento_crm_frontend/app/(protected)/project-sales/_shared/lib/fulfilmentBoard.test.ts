@@ -819,3 +819,48 @@ describe('confirmLinesFor', () => {
     });
   });
 });
+
+/**
+ * The server's own proposal numbers, once it started sending them.
+ *
+ * The board now proposes what the SHEET proposes - pool and borrow are considered, not just
+ * own-location reserve then buy - so summing the source strip on this side would be a second,
+ * worse allocator quietly disagreeing with the real one.
+ */
+describe('confirmLinesFor reads the engine’s numbers', () => {
+  const board = buildBoard([line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' })], {
+    today: TODAY,
+  });
+  const base = board.cells[0].contributions[0];
+
+  it('posts the proposal the server sent, not one re-derived from the sources', () => {
+    const withProposal = [
+      {
+        ...base,
+        // Deliberately disagreeing with `sources`, which says buy 100: the engine found a
+        // pool Reserve the client's own arithmetic could never have known about.
+        qty_proposed_reserve: '60',
+        qty_proposed_incoming: '10',
+        qty_proposed_buy: '30',
+      },
+    ];
+    const lines = confirmLinesFor(withProposal, 'so-a', {
+      [base.key]: { verdict: 'approved' },
+    });
+    expect(lines[0].timely_spo_qty).toBe('10');
+    expect(lines[0].reserve).toEqual([{ warehouse_id: 'wh-BRW-BB', qty: '60' }]);
+    expect(lines[0].buy_qty).toBe('30');
+  });
+
+  it('still moves an amendment’s difference into the Buy', () => {
+    const withProposal = [
+      { ...base, qty_proposed_reserve: '60', qty_proposed_incoming: '10', qty_proposed_buy: '30' },
+    ];
+    const lines = confirmLinesFor(withProposal, 'so-a', {
+      [base.key]: { verdict: 'amended', reserve_qty: '20', reason: 'Held back.' },
+    });
+    expect(lines[0].reserve).toEqual([{ warehouse_id: 'wh-BRW-BB', qty: '20' }]);
+    // 100 owed, 10 incoming, 20 reserved: the other 70 is bought, not lost.
+    expect(lines[0].buy_qty).toBe('70');
+  });
+});

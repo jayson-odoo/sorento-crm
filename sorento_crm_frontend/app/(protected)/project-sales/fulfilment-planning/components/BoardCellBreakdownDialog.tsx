@@ -23,6 +23,7 @@ import { amendNeedsReason, factorLabel } from '../../_shared/lib/fulfilmentBoard
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import type {
   BoardCell,
+  BoardCellLocation,
   BoardContribution,
   BoardDecision,
   BoardDraft,
@@ -59,12 +60,19 @@ export function BoardCellBreakdownDialog({
   cell,
   bucketLabel,
   draft,
+  rankingIsFlat = false,
   onDecide,
   onClose,
 }: {
   cell: BoardCell;
   bucketLabel: string;
   draft: BoardDraft;
+  /**
+   * The SERVER's verdict that the active policy separates none of these rows (13.5). When it
+   * does, every score is 0.00, and a column of 0.00 reads as a considered ranking rather than
+   * as no ranking, so the number is suppressed instead.
+   */
+  rankingIsFlat?: boolean;
   onDecide: (key: string, decision: BoardDecision | null) => void;
   onClose: () => void;
 }) {
@@ -139,6 +147,27 @@ export function BoardCellBreakdownDialog({
         size: 110,
         minSize: 90,
         meta: { headerTitle: 'Ordered' },
+      },
+      {
+        id: 'qty_delivered',
+        accessorFn: (row) => row.qty_delivered ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Delivered" column={column} />,
+        cell: ({ row }) =>
+          row.original.qty_delivered ? (
+            <span className="block truncate text-sm tabular-nums">
+              {row.original.qty_delivered}
+            </span>
+          ) : (
+            <span className="text-sm text-muted-foreground">Not stated</span>
+          ),
+        footer: () => (
+          <span className="tabular-nums">
+            {sumOf(cell.contributions, (row) => row.qty_delivered ?? '0')}
+          </span>
+        ),
+        size: 110,
+        minSize: 90,
+        meta: { headerTitle: 'Delivered' },
       },
       {
         id: 'qty',
@@ -224,17 +253,23 @@ export function BoardCellBreakdownDialog({
         header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
         cell: ({ row }) => (
           <div className="min-w-0" data-testid={`rank-factors-${row.original.key}`}>
+            {/* No 0.00 on every row when the policy separates nothing: that reads as a
+                considered ranking rather than as the absence of one (13.5). */}
             <span className="block text-sm font-medium tabular-nums">
-              {row.original.rank_score.toFixed(2)}
+              {rankingIsFlat ? 'Not ranked' : row.original.rank_score.toFixed(2)}
             </span>
-            {/* Named in words a planner uses. These printed `po_document_sequence absent`
-                until the captain asked what "w/c" meant and the same fault was found here:
-                a database column name is not a label. */}
-            <span className="block truncate text-[11px] text-muted-foreground" title={factorsTitle(row.original)}>
+            {/* The RAW fact leads - "2026-09-03", "45 days" - because that is what a planner
+                recognises; the normalised 0-to-1 number is an artefact of the scoring. The
+                WEIGHT is deliberately not here: `need_by_date 1.00 x3` reads to everybody as
+                a weight of 1.00. It is in the tooltip, named. */}
+            <span
+              className="block truncate text-[11px] text-muted-foreground"
+              title={factorsTitle(row.original)}
+            >
               {row.original.rank_factors
                 .map((factor) =>
                   factor.present
-                    ? factorLabel(factor.key)
+                    ? `${factorLabel(factor.key)} ${factor.raw ?? ''}`.trim()
                     : `${factorLabel(factor.key)} not recorded`,
                 )
                 .join(', ')}
@@ -269,7 +304,7 @@ export function BoardCellBreakdownDialog({
         meta: { headerTitle: 'Decision' },
       },
     ],
-    [cell.contributions, draft, onDecide],
+    [cell.contributions, draft, onDecide, rankingIsFlat],
   );
 
   return (
@@ -300,15 +335,19 @@ export function BoardCellBreakdownDialog({
           {/* The source strip again, because the dialog has to stand on its own: a reader who
               opened it from a cell they can no longer see still needs to know one cell can
               draw on several locations. */}
+          {/* What is actually AT each location, not only what is owed from it. The captain's
+              "where will I need to source to fulfil", answered with facts. */}
           <div className="flex flex-wrap gap-1.5">
             {cell.locations.map((entry) => (
               <span
                 key={entry.location ?? '__none__'}
+                data-testid={`cell-location-${entry.location ?? 'none'}`}
+                title={locationTitle(entry)}
                 className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(
                   entry.location ? 'draft' : 'rejected',
                 )}`}
               >
-                {`${entry.location ?? 'No location'} · ${entry.qty}`}
+                {locationStrip(entry)}
               </span>
             ))}
           </div>
@@ -526,6 +565,37 @@ function AmendPanel({
   );
 }
 
+/**
+ * One location pill: what is owed here, then what is here.
+ *
+ * A NULL stock figure is "not stated", never 0. The two are opposite instructions - 0 free
+ * means do not look here, nothing stated means nobody has said where to look - and a line whose
+ * sales order names no location has every stock figure null by construction.
+ */
+function locationStrip(entry: BoardCellLocation): string {
+  const parts = [`${entry.location ?? 'No location'} · ${entry.qty} owed`];
+  if (entry.qty_on_hand === null || entry.qty_on_hand === undefined) {
+    parts.push('Stock not stated');
+  } else {
+    parts.push(`${entry.qty_on_hand} on hand`);
+    if (entry.qty_free !== null && entry.qty_free !== undefined) {
+      parts.push(`${entry.qty_free} free`);
+    }
+    if (entry.qty_incoming !== null && entry.qty_incoming !== undefined) {
+      parts.push(`${entry.qty_incoming} incoming`);
+    }
+  }
+  return parts.join(' · ');
+}
+
+/** The documents behind the incoming stock: "80 incoming" from nowhere is a rumour. */
+function locationTitle(entry: BoardCellLocation): string {
+  const legs = (entry.incoming ?? []).map((leg) =>
+    `${leg.spo_number}${leg.arrival_date ? ` arrives ${formatDateInMalaysia(leg.arrival_date)}` : ''}: ${leg.qty}`,
+  );
+  return legs.length > 0 ? legs.join('. ') : locationStrip(entry);
+}
+
 function sourceLabel(kind: BoardContribution['sources'][number]['kind']): string {
   if (kind === 'reserve') return 'Reserve';
   if (kind === 'timely_spo') return 'Incoming';
@@ -577,7 +647,7 @@ function factorsTitle(contribution: BoardContribution): string {
   return contribution.rank_factors
     .map((factor) =>
       factor.present
-        ? `${factorLabel(factor.key)}: ${factor.value?.toFixed(2)} at weight ${factor.weight}`
+        ? `${factorLabel(factor.key)}: ${factor.raw ?? factor.value?.toFixed(2)}, scored ${factor.value?.toFixed(2)}, weighted ${factor.weight}`
         : `${factorLabel(factor.key)}: not recorded, so it is left out of the score entirely rather than counted as zero`,
     )
     .join('. ');
