@@ -1912,11 +1912,14 @@ now posts to the SAME per-order endpoint the sheet uses,
   On `failing_lines`: **the draft is untouched** and the refused lines are named with their
   reasons beside the order that owns them. Making a planner recompose after a refusal is the one
   outcome that would teach them not to use the board.
-- Two consequences are stated on the commit card rather than discovered later: confirmed Buy rows
-  reach purchasing on the sales order itself, and an adopted order raises no purchasing task and
-  sends no notification. The Order Inquiry LIST is project-scoped, so an adopted order is absent
-  from it and **no link is rendered** - a link that opens a list without the thing it promised is
-  worse than no link.
+- The commit card says where the rows go and what still does not happen: **"Raised. Purchasing
+  picks these up on [Order Inquiries](/project-sales/order-inquiries), grouped by delivery month.
+  An adopted order raises no purchasing task and sends no notification."** The first sentence
+  used to read "on the sales order itself" and carry a warning that an adopted order was absent
+  from the Order Inquiry list, because that list was project-scoped; the cross-project Order
+  Inquiries page (Project Sales -> Order Inquiries) now carries adopted orders' rows, so the
+  warning is spent and the destination is a real place to send somebody. The second sentence is
+  unchanged, because it is still true.
 
 **The three ids it is built from are live** (18 August 2026): `orders[].project_sales_order_id`
 (the `{pso_id}` to post to, null when nobody has adopted the order - Confirm is then disabled

@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, PackageSearch, Search, X } from 'lucide-react';
 import {
@@ -626,13 +627,22 @@ export function FulfilmentBoardPanel({
                 One confirmation per sales order, each atomic across the lines it commits.
                 Anything left undecided stays outstanding and keeps flowing to reorder planning.
               </p>
-              {/* Two consequences a planner would otherwise wait for and never see. Stated
-                  rather than papered over, and NOT linked: the Order Inquiry list is
-                  project-scoped, so a link from here would open a list this order is not on,
-                  which is worse than no link. */}
+              {/* Where the confirmed Buy rows go, and what still does not happen. This used to
+                  say "on the sales order itself" and warn that an adopted order was absent from
+                  the Order Inquiry list, because that list was project-scoped. The
+                  cross-project Order Inquiries page carries adopted orders' rows now, so the
+                  warning is spent and the destination is a real place to send somebody. The
+                  second sentence is unchanged, because it is still true. */}
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Confirmed Buy rows reach purchasing on the sales order itself. An adopted order
-                raises no purchasing task and sends no notification.
+                Raised. Purchasing picks these up on{' '}
+                <Link
+                  href="/project-sales/order-inquiries"
+                  className="text-primary hover:underline"
+                >
+                  Order Inquiries
+                </Link>
+                , grouped by delivery month. An adopted order raises no purchasing task and
+                sends no notification.
               </p>
             </CardHeader>
             <CardContent className="space-y-2">

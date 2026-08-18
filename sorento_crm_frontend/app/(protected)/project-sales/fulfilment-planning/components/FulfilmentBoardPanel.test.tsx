@@ -917,20 +917,39 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument();
   });
 
-  it('states what confirming does NOT do, and links to no list this order is absent from', async () => {
+  /**
+   * Where the confirmed Buy rows go, and what still does not happen.
+   *
+   * This sentence used to say "on the sales order itself" and warn that an adopted order was
+   * absent from the Order Inquiry list, because that list was project-scoped. A cross-project
+   * Order Inquiries page now carries adopted orders' rows, so the warning is spent and the
+   * destination is a real place to send somebody.
+   */
+  it('sends the planner to Order Inquiries, where the rows now actually appear', async () => {
+    getPlanningBoard.mockResolvedValue(twoLineOrder());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const link = screen.getByRole('link', { name: 'Order Inquiries' });
+    expect(link).toHaveAttribute('href', '/project-sales/order-inquiries');
+    expect(
+      screen.getByText(/Purchasing picks these up on/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/grouped by delivery month/)).toBeInTheDocument();
+    // The old caveat is gone with the reason for it.
+    expect(screen.queryByText(/on the sales order itself/)).not.toBeInTheDocument();
+  });
+
+  it('still says what confirming does NOT do, because that part is unchanged', async () => {
     getPlanningBoard.mockResolvedValue(twoLineOrder());
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
     expect(
-      screen.getByText(
-        'Confirmed Buy rows reach purchasing on the sales order itself. An adopted order raises no purchasing task and sends no notification.',
-      ),
+      screen.getByText(/An adopted order raises no purchasing task and sends no notification\./),
     ).toBeInTheDocument();
-    // The Order Inquiry list is project-scoped, so an adopted order is not on it: a link would
-    // open a list without the thing it promised.
-    expect(screen.queryByRole('link', { name: /order inquir/i })).not.toBeInTheDocument();
   });
 
   /**
