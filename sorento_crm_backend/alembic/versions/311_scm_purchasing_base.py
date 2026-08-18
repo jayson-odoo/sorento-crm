@@ -159,26 +159,27 @@ def seed_priority_policy(bind) -> int:
             """
         ),
         {
-            "n": "Today's rule (PO document sequence)",
+            "n": "Today's rule (demand owed, then PO document sequence)",
             "f": json.dumps(_PRIORITY_FACTORS),
             "d": json.dumps({"project": 1.0, "retail": 0.4}),
             "o": (
-                "Seeded to reproduce the manual answer so week-one output is "
-                "checkable against what Ms Tee would have done by hand. The fairer "
-                "need-by-within-demand-class weighting ships in the same release "
-                "but is not active until someone switches it after reviewing the "
-                "rank-delta preview."
+                "Demand at 3.0 against sequence at 1.0 gives non-overlapping score "
+                "bands: project [0.75, 1.0], retail [0.30, 0.55], nothing owed "
+                "[0, 0.25]. So a line owed to a customer always outranks one owed to "
+                "nobody, and PO document sequence orders the lines inside each band."
             ),
         },
     )
     return 1
 
-# Seeded so day-one ranking reproduces today's manual answer (PO document sequence
-# dominant). The fairer need-by-within-class weighting ships in the same release but off,
-# so Ms Tee can check the system against her own working before changing the rule.
+# Seeded so day-one ranking puts outstanding customer demand first and settles ties by the
+# document sequence the buyer already reads. Keep in step with `priority.SEEDED_WEIGHTS` /
+# `priority.SEEDED_CLASS_WEIGHTS`, which is where the reasoning lives; the literals are
+# repeated here rather than imported so migrations stay standalone. Migration 374 raises
+# `demand_class` on databases this revision already seeded at 0.0.
 _PRIORITY_FACTORS = {
     "po_document_sequence": 1.0,
-    "demand_class": 0.0,
+    "demand_class": 3.0,
     "need_by_date": 0.0,
     "document_age": 0.0,
 }

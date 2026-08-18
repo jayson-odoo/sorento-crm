@@ -497,10 +497,14 @@ allocation IS the supply, so there is no path by which an approved allocation is
 
 **AC-H1** Priority is a weighted policy row, per tenant, not a rule in code.
 
-**AC-H2** The seeded default reproduces today's behaviour: PO document sequence dominant. Day-one
-output is checkable against the manual answer.
+**AC-H2** The seeded default ranks by outstanding customer demand first (project, then retail,
+then nothing owed) and by PO document sequence within each demand band. Superseded 2026-08-17 by
+the captain's decision (`decision-loading-plan-demand-source.md`, gap G1a): the original seed
+reproduced the manual answer (sequence only) with demand weighted 0.0; migration 374 raises
+demand to 3.0. A line owed to nobody scores demand 0.0 (present), never absent.
 
-**AC-H3** A need-by-date-and-demand-class weighting ships in the same release, off by default.
+**AC-H3** The weighting is a policy row (`scm.priority_policy`) editable in the FE; need-by-date
+still ships weighted 0.0 by default.
 
 **AC-H4** Switching weights shows a side-by-side preview of which lines change rank and by how
 much, before committing.
