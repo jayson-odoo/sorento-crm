@@ -19,6 +19,11 @@ export const UOMSchema = z.object({
     .max(999999.9999, { message: 'Conversion factor is too large.' })
     .optional()
     .nullable(),
+  decimal_places: z.coerce
+    .number()
+    .int({ message: 'Decimal places must be a whole number.' })
+    .min(0, { message: 'Decimal places must be between 0 and 4.' })
+    .max(4, { message: 'Decimal places must be between 0 and 4.' }),
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
   is_active: z.boolean(),
 });

@@ -75,6 +75,18 @@ export default function UOMList() {
         meta: { headerTitle: 'Conversion Factor' },
       },
       {
+        accessorKey: 'decimal_places',
+        header: ({ column }) => <DataGridColumnHeader title="Decimal Places" column={column} />,
+        size: 130,
+        // 0 is a real answer here - whole units only - so it prints as 0 rather than
+        // falling through a truthiness check to a dash the way the columns above do.
+        cell: ({ row }) =>
+          row.original.decimal_places === null || row.original.decimal_places === undefined
+            ? '-'
+            : row.original.decimal_places,
+        meta: { headerTitle: 'Decimal Places' },
+      },
+      {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         size: 100,

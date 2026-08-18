@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Check, PackageOpen } from 'lucide-react';
+import { AlertCircle, Check, Lock, PackageOpen } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,8 +27,20 @@ import {
   orderQuantityImpact,
   type ImpactFigure,
 } from '../lib/orderImpact';
+import {
+  decimalPlacesOf,
+  exceedsPrecision,
+  fmtQty,
+  precisionError,
+  precisionHint,
+  sanitizeQtyInput,
+} from '../lib/qtyPrecision';
 import { useOrderSummarySuppliers } from '../hooks/useSummaryOrder';
-import type { OrderSummaryRow, SupplierCandidate } from '../types/summaryOrder.types';
+import type {
+  OrderSummaryDecisionResult,
+  OrderSummaryRow,
+  SupplierCandidate,
+} from '../types/summaryOrder.types';
 
 /**
  * The order-quantity decision (UAC Group C2), as a right slide-over off the
@@ -59,6 +71,17 @@ import type { OrderSummaryRow, SupplierCandidate } from '../types/summaryOrder.t
  * PO date is flagged (AC-C2.6): it is what separates a fast mover from a dead
  * line. Both costs are labelled ex-works in the supplier's currency and neither
  * is a landed cost (AC-C3.4).
+ *
+ * Stage 2 adds precision and grain, and neither is a new decision:
+ *
+ *  3. **The quantity field obeys the row's FROZEN `uom_decimal_places`** (AC-F12).
+ *     A count unit takes whole numbers and the separator cannot even be typed; a
+ *     `kg` at three places takes `2.5`. The server validates it again - this is a
+ *     first line, not the only one - and its refusal is rendered here, beside the
+ *     field that caused it, rather than only in a toast that leaves the screen.
+ *  4. **A run decided at the other grain refuses the write** (AC-F09), so the
+ *     control is disabled and says which screen owns the decision. A disabled
+ *     control that explains itself beats an enabled one that fails on save.
  */
 
 /** One figure in the consequence panel: the number, or the input that is missing. */
@@ -91,8 +114,18 @@ function ConsequenceFigure({
   );
 }
 
-/** One number in the position strip. */
-function Position({ label, value, tone }: { label: string; value: number; tone?: 'short' }) {
+/** One number in the position strip, at the row's own precision. */
+function Position({
+  label,
+  value,
+  dp = 0,
+  tone,
+}: {
+  label: string;
+  value: number;
+  dp?: number;
+  tone?: 'short';
+}) {
   return (
     <div className="min-w-0 rounded-lg border border-border px-2.5 py-1.5">
       <div className="truncate text-2xs uppercase tracking-wide text-muted-foreground" title={label}>
@@ -104,7 +137,7 @@ function Position({ label, value, tone }: { label: string; value: number; tone?:
           tone === 'short' && value > 0 && 'text-scm-stockout',
         )}
       >
-        {fmtInt(value)}
+        {fmtQty(value, dp)}
       </div>
     </div>
   );
@@ -219,6 +252,12 @@ export interface OrderDecisionSheetProps {
   onOpenChange: (open: boolean) => void;
   onSave: (input: { chosen_qty: number; supplier_code: string }) => void;
   isSaving: boolean;
+  /** Why this run refuses a Product decision, or null when it accepts one. */
+  lockReason?: string | null;
+  /** The server's refusal of the last attempt, rendered beside the quantity. */
+  saveError?: string | null;
+  /** The decision just recorded, so its location split is visible at once. */
+  saved?: OrderSummaryDecisionResult | null;
 }
 
 export function OrderDecisionSheet({
@@ -227,6 +266,9 @@ export function OrderDecisionSheet({
   onOpenChange,
   onSave,
   isSaving,
+  lockReason = null,
+  saveError = null,
+  saved = null,
 }: OrderDecisionSheetProps) {
   const [qtyText, setQtyText] = useState('');
   const [supplierCode, setSupplierCode] = useState<string | null>(null);
@@ -247,13 +289,16 @@ export function OrderDecisionSheet({
     [candidates, supplierCode],
   );
 
-  const chosenQty = Number.parseInt(qtyText, 10);
+  // The row's FROZEN precision, not live UOM master data (AC-F12).
+  const dp = decimalPlacesOf(row?.uom_decimal_places);
+  const chosenQty = Number.parseFloat(qtyText);
   const qty = Number.isFinite(chosenQty) ? chosenQty : 0;
+  const tooPrecise = exceedsPrecision(qtyText, dp);
   const impact = row ? orderQuantityImpact(row, qty, selected) : null;
 
   if (!row) return null;
 
-  const canSave = qty > 0 && !!supplierCode && !isSaving;
+  const canSave = qty > 0 && !!supplierCode && !isSaving && !tooPrecise && !lockReason && !saved;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -276,17 +321,17 @@ export function OrderDecisionSheet({
           {/* Position - what the row already said, so the decision is taken in context. */}
           <section aria-label="Position">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              <Position label="On hand" value={row.on_hand} />
-              <Position label="Project demand" value={row.project_demand} />
-              <Position label="Dealer outstanding" value={row.dealer_outstanding} />
+              <Position label="On hand" value={row.on_hand} dp={dp} />
+              <Position label="Project demand" value={row.project_demand} dp={dp} />
+              <Position label="Retail outstanding" value={row.retail_outstanding} dp={dp} />
               {/* Ordered is not in the net position: an order placed is not stock on the
                   water. Shown so a shortfall does not read as unattended. */}
-              <Position label="Ordered" value={row.qty_on_order} />
-              <Position label="Incoming" value={row.qty_in_transit} />
+              <Position label="Ordered" value={row.qty_on_order} dp={dp} />
+              <Position label="Incoming" value={row.qty_in_transit} dp={dp} />
               {/* Same label as the grid column. The two surfaces are one click apart, and
                   calling the same number "Shortfall" here and "Short vs orders" there
                   reads as two different figures. */}
-              <Position label="Short vs orders" value={row.shortfall} tone="short" />
+              <Position label="Short vs orders" value={row.shortfall} dp={dp} tone="short" />
             </div>
           </section>
 
@@ -299,35 +344,90 @@ export function OrderDecisionSheet({
                 </Label>
                 <Input
                   id="chosen-qty"
-                  inputMode="numeric"
+                  inputMode={dp > 0 ? 'decimal' : 'numeric'}
                   value={qtyText}
-                  onChange={(e) => setQtyText(e.target.value.replace(/[^0-9]/g, ''))}
+                  onChange={(e) => setQtyText(sanitizeQtyInput(e.target.value, dp))}
+                  disabled={!!lockReason || !!saved}
+                  aria-invalid={tooPrecise || undefined}
                   className="tabular-nums"
                 />
+                <p className="mt-1 text-2xs text-muted-foreground" data-testid="precision-hint">
+                  {precisionHint(dp, row.uom)}
+                </p>
               </div>
               <div className="shrink-0 rounded-lg border border-border px-3 py-2" data-testid="suggested-qty">
                 <div className="text-2xs uppercase tracking-wide text-muted-foreground">
                   Engine suggests
                 </div>
                 <div className="text-lg font-semibold tabular-nums leading-tight">
-                  {fmtInt(row.suggested_qty)}
+                  {fmtQty(row.suggested_qty, dp)}
                 </div>
               </div>
               <Button
                 variant="outline"
                 className="shrink-0"
+                disabled={!!lockReason || !!saved}
                 onClick={() => setQtyText(String(row.suggested_qty))}
               >
                 Use suggestion
               </Button>
             </div>
+            {/* The row's own precision, refused here before the server refuses it. */}
+            {tooPrecise ? (
+              <p className="text-2xs text-destructive" role="alert" data-testid="precision-error">
+                {precisionError(dp, row.uom)}
+              </p>
+            ) : null}
+            {/* What the server said. Rendered beside the field rather than only in a
+                toast, because a grain refusal is not fixed by retyping. */}
+            {saveError ? (
+              <p className="text-2xs text-destructive" role="alert" data-testid="decision-error">
+                {saveError}
+              </p>
+            ) : null}
             {row.decided_by ? (
               <p className="text-2xs text-muted-foreground">
-                Last set to {fmtInt(row.chosen_qty)} by {row.decided_by}
+                Last set to {fmtQty(row.chosen_qty, dp)} by {row.decided_by}
                 {row.decided_at ? ` on ${dayLabel(row.decided_at.slice(0, 10))}` : ''}
               </p>
             ) : null}
           </section>
+
+          {/* The split back to locations, the moment it is recorded (AC-F08 / AC-F12).
+              The allocator reruns over the frozen location inputs in the UOM's integer
+              minor units, so these quantities sum EXACTLY to the chosen quantity. */}
+          {saved ? (
+            <section aria-label="Split back to locations" className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Split back to locations
+              </div>
+              {saved.location_allocations.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border p-3 text-center text-2xs text-muted-foreground">
+                  This plan holds no location facts for the product, so there is nothing
+                  to split the quantity across.
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-lg border border-border">
+                  {saved.location_allocations.map((a) => (
+                    <div
+                      key={a.warehouse_code}
+                      className="flex items-center justify-between gap-3 border-b px-3 py-2 text-sm last:border-b-0"
+                      data-testid={`split-${a.warehouse_code}`}
+                    >
+                      <span className="truncate" title={a.warehouse_name}>
+                        {a.warehouse_code}
+                      </span>
+                      <span className="shrink-0 tabular-nums">{fmtQty(a.allocated_qty, dp)}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between gap-3 bg-muted/40 px-3 py-2 text-sm font-medium">
+                    <span>Total</span>
+                    <span className="tabular-nums">{fmtQty(saved.chosen_qty, dp)}</span>
+                  </div>
+                </div>
+              )}
+            </section>
+          ) : null}
 
           {/* Consequence - stated, never warned about (AC-C2.7). */}
           {impact ? (
@@ -420,9 +520,18 @@ export function OrderDecisionSheet({
           </section>
         </SheetBody>
 
-        <SheetFooter className="gap-2 border-t p-4 sm:p-6">
+        <SheetFooter className="flex-col gap-2 border-t p-4 sm:flex-row sm:p-6">
+          {lockReason ? (
+            <span
+              className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground sm:me-auto"
+              data-testid="decision-lock-reason"
+            >
+              <Lock className="size-3.5 shrink-0" aria-hidden />
+              <span className="break-words">{lockReason}</span>
+            </span>
+          ) : null}
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>
-            Cancel
+            {saved ? 'Close' : 'Cancel'}
           </Button>
           <Button
             disabled={!canSave}
@@ -431,7 +540,7 @@ export function OrderDecisionSheet({
               onSave({ chosen_qty: qty, supplier_code: supplierCode });
             }}
           >
-            Record decision
+            {saved ? 'Recorded' : 'Record decision'}
           </Button>
         </SheetFooter>
       </SheetContent>

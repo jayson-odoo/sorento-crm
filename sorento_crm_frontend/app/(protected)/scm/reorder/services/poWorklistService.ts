@@ -38,6 +38,15 @@
  *    of the screen (AC-E2.4) but urgency is what decides which not-keyed row to do
  *    first, and a client free to re-sort could disagree with the late flag beside it.
  *
+ *    Stage 2 adds the run's stamped `decision_grain` to the response and reads ONLY
+ *    that grain (AC-F09): a `product` run lists product decisions, each carrying
+ *    `location_allocations` (its split back to locations, summing exactly to
+ *    `chosen_qty`); a `location` run lists the per-location recommendation
+ *    decisions, each naming its `warehouse_code` and carrying no split. Neither
+ *    shape gains a channel key, and rows from the comparison grain are never
+ *    merged in - keying both would buy the same requirement twice. A legacy run
+ *    carries a null grain and no split.
+ *
  *    Three nullable fields are load-bearing and must NOT be defaulted by the server.
  *    `need_by` is absent whenever nothing committed is uncovered, which is most of the
  *    book (the committed order book is 17 sales orders); `place_by` and

@@ -2,7 +2,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
@@ -100,6 +100,10 @@ class SystemSettingUpdate(BaseModel):
     # must appear here AND in the GET dict.
     portal_revisions_enabled: Optional[bool] = None
     portal_max_revisions: Optional[int] = Field(None, ge=0, le=50)
+    # SCM front planning: the admin plan-grain policy (plan 5.1, AC-F01). A Literal, so
+    # anything but the two grains is a 422 before it can reach the column. Same rule as
+    # the blocks above - it must appear HERE and in the GET dict, because both are manual.
+    plan_grain: Optional[Literal["product", "location"]] = None
     # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Same rule
     # again - every one of these must ALSO appear in the GET dict below.
     #
@@ -269,6 +273,9 @@ async def get_settings(
                 "chat_latency_min_sample": getattr(settings, "chat_latency_min_sample", 30) if settings else None,
                 "portal_revisions_enabled": getattr(settings, "portal_revisions_enabled", True) if settings else None,
                 "portal_max_revisions": getattr(settings, "portal_max_revisions", 2) if settings else None,
+                # Rollout default (plan 5.1): a row saved before the column existed reads
+                # as Product rather than as "no policy", which has no meaning here.
+                "plan_grain": (getattr(settings, "plan_grain", None) or "product") if settings else None,
                 # Chatbot media. NULL is meaningful for the three model columns:
                 # provider/model inherit the AIAssistantConfig row, and a NULL
                 # degraded model means the monthly quota is a hard stop rather

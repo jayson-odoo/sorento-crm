@@ -18,7 +18,7 @@ from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment
-from app.models.scm import ReorderRecommendation
+from app.models.scm import ReorderRecommendation, ReorderRun
 from app.schemas.scm_reorder import (
     CreateReorderRunRequest,
     ReorderRunAccepted,
@@ -31,6 +31,7 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.dealer_kit import product_images
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.scm import cover_service
+from app.services.scm import plan_grain
 from app.services.scm import price_history_service
 from app.services.scm import (
     level_suggestion_service,
@@ -113,7 +114,8 @@ def list_reorder_runs(
         text(f"SELECT count(*) FROM scm.reorder_run {where}"), co_params
     ).scalar() or 0
     rows = db.execute(text(f"""
-        SELECT id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log
+        SELECT id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log,
+               decision_grain, front_planning_contract_version
         FROM scm.reorder_run
         {where}
         ORDER BY started_at DESC NULLS LAST, created_at DESC
@@ -193,6 +195,8 @@ def _list_item(r, code_by_id: dict, buy_counts: dict[str, int] | None = None) ->
         "started_at": _iso(r["started_at"]),
         "finished_at": _iso(r["finished_at"]),
         "summary": summary,
+        "decision_grain": r["decision_grain"],
+        "front_planning_contract_version": r["front_planning_contract_version"],
     }
 
 
@@ -270,7 +274,8 @@ def get_reorder_run(
     ``error`` once ``status='failed'``."""
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
-        "SELECT id, status, buy_scope, error_text, run_log FROM scm.reorder_run "
+        "SELECT id, status, buy_scope, error_text, run_log, decision_grain, "
+        "       front_planning_contract_version FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": run_id, **co_params}).mappings().first()
     if not row:
@@ -295,6 +300,8 @@ def get_reorder_run(
         "buy_scope": row["buy_scope"],
         "error": row["error_text"],
         "summary": summary,
+        "decision_grain": row["decision_grain"],
+        "front_planning_contract_version": row["front_planning_contract_version"],
     }
 
 
@@ -737,7 +744,14 @@ def list_recommendations(
     if budget is not None:
         funding_by_id = svc.allocate_run_budget(db, run_id, budget).status_by_id
 
-    data = [_row(r, funding_by_id) for r in rows]
+    # Whose decision this run's locations are (front planning 5.4). Under `product` the
+    # per-location view stays a read and drill view, and under a legacy run nothing is
+    # actionable at all - resolved ONCE for the page rather than per row, and sent so the
+    # screen can disable the control instead of letting the write fail with a 409.
+    run = db.get(ReorderRun, run_id)
+    read_only = (plan_grain.is_legacy_run(run)
+                 or plan_grain.decision_grain_of(run) != plan_grain.LOCATION_GRAIN)
+    data = [_row(r, funding_by_id, decisions_read_only=read_only) for r in rows]
     total_pages = max(1, (int(total) + limit - 1) // limit)
     return {"data": data,
             "pagination": {"page": page, "limit": limit, "total": int(total),
@@ -781,7 +795,8 @@ def explain_recommendation_net(
     return svc.explain_net(db, rec_id)
 
 
-def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
+def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
+         decisions_read_only: bool = False) -> dict:
     """Build a read-only recommendation row from stored columns + frozen ``inputs``.
 
     ``funding_by_id`` (M4) carries the live budget allocation → a buy row's
@@ -879,6 +894,19 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "incoming_spo": inp.get("on_order"),
         "outstanding_po": inp.get("po_ordered"),
         "outstanding_sales": inp.get("committed"),
+        # Front planning 5.3 / AC-F05: this location's demand, split by channel, beside
+        # the shared supply above - which stays single-valued and carries no channel.
+        # NULL on a run whose recommendations predate the contract; unclassified is shown
+        # and never sized into the order (AC-E06).
+        "project_need": inp.get("project_need"),
+        "retail_need": inp.get("retail_need"),
+        # Confirmed Buy bypasses the netting; this unconfirmed sheet leg went THROUGH it,
+        # so it is inside `retail_need` and is shown as evidence, not as an extra addend.
+        "project_sheet_need": inp.get("project_sheet_need"),
+        "unclassified_need": inp.get("unclassified_need"),
+        # True when the run is decided at Product grain, or is legacy. The row is still a
+        # read and drill row; only its decision controls are closed (AC-F02, AC-F09).
+        "decisions_read_only": decisions_read_only,
         # What master data says, beside what the plan computed. The buyer asked to see both:
         # where they disagree is where the master record needs updating.
         "master_reorder_level": inp.get("master_reorder_level"),

@@ -242,3 +242,71 @@ def _sessions_for(app):
     except Exception:  # noqa: BLE001 - a non-generator override is not ours to interpret
         return []
     return [db] if db is not None else []
+
+
+def set_plan_grain(db, grain: str) -> None:
+    """Put the admin plan-grain policy on `grain` before a run is created.
+
+    A run stamps the configured grain at creation (front planning 5.1 / 5.4) and only that
+    grain may be decided on it, so a suite whose decisions are LOCATION-grain (accept /
+    adjust / reject a recommendation) has to create its run under the `location` policy -
+    under the rollout default, `product`, the run owns the `order_summary_row` decision
+    instead and refuses them with `decision_grain_mismatch`, which is the contract rather
+    than a defect.
+
+    The settings row is created when absent so this does not depend on a seeded singleton
+    (CI's database has none), and everything is rolled back with the caller's savepoint.
+    """
+    import uuid as _uuid
+
+    from app.models.user import SystemSetting
+
+    settings = db.query(SystemSetting).first()
+    if settings is None:
+        settings = SystemSetting(id=str(_uuid.uuid4()), name="ZZTSCM settings")
+        db.add(settings)
+    settings.plan_grain = grain
+    db.flush()
+
+
+def single_location_plan_basis(inputs: dict, warehouse, *, rounded: float) -> dict:
+    """The canonical `ReorderRecommendation.inputs["plan_basis"]` of a ONE-LOCATION buy.
+
+    Every buy the engine emits carries the basis of the SIZING GROUP it belongs to -
+    the locations the buy was netted over, their channel needs, their shared supply
+    facts, and the group's own netted replenishment (`reorder_run_service._plan_basis`).
+    For a per-warehouse buy that group is the single location, which is the shape a
+    hand-built fixture wants; a pool or network buy carries several locations and a
+    group figure that is NOT their sum, which is what
+    `tests/scm/test_channel_read_model.py` proves with the real engine.
+
+    Derived from the same `inputs` dict the fixture already writes, so a test states its
+    numbers once and cannot drift from the shape the freeze reads.
+    """
+    wid = str(warehouse.id)
+    loc = {
+        "warehouse_id": wid,
+        "warehouse_code": warehouse.warehouse_code,
+        "warehouse_name": warehouse.warehouse_name,
+        "project_need": float(inputs.get("project_need") or 0.0),
+        "retail_need": float(inputs.get("retail_need") or 0.0),
+        "project_sheet_need": float(inputs.get("project_sheet_need") or 0.0),
+        "unclassified_need": float(inputs.get("unclassified_need") or 0.0),
+        "on_hand": inputs.get("on_hand"),
+        "incoming_spo": inputs.get("on_order"),
+        "on_order_po": inputs.get("po_ordered"),
+        "reorder_level": inputs.get("reorder_level"),
+        "avg_daily_demand": inputs.get("demand_rate"),
+        "location_suggested_qty": float(rounded or 0.0),
+    }
+    return {
+        "group": wid,
+        "scope": "location",
+        "project_need": loc["project_need"],
+        "retail_need": loc["retail_need"],
+        "project_sheet_need": loc["project_sheet_need"],
+        "unclassified_need": loc["unclassified_need"],
+        "recommended": loc["project_need"] + loc["retail_need"],
+        "rounded": float(rounded or 0.0),
+        "locations": [loc],
+    }

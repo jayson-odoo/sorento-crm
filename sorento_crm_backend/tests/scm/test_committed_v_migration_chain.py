@@ -45,11 +45,24 @@ def _normalize(sql: str) -> str:
 
 @requires_pg
 def test_migration_bodies_are_frozen_not_imported():
-    """Neither view migration may import the live SQL - that import IS the outage."""
+    """No migration may import the live application code - that import IS the outage.
+
+    Wider than the view chain the file is named for: `374_uom_decimal_places` adds
+    `units_of_measure.decimal_places` and BACKFILLS it, and it originally called
+    `app.services.uom_decimal_places.backfill_uom_decimal_places` - the same shape as the
+    340/346 failure, with the same replay hazard. Its name lists and observed-scale SQL are
+    frozen in the migration now, and the service keeps the live copy for admin re-runs.
+
+    The list is the union of both SCM lanes: Stage 1C's `374_so_supply_decisions` and
+    Stage 2's `374_uom_decimal_places` / `376_scm_channel_read_model`. Two different
+    revisions numbered 374 is not a typo - they are siblings off `373_merge_scm_stage0_1a`.
+    """
     for name in (
         "340_scm_committed_reads_the_decision",
         "346_scm_demand_origin_split",
         "374_so_supply_decisions",
+        "374_uom_decimal_places",
+        "376_scm_channel_read_model",
     ):
         source = (_VERSIONS / f"{name}.py").read_text()
         assert "from app.services" not in source, (
@@ -62,24 +75,47 @@ def test_migration_bodies_are_frozen_not_imported():
 def test_newest_view_migration_matches_the_live_body():
     """Edit COMMITTED_V_SQL -> this goes red -> write a NEW migration with the new body.
 
-    The newest one is 374 (front planning section 4: the sheet leg stops counting once
-    the project SO holds an active confirmed decision). 346 stays exactly as it shipped -
-    that is the point of the guard - and is now what 374 restores on downgrade.
+    The newest one is `376_scm_channel_read_model` (the channel split), which runs after
+    Stage 1C's `374_so_supply_decisions` by `depends_on` and replaces the body 374
+    installed. 374's own freeze is checked below, as 346's is: a superseded body stays
+    exactly as it shipped, which is the whole point of the guard.
     """
-    newest = _load("374_so_supply_decisions")
-    assert _normalize(newest._AS_OF_374) == _normalize(COMMITTED_V_SQL), (
-        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 374; "
-        "add a new migration that freezes the new body (346's pattern), so a from-zero "
+    m376 = _load("376_scm_channel_read_model")
+    assert _normalize(m376._AS_OF_376) == _normalize(COMMITTED_V_SQL), (
+        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 376; "
+        "add a new migration that freezes the new body (376's pattern), so a from-zero "
         "replay stays true to history."
     )
 
 
 @requires_pg
-def test_the_superseded_body_is_still_frozen_where_it_was_written():
-    """374's downgrade restores 346's body, so the two copies must not drift apart."""
+def test_346_still_freezes_the_body_it_shipped_with():
+    """A superseded freeze is history and must stay verbatim.
+
+    346's body is what a database at that revision holds; editing it to match today's rule
+    would change the replay without changing any existing database, which is the same
+    mistake in the other direction from importing live code.
+    """
     m346 = _load("346_scm_demand_origin_split")
-    newest = _load("374_so_supply_decisions")
-    assert _normalize(newest._AS_OF_346) == _normalize(m346._AS_OF_346)
+    assert "demand_origin = 'scm_order_inquiry'" in m346._AS_OF_346
+    assert "project_committed" not in m346._AS_OF_346
+
+
+@requires_pg
+def test_every_downgrade_copy_matches_the_revision_it_restores():
+    """A downgrade restores the body of the revision BELOW it, copied verbatim.
+
+    Each view migration keeps its own frozen copy of the body it replaced, so the copies
+    have to be pinned equal to the originals or a downgrade quietly installs a body nobody
+    wrote. Two links in the chain now: 374 restores 346, and 376 restores 374 (`depends_on`
+    puts 374 directly beneath it, so 346 would be a step too far back).
+    """
+    m346 = _load("346_scm_demand_origin_split")
+    m374 = _load("374_so_supply_decisions")
+    m376 = _load("376_scm_channel_read_model")
+
+    assert _normalize(m374._AS_OF_346) == _normalize(m346._AS_OF_346)
+    assert _normalize(m376._AS_OF_374) == _normalize(m374._AS_OF_374)
 
 
 @requires_pg
@@ -90,6 +126,11 @@ def test_replaying_340_then_346_on_a_339_shaped_schema():
         # blank_session built today's model schema; put it back to the world as
         # migration 339 left it: the column 346 adds must not exist yet.
         db.execute(text("ALTER TABLE sales_orders DROP COLUMN IF EXISTS demand_origin"))
+        # `scm` is schema-qualified in the view DDL, so the replay lands on the REAL view
+        # (inside this rolled-back transaction). It has since grown the channel columns,
+        # and Postgres refuses a CREATE OR REPLACE that DROPS columns - so the world 339
+        # left needs the view genuinely absent, not merely out of date.
+        db.execute(text("DROP VIEW IF EXISTS scm.committed_v CASCADE"))
 
         conn = db.connection()
         ops = Operations(MigrationContext.configure(conn))

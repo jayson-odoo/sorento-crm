@@ -22,7 +22,7 @@ from sqlalchemy import text
 from app.services.scm import cash_ranking as cr
 from app.services.scm import decision_service as dsvc
 from app.services.scm import reorder_run_service as svc
-from tests.scm.conftest import requires_pg
+from tests.scm.conftest import requires_pg, set_plan_grain
 from tests.scm.test_m4_cash import _client, _seed_two_buys
 
 pytestmark = requires_pg
@@ -163,6 +163,9 @@ def test_apply_budget_pins_accepted_regardless_of_rank(scm_app):
     its rank is lower — it consumes budget first; the un-pinned buy defers."""
     app, db = _client(scm_app, "purchasing")
     _, a, b = _seed_two_buys(db)
+    # Accept / reject below are LOCATION-grain decisions (front planning 5.4), so the run
+    # has to be created under the location policy or it owns the Product decision instead.
+    set_plan_grain(db, "location")
     created = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rid = created["run_id"]
@@ -190,6 +193,9 @@ def test_apply_budget_excludes_dismissed(scm_app):
     funding_status is cleared, and it is not counted as funded/deferred."""
     app, db = _client(scm_app, "purchasing")
     _, a, b = _seed_two_buys(db)
+    # Accept / reject below are LOCATION-grain decisions (front planning 5.4), so the run
+    # has to be created under the location policy or it owns the Product decision instead.
+    set_plan_grain(db, "location")
     created = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rid = created["run_id"]

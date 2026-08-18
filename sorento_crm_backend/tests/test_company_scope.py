@@ -385,19 +385,29 @@ def test_every_company_id_table_is_registered():
     # `_assert_reviewer_writable`), and the mixin cannot catch a SAME-company write
     # aimed at another request's person, which is exactly what those ownership checks
     # are for. Both are load-bearing; removing either is a real hole.
+    # Front planning adds 2 owned tables between its stages. `so_supply_decisions` is a
+    # fact about ONE company's project pipeline (the revision CS confirmed against a
+    # Project SO, loaded by id on every read of the sheet it backs), and
+    # `order_summary_location_allocation` is a planning artefact for the same reason
+    # `reorder_recommendation` and `recommendation_override` beside it are: it is that
+    # company's decision, read by the PO worklist, and the mixin stamps the company at
+    # insert so a split written under one scope can never be read under another.
     #
-    # The number is the union of three lineages at this merge: main's 68 (67 plus the
-    # flyer proposal batch above), plus the 41 the project-sales branch brought (which
-    # were audited table by table at its own merge), plus Stage 1C's
-    # `projects.so_supply_decisions`. That last one is OWNED without question: a supply
-    # decision is one company's promise about one company's stock, and it is loaded by id
-    # on every read of the sheet it backs.
+    # The number is the union of four lineages at this merge: main's 68 (67 plus the flyer
+    # proposal batch above), plus the 41 the project-sales branch brought (audited table by
+    # table at its own merge), plus `so_supply_decisions`, plus
+    # `order_summary_location_allocation`.
     #
-    # Stage 1C branched before the flyer proposal batch landed, so it counted 67+41+1 and
-    # arrived at the same 109 main's 68+41 did. Both were right about their own lineage and
-    # wrong about the union; the merged total is 110, measured against the model set rather
-    # than reasoned from either arithmetic.
-    expected_owned = 110
+    # Two of those counts arrived here already wrong, in the same way, and it is worth
+    # naming so the next merge does not repeat it. Stage 1C branched before the flyer
+    # proposal batch landed and counted 67+41+1 = 109; main counted 68+41 = 109; Stage 2
+    # branched before Stage 1C and counted its OWN copy of `so_supply_decisions` plus
+    # `order_summary_location_allocation` as 68+41+2 = 111. Each was right about its own
+    # lineage and wrong about the union, and 111 is only coincidentally the merged answer:
+    # `so_supply_decisions` exists once, not twice, because Stage 1C owns the model and
+    # Stage 2's duplicate declaration is gone (see `app/models/project_so.py`). The value
+    # below is measured against the merged model set, never reasoned from either sum.
+    expected_owned = 111
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

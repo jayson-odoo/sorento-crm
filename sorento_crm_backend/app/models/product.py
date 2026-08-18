@@ -1,5 +1,18 @@
 """Product management models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Integer, Index, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    SmallInteger,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -90,6 +103,14 @@ class UnitOfMeasure(Base, CompanyScopedMixin):
     uom_name = Column(String(150), nullable=False)
     base_uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
     conversion_factor = Column(Numeric(10, 4), nullable=True)
+    # Canonical divisibility of the unit (front-planning plan 6.4, AC-F12): how many
+    # fractional digits a quantity in this unit may carry. `EA` is 0 and refuses 2.5,
+    # `kg` at 3 accepts it. It is a property of the UNIT, not of SCM arithmetic, and it
+    # is never inferred from `conversion_factor`. 0 is the rollout fallback, so a unit
+    # nobody has classified behaves as whole units rather than as unbounded precision.
+    decimal_places = Column(
+        SmallInteger, nullable=False, server_default=text("0"), default=0
+    )
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -102,6 +123,10 @@ class UnitOfMeasure(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_units_of_measure_base_uom_id", "base_uom_id"),
         Index("ix_units_of_measure_is_active", "is_active"),
+        CheckConstraint(
+            "decimal_places >= 0 AND decimal_places <= 4",
+            name="ck_units_of_measure_decimal_places",
+        ),
     )
 
 

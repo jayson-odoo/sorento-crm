@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
 import { dayLabel } from '../lib/coverageTimeline';
+import { fmtQty } from '../lib/qtyPrecision';
 import { useOrderSummaryDemand } from '../hooks/useSummaryOrder';
 import type { OrderSummaryDemandKind } from '../types/summaryOrder.types';
 
@@ -35,7 +36,11 @@ import type { OrderSummaryDemandKind } from '../types/summaryOrder.types';
 
 const KIND_LABEL: Record<OrderSummaryDemandKind, string> = {
   project: 'Project demand',
-  dealer: 'Dealer outstanding',
+  retail: 'Retail outstanding',
+  unclassified: 'Unclassified demand',
+  // The legacy name of `retail`. Kept so an older caller still renders, and it
+  // says Retail either way - the user's word for that side of the book.
+  dealer: 'Retail outstanding',
 };
 
 /** Ageing tone. Only the worst band is coloured, so the colour still means something. */
@@ -55,6 +60,11 @@ export interface DemandDrillPopoverProps {
   lineCount: number;
   /** Opaque run key, passed through so a past week drills to that week's lines. */
   runId: string | null;
+  /**
+   * The row's FROZEN `uom_decimal_places` (AC-F12). A measure unit's 1.25 kg must
+   * not be rendered as 1 here while the row above says 1.25.
+   */
+  decimalPlaces?: number;
 }
 
 export function DemandDrillPopover({
@@ -64,6 +74,7 @@ export function DemandDrillPopover({
   totalQty,
   lineCount,
   runId,
+  decimalPlaces = 0,
 }: DemandDrillPopoverProps) {
   const [open, setOpen] = useState(false);
   const { data, isLoading, isError, error, refetch } = useOrderSummaryDemand(
@@ -77,7 +88,7 @@ export function DemandDrillPopover({
   if (lineCount === 0) {
     return (
       <span className="tabular-nums" data-testid={`demand-total-${kind}`}>
-        {fmtInt(totalQty)}
+        {fmtQty(totalQty, decimalPlaces)}
       </span>
     );
   }
@@ -85,7 +96,7 @@ export function DemandDrillPopover({
   return (
     <span className="flex items-center justify-end gap-1">
       <span className="tabular-nums" data-testid={`demand-total-${kind}`}>
-        {fmtInt(totalQty)}
+        {fmtQty(totalQty, decimalPlaces)}
       </span>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
@@ -116,7 +127,7 @@ export function DemandDrillPopover({
                 </div>
               </div>
               <Badge variant="secondary" appearance="light" size="xs" className="w-fit shrink-0">
-                {fmtInt(totalQty)}
+                {fmtQty(totalQty, decimalPlaces)}
               </Badge>
             </div>
 
@@ -137,9 +148,11 @@ export function DemandDrillPopover({
                 </Button>
               </div>
             ) : kind === 'project' ? (
-              <ProjectLines drill={data} />
+              <ProjectLines drill={data} dp={decimalPlaces} />
+            ) : kind === 'unclassified' ? (
+              <UnclassifiedLines drill={data} dp={decimalPlaces} />
             ) : (
-              <DealerLines drill={data} />
+              <RetailLines drill={data} dp={decimalPlaces} />
             )}
           </PopoverContent>
         </PopoverPortal>
@@ -154,8 +167,10 @@ function EmptyLines({ children }: { children: React.ReactNode }) {
 
 function ProjectLines({
   drill,
+  dp,
 }: {
   drill: NonNullable<ReturnType<typeof useOrderSummaryDemand>['data']>;
+  dp: number;
 }) {
   if (drill.project_lines.length === 0) {
     return <EmptyLines>No project has committed this item.</EmptyLines>;
@@ -172,27 +187,39 @@ function ProjectLines({
               {line.project_name}
             </div>
             <div className="truncate text-2xs text-muted-foreground">
-              {line.so_number} · needed {line.required_date ? dayLabel(line.required_date) : 'no date'}
+              {line.so_number}
+              {line.line_no !== null && line.line_no !== undefined ? ` line ${line.line_no}` : ''} ·{' '}
+              {line.warehouse_code ? `${line.warehouse_code} · ` : ''}
+              needed {line.required_date ? dayLabel(line.required_date) : 'no date'}
+            </div>
+            {/* The trace from a Buy back to the decision that confirmed it (AC-D06).
+                A revision and an inquiry number - never a UUID. */}
+            <div className="truncate text-2xs text-muted-foreground">
+              {line.decision_ref ?? 'No confirmed decision yet'}
             </div>
           </div>
-          <span className="shrink-0 tabular-nums">{fmtInt(line.qty)}</span>
+          <span className="shrink-0 tabular-nums">{fmtQty(line.qty, dp)}</span>
         </div>
       ))}
     </div>
   );
 }
 
-function DealerLines({
+function RetailLines({
   drill,
+  dp,
 }: {
   drill: NonNullable<ReturnType<typeof useOrderSummaryDemand>['data']>;
+  dp: number;
 }) {
-  if (drill.dealer_lines.length === 0) {
-    return <EmptyLines>No dealer order is outstanding on this item.</EmptyLines>;
+  // `retail_lines` is the name; `dealer_lines` is the same lines under the old one.
+  const lines = drill.retail_lines ?? drill.dealer_lines ?? [];
+  if (lines.length === 0) {
+    return <EmptyLines>No retail order is outstanding on this item.</EmptyLines>;
   }
   return (
-    <div className="max-h-64 overflow-y-auto" data-testid="dealer-lines">
-      {drill.dealer_lines.map((line, i) => (
+    <div className="max-h-64 overflow-y-auto" data-testid="retail-lines">
+      {lines.map((line, i) => (
         <div
           key={`${line.so_number}-${i}`}
           className="flex items-start justify-between gap-3 border-b px-3 py-2 text-sm last:border-b-0"
@@ -207,11 +234,56 @@ function DealerLines({
             </div>
           </div>
           <div className="shrink-0 text-end">
-            <div className="tabular-nums">{fmtInt(line.qty)}</div>
+            <div className="tabular-nums">{fmtQty(line.qty, dp)}</div>
             <div className={cn('text-2xs tabular-nums', ageTone(line.days_outstanding))}>
               {fmtInt(line.days_outstanding)} days
             </div>
           </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Demand whose SO carries no persisted class (AC-E02 / AC-E07).
+ *
+ * It is shown as an exception with the SO lines behind it, and it is excluded from
+ * the actionable suggestion until somebody classifies it. It never becomes a third
+ * demand class, and the fulfilment location is never used to guess one.
+ */
+function UnclassifiedLines({
+  drill,
+  dp,
+}: {
+  drill: NonNullable<ReturnType<typeof useOrderSummaryDemand>['data']>;
+  dp: number;
+}) {
+  const lines = drill.unclassified_lines ?? [];
+  if (lines.length === 0) {
+    return <EmptyLines>Every order on this item carries a demand class.</EmptyLines>;
+  }
+  return (
+    <div className="max-h-64 overflow-y-auto" data-testid="unclassified-lines">
+      {lines.map((line, i) => (
+        <div
+          key={`${line.so_number}-${i}`}
+          className="flex items-start justify-between gap-3 border-b px-3 py-2 text-sm last:border-b-0"
+        >
+          <div className="min-w-0">
+            <div className="truncate font-medium" title={line.customer_name}>
+              {line.customer_name}
+            </div>
+            <div className="truncate text-2xs text-muted-foreground">
+              {line.so_number}
+              {line.line_no !== null ? ` line ${line.line_no}` : ''} · raised{' '}
+              {line.ordered_date ? dayLabel(line.ordered_date) : EM_DASH}
+            </div>
+            <div className="text-2xs text-scm-overstock" title={line.exception}>
+              {line.exception}
+            </div>
+          </div>
+          <span className="shrink-0 tabular-nums">{fmtQty(line.qty, dp)}</span>
         </div>
       ))}
     </div>

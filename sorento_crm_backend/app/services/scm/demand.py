@@ -142,33 +142,122 @@ def qty_of(row) -> float:
     return max(base - float(row.qty_delivered or 0), 0.0)
 
 
+#: The Order Inquiry verb that says "buy this". The only verb that is new purchasing
+#: demand; every other verb is an amendment instruction or a coverage note.
+BUY_VERB = "ORDER"
+
+#: An inquiry row still waiting to be placed. `actioned` means purchasing has bought it
+#: and `cancelled` means it went away, so neither is current need.
+UNPLACED_INQUIRY_STATE = "raised"
+
+#: The one decision state that counts. A superseded or challenged revision's Buy is
+#: history, and counting it would buy the same requirement twice.
+ACTIVE_DECISION_STATE = "active"
+
 #: The body of `scm.committed_v`. Kept as a constant so the migration that installs it and
 #: the expression above are edited in the same file.
+#:
+#: Front planning (plan 4, 5.3, 6.4) splits the SAME aggregate row by demand channel. The
+#: keys and the cardinality are untouched - one row per (product_id, warehouse_id) - and
+#: `committed` stays the sum of the three new columns, so `scm.net_position_v` and every
+#: consumer of it sees no change. What is new is that the row can now SAY which channel its
+#: commitment came from, which is what makes a Project total firm and a Retail total
+#: nettable without a second read model.
+#:
+#: Two legs supply Project demand, and they are mutually exclusive by design (plan 4):
+#:
+#: * the CONFIRMED leg - current unplaced Buy on `projects.order_inquiry_rows` pointing at
+#:   an ACTIVE `projects.so_supply_decisions` row, landed at the location of the reconciled
+#:   core SO line. This is CS's own decision and it passes through unnetted.
+#: * the SHEET leg - a `demand_origin = 'scm_order_inquiry'` order, counted ONLY while its
+#:   SO has no active decision. The moment CS confirms, the confirmed Buy residual replaces
+#:   the sheet quantity, so a sheet-named SO that is later confirmed counts exactly once.
+#:
+#: A project-class order with neither (the normal book, no decision) is still set aside -
+#: unchanged behaviour, now provably absent from all four columns rather than just from the
+#: old one.
+#:
+#: Only ONE of those legs is FIRM, which is why there is a fifth column. Plan 5.3 defines
+#: `project_need` as "confirmed unplaced Buy" and AC-E05 bypasses the reorder trigger for
+#: "confirmed unplaced Project Buy": that is the CONFIRMED leg alone, so it gets its own
+#: `project_confirmed_committed` for the engine to read. The sheet leg stays inside
+#: `project_committed` (plan 6.4: the Project column reads both legs, and the display column
+#: must not lose it) but is netted like any other commitment, exactly as it was before this
+#: split existed - S13b's "the book supplies the rest". Passing the whole of
+#: `project_committed` past the trigger bought stock a shared pool already held.
 COMMITTED_V_SQL = """
 CREATE OR REPLACE VIEW scm.committed_v AS
-SELECT sol.product_id,
-       sol.warehouse_id,
-       SUM(GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-                    - COALESCE(sol.qty_delivered, 0), 0)) AS committed
-FROM sales_order_lines sol
-JOIN sales_orders so ON so.id = sol.sales_order_id
-WHERE so.status = 'open'
-  AND sol.line_status = 'open'
-  AND sol.purchasing_status <> 'covered'
-  AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
-               - COALESCE(sol.qty_delivered, 0), 0) > 0
-  -- S13b: project demand comes from the Order Inquiry; the book supplies the rest.
-  -- Front planning section 4: and only while CS has not confirmed a supply decision for
-  -- it, after which the confirmed Buy residual replaces the sheet quantity.
-  AND (so.demand_class IS DISTINCT FROM 'project'
-       OR (so.demand_origin = 'scm_order_inquiry'
-           AND NOT EXISTS (
-               SELECT 1
-               FROM projects.sales_orders pso
-               JOIN projects.so_supply_decisions d
-                 ON d.project_sales_order_id = pso.id
-               WHERE pso.so_id = so.id
-                 AND d.state = 'active'
-           )))
-GROUP BY sol.product_id, sol.warehouse_id;
+WITH decided AS (
+    SELECT DISTINCT pso.so_id AS sales_order_id
+    FROM projects.sales_orders pso
+    JOIN projects.so_supply_decisions d
+      ON d.project_sales_order_id = pso.id
+     AND d.state = 'active'
+    WHERE pso.so_id IS NOT NULL
+),
+legs AS (
+    SELECT sol.product_id,
+           sol.warehouse_id,
+           CASE WHEN so.demand_class = 'project'
+                THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+                              - COALESCE(sol.qty_delivered, 0), 0)
+                ELSE 0 END AS project_qty,
+           -- The sheet leg is project-class demand, never firm Buy: no CS decision points
+           -- at it, so it is netted like any other commitment (S13b).
+           0 AS project_confirmed_qty,
+           CASE WHEN so.demand_class IS NOT NULL AND so.demand_class <> 'project'
+                THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+                              - COALESCE(sol.qty_delivered, 0), 0)
+                ELSE 0 END AS retail_qty,
+           CASE WHEN so.demand_class IS NULL
+                THEN GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+                              - COALESCE(sol.qty_delivered, 0), 0)
+                ELSE 0 END AS unclassified_qty
+    FROM sales_order_lines sol
+    JOIN sales_orders so ON so.id = sol.sales_order_id
+    WHERE so.status = 'open'
+      AND sol.line_status = 'open'
+      AND sol.purchasing_status <> 'covered'
+      AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+                   - COALESCE(sol.qty_delivered, 0), 0) > 0
+      -- S13b: project demand comes from the Order Inquiry; the book supplies the rest.
+      -- Front planning narrows the sheet leg further: once CS has confirmed a decision
+      -- for the order, its confirmed Buy residual below is the only Project reading.
+      AND (so.demand_class IS DISTINCT FROM 'project'
+           OR (so.demand_origin = 'scm_order_inquiry'
+               AND NOT EXISTS (SELECT 1 FROM decided dd
+                               WHERE dd.sales_order_id = so.id)))
+    UNION ALL
+    -- The confirmed leg: what CS decided must be bought, at the reconciled core line's
+    -- product and fulfilment location. Never matched on provisional_ref, autocount_doc_no
+    -- or item code (plan 4).
+    SELECT sol.product_id,
+           sol.warehouse_id,
+           oir.qty AS project_qty,
+           oir.qty AS project_confirmed_qty,
+           0 AS retail_qty,
+           0 AS unclassified_qty
+    FROM projects.order_inquiry_rows oir
+    JOIN projects.so_supply_decisions d
+      ON d.id = oir.supply_decision_id
+     AND d.state = 'active'
+    JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+    JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
+    WHERE oir.verb = 'ORDER'
+      AND oir.state = 'raised'
+      AND oir.qty > 0
+)
+SELECT product_id,
+       warehouse_id,
+       SUM(project_qty + retail_qty + unclassified_qty) AS committed,
+       SUM(project_qty) AS project_committed,
+       SUM(retail_qty) AS retail_committed,
+       SUM(unclassified_qty) AS unclassified_committed,
+       -- LAST on purpose: appended, so a CREATE OR REPLACE of this body over a database
+       -- already carrying the four-column view is legal (Postgres lets a replacement add
+       -- columns at the end and nowhere else). A SUBSET of `project_committed`, never a
+       -- fourth addend of `committed` - adding it there would count confirmed Buy twice.
+       SUM(project_confirmed_qty) AS project_confirmed_committed
+FROM legs
+GROUP BY product_id, warehouse_id;
 """

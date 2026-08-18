@@ -23,8 +23,12 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { EM_DASH, fmtInt, fmtSupplierCost } from '../../lib/format';
 import { computedAtLabel, dayLabel } from '../lib/coverageTimeline';
+import { isLegacyRun, planGrainLabel } from '../lib/planGrain';
+import { decimalPlacesOf, fmtQty } from '../lib/qtyPrecision';
 import { usePoWorklist, useSetKeyedStatus } from '../hooks/usePoWorklist';
 import {
   KEYED_STATUS_LABELS,
@@ -172,7 +176,9 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
               No PO needed
             </span>
           ) : (
-            <span className="font-medium">{fmtInt(row.original.chosen_qty)}</span>
+            <span className="font-medium">
+              {fmtQty(row.original.chosen_qty, decimalPlacesOf(row.original.uom_decimal_places))}
+            </span>
           ),
         size: 130,
         meta: { headerTitle: 'Order qty', ...numMeta },
@@ -193,7 +199,7 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
             )}
             title="What the reorder policy proposed before anyone decided"
           >
-            {fmtInt(row.original.suggested_qty)}
+            {fmtQty(row.original.suggested_qty, decimalPlacesOf(row.original.uom_decimal_places))}
           </span>
         ),
         size: 120,
@@ -212,6 +218,62 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
           ),
         size: 200,
         meta: { headerTitle: 'Supplier' },
+      },
+      {
+        // The run's own grain decides what this column carries (AC-F09): a product
+        // decision shows the split it was allocated into, a location decision shows
+        // the location it belongs to. The two never appear together.
+        id: 'where',
+        header: ({ column }) => <DataGridColumnHeader title="Locations" column={column} />,
+        cell: ({ row }) => {
+          const r = row.original;
+          const dp = decimalPlacesOf(r.uom_decimal_places);
+          if (r.warehouse_code) {
+            return (
+              <span className="truncate" title={r.warehouse_name ?? r.warehouse_code}>
+                {r.warehouse_code}
+              </span>
+            );
+          }
+          const split = r.location_allocations ?? [];
+          if (split.length === 0) {
+            return <span className="text-muted-foreground">{EM_DASH}</span>;
+          }
+          return (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="rounded-sm text-2xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={`Location split for ${r.product_code}`}
+                >
+                  {split.length} location{split.length === 1 ? '' : 's'}
+                </button>
+              </PopoverTrigger>
+              <PopoverPortal>
+                <PopoverContent align="start" collisionPadding={8} className="w-64 p-0">
+                  <div className="border-b px-3 py-2 text-2xs font-semibold">
+                    Split back to locations
+                  </div>
+                  {split.map((a) => (
+                    <div
+                      key={a.warehouse_code}
+                      className="flex items-center justify-between gap-3 border-b px-3 py-1.5 text-2xs last:border-b-0"
+                    >
+                      <span className="truncate" title={a.warehouse_name}>
+                        {a.warehouse_code}
+                      </span>
+                      <span className="tabular-nums">{fmtQty(a.allocated_qty, dp)}</span>
+                    </div>
+                  ))}
+                </PopoverContent>
+              </PopoverPortal>
+            </Popover>
+          );
+        },
+        size: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Locations' },
       },
       {
         accessorKey: 'need_by',
@@ -374,7 +436,9 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
   const table = useReactTable({
     data: rows,
     columns,
-    getRowId: (r) => r.product_code,
+    // A location-grain run lists one row per product AND location, so the product
+    // code alone is not unique on it.
+    getRowId: (r) => (r.warehouse_code ? `${r.product_code}:${r.warehouse_code}` : r.product_code),
     state: { pagination, sorting, globalFilter: searchQuery },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
@@ -438,7 +502,23 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
               Back to plan
             </Button>
           ) : null}
-          <h3 className="text-base font-semibold">PO worklist</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold">PO worklist</h3>
+            {/* Which grain this list is keyed on. A fact about the run, not a control. */}
+            {data ? (
+              <Badge
+                variant={isLegacyRun({ decision_grain: data.decision_grain, front_planning_contract_version: data.decision_grain ? 1 : null }) ? 'secondary' : 'info'}
+                appearance="light"
+                size="sm"
+                data-testid="worklist-grain-chip"
+              >
+                {planGrainLabel({
+                  decision_grain: data.decision_grain,
+                  front_planning_contract_version: data.decision_grain ? 1 : null,
+                })}
+              </Badge>
+            ) : null}
+          </div>
           <p className="text-2xs text-muted-foreground">
             {total === 0
               ? 'Nothing decided yet, so there is nothing to key'

@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
 import {
@@ -114,6 +115,39 @@ function StopClick({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * One channel demand figure (AC-F07).
+ *
+ * NULL is UNAVAILABLE - a legacy run has no breakdown and it is never inferred or
+ * backfilled (AC-F10) - which is a different fact from a channel that genuinely
+ * needs nothing, and must not be printed as 0.
+ */
+function ChannelNeed({
+  value,
+  title,
+  tone,
+}: {
+  value: number | null | undefined;
+  title: string;
+  tone?: 'exception';
+}) {
+  if (value === null || value === undefined) {
+    return (
+      <span className="text-2xs text-muted-foreground" title="Unavailable on a legacy plan">
+        Unavailable
+      </span>
+    );
+  }
+  return (
+    <span
+      className={cn('tabular-nums', tone === 'exception' && value > 0 && 'text-scm-overstock')}
+      title={title}
+    >
+      {fmtInt(value)}
+    </span>
+  );
+}
+
 /** A dash means "not on file", which is a different fact from zero and must not read as it. */
 function numCell(value: number | null | undefined) {
   return value === null || value === undefined ? (
@@ -152,6 +186,8 @@ export function PlanLinesGrid({
   onDecidedFilterChange,
   secondaryActions,
   runId,
+  decisionsReadOnly = false,
+  readOnlyReason = null,
   isLoading,
 }: {
   lines: PlanLine[];
@@ -215,6 +251,15 @@ export function PlanLinesGrid({
   secondaryActions?: ToolbarAction[];
   /** The run on screen, threaded to each row's demand drill so it can fetch its order lines. */
   runId?: string | null;
+  /**
+   * The run is decided at the OTHER grain, or predates the contract, so this view is
+   * a read and drill view (AC-F02 / AC-F09). Every decision control is disabled and
+   * says which screen owns the decision; nothing is hidden, because the facts are the
+   * same facts and the buyer still has to be able to read them.
+   */
+  decisionsReadOnly?: boolean;
+  /** What the disabled control says, in place of the decision cell's own controls. */
+  readOnlyReason?: string | null;
   isLoading?: boolean;
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
@@ -506,6 +551,59 @@ export function PlanLinesGrid({
         size: 130,
         enableSorting: true,
         meta: { headerTitle: 'SO (needed)', skeleton: <Skeleton className="h-4 w-10" /> },
+      },
+      // The SO column's channel split (AC-F05 / AC-F07). Three DEMAND columns; the
+      // supply columns below stay single shared facts of this product-location and
+      // are deliberately NOT repeated per channel. Unclassified is visible and is
+      // excluded from the actionable need until somebody classifies it.
+      {
+        id: 'project_need',
+        accessorFn: (row) => row.rec.project_need ?? -1,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Project" visibility column={column} />
+        ),
+        cell: ({ row }) => (
+          <ChannelNeed
+            value={row.original.rec.project_need}
+            title="Confirmed unplaced Project Buy. Firm: Retail netting never reduces it"
+          />
+        ),
+        size: 90,
+        enableSorting: true,
+        meta: { headerTitle: 'Project need', skeleton: <Skeleton className="h-4 w-10" /> },
+      },
+      {
+        id: 'retail_need',
+        accessorFn: (row) => row.rec.retail_need ?? -1,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Retail" visibility column={column} />
+        ),
+        cell: ({ row }) => (
+          <ChannelNeed
+            value={row.original.rec.retail_need}
+            title="Retail-class need, after the normal netting of free supply"
+          />
+        ),
+        size: 90,
+        enableSorting: true,
+        meta: { headerTitle: 'Retail need', skeleton: <Skeleton className="h-4 w-10" /> },
+      },
+      {
+        id: 'unclassified_need',
+        accessorFn: (row) => row.rec.unclassified_need ?? -1,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Unclass." visibility column={column} />
+        ),
+        cell: ({ row }) => (
+          <ChannelNeed
+            value={row.original.rec.unclassified_need}
+            title="Demand whose sales order carries no demand class. Not in the actionable need"
+            tone="exception"
+          />
+        ),
+        size: 90,
+        enableSorting: true,
+        meta: { headerTitle: 'Unclassified need', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       // The three offsets, on the row rather than behind a popover. This is the arithmetic
       // that produced the suggested quantity, and the buyer has to be able to see it without
@@ -824,7 +922,18 @@ export function PlanLinesGrid({
         // place to see the suggestion and take it. Wider than either of the two columns it
         // replaces used to be alone, since it now carries what both of them said.
         header: ({ column }) => <DataGridColumnHeader title="Decision" visibility column={column} />,
-        cell: ({ row }) => (
+        cell: ({ row }) =>
+          decisionsReadOnly ? (
+            // Disabled and explained, never silently inert: the buyer needs to know
+            // WHICH screen owns this decision (AC-F02).
+            <span
+              className="text-2xs text-muted-foreground"
+              data-testid={`decision-read-only-${row.original.id}`}
+              title={readOnlyReason ?? 'Decided at another grain'}
+            >
+              {readOnlyReason ?? 'Decided at another grain'}
+            </span>
+          ) : (
           <StopClick>
           <PlanLineDecisionCell
             line={row.original}
@@ -838,14 +947,15 @@ export function PlanLinesGrid({
             onClear={() => onClear(row.original)}
           />
           </StopClick>
-        ),
+          ),
         size: 340,
         enableSorting: false,
         enableHiding: false,
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
-    [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor,
+    [decisions, onDecide, onClear, runId, decisionsReadOnly, readOnlyReason,
+     coverFor, priceFor, cheaperFor, trendFor,
      levelFor, onAmendLevel, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
      onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
      onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell],
@@ -855,7 +965,8 @@ export function PlanLinesGrid({
   // followed by the columns that explain it. Deliberately NOT the definition order.
   const [columnOrder, setColumnOrder] = useState<string[]>(() => [
     'rank', 'side', 'sku', 'warehouse',
-    'suggested', 'needed', 'on_hand', 'incoming_spo', 'outstanding_po',
+    'suggested', 'needed', 'project_need', 'retail_need', 'unclassified_need',
+    'on_hand', 'incoming_spo', 'outstanding_po',
     'decision',
     'price', 'supplier', 'moq', 'cost',
     'reorder_level', 'reorder_qty', 'level', 'health',

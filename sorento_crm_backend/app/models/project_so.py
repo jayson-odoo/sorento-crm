@@ -635,6 +635,16 @@ class SOAmendment(Base, CompanyScopedMixin):
     )
 
 
+# NOTE (merge, Stage 1C + Stage 2): `SOSupplyDecision` used to be declared HERE too.
+# Both stages needed `projects.so_supply_decisions` and, with neither merged, each wrote
+# its own copy of the class and its own DDL. Stage 2's own docstring named the owner
+# ("Stage 1C owns the atomic confirmation that writes it; nothing in SCM writes it"), so
+# the Stage 1C declaration further down is the one that survives and Stage 2's duplicate
+# is gone. Two mappers on one `__tablename__` is an import-time error, not a style
+# problem. Stage 2 still only READS the table, through raw SQL in `scm.committed_v`, and
+# that view needs `id` / `project_sales_order_id` / `state`, all of which 1C's table has.
+
+
 # --------------------------------------------------------------------- order inquiry
 
 INQUIRY_RAISED = "raised"
@@ -728,6 +738,9 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     # Nullable, because amendment exception rows and every row raised before Stage 1C
     # belong to no decision. SET NULL rather than CASCADE: a decision that is deleted
     # must not take purchasing's ledger with it.
+    #
+    # Stage 2 reads it: SCM counts Project demand as the qty on rows pointing at an ACTIVE
+    # decision, which is what stops a superseded revision's Buy being bought again.
     supply_decision_id = Column(
         UUID(as_uuid=False),
         ForeignKey("projects.so_supply_decisions.id", ondelete="SET NULL"),
@@ -745,6 +758,9 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_order_inquiry_rows_inquiry", "order_inquiry_id"),
         Index("ix_project_order_inquiry_rows_state", "state"),
+        # Stage 1C's name, because 1C's `374_so_supply_decisions` is the migration that
+        # creates this index; Stage 2 proposed `..._supply_decision` for the same column
+        # and its duplicate DDL is dropped with the duplicate model above.
         Index("ix_project_order_inquiry_rows_decision", "supply_decision_id"),
         {"schema": "projects"},
     )
