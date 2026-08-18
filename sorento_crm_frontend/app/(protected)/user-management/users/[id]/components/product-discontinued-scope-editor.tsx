@@ -106,7 +106,10 @@ const ScopeRowFields = ({
     onBrandsLoadErrorChange(isError);
   }, [isError, row.brandsLoadError, onBrandsLoadErrorChange]);
 
-  const brandsUnknown = isScopeRowBrandsUnknown({ ...row, brandsLoadError: isError });
+  const brandsUnknown = isScopeRowBrandsUnknown({
+    ...row,
+    brandsLoadError: isError,
+  });
 
   const handleCompanyChange = (value: string) => {
     const companyId = value === ALL_COMPANIES_VALUE ? null : value;

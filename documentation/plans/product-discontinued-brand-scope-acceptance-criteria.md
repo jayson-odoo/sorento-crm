@@ -109,7 +109,7 @@ the catalogue, and the admin who manages user notification preferences.
 
 ## Follow-ups (out of scope here, deliberately)
 
-- **Write-side company gating on `replace_scopes`.** The READ side already handles a company
+- **Write-side company gating on `replace_scopes`** (register row `BL-024`). The READ side already handles a company
   outside the acting admin's grants: `GET /brands/select?company_id=` refuses one they cannot
   reach, and the editor merges a saved-but-ungranted company into its option list so the value
   renders by name rather than blank. The WRITE side does not check that the acting admin may

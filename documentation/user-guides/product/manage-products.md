@@ -14,7 +14,7 @@ The list is a DataGrid with these columns: **Product Code**, **Product Name**, *
 * **Export** — downloads the current filtered/searched list to `products_export.xlsx`.
 * Clicking a row opens that product's detail page. Per-row icons: **Edit**, **Duplicate**, **Delete**.
 
-> A banner "Showing only the products from a recent "products discontinued" notification." appears when you arrive via a discontinued-products notification deep link. Click **Clear filter** to see all products again.
+> A banner "Showing only the products from a recent "products discontinued" notification." appears when you arrive via a discontinued-products notification deep link. Click **Clear filter** to see all products again. If your discontinued subscription covers only some brands, the link opens on just those brands (`brand_id` alongside the batch): a link naming several brands leaves the **Brand** dropdown on **All brands** while its own filter narrows the grid, a link naming one selects that brand in the dropdown, and **Clear filter** drops the batch and the brand filter together.
 
 ## Create a product
 
