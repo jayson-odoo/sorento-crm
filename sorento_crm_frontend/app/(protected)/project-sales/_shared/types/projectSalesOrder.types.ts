@@ -279,6 +279,28 @@ export interface SalesOrderDeleteResult {
   deleted: Record<string, number>;
 }
 
+/** One order a bulk delete would not touch, named by its reference rather than its id. */
+export interface SalesOrderDeleteRefusal {
+  id: string;
+  provisional_ref: string;
+  code: string;
+  message: string;
+}
+
+/**
+ * What `POST /sales-orders/bulk-delete` answers.
+ *
+ * `refused` is always empty here: a batch that WOULD refuse never reaches this body, because
+ * the call is all-or-nothing and is answered 409 before anything is deleted. It is on the
+ * shape so a client reads one body either way.
+ */
+export interface SalesOrderBulkDeleteResult {
+  success: boolean;
+  deleted_count: number;
+  deleted: Record<string, number>;
+  refused: SalesOrderDeleteRefusal[];
+}
+
 /**
  * One line as the edit session holds it, between Edit and Save.
  *

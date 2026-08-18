@@ -586,12 +586,19 @@ Layering as enforced: grid / sheet -> `useFulfilmentPlanning` and new
 service. New selects use `SearchableSelect` with `clearable` where optional.
 
 - `FulfilmentPlanningClient.tsx`: columns become Sales order (`so_number`), Customer, Project
-  (`project_label`), Earliest required, Outstanding qty, Lines, State, then Project SO
-  (`provisional_ref`, empty state "Not authored here"), Area group. Grid keeps
-  `listingKey="projects.projects.view::project-fulfilment-planning"` and
-  `tableLayout={{ width: 'fixed', columnsResizable: true }}` with explicit `size` per column and
-  `truncate` + `title` on text. Row action on a Not started row is **Start planning**; on any other
-  row it opens the sheet, as today.
+  (`project_label`), Earliest required, Outstanding qty, Lines, Review state, the row action, then
+  Project SO (`provisional_ref`, empty state "Not authored here"), Customer PO, Area group,
+  Updated. Grid keeps `tableLayout={{ width: 'fixed', columnsResizable: true }}` with explicit
+  `size` per column and `truncate` + `title` on text. Row action on a Not started row is **Start
+  planning**; on any other row it is Open, and clicking the row itself opens the sheet only when a
+  planning record exists (a row click must never be what writes one).
+- **The `listingKey` stable id is bumped to `...::project-fulfilment-planning-v2`.** Four columns
+  are new and one (`autocount_doc_no`) is gone, so this is not the same listing it was: a config
+  saved against the old set interleaves the new columns into an order nobody chose. Measured in the
+  browser during Phase 1 - the screen came up as Sales order, Project SO, Review state, action,
+  Lines with Customer and both dates pushed off to the right, and only Columns -> Reset fixed it.
+  Bumping the id hands everyone the new defaults once, which is the honest answer to "the columns
+  changed". Anyone who had resized this grid sets it again; that is the whole cost.
 - `ReviewStatePill` and `REVIEW_STATE_LABELS` gain `not_started` -> "Not started". The Project SO
   status label / pill maps gain `adopted` -> "Adopted" in the same change (grep the SO status label
   map used by the project's Sales orders panel and the SO detail header; a status with no label
@@ -606,10 +613,10 @@ service. New selects use `SearchableSelect` with `clearable` where optional.
 - Every state rendered: loading skeletons, empty worklist, request error with Try again, not-started
   row, adopted-with-no-exceptions, adopted-with-a-vanished-line, a line whose sales order states no
   location, confirmed frozen view, detach refused by an active decision.
-- Column-preference gotcha to check in Phase 2: users with a saved config for this `listingKey`
-  may not see the new columns until they reset. Verify against
-  `lib/listing-column-preferences/useListingColumnPreferences` behaviour for unknown columns and note
-  the outcome in the test report.
+- Column-preference gotcha: CONFIRMED in Phase 1, and answered by the `listingKey` bump above
+  rather than left for Phase 2. `useListingColumnPreferences` keeps a saved order for the columns it
+  knows and appends the rest, so a changed column set reads as a scrambled screen and not as a
+  missing feature.
 
 ---
 

@@ -517,4 +517,31 @@ describe('PurchaseOrderDetailClient header', () => {
 
     expect(push).toHaveBeenCalledWith('/project-sales/p1/pos/po2');
   });
+
+  /**
+   * The pager stands down for the duration of a session, exactly as it does on the quotation
+   * document. The staged work would in fact survive a step away - it lives in the session, not
+   * in the table - but a Next sitting beside Cancel and Save reads like it will discard it, and
+   * a control nobody dares press is worse than one that is absent.
+   */
+  it('stands the pager down while an edit session is open, and brings it back on Cancel', async () => {
+    renderPage();
+
+    expect(
+      await screen.findByRole('button', { name: 'Next purchase order' }),
+    ).toBeInTheDocument();
+
+    await openEditor();
+
+    expect(screen.queryByRole('button', { name: 'Next purchase order' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Previous purchase order' })).toBeNull();
+    // Cancel and Save are what the header states instead.
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(
+      await screen.findByRole('button', { name: 'Next purchase order' }),
+    ).toBeInTheDocument();
+  });
 });

@@ -11,6 +11,7 @@ import type {
   ProjectSalesOrderDetail,
   ProjectSalesOrderListParams,
   ProjectSalesOrderRow,
+  SalesOrderBulkDeleteResult,
   SalesOrderDeleteResult,
   SalesOrderDocumentSaveBody,
   SalesOrderLineUpdateBody,
@@ -241,6 +242,37 @@ export async function deleteProjectSalesOrder(
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}`, { method: 'DELETE' });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to delete this sales order'));
+  return response.json();
+}
+
+/**
+ * Several selected drafts in ONE call.
+ *
+ *   POST /api/v1/project-sales/sales-orders/bulk-delete   { ids: [...] }
+ *   200 { success, deleted_count, deleted: { "<table>": n }, refused: [] }
+ *
+ * ONE call rather than one per row, and it is not an optimisation: N calls half-apply, so
+ * the first refusal would leave the reviewer with a selection that is partly gone and no way
+ * to say which part. This is ALL OR NOTHING - one undeletable order in the selection refuses
+ * the whole call with 409 and deletes nothing, and the message names every order to un-tick
+ * and why. `extractApiError` surfaces that sentence, which is what the toast shows.
+ *
+ * Every id must belong to one project (422 `so_bulk_cross_project`), and the batch is capped
+ * at 200 (422 beyond it). The same refusals the single delete raises apply per order:
+ * published or amended, AutoCount-linked, carrying a published amendment, supply confirmed.
+ */
+export async function bulkDeleteProjectSalesOrders(
+  ids: string[],
+): Promise<SalesOrderBulkDeleteResult> {
+  const response = await apiFetch(`${BASE}/sales-orders/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok)
+    throw new Error(
+      await extractApiError(response, 'Failed to delete the selected sales orders'),
+    );
   return response.json();
 }
 

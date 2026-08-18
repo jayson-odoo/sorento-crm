@@ -808,4 +808,29 @@ describe('SalesOrderDetailClient header', () => {
 
     expect(push).toHaveBeenCalledWith('/project-sales/p1/sales-orders/so-2');
   });
+
+  /**
+   * The pager stands down for the duration of an edit session, the same way the quotation
+   * document's does, and for the same reason: the staged work would in fact survive a step away,
+   * but a Next sitting beside Cancel and Save reads like it will discard it, and a control
+   * nobody dares press is worse than one that is absent.
+   */
+  it('stands the pager down while an edit session is open, and brings it back on Cancel', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail());
+
+    renderDetail();
+
+    expect(await screen.findByRole('button', { name: 'Next sales order' })).toBeInTheDocument();
+
+    const gear = await openGear();
+    fireEvent.click(gear.getByRole('menuitem', { name: /Edit this sales order/ }));
+    await screen.findByRole('button', { name: 'Save' });
+
+    expect(screen.queryByRole('button', { name: 'Next sales order' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Previous sales order' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(await screen.findByRole('button', { name: 'Next sales order' })).toBeInTheDocument();
+  });
 });

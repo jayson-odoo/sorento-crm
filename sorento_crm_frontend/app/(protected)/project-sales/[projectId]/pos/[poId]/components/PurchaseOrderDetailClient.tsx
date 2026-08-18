@@ -254,16 +254,23 @@ export function PurchaseOrderDetailClient({
         <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
           <div className="flex flex-wrap items-center gap-2">
             {/* Walking a project's POs one after another is the normal case, so the pager
-                comes first, the way it does on the user record. */}
-            <RecordNavigation
-              basePath={`/project-sales/${projectId}/pos`}
-              prevId={neighbours.prevId}
-              nextId={neighbours.nextId}
-              currentIndex={neighbours.index != null ? neighbours.index - 1 : undefined}
-              totalCount={neighbours.total}
-              isLoading={neighbours.isLoading}
-              ariaLabel="purchase order"
-            />
+                comes first, the way it does on the user record.
+
+                Hidden while a session is open, exactly as the quotation document hides it. The
+                staged work would in fact survive a step away - it lives in the session, not in
+                the table - but a pager sitting beside Cancel and Save READS like it will
+                discard it, and a control nobody dares press is worse than one that is absent. */}
+            {!isEditing && (
+              <RecordNavigation
+                basePath={`/project-sales/${projectId}/pos`}
+                prevId={neighbours.prevId}
+                nextId={neighbours.nextId}
+                currentIndex={neighbours.index != null ? neighbours.index - 1 : undefined}
+                totalCount={neighbours.total}
+                isLoading={neighbours.isLoading}
+                ariaLabel="purchase order"
+              />
+            )}
             {/* Everything that is not the one call to action lives behind the gear. Only
                 rendered for somebody who may act: a reader has nothing to put in it. */}
             {canEdit && (

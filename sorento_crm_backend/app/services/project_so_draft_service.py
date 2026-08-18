@@ -1956,6 +1956,93 @@ class ProjectSODraftService:
         self.db.flush()
         return deleted
 
+    def describe_delete_refusals(
+        self, orders: Sequence[ProjectSalesOrder]
+    ) -> List[Dict[str, Any]]:
+        """Which of these orders may NOT be deleted, and why, one entry each.
+
+        The same gate the single delete raises, asked as a question instead. The reviewer
+        selected several rows and has to be able to correct that selection in one pass, which
+        means seeing every refusal at once rather than the first one - so this reports the
+        whole set rather than stopping at the earliest.
+
+        ``provisional_ref`` rides along because that is what the screen shows: no id ever
+        reaches the UI, and "PSO-000004 is published" is the only form of the sentence the
+        reviewer can act on.
+        """
+        refusals: List[Dict[str, Any]] = []
+        for order in orders:
+            try:
+                self._assert_deletable(order)
+            except AppException as exc:
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                refusals.append(
+                    {
+                        "id": order.id,
+                        "provisional_ref": order.provisional_ref,
+                        "code": detail.get("code") or "so_not_deletable",
+                        "message": detail.get("message") or "This sales order cannot be deleted.",
+                    }
+                )
+        return refusals
+
+    def delete_orders(self, orders: Sequence[ProjectSalesOrder]) -> Dict[str, int]:
+        """Several drafts in ONE transaction, all or nothing.
+
+        Every order is checked BEFORE any of them is touched. A half-applied bulk delete is
+        the failure worth designing against: the reviewer would be left with a selection that
+        is partly gone and no way to say which part, and the natural next move (select the
+        same rows and retry) would then be wrong. So one undeletable order refuses the whole
+        call, and the caller is told which ones and why.
+
+        Counts are summed ACROSS the batch, keyed by ``schema.table``, so the answer says what
+        was removed rather than repeating a per-order breakdown nobody reads.
+
+        Duplicates are collapsed: a payload naming one order twice deletes it once and counts
+        it once. The caller commits.
+        """
+        seen: set = set()
+        unique: List[ProjectSalesOrder] = []
+        for order in orders:
+            if order.id in seen:
+                continue
+            seen.add(order.id)
+            unique.append(order)
+
+        refusals = self.describe_delete_refusals(unique)
+        if refusals:
+            # Belt to the route's braces. The route answers the structured 409 (it can name
+            # every refusal, which an AppException cannot carry), but the gate lives here so a
+            # future caller cannot delete past it by not asking first.
+            raise AppException(
+                status_code=409,
+                message=self.describe_refusals_sentence(refusals),
+                code="so_bulk_not_deletable",
+            )
+
+        totals: Dict[str, int] = {}
+        for order in unique:
+            for label, count in self.delete_order(order).items():
+                totals[label] = totals.get(label, 0) + count
+        return totals
+
+    @staticmethod
+    def describe_refusals_sentence(refusals: Sequence[Dict[str, Any]]) -> str:
+        """The refusals as ONE sentence, for the toast the reviewer actually sees.
+
+        The frontend's ``extractApiError`` is string-only by design, so the structured list
+        beside it would never be read aloud. Every reference is named: "fix the selection and
+        retry" is only actionable if the rows to un-tick are named.
+        """
+        named = "; ".join(
+            f"{item['provisional_ref']}: {item['message']}" for item in refusals
+        )
+        count = len(refusals)
+        return (
+            f"{count} of the selected sales order{'s' if count != 1 else ''} cannot be "
+            f"deleted, so none were. {named}"
+        )
+
     def _assert_deletable(self, order: ProjectSalesOrder) -> None:
         """A live commitment is amended, never deleted.
 

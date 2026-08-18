@@ -769,3 +769,214 @@ def test_a_deleted_draft_leaves_nothing_for_a_rebuild_to_trip_over(api):
         db
     )._clear_previous_drafts(po, version)
     assert (replaced, skipped, committed, reusable) == (0, 0, set(), {})
+
+
+# ----------------------------------------------------------- the bulk delete
+#
+# The list lets a reviewer tick several drafts at once, so the delete has to be one call:
+# N round trips would half-apply on the first refusal and leave the user looking at a
+# selection that is partly gone. The rule this section pins is ALL OR NOTHING - one
+# undeletable order in the selection refuses the whole call and deletes nothing, so the
+# answer is "fix the selection and retry" rather than "some of it happened".
+
+BULK = f"{BASE}/sales-orders/bulk-delete"
+
+
+def test_bulk_delete_removes_every_selected_draft_and_leaves_the_rest(api):
+    client, db, company_id, _user_id, project = api
+    product = _product(db, "WC")
+    po = _po(db, project)
+    first = _order(db, project, po=po, area_group="TOWER", lines=[(product, "10", "100.00", "UNIT")])
+    second = _order(db, project, po=po, area_group="PODIUM", lines=[(product, "5", "50.00", "UNIT")])
+    survivor = _order(db, project, po=po, area_group="COMMON", lines=[(product, "1", "1.00", "UNIT")])
+    line = _stored_lines(db, first.id)[0]
+    db.add(
+        SODraftFinding(
+            id=_uid(),
+            company_id=company_id,
+            project_sales_order_id=first.id,
+            line_id=line.id,
+            severity="warn",
+            code="price_vs_quotation",
+            detail=f"{MARKER} warning",
+        )
+    )
+    db.commit()
+    first_id, second_id, survivor_id = first.id, second.id, survivor.id
+
+    deleted = client.post(BULK, json={"ids": [first_id, second_id]})
+
+    assert deleted.status_code == 200, deleted.text
+    body = deleted.json()
+    assert body["success"] is True
+    assert body["deleted_count"] == 2
+    assert body["refused"] == []
+    # The counts are summed across the batch, not reported per order.
+    assert body["deleted"]["projects.sales_order_lines"] == 2
+    assert body["deleted"]["projects.so_draft_findings"] == 1
+
+    db.expire_all()
+    for row_id in (first_id, second_id):
+        assert db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == row_id).first() is None
+        assert _stored_lines(db, row_id) == []
+    assert db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == survivor_id).first()
+    assert len(_stored_lines(db, survivor_id)) == 1
+
+
+def test_one_undeletable_order_refuses_the_whole_selection(api):
+    """All or nothing. A half-applied bulk delete leaves the user unable to say what went."""
+    client, db, _company_id, _user_id, project = api
+    product = _product(db, "WC")
+    ok = _order(db, project, lines=[(product, "1", "1.00", "UNIT")])
+    published = _order(
+        db, project, status=SO_STATUS_PUBLISHED, lines=[(product, "1", "1.00", "UNIT")]
+    )
+    ok_id, published_id = ok.id, published.id
+    published_ref = published.provisional_ref
+
+    refused = client.post(BULK, json={"ids": [ok_id, published_id]})
+
+    assert refused.status_code == 409, refused.text
+    body = refused.json()
+    assert body["code"] == "so_bulk_not_deletable"
+    assert [item["id"] for item in body["refused"]] == [published_id]
+    assert body["refused"][0]["code"] == "so_published_not_deletable"
+    assert body["refused"][0]["provisional_ref"] == published_ref
+    # The sentence a person reads names the reference, not the id.
+    assert published_ref in body["message"]
+
+    db.expire_all()
+    assert db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == ok_id).first()
+    assert db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == published_id).first()
+
+
+def test_every_refused_order_is_named_with_its_own_reason(api):
+    """Four separate facts refuse a delete, and the reviewer has to see which applies to
+    which order or the selection cannot be corrected in one pass."""
+    client, db, company_id, _user_id, project = api
+    product = _product(db, "WC")
+    adopted = _order(db, project, lines=[(product, "1", "1.00", "UNIT")])
+    adopted.autocount_doc_no = "SO397450"
+    amended = _order(db, project, lines=[(product, "1", "1.00", "UNIT")])
+    db.add(
+        SOAmendment(
+            id=_uid(),
+            company_id=company_id,
+            project_sales_order_id=amended.id,
+            status=AMENDMENT_PUBLISHED,
+        )
+    )
+    supplied = _order(db, project, lines=[(product, "1", "1.00", "UNIT")])
+    db.add(
+        SOSupplyDecision(
+            id=_uid(),
+            company_id=company_id,
+            project_sales_order_id=supplied.id,
+            revision_no=1,
+            state=DECISION_ACTIVE,
+            line_snapshots=[],
+        )
+    )
+    db.commit()
+
+    refused = client.post(
+        BULK, json={"ids": [adopted.id, amended.id, supplied.id]}
+    )
+
+    assert refused.status_code == 409, refused.text
+    codes = {item["id"]: item["code"] for item in refused.json()["refused"]}
+    assert codes[adopted.id] == "so_autocount_linked"
+    assert codes[amended.id] == "so_amendment_published"
+    assert codes[supplied.id] == "so_supply_confirmed"
+
+
+def test_an_unknown_id_in_the_selection_is_a_404(api):
+    client, db, _company_id, _user_id, project = api
+    product = _product(db, "WC")
+    order = _order(db, project, lines=[(product, "1", "1.00", "UNIT")])
+    order_id = order.id
+
+    missing = client.post(BULK, json={"ids": [order_id, _uid()]})
+
+    assert missing.status_code == 404, missing.text
+    db.expire_all()
+    assert db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == order_id).first()
+
+
+def test_a_selection_spanning_two_projects_is_refused(api):
+    """The ids come from ONE project's list, and the edit right is that project's. A payload
+    mixing two would delete another project's drafts under this project's permission."""
+    from app.services.project_service import register_project
+
+    client, db, company_id, user_id, project = api
+    other = register_project(
+        db,
+        company_id=company_id,
+        actor_user_id=user_id,
+        developer_party_id=None,
+        title=f"{MARKER} Another tower",
+    )
+    product = _product(db, "WC")
+    mine = _order(db, project, lines=[(product, "1", "1.00", "UNIT")])
+    theirs = _order(db, other, lines=[(product, "1", "1.00", "UNIT")])
+    mine_id, theirs_id = mine.id, theirs.id
+
+    refused = client.post(BULK, json={"ids": [mine_id, theirs_id]})
+
+    assert refused.status_code == 422, refused.text
+    assert "one project" in refused.text.lower()
+    db.expire_all()
+    assert db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == mine_id).first()
+    assert db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == theirs_id).first()
+
+
+def test_an_empty_selection_is_refused_by_the_schema(api):
+    client, _db, _company_id, _user_id, _project = api
+
+    refused = client.post(BULK, json={"ids": []})
+
+    assert refused.status_code == 422, refused.text
+
+
+def test_a_selection_beyond_the_cap_is_refused(api):
+    """A cap, so one crafted payload cannot ask for a delete that holds the worker for
+    minutes. 200 is far above any page of the list."""
+    client, _db, _company_id, _user_id, _project = api
+
+    refused = client.post(BULK, json={"ids": [_uid() for _ in range(201)]})
+
+    assert refused.status_code == 422, refused.text
+
+
+def test_a_reader_cannot_bulk_delete(api):
+    from app.services.user_service import UserPermissionService
+
+    client, db, _company_id, _user_id, project = api
+    product = _product(db, "WC")
+    order = _order(db, project, lines=[(product, "1", "1.00", "UNIT")])
+    order_id = order.id
+
+    granted = UserPermissionService.check_user_has_permission
+    UserPermissionService.check_user_has_permission = lambda self, uid, slug: slug != DELETE
+    try:
+        refused = client.post(BULK, json={"ids": [order_id]})
+    finally:
+        UserPermissionService.check_user_has_permission = granted
+
+    assert refused.status_code == 403, refused.text
+    db.expire_all()
+    assert db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == order_id).first()
+
+
+def test_the_same_id_twice_deletes_it_once(api):
+    """A selection cannot really hold a duplicate, but a retry or a crafted payload can, and
+    deleting a row twice would count it twice in the answer."""
+    client, db, _company_id, _user_id, project = api
+    product = _product(db, "WC")
+    order = _order(db, project, lines=[(product, "1", "1.00", "UNIT")])
+    order_id = order.id
+
+    deleted = client.post(BULK, json={"ids": [order_id, order_id]})
+
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted_count"] == 1

@@ -306,6 +306,55 @@ class SalesOrderDeleteResponse(BaseModel):
     deleted: Dict[str, int] = {}
 
 
+#: The most sales orders one bulk delete may name.
+#:
+#: Far above any page of the list (which shows 25), so a real selection never meets it. It
+#: exists so one crafted payload cannot ask for a delete that walks thousands of orders and
+#: their children inside a single request, holding a worker for minutes.
+MAX_BULK_DELETE = 200
+
+
+class SalesOrderBulkDeleteRequest(BaseModel):
+    """`POST /sales-orders/bulk-delete`: several drafts in ONE call.
+
+    One call rather than N, and it is not an optimisation: N round trips half-apply. The
+    first refusal would leave the reviewer looking at a selection that is partly gone, with
+    no way to say which part. This is all-or-nothing (see the route).
+
+    Every id must belong to the SAME project - they came from one project's list, and the
+    edit right being checked is that project's.
+    """
+
+    ids: List[str] = Field(..., min_length=1, max_length=MAX_BULK_DELETE)
+
+
+class SalesOrderDeleteRefusal(BaseModel):
+    """One order the batch would not delete, and why, in the words a person reads.
+
+    ``provisional_ref`` is what the message names: no id ever reaches the screen, and the
+    reviewer corrects the selection by the reference printed in the list.
+    """
+
+    id: str
+    provisional_ref: str
+    code: str
+    message: str
+
+
+class SalesOrderBulkDeleteResponse(BaseModel):
+    """Mirrors the single delete, plus the count and the (always empty here) refusals.
+
+    ``refused`` is present on success so the shape is stable: a client reads one body
+    whether it deleted two orders or none. A batch that WOULD refuse never reaches this
+    schema - it is answered 409 before anything is deleted.
+    """
+
+    success: bool = True
+    deleted_count: int = 0
+    deleted: Dict[str, int] = {}
+    refused: List[SalesOrderDeleteRefusal] = []
+
+
 class RegroupGroup(BaseModel):
     area_group: Optional[str] = Field(None, max_length=80)
     line_ids: List[str] = Field(..., min_length=1)

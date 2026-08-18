@@ -21,6 +21,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -43,6 +44,8 @@ from app.schemas.project_sales_order import (
     PublishRequest,
     PublishResponse,
     RegroupRequest,
+    SalesOrderBulkDeleteRequest,
+    SalesOrderBulkDeleteResponse,
     SalesOrderDeleteResponse,
     SalesOrderDocumentSave,
     SalesOrderLineUpdate,
@@ -325,6 +328,84 @@ async def delete_sales_order(
         deleted = service.delete_order(order)
         db.commit()
         return {"success": True, "provisional_ref": reference, "deleted": deleted}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/sales-orders/bulk-delete", response_model=SalesOrderBulkDeleteResponse)
+async def bulk_delete_sales_orders(
+    payload: SalesOrderBulkDeleteRequest,
+    current_user: dict = Depends(require_permission(DELETE)),
+    db: Session = Depends(get_db),
+):
+    """Delete several selected drafts in ONE transaction, all or nothing.
+
+    **Why a batch endpoint and not N calls.** N calls half-apply: the first refusal leaves the
+    reviewer with a selection that is partly gone and no way to say which part, and the
+    obvious next move (re-select the same rows and retry) is then wrong. One call either
+    removes the whole selection or removes none of it.
+
+    **Every id must belong to one project** (422 ``so_bulk_cross_project``). The ids came from
+    one project's list and the right being checked is that project's, so a payload mixing two
+    would delete another project's drafts under this one's permission.
+
+    **The refusal is a 409 carrying every offender**, before anything is deleted:
+
+        {"message": "...", "code": "so_bulk_not_deletable",
+         "refused": [{"id", "provisional_ref", "code", "message"}, ...]}
+
+    Written as a raw ``JSONResponse`` rather than through ``AppException``, which carries one
+    message and cannot hold a list - the same shape the prompt registry's save-validation
+    already uses. ``message`` still names every reference, because the frontend's
+    ``extractApiError`` is string-only and that sentence is what the reviewer actually reads.
+
+    On success the body mirrors the single delete, with the counts summed across the batch.
+    """
+    try:
+        for pso_id in payload.ids:
+            validate_uuid_path(pso_id, resource="Sales order")
+        service = ProjectSODraftService(db)
+        # Ordered and de-duplicated, so the answer is stable and an order named twice is
+        # deleted (and counted) once.
+        orders = [service.get_order(pso_id) for pso_id in dict.fromkeys(payload.ids)]
+
+        project_ids = {order.project_id for order in orders}
+        if len(project_ids) > 1:
+            raise AppException(
+                status_code=422,
+                message=(
+                    "These sales orders belong to more than one project. A selection is "
+                    "deleted from one project's list at a time."
+                ),
+                code="so_bulk_cross_project",
+            )
+        project = projects.get_project_or_404(db, orders[0].project_id)
+        projects.assert_can_edit_project(
+            db, project, current_user["id"], permission_slugs(db, current_user["id"])
+        )
+
+        refusals = service.describe_delete_refusals(orders)
+        if refusals:
+            # Nothing has been written, so there is nothing to roll back; the 409 is the
+            # answer rather than an error path.
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "message": service.describe_refusals_sentence(refusals),
+                    "code": "so_bulk_not_deletable",
+                    "refused": refusals,
+                },
+            )
+
+        deleted = service.delete_orders(orders)
+        db.commit()
+        return {
+            "success": True,
+            "deleted_count": len(orders),
+            "deleted": deleted,
+            "refused": [],
+        }
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

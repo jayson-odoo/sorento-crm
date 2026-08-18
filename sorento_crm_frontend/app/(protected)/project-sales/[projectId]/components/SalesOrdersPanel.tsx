@@ -35,12 +35,42 @@ import { GroupingOriginNote, SalesOrderStatusPill } from './SalesOrderStatusPill
 import { SalesOrderBuildDialog } from './SalesOrderBuildDialog';
 
 /**
+ * Why one drafted sales order cannot be deleted, or undefined when it can.
+ *
+ * The SERVER owns this rule and refuses on four separate facts (published or amended, linked
+ * to an AutoCount document, carrying a published amendment, supply confirmed). The list row
+ * only carries the first two, so this pre-empts those and the other two come back as the
+ * bulk call's 409, whose message names each order to un-tick. Deliberately NOT a guess at the
+ * two it cannot see: a row wrongly greyed out is worse than one the server refuses with a
+ * reason.
+ *
+ * One function, three readers - the row's Delete button, its selection checkbox, and the
+ * count in the bulk strip - so a row can never be tickable and undeletable at the same time.
+ */
+export function salesOrderDeleteRefusal(
+  row: ProjectSalesOrderRow,
+): string | undefined {
+  if (row.status === 'published' || row.status === 'amended') {
+    return 'Published orders are amended, not deleted';
+  }
+  if (row.autocount_doc_no) {
+    return `In AutoCount as ${row.autocount_doc_no}, so it is amended, not deleted`;
+  }
+  return undefined;
+}
+
+/**
  * Sales orders (P7 and P11, contract sections 5 and 6).
  *
  * The list answers three questions in one pass: what the system proposed, what it refuses
  * to publish, and where each split came from. Grouping origin sits on every row because the
  * area split is a proposal: one real PO produced three sales orders, one of them an early
  * product subset with no area logic in it at all.
+ *
+ * It is also where a bad BUILD is undone. Building is idempotent per (PO version, schedule
+ * version), so a batch cut on the wrong key produces a dozen drafts that all have to go
+ * before it can be run again - which is why the rows tick and the delete is one call rather
+ * than twelve.
  */
 export function SalesOrdersPanel({ project }: { project: Project }) {
   const router = useRouter();
@@ -50,6 +80,8 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
   });
   const [building, setBuilding] = React.useState(false);
   const [pendingDelete, setPendingDelete] = React.useState<ProjectSalesOrderRow | null>(null);
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const [confirmBulkDelete, setConfirmBulkDelete] = React.useState(false);
 
   const params = React.useMemo(
     () => ({ page: pagination.pageIndex + 1, limit: pagination.pageSize }),
@@ -58,6 +90,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
   const salesOrders = useProjectSalesOrders(project.id, params);
   const build = useSalesOrderBuild(project.id);
   const removeOrder = useSalesOrderDelete(project.id);
+  const removeSelected = useSalesOrderBulkDelete(project.id);
 
   const rows = React.useMemo(() => salesOrders.data?.data ?? [], [salesOrders.data]);
   const total = salesOrders.data?.total ?? 0;
@@ -72,6 +105,19 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
 
   const columns = React.useMemo<ColumnDef<ProjectSalesOrderRow>[]>(
     () => [
+      // The shared selection column, never a hand-rolled Set: it binds to react-table's own
+      // `rowSelection` so the ids read out of it here are the ids the grid thinks are ticked.
+      // Only for someone who may edit - a reader has nothing to do with a selection.
+      ...(project.can_edit
+        ? [
+            buildSelectColumn<ProjectSalesOrderRow>({
+              enableRow: (row) => salesOrderDeleteRefusal(row.original) === undefined,
+              disabledReason: (row) => salesOrderDeleteRefusal(row.original),
+              rowLabel: (row) =>
+                `Select ${row.original.autocount_doc_no || row.original.provisional_ref}`,
+            }),
+          ]
+        : []),
       {
         accessorKey: 'provisional_ref',
         header: ({ column }) => <DataGridColumnHeader title="Reference" column={column} />,
@@ -243,6 +289,9 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
               cell: ({ row }: { row: { original: ProjectSalesOrderRow } }) => {
                 const published =
                   row.original.status === 'published' || row.original.status === 'amended';
+                // The SAME rule the checkbox beside it obeys, so a row can never be tickable
+                // and undeletable at once.
+                const refusal = salesOrderDeleteRefusal(row.original);
                 const reference =
                   row.original.autocount_doc_no || row.original.provisional_ref;
                 return (
@@ -277,13 +326,9 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
                       mode="icon"
                       variant="ghost"
                       size="sm"
-                      disabled={published}
-                      aria-label={`Delete ${row.original.autocount_doc_no || row.original.provisional_ref}`}
-                      title={
-                        published
-                          ? 'Published orders are amended, not deleted'
-                          : 'Delete this draft'
-                      }
+                      disabled={Boolean(refusal)}
+                      aria-label={`Delete ${reference}`}
+                      title={refusal ?? 'Delete this draft'}
                       onClick={(event) => {
                         // The row itself navigates to the order. Without this the dialog and
                         // the detail page would both open on one click.
@@ -312,7 +357,9 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
     data: rows,
     pageCount: Math.ceil(total / pagination.pageSize) || 0,
     getRowId: (row) => row.id,
-    state: { pagination },
+    state: { pagination, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -356,6 +403,40 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
               </div>
             </div>
 
+            {/* The bulk strip, in the toolbar's own grammar: a count badge, the destructive
+                action, then Clear. It REPLACES the counts row rather than appearing under it,
+                so the header states one thing at a time - what the list holds, or what is
+                selected. */}
+            {selectedIds.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
+                  {`${selectedIds.length} selected`}
+                </Badge>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-destructive hover:text-destructive"
+                  disabled={removeSelected.isPending}
+                  onClick={() => setConfirmBulkDelete(true)}
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                  {`Delete ${selectedIds.length} sales order${
+                    selectedIds.length === 1 ? '' : 's'
+                  }`}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-muted-foreground"
+                  onClick={() => setRowSelection({})}
+                >
+                  <X className="size-4" aria-hidden />
+                  Clear
+                </Button>
+              </div>
+            ) : (
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <Badge variant="outline">
                 {`${total.toLocaleString()} sales order${total === 1 ? '' : 's'}`}
