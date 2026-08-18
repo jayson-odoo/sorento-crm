@@ -825,6 +825,95 @@ describe('FulfilmentPlanningClient: select all', () => {
 });
 
 /**
+ * Building one board out of several searches (evidence run, 18 August 2026).
+ *
+ * A planner does not have the two orders they want to plan together on one screen: they search
+ * SO403765, tick it, then search SO396351 and tick that. Both halves of that have to hold - the
+ * search box has to still BE there once a row is ticked, and a tick has to survive the page of
+ * rows it was made on being replaced. Without either, the only way to a two-order board was to
+ * hand-write `?orders=` into the URL, which is not a thing a planner does.
+ */
+describe('FulfilmentPlanningClient: ticking across searches', () => {
+  function found(index: number): FulfilmentPlanningRow {
+    return {
+      row_kind: 'sales_order',
+      id: null,
+      sales_order_id: `so-${index}`,
+      so_number: `SO${100000 + index}`,
+      customer_name: 'A CUSTOMER SDN BHD',
+      line_count: 1,
+      review_state: 'not_started',
+      earliest_required_date: '2026-01-01',
+    };
+  }
+
+  /** One row per search needle, so each search replaces the page entirely. */
+  function respondPerSearch() {
+    listFulfilmentPlanning.mockImplementation((params: { query?: string }) =>
+      Promise.resolve(envelope([found(params?.query === 'SO100002' ? 2 : 1)])),
+    );
+  }
+
+  it('keeps the search box once an order is ticked', async () => {
+    respondPerSearch();
+
+    renderClient();
+    await screen.findByText('SO100001');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO100001 for planning' }));
+
+    expect(
+      screen.getByPlaceholderText('Search sales order, customer, project or product'),
+    ).toBeInTheDocument();
+  });
+
+  it('counts an order ticked on an earlier search, and opens the board on both', async () => {
+    respondPerSearch();
+    getPlanningBoard.mockReturnValue(new Promise(() => {}));
+
+    renderClient();
+    await screen.findByText('SO100001');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO100001 for planning' }));
+
+    fireEvent.change(
+      screen.getByPlaceholderText('Search sales order, customer, project or product'),
+      { target: { value: 'SO100002' } },
+    );
+    await screen.findByText('SO100002');
+    // The first order is off the page now, and still ticked.
+    expect(screen.getByRole('button', { name: /Plan together \(1\)/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO100002 for planning' }));
+    expect(screen.getByRole('button', { name: /Plan together \(2\)/ })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Plan together \(2\)/ }));
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith(
+        expect.stringContaining('orders=SO100001%2CSO100002'),
+        expect.objectContaining({ scroll: false }),
+      ),
+    );
+  });
+
+  it('clears every ticked order, including the ones no longer on the page', async () => {
+    respondPerSearch();
+
+    renderClient();
+    await screen.findByText('SO100001');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO100001 for planning' }));
+
+    fireEvent.change(
+      screen.getByPlaceholderText('Search sales order, customer, project or product'),
+      { target: { value: 'SO100002' } },
+    );
+    await screen.findByText('SO100002');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear the selection' }));
+
+    expect(screen.getByRole('button', { name: /Plan together \(0\)/ })).toBeDisabled();
+  });
+});
+
+/**
  * Searching the worklist (captain: "i should be able to search by product, by sales order, by
  * customer, to shrink the dataset i am viewing").
  *

@@ -1127,6 +1127,16 @@ Why, and why not the alternatives:
 The selection lives in the URL (`?orders=SO391698,SO324265,...` by sales-order number, never by id)
 so a board can be linked to and reloaded.
 
+**Ticking happens ACROSS searches** (18 August 2026, found in a live evidence run). "Filter to find,
+tick to select" only works if both survive each other: the search box stays on the toolbar while
+orders are ticked (`keepSearchWhileSelected` on the shared `DataGridListToolbar`, off everywhere
+else), and a tick outlives the page of rows it was made on, so "Plan together (N)" keeps counting an
+order the current search no longer shows. The same opt-in makes the toolbar's own "N selected" count
+the whole accumulated selection, because a strip reading "1 selected" beside "Plan together (2)" is
+two answers to one question; every other listing keeps the page-scoped count its bulk actions act on. Without the pair, two orders found by two different needles
+could only be boarded by hand-writing `?orders=` into the URL. The 50-order cap is unchanged and is
+still counted over the whole accumulated selection.
+
 ### 13.3 What the date axis is: a calendar control
 
 **Decided by the captain: "the date axis should be like google calendar, i can control by date, or

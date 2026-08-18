@@ -20,7 +20,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -517,22 +517,34 @@ export function FulfilmentPlanningClient() {
   const filtersActive = reviewState !== 'all' ? 1 : 0;
 
   /**
+   * Every sales-order number this session has seen, by row key.
+   *
+   * A board is assembled ACROSS searches: tick SO403765, search for SO396351, tick that too.
+   * The tick itself survives, because `rowSelection` is keyed by `planningRowKey` and nothing
+   * resets it, but the row it was made on is gone from the page, and the NUMBER only ever
+   * arrived with that row. Remembering the pairs as they go past is what lets a tick still
+   * name its order once the page has moved on. It only ever grows by rows actually rendered.
+   */
+  const seenOrderNumbers = React.useRef(new Map<string, string>());
+
+  /**
    * The ticked orders, by NUMBER, which is what a board is addressed with (13.2, never ids).
    *
-   * Read off the table's own selection rather than a parallel array, so ticking a row and
-   * ticking the header mean exactly the same thing. The row id is `planningRowKey`, so the
-   * number is resolved back through the rows the page is holding.
+   * Read off the table's own selection state rather than a parallel array, so ticking a row
+   * and ticking the header mean exactly the same thing - but off `rowSelection` itself, NOT
+   * `table.getSelectedRowModel()`, which is page-scoped and would forget an order the moment
+   * a new search replaced the rows it was ticked on.
    */
   const selected = React.useMemo(() => {
-    const byKey = new Map(rows.map((row) => [planningRowKey(row), row]));
-    return selectedRowIds(table)
-      .map((id) => byKey.get(id)?.so_number)
+    // Idempotent, and derived only from `rows`: re-running it can add nothing new.
+    for (const row of rows) {
+      if (row.so_number) seenOrderNumbers.current.set(planningRowKey(row), row.so_number);
+    }
+    return Object.entries(rowSelection)
+      .filter(([, ticked]) => ticked)
+      .map(([key]) => seenOrderNumbers.current.get(key))
       .filter((soNumber): soNumber is string => Boolean(soNumber));
-    // `rowSelection` is in the deps on purpose: `table` is a stable object whose selection
-    // state changes underneath it, so without it the memo would hold the first selection
-    // forever. The lint rule cannot see through the table instance.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, table, rowSelection]);
+  }, [rows, rowSelection]);
 
   const overCap = selected.length > MAX_BOARD_SELECTION;
   /** How many were asked for, whether by tick or by link. */
@@ -643,6 +655,9 @@ export function FulfilmentPlanningClient() {
             <DataGridListToolbar
               table={table}
               exportConfig={false}
+              // The selection here is BUILT by searching: two orders worth planning together
+              // are rarely on one page, so the box has to survive the first tick.
+              keepSearchWhileSelected
               searchSlot={
                 <div className="relative">
                   <Search

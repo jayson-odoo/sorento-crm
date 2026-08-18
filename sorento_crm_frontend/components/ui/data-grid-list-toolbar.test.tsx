@@ -65,6 +65,59 @@ describe('DataGridListToolbar', () => {
     expect(screen.getByRole('button', { name: /clear/i })).toBeInTheDocument();
   });
 
+  it('hides the search while rows are selected, unless the page opts out (D2/H)', () => {
+    render(
+      <Harness
+        initialSelection={{ '1': true }}
+        toolbarProps={{ exportConfig: false, searchSlot: <input placeholder="Search rows" /> }}
+      />,
+    );
+    expect(screen.queryByPlaceholderText('Search rows')).toBeNull();
+  });
+
+  it('keeps the search beside the bulk strip when keepSearchWhileSelected is set', () => {
+    render(
+      <Harness
+        initialSelection={{ '1': true }}
+        toolbarProps={{
+          exportConfig: false,
+          searchSlot: <input placeholder="Search rows" />,
+          keepSearchWhileSelected: true,
+        }}
+      />,
+    );
+    // Both, at once: the search is how the next order to tick is found, and the strip is
+    // what says how many are ticked already.
+    expect(screen.getByPlaceholderText('Search rows')).toBeInTheDocument();
+    expect(screen.getByText(/1 selected/i)).toBeInTheDocument();
+    // The search comes FIRST, where it sits when nothing is selected, so it does not move
+    // under the cursor the moment a row is ticked.
+    const search = screen.getByPlaceholderText('Search rows');
+    const badge = screen.getByText(/1 selected/i);
+    expect(search.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  /**
+   * A tick made on a page (or a search) that is no longer loaded: the key is in
+   * `rowSelection`, but the row is not in the table's row model.
+   */
+  it('counts only the loaded rows in the bulk strip by default', () => {
+    render(<Harness initialSelection={{ '1': true, 'off-page': true }} toolbarProps={{ exportConfig: false }} />);
+    expect(screen.getByText(/1 selected/i)).toBeInTheDocument();
+  });
+
+  it('counts the whole accumulated selection when keepSearchWhileSelected is set', () => {
+    render(
+      <Harness
+        initialSelection={{ '1': true, 'off-page': true }}
+        toolbarProps={{ exportConfig: false, keepSearchWhileSelected: true }}
+      />,
+    );
+    // The page that opted into ticking across searches is counting the SET, so the strip has
+    // to agree with the count its own action button shows.
+    expect(screen.getByText(/2 selected/i)).toBeInTheDocument();
+  });
+
   it('does NOT render a Filters button when no filters are wired (D3)', () => {
     render(<Harness toolbarProps={{ exportConfig: false }} />);
     expect(screen.queryByRole('button', { name: /filters/i })).toBeNull();
