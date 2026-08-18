@@ -188,8 +188,10 @@ interface ProductDiscontinuedScopeEditorProps {
   /**
    * Rows carrying a refreshed brand-load flag. Kept apart from ``onChange`` so a
    * failed fetch cannot mark the scope set edited and rewrite it on the next save.
+   * Required for that reason: a consumer that left it out would route the failure
+   * back into ``onChange`` and inherit the hazard this split exists to remove.
    */
-  onBrandsLoadErrorChange?: (rows: ScopeRow[]) => void;
+  onBrandsLoadErrorChange: (rows: ScopeRow[]) => void;
 }
 
 /**
@@ -298,7 +300,7 @@ const ProductDiscontinuedScopeEditor = ({
                 )
               }
               onBrandsLoadErrorChange={(hasError) =>
-                (onBrandsLoadErrorChange ?? onChange)(
+                onBrandsLoadErrorChange(
                   rows.map((current, i) =>
                     i === index
                       ? { ...current, brandsLoadError: hasError }
