@@ -375,7 +375,7 @@ function allocate(
         qty: fromMinor(reserved),
         location,
         warehouse_id: `wh-${location}`,
-        reason: `Free unclaimed stock at ${location} covers this much by the required date.`,
+        reason: `Free unclaimed stock at ${location} covers this much by the delivery date.`,
       });
     }
     if (buy > 0) {
@@ -386,7 +386,7 @@ function allocate(
         reason:
           reserved > 0
             ? `Free stock at ${location} ran out on this line; the residual is bought.`
-            : `Nothing free at ${location} by the required date, so the whole quantity is bought.`,
+            : `Nothing free at ${location} by the delivery date, so the whole quantity is bought.`,
       });
     }
     contribution.sources = sources;
@@ -633,7 +633,7 @@ function leadingFactorOf(other: BoardContribution, mine: BoardContribution): str
 /** The two commonest reasons the queue is ahead, in the words the server uses. */
 function aheadPhraseOf(byFactor: Record<string, number>): string {
   const phrases: Record<string, string> = {
-    need_by_date: 'an earlier required date',
+    need_by_date: 'an earlier delivery date',
     document_age: 'an older order date',
     customer_credit: 'shorter payment terms',
     demand_class: 'a higher-ranked demand type',

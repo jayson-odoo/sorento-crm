@@ -82,7 +82,7 @@ function line(overrides: Partial<SupplyLine> = {}): SupplyLine {
       {
         kind: 'reserve',
         qty: '200',
-        reason: 'Free stock at BRW-BB covers the need by the required date.',
+        reason: 'Free stock at BRW-BB covers the need by the delivery date.',
         source_location: 'BRW-BB',
         source_warehouse_id: WH_BRW,
       },
@@ -128,7 +128,7 @@ const CONFIRMED = proposal({
           {
             kind: 'reserve',
             qty: '200',
-            reason: 'Free stock at BRW-BB covers the need by the required date.',
+            reason: 'Free stock at BRW-BB covers the need by the delivery date.',
             source_location: 'BRW-BB',
             source_warehouse_id: WH_BRW,
           },

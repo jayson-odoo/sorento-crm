@@ -56,7 +56,7 @@ describe('amendDraftFrom: the proposal, as something a person can edit', () => {
         location: 'BRW-BB',
         warehouse_id: 'wh-BRW-BB',
         qty: '40',
-        reason: 'Free unclaimed stock at BRW-BB covers this much by the required date.',
+        reason: 'Free unclaimed stock at BRW-BB covers this much by the delivery date.',
       },
     ]);
     expect(draft.borrow).toEqual([]);

@@ -106,7 +106,7 @@ function summary(overrides: Partial<ReconciliationSummary> = {}): Reconciliation
         stock_location: 'BRW-BB',
         link: 'linked',
         candidate_count: 1,
-        reason: 'Matched on product and required date 01 Jul 2026.',
+        reason: 'Matched on product and delivery date 01 Jul 2026.',
       },
     ],
     exceptions: [],
@@ -165,7 +165,7 @@ function supply(overrides: Partial<SupplyProposal> = {}): SupplyProposal {
           {
             kind: 'reserve',
             qty: '200',
-            reason: 'Free stock at BRW-BB covers the need by the required date.',
+            reason: 'Free stock at BRW-BB covers the need by the delivery date.',
             source_location: 'BRW-BB',
             source_warehouse_id: WH_BRW,
           },
@@ -548,7 +548,7 @@ describe('FulfilmentPlanningSheet', () => {
                 {
                   kind: 'reserve',
                   qty: '200',
-                  reason: 'Free stock at BRW-BB covers the need by the required date.',
+                  reason: 'Free stock at BRW-BB covers the need by the delivery date.',
                   source_location: 'BRW-BB',
                   source_warehouse_id: WH_BRW,
                 },

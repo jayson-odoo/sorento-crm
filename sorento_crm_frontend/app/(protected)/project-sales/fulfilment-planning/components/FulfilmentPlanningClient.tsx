@@ -309,7 +309,7 @@ export function FulfilmentPlanningClient() {
       {
         id: 'earliest_required_date',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Earliest required" column={column} />
+          <DataGridColumnHeader title="Earliest delivery" column={column} />
         ),
         cell: ({ row }) =>
           row.original.earliest_required_date ? (
@@ -321,7 +321,7 @@ export function FulfilmentPlanningClient() {
           ),
         size: 140,
         minSize: 120,
-        meta: { headerTitle: 'Earliest required', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Earliest delivery', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         id: 'outstanding_qty',
@@ -591,7 +591,7 @@ export function FulfilmentPlanningClient() {
         <div className="flex min-w-0 items-center gap-2">
           <h1 className="text-xl font-semibold break-words">Fulfilment planning</h1>
           <InfoHint label="About fulfilment planning">
-            Outstanding project sales orders, earliest required date first.
+            Outstanding project sales orders, earliest delivery date first.
           </InfoHint>
         </div>
         <div className="flex flex-wrap items-center gap-2">

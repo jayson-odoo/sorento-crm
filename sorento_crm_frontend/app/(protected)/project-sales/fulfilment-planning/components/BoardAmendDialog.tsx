@@ -109,7 +109,7 @@ export function BoardAmendDialog({
 
           {/* Dated supply, not a choice: it is shown and never typed, exactly as on the sheet.
               An amendment cannot promise incoming stock that is not coming. */}
-          <Section label="Incoming by the required date">
+          <Section label="Incoming by the delivery date">
             <span data-testid="amend-incoming" className="text-sm tabular-nums">
               {draft.timely_spo_qty}
             </span>

@@ -247,7 +247,7 @@ export interface SupplyComponent {
   qty: string;
   /**
    * The short sentence the rule that produced the quantity wrote (AC-B14), for example
-   * "Reserve 10: free stock at BRW covers the need by the required date". Deterministic,
+   * "Reserve 10: free stock at BRW covers the need by the delivery date". Deterministic,
    * frozen with the snapshot at confirmation, and shown beside the quantity always.
    */
   reason: string;
