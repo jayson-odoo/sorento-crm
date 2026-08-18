@@ -303,6 +303,46 @@ def test_takeover_taker_without_respond_id_skips_push(notify, db):
         assert tracking.assigned_to_id == me
 
 
+@patch("app.services.sla_service.ConversationSLATrackingService._notify_reassignment")
+def test_takeover_dual_team_set_prefers_trackings_own_set(notify, db):
+    """The taker holds a tier-1 link in BOTH team sets under the same agent - the
+    per-team-set invariant allows this (PLAN-tier1-teamset-invariant). Deterministic
+    (tier desc, code asc) ordering alone would pick 'set_p' (p < q alphabetically);
+    the tracking's own team_set_code='set_q' must win instead, so takeover doesn't
+    silently move the task to the wrong team/set."""
+    pid = _policy(db)
+    me = _user(db, "me", respond_user_id="r-me")
+    peer = _user(db, "peer", respond_user_id="r-peer")
+    team_p = _team(db, "Team P")
+    team_q = _team(db, "Team Q")
+    _member(db, team_p, me)
+    _member(db, team_q, me)
+    _member(db, team_q, peer)  # shared team with peer -> me can see peer's task
+    agent_id = _agent(db)
+    _agent_team(db, agent_id, team_p, code="set_p", tier=1)
+    _agent_team(db, agent_id, team_q, code="set_q", tier=1)
+    tid = _track(db, pid, assignee=peer, src="complaint")
+    db.query(ConversationSLATracking).filter(ConversationSLATracking.id == tid).update(
+        {"agent_id": agent_id, "team_set_code": "set_q", "current_tier": 1}
+    )
+    db.commit()
+
+    tracking = ConversationSLATrackingService(db).takeover(tid, me, team_q)
+
+    assert tracking.assigned_to_id == me
+    assert tracking.team_set_code == "set_q", "must stay on the tracking's own team set"
+    assert tracking.agent_id == agent_id
+    cur = (
+        db.query(AgentTeamRoundRobinCursor)
+        .filter(
+            AgentTeamRoundRobinCursor.agent_id == agent_id,
+            AgentTeamRoundRobinCursor.team_id == team_q,
+        )
+        .first()
+    )
+    assert cur is not None and cur.last_assigned_user_id == me
+
+
 def test_takeover_blocked_when_not_visible(db):
     pid = _policy(db)
     me = _user(db, "me")
@@ -386,6 +426,37 @@ def test_reassign_rederives_target_tier_in_agent_chain(notify, db):
     # clocks preserved
     assert tracking.due_at == datetime(2026, 6, 1, 14, 0, 0)
     assert tracking.current_tier_started_at == datetime(2026, 6, 1, 9, 0, 0)
+
+
+@patch("app.services.sla_service.ConversationSLATrackingService._notify_reassignment")
+def test_reassign_dual_team_set_prefers_trackings_own_set(notify, db):
+    """The target holds a tier-1 link in BOTH team sets under the tracking's agent -
+    per-team-set relaxation allows it. Deterministic (tier desc, code asc) ordering
+    alone would flip the tracking to 'set_p'; passing the tracking's own
+    team_set_code='set_q' must keep it there instead."""
+    pid = _policy(db)
+    me = _user(db, "me")
+    target = _user(db, "tay", respond_user_id="r-tay")
+    agent_id = _agent(db)
+    team_p = _team(db, "Team P")
+    team_q = _team(db, "Team Q")
+    _member(db, team_p, me)       # me sees target via shared team_p membership (scope-B)
+    _member(db, team_p, target)
+    _member(db, team_q, target)
+    _agent_team(db, agent_id, team_p, code="set_p", tier=1)
+    _agent_team(db, agent_id, team_q, code="set_q", tier=1)
+    tid = _track(db, pid, assignee=me, src="complaint")
+    db.query(ConversationSLATracking).filter(ConversationSLATracking.id == tid).update(
+        {"agent_id": agent_id, "team_set_code": "set_q", "current_tier": 1}
+    )
+    db.commit()
+
+    tracking = ConversationSLATrackingService(db).reassign(tid, me, target)
+
+    assert tracking.assigned_to_id == target
+    assert tracking.team_set_code == "set_q", "must stay on the tracking's own team set"
+    assert tracking.current_tier == 1
+    assert tracking.agent_id == agent_id
 
 
 def test_reassign_scope_b_enforced(db):

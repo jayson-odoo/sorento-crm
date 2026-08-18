@@ -2088,11 +2088,13 @@ class AccessAgentService:
 
     def _validate_tier1_invariant_for_assignments(self, agent_id: str, assignments: list[dict]) -> None:
         """
-        Tier-1 membership invariant (PLAN-sla-assignee-team-derivation), TEAM-level: linking
+        Tier-1 membership invariant (PLAN-tier1-teamset-invariant), TEAM-level: linking
         teams at tier 1 must not leave any user a member of two DIFFERENT tier-1-linked
-        teams. The same team linked at tier 1 under many agents is fine (shared executive
-        pools). Cross-tier reuse of a tier-1 team (same team at tier 2/3 elsewhere) does not
-        break routing derivation — warn only.
+        teams WITHIN THE SAME TEAM SET (AgentTeam.code). Tier-1 membership in two different
+        team sets is legal: the tracking's team_set_code tells derivation which one applies.
+        The same team linked at tier 1 under many agents is fine (shared executive pools).
+        Cross-tier reuse of a tier-1 team (same team at tier 2/3 elsewhere) does not break
+        routing derivation, so it is warn only.
         """
         import logging
 
@@ -2160,34 +2162,45 @@ class AccessAgentService:
             if form_codes:
                 other_links_q = other_links_q.filter(AccessAgent.code.notin_(form_codes))
             other_links = other_links_q.all()
-        conflict_by_user: dict[str, tuple[str, str, str]] = {}
-        for uid, other_agent_id, code, _tid, team_name in other_links:
-            conflict_by_user.setdefault(str(uid), (str(other_agent_id), str(code), str(team_name)))
 
-        # Teams each user belongs to within this payload's tier-1 assignments.
-        local_teams_by_user: dict[str, set[str]] = {}
-        for _code, tid in tier1_assignments:
+        # Teams each user belongs to within this payload's tier-1 assignments, keyed
+        # per team set: the invariant is scoped per code, so the same user leading two
+        # teams in two DIFFERENT sets is legal.
+        local_teams_by_user_code: dict[tuple[str, str], set[str]] = {}
+        for code, tid in tier1_assignments:
             for uid in members_by_team.get(tid, set()):
-                local_teams_by_user.setdefault(uid, set()).add(tid)
+                local_teams_by_user_code.setdefault((uid, str(code)), set()).add(tid)
 
-        for uid, local_teams in local_teams_by_user.items():
-            other = conflict_by_user.get(uid)
+        # An existing tier-1 link only conflicts when it sits in a team set this
+        # payload also puts the user at tier 1 in. That filtering is the lookup below:
+        # the map is keyed per (user, code) and only ever read at the keys the payload
+        # produced, so entries for other team sets are simply never consulted. The
+        # tuple carries only what the key does not.
+        conflict_by_user_code: dict[tuple[str, str], tuple[str, str]] = {}
+        for uid, other_agent_id, code, _tid, team_name in other_links:
+            conflict_by_user_code.setdefault(
+                (str(uid), str(code)), (str(other_agent_id), str(team_name))
+            )
+
+        for (uid, code), local_teams in local_teams_by_user_code.items():
+            other = conflict_by_user_code.get((uid, code))
             if len(local_teams) <= 1 and not other:
                 continue
             user = self.db.query(User).filter(User.id == uid).first()
             user_label = (user.name or user.email) if user else uid
             if other:
-                other_agent_id, other_code, other_team = other
+                other_agent_id, other_team = other
                 agent = self.db.query(AccessAgent).filter(AccessAgent.id == other_agent_id).first()
                 agent_label = agent.code if agent else other_agent_id
                 raise handle_validation_error(
                     f"User '{user_label}' is already in tier-1 team '{other_team}' "
-                    f"(agent '{agent_label}', team set '{other_code}'). "
-                    "A user may only belong to one tier-1 team."
+                    f"(agent '{agent_label}', team set '{code}'). "
+                    "A user may only belong to one tier-1 team per team set."
                 )
             raise handle_validation_error(
                 f"User '{user_label}' would belong to multiple tier-1 teams "
-                f"({sorted(local_teams)}). A user may only belong to one tier-1 team."
+                f"({sorted(local_teams)}) in team set '{code}'. "
+                "A user may only belong to one tier-1 team per team set."
             )
 
         # Warn-only: tier-1 team reused at other tiers (here or under other agents).
@@ -2964,21 +2977,24 @@ class TeamService:
 
     def _validate_tier1_membership_invariant(self, team_id: str, user_id: str) -> None:
         """
-        Tier-1 membership invariant (PLAN-sla-assignee-team-derivation), TEAM-level: a user
-        may belong to at most ONE team that is linked at tier 1 under a CONVERSATION-SLA
-        agent, so assignee-driven routing derivation is unambiguous. FORM-SLA agents
-        (their code owns rows in form_sla_configs) route via FormSLAConfig stages, not
-        membership derivation, so their tier-1 teams do NOT count — a user may sit in many
-        form-SLA tier-1 teams plus at most one conversation-SLA tier-1 team. The same team
-        linked at tier 1 under many agents is fine (shared executive pools) — derivation
-        prefers the tracking's current agent and falls back to the deterministic first link.
+        Tier-1 membership invariant (PLAN-tier1-teamset-invariant), TEAM-level: a user may
+        belong to at most ONE team that is linked at tier 1 under a CONVERSATION-SLA agent
+        PER TEAM SET (AgentTeam.code), so assignee-driven routing derivation is unambiguous
+        once the tracking's team_set_code is known. Tier-1 membership in two DIFFERENT team
+        sets is legal (e.g. Marketing - Promotion and Marketing - Product under the same
+        agent). FORM-SLA agents (their code owns rows in form_sla_configs) route via
+        FormSLAConfig stages, not membership derivation, so their tier-1 teams do NOT count
+        (a user may sit in many form-SLA tier-1 teams plus one conversation-SLA tier-1 team
+        per team set). The same team linked at tier 1 under many agents is fine (shared
+        executive pools); derivation prefers the tracking's current agent and falls back to
+        the deterministic first link.
         """
         from app.services.form_sla_service import form_sla_agent_codes
 
         form_codes = form_sla_agent_codes(self.db)
 
-        # Does the target team have a CONVERSATION-SLA tier-1 link? A team linked
-        # at tier 1 ONLY under form-SLA agents can never conflict.
+        # Which team SETS does the target team carry a CONVERSATION-SLA tier-1 link
+        # under? A team linked at tier 1 ONLY under form-SLA agents can never conflict.
         new_links_q = (
             self.db.query(AgentTeam)
             .join(AccessAgent, AccessAgent.id == AgentTeam.agent_id)
@@ -2986,10 +3002,14 @@ class TeamService:
         )
         if form_codes:
             new_links_q = new_links_q.filter(AccessAgent.code.notin_(form_codes))
-        if not new_links_q.first():
+        new_links = new_links_q.all()
+        new_codes = {str(l.code) for l in new_links if getattr(l, "code", None) is not None}
+        if not new_codes:
             return
 
-        # Other tier-1 teams the user is in that carry a CONVERSATION-SLA link.
+        # Other tier-1 teams the user is in that carry a CONVERSATION-SLA link UNDER
+        # ONE OF THOSE TEAM SETS. A tier-1 team in a different set is not a conflict:
+        # the tracking's team_set_code tells derivation which one applies.
         existing_q = (
             self.db.query(AgentTeam, Team.name)
             .join(TeamMember, TeamMember.team_id == AgentTeam.team_id)
@@ -2999,6 +3019,7 @@ class TeamService:
                 TeamMember.user_id == user_id,
                 AgentTeam.tier == 1,
                 AgentTeam.team_id != team_id,
+                AgentTeam.code.in_(sorted(new_codes)),
             )
         )
         if form_codes:
@@ -3017,7 +3038,7 @@ class TeamService:
         raise handle_validation_error(
             f"User '{user_label}' is already in tier-1 team '{team_name}' "
             f"(agent '{agent_label}', team set '{link.code}'). "
-            "A user may only belong to one tier-1 team."
+            "A user may only belong to one tier-1 team per team set."
         )
 
     def add_team_member(
