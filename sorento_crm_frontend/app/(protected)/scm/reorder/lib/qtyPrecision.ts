@@ -68,11 +68,6 @@ export function exceedsPrecision(text: string, dp: number): boolean {
   return decimalsIn(text) > dp;
 }
 
-/** A quantity rendered at its own precision: never padded, never truncated. */
-export function fmtQty(value: number | null | undefined, dp = 0): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return '-';
-  return new Intl.NumberFormat('en-GB', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: Math.min(Math.max(dp, 0), 4),
-  }).format(value);
-}
+/** A quantity rendered at its own precision. Defined in `lib/format.ts` (the one home
+ * for formatters); re-exported here so the precision helpers stay one import. */
+export { fmtQty } from '../../lib/format';

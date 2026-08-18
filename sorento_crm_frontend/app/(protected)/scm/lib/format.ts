@@ -224,3 +224,16 @@ export function fmtDateTime(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return EM_DASH;
   return `${d.toLocaleDateString(DATE_LOCALE, DATE_PARTS)}, ${d.toLocaleTimeString(DATE_LOCALE, TIME_PARTS)}`;
 }
+
+/**
+ * A quantity rendered at its own precision: never padded, never truncated. `dp` is the
+ * frozen `uom_decimal_places` of the row (0-4). Lives here, not next to its callers,
+ * because this file is the one home for number formatting (see format.guard.test.ts).
+ */
+export function fmtQty(value: number | null | undefined, dp = 0): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return EM_DASH;
+  return new Intl.NumberFormat('en-GB', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: Math.min(Math.max(dp, 0), 4),
+  }).format(value);
+}
