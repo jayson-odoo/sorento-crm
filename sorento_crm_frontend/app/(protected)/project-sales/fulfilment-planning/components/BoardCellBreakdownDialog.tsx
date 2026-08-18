@@ -15,16 +15,18 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
-import { amendNeedsReason, factorLabel, rankingNote } from '../../_shared/lib/fulfilmentBoard';
+import { rankingNote } from '../../_shared/lib/fulfilmentBoard';
+import { amendSummary } from '../../_shared/lib/boardAmend';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { BoardAmendDialog } from './BoardAmendDialog';
+import { BoardRankPopover } from './BoardRankPopover';
+import { BoardTrailPopover } from './BoardTrailPopover';
+import { CellStockTable } from './CellStockTable';
 import type {
   BoardCell,
-  BoardCellLocation,
   BoardContribution,
   BoardDecision,
   BoardDraft,
@@ -62,19 +64,12 @@ export function BoardCellBreakdownDialog({
   bucketLabel,
   draft,
   onDecide,
-  onOpenStock,
   onClose,
 }: {
   cell: BoardCell;
   bucketLabel: string;
   draft: BoardDraft;
   onDecide: (key: string, decision: BoardDecision | null) => void;
-  /** Drill into what a location's position is made of. Addressed by ids, never by item code. */
-  onOpenStock?: (target: {
-    productId: string;
-    warehouseId: string;
-    locationCode: string;
-  }) => void;
   onClose: () => void;
 }) {
   /**
@@ -290,7 +285,13 @@ export function BoardCellBreakdownDialog({
           const share = shareNote(row.original);
           return (
             <div className="min-w-0" title={why}>
-              <span className="block truncate text-sm tabular-nums">{strip}</span>
+              <div className="flex items-start gap-1">
+                <span className="min-w-0 flex-1 truncate text-sm tabular-nums">{strip}</span>
+                {/* The whole ladder behind that strip, structured, under an icon (the
+                    captain: "need more justification ... STRUCTURED instead of plain text
+                    explaining, you can put it under the tooltip"). */}
+                <BoardTrailPopover contribution={row.original} />
+              </div>
               {share && (
                 // WRAPS rather than truncates, unlike the strip above it. Measured in the
                 // browser at the column's saved width: "1 line ahead wanting 60 · 955 lef..."
@@ -326,16 +327,23 @@ export function BoardCellBreakdownDialog({
         // which was identical on every row - because the factors are identical there, which is
         // a fact about the POLICY, not about any row - and truncated mid-word. The captain:
         // "the word here is too long already, don't explain too much". The facts are per row
-        // and wanted only when comparing two of them, so they are a tooltip; the policy's own
-        // flatness is stated once at the top.
+        // and wanted only when comparing two of them, so they are behind the icon; the policy's
+        // own flatness is stated once at the top.
+        //
+        // The icon replaces the hover TITLE the facts used to live in ("how is the rank
+        // calculated? can have an information tooltip to show the calculation"): hover prose
+        // cannot be read on a touch screen, cannot be compared against a second row, and was
+        // the very shape the captain rejected on the justification beside it.
         cell: ({ row }) => (
-          <span
-            data-testid={`rank-factors-${row.original.key}`}
-            className="block truncate text-sm font-medium tabular-nums text-end"
-            title={factorsTitle(row.original)}
-          >
-            {ranking ? ranking.cell : row.original.rank_score.toFixed(2)}
-          </span>
+          <div className="flex min-w-0 items-center justify-end gap-1">
+            <span
+              data-testid={`rank-factors-${row.original.key}`}
+              className="min-w-0 truncate text-sm font-medium tabular-nums text-end"
+            >
+              {ranking ? ranking.cell : row.original.rank_score.toFixed(2)}
+            </span>
+            <BoardRankPopover contribution={row.original} note={ranking?.note} />
+          </div>
         ),
         size: 110,
         minSize: 90,
@@ -400,43 +408,19 @@ export function BoardCellBreakdownDialog({
             <p className="text-sm text-muted-foreground break-words">{ranking.note}</p>
           )}
 
-          {/* The source strip again, because the dialog has to stand on its own: a reader who
-              opened it from a cell they can no longer see still needs to know one cell can
-              draw on several locations. */}
-          {/* What is actually AT each location, not only what is owed from it. The captain's
-              "where will I need to source to fulfil", answered with facts. */}
-          <div className="flex flex-wrap gap-1.5">
-            {cell.locations.map((entry) => {
-              // Only a position the server addressed can be drilled into: two products share
-              // the code B2155-NL-BLUE on the live book, so resolving one from the code would
-              // answer confidently about the wrong product.
-              const drillable = Boolean(entry.product_id && entry.warehouse_id && onOpenStock);
-              return (
-                <span
-                  key={entry.location ?? '__none__'}
-                  data-testid={`cell-location-${entry.location ?? 'none'}`}
-                  title={locationTitle(entry)}
-                  role={drillable ? 'button' : undefined}
-                  tabIndex={drillable ? 0 : undefined}
-                  onClick={
-                    drillable
-                      ? () =>
-                          onOpenStock?.({
-                            productId: entry.product_id as string,
-                            warehouseId: entry.warehouse_id as string,
-                            locationCode: entry.location ?? '',
-                          })
-                      : undefined
-                  }
-                  className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(
-                    entry.location ? 'draft' : 'rejected',
-                  )}${drillable ? ' cursor-pointer hover:underline' : ''}`}
-                >
-                  {locationStrip(entry)}
-                </span>
-              );
-            })}
-          </div>
+          {/* What is actually AT each location, not only what is owed from it - the captain's
+              "where will I need to source to fulfil", answered with facts, and the dialog has to
+              carry it because a reader who opened it from a cell they can no longer see still
+              needs to know one cell can draw on several locations.
+
+              KEYED BY THE CELL, so the locations a reader expanded close when the dialog is
+              pointed at a different cell: an expansion left open would otherwise show the
+              previous cell's documents under the new cell's row. */}
+          <CellStockTable
+            key={`${cell.row_key ?? cell.item_code}|${cell.bucket_key}`}
+            locations={cell.locations}
+            itemCode={cell.item_code}
+          />
         </DialogHeader>
 
         {/* The ONLY scrolling region, and it holds the row actions. The footer below is its
@@ -502,17 +486,22 @@ export function BoardCellBreakdownDialog({
             pageSize={25}
           />
 
-          {amending && (
-            <AmendPanel
-              contribution={amending}
-              onCancel={() => setAmending(null)}
-              onSave={(decision) => {
-                onDecide(amending.key, decision);
-                setAmending(null);
-              }}
-            />
-          )}
         </DialogBody>
+
+        {/* The editor is a DIALOG OVER THIS ONE, not a panel under the table. It used to be
+            appended below a 25-row grid inside this same scroll region, with no focus moved
+            to it: pressing Amend moved nothing the planner could see, so the form was never
+            found and the verb read as broken (the captain: "the amend is not working"). */}
+        {amending && (
+          <BoardAmendDialog
+            contribution={amending}
+            onCancel={() => setAmending(null)}
+            onSave={(decision) => {
+              onDecide(amending.key, decision);
+              setAmending(null);
+            }}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -566,12 +555,20 @@ function DecisionCell({
           )}`}
           title={decision.reason ?? ''}
         >
+          {/* An amendment can now reserve, borrow and buy at once, so the pill states the
+              COMPOSITION: naming one of the three describes a decision nobody took. */}
           {decision.verdict === 'approved'
             ? 'Approved'
             : decision.verdict === 'amended'
-              ? `Amended to reserve ${decision.reserve_qty}`
+              ? amendSummary(decision)
               : 'Rejected'}
         </span>
+        {/* Amend stays offered on a decided row. Undo-then-Amend is two presses that throw
+            away the composition the planner already made. */}
+        <Button type="button" size="sm" variant="outline" onClick={onAmend}>
+          <Pencil className="size-4" aria-hidden />
+          Amend
+        </Button>
         <Button type="button" size="sm" variant="ghost" onClick={onUndo}>
           Undo
         </Button>
@@ -598,144 +595,13 @@ function DecisionCell({
 }
 
 /**
- * Amending one row, under the table rather than inside a cell.
+ * A figure the server actually stated, as opposed to one it left out.
  *
- * A quantity input and a mandatory-reason box do not fit a fixed-width grid cell without
- * truncating the very thing they exist to capture, so the form gets the width it needs and the
- * table keeps its shape. Inside the scroll region, so it can never be covered by the footer.
+ * A NULL is "not stated", never 0. The two are opposite instructions - 0 means do not look
+ * here, nothing stated means nobody has said where to look.
  */
-function AmendPanel({
-  contribution,
-  onSave,
-  onCancel,
-}: {
-  contribution: BoardContribution;
-  onSave: (decision: BoardDecision) => void;
-  onCancel: () => void;
-}) {
-  const proposedReserve = contribution.sources
-    .filter((source) => source.kind === 'reserve')
-    .reduce((total, source) => total + toMinor(source.qty), 0);
-  const [reserveQty, setReserveQty] = React.useState(fromMinor(proposedReserve));
-  const [reason, setReason] = React.useState('');
-
-  const needsReason = amendNeedsReason(contribution, reserveQty);
-  const canSave = !needsReason || reason.trim().length > 0;
-
-  return (
-    <section className="space-y-2 rounded-lg border border-border p-3">
-      <h4 className="text-sm font-medium">
-        {`Amend ${contribution.so_number} line ${contribution.line_no}`}
-      </h4>
-      <div className="flex flex-wrap items-center gap-2">
-        <label
-          className="text-2xs uppercase tracking-wide text-muted-foreground"
-          htmlFor={`amend-reserve-${contribution.key}`}
-        >
-          Reserve
-        </label>
-        <Input
-          id={`amend-reserve-${contribution.key}`}
-          type="number"
-          min="0"
-          step="any"
-          value={reserveQty}
-          aria-label={`Reserve for ${contribution.so_number} line ${contribution.line_no}`}
-          onChange={(event) => setReserveQty(event.target.value)}
-          className="h-8 w-28 tabular-nums"
-        />
-        <span className="text-sm text-muted-foreground">
-          {contribution.fulfilment_location}
-        </span>
-      </div>
-      {needsReason && (
-        <div className="space-y-1">
-          <label
-            className="block text-2xs uppercase tracking-wide text-muted-foreground"
-            htmlFor={`amend-reason-${contribution.key}`}
-          >
-            Reason <span className="text-destructive">*</span>
-          </label>
-          <Textarea
-            id={`amend-reason-${contribution.key}`}
-            rows={2}
-            value={reason}
-            placeholder="In your own words"
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </div>
-      )}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          disabled={!canSave}
-          onClick={() =>
-            onSave({
-              verdict: 'amended',
-              reserve_qty: reserveQty,
-              reason: reason.trim() || undefined,
-            })
-          }
-        >
-          Save the amendment
-        </Button>
-        <Button type="button" size="sm" variant="outline" onClick={onCancel}>
-          Cancel
-        </Button>
-      </div>
-    </section>
-  );
-}
-
-/**
- * One location pill: what is owed here, then what is here.
- *
- * A NULL stock figure is "not stated", never 0. The two are opposite instructions - 0 free
- * means do not look here, nothing stated means nobody has said where to look - and a line whose
- * sales order names no location has every stock figure null by construction.
- */
-function locationStrip(entry: BoardCellLocation): string {
-  const parts = [`${entry.location ?? 'No location'} · ${entry.qty} owed`];
-  // AutoCount's four, in AutoCount's words and AutoCount's order, because this is the figure
-  // the planner reads over there and then comes here to find. `available_qty` is SIGNED and is
-  // rendered exactly as it arrives: a negative available IS the shortfall, and clamping it
-  // would turn the one number that says "this cannot be met" into one that says it can.
-  //
-  // Each is shown on its OWN presence, not on on-hand's: measured on the live board, a location
-  // carries `so_qty` while `qty_on_hand` is null, and gating the strip on on-hand hid the very
-  // figure the planner came for. Absent stays absent - never invented as 0.
-  const stated = [
-    present(entry.qty_on_hand) ? `On hand ${entry.qty_on_hand}` : null,
-    present(entry.so_qty) ? `SO qty ${entry.so_qty}` : null,
-    present(entry.spo_qty) ? `SPO qty ${entry.spo_qty}` : null,
-    present(entry.available_qty) ? `Available ${entry.available_qty}` : null,
-  ].filter((part): part is string => part !== null);
-  parts.push(...(stated.length > 0 ? stated : ['Stock not stated']));
-  return parts.join(' · ');
-}
-
 function present(value: string | null | undefined): boolean {
   return value !== null && value !== undefined;
-}
-
-/**
- * The engine's own figures and the documents behind the incoming stock.
- *
- * Kept out of the strip and reachable here: "80 incoming" from nowhere is a rumour, and the
- * reserved / free split is the engine's answer rather than AutoCount's, so it does not belong
- * beside the four numbers a planner came to reconcile.
- */
-function locationTitle(entry: BoardCellLocation): string {
-  const parts: string[] = [];
-  if (present(entry.qty_reserved)) parts.push(`${entry.qty_reserved} reserved`);
-  if (present(entry.qty_free)) parts.push(`${entry.qty_free} free`);
-  for (const leg of entry.incoming ?? []) {
-    parts.push(
-      `${leg.spo_number}${leg.arrival_date ? ` arrives ${formatDateInMalaysia(leg.arrival_date)}` : ''}: ${leg.qty}`,
-    );
-  }
-  return parts.length > 0 ? parts.join('. ') : locationStrip(entry);
 }
 
 /**
@@ -817,13 +683,7 @@ function cellBalanceLine(cell: BoardCell): string {
   )} incoming + ${fromMinor(of('buy'))} buy`;
 }
 
-/** The evidence behind the score, for the reader who wants it. Words, never column names. */
-function factorsTitle(contribution: BoardContribution): string {
-  return contribution.rank_factors
-    .map((factor) =>
-      factor.present
-        ? `${factorLabel(factor.key)}: ${factor.raw ?? factor.value?.toFixed(2)}, scored ${factor.value?.toFixed(2)}, weighted ${factor.weight}`
-        : `${factorLabel(factor.key)}: not recorded, so it is left out of the score entirely rather than counted as zero`,
-    )
-    .join('. ');
-}
+// The evidence behind the score used to be a `title` sentence built here. It is a table now
+// (`BoardRankPopover`): the captain asked to see the CALCULATION, and one row per factor with
+// its fact, score, weight and product - plus the division that produces the number - is the
+// shape a person can check. Two renderings of one arithmetic is how they drift.

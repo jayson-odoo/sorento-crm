@@ -82,6 +82,60 @@ class BoardSource(BaseModel):
     arrival_date: Optional[date] = None
 
 
+BoardTrailKind = Literal["reserve_own", "reserve_pool", "incoming", "borrow", "buy"]
+BoardTrailOutcome = Literal[
+    "took", "nothing_left", "not_eligible", "offered", "none_needed"
+]
+
+
+class BoardTrailStep(BaseModel):
+    """One rung of the source ladder, as it was walked for one line.
+
+    The captain, reading a Buy: "can you justify how you arrive at the buy, like what's the
+    process you have gone through: checking the available quantity first, deciding whether to
+    reserve it or not, then checking the SPO quantity, then checking whether can borrow" - and
+    then, on being shown a paragraph: "the justification needs to be STRUCTURED".
+
+    So EVERY rung is emitted for a plannable line, including the ones that gave nothing: a step
+    that is silently omitted reads as a step that was never taken, which is the exact doubt this
+    exists to answer. A line that cannot be planned at all carries no trail, because no ladder
+    was walked for it.
+
+    The trail is a READ of what `front_planning_engine.propose_line` did. It never decides a
+    quantity, so it cannot disagree with the proposal it explains.
+    """
+
+    #: 1-based, in the order the ladder walked.
+    step: int
+    kind: BoardTrailKind
+    #: Warehouse CODE of the source. Null for Buy, which is held nowhere, and for Borrow, whose
+    #: donors are several and are listed on the contribution itself.
+    location: Optional[str] = None
+    #: Addressing only, never rendered, exactly as on `BoardSource`.
+    warehouse_id: Optional[str] = None
+    #: What the source held when the ladder reached this line, BEFORE the demand ranked ahead:
+    #: the pile's free stock for the own location, the running pool balance for the pool, the
+    #: timely incoming total, the donors' total for Borrow. Null where the question is
+    #: meaningless (Buy holds nothing; an absent pool holds nothing).
+    opening: Optional[str] = None
+    #: Own location only: what the demand ranked ahead of this line still wants there, and how
+    #: many lines that is. Null elsewhere - the pool nets its own book before it is offered, and
+    #: incoming and Buy have no queue.
+    ahead_qty: Optional[str] = None
+    ahead_lines: Optional[int] = None
+    #: What this source could give THIS line after its own rules were applied.
+    offered: str = "0"
+    #: What the line actually took from it. Always "0" for Borrow: it is offered and never
+    #: proposed, because a Borrow needs a donor and a reason from a person (AC-B09).
+    taken: str = "0"
+    #: The line's still-uncovered quantity after this step. Zero on the last one.
+    remaining_after: str = "0"
+    outcome: BoardTrailOutcome
+    #: ONE short structured hint, never a paragraph: "hot-selling: pool only", "capped by
+    #: reorder level 10", "ZZT-SPO-0001 arrives 2026-08-25", "3 donors".
+    note: Optional[str] = None
+
+
 class BoardContribution(BaseModel):
     """One contributing sales-order line inside a cell: a row of the breakdown table."""
 
@@ -144,23 +198,53 @@ class BoardContribution(BaseModel):
     #: it sits in has not ended, so the bucket flag alone would undercount it.
     is_past: bool = False
     fulfilment_location: Optional[str] = None
+    #: The same warehouse by ID, addressing only. Needed on the LINE and not merely on the
+    #: sources: an amendment that reserves on a line the engine proposed nothing for has no
+    #: Reserve source to read a warehouse off, and inventing one from the code would be
+    #: guessing at an id. Null for an unplannable line, which names no location at all.
+    fulfilment_warehouse_id: Optional[str] = None
     #: The sales-order line states no location, so it cannot be planned (AC-FP16).
     unplannable: bool = False
     priority: Optional[str] = None
     rank_score: float
     rank_factors: List[BoardRankFactor] = []
     sources: List[BoardSource] = []
+    #: The ladder, rung by rung, in the order it was walked (see `BoardTrailStep`). Empty for a
+    #: line that cannot be planned: no ladder was walked for it.
+    trail: List[BoardTrailStep] = []
     #: The supply this row would otherwise have had was taken by a row served before it.
     contested: bool = False
 
 
+class BorrowDonorImpact(BaseModel):
+    """What borrowing this quantity does to whoever is holding it now (AC-B09)."""
+
+    free_before: str
+    free_after_full_borrow: str
+    #: Already committed to another sales order at that location.
+    committed_qty: str
+
+
 class BorrowCandidate(BaseModel):
-    """Where a Buy could be borrowed from instead. Offered, never proposed (AC-B09)."""
+    """Where a Buy could be borrowed from instead. Offered, never proposed (AC-B09).
+
+    The same four facts the sheet's candidate carries, because the board now COMPOSES a
+    Borrow rather than only mentioning that one is possible: `ConfirmBorrowComponent` takes a
+    `warehouse_id` and a `donor_project_id`, and neither can be resolved from a warehouse code
+    on the client without guessing at an id. A donor that can only be read is a donor that
+    cannot be used, which is what a narrower copy of this shape made it.
+    """
 
     source: str
     warehouse_code: str
+    #: Addressing only, never rendered: the screen names warehouses by code and the confirm
+    #: payload names them by id.
+    warehouse_id: Optional[str] = None
     donor_project_ref: Optional[str] = None
+    donor_project_id: Optional[str] = None
     free_qty: str
+    #: Absent only on a payload built before this field existed; the engine always states it.
+    donor_impact: Optional[BorrowDonorImpact] = None
 
 
 class StockDetailSalesOrder(BaseModel):

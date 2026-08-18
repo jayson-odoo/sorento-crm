@@ -1851,6 +1851,50 @@ is NULL, never zero, when the sales order states no location, and renders "Stock
 `0 free` means do not look here, nothing stated means nobody said where to look, and those are
 opposite instructions.
 
+#### The strip became a STOCK TABLE, and the drill-down became an expansion (captain, 18 Aug 2026)
+
+> "the representation of the BRW-BB on hand quantity, so quantity, PO quantity etc can be more
+> tabulated and structured like AutoCount, with expandable details instead of clicking in"
+
+The strip printed one location as a run-on sentence -
+`BRW-BB · 316 owed · On hand 478 · SO qty 47009 · SPO qty 0 · Available -46531` - and a cell that
+draws on two locations printed two of them, which a reader had to parse word by word to compare.
+`CellStockTable` states the same facts as a ROW each, under AutoCount's own headers:
+**Location | Owed here | On hand | Reserved | Free | SO qty | SPO qty | Available**. `Available`
+stays SIGNED and is coloured when negative; an absent figure reads "Not stated", never 0. The
+totals row appears only when there is more than one location, because one row is already its own
+total.
+
+**Reserved and Free moved out of a tooltip and into columns**, so `On hand - Reserved - held =
+Free` closes on screen and a touch device can read it at all. The incoming legs left the tooltip
+too: they are the SPO rows of the expansion, where the document that carries them already lives.
+
+**The drill-down is an expansion, not a second dialog.** `StockDetailDialog` is DELETED; what it
+wrapped is `StockDocumentsPanel` (`{productId, warehouseId, itemCode, locationCode}`), rendered
+inline under the location row - the arithmetic line, then the S/O and SPO documents in the shared
+`PanelDataGrid`, with its own loading, error and empty states. Several locations may stand open at
+once, because a cell drawing on its own location and on the shared pool is opened precisely to
+compare the two. The expansion state is keyed on the CELL, so pointing the dialog at another cell
+closes it rather than showing the previous cell's documents under the new cell's row. A location
+the server did not address by ids gets no chevron and a `title` of "Not addressable": two products
+share the code `B2155-NL-BLUE` on the live book, so resolving one from the code would answer
+confidently about the wrong product.
+
+**It takes the matrix's carve-out, not the DataGrid.** This is a fixed matrix of eight named
+figures with an expansion, not a listing: no column config, sort, resize or pagination applies to
+it, and `PanelDataGrid` would add a card, a pagination bar and a `table-fixed` layout for the
+privilege. So it is a small `<table>` under the same three obligations 13.10 states - it scrolls
+inside its OWN container (measured at 375px: the document does not scroll sideways while the table
+does, 856px of content in a 339px box), fixed cell widths on a `w-max` table never `table-fixed`,
+and long text truncates with a `title`.
+
+**Measured live, 18 August 2026** (SO403765 + SO396351, cell `B2155-NL-BLUE · 28 Dec 2026`):
+the row read `BRW-BB | 316 | 478 | 0 | 478 | 47009 | 0 | -46531`, the last figure in red, and
+expanding it fetched `stock-detail?product_id=…&warehouse_id=…` (200) and listed **289 documents**
+totalling the header's SO qty. The `WESERP10B` cell showed the two-location case - `BRW-BB` with
+On hand and Available "Not stated" beside a stated SO qty of 39,226, `BRW` at `2155 / 13503 / 0 /
+-11348`, and a totals row of `158 / 2155 / 52729 / 0 / -11348`.
+
 **SEARCH names what it searches** (captain: "i should be able to search by product, by sales
 order, by customer, to shrink the dataset i am viewing"). One box, one `query` parameter,
 composing with `review_state`, `project_id`, `sales_order_id`, `sort` and `dir`. The placeholder
@@ -2048,13 +2092,15 @@ presence: measured on the live board a location carries `so_qty` while `qty_on_h
 gating the strip on on-hand hid the very figure the planner came for. The engine's own
 reserved/free split moved into the tooltip, beside the SPO documents.
 
-**DRILL-DOWN: Stock Status with Detail.** Clicking a location pill opens
+**DRILL-DOWN: Stock Status with Detail.** The chevron on a location ROW (the pills became a table
+on 18 August, see 13.10) expands
 `GET /fulfilment-planning/stock-detail?product_id=&warehouse_id=` - addressed by IDS because two
 products on the live book share the code `B2155-NL-BLUE`, so a lookup by code would answer
-confidently about the wrong one. The dialog is AutoCount's shape: the arithmetic as a header
+confidently about the wrong one. The panel is AutoCount's shape: the arithmetic as a header
 line, the S/O and SPO documents beneath it in a shared DataGrid (type, document, party, doc date,
 delivery/expected, quantity, and a Covered badge for an order a decision already met), and a
-total that adds back up to the header. Scrolls in its own container, X closes.
+total that adds back up to the header. Scrolls in its own container; the chevron that opened it
+closes it.
 
 **THE NOT-RANKED SENTENCE COMES FROM ONE PLACE** (`rankingNote`), keyed on `rank_separates` and
 `distinct_order_count`: "Only line in this cell" / "Same sales order; line order decided which

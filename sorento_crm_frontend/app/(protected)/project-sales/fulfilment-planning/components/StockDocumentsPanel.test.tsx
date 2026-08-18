@@ -1,11 +1,15 @@
 /**
- * Stock Status with Detail: what the four numbers on a location pill are made of.
+ * Stock Status with Detail: what the numbers on a location row are made of.
  *
  * AutoCount shows the position and then the documents that produce it, and the captain reads it
  * there before coming here. So this mirrors that shape: a header line that IS the arithmetic
  * ("On hand 478 - SO 47,009 + SPO 0 = Available -46,531"), the documents beneath it, and a total
  * that adds back up to the header. A detail view whose total disagrees with its own header is
  * the one thing that would make somebody stop trusting the board.
+ *
+ * These tests were the `StockDetailDialog` suite. The captain asked for the documents to expand
+ * UNDER the location row instead of opening a second dialog ("expandable details instead of
+ * clicking in"), so the dialog is gone and the panel it wrapped is what stands on its own.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -22,18 +26,24 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getStockDetail: (...args: unknown[]) => getStockDetail(...args),
 }));
 
-import { StockDetailDialog } from './StockDetailDialog';
+import { StockDocumentsPanel } from './StockDocumentsPanel';
 import type { StockDetail } from '../../_shared/types/fulfilmentPlanning.types';
 
-/** The captain's own cell, as the live book reports it. */
-function captainsCell(overrides: Partial<StockDetail> = {}): StockDetail {
+/** The captain's own position, in the shape the backend actually sends it. */
+function captainsPosition(overrides: Partial<StockDetail> = {}): StockDetail {
   return {
+    product_id: 'prod-1',
     item_code: 'B2155-NL-BLUE',
-    warehouse_code: 'BRW-BB',
+    description: 'BLUE NYLON LEAF 2155',
+    warehouse_id: 'wh-1',
+    location: 'BRW-BB',
     qty_on_hand: '478',
     so_qty: '47009',
     spo_qty: '0',
     available_qty: '-46531',
+    qty_reserved: '0',
+    qty_held_by_decisions: '0',
+    qty_free: '478',
     sales_orders: [
       {
         sales_order_id: 'so-a',
@@ -61,41 +71,39 @@ function captainsCell(overrides: Partial<StockDetail> = {}): StockDetail {
   };
 }
 
-function renderDialog(onClose = vi.fn()) {
+function renderPanel() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   render(
     <QueryClientProvider client={client}>
-      <StockDetailDialog
+      <StockDocumentsPanel
         productId="prod-1"
         warehouseId="wh-1"
-        locationCode="BRW-BB"
         itemCode="B2155-NL-BLUE"
-        onClose={onClose}
+        locationCode="BRW-BB"
       />
     </QueryClientProvider>,
   );
-  return { onClose };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('StockDetailDialog', () => {
+describe('StockDocumentsPanel', () => {
   it('asks by IDS, because two products share the code B2155-NL-BLUE on the live book', async () => {
-    getStockDetail.mockResolvedValue(captainsCell());
+    getStockDetail.mockResolvedValue(captainsPosition());
 
-    renderDialog();
+    renderPanel();
 
     await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1'));
   });
 
-  it('heads the dialog with the arithmetic itself', async () => {
-    getStockDetail.mockResolvedValue(captainsCell());
+  it('heads the panel with the arithmetic itself', async () => {
+    getStockDetail.mockResolvedValue(captainsPosition());
 
-    renderDialog();
+    renderPanel();
 
     expect(
       await screen.findByText('On hand 478 - SO 47009 + SPO 0 = Available -46531'),
@@ -103,9 +111,9 @@ describe('StockDetailDialog', () => {
   });
 
   it('renders a negative available plainly, never clamped and never hidden', async () => {
-    getStockDetail.mockResolvedValue(captainsCell());
+    getStockDetail.mockResolvedValue(captainsPosition());
 
-    renderDialog();
+    renderPanel();
 
     const header = await screen.findByTestId('stock-detail-arithmetic');
     expect(header.textContent).toContain('-46531');
@@ -114,7 +122,7 @@ describe('StockDetailDialog', () => {
 
   it('lists every document behind the position, typed', async () => {
     getStockDetail.mockResolvedValue(
-      captainsCell({
+      captainsPosition({
         incoming: [
           {
             spo_number: '202601-S0003',
@@ -126,7 +134,7 @@ describe('StockDetailDialog', () => {
       }),
     );
 
-    renderDialog();
+    renderPanel();
 
     const table = await screen.findByRole('table');
     const rows = table.querySelectorAll('tbody tr');
@@ -139,9 +147,9 @@ describe('StockDetailDialog', () => {
   });
 
   it('totals the documents so the table adds up to its own header', async () => {
-    getStockDetail.mockResolvedValue(captainsCell());
+    getStockDetail.mockResolvedValue(captainsPosition());
 
-    renderDialog();
+    renderPanel();
 
     const table = await screen.findByRole('table');
     const footer = [...(table.querySelector('tfoot')?.querySelectorAll('td') ?? [])].map(
@@ -153,9 +161,9 @@ describe('StockDetailDialog', () => {
   });
 
   it('links a sales order the same way every other listing does', async () => {
-    getStockDetail.mockResolvedValue(captainsCell());
+    getStockDetail.mockResolvedValue(captainsPosition());
 
-    renderDialog();
+    renderPanel();
 
     expect(await screen.findByRole('link', { name: 'SO391698' })).toHaveAttribute(
       'href',
@@ -164,41 +172,59 @@ describe('StockDetailDialog', () => {
   });
 
   it('marks an order already covered by a decision, because it is not competing any more', async () => {
-    getStockDetail.mockResolvedValue(captainsCell());
+    getStockDetail.mockResolvedValue(captainsPosition());
 
-    renderDialog();
+    renderPanel();
 
     await screen.findByRole('table');
     expect(screen.getByText('Covered')).toBeInTheDocument();
   });
 
-  it('scrolls inside its own container, with the X outside the scroll region', async () => {
-    getStockDetail.mockResolvedValue(captainsCell());
+  /**
+   * The live book tops out at 501 documents for one product at one location, and this now opens
+   * INSIDE a row of the cell dialog. So the documents scroll in a region of their own rather
+   * than growing the dialog until nothing else is reachable.
+   */
+  it('scrolls inside its own container', async () => {
+    getStockDetail.mockResolvedValue(captainsPosition());
 
-    renderDialog();
+    renderPanel();
     await screen.findByRole('table');
 
-    const body = screen.getByTestId('stock-detail-body');
-    expect(body.className).toContain('overflow-y-auto');
-    expect(body.className).toContain('min-h-0');
-    expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(1);
+    const panel = screen.getByTestId('stock-documents-panel');
+    expect(panel.className).toContain('overflow-y-auto');
+    expect(panel.className).toContain('max-h-');
   });
 
   it('says so when the detail cannot be loaded, rather than showing an empty table', async () => {
     getStockDetail.mockRejectedValue(new Error('Backend is down'));
 
-    renderDialog();
+    renderPanel();
 
     expect(await screen.findByText('Backend is down')).toBeInTheDocument();
   });
 
   it('states an empty position rather than an empty grid', async () => {
     getStockDetail.mockResolvedValue(
-      captainsCell({ sales_orders: [], incoming: [], so_qty: '0', spo_qty: '0', available_qty: '478' }),
+      captainsPosition({
+        sales_orders: [],
+        incoming: [],
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '478',
+      }),
     );
 
-    renderDialog();
+    renderPanel();
 
     expect(await screen.findByText('Nothing is claiming this stock')).toBeInTheDocument();
+  });
+
+  it('says it is loading rather than showing a position it does not have yet', () => {
+    getStockDetail.mockReturnValue(new Promise(() => {}));
+
+    renderPanel();
+
+    expect(screen.getByTestId('stock-documents-loading')).toBeInTheDocument();
   });
 });

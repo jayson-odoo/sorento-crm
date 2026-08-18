@@ -322,7 +322,8 @@ export async function getPlanningBoard(
 
 
 /**
- * What the four numbers on a location pill are made of (AutoCount's "Stock Status with Detail").
+ * What a location row of the cell's stock table is made of (AutoCount's "Stock Status with
+ * Detail"), expanded under that row.
  *
  * Addressed by IDS, never by item code: two products on the live book share the code
  * `B2155-NL-BLUE`, so a lookup by code would answer confidently about the wrong one.

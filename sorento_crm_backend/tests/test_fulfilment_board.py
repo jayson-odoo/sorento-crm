@@ -1519,6 +1519,42 @@ def test_a_buy_the_board_cannot_avoid_still_says_borrowing_is_possible():
         assert "borrow" in contribution["sources"][-1]["reason"].lower()
 
 
+def test_a_board_borrow_candidate_carries_what_it_takes_to_confirm_it():
+    """A donor the planner can only READ is a donor they cannot use.
+
+    The board's Amend now composes a Borrow, and `ConfirmBorrowComponent` takes a
+    `warehouse_id` and a `donor_project_id` - neither of which a warehouse CODE can be
+    resolved into on the client without guessing at an id. The sheet's candidate has carried
+    both since Stage 1C; the board's was a narrower copy of it, so the same donor was
+    offerable on one screen and not on the other.
+
+    `donor_impact` travels for the same reason it does on the sheet: borrowing is decided
+    with the holder's position in front of the person deciding (AC-B09).
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTO{_uid()[:6]}"[:20])
+        elsewhere = _warehouse(db, f"ZZTE{_uid()[:6]}"[:20])
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, elsewhere, on_hand=25)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        candidate = contribution["borrow_candidates"][0]
+        assert candidate["warehouse_id"] == str(elsewhere.id)
+        # Free stock at another location has no project holding it, so there is no donor to
+        # ask and no project to name. Absent, never invented.
+        assert candidate["donor_project_id"] is None
+        assert candidate["donor_impact"] == {
+            "free_before": "25",
+            "free_after_full_borrow": "0",
+            "committed_qty": "0",
+        }
+
+
 # --------------------------------------------------------------------------- #
 # the two nonsense sentences
 # --------------------------------------------------------------------------- #
@@ -2736,3 +2772,265 @@ def test_the_confirmation_accepts_what_the_ladder_proposes_over_an_oversold_pile
         assert response.status_code == 200, response.text
         assert lines[0]["reserve"] == [], "nothing was left at that pile for this line"
         assert lines[0]["buy_qty"] == "80"
+
+
+# --------------------------------------------------------------------------- #
+# the decision trail: the ladder, walked in the open
+#
+# The captain, on a Buy: "can you justify how you arrive at the buy, like what's the process
+# you have gone through: checking the available quantity first, deciding whether to reserve it
+# or not, then checking the SPO quantity, then checking whether can borrow ... need more
+# justification", and then: "the justification needs to be STRUCTURED instead of plain text".
+#
+# So every plannable line carries the whole ladder as STEPS, including the ones that gave
+# nothing: "the pool was checked and had none" is the answer to the question, and a step that
+# is silently omitted reads as a step that was never taken.
+# --------------------------------------------------------------------------- #
+
+
+def _trail(contribution) -> list:
+    return contribution["trail"]
+
+
+def _step(contribution, kind: str) -> dict:
+    return next(step for step in contribution["trail"] if step["kind"] == kind)
+
+
+def test_the_trail_walks_every_source_in_ladder_order_even_when_one_gives_nothing():
+    with blank_session() as db:
+        order, product, _warehouse = _quantity_world(db)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        assert [step["kind"] for step in _trail(contribution)] == [
+            "reserve_own",
+            "reserve_pool",
+            "incoming",
+            "borrow",
+            "buy",
+        ]
+        assert [step["step"] for step in _trail(contribution)] == [1, 2, 3, 4, 5]
+
+
+def test_the_trail_states_what_each_source_held_offered_and_gave():
+    """`_quantity_world`: free 5 at the own location, 7 arriving in time, 20 owed."""
+    with blank_session() as db:
+        order, product, warehouse = _quantity_world(db)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        own = _step(contribution, "reserve_own")
+        assert own["location"] == warehouse.warehouse_code
+        assert own["warehouse_id"] == str(warehouse.id)
+        assert own["opening"] == "5"
+        assert own["ahead_qty"] == "0"
+        assert own["ahead_lines"] == 0
+        assert own["offered"] == "5"
+        assert own["taken"] == "5"
+        assert own["remaining_after"] == "15"
+        assert own["outcome"] == "took"
+
+        incoming = _step(contribution, "incoming")
+        assert incoming["opening"] == "7"
+        assert incoming["offered"] == "7"
+        assert incoming["taken"] == "7"
+        assert incoming["remaining_after"] == "8"
+        assert incoming["outcome"] == "took"
+        assert "ZZT-SPO-0001" in (incoming["note"] or "")
+
+        buy = _step(contribution, "buy")
+        assert buy["location"] is None
+        assert buy["offered"] == "8"
+        assert buy["taken"] == "8"
+        assert buy["remaining_after"] == "0"
+        assert buy["outcome"] == "took"
+
+
+def test_the_trail_adds_up_to_the_proposal_it_explains():
+    with blank_session() as db:
+        order, product, _warehouse = _quantity_world(db)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        reserved = sum(
+            Decimal(step["taken"])
+            for step in _trail(contribution)
+            if step["kind"] in ("reserve_own", "reserve_pool")
+        )
+        assert reserved == Decimal(contribution["qty_proposed_reserve"])
+        assert Decimal(_step(contribution, "incoming")["taken"]) == Decimal(
+            contribution["qty_proposed_incoming"]
+        )
+        assert Decimal(_step(contribution, "buy")["taken"]) == Decimal(
+            contribution["qty_proposed_buy"]
+        )
+        assert _trail(contribution)[-1]["remaining_after"] == "0"
+
+
+def test_the_trail_says_the_queue_ahead_emptied_the_pile_and_the_residual_is_bought():
+    """The captain's live shape: stock at the location, and none of it left for this line."""
+    with blank_session() as db:
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=10)
+        first = _order(db, so_number=f"ZZT-SO-A{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, first, product, qty="10", required_date=date(2026, 9, 1), warehouse=warehouse)
+        ours = _order(db, so_number=f"ZZT-SO-B{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, ours, product, qty="4", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        own = _step(contribution, "reserve_own")
+        assert own["opening"] == "10", "the pile did hold stock when this line was reached"
+        assert own["ahead_qty"] == "10"
+        assert own["ahead_lines"] == 1
+        assert own["offered"] == "0", "and the queue ahead of it wanted all of it"
+        assert own["taken"] == "0"
+        assert own["outcome"] == "nothing_left"
+
+        buy = _step(contribution, "buy")
+        assert buy["taken"] == "4"
+        assert buy["outcome"] == "took"
+
+
+def test_a_line_covered_before_the_buy_step_says_the_buy_was_not_needed():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=50)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        assert _step(contribution, "reserve_own")["outcome"] == "took"
+        # Everything after the cover is walked and reported as unnecessary, never omitted.
+        for kind in ("incoming", "borrow", "buy"):
+            step = _step(contribution, kind)
+            assert step["taken"] == "0"
+            assert step["outcome"] == "none_needed", kind
+            assert step["remaining_after"] == "0"
+
+
+def test_the_trail_says_a_hot_selling_line_may_not_touch_its_own_location():
+    """PLAN 3.3 stated as a step rather than as a missing one."""
+    from app.models.scm import ItemClassification, ReorderLevel
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        own.segment = "dealer"
+        db.flush()
+        _stock(db, product, own, on_hand=20)
+        _stock(db, product, pool, on_hand=12)
+        db.add(
+            ItemClassification(
+                id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class="A"
+            )
+        )
+        db.add(ReorderLevel(id=_uid(), product_id=product.id, warehouse_id=pool.id, level=10))
+        db.flush()
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        step = _step(contribution, "reserve_own")
+        assert step["outcome"] == "not_eligible"
+        assert step["taken"] == "0"
+        assert "hot-selling" in (step["note"] or "")
+
+        pool_step = _step(contribution, "reserve_pool")
+        assert pool_step["location"] == pool.warehouse_code
+        assert pool_step["opening"] == "12"
+        # Only the headroom above the pool's own reorder level is ever offered.
+        assert pool_step["offered"] == "2"
+        assert pool_step["taken"] == "2"
+        assert "10" in (pool_step["note"] or "")
+
+
+def test_the_pool_step_is_walked_even_where_there_is_no_pool():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=4)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        step = _step(contribution, "reserve_pool")
+        assert step["outcome"] == "not_eligible"
+        assert step["location"] is None
+        assert step["opening"] is None
+        assert step["note"] == "no shared pool"
+
+
+def test_the_borrow_step_offers_what_it_found_and_takes_none_of_it():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTO{_uid()[:6]}"[:20])
+        elsewhere = _warehouse(db, f"ZZTE{_uid()[:6]}"[:20])
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, elsewhere, on_hand=25)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        step = _step(contribution, "borrow")
+        assert step["opening"] == "25"
+        assert step["offered"] == "25"
+        assert step["taken"] == "0", "a Borrow needs a donor and a reason from a person"
+        assert step["outcome"] == "offered"
+        assert step["remaining_after"] == "10", "so it still owes what the Buy then covers"
+        assert _step(contribution, "buy")["taken"] == "10"
+
+
+def test_an_unplannable_line_carries_no_trail_at_all():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=None)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        assert contribution["unplannable"] is True
+        assert contribution["trail"] == []
+
+
+def test_a_contribution_names_its_fulfilment_location_by_id_as_well_as_by_code():
+    """The confirm payload addresses a warehouse by id, and an amendment on a line the engine
+    proposed nothing for has no Reserve source to read one off."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        cell = _cell(board, product.product_code, "2026-08-31")
+
+        assert cell["contributions"][0]["fulfilment_warehouse_id"] == str(warehouse.id)
+
+
+def test_an_unplannable_line_has_no_fulfilment_warehouse_id():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=None)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        cell = _cell(board, product.product_code, "2026-08-31")
+
+        assert cell["contributions"][0]["fulfilment_warehouse_id"] is None

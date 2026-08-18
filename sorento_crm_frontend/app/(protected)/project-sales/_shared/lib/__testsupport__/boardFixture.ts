@@ -20,6 +20,7 @@ import type {
   BoardProductRow,
   BoardRankFactor,
   BoardSource,
+  BoardTrailStep,
   PlanningBoard,
 } from '../../types/fulfilmentPlanning.types';
 import { fromMinor, toMinor } from '../supplyComposition';
@@ -324,6 +325,8 @@ function allocate(
           reason: 'No fulfilment location on the sales order line, so nothing can be sourced for it.',
         },
       ];
+      // No ladder was walked for it, so it carries no trail - never an invented empty one.
+      contribution.trail = [];
       continue;
     }
     const location = contribution.fulfilment_location as string;
@@ -365,6 +368,15 @@ function allocate(
       });
     }
     contribution.sources = sources;
+    contribution.trail = trailFor({
+      location,
+      opening: opening[stockKey] ?? 0,
+      ahead: queue,
+      offered: toMinor(contribution.available_to_this_line),
+      reserved,
+      need,
+      buy,
+    });
     // Contested means the stock this line would otherwise have had was actually TAKEN, either
     // by a higher-ranked line in this same cell or by an earlier bucket that drew the pool down
     // first. Both are "somebody got there before you"; the screen therefore says exactly that
@@ -373,6 +385,75 @@ function allocate(
     contribution.contested = buy > 0 && (consumed[stockKey] ?? 0) > 0;
     consumed[stockKey] = (consumed[stockKey] ?? 0) + reserved;
   }
+}
+
+/**
+ * The ladder as the server states it: EVERY rung, in order, including the ones that gave
+ * nothing (PLAN 13.7, the captain's "what's the process you have gone through").
+ *
+ * This fixture only ever models own-location free stock, so its pool, incoming and borrow rungs
+ * are always empty - which is exactly the case worth having in the tests, because "checked and
+ * had nothing" is the reading the screen must not silently drop.
+ */
+function trailFor(input: {
+  location: string;
+  opening: number;
+  ahead: { lines: number; qty: number };
+  offered: number;
+  reserved: number;
+  need: number;
+  buy: number;
+}): BoardTrailStep[] {
+  const steps: BoardTrailStep[] = [];
+  let remaining = input.need;
+
+  const add = (
+    kind: BoardTrailStep['kind'],
+    fields: Omit<
+      Partial<BoardTrailStep>,
+      'step' | 'kind' | 'offered' | 'taken' | 'remaining_after'
+    > & { offered: number; taken: number },
+  ) => {
+    const wanted = remaining;
+    remaining = Math.max(remaining - fields.taken, 0);
+    const outcome: BoardTrailStep['outcome'] =
+      fields.outcome ??
+      (fields.taken > 0
+        ? 'took'
+        : wanted <= 0
+          ? 'none_needed'
+          : 'nothing_left');
+    steps.push({
+      ...fields,
+      step: steps.length + 1,
+      kind,
+      offered: fromMinor(fields.offered),
+      taken: fromMinor(fields.taken),
+      remaining_after: fromMinor(remaining),
+      outcome,
+    });
+  };
+
+  add('reserve_own', {
+    location: input.location,
+    warehouse_id: `wh-${input.location}`,
+    opening: fromMinor(input.opening),
+    ahead_qty: fromMinor(input.ahead.qty),
+    ahead_lines: input.ahead.lines,
+    offered: input.offered,
+    taken: input.reserved,
+  });
+  add('reserve_pool', { offered: 0, taken: 0, outcome: 'not_eligible', note: 'no shared pool' });
+  add('incoming', {
+    location: input.location,
+    warehouse_id: `wh-${input.location}`,
+    opening: '0',
+    offered: 0,
+    taken: 0,
+  });
+  add('borrow', { opening: '0', offered: 0, taken: 0 });
+  add('buy', { offered: input.buy, taken: input.buy });
+  return steps;
 }
 
 /**

@@ -130,6 +130,65 @@ def test_an_undecided_line_reads_as_undecided_on_the_sheet(api):
     )
 
 
+def test_the_reason_an_amendment_gives_is_frozen_with_the_line(api):
+    """A planner who overrides the engine says why, and the snapshot has to keep it.
+
+    On the board an amendment is a composition a person typed in place of the one the engine
+    proposed, and its reason was being collected on screen and thrown away at the call: the
+    snapshot then explained the quantities with the ENGINE's sentences, which are the reasons
+    for a decision nobody took. It reads back on the frozen line, where the rest of what was
+    decided already lives.
+    """
+    client, world = api
+    db = world.db
+    order, line_1, _line_2 = _two_line_order(world)
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                {
+                    **_line_payload(line_1.id, buy_qty="50"),
+                    "amend_reason": "Holding the free stock for the site that is already late.",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot = _decision(db, order).line_snapshots[0]
+    assert snapshot["amend_reason"] == (
+        "Holding the free stock for the site that is already late."
+    )
+
+    sheet = client.get(f"{BASE}/sales-orders/{order.id}/supply")
+    assert sheet.status_code == 200, sheet.text
+    frozen = next(
+        line["frozen"]
+        for line in sheet.json()["lines"]
+        if line["project_line_id"] == str(line_1.id)
+    )
+    assert frozen["amend_reason"] == (
+        "Holding the free stock for the site that is already late."
+    )
+
+
+def test_a_line_nobody_amended_freezes_no_amendment_reason(api):
+    """Absent, never an empty string: a blank reason beside a proposal taken as it stands
+    would read as an amendment somebody declined to explain."""
+    client, world = api
+    db = world.db
+    order, line_1, _line_2 = _two_line_order(world)
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line_1.id, buy_qty="50")]},
+    )
+    assert response.status_code == 200, response.text
+
+    assert _decision(db, order).line_snapshots[0]["amend_reason"] is None
+
+
 def test_confirming_nothing_is_refused_and_leaves_the_active_decision_alone(api):
     """A confirmation of no lines is not a decision. Accepting it would supersede the
     revision that IS holding stock and quietly un-decide the whole order."""

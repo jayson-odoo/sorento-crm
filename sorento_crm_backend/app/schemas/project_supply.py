@@ -69,6 +69,9 @@ class SupplyFrozenLine(BaseModel):
 
     open_qty: str
     components: List[SupplyComponent] = []
+    #: The reason given for overriding the engine's proposal, when one was. Absent on a line
+    #: confirmed as proposed, and on any line frozen before the field existed.
+    amend_reason: Optional[str] = None
 
 
 class SupplyLine(BaseModel):
@@ -164,6 +167,11 @@ class ConfirmLine(BaseModel):
     borrow: List[ConfirmBorrowComponent] = Field(default_factory=list)
     buy_qty: Decimal = Decimal("0")
     buy_reason: Optional[str] = None
+    #: Why this composition is not the one the engine proposed, in the planner's own words.
+    #: Absent when they took the proposal as it stood: demanding a reason for agreeing is how
+    #: a mandatory field becomes a rubber stamp. It is FROZEN with the line, beside the
+    #: engine's own sentences, because those explain a decision nobody took once it is amended.
+    amend_reason: Optional[str] = None
 
 
 class ConfirmSupplyBody(BaseModel):

@@ -185,6 +185,35 @@ export function confirmLinesFor(
     if (!decision || decision.verdict === 'rejected') continue;
     if (!contribution.project_line_id) continue;
 
+    // AN AMENDMENT COMPOSED IN THE EDITOR IS POSTED AS COMPOSED. Every warehouse and every
+    // donor was chosen by a person against the balance in front of them, so there is nothing
+    // left to derive - and the derivation is what used to lose them: a line the engine met
+    // entirely from Buy has no Reserve source to read a warehouse off, so an amendment moving
+    // it into a Reserve was dropped from the body while the row still read "Amended".
+    if (decision.verdict === 'amended' && decision.reserve) {
+      lines.push({
+        project_line_id: contribution.project_line_id,
+        timely_spo_qty: fromMinor(toMinor(decision.timely_spo_qty ?? '0')),
+        reserve: decision.reserve
+          .filter((row) => toMinor(row.qty) > 0)
+          .map((row) => ({ warehouse_id: row.warehouse_id, qty: row.qty })),
+        borrow: (decision.borrow ?? [])
+          .filter((row) => toMinor(row.qty) > 0)
+          .map((row) => ({
+            source: row.source,
+            warehouse_id: row.warehouse_id,
+            donor_project_id: row.donor_project_id ?? null,
+            qty: row.qty,
+            reason: row.reason,
+          })),
+        buy_qty: fromMinor(toMinor(decision.buy_qty ?? '0')),
+        // Frozen with the line. Every other component carries the sentence of the RULE that
+        // produced it, and those explain a decision nobody took once a person overrode them.
+        amend_reason: decision.reason,
+      });
+      continue;
+    }
+
     const owed = toMinor(contribution.qty_outstanding ?? contribution.qty);
     // The engine's own numbers when it sends them. The board now proposes what the SHEET
     // proposes - pool and borrow are considered, not just own-location reserve then buy - so
@@ -219,10 +248,13 @@ export function confirmLinesFor(
       project_line_id: contribution.project_line_id,
       timely_spo_qty: fromMinor(incoming),
       reserve,
-      // The board never proposes a Borrow: it crosses locations, and the board allocates per
-      // (product, location) only (13.7, deviation 8).
+      // The board never PROPOSES a Borrow: it crosses locations, and the board allocates per
+      // (product, location) only (13.7, deviation 8). One composed by hand in the editor takes
+      // the branch above.
       borrow: [],
       buy_qty: fromMinor(buy),
+      // Present only on the legacy single-number amendment, which is still an override.
+      amend_reason: decision.verdict === 'amended' ? decision.reason : undefined,
     });
   }
   return lines;
@@ -342,20 +374,44 @@ export function plannedLineCount(
 }
 
 /**
- * Whether an amend needs a reason.
+ * Whether an amend needs a reason, read over the WHOLE composition.
  *
- * Reducing the Reserve the rule proposed takes stock away from this line and hands it to
- * nobody in particular, so a person has to say why. Accepting the proposal unchanged does not:
- * demanding a reason for agreeing is how a mandatory field becomes a rubber stamp.
+ * Moving stock the rule proposed takes it away from this line, or from somebody else, and
+ * hands it to nobody in particular, so a person has to say why. Accepting the proposal
+ * unchanged does not: demanding a reason for agreeing is how a mandatory field becomes a
+ * rubber stamp.
+ *
+ * It looked at the Reserve alone while the Reserve was all a board amendment could change.
+ * Now that the editor composes all four kinds, a planner could take 40 out of the Reserve and
+ * put 40 into a Borrow - displacing the rule completely - and be asked for nothing.
  */
 export function amendNeedsReason(
   contribution: BoardContribution,
-  reserveQty: string,
+  composition: {
+    timely_spo_qty: string;
+    reserve: { qty: string }[];
+    borrow: { qty: string }[];
+    buy_qty: string;
+  },
 ): boolean {
-  const proposed = contribution.sources
-    .filter((source) => source.kind === 'reserve')
-    .reduce((total, source) => total + toMinor(source.qty), 0);
-  return toMinor(reserveQty) !== proposed;
+  const proposedOf = (
+    stated: string | null | undefined,
+    kind: string,
+  ): number => (stated === null || stated === undefined
+    ? sumSources(contribution, kind)
+    : toMinor(stated));
+  const total = (rows: { qty: string }[]) =>
+    rows.reduce((sum, row) => sum + toMinor(row.qty), 0);
+
+  return (
+    total(composition.reserve) !==
+      proposedOf(contribution.qty_proposed_reserve, 'reserve') ||
+    toMinor(composition.timely_spo_qty) !==
+      proposedOf(contribution.qty_proposed_incoming, 'timely_spo') ||
+    toMinor(composition.buy_qty) !== proposedOf(contribution.qty_proposed_buy, 'buy') ||
+    // The engine proposes no Borrow on either surface, so ANY borrow is an override.
+    total(composition.borrow) !== 0
+  );
 }
 
 

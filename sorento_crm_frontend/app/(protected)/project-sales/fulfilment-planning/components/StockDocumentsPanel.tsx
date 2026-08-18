@@ -5,14 +5,6 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { ColumnDef } from '@tanstack/react-table';
 import { PackageSearch } from 'lucide-react';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -21,28 +13,32 @@ import { getStockDetail } from '../../_shared/services/fulfilmentPlanningService
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 
 /**
- * What the four numbers on a location pill are made of - AutoCount's "Stock Status with Detail".
+ * What the numbers on one location row are made of - AutoCount's "Stock Status with Detail".
  *
  * The captain reads this position in AutoCount and then comes here, so the shape is theirs: the
  * arithmetic as a header line, the documents that produce it beneath, and a total that adds back
  * up to the header. A detail view whose total disagrees with its own header is the one thing
  * that would make somebody stop trusting the board.
  *
+ * It is a PANEL rather than a dialog because the captain asked for "expandable details instead
+ * of clicking in": it renders inside the location row it belongs to, so the position and its
+ * documents are on screen together and closing it is the same press that opened it. It scrolls
+ * in a region of its own - the live book tops out at 501 documents for one product at one
+ * location, and a panel that grows without limit would push the rest of the dialog out of reach.
+ *
  * Addressed by IDS. Two products on the live book share the item code `B2155-NL-BLUE`, so a
  * lookup by code would answer confidently about the wrong one.
  */
-export function StockDetailDialog({
+export function StockDocumentsPanel({
   productId,
   warehouseId,
-  locationCode,
   itemCode,
-  onClose,
+  locationCode,
 }: {
   productId: string;
   warehouseId: string;
-  locationCode: string;
   itemCode: string;
-  onClose: () => void;
+  locationCode: string;
 }) {
   const detail = useQuery({
     queryKey: ['project-stock-detail', productId, warehouseId],
@@ -55,8 +51,12 @@ export function StockDetailDialog({
     const data = detail.data;
     if (!data) return [];
     return [
-      ...data.sales_orders.map((order) => ({
-        key: `so-${order.sales_order_id}`,
+      // Keyed by POSITION as well as by id: one sales order can stand behind this location on
+      // several of its own lines, so `sales_order_id` alone is not unique and React logged a
+      // duplicate-key error for every repeat (measured live at BRW-BB, which returns the same
+      // order many times over).
+      ...data.sales_orders.map((order, index) => ({
+        key: `so-${index}-${order.sales_order_id}`,
         doc_type: 'S/O' as const,
         doc_no: order.so_number,
         sales_order_id: order.sales_order_id,
@@ -67,8 +67,8 @@ export function StockDetailDialog({
         qty: order.so_qty,
         is_covered: Boolean(order.is_covered),
       })),
-      ...data.incoming.map((leg) => ({
-        key: `spo-${leg.spo_number}`,
+      ...data.incoming.map((leg, index) => ({
+        key: `spo-${index}-${leg.spo_number}`,
         doc_type: 'SPO' as const,
         doc_no: leg.spo_number,
         sales_order_id: null,
@@ -120,7 +120,9 @@ export function StockDetailDialog({
       {
         id: 'party',
         accessorFn: (row) => row.party ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Customer / supplier" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Customer / supplier" column={column} />
+        ),
         cell: ({ row }) => (
           <span className="block truncate text-sm" title={row.original.party ?? ''}>
             {row.original.party || 'Not recorded'}
@@ -202,70 +204,62 @@ export function StockDetailDialog({
   const data = detail.data;
 
   return (
-    <Dialog open onOpenChange={(next) => !next && onClose()}>
-      <DialogContent
-        data-testid="stock-detail-content"
-        className="flex max-h-[85vh] w-full flex-col overflow-hidden p-0 sm:max-w-5xl"
-      >
-        <DialogHeader className="shrink-0 space-y-2 border-b p-4 sm:p-6">
-          <DialogTitle className="min-w-0 break-words">
-            {`${itemCode} · ${locationCode}`}
-          </DialogTitle>
-          <DialogDescription className="min-w-0 break-words">
-            What the position at this location is made of.
-          </DialogDescription>
-          {data && (
-            // The arithmetic IS the header, so the total below can be checked against it by
-            // eye. `available_qty` is signed and is printed as it arrives: a negative available
-            // is the shortfall, and clamping it would turn the one number that says "this
-            // cannot be met" into one that says it can.
-            <div
-              data-testid="stock-detail-arithmetic"
-              className="text-sm font-medium tabular-nums break-words"
-            >
-              {`On hand ${data.qty_on_hand} - SO ${data.so_qty} + SPO ${data.spo_qty} = Available ${data.available_qty}`}
-            </div>
-          )}
-        </DialogHeader>
+    <div
+      data-testid="stock-documents-panel"
+      // Deliberately shorter than the stock table's own 50vh container, so the documents are
+      // what scrolls rather than the position above them: measured at an 800px window, a taller
+      // panel left the contributing lines a two-row sliver.
+      className="max-h-[35vh] space-y-2 overflow-y-auto bg-muted/30 p-3"
+    >
+      <div className="min-w-0 break-words text-sm font-medium">
+        {`${itemCode} · ${locationCode}`}
+      </div>
 
-        <DialogBody
-          data-testid="stock-detail-body"
-          className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"
+      {data && (
+        // The arithmetic IS the header, so the total below can be checked against it by eye.
+        // `available_qty` is signed and is printed as it arrives: a negative available is the
+        // shortfall, and clamping it would turn the one number that says "this cannot be met"
+        // into one that says it can.
+        <div
+          data-testid="stock-detail-arithmetic"
+          className="min-w-0 break-words text-sm font-medium tabular-nums"
         >
-          {detail.isError ? (
-            <p className="py-6 text-center text-sm text-destructive">
-              {detail.error instanceof Error
-                ? detail.error.message
-                : 'The stock detail could not be loaded.'}
-            </p>
-          ) : detail.isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-5/6" />
-              <Skeleton className="h-4 w-2/3" />
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="py-8 text-center">
-              <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
-              <h3 className="mt-2 text-sm font-semibold">Nothing is claiming this stock</h3>
-            </div>
-          ) : (
-            <PanelDataGrid<StockDetailRow>
-              title="Documents"
-              columns={columns}
-              rows={rows}
-              getRowId={(row) => row.key}
-              listingKey="projects.projects.view::project-stock-detail"
-              sortable
-              emptyTitle="Nothing is claiming this stock"
-              // The live book tops out at 501 rows for one product and location, which is one
-              // page: paging it would hide the total that makes the header checkable.
-              pageSize={1000}
-            />
-          )}
-        </DialogBody>
-      </DialogContent>
-    </Dialog>
+          {`On hand ${data.qty_on_hand} - SO ${data.so_qty} + SPO ${data.spo_qty} = Available ${data.available_qty}`}
+        </div>
+      )}
+
+      {detail.isError ? (
+        <p className="py-6 text-center text-sm text-destructive">
+          {detail.error instanceof Error
+            ? detail.error.message
+            : 'The stock detail could not be loaded.'}
+        </p>
+      ) : detail.isLoading ? (
+        <div data-testid="stock-documents-loading" className="space-y-2 py-2">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="py-8 text-center">
+          <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
+          <h3 className="mt-2 text-sm font-semibold">Nothing is claiming this stock</h3>
+        </div>
+      ) : (
+        <PanelDataGrid<StockDetailRow>
+          title="Documents"
+          columns={columns}
+          rows={rows}
+          getRowId={(row) => row.key}
+          listingKey="projects.projects.view::project-stock-detail"
+          sortable
+          emptyTitle="Nothing is claiming this stock"
+          // The live book tops out at 501 rows for one product and location, which is one page:
+          // paging it would hide the total that makes the header checkable.
+          pageSize={1000}
+        />
+      )}
+    </div>
   );
 }
 

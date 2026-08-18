@@ -295,6 +295,8 @@ export interface BorrowCandidate {
 export interface SupplyFrozenLine {
   open_qty: string;
   components: SupplyComponent[];
+  /** The reason given for overriding the proposal, when one was. Absent otherwise. */
+  amend_reason?: string | null;
 }
 
 export interface SupplyLine {
@@ -399,6 +401,12 @@ export interface ConfirmLine {
   buy_qty: string;
   /** Mandatory when the product is discontinued and `buy_qty > 0` (AC-B11). */
   buy_reason?: string | null;
+  /**
+   * Why this composition is not the engine's, in the planner's own words. Frozen with the
+   * line: every other component carries the sentence of the RULE that produced it, and those
+   * explain a decision nobody took once a person has overridden them.
+   */
+  amend_reason?: string | null;
 }
 
 export interface ConfirmSupplyBody {
@@ -480,6 +488,58 @@ export interface BoardDateBucket {
 
 /** How a contributing line's quantity is proposed to be met. Mirrors SupplyComponentKind. */
 export type BoardSourceKind = 'reserve' | 'timely_spo' | 'buy' | 'unplannable';
+
+/** The rungs of the source ladder, in the order the engine walks them. */
+export type BoardTrailKind = 'reserve_own' | 'reserve_pool' | 'incoming' | 'borrow' | 'buy';
+
+/**
+ * What happened at one rung.
+ *
+ *   took          the source gave something
+ *   nothing_left  it was checked and had nothing to give
+ *   not_eligible  a RULE skipped it (hot-selling protects dealer stock; no shared pool exists)
+ *   offered       found, and deliberately not taken - Borrow needs a donor and a person's reason
+ *   none_needed   the line was already covered before the ladder reached it
+ */
+export type BoardTrailOutcome =
+  | 'took'
+  | 'nothing_left'
+  | 'not_eligible'
+  | 'offered'
+  | 'none_needed';
+
+/**
+ * One rung of the ladder, as it was walked for one line (the captain: "can you justify how you
+ * arrive at the buy, like what's the process you have gone through ... need more justification",
+ * and then "the justification needs to be STRUCTURED instead of plain text").
+ *
+ * EVERY rung arrives, including the ones that gave nothing: "the pool was checked and had none"
+ * is the answer to that question, and a step the server omitted would read as a step nobody took.
+ * A line that cannot be planned carries an empty trail, because no ladder was walked for it.
+ */
+export interface BoardTrailStep {
+  /** 1-based, in the order the ladder walked. */
+  step: number;
+  kind: BoardTrailKind;
+  /** The source's warehouse code. Null for Buy, which is held nowhere, and for Borrow. */
+  location?: string | null;
+  /** The same warehouse by id. Addressing only, never rendered. */
+  warehouse_id?: string | null;
+  /** What the source held when the ladder reached this line, before the demand ahead of it. */
+  opening?: string | null;
+  /** Own location only: what the queue in front of this line wants, and how long it is. */
+  ahead_qty?: string | null;
+  ahead_lines?: number | null;
+  /** What this source could give THIS line once its own rules were applied. */
+  offered: string;
+  /** What the line actually took. Always 0 for Borrow, which is offered and never proposed. */
+  taken: string;
+  /** Still uncovered after this step. Zero on the last one. */
+  remaining_after: string;
+  outcome: BoardTrailOutcome;
+  /** One short hint, never a paragraph: "hot-selling: pool only", "3 donors". */
+  note?: string | null;
+}
 
 /**
  * One contributing sales-order line inside a cell: the row of the breakdown table the captain
@@ -604,6 +664,13 @@ export interface BoardContribution {
   /** The default rule's proposal for this row, in the order the engine proposes them. */
   sources: BoardSource[];
   /**
+   * HOW that proposal was arrived at: the ladder, rung by rung, in the order it was walked.
+   *
+   * The sources say what the answer is; this says what was checked to get there, including the
+   * rungs that gave nothing. Empty for a line that cannot be planned at all.
+   */
+  trail?: BoardTrailStep[];
+  /**
    * Free stock at this row's location ran out before this row was reached, so the default
    * rule gave it to an earlier-dated row and this one is bought instead (13.5). Named because
    * today the two orders would both silently propose the same stock and the second would only
@@ -674,8 +741,17 @@ export interface BoardSource {
 export interface BoardBorrowCandidate {
   source: BorrowSource;
   warehouse_code: string;
+  /**
+   * Addressing only, never rendered. The board COMPOSES a Borrow now rather than only
+   * mentioning that one is possible, and `ConfirmBorrowComponent` names the donor by id: a
+   * warehouse code cannot be resolved into one here without guessing at an id.
+   */
+  warehouse_id?: string | null;
   donor_project_ref?: string | null;
+  donor_project_id?: string | null;
   free_qty: string;
+  /** What taking it costs whoever holds it (AC-B09). Shown while the borrow is chosen. */
+  donor_impact?: BorrowDonorImpact;
 }
 
 /** One incoming purchase leg at a location, with the document that carries it. */
@@ -715,6 +791,15 @@ export interface BoardCellLocation {
   qty_free?: string | null;
   /** Free stock left AFTER this board's own proposals have drawn it down. */
   qty_free_remaining?: string | null;
+  /**
+   * What confirmed decisions are already holding here. On hand, less reserved, less this, IS
+   * `qty_free` - the third term of that arithmetic, so the sum can close on screen.
+   */
+  qty_held_by_decisions?: string | null;
+  /** What the WHOLE BOOK still owes here, not merely the orders on this board. */
+  qty_owed_all_orders?: string | null;
+  /** Of that, the part a confirmed decision already covers. */
+  qty_owed_confirmed?: string | null;
   qty_incoming?: string | null;
   incoming?: BoardIncomingLeg[];
   qty_proposed_reserve?: string | null;
@@ -863,10 +948,49 @@ export interface PlanningBoard {
 /** What CS did to one contributing row. The board's working draft, persisted nowhere yet. */
 export type BoardVerdict = 'approved' | 'amended' | 'rejected';
 
+/** One warehouse's share of an amended Reserve. Addressed by id, labelled by code. */
+export interface BoardReserveComponent {
+  warehouse_id: string;
+  /** The warehouse CODE, for the pill and the editor. Never the id. */
+  location?: string | null;
+  qty: string;
+}
+
+/** One donor an amendment borrows from. The confirm body's borrow component, plus its code. */
+export interface BoardBorrowComponent {
+  source: BorrowSource;
+  warehouse_id: string;
+  warehouse_code?: string | null;
+  donor_project_ref?: string | null;
+  donor_project_id?: string | null;
+  qty: string;
+  /** Mandatory: no Borrow is written without one (AC-B09). */
+  reason: string;
+}
+
 export interface BoardDecision {
   verdict: BoardVerdict;
-  /** Present on an amend: the Reserve quantity CS typed in place of the proposed one. */
+  /**
+   * The whole Reserve as one number.
+   *
+   * Kept beside the components below because it is what a decision taken before the board
+   * could compose one carries, and what the pill falls back to. The components are the
+   * decision; this is a summary of them.
+   */
   reserve_qty?: string;
+  /**
+   * The composition the planner typed, in full: the SAME four kinds the per-order sheet
+   * composes, so an amendment made on the board and one made on the sheet reach the
+   * confirmation as the same body.
+   *
+   * Present on an amend made in the editor. Absent on an approval (the proposal stands, and
+   * the confirmation reads the server's own numbers) and on a rejection (nothing is posted).
+   */
+  reserve?: BoardReserveComponent[];
+  borrow?: BoardBorrowComponent[];
+  buy_qty?: string;
+  /** The server's incoming cover, carried through unedited: it is dated supply, not a choice. */
+  timely_spo_qty?: string;
   /**
    * Mandatory on an amend that displaces the default priority rule, and on a reject. Same
    * shape as the Borrow reason the per-line card already demands (AC-B09): a decision a
@@ -880,7 +1004,8 @@ export type BoardDraft = Record<string, BoardDecision>;
 
 
 // ---------------------------------------------------------------------------
-// Stock Status with Detail: what the four numbers on a location pill are made of.
+// Stock Status with Detail: what the figures on a location ROW of the cell's stock table are
+// made of, expanded under that row.
 //
 // AutoCount shows this as a document list under the position, and the captain reads it there.
 // The FE mirrors that: a header line that is the arithmetic, then the documents that produce
@@ -910,15 +1035,30 @@ export interface StockDetailIncoming {
   spo_qty: string;
 }
 
-/** `GET /project-sales/fulfilment-planning/stock-detail?product_id=&warehouse_id=`. */
+/**
+ * `GET /project-sales/fulfilment-planning/stock-detail?product_id=&warehouse_id=`.
+ *
+ * The field names are the SERVER's, checked against `app/schemas/project_board.py`. This type
+ * used to declare a `warehouse_code` the backend never sends and to omit three fields it always
+ * sends, so a reader of the type learnt the wrong shape and a renderer of `warehouse_code` would
+ * have printed nothing for ever without a type error.
+ */
 export interface StockDetail {
-  item_code?: string | null;
-  warehouse_code?: string | null;
+  product_id: string;
+  item_code: string;
+  description?: string | null;
+  warehouse_id: string;
+  /** The warehouse CODE, which is what the screen shows. Named `location` by the server. */
+  location: string;
   qty_on_hand: string;
   so_qty: string;
   spo_qty: string;
   /** SIGNED: on hand - SO + SPO. Negative is the shortfall and is shown as it arrives. */
   available_qty: string;
+  qty_reserved: string;
+  /** What confirmed decisions hold here. On hand, less reserved, less this, IS `qty_free`. */
+  qty_held_by_decisions: string;
+  qty_free: string;
   sales_orders: StockDetailSalesOrder[];
   incoming: StockDetailIncoming[];
 }

@@ -619,20 +619,49 @@ describe('day granularity (13.3)', () => {
   });
 });
 
+/**
+ * Whether an amendment has to say why, read over the WHOLE composition.
+ *
+ * It used to look at the Reserve alone, which was all a board amendment could change. Now that
+ * the editor composes all four kinds, a planner could move 40 out of Reserve and 40 into
+ * Borrow, displace the rule completely, and be asked for nothing.
+ */
 describe('amendNeedsReason', () => {
   const board = buildBoard([line({ qty: '100' })], {
     today: TODAY,
     freeStock: { 'WESERP10B|BRW-BB': '40' },
   });
   const contribution = board.cells[0].contributions[0];
+  /** The proposal as it stands: reserve 40 at the line's own location, buy the other 60. */
+  const proposed = {
+    timely_spo_qty: '0',
+    reserve: [{ qty: '40' }],
+    borrow: [] as { qty: string }[],
+    buy_qty: '60',
+  };
 
   it('does not demand a reason for accepting the proposal unchanged', () => {
-    expect(amendNeedsReason(contribution, '40')).toBe(false);
+    expect(amendNeedsReason(contribution, proposed)).toBe(false);
   });
 
-  it('demands one for any quantity that displaces the rule', () => {
-    expect(amendNeedsReason(contribution, '10')).toBe(true);
-    expect(amendNeedsReason(contribution, '100')).toBe(true);
+  it('demands one for any Reserve that displaces the rule', () => {
+    expect(
+      amendNeedsReason(contribution, { ...proposed, reserve: [{ qty: '10' }], buy_qty: '90' }),
+    ).toBe(true);
+  });
+
+  it('demands one for a Borrow, which the engine never proposes', () => {
+    expect(
+      amendNeedsReason(contribution, {
+        ...proposed,
+        borrow: [{ qty: '10' }],
+        buy_qty: '50',
+      }),
+    ).toBe(true);
+  });
+
+  it('demands one when the Buy changes, however the Reserve was left', () => {
+    expect(amendNeedsReason(contribution, { ...proposed, buy_qty: '20' })).toBe(true);
   });
 });
 
@@ -951,6 +980,113 @@ describe('confirmLinesFor addresses each reserve to its own warehouse', () => {
     expect(
       confirmLinesFor(noWarehouse, 'so-a', { [base.key]: { verdict: 'approved' } }),
     ).toEqual([]);
+  });
+});
+
+/**
+ * An amendment made in the editor posts THE COMPOSITION THE PLANNER TYPED.
+ *
+ * The captain: "I should be able to amend the decision and quantity, like I can decide to
+ * reserve, or buy, or borrow". A body that took one number and derived the rest could carry
+ * one of those three; this carries what was actually decided, per warehouse and per donor, the
+ * same way the per-order sheet's body does.
+ */
+describe('confirmLinesFor and a composed amendment', () => {
+  const board = buildBoard(
+    [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' })],
+    { today: TODAY },
+  );
+  const base = board.cells[0].contributions[0];
+
+  it('posts the reserve, the borrow and the buy exactly as composed', () => {
+    const lines = confirmLinesFor([base], 'so-a', {
+      [base.key]: {
+        verdict: 'amended',
+        reserve_qty: '20',
+        timely_spo_qty: '0',
+        reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '20' }],
+        borrow: [
+          {
+            source: 'other_location',
+            warehouse_id: 'wh-ib',
+            warehouse_code: 'BRW-IB',
+            donor_project_id: null,
+            qty: '10',
+            reason: 'The site next door can wait a week.',
+          },
+        ],
+        buy_qty: '70',
+        reason: 'Holding the rest for the late site.',
+      },
+    });
+
+    expect(lines[0]).toEqual({
+      project_line_id: 'pl-so-a-1',
+      timely_spo_qty: '0',
+      reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '20' }],
+      borrow: [
+        {
+          source: 'other_location',
+          warehouse_id: 'wh-ib',
+          donor_project_id: null,
+          qty: '10',
+          reason: 'The site next door can wait a week.',
+        },
+      ],
+      buy_qty: '70',
+      amend_reason: 'Holding the rest for the late site.',
+    });
+  });
+
+  it('no longer drops the amendment that turns a Buy into a Reserve', () => {
+    // The line the engine met entirely from Buy is the one a planner most wants to amend:
+    // there is stock at their own warehouse. The old body read the warehouse off the Reserve
+    // SOURCES, of which there were none, and dropped the line - so the amendment was accepted
+    // on screen and posted nothing at all.
+    const lines = confirmLinesFor([base], 'so-a', {
+      [base.key]: {
+        verdict: 'amended',
+        reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '100' }],
+        borrow: [],
+        buy_qty: '0',
+        timely_spo_qty: '0',
+        reason: 'The stock is at my own warehouse.',
+      },
+    });
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0].reserve).toEqual([{ warehouse_id: 'wh-BRW-BB', qty: '100' }]);
+    expect(lines[0].buy_qty).toBe('0');
+  });
+
+  it('leaves the reason off a body nobody gave one for', () => {
+    const lines = confirmLinesFor([base], 'so-a', {
+      [base.key]: {
+        verdict: 'amended',
+        reserve: [],
+        borrow: [],
+        buy_qty: '100',
+        timely_spo_qty: '0',
+      },
+    });
+    expect(lines[0].amend_reason).toBeUndefined();
+  });
+
+  it('still derives the Buy for an amendment carrying only the old single number', () => {
+    // A draft entry made before the editor existed. It cannot name a warehouse for a quantity
+    // the engine did not reserve, so the derived path stays exactly as it was.
+    const lines = confirmLinesFor(
+      [{ ...base, qty_proposed_reserve: '40', qty_proposed_buy: '60',
+         sources: [
+           { kind: 'reserve' as const, qty: '40', location: 'BRW-BB', warehouse_id: 'wh-BRW-BB', reason: 'Covered.' },
+           { kind: 'buy' as const, qty: '60', location: null, reason: 'The residual is bought.' },
+         ] }],
+      'so-a',
+      { [base.key]: { verdict: 'amended', reserve_qty: '10', reason: 'Held back.' } },
+    );
+    expect(lines[0].reserve).toEqual([{ warehouse_id: 'wh-BRW-BB', qty: '10' }]);
+    expect(lines[0].buy_qty).toBe('90');
+    expect(lines[0].amend_reason).toBe('Held back.');
   });
 });
 

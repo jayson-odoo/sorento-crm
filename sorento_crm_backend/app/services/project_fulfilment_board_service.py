@@ -196,7 +196,8 @@ class _Row:
         "project_label", "order_date", "line_no", "item_code", "product_id", "qty",
         "required_date", "warehouse_id", "location", "priority", "demand_class",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
-        "sources", "contested", "qty_ordered", "qty_delivered", "proposed", "free_before",
+        "sources", "trail", "contested", "qty_ordered", "qty_delivered", "proposed",
+        "free_before",
         "raw_facts", "taken_before", "last_taker", "borrow_candidates",
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
@@ -208,6 +209,9 @@ class _Row:
         self.rank_score = 0.0
         self.rank_factors = []
         self.sources = []
+        # The ladder as it was walked for this line, rung by rung. Empty for an unplannable
+        # line: no ladder was walked for it.
+        self.trail = []
         self.contested = False
         self.is_past = False
         # Filled by `_allocate`: what the engine proposes for this line, by kind, and what was
@@ -942,9 +946,11 @@ class FulfilmentBoardService:
                 )
                 if code and warehouse_id
             }
-            components = self.supply.compose_line(
-                fact, pool_free_left=pool_left.get(pool_key, _ZERO) if pool_key else None
-            )
+            # What the shared pool still held when THIS line was reached, captured before the
+            # draw: the trail states what each source held, and reading it back afterwards
+            # would state what was left instead.
+            pool_open = pool_left.get(pool_key, _ZERO) if pool_key else None
+            components = self.supply.compose_line(fact, pool_free_left=pool_open)
             if pool_key and fact.pool_code:
                 drawn = sum(
                     (
@@ -980,6 +986,184 @@ class FulfilmentBoardService:
                 row.borrow_candidates = []
 
             row.sources = [self._source(component, row) for component in components]
+            row.trail = self._trail(row, fact, components, pool_open)
+
+    def _trail(
+        self,
+        row: _Row,
+        fact: Any,
+        components: Sequence[Any],
+        pool_open: Optional[Decimal],
+    ) -> List[Dict[str, Any]]:
+        """The ladder for one line, rung by rung, in the order it was walked.
+
+        The captain: "can you justify how you arrive at the buy, like what's the process you
+        have gone through: checking the available quantity first, deciding whether to reserve
+        it or not, then checking the SPO quantity, then checking whether can borrow".
+
+        EVERY rung is emitted, including the ones that gave nothing, because "the pool was
+        checked and had none" is the answer to that question and an omitted step reads as a step
+        that was never taken. A rung skipped by a RULE - a hot-selling product may not touch its
+        own dealer stock, a location has no shared pool - says so under its own outcome rather
+        than looking like a source that happened to be empty.
+
+        A READ, never a second allocator: every quantity here is either one the engine already
+        produced (`components`) or one the facts already state, so the trail cannot disagree
+        with the proposal it explains.
+        """
+        steps: List[Dict[str, Any]] = []
+        remaining = _dec(row.qty)
+        own_code = fact.own_code
+        pool_code = fact.pool_code
+        level = max(_dec(fact.pool_reorder_level), _ZERO)
+
+        def took(kind: str, location: Optional[str]) -> Decimal:
+            return sum(
+                (
+                    component.qty
+                    for component in components
+                    if component.kind == kind and component.source_location == location
+                ),
+                _ZERO,
+            )
+
+        def add(
+            kind: str,
+            *,
+            location: Optional[str] = None,
+            warehouse_id: Optional[str] = None,
+            opening: Optional[Decimal] = None,
+            offered: Decimal = _ZERO,
+            taken: Decimal = _ZERO,
+            ahead_qty: Optional[Decimal] = None,
+            ahead_lines: Optional[int] = None,
+            note: Optional[str] = None,
+            eligible: bool = True,
+            offer_only: bool = False,
+        ) -> None:
+            nonlocal remaining
+            wanted = remaining
+            remaining = max(remaining - taken, _ZERO)
+            if not eligible:
+                outcome = "not_eligible"
+            elif taken > _ZERO:
+                outcome = "took"
+            elif wanted <= _ZERO:
+                outcome = "none_needed"
+            elif offer_only and offered > _ZERO:
+                outcome = "offered"
+            else:
+                outcome = "nothing_left"
+            steps.append(
+                {
+                    "step": len(steps) + 1,
+                    "kind": kind,
+                    "location": location,
+                    "warehouse_id": warehouse_id,
+                    "opening": None if opening is None else qty_text(opening),
+                    "ahead_qty": None if ahead_qty is None else qty_text(ahead_qty),
+                    "ahead_lines": ahead_lines,
+                    "offered": qty_text(offered),
+                    "taken": qty_text(taken),
+                    "remaining_after": qty_text(remaining),
+                    "outcome": outcome,
+                    "note": note,
+                }
+            )
+
+        # 1. The line's own location, and what the demand ranked ahead of it there had left.
+        add(
+            "reserve_own",
+            location=own_code,
+            warehouse_id=row.warehouse_ids.get(own_code),
+            opening=self._free.get((row.product_id, row.warehouse_id), _ZERO),
+            ahead_qty=fact.so_qty_ahead,
+            ahead_lines=fact.lines_ahead,
+            offered=_ZERO if fact.is_hot_selling else fact.available_to_this_line,
+            taken=took(RESERVE, own_code) if not fact.is_hot_selling else _ZERO,
+            eligible=not fact.is_hot_selling,
+            note="hot-selling: pool only" if fact.is_hot_selling else None,
+        )
+
+        # 2. The shared pool, which a hot-selling product may draw on only above the pool's own
+        #    reorder level (PLAN 3.3).
+        if not pool_code:
+            add("reserve_pool", eligible=False, note="no shared pool")
+        elif pool_code == own_code:
+            add(
+                "reserve_pool",
+                location=pool_code,
+                warehouse_id=row.warehouse_ids.get(pool_code),
+                eligible=False,
+                note="pool is this location",
+            )
+        else:
+            balance = max(_dec(pool_open), _ZERO)
+            add(
+                "reserve_pool",
+                location=pool_code,
+                warehouse_id=row.warehouse_ids.get(pool_code),
+                opening=balance,
+                offered=(
+                    max(balance - level, _ZERO) if fact.is_hot_selling else balance
+                ),
+                taken=took(RESERVE, pool_code),
+                note=(
+                    f"capped by reorder level {qty_text(level)}"
+                    if fact.is_hot_selling and level > _ZERO
+                    else None
+                ),
+            )
+
+        # 3. Supply already on its way that lands on or before the required date.
+        add(
+            "incoming",
+            location=own_code,
+            warehouse_id=row.warehouse_ids.get(own_code),
+            opening=fact.timely_qty,
+            offered=fact.timely_qty,
+            taken=took(TIMELY_SPO, own_code),
+            note=self._incoming_note(fact),
+        )
+
+        # 4. Borrow: offered, never proposed. It needs a donor and a reason from a person
+        #    (AC-B09), so the trail shows what was found and that nothing was taken.
+        donors = sum(
+            (_dec(candidate["free_qty"]) for candidate in row.borrow_candidates), _ZERO
+        )
+        add(
+            "borrow",
+            opening=donors if row.borrow_candidates else _ZERO,
+            offered=donors,
+            note=(
+                f"{len(row.borrow_candidates)} donor"
+                f"{'' if len(row.borrow_candidates) == 1 else 's'}"
+                if row.borrow_candidates
+                else None
+            ),
+            offer_only=True,
+        )
+
+        # 5. Whatever is still uncovered.
+        residual = row.proposed.get(BUY, _ZERO)
+        add("buy", offered=residual, taken=residual)
+        return steps
+
+    @staticmethod
+    def _incoming_note(fact: Any) -> Optional[str]:
+        """Which document the incoming cover is, said once and shortly.
+
+        Named is the useful form - "ZZT-SPO-0001 arrives 2026-08-25" is something a planner can
+        look up, and an unnamed quantity is not - and the rest of the documents are already on
+        the location strip, so this states the first and how many follow it.
+        """
+        refs = list(fact.timely_refs or [])
+        if not refs:
+            return None
+        first = refs[0]
+        when = first.arrival_date.isoformat() if first.arrival_date else "an unstated date"
+        note = f"{first.spo_number} arrives {when}"
+        return note if len(refs) == 1 else f"{note} +{len(refs) - 1} more"
 
     def _buy_reason(self, row: _Row) -> str:
         """Why this quantity is being bought, said in a way a person can check.
@@ -1235,12 +1419,19 @@ class FulfilmentBoardService:
                     _ZERO,
                 )
             ),
+            # The sheet's own candidate, passed through whole. It was being narrowed to the
+            # four fields a READER needs, and the board now composes a Borrow: the confirm
+            # body names the donor by `warehouse_id` and `donor_project_id`, neither of which
+            # a warehouse code can be resolved into on the client without guessing at an id.
             "borrow_candidates": [
                 {
                     "source": candidate["source"],
                     "warehouse_code": candidate["warehouse_code"],
+                    "warehouse_id": candidate.get("warehouse_id"),
                     "donor_project_ref": candidate.get("donor_project_ref"),
+                    "donor_project_id": candidate.get("donor_project_id"),
                     "free_qty": candidate["free_qty"],
+                    "donor_impact": candidate.get("donor_impact"),
                 }
                 for candidate in row.borrow_candidates
             ],
@@ -1248,6 +1439,10 @@ class FulfilmentBoardService:
             #: This line's own date is behind the as-of date. Per line, not per column.
             "is_past": row.is_past,
             "fulfilment_location": row.location,
+            #: The same warehouse by id, addressing only. An amendment on a line the engine
+            #: proposed nothing for has no Reserve source to read one off, and inventing one
+            #: from the location code would be guessing at an id.
+            "fulfilment_warehouse_id": row.warehouse_id,
             "unplannable": row.unplannable,
             "priority": row.priority,
             "rank_score": round(float(row.rank_score), 6),
@@ -1261,6 +1456,10 @@ class FulfilmentBoardService:
                 for factor in row.rank_factors
             ],
             "sources": row.sources,
+            # The ladder, rung by rung, in the order it was walked - including the rungs that
+            # gave nothing, because "the pool was checked and had none" is the answer to "how
+            # did you arrive at the Buy" and an omitted step reads as a step never taken.
+            "trail": row.trail,
             "contested": row.contested,
         }
 

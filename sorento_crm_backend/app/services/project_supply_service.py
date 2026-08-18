@@ -654,6 +654,10 @@ class ProjectSupplyService:
             out[line_id] = {
                 "open_qty": str(snapshot.get("open_qty") or "0"),
                 "components": list(snapshot.get("components") or []),
+                # Read back beside the components it explains. A snapshot written before the
+                # field existed simply has none, which is the same answer as "nobody amended
+                # this line" and reads identically on screen.
+                "amend_reason": snapshot.get("amend_reason"),
             }
         return out
 
@@ -1393,6 +1397,11 @@ class ProjectSupplyService:
                 "This product is discontinued." if fact.is_discontinued else None
             ),
             "buy_reason": (entry.buy_reason or "").strip() or None,
+            # Why the composition above is not the one the engine proposed. Frozen with the
+            # line rather than discarded at the call: every other component carries the
+            # sentence of the RULE that produced it, and on an amended line those sentences
+            # explain a decision nobody took.
+            "amend_reason": (getattr(entry, "amend_reason", None) or "").strip() or None,
         }
 
     def _reserve_reason(self, fact: _LineFacts, location: Optional[str]) -> str:
