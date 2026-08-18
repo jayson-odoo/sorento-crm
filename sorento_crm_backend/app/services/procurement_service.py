@@ -529,6 +529,63 @@ class SupplierService:
         return supplier
 
 
+def _merge_shipment_lines(line_payloads) -> list[dict]:
+    """One row per product per shipment, merging the file's duplicate lines by product.
+
+    A packing list often names the same product twice - two cartons of it, at two prices,
+    because a price was renegotiated part way through the order. Quantities and cartons add
+    up. The PRICE cannot: keeping the first line's `unit_cost` silently values the whole
+    merged quantity at whichever price happened to be listed first, and the difference is
+    invisible afterwards because the two lines no longer exist separately.
+
+    So the merged cost is the QUANTITY-WEIGHTED average, which is what the container
+    actually cost per unit. It is only computed when both sides carry a cost in the SAME
+    currency; a currency mismatch is not arithmetic, so the first line's cost is kept and
+    the disagreement is logged rather than averaged into a meaningless number.
+    """
+    merged: dict[str, dict] = {}
+    for line_data in line_payloads:
+        d = line_data.model_dump() if hasattr(line_data, "model_dump") else dict(line_data)
+        pid = d["product_id"]
+        if pid not in merged:
+            merged[pid] = dict(d)
+            continue
+
+        kept = merged[pid]
+        kept_qty = kept.get("quantity_shipped") or 0
+        add_qty = d.get("quantity_shipped") or 0
+        kept["quantity_shipped"] = kept_qty + add_qty
+        incoming_cartons = d.get("cartons_count")
+        kept["cartons_count"] = (kept.get("cartons_count") or 0) + (
+            incoming_cartons if incoming_cartons is not None else 1
+        )
+
+        kept_cost, add_cost = kept.get("unit_cost"), d.get("unit_cost")
+        if kept_cost is None or add_cost is None:
+            # One side priced and the other not: there is nothing to average against, and
+            # inventing a zero for the unpriced half would halve the cost of the line.
+            kept["unit_cost"] = kept_cost if kept_cost is not None else add_cost
+            kept["currency"] = kept.get("currency") or d.get("currency")
+            continue
+        if (kept.get("currency") or None) != (d.get("currency") or None):
+            logger.warning(
+                "Shipment line merge: product %s appears twice in different currencies "
+                "(%s and %s). Keeping the first line's cost rather than averaging.",
+                pid, kept.get("currency"), d.get("currency"),
+            )
+            continue
+
+        total_qty = Decimal(str(kept_qty)) + Decimal(str(add_qty))
+        if total_qty == 0:
+            continue
+        kept["unit_cost"] = (
+            Decimal(str(kept_cost)) * Decimal(str(kept_qty))
+            + Decimal(str(add_cost)) * Decimal(str(add_qty))
+        ) / total_qty
+
+    return list(merged.values())
+
+
 class InboundShipmentService:
     """Service for inbound shipment (packing list) operations."""
     
@@ -981,16 +1038,7 @@ class InboundShipmentService:
                 self.db.delete(line)
             self.db.flush()
             if shipment_data.shipment_lines:
-                merged: dict[str, dict] = {}
-                for line_data in shipment_data.shipment_lines:
-                    d = line_data.model_dump()
-                    pid = d["product_id"]
-                    if pid in merged:
-                        merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
-                        merged[pid]["cartons_count"] += d.get("cartons_count", 1)
-                    else:
-                        merged[pid] = dict(d)
-                for d in merged.values():
+                for d in _merge_shipment_lines(shipment_data.shipment_lines):
                     line = InboundShipmentLine(**d, shipment_id=existing.id)
                     self.db.add(line)
             self.db.commit()
@@ -1011,16 +1059,7 @@ class InboundShipmentService:
         
         # Create lines if provided (one row per product per shipment; merge duplicates by product_id)
         if shipment_data.shipment_lines:
-            merged: dict[str, dict] = {}  # product_id -> merged line dict
-            for line_data in shipment_data.shipment_lines:
-                d = line_data.model_dump()
-                pid = d["product_id"]
-                if pid in merged:
-                    merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
-                    merged[pid]["cartons_count"] += d.get("cartons_count", 1)
-                else:
-                    merged[pid] = dict(d)
-            for d in merged.values():
+            for d in _merge_shipment_lines(shipment_data.shipment_lines):
                 line = InboundShipmentLine(**d, shipment_id=shipment.id)
                 self.db.add(line)
         
@@ -1048,16 +1087,7 @@ class InboundShipmentService:
             self.db.flush()
             lines_data = shipment_data.shipment_lines or []
             if lines_data:
-                merged: dict[str, dict] = {}
-                for line_data in lines_data:
-                    d = line_data.model_dump()
-                    pid = d["product_id"]
-                    if pid in merged:
-                        merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
-                        merged[pid]["cartons_count"] += d.get("cartons_count", 1)
-                    else:
-                        merged[pid] = dict(d)
-                for d in merged.values():
+                for d in _merge_shipment_lines(lines_data):
                     line = InboundShipmentLine(**d, shipment_id=shipment.id)
                     self.db.add(line)
         

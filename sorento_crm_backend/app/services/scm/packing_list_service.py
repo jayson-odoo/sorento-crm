@@ -32,16 +32,42 @@ from sqlalchemy.orm import Session
 
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
 from app.services.error_handler import AppException
+from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.packing_list_reader import PackingBlock, PackingReadResult, read_workbook
+from app.services.scm.supplier_scope import assert_supplier
 from app.services.scm.upload_validation import envelope, named
 
 #: What a block is called when it has no container number of its own. Positional, so the same
 #: file re-uploaded produces the same names and the duplicate resolver recognises them.
 _PRELOAD_PREFIX = "PRELOAD"
 
+#: The sentence the operator has to be able to act on when the file prices what it ships and
+#: nothing says in what money. Shared with the proforma channel's wording (AC-P3.2).
+_NO_CURRENCY = (
+    "Nothing says which money these prices are in - state the currency this packing list is in."
+)
+
+
+def _priced(parsed: PackingReadResult) -> int:
+    """How many lines carry a unit price. A price is what makes a currency compulsory."""
+    return sum(1 for b in parsed.blocks for ln in b.lines if ln.unit_price is not None)
+
 
 def _parse(db: Session, data: bytes) -> PackingReadResult:
     return read_workbook(data, db=db)
+
+
+def _check_supplier(db: Session, supplier_id: Optional[str]) -> None:
+    """A STATED supplier has to be one we hold, same rule as the proforma channel.
+
+    The supplier is optional here (a pre-load list can arrive before anyone knows), so only a
+    stated one is checked. It has to be checked before the currency resolution below it: the
+    supplier price list is one of the currency sources, and a value that is not an id reached
+    a UUID column there, which is a 500 with the session aborted rather than the 422 the
+    operator can act on.
+    """
+    if supplier_id:
+        assert_supplier(db, supplier_id)
 
 
 def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
@@ -114,22 +140,59 @@ def _summarise(db: Session, parsed: PackingReadResult, *, source_ref: Optional[s
     }
 
 
-def preview(db: Session, data: bytes, *, source_ref: Optional[str] = None) -> dict:
-    """What this file would create, before anything is written."""
+def preview(
+    db: Session,
+    data: bytes,
+    *,
+    source_ref: Optional[str] = None,
+    supplier_id: Optional[str] = None,
+    currency: Optional[str] = None,
+) -> dict:
+    """What this file would create, before anything is written.
+
+    Takes the same `supplier_id` / `currency` the apply will, and reports which currency
+    resolved and where from: the preview is what the operator reads before pressing Confirm,
+    and a preview that cannot say the file is priced in nothing would let them press it and
+    only then be told (AC-P3.1).
+    """
+    _check_supplier(db, supplier_id)
     parsed = _parse(db, data)
     out = _summarise(db, parsed, source_ref=source_ref)
+    code, source = resolve_currency(
+        db, supplier_id=supplier_id, requested=currency, stated=parsed.currency_hint
+    )
+    out["currency"] = code
+    out["currency_source"] = source
+    out["priced_lines"] = _priced(parsed)
     out["ok"] = parsed.ok
     out["missing_columns"] = parsed.missing_columns
-    out["problems"] = [p.message for p in parsed.problems][:50]
+    out["problems"] = [p.reason for p in parsed.problems][:50]
     return out
 
 
-def validate(db: Session, data: bytes, *, source_ref: Optional[str] = None) -> dict:
+def validate(
+    db: Session,
+    data: bytes,
+    *,
+    source_ref: Optional[str] = None,
+    supplier_id: Optional[str] = None,
+    currency: Optional[str] = None,
+) -> dict:
     """The `{valid, errors, warnings, summary}` verdict a Test means everywhere here."""
+    _check_supplier(db, supplier_id)
     parsed = _parse(db, data)
     summary = _summarise(db, parsed, source_ref=source_ref)
+    code, source = resolve_currency(
+        db, supplier_id=supplier_id, requested=currency, stated=parsed.currency_hint
+    )
+    summary["currency"] = code
+    summary["currency_source"] = source
+    summary["priced_lines"] = _priced(parsed)
 
-    problems: list[str] = [p.message for p in parsed.problems]
+    # Row problems are WARNINGS, mirroring the proforma channel: apply loads the readable
+    # rows regardless, and a Test that says "invalid" about a file Confirm then accepts is
+    # a verdict the operator learns to ignore. Errors are only what apply refuses.
+    problems: list[str] = []
     if parsed.missing_columns:
         problems.append(
             "The file does not name "
@@ -138,8 +201,12 @@ def validate(db: Session, data: bytes, *, source_ref: Optional[str] = None) -> d
         )
     elif not parsed.blocks:
         problems.append("No container block was found in this file.")
+    elif summary["priced_lines"] and not code:
+        # A price parsed and then stored without its currency is a number with no meaning,
+        # so it is refused here rather than landed as a bare figure (AC-P5.2).
+        problems.append(_NO_CURRENCY)
 
-    warnings: list[str] = []
+    warnings: list[str] = [p.reason for p in parsed.problems][:50]
     if summary["unmatched_items"]:
         warnings.append(
             "No product matches "
@@ -162,6 +229,7 @@ def apply(
     *,
     supplier_id: Optional[str] = None,
     shipment_date: Optional[date] = None,
+    currency: Optional[str] = None,
     source_ref: Optional[str] = None,
     attachment_id: Optional[str] = None,
     actor_id: Optional[str] = None,
@@ -172,6 +240,7 @@ def apply(
     same file uploaded twice resolves to the same shipments and updates them in place, which is
     AC-G3 and is also what stops a nervous second click doubling a container.
     """
+    _check_supplier(db, supplier_id)
     parsed = _parse(db, data)
     if not parsed.ok:
         raise AppException(
@@ -179,6 +248,15 @@ def apply(
             "This file could not be read as a packing list.",
             detail=", ".join(parsed.missing_columns) or "no container block was found",
         )
+
+    # The pre-loading list prices what it ships, and that price used to be parsed and then
+    # dropped. It is kept now - on the shipment line, with the currency it belongs to - and a
+    # priced file with no resolvable currency is refused rather than stored bare (AC-P5.1/2).
+    resolved_currency, _source = resolve_currency(
+        db, supplier_id=supplier_id, requested=currency, stated=parsed.currency_hint
+    )
+    if _priced(parsed) and not resolved_currency:
+        raise AppException(422, _NO_CURRENCY, detail="currency")
 
     known = _products_by_code(
         db, {ln.item_code for b in parsed.blocks for ln in b.lines}
@@ -206,6 +284,11 @@ def apply(
                     quantity_shipped=int(ln.qty),
                     uom_id=str(product["base_uom_id"]) if product.get("base_uom_id") else None,
                     cartons_count=int(ln.cartons) if ln.cartons else 1,
+                    # Both None on an unpriced list, and neither defaulted: a cost of zero
+                    # would read as free, and a currency nobody stated would make the
+                    # incoming figure look comparable to the ordered one when it is not.
+                    unit_cost=ln.unit_price,
+                    currency=resolved_currency if ln.unit_price is not None else None,
                 )
             )
 
@@ -257,6 +340,8 @@ def apply(
             "shipments_created": created,
             "shipments_updated": updated,
             "lines_skipped": skipped_lines,
+            "currency": resolved_currency,
+            "currency_source": _source,
             "results": results,
         }
     )

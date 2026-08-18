@@ -456,12 +456,24 @@ class AllocationApproval(BaseModel):
 @router.post("/packing-lists/preview")
 async def preview_packing_list(
     file: UploadFile = File(..., description="The pre-load list or packing list"),
+    supplier_id: Optional[str] = Form(None),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Every container block the file holds, and what each would create. Writes nothing."""
+    """Every container block the file holds, and what each would create. Writes nothing.
+
+    Takes the supplier and the currency the apply will take, so the preview can say which
+    money the prices are in before anything is written rather than after.
+    """
     return packing_list_service.preview(
-        db, await read_upload(file), source_ref=file.filename
+        db,
+        await read_upload(file),
+        source_ref=file.filename,
+        supplier_id=supplier_id,
+        currency=currency,
     )
 
 
@@ -470,6 +482,9 @@ async def apply_packing_list(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
     supplier_id: Optional[str] = Form(None),
     shipment_date: Optional[str] = Form(None),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
     validate_only: bool = Query(
         False,
         description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
@@ -480,7 +495,9 @@ async def apply_packing_list(
     """One inbound shipment per container block. Re-uploading the same file updates in place."""
     data = await read_upload(file)
     if validate_only:
-        return packing_list_service.validate(db, data, source_ref=file.filename)
+        return packing_list_service.validate(
+            db, data, source_ref=file.filename, supplier_id=supplier_id, currency=currency
+        )
 
     parsed_date = None
     if shipment_date:
@@ -497,6 +514,7 @@ async def apply_packing_list(
         data,
         supplier_id=supplier_id,
         shipment_date=parsed_date,
+        currency=currency,
         source_ref=file.filename,
         actor_id=current_user.get("id"),
     )

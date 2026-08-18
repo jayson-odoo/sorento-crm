@@ -306,7 +306,9 @@ recoverable, or the decision cannot be reviewed.
 **AC-C3.2** Incoming cost is captured from the packing list at the moment an SPO allocation is
 approved and stamped on the inbound shipment line. The column exists and is populated in 0 of
 1,015 existing rows, and the table has **no currency column**, so both the write and a currency
-migration are in scope.
+migration are in scope. (Met since 17 Aug 2026: the currency column landed with S3b and the
+Excel packing-list ingest now fills both columns at upload. Contract and known limits:
+`scm-proforma-invoice-acceptance-criteria.md` AC-P5.)
 
 **AC-C3.3** Ordered cost is never overwritten by incoming cost. The variance between them is a
 first-class output, since a supplier whose incoming cost drifts above its ordered cost has repriced

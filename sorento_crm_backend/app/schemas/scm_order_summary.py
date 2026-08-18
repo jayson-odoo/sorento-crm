@@ -191,6 +191,10 @@ class SupplierCandidateOut(BaseModel):
     last_po_date: Optional[str] = None
     last_po_number: Optional[str] = None
     last_incoming_cost: Optional[float] = None
+    # What `last_incoming_cost` is quoted in, from the shipment line itself. Separate from
+    # ``currency`` on purpose: the packing-list ingest stores a supplier's own currency
+    # (often CNY) and the PO may be in another, so one code cannot label both figures.
+    last_incoming_currency: Optional[str] = None
     last_incoming_date: Optional[str] = None
     # Incoming minus ordered. A positive number means the supplier repriced upward after we
     # committed (AC-C3.3). NULL when the two sides are not comparable.

@@ -1227,6 +1227,12 @@ def suppliers_for(
             **c,
             "_is_primary": primary,
             "last_incoming_cost": _f(inc_cost),
+            # The SHIPMENT line's own currency, not the candidate's. `currency` above is the
+            # link's or the PO line's, and a CNY pre-loading list price rendered under it
+            # reads as MYR 250.00 for CNY 250.00 with nothing on screen disagreeing. Null
+            # when the shipment line states none, which the screen shows unlabelled rather
+            # than borrowing a code the figure is not in.
+            "last_incoming_currency": inc_ccy,
             "last_incoming_date": inc_date.isoformat() if inc_date else None,
             # None whenever the two sides are not comparable (a missing figure, or two
             # currencies). Subtracting different units would produce a number that looks like
@@ -1266,10 +1272,12 @@ def suppliers_for(
 def _last_incoming_cost(db: Session, product_id: str) -> dict[str, tuple]:
     """Per supplier, the newest inbound shipment line cost for this item.
 
-    Populated in 0 of 1,015 rows today: the packing-list ingest cannot supply a unit price
-    (`PackingListProduct` is code plus quantity), so this returns nothing until that extraction
-    is extended. It is written now so the day a cost arrives the variance is correct, and the
-    screen says "no incoming cost recorded" in the meantime rather than inventing one.
+    Empty for every row written before G3c, and populated from there: the packing-list ingest
+    now persists the `unit_cost` + `currency` it parses instead of discarding them, so a
+    shipment loaded from a priced pre-loading list answers here. Rows with no cost still
+    read as "no incoming cost recorded" rather than having one invented for them, and the
+    currency below is load-bearing now that the value arrives - a CNY price compared against
+    an MYR price list is a variance number that means nothing.
     """
     from app.models.procurement import InboundShipment, InboundShipmentLine
 

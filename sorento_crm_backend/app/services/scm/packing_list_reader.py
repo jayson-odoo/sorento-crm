@@ -29,6 +29,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.services.import_alias_service import AliasResolver, normalize_header
+from app.services.scm.currency_resolution import price_column_currency
 from app.services.scm.outstanding_reader import RowProblem, sheet_rows
 
 DOC_TYPE = "packing_list"
@@ -91,6 +92,11 @@ class PackingReadResult:
     unmapped_headers: list[str] = field(default_factory=list)
     missing_columns: list[str] = field(default_factory=list)
     total_rows: int = 0
+    #: What the price columns say the money is (`RMB`, `单价(元)`). A HINT: the file states
+    #: it, the service decides whether it wins (`currency_resolution.resolve_currency`).
+    #: Without it a parsed unit price could only be stored with no currency, which is the
+    #: same as not storing it (AC-P5.1).
+    currency_hint: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -138,22 +144,35 @@ def _header_map(raw: list, resolver: AliasResolver) -> dict[int, str]:
     return out
 
 
-def _is_header(mapped: dict[int, str]) -> bool:
-    """A header is a row that names an item column AND a quantity column.
+def _is_header(mapped: dict[int, str], required: tuple[str, ...] = _REQUIRED_COLUMNS) -> bool:
+    """A header is a row that names every column the document cannot be read without.
 
     Item code alone is not enough: a labelled cell reading `产品型号: SRTWC8613` resolves the
     same alias and would otherwise start a block of one row whose header is its own data.
+
+    `required` is a parameter because the proforma reader shares this machinery and needs a
+    price column on the header row before it will call a row a header (AC-P2.6).
     """
     values = set(mapped.values())
-    return "item_code" in values and "qty" in values
+    return all(f in values for f in required)
 
 
-def _labelled(raw: list, resolver: AliasResolver) -> dict[str, str]:
+def _labelled(
+    raw: list, resolver: AliasResolver, fields: tuple[str, ...] = _BLOCK_FIELDS
+) -> dict[str, str]:
     """Block-level values written as `label: value` or `label | value` in adjacent cells.
 
-    Only the two block fields are collected. A row that maps a label to nothing usable is
-    ignored rather than recorded as blank, because a blank container number and an absent one
-    have to stay the same thing here (AC-G2).
+    Only the block fields are collected (`fields` is a parameter so the proforma reader can
+    ask for its own five). A row that maps a label to nothing usable is ignored rather than
+    recorded as blank, because a blank container number and an absent one have to stay the
+    same thing here (AC-G2).
+
+    A candidate value that is itself a LABEL - it resolves to a known header, or it simply
+    ends in a colon - is not a value, and ends the search for this field. The row
+    `提单号：` ... `Date 日期：` ... `31/07/2026` is a blank bill of lading followed by a
+    date; without this the scan walked past the second label and read the date as the B/L
+    number (AC-P2.4). The colon test is what corrects the PACKING-LIST channel, where
+    `Date 日期：` resolves to nothing at all and so would not be recognised as a label.
     """
     out: dict[str, str] = {}
     for pos, cell in enumerate(raw):
@@ -166,7 +185,7 @@ def _labelled(raw: list, resolver: AliasResolver) -> dict[str, str]:
             if sep in label:
                 head, _, tail = label.partition(sep)
                 f = resolver.field_for_header(head)
-                if f in _BLOCK_FIELDS and _text(tail):
+                if f in fields and _text(tail):
                     inline = (f, _text(tail))
                 break
         if inline:
@@ -174,13 +193,33 @@ def _labelled(raw: list, resolver: AliasResolver) -> dict[str, str]:
             continue
 
         f = resolver.field_for_header(label)
-        if f in _BLOCK_FIELDS:
+        if f in fields:
             for nxt in raw[pos + 1:]:
                 val = _text(nxt)
-                if val:
+                if not val:
+                    continue
+                if not _is_label(val, resolver):
                     out.setdefault(f, val)
-                    break
+                break
     return out
+
+
+def _is_label(value: str, resolver: AliasResolver) -> bool:
+    """Is this cell a heading rather than somebody's answer to one?
+
+    Three ways to be one, and all three occur in the files: it ends in a colon
+    (`Date 日期：`), it resolves to a known header on its own (`货柜号`), or it is the
+    one-cell `label：value` form (`货柜号：XXXU1234567`) whose head resolves. The last is why
+    the test is not simply "does it resolve" - the whole cell resolves to nothing.
+    """
+    if value.rstrip().endswith((":", "：")):
+        return True
+    if resolver.field_for_header(value) is not None:
+        return True
+    for sep in ("：", ":"):
+        if sep in value:
+            return resolver.field_for_header(value.partition(sep)[0]) is not None
+    return False
 
 
 def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optional[PackingLine]:
@@ -259,6 +298,7 @@ def read_workbook(
                     for p, c in enumerate(raw)
                     if p not in mapped and normalize_header(c)
                 ]
+                result.currency_hint = price_column_currency(raw, mapped)
             saw_header = True
             col_field = mapped
             current = PackingBlock(

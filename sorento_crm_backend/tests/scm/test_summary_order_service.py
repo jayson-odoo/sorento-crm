@@ -560,6 +560,10 @@ def test_an_incoming_cost_in_another_currency_produces_no_variance(db, chain):
 
     assert c["last_incoming_cost"] == 95
     assert c["cost_variance"] is None, "a cross-currency subtraction is not a variance"
+    # The figure travels with the currency it is actually in. `currency` is the PO's, and a
+    # screen labelling 95 MYR as USD states a price the supplier never quoted.
+    assert c["last_incoming_currency"] == "MYR"
+    assert c["currency"] == "USD"
 
 
 def test_an_incoming_cost_above_the_ordered_cost_is_a_positive_variance(db, chain):

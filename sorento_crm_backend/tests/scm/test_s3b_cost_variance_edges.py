@@ -312,6 +312,39 @@ def test_a_currency_stated_by_the_packing_list_is_not_overwritten(db):
     assert line.unit_cost == Decimal("70.00")
 
 
+def test_a_stated_cny_survives_an_allocation_against_a_myr_po_line(db):
+    """AC-P5.3 (proforma/packing-list price capture): the specific pair the gap named.
+
+    Same mechanism as the CNY-vs-USD case above, pinned again for the exact pairing the
+    proforma-invoice slice's acceptance criteria calls out - a Malaysian PO denominated in
+    MYR must never overwrite a currency the packing list itself stated in CNY.
+    """
+    product_id = _product(db)
+    warehouse_id = _warehouse(db)
+    shipment_id, line_id = _shipment_with_line(
+        db, product_id, unit_cost=Decimal("70.00"), currency="CNY"
+    )
+    po_line_id = _po_line(
+        db, product_id, warehouse_id, unit_cost=Decimal("55.00"), currency="MYR"
+    )
+    db.commit()
+
+    SPOAllocationService(db).create_allocation(
+        _payload(
+            spo_number=f"{MARKER}-SPO-{_suffix()}",
+            shipment_id=shipment_id,
+            warehouse_id=warehouse_id,
+            product_id=product_id,
+            po_line_id=po_line_id,
+        ),
+        created_by=None,
+    )
+
+    line = _reload_line(db, line_id)
+    assert line.currency == "CNY"
+    assert line.unit_cost == Decimal("70.00")
+
+
 def test_an_allocation_for_a_product_not_on_the_packing_list_does_not_fail(db):
     """The allocated product need not appear on the shipment's lines.
 

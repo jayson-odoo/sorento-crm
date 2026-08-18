@@ -423,22 +423,45 @@ export interface PackingListPreview {
   unmapped_headers: string[];
   missing_columns: string[];
   problems: string[];
+  /** Null when neither the file, the form nor the supplier's price list says. */
+  currency?: string | null;
+  /** Which of those said it: `form` | `document` | `supplier_price_list` | `none`. */
+  currency_source?: string | null;
+  priced_lines?: number;
 }
 
-export async function previewPackingList(file: File): Promise<PackingListPreview> {
+/** What the supplier and currency form fields are called on both packing-list endpoints. */
+interface PackingListUploadOptions {
+  supplierId?: string | null;
+  currency?: string | null;
+}
+
+function packingListForm(file: File, opts: PackingListUploadOptions): FormData {
   const body = new FormData();
   body.append('file', file);
-  const res = await apiFetch('/api/v1/scm/packing-lists/preview', { method: 'POST', body });
+  if (opts.supplierId) body.append('supplier_id', opts.supplierId);
+  // Only when the operator typed one: an empty string would be read as a currency the
+  // backend cannot resolve and refuse the upload the document itself could have answered.
+  if (opts.currency) body.append('currency', opts.currency);
+  return body;
+}
+
+export async function previewPackingList(
+  file: File,
+  opts: PackingListUploadOptions = {},
+): Promise<PackingListPreview> {
+  const res = await apiFetch('/api/v1/scm/packing-lists/preview', {
+    method: 'POST',
+    body: packingListForm(file, opts),
+  });
   return readJson<PackingListPreview>(res, 'Failed to read the packing list');
 }
 
 export async function applyPackingList(
   file: File,
-  opts: { supplierId?: string | null; shipmentDate?: string | null; validateOnly?: boolean } = {},
+  opts: PackingListUploadOptions & { shipmentDate?: string | null; validateOnly?: boolean } = {},
 ): Promise<Record<string, unknown>> {
-  const body = new FormData();
-  body.append('file', file);
-  if (opts.supplierId) body.append('supplier_id', opts.supplierId);
+  const body = packingListForm(file, opts);
   if (opts.shipmentDate) body.append('shipment_date', opts.shipmentDate);
   const qs = opts.validateOnly ? '?validate_only=true' : '';
   const res = await apiFetch(`/api/v1/scm/packing-lists/apply${qs}`, { method: 'POST', body });

@@ -392,22 +392,27 @@ def test_every_company_id_table_is_registered():
     # `reorder_recommendation` and `recommendation_override` beside it are: it is that
     # company's decision, read by the PO worklist, and the mixin stamps the company at
     # insert so a split written under one scope can never be read under another.
+    # The proforma slice adds 2 more under the same rule: an invoice is ONE company's
+    # document of record from ONE of its suppliers, and its lines are that document's own
+    # charges. The lines are owned rather than derived because the write path deletes and
+    # reinserts them BY invoice id, and the mixin also stamps the company at insert.
     #
-    # The number is the union of four lineages at this merge: main's 68 (67 plus the flyer
+    # The number is the union of five lineages at this merge: main's 68 (67 plus the flyer
     # proposal batch above), plus the 41 the project-sales branch brought (audited table by
     # table at its own merge), plus `so_supply_decisions`, plus
-    # `order_summary_location_allocation`.
+    # `order_summary_location_allocation`, plus `proforma_invoice` and
+    # `proforma_invoice_line`.
     #
-    # Two of those counts arrived here already wrong, in the same way, and it is worth
-    # naming so the next merge does not repeat it. Stage 1C branched before the flyer
-    # proposal batch landed and counted 67+41+1 = 109; main counted 68+41 = 109; Stage 2
-    # branched before Stage 1C and counted its OWN copy of `so_supply_decisions` plus
-    # `order_summary_location_allocation` as 68+41+2 = 111. Each was right about its own
-    # lineage and wrong about the union, and 111 is only coincidentally the merged answer:
-    # `so_supply_decisions` exists once, not twice, because Stage 1C owns the model and
-    # Stage 2's duplicate declaration is gone (see `app/models/project_so.py`). The value
-    # below is measured against the merged model set, never reasoned from either sum.
-    expected_owned = 111
+    # Every branch that has reached this line so far arrived with a number that was right
+    # about its own lineage and wrong about the union, so measure rather than add up. Stage
+    # 1C branched before the flyer proposal batch landed and counted 67+41+1 = 109; main
+    # counted 68+41 = 109; Stage 2 branched before Stage 1C and counted its OWN copy of
+    # `so_supply_decisions` plus `order_summary_location_allocation` as 68+41+2 = 111; the
+    # proforma branch counted 68+41+2 = 111 for a different pair. 111 was only coincidentally
+    # the merged answer at Stage 2, because `so_supply_decisions` exists once and not twice
+    # (Stage 1C owns the model, Stage 2's duplicate declaration is gone - see
+    # `app/models/project_so.py`). The value below is measured against the merged model set.
+    expected_owned = 113
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
