@@ -501,8 +501,14 @@ export interface BoardContribution {
    */
   customer_id?: string | null;
   project_label?: string | null;
-  /** The project's stable key, for grouping only. Same rule and same fallback as the customer. */
-  project_id?: string | null;
+  /**
+   * The project's normalised key, for grouping only, never rendered.
+   *
+   * A STRING rather than an id on purpose: an adopted order has no project registration, so the
+   * project string on the order IS its identity. Grouping on the raw label instead would merge
+   * two spellings of one project and split one project written two ways.
+   */
+  project_key?: string | null;
   line_no: number;
   item_code: string;
   /** The still-owed quantity. `qty_outstanding` is the same number under its own name. */
@@ -666,6 +672,18 @@ export interface BoardIncomingLeg {
  */
 export interface BoardCellLocation {
   location: string | null;
+  /**
+   * The product and warehouse this position is about, for the drill-down only, never rendered.
+   *
+   * Two products on the live book share the item code `B2155-NL-BLUE`, so resolving a stock
+   * position from the code would answer about the wrong one.
+   */
+  product_id?: string | null;
+  warehouse_id?: string | null;
+  /** AutoCount's own four, in AutoCount's own words. `available_qty` is SIGNED. */
+  so_qty?: string | null;
+  spo_qty?: string | null;
+  available_qty?: string | null;
   /** What is owed here. `qty` is kept as an alias of it. */
   qty: string;
   qty_demand?: string | null;
@@ -709,6 +727,10 @@ export interface BoardCell {
    * without walking every contribution of every cell.
    */
   past_count?: number;
+  /** How many DIFFERENT sales orders contribute here. One means an order competing with itself. */
+  distinct_order_count?: number;
+  /** Whether the ranking actually put these rows in an order, or they all scored alike. */
+  rank_separates?: boolean;
 }
 
 export interface BoardProductRow {
@@ -832,3 +854,48 @@ export interface BoardDecision {
 
 /** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */
 export type BoardDraft = Record<string, BoardDecision>;
+
+
+// ---------------------------------------------------------------------------
+// Stock Status with Detail: what the four numbers on a location pill are made of.
+//
+// AutoCount shows this as a document list under the position, and the captain reads it there.
+// The FE mirrors that: a header line that is the arithmetic, then the documents that produce
+// it, then a total that adds back up to the header.
+// ---------------------------------------------------------------------------
+
+/** One sales order standing behind the SO quantity. */
+export interface StockDetailSalesOrder {
+  sales_order_id: string;
+  so_number: string;
+  customer_name?: string | null;
+  customer_id?: string | null;
+  project_label?: string | null;
+  demand_class?: string | null;
+  doc_date?: string | null;
+  delivery_date?: string | null;
+  so_qty: string;
+  /** Already covered by a confirmed decision, so it is not competing for this stock. */
+  is_covered?: boolean;
+}
+
+/** One purchase order standing behind the SPO quantity. */
+export interface StockDetailIncoming {
+  spo_number: string;
+  supplier_name?: string | null;
+  expected_date?: string | null;
+  spo_qty: string;
+}
+
+/** `GET /project-sales/fulfilment-planning/stock-detail?product_id=&warehouse_id=`. */
+export interface StockDetail {
+  item_code?: string | null;
+  warehouse_code?: string | null;
+  qty_on_hand: string;
+  so_qty: string;
+  spo_qty: string;
+  /** SIGNED: on hand - SO + SPO. Negative is the shortfall and is shown as it arrives. */
+  available_qty: string;
+  sales_orders: StockDetailSalesOrder[];
+  incoming: StockDetailIncoming[];
+}

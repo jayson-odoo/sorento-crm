@@ -6,6 +6,10 @@
  * in (13.5), and when an order becomes confirmable (13.4). None of them needs a grid mounted.
  */
 import { describe, expect, it } from 'vitest';
+import type {
+  BoardCell,
+  BoardContribution,
+} from '../types/fulfilmentPlanning.types';
 import {
   amendNeedsReason,
   boardAxis,
@@ -1071,7 +1075,7 @@ describe('boardAxis: pivoting the rows', () => {
       ...cell,
       contributions: cell.contributions.map((entry) => ({
         ...entry,
-        project_id: entry.sales_order_id === 'so-a' ? 'proj-1' : 'proj-2',
+        project_key: entry.sales_order_id === 'so-a' ? 'proj-1' : 'proj-2',
         project_label: entry.sales_order_id === 'so-a' ? 'TOWER A' : 'TOWER B',
       })),
     }));
@@ -1196,17 +1200,43 @@ describe('rowMatchesSearch', () => {
  * a hunt through two components.
  */
 describe('rankingNote', () => {
-  const ranked = { name: 'Fair', factors: {}, demand_class_weights: {}, is_preview: false, discriminates_nothing: false };
+  function cellOf(count: number, extra: Partial<BoardCell> = {}): BoardCell {
+    return {
+      item_code: 'AAA',
+      bucket_key: '2026-08-31',
+      total_qty: '10',
+      locations: [],
+      contributions: Array.from({ length: count }, () => ({}) as BoardContribution),
+      unplannable_count: 0,
+      contested_count: 0,
+      ...extra,
+    };
+  }
 
-  it('says nothing at all when the policy ranks the rows', () => {
-    expect(rankingNote(ranked)).toBeNull();
+  it('shows the ranking, and says nothing, when the policy separates the rows', () => {
+    const note = rankingNote(cellOf(3, { rank_separates: true, distinct_order_count: 3 }));
+    expect(note).toBeNull();
   });
 
-  it('gives the cell and the banner their wording together, so they cannot drift', () => {
-    const note = rankingNote({ ...ranked, discriminates_nothing: true });
+  it('says a single line is simply the only one here', () => {
+    // Nothing was ranked because there was nothing to rank against. Calling that a policy
+    // failure is the wording that read wrong.
+    const note = rankingNote(cellOf(1, { rank_separates: false, distinct_order_count: 1 }));
     expect(note?.cell).toBe('Not ranked');
-    expect(note?.banner).toBe(
-      'This policy weights nothing that separates these rows, so every one scores the same and the ranking is flat.',
+    expect(note?.note).toBe('Only line in this cell');
+  });
+
+  it('names line order when the tie is one order competing with itself', () => {
+    // Common and benign under the fair policy: lines of one order in one week share their
+    // date, their document date and their terms, so nothing about the POLICY is wrong.
+    const note = rankingNote(cellOf(4, { rank_separates: false, distinct_order_count: 1 }));
+    expect(note?.note).toBe(
+      'Same sales order; line order decided which line was served first',
     );
+  });
+
+  it('keeps the policy sentence for a real tie between different orders', () => {
+    const note = rankingNote(cellOf(4, { rank_separates: false, distinct_order_count: 3 }));
+    expect(note?.note).toBe('The active policy separates none of these rows');
   });
 });

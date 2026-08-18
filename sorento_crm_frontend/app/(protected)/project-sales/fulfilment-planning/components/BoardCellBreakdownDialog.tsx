@@ -20,7 +20,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
-import { amendNeedsReason, factorLabel } from '../../_shared/lib/fulfilmentBoard';
+import { amendNeedsReason, factorLabel, rankingNote } from '../../_shared/lib/fulfilmentBoard';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import type {
   BoardCell,
@@ -61,22 +61,27 @@ export function BoardCellBreakdownDialog({
   cell,
   bucketLabel,
   draft,
-  rankingIsFlat = false,
   onDecide,
+  onOpenStock,
   onClose,
 }: {
   cell: BoardCell;
   bucketLabel: string;
   draft: BoardDraft;
-  /**
-   * The SERVER's verdict that the active policy separates none of these rows (13.5). When it
-   * does, every score is 0.00, and a column of 0.00 reads as a considered ranking rather than
-   * as no ranking, so the number is suppressed instead.
-   */
-  rankingIsFlat?: boolean;
   onDecide: (key: string, decision: BoardDecision | null) => void;
+  /** Drill into what a location's position is made of. Addressed by ids, never by item code. */
+  onOpenStock?: (target: {
+    productId: string;
+    warehouseId: string;
+    locationCode: string;
+  }) => void;
   onClose: () => void;
 }) {
+  /**
+   * What this cell can say about its own ranking, from ONE place (`rankingNote`), so the number
+   * in the Rank column and the sentence at the top of the dialog can never drift apart.
+   */
+  const ranking = rankingNote(cell);
   const decided = cell.contributions.filter((entry) => draft[entry.key]).length;
   /** The row being amended, if any. One at a time: two open forms is two half-decisions. */
   const [amending, setAmending] = React.useState<BoardContribution | null>(null);
@@ -314,7 +319,7 @@ export function BoardCellBreakdownDialog({
             className="block truncate text-sm font-medium tabular-nums text-end"
             title={factorsTitle(row.original)}
           >
-            {rankingIsFlat ? 'Not ranked' : row.original.rank_score.toFixed(2)}
+            {ranking ? ranking.cell : row.original.rank_score.toFixed(2)}
           </span>
         ),
         size: 110,
@@ -345,7 +350,7 @@ export function BoardCellBreakdownDialog({
         meta: { headerTitle: 'Decision' },
       },
     ],
-    [cell.contributions, draft, onDecide, rankingIsFlat],
+    [cell.contributions, draft, onDecide, ranking],
   );
 
   return (
@@ -376,10 +381,8 @@ export function BoardCellBreakdownDialog({
           {/* Said ONCE, because it is a fact about the policy rather than about any row. It was
               repeated under every rank, eleven identical grey sentences saying nothing
               row-specific. */}
-          {rankingIsFlat && (
-            <p className="text-sm text-muted-foreground break-words">
-              The active policy separates none of these rows.
-            </p>
+          {ranking && (
+            <p className="text-sm text-muted-foreground break-words">{ranking.note}</p>
           )}
 
           {/* The source strip again, because the dialog has to stand on its own: a reader who
@@ -388,18 +391,36 @@ export function BoardCellBreakdownDialog({
           {/* What is actually AT each location, not only what is owed from it. The captain's
               "where will I need to source to fulfil", answered with facts. */}
           <div className="flex flex-wrap gap-1.5">
-            {cell.locations.map((entry) => (
-              <span
-                key={entry.location ?? '__none__'}
-                data-testid={`cell-location-${entry.location ?? 'none'}`}
-                title={locationTitle(entry)}
-                className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(
-                  entry.location ? 'draft' : 'rejected',
-                )}`}
-              >
-                {locationStrip(entry)}
-              </span>
-            ))}
+            {cell.locations.map((entry) => {
+              // Only a position the server addressed can be drilled into: two products share
+              // the code B2155-NL-BLUE on the live book, so resolving one from the code would
+              // answer confidently about the wrong product.
+              const drillable = Boolean(entry.product_id && entry.warehouse_id && onOpenStock);
+              return (
+                <span
+                  key={entry.location ?? '__none__'}
+                  data-testid={`cell-location-${entry.location ?? 'none'}`}
+                  title={locationTitle(entry)}
+                  role={drillable ? 'button' : undefined}
+                  tabIndex={drillable ? 0 : undefined}
+                  onClick={
+                    drillable
+                      ? () =>
+                          onOpenStock?.({
+                            productId: entry.product_id as string,
+                            warehouseId: entry.warehouse_id as string,
+                            locationCode: entry.location ?? '',
+                          })
+                      : undefined
+                  }
+                  className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(
+                    entry.location ? 'draft' : 'rejected',
+                  )}${drillable ? ' cursor-pointer hover:underline' : ''}`}
+                >
+                  {locationStrip(entry)}
+                </span>
+              );
+            })}
           </div>
         </DialogHeader>
 
@@ -661,26 +682,45 @@ function AmendPanel({
  */
 function locationStrip(entry: BoardCellLocation): string {
   const parts = [`${entry.location ?? 'No location'} · ${entry.qty} owed`];
-  if (entry.qty_on_hand === null || entry.qty_on_hand === undefined) {
-    parts.push('Stock not stated');
-  } else {
-    parts.push(`${entry.qty_on_hand} on hand`);
-    if (entry.qty_free !== null && entry.qty_free !== undefined) {
-      parts.push(`${entry.qty_free} free`);
-    }
-    if (entry.qty_incoming !== null && entry.qty_incoming !== undefined) {
-      parts.push(`${entry.qty_incoming} incoming`);
-    }
-  }
+  // AutoCount's four, in AutoCount's words and AutoCount's order, because this is the figure
+  // the planner reads over there and then comes here to find. `available_qty` is SIGNED and is
+  // rendered exactly as it arrives: a negative available IS the shortfall, and clamping it
+  // would turn the one number that says "this cannot be met" into one that says it can.
+  //
+  // Each is shown on its OWN presence, not on on-hand's: measured on the live board, a location
+  // carries `so_qty` while `qty_on_hand` is null, and gating the strip on on-hand hid the very
+  // figure the planner came for. Absent stays absent - never invented as 0.
+  const stated = [
+    present(entry.qty_on_hand) ? `On hand ${entry.qty_on_hand}` : null,
+    present(entry.so_qty) ? `SO qty ${entry.so_qty}` : null,
+    present(entry.spo_qty) ? `SPO qty ${entry.spo_qty}` : null,
+    present(entry.available_qty) ? `Available ${entry.available_qty}` : null,
+  ].filter((part): part is string => part !== null);
+  parts.push(...(stated.length > 0 ? stated : ['Stock not stated']));
   return parts.join(' · ');
 }
 
-/** The documents behind the incoming stock: "80 incoming" from nowhere is a rumour. */
+function present(value: string | null | undefined): boolean {
+  return value !== null && value !== undefined;
+}
+
+/**
+ * The engine's own figures and the documents behind the incoming stock.
+ *
+ * Kept out of the strip and reachable here: "80 incoming" from nowhere is a rumour, and the
+ * reserved / free split is the engine's answer rather than AutoCount's, so it does not belong
+ * beside the four numbers a planner came to reconcile.
+ */
 function locationTitle(entry: BoardCellLocation): string {
-  const legs = (entry.incoming ?? []).map((leg) =>
-    `${leg.spo_number}${leg.arrival_date ? ` arrives ${formatDateInMalaysia(leg.arrival_date)}` : ''}: ${leg.qty}`,
-  );
-  return legs.length > 0 ? legs.join('. ') : locationStrip(entry);
+  const parts: string[] = [];
+  if (present(entry.qty_reserved)) parts.push(`${entry.qty_reserved} reserved`);
+  if (present(entry.qty_free)) parts.push(`${entry.qty_free} free`);
+  for (const leg of entry.incoming ?? []) {
+    parts.push(
+      `${leg.spo_number}${leg.arrival_date ? ` arrives ${formatDateInMalaysia(leg.arrival_date)}` : ''}: ${leg.qty}`,
+    );
+  }
+  return parts.length > 0 ? parts.join('. ') : locationStrip(entry);
 }
 
 function sourceLabel(kind: BoardContribution['sources'][number]['kind']): string {

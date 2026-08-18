@@ -48,6 +48,7 @@ import type {
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
+import { StockDetailDialog } from './StockDetailDialog';
 
 /** The calendar control the captain asked for: day, week or month (PLAN 13.3). */
 const GRANULARITY_OPTIONS = [
@@ -140,6 +141,12 @@ export function FulfilmentBoardPanel({
   );
   const [draft, setDraft] = React.useState<BoardDraft>({});
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
+  /** The location position being drilled into, addressed by ids the server sent. */
+  const [openStock, setOpenStock] = React.useState<{
+    productId: string;
+    warehouseId: string;
+    locationCode: string;
+  } | null>(null);
   const [previewPolicy, setPreviewPolicy] = React.useState(false);
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
   const [dayWindow, setDayWindow] = React.useState<string | undefined>(undefined);
@@ -758,9 +765,19 @@ export function FulfilmentBoardPanel({
           cell={liveCell}
           bucketLabel={bucketLabel.get(liveCell.bucket_key) ?? liveCell.bucket_key}
           draft={draft}
-          rankingIsFlat={board.data?.policy.discriminates_nothing ?? false}
           onDecide={decide}
+          onOpenStock={setOpenStock}
           onClose={() => setOpenCell(null)}
+        />
+      )}
+
+      {openStock && (
+        <StockDetailDialog
+          productId={openStock.productId}
+          warehouseId={openStock.warehouseId}
+          locationCode={openStock.locationCode}
+          itemCode={liveCell?.item_code ?? ''}
+          onClose={() => setOpenStock(null)}
         />
       )}
     </div>

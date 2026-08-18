@@ -10,6 +10,7 @@ import type {
   FulfilmentPlanningListParams,
   FulfilmentPlanningRow,
   ReconciliationSummary,
+  StockDetail,
   SupplyFailingLine,
   SupplyProposal,
 } from '../types/fulfilmentPlanning.types';
@@ -316,5 +317,25 @@ export async function getPlanningBoard(
   const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the planning board'));
+  return response.json();
+}
+
+
+/**
+ * What the four numbers on a location pill are made of (AutoCount's "Stock Status with Detail").
+ *
+ * Addressed by IDS, never by item code: two products on the live book share the code
+ * `B2155-NL-BLUE`, so a lookup by code would answer confidently about the wrong one.
+ */
+export async function getStockDetail(
+  productId: string,
+  warehouseId: string,
+): Promise<StockDetail> {
+  const search = new URLSearchParams({ product_id: productId, warehouse_id: warehouseId });
+  const response = await apiFetch(
+    `${BASE}/fulfilment-planning/stock-detail?${search.toString()}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the stock detail'));
   return response.json();
 }

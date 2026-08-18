@@ -1979,6 +1979,60 @@ the count is STATED ("60 ticked. A board takes at most 50 sales orders.") and Pl
 disabled: a planner who ticked everything and got a board of the first fifty would be planning a
 set they did not choose.
 
+**THE ROW AXIS PIVOTS** (captain: "i wonder if we can view in the dimension of sales order also
+... how about if we want vertical is sales order, is customer, is project"). A "Rows" control
+beside the granularity select: **Product | Sales order | Customer | Project**, dates always
+across. A pivot is a different GROUPING of the same contributions into cells - no second fetch,
+and no second idea of what a line is, which is why a decision made under one axis is still that
+line's decision under another. It travels in the URL as `?rows=`, absent when it is the default.
+
+- **Grouped by IDS, labelled by names.** `sales_order_id`, `customer_id`, `project_key` (a
+  normalised STRING, because an adopted order has no project registration so the project string
+  on the order IS its identity). Two customers sharing a name are two rows; neither shows an id.
+- The PRODUCT axis keeps the server's own cells untouched, because they carry the stock position
+  per product and location that no client-side regrouping could reproduce. A pivoted cell states
+  **no** stock position: on-hand is a fact about one product at one location, and a cell holding
+  three products has none to state.
+- Per-cell counts on a pivoted cell are summed from per-line facts the server stated
+  (`is_past`, `unplannable`, `contested`), never re-decided here.
+- The breakdown dialog is unchanged, because it always listed LINES - it gains a **Product**
+  column, which was redundant when every line in a cell was one product and is load-bearing now
+  that a sales-order row's cell spans several.
+
+**THE BOARD'S SEARCH COVERS ALL FOUR** - sales order, customer, project and product, the same
+four the worklist box searches, with identical wording. A ROW survives if ANY of its lines
+matches; the cells in that row keep ALL their contributions, because filtering inside a cell
+would print a total that is not the cell's. The "N of M" names whatever the row axis is
+("3 of 40 products", "1 of 2 sales orders").
+
+**THE LOCATION STRIP IS AUTOCOUNT'S FOUR**, in AutoCount's words and order:
+`On hand · SO qty · SPO qty · Available`. `available_qty` is SIGNED and is rendered as it
+arrives - **a negative available is the shortfall**, and clamping it would turn the one number
+that says "this cannot be met" into one that says it can. Each of the four shows on its OWN
+presence: measured on the live board a location carries `so_qty` while `qty_on_hand` is null, and
+gating the strip on on-hand hid the very figure the planner came for. The engine's own
+reserved/free split moved into the tooltip, beside the SPO documents.
+
+**DRILL-DOWN: Stock Status with Detail.** Clicking a location pill opens
+`GET /fulfilment-planning/stock-detail?product_id=&warehouse_id=` - addressed by IDS because two
+products on the live book share the code `B2155-NL-BLUE`, so a lookup by code would answer
+confidently about the wrong one. The dialog is AutoCount's shape: the arithmetic as a header
+line, the S/O and SPO documents beneath it in a shared DataGrid (type, document, party, doc date,
+delivery/expected, quantity, and a Covered badge for an order a decision already met), and a
+total that adds back up to the header. Scrolls in its own container, X closes.
+
+**THE NOT-RANKED SENTENCE COMES FROM ONE PLACE** (`rankingNote`), keyed on `rank_separates` and
+`distinct_order_count`: "Only line in this cell" / "Same sales order; line order decided which
+line was served first" / "The active policy separates none of these rows" / nothing at all when
+the ranking separates. The second case is common and benign under the fair policy - one order's
+lines in one week share their date, document date and terms - and calling that a policy failure
+sent people hunting a broken weighting.
+
+**Measured live on the captain's four-order selection, 18 August 2026:** Product **40** rows,
+Sales order **4**, Customer **4**, Project **4**. The drill-down on `B2155-NL-BLUE` at `BRW-IB`
+returned `On hand 5290 - SO 27804 + SPO 0 = Available -22514` over **110 document rows** on one
+page, with the table's own total reading **27804** - the same figure as the header's SO.
+
 **THE WHOLE BOARD IS ONE LINK, as 13.2 and 13.3 always specified.** The selection and the
 granularity are now in the URL beside the product filter -
 `?orders=SO391698,SO324265,SO284663&granularity=month&product=cks`, by sales-order NUMBER, never

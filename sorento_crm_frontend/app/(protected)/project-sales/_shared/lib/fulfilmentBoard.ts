@@ -384,7 +384,10 @@ function axisKeyOf(
   }
   if (axis === 'project') {
     const label = contribution.project_label || 'Not named on the order';
-    return { key: contribution.project_id || `name:${label}`, label };
+    // The server's normalised key, which is a STRING because an adopted order has no project
+    // registration: the project string on the order is its identity. Grouping on the raw label
+    // would merge two spellings of one project and split one project written two ways.
+    return { key: contribution.project_key || `name:${label}`, label };
   }
   return { key: contribution.item_code, label: contribution.item_code };
 }
@@ -482,4 +485,30 @@ export function rowMatchesSearch(
       contribution.item_code,
     ].some((field) => (field ?? '').toLowerCase().includes(needle)),
   );
+}
+
+
+/**
+ * What a cell says about its own ranking, from ONE place.
+ *
+ * "The active policy separates none of these rows" is TRUE whenever nothing separated them, but
+ * under the fair policy the usual cause is not the policy at all: one sales order's lines in one
+ * week share their required date, their document date and their payment terms, so of course
+ * they tie. Reading that as a policy failure sent people looking for a broken weighting.
+ *
+ * So the sentence is chosen by what actually happened, and it lives here rather than in the two
+ * components that show it, because a cell reading one thing while the banner reads another is
+ * how two explanations of one fact appear.
+ */
+export function rankingNote(
+  cell: Pick<BoardCell, 'contributions' | 'distinct_order_count' | 'rank_separates'>,
+): { cell: string; note: string } | null {
+  if (cell.rank_separates) return null;
+  const note =
+    cell.contributions.length === 1
+      ? 'Only line in this cell'
+      : (cell.distinct_order_count ?? 0) === 1
+        ? 'Same sales order; line order decided which line was served first'
+        : 'The active policy separates none of these rows';
+  return { cell: 'Not ranked', note };
 }

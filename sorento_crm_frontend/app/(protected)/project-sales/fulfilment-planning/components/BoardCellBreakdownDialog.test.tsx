@@ -234,18 +234,86 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     return { ...cell, locations: [{ ...cell.locations[0], ...location }] };
   }
 
-  function renderCell(cell: BoardCell, rankingIsFlat = false) {
+  function renderCell(cell: BoardCell) {
     render(
       <BoardCellBreakdownDialog
         cell={cell}
         bucketLabel="31 Aug 2026"
         draft={{}}
-        rankingIsFlat={rankingIsFlat}
         onDecide={vi.fn()}
         onClose={vi.fn()}
       />,
     );
   }
+
+  /**
+   * AutoCount's four, in AutoCount's words and AutoCount's order, because this is the number
+   * the captain reads in AutoCount and then looks for here.
+   */
+  it('opens the stock detail from the pill, addressed by ids', () => {
+    const onOpenStock = vi.fn();
+    render(
+      <BoardCellBreakdownDialog
+        cell={stockedCell({
+          location: 'BRW-BB',
+          product_id: 'prod-1',
+          warehouse_id: 'wh-1',
+          qty_on_hand: '478',
+        })}
+        bucketLabel="31 Aug 2026"
+        draft={{}}
+        onDecide={vi.fn()}
+        onClose={vi.fn()}
+        onOpenStock={onOpenStock}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('cell-location-BRW-BB'));
+
+    expect(onOpenStock).toHaveBeenCalledWith({
+      productId: 'prod-1',
+      warehouseId: 'wh-1',
+      locationCode: 'BRW-BB',
+    });
+  });
+
+  it('does not offer a drill-down the server cannot address', () => {
+    const onOpenStock = vi.fn();
+    render(
+      <BoardCellBreakdownDialog
+        cell={stockedCell({ location: 'BRW-BB', product_id: null, warehouse_id: null })}
+        bucketLabel="31 Aug 2026"
+        draft={{}}
+        onDecide={vi.fn()}
+        onClose={vi.fn()}
+        onOpenStock={onOpenStock}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('cell-location-BRW-BB'));
+    expect(onOpenStock).not.toHaveBeenCalled();
+  });
+
+  it('leads with On hand, SO qty, SPO qty and Available', () => {
+    renderCell(
+      stockedCell({
+        location: 'BRW-BB',
+        qty_on_hand: '478',
+        so_qty: '47009',
+        spo_qty: '0',
+        available_qty: '-46531',
+      }),
+    );
+
+    const strip = screen.getByTestId('cell-location-BRW-BB');
+    expect(strip.textContent).toContain('On hand 478');
+    expect(strip.textContent).toContain('SO qty 47009');
+    expect(strip.textContent).toContain('SPO qty 0');
+    // A negative available is the whole point: it is the shortfall, and clamping it to zero
+    // would turn the one number that says "this cannot be met" into one that says it can.
+    expect(strip.textContent).toContain('Available -46531');
+    expect(strip.textContent).not.toContain('free');
+  });
 
   it('states what is actually at each location, on hand, free and incoming', () => {
     renderCell(
@@ -259,11 +327,35 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     );
 
     const strip = screen.getByTestId('cell-location-BRW-BB');
-    expect(strip.textContent).toContain('500 on hand');
-    expect(strip.textContent).toContain('120 free');
-    expect(strip.textContent).toContain('80 incoming');
-    // The document behind the incoming stock, because "80 incoming" from nowhere is a rumour.
+    expect(strip.textContent).toContain('On hand 500');
+    // The engine's own figures stay reachable, in the tooltip, beside the documents behind the
+    // incoming stock - "80 incoming" from nowhere is a rumour.
+    expect(strip.getAttribute('title')).toContain('120 free');
     expect(strip.getAttribute('title')).toContain('202601-S0003');
+  });
+
+  /**
+   * Measured on the live board: a location can carry `so_qty` while `qty_on_hand` is null.
+   * Gating the whole strip on on-hand hid the SO figure the planner came for.
+   */
+  it('shows whichever of the four the server stated, not all-or-nothing', () => {
+    renderCell(
+      stockedCell({
+        location: 'BRW-IB',
+        qty_on_hand: null,
+        so_qty: '10805',
+        spo_qty: '0',
+        available_qty: null,
+      }),
+    );
+
+    const strip = screen.getByTestId('cell-location-BRW-IB');
+    expect(strip.textContent).toContain('SO qty 10805');
+    expect(strip.textContent).toContain('SPO qty 0');
+    // Absent is absent: neither invented as 0 nor allowed to hide the ones that are stated.
+    expect(strip.textContent).not.toContain('On hand');
+    expect(strip.textContent).not.toContain('Available');
+    expect(strip.textContent).not.toContain('Stock not stated');
   });
 
   it('says NOT STATED, never 0, when the sales order named no location', () => {
@@ -273,6 +365,9 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       stockedCell({
         location: null,
         qty_on_hand: null,
+        so_qty: null,
+        spo_qty: null,
+        available_qty: null,
         qty_free: null,
         qty_incoming: null,
       }),
@@ -311,7 +406,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
         },
       ],
     };
-    renderCell(ranked);
+    renderCell({ ...ranked, rank_separates: true });
 
     const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
     // The captain: "the word here is too long already, don't explain too much". The cell is
@@ -323,7 +418,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 
   it('reads the number as a number: right-aligned, tabular figures', () => {
     const cell = cellOf([demand()]);
-    renderCell(cell);
+    renderCell({ ...cell, rank_separates: true });
 
     const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
     expect(rank.className).toContain('tabular-nums');
@@ -337,6 +432,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     ]);
     const ranked = {
       ...cell,
+      rank_separates: true,
       contributions: cell.contributions.map((entry, index) => ({
         ...entry,
         rank_score: index === 0 ? 0.9 : 0.2,
@@ -374,7 +470,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
         },
       ],
     };
-    renderCell(withRaw);
+    renderCell({ ...withRaw, rank_separates: true });
 
     const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
     const detail = rank.getAttribute('title') ?? '';
@@ -388,7 +484,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 
   it('prints no score at all when the server says the policy separates nothing', () => {
     const cell = cellOf([demand()]);
-    renderCell(cell, true);
+    renderCell({ ...cell, rank_separates: false, distinct_order_count: 2 });
 
     // The live policy scores every row 0.00, and a column of 0.00 reads as a considered
     // ranking rather than as no ranking.
@@ -401,26 +497,57 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
    * which is a fact about the POLICY, not about any row. Repeating it per row is eleven copies
    * of one sentence; it belongs once, at the top.
    */
-  it('states a flat ranking ONCE at the top, never on every row', () => {
+  /**
+   * The four cases, from one place. "The active policy separates none of these rows" is true
+   * whenever nothing separated them, but under the fair policy the usual cause is that one
+   * order's lines in one week share their date, document date and terms - which is not a policy
+   * failure, and reading it as one sent people hunting a broken weighting.
+   */
+  it('says a single line is simply the only one here', () => {
+    const cell = cellOf([demand()]);
+    renderCell({ ...cell, rank_separates: false, distinct_order_count: 1 });
+
+    expect(screen.getByText('Only line in this cell')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/The active policy separates none of these rows/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('names line order when one sales order is competing with itself', () => {
+    const cell = cellOf([
+      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+      demand({ line_no: 2, so_number: 'SO000001', sales_order_id: 'so-a' }),
+    ]);
+    renderCell({ ...cell, rank_separates: false, distinct_order_count: 1 });
+
+    expect(
+      screen.getByText('Same sales order; line order decided which line was served first'),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the policy sentence for a real tie between different orders', () => {
     const cell = cellOf([
       demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
       demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
     ]);
-    renderCell(cell, true);
+    renderCell({ ...cell, rank_separates: false, distinct_order_count: 2 });
 
     expect(
-      screen.getByText('The active policy separates none of these rows.'),
+      screen.getByText('The active policy separates none of these rows'),
     ).toBeInTheDocument();
-    // Once, not once per row.
-    expect(screen.getAllByText('The active policy separates none of these rows.')).toHaveLength(1);
-    expect(screen.queryByText(/not recorded/)).not.toBeInTheDocument();
   });
 
-  it('says nothing about the policy when it does rank', () => {
-    renderCell(cellOf([demand()]), false);
+  it('says nothing about the ranking, and shows it, when the policy does separate the rows', () => {
+    const cell = cellOf([demand()]);
+    renderCell({ ...cell, rank_separates: true, distinct_order_count: 1 });
+
+    expect(screen.queryByText(/Only line in this cell/)).not.toBeInTheDocument();
     expect(
-      screen.queryByText('The active policy separates none of these rows.'),
+      screen.queryByText(/The active policy separates none of these rows/),
     ).not.toBeInTheDocument();
+    expect(screen.getByTestId(`rank-factors-${cell.contributions[0].key}`).textContent).toBe(
+      '0.00',
+    );
   });
 });
 
