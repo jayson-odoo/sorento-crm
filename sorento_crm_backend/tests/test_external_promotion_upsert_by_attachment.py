@@ -16,6 +16,7 @@ writes are discarded -- so the shared dev database is never touched.
 from __future__ import annotations
 
 import uuid
+from datetime import date, timedelta
 
 import pytest
 
@@ -44,8 +45,16 @@ def _attachment(db, original_filename: str) -> Attachment:
     return att
 
 
-def _promotion(db, description: str, attachment: Attachment | None = None) -> Promotion:
-    promo = Promotion(description=description, is_active=True)
+def _promotion(
+    db,
+    description: str,
+    attachment: Attachment | None = None,
+    start_date=None,
+    end_date=None,
+) -> Promotion:
+    promo = Promotion(
+        description=description, is_active=True, start_date=start_date, end_date=end_date
+    )
     db.add(promo)
     db.flush()
     if attachment is not None:
@@ -54,7 +63,12 @@ def _promotion(db, description: str, attachment: Attachment | None = None) -> Pr
     return promo
 
 
-def _payload(description: str, attachment_id: str | None) -> PromotionRequest:
+def _payload(
+    description: str,
+    attachment_id: str | None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> PromotionRequest:
     """What n8n posts: the sanitized attachment filename as the root description.
 
     Built from a dict, not from model instances. ``_accept_n8n_shape`` runs
@@ -73,6 +87,10 @@ def _payload(description: str, attachment_id: str | None) -> PromotionRequest:
     }
     if attachment_id is not None:
         body["attachment_id"] = attachment_id
+    if start_date is not None:
+        body["promotions"]["start_date"] = start_date
+    if end_date is not None:
+        body["promotions"]["end_date"] = end_date
     return PromotionRequest.model_validate(body)
 
 
@@ -141,6 +159,66 @@ def test_description_match_still_updates_when_the_promotion_has_no_attachment():
         assert result.already_existed is True
         assert str(result.promotion.id) == str(original_id)
         assert db.query(Promotion).filter(Promotion.description == description).count() == 1
+
+
+def test_expired_promotion_is_reissued_in_place_with_the_new_window():
+    """A flyer resubmitted after its window ended used to 409 and write nothing.
+
+    The stored end_date decided the lock, so a re-issue carrying a live window was
+    rejected on the strength of the window it was replacing.
+    """
+    with blank_session() as db:
+        description = f"{unique_code('PROMO')} WATER CLOSET OFFICE.pdf"
+        att = _attachment(db, description)
+        original_id = _promotion(
+            db,
+            description,
+            attachment=att,
+            start_date=date.today() - timedelta(days=60),
+            end_date=date.today() - timedelta(days=18),
+        ).id
+
+        new_start = date.today()
+        new_end = date.today() + timedelta(days=30)
+        result = create_promotion(
+            payload=_payload(
+                description,
+                str(att.id),
+                start_date=new_start.isoformat(),
+                end_date=new_end.isoformat(),
+            ),
+            current_user=_user(),
+            db=db,
+        )
+
+        assert result.already_existed is True
+        assert str(result.promotion.id) == str(original_id)
+        refreshed = db.query(Promotion).filter(Promotion.id == original_id).one()
+        assert refreshed.end_date == new_end
+        assert refreshed.start_date == new_start
+
+
+def test_expired_promotion_without_a_new_window_still_updates_instead_of_409():
+    """Even a plain replay lands: the intake has no locked state any more."""
+    with blank_session() as db:
+        description = f"{unique_code('PROMO')} REPLAY.pdf"
+        att = _attachment(db, description)
+        original_id = _promotion(
+            db,
+            description,
+            attachment=att,
+            start_date=date.today() - timedelta(days=60),
+            end_date=date.today() - timedelta(days=18),
+        ).id
+
+        result = create_promotion(
+            payload=_payload(description, str(att.id)),
+            current_user=_user(),
+            db=db,
+        )
+
+        assert result.already_existed is True
+        assert str(result.promotion.id) == str(original_id)
 
 
 def test_unknown_attachment_and_unknown_description_creates_a_new_promotion():
