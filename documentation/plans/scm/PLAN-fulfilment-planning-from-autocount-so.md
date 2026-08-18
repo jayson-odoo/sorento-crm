@@ -2147,3 +2147,41 @@ The worklist gains a selection column and a "Plan together (N)" toolbar action; 
 under the same screen so it can be linked (13.2). The breakdown is a shared `DataGrid` - there the
 columns are fixed and known (sales order, customer, project, quantity, location, composition,
 decision), which is exactly when `DataGrid` is right.
+
+#### Live amendments, 18 August 2026 evening (captain testing the cell dialog)
+
+Five asks from one screen (`B2155-NL-BLUE · 28 Dec 2026`, orders SO403765 + SO396351), all landed
+on the e2e stack as follow-ups (fix + targeted tests + live evidence, no pipeline cycle):
+
+1. **"How is the rank calculated? An information tooltip to show the calculation."** The factor
+   breakdown was already on the wire (`rank_factors`: key, weight, value, raw, present) but the FE
+   only put it in a hover `title` as prose. It is now an Info icon per Rank cell opening a popover
+   with a table `Factor | Fact | Score | Weight | Weighted` and a total row that equals the visible
+   number (`sum(w*v) / sum(w present)`); absent facts render "not recorded" and are left out, not
+   zeroed. Same table under the "Not ranked" state, with the reason sentence.
+2. **"Justify how you arrive at the Buy: available first, reserve or not, then SPO, then borrow ...
+   structured, not plain text, under a tooltip."** The board now emits a per-line `trail`: one
+   step per rung of the ladder in the order it was walked (reserve at own location, reserve at
+   the pool, incoming SPO, borrow, buy), each with `opening / ahead_qty / ahead_lines / offered /
+   taken / remaining_after / outcome / note`. Every step is emitted even when it took nothing, so
+   the reader sees the process, not only the answer. The trail is a READ of what `propose_line`
+   did; it never changes the arithmetic. Rendered as a table in a popover next to the decision.
+3. **"BRW-BB on hand / SO qty / PO qty more tabulated and structured like AutoCount, with
+   expandable details instead of clicking in."** The location pills become a stock table
+   (`Location | Owed here | On hand | Reserved | Free | SO qty | SPO qty | Available`) with a
+   chevron that expands the documents behind the pile inline (S/O + SPO rows). The separate
+   `StockDetailDialog` click-in is retired; its body is `StockDocumentsPanel`.
+4. **"Amend is not working; I should be able to amend the decision and quantity - reserve, buy or
+   borrow."** Amend was reserve-quantity-only, rendered under the 25-row grid where nobody saw
+   it, discarded its own reason, and silently dropped a Buy line amended into a Reserve (the FE
+   fallback read `fulfilment_warehouse_id`, which the BE never sent). It is now a nested dialog
+   per line with the full composition (incoming read-only, reserve per warehouse with the own
+   location always present, borrow rows from `borrow_candidates`, buy, live balance, reason), the
+   draft carries the composition, and Confirm posts it verbatim (`amend_reason` added to
+   `ConfirmLine`, stored in the line snapshot; board `BorrowCandidate` widened with
+   `warehouse_id / donor_project_id / donor_impact` so a board-made borrow is confirmable).
+   A decided row offers Amend again, not Undo only.
+5. **`/scm/sales-orders/{id}` "the sort in the SO line is not working."** Not the board: the SO
+   detail lines table (and its PO-detail mirror) built `useReactTable` without
+   `getSortedRowModel`, so the header flipped its arrow and nothing moved. Client-side sort added
+   to both; the other `/scm` tables with the same defect are listed in the backlog.

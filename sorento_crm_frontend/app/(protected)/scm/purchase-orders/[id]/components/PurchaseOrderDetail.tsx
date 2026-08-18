@@ -1,10 +1,12 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
+  SortingState,
   getCoreRowModel,
+  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { ArrowLeft, CheckCircle2, PackageCheck } from 'lucide-react';
@@ -69,6 +71,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const listSearch = useSearchParams().toString();
 
   const lines = useMemo<PurchaseOrderLine[]>(() => data?.lines ?? [], [data]);
+  // Sorted here rather than by the API: the lines come embedded in the order read, so there
+  // is no second request to spend and no page boundary to sort across.
+  const [sorting, setSorting] = useState<SortingState>([]);
 
   const columns = useMemo<ColumnDef<PurchaseOrderLine>[]>(
     () => [
@@ -87,14 +92,18 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'SKU' },
       },
       {
-        accessorKey: 'qty_ordered',
+        id: 'qty_ordered',
+        // The sort value is the NUMBER, never the printed string: a quantity read off the
+        // API as "1200.0000" would otherwise order before "45" the way a word does.
+        accessorFn: (line) => Number(line.qty_ordered),
         header: ({ column }) => <DataGridColumnHeader title="Qty ordered" column={column} />,
         cell: ({ row }) => fmtInt(row.original.qty_ordered),
         size: 130,
         meta: { headerTitle: 'Qty ordered', headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' },
       },
       {
-        accessorKey: 'qty_received',
+        id: 'qty_received',
+        accessorFn: (line) => Number(line.qty_received),
         header: ({ column }) => <DataGridColumnHeader title="Qty received" column={column} />,
         cell: ({ row }) => fmtInt(row.original.qty_received),
         size: 130,
@@ -115,7 +124,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     columns,
     data: lines,
     getRowId: (row) => row.id,
+    state: { sorting },
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
