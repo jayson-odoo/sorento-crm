@@ -114,6 +114,63 @@ class BoardAheadLine(BaseModel):
     same_order: bool = False
 
 
+class BoardTrailPool(BaseModel):
+    """The shared pool's pile as the pool rung saw it, in AutoCount's vocabulary.
+
+    The captain, on a rung reading `Pool BRW | Had 0` beside an Inventory screen showing
+    `Available 1`: "why it shows 0?" Two true numbers with nothing between them. `Had` (here
+    `left`) is what the POOL'S OWN book ranked ahead of this line left; `available` is the
+    pile's whole position. Both are printed, with the subtraction between them, so the rung
+    can be checked against the stock screen instead of argued with.
+    """
+
+    location: str
+    #: Addressing only, never rendered.
+    warehouse_id: Optional[str] = None
+    on_hand: str = "0"
+    #: What the whole open book still owes at the pool, and what is on the water to it.
+    so_qty: str = "0"
+    spo_qty: str = "0"
+    #: `on_hand - so_qty + spo_qty`, SIGNED and never clamped: an oversold pool says so.
+    available: str = "0"
+    reserved: str = "0"
+    #: On hand less reserved less confirmed holds - what the engine may plan against.
+    free: str = "0"
+    #: What the pool's own orders ranked AHEAD of this line claim of that, and how many
+    #: lines that is. `free - claimed_ahead_qty` is what the rung had, before earlier lines
+    #: on this board drew on it.
+    claimed_ahead_qty: str = "0"
+    claimed_ahead_lines: int = 0
+    #: What was left for THIS line when the rung was reached - the rung's own `opening`.
+    left: str = "0"
+    reorder_level: str = "0"
+    #: What could be taken above the reorder level, when a cap applies (a dealer hot-selling
+    #: item draws only above it). Null when no cap applies - never "0" for a limit nobody set.
+    cap: Optional[str] = None
+
+
+class BoardItemFlags(BaseModel):
+    """The item facts the ladder judged a line on, said rather than implied.
+
+    The captain, reading the trail: "where is the consideration of dealer hot selling /
+    project hot selling / discontinued, to see if we can take from BRW?" They were consulted
+    on every line and never printed. There is no "project hot-selling" concept - only the
+    dealer one (PLAN-scm-front-planning 3.3) - and stating the flags plainly is the answer.
+    """
+
+    #: ABC class A at an active dealer-segment location (3.3): own-location stock is kept for
+    #: retail and the line may reserve from the pool only, above the pool's reorder level.
+    dealer_hot_selling: bool = False
+    #: The dealer locations where it earned that, by code. Evidence, not a bare verdict.
+    dealer_hot_selling_where: List[str] = []
+    #: `products.is_discontinued`: a Buy for it needs a reason at confirm, nothing more.
+    discontinued: bool = False
+    #: Somebody has classified this item at a dealer location at all. False is the PLAN's
+    #: "Retail classification unavailable" state, which is a different answer from "not
+    #: hot-selling" and must not be printed as it.
+    retail_classification_available: bool = True
+
+
 class BoardTrailStep(BaseModel):
     """One rung of the source ladder, as it was walked for one line.
 
@@ -171,6 +228,9 @@ class BoardTrailStep(BaseModel):
     #: ONE short structured hint, never a paragraph: "hot-selling: pool only", "capped by
     #: reorder level 10", "ZZT-SPO-0001 arrives 2026-08-25", "MWH-IB 12000 · BRW 9000".
     note: Optional[str] = None
+    #: The pool's pile behind the `reserve_pool` rung. Null on every other rung, and on a
+    #: pool rung with no pile to describe (no shared pool; the pool is this location).
+    pool: Optional[BoardTrailPool] = None
 
 
 class BoardDecisionReserve(BaseModel):
@@ -307,6 +367,9 @@ class BoardContribution(BaseModel):
     #: The ladder, rung by rung, in the order it was walked (see `BoardTrailStep`). Empty for a
     #: line that cannot be planned: no ladder was walked for it.
     trail: List[BoardTrailStep] = []
+    #: The item facts the ladder judged this line on. Null, never a set of `false`s, on a
+    #: line the ladder did not walk (unplannable, covered): it was judged against nothing.
+    item_flags: Optional[BoardItemFlags] = None
     #: The supply this row would otherwise have had was taken by a row served before it.
     #: Always false on a covered line: a decided line is not competing for anything.
     contested: bool = False

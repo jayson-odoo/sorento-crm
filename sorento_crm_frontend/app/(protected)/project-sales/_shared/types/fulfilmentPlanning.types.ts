@@ -590,6 +590,57 @@ export interface BoardTrailStep {
   why?: string | null;
   /** One short hint, never a paragraph: "hot-selling: pool only", "MWH-IB 12000 · BRW 9000". */
   note?: string | null;
+  /**
+   * The pool's pile behind the `reserve_pool` rung, in AutoCount's vocabulary. Null on every other
+   * rung, and on a pool rung with no pile to describe (no shared pool; the pool is this location).
+   */
+  pool?: BoardTrailPool | null;
+}
+
+/**
+ * The shared pool's pile as the pool rung saw it.
+ *
+ * The captain, on `Pool BRW | Had 0` beside an Inventory screen showing `Available 1`: "why it
+ * shows 0?" Two true numbers: `left` is what the POOL'S OWN book ranked ahead of this line left,
+ * `available` is the pile's whole position. Both arrive, with the subtraction between them.
+ */
+export interface BoardTrailPool {
+  location: string;
+  /** Addressing only, never rendered. */
+  warehouse_id?: string | null;
+  on_hand: string;
+  /** What the whole open book still owes at the pool, and what is on the water to it. */
+  so_qty: string;
+  spo_qty: string;
+  /** `on_hand - so_qty + spo_qty`, SIGNED and never clamped. */
+  available: string;
+  reserved: string;
+  /** On hand less reserved less confirmed holds - what the engine may plan against. */
+  free: string;
+  /** What the pool's own orders ranked AHEAD of this line claim of that, and how many lines. */
+  claimed_ahead_qty: string;
+  claimed_ahead_lines: number;
+  /** What was left for THIS line when the rung was reached - the rung's own `opening`. */
+  left: string;
+  reorder_level: string;
+  /** What could be taken above the reorder level, when a cap applies. Null when none does. */
+  cap?: string | null;
+}
+
+/**
+ * The item facts the ladder judged a line on, said rather than implied.
+ *
+ * The captain: "where is the consideration of dealer hot selling / project hot selling /
+ * discontinued, to see if we can take from BRW?" There is no project hot-selling concept - only
+ * the dealer one - and `retail_classification_available: false` is "nobody has classified it",
+ * which is a different answer from "not hot-selling".
+ */
+export interface BoardItemFlags {
+  dealer_hot_selling: boolean;
+  /** The dealer locations where it earned that, by code. */
+  dealer_hot_selling_where: string[];
+  discontinued: boolean;
+  retail_classification_available: boolean;
 }
 
 /** One line standing in front of this one at its pile, and what put it there. */
@@ -782,6 +833,11 @@ export interface BoardContribution {
    * rungs that gave nothing. Empty for a line that cannot be planned at all.
    */
   trail?: BoardTrailStep[];
+  /**
+   * The item facts the ladder judged this line on. Null, never a set of `false`s, on a line the
+   * ladder did not walk (unplannable, covered): it was judged against nothing.
+   */
+  item_flags?: BoardItemFlags | null;
   /**
    * Free stock at this row's location ran out before this row was reached, so the default
    * rule gave it to an earlier-dated row and this one is bought instead (13.5). Named because

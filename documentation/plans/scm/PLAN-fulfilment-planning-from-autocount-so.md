@@ -2404,6 +2404,40 @@ shortfall into `scm.committed_v` as well would buy the same units twice. It is a
 instruction, and it appears where purchasing already works: the **Order Inquiries worklist**
 (Project Sales -> Order Inquiries), with its own `BORROW SHORTFALL` pill and its note.
 
+#### The second rule: a POOL reserve that leaves the pool short (captain, 19 Aug 2026)
+
+The captain, on a trail rung reading `Pool BRW | 4 | took 4`: "cause when we take from BRW, first
+we need to see its available quantity also, if available quantity is negative and if we want to
+take, we must have an order back just like mentioned [for borrow]."
+
+**A Reserve drawn from the line's shared pool is a donor by the same rule.** The pool rung offers
+what the pool's own book ranked AHEAD of this line leaves (`pool_claims`); the pool's book ranked
+BEHIND it still wants that stock, and it shows in the pool's availability rather than in the queue.
+So on confirmation, a Reserve component at the POOL warehouse whose take leaves the pool's
+`on hand - SO + SPO` below zero raises the SAME `BORROW_SHORTFALL` row - `stock_location` = the pool's
+code, `qty = min(taken, -available_after)`, note `Reserved 20 at BRW for SO403765 line 20; BRW goes
+short by 10` - inside the same atomic confirmation. A pool the take leaves at or above zero raises
+nothing. Aggregated per donor pile exactly as borrows are: a Borrow and a pool Reserve at one location
+open one hole between them (`Borrowed 5 and reserved 15 at BRW for ... line 1, line 2; ...`).
+
+**A Reserve at the line's OWN location never raises one, by construction.** That location's demand
+IS this line, already inside its `SO qty`; subtracting the reserve from that location's availability
+would count the same quantity twice.
+
+**Caveat, open for the captain - a double count in reorder planning.** BRW's remaining demand (the
+lines ranked behind this one) is already in the book, so BRW's own reorder planning will ALSO see the
+hole this reserve opened. The row is a purchasing instruction that names the cause ("Reserved N at
+BRW for ..."), so purchasing can reconcile it against BRW's reorder line rather than order twice;
+whether the row should instead be suppressed when a reorder proposal for the same pile already
+exists is not decided here.
+
+Built in `ProjectSupplyService._borrow_shortfalls` (pool-reserve components are treated as donors
+beside the borrows; own-location reserves are skipped) and written by
+`ProjectOrderInquiryService._raise_borrow_shortfalls` unchanged. Tests:
+`tests/test_so_supply_confirmation.py` (a pool reserve that oversells the pool raises one row at the
+pool; a comfortable one raises none; an own-location reserve raises none however oversold; a pool
+reserve and a borrow at one location open one hole).
+
 #### Where it is built
 
 - `ProjectSupplyService._borrow_candidates(fact, need=...)` (enrichment + `_ranked`),
@@ -2523,3 +2557,44 @@ queue-equals-the-trail invariant); `BoardCellBreakdownDialog.test.tsx` (why line
 sub-list, "and N more", the borrow why and its donors, the queue button and what it asks for);
 `PileQueueDialog.test.tsx` (loading, error, empty, the header line, the mark, the dimmed rows,
 the per-row factor table).
+
+#### 4. The flags the ladder judged the item on, and the pool pile behind rung 2 (captain, 19 Aug 2026)
+
+Three questions on the popover, verbatim: "where is the consideration of dealer hot selling /
+project hot selling / discontinued, to see if we can take from BRW?"; on `Pool BRW | Had 0` beside
+an Inventory screen showing `Available 1`: "why it shows 0?"; on `Pool BRW | 4 | took 4`: "is it
+reached to take from BRW because it is project hot selling and not dealer hot selling? is it taken
+because for location BRW there is no outstanding quantity?"
+
+**The flags were consulted and never printed.** Every plannable contribution now carries
+`item_flags: {dealer_hot_selling, dealer_hot_selling_where, discontinued,
+retail_classification_available}` (null on a line the ladder never walked - unplannable or covered -
+because `false` there would claim a judgement that was not made). There is no "project hot-selling"
+concept: only the dealer one exists (`ProjectSupplyService._classification`: ABC A at an active
+dealer-segment location, PLAN-scm-front-planning 3.3), and its whole effect is "own-location stock
+is not eligible, pool only, above the pool's reorder level". `products.is_discontinued` only forces
+a reason on the Buy. `retail_classification_available = false` is the PLAN's "Retail classification
+unavailable" state - a different answer from "not hot-selling", and never printed as it. Rung 1's
+`why` now opens with the verdict in words (`Not dealer hot-selling, so own-location stock is
+eligible.` / `Dealer hot-selling (ABC A at BRW-IB): own-location stock is kept for retail, pool
+only.` / `No retail classification for this item, so own-location stock is eligible.`), and rung 5
+appends `Discontinued: the buy needs a reason.` when it applies. The popover header shows the flags
+as chips (`hot-selling`, `discontinued`, `no retail classification`).
+
+**`Had` and `Available` are two true numbers.** `Had` (the rung's `opening`) is what the POOL'S OWN
+book ranked ahead of this line left (`pool_claims`, over `_pile_book` at the pool - dealer and
+project lines fulfilled directly from BRW alike), less what earlier lines on the same board drew.
+`Available 1` in Inventory is on hand less reserved. So rung 2 now carries the pool's pile:
+`pool: {location, on_hand, so_qty, spo_qty, available (signed, on hand - SO + SPO), reserved, free,
+claimed_ahead_qty, claimed_ahead_lines, left, reorder_level, cap}` - the same three reads a Borrow
+donor row is built on (`pile_triples` over `_pile_read`, one batched read per board for every pool
+a served line may draw on) - and its `why` says the subtraction: `BRW holds 1 on hand (Available 1
+in stock), but BRW's own orders ranked ahead of this line claim 1, so 0 is left.` / `BRW: 4 left
+after its own queue ahead of this line; this line takes 4.` / hot-selling: `..., capped above BRW's
+reorder level 50: 20 left; ...` / `No shared pool for this product.` The popover renders it as a
+sub-table under rung 2: `On hand | SO qty | SPO qty | Available | Free | Claimed ahead | Left`.
+
+Tests: `tests/test_fulfilment_board.py` (flags on the wire and null where the ladder did not walk;
+the own-rung wording for not-hot / hot / the buy-rung suffix for discontinued; the pool pile equals
+the location's triple, `taken` never exceeds `left`, the reorder-level cap, no pile without a pool);
+`BoardCellBreakdownDialog.test.tsx` (chips, the rung-2 sub-table, the wording).

@@ -281,8 +281,16 @@ class _LineFacts:
     ahead_more: int = 0
     ahead_by_factor: Dict[str, int] = field(default_factory=dict)
     pool_free: Decimal = _ZERO
+    #: What the POOL'S OWN book, ranked ahead of this line, still claims there, and how many
+    #: lines that is - the subtraction behind `pool_free`, carried so a screen can print it:
+    #: "BRW holds 1 on hand, but its own orders ahead of this line claim 1, so 0 is left".
+    pool_claimed_qty: Decimal = _ZERO
+    pool_claimed_lines: int = 0
     pool_reorder_level: Decimal = _ZERO
     is_hot_selling: bool = False
+    #: The dealer locations holding this item as ABC A, by code - the evidence behind
+    #: `is_hot_selling`, so the verdict can be checked rather than trusted.
+    hot_selling_where: List[str] = field(default_factory=list)
     classification_unavailable: bool = False
     is_discontinued: bool = False
     timely_qty: Decimal = _ZERO
@@ -581,7 +589,7 @@ class ProjectSupplyService:
         self._free_cache = self._free_stock(product_ids, exclude_order_id=None)
         self._holds_cache = self._holds_by_project(product_ids, exclude_order_id=None)
         self._pile_cache = None
-        hot, unavailable = self._classification(product_ids)
+        hot, unavailable, hot_where = self._classification(product_ids)
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
         spo = self._spo_rows(product_ids, warehouse_ids)
@@ -652,7 +660,8 @@ class ProjectSupplyService:
             shares = attribution.get(key, {}).get(
                 str(row.get("line_id") or row["key"]), {}
             )
-            claimed = pool_ahead.get(str(row["key"]), _ZERO)
+            claim = pool_ahead.get(str(row["key"]), {})
+            claimed = _dec(claim.get("qty"))
             facts[str(row["key"])] = _LineFacts(
                 item_code=row.get("item_code"),
                 product_id=product_id,
@@ -677,10 +686,13 @@ class ProjectSupplyService:
                     if pool
                     else _ZERO
                 ),
+                pool_claimed_qty=claimed if pool else _ZERO,
+                pool_claimed_lines=int(claim.get("lines") or 0) if pool else 0,
                 pool_reorder_level=levels.get(
                     (product_id or "", str(pool.id) if pool else ""), _ZERO
                 ),
                 is_hot_selling=(product_id or "") in hot,
+                hot_selling_where=list(hot_where.get(product_id or "", [])),
                 classification_unavailable=(product_id or "") in unavailable,
                 is_discontinued=(product_id or "") in discontinued,
                 timely_refs=timely_refs,
@@ -1438,25 +1450,55 @@ class ProjectSupplyService:
 
         Aggregated per donor pile, because two lines of one order taking from the same
         location open one hole between them and not two.
+
+        A Reserve drawn from the line's SHARED POOL is a donor by the same rule (13.11, the
+        second rule). The captain, on a rung reading `Pool BRW | 4 | took 4`: "when we take
+        from BRW, first we need to see its available quantity also, if available quantity is
+        negative and if we want to take, we must have an order back just like mentioned."
+        The pool's own book ranked BEHIND this line still wants that stock, and it shows in
+        the pool's availability rather than in the queue ahead - so a pool take that leaves
+        the pool's `on hand - SO + SPO` below zero opens a hole there, and purchasing is told
+        about the hole at the POOL's location. A Reserve at the line's OWN location is never
+        one: that location's demand IS this line, already inside its `SO qty`, and taking the
+        reserve out again would count the same quantity twice.
         """
         piles: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+        def pile_for(
+            line: ProjectSalesOrderLine, fact: _LineFacts, warehouse_id: str
+        ) -> Dict[str, Any]:
+            return piles.setdefault(
+                (fact.product_id or "", warehouse_id),
+                {
+                    "borrowed": _ZERO,
+                    "reserved": _ZERO,
+                    "item_code": fact.item_code,
+                    "lines": [],
+                    "line": line,
+                    "required_date": fact.required_date or line.delivery_date,
+                },
+            )
+
         for line, entry, fact in checked:
+            if not fact.product_id:
+                continue
             for item in entry.borrow or []:
                 qty = _dec(item.qty)
-                if qty <= _ZERO or not fact.product_id or not item.warehouse_id:
+                if qty <= _ZERO or not item.warehouse_id:
                     continue
-                key = (fact.product_id, str(item.warehouse_id))
-                pile = piles.setdefault(
-                    key,
-                    {
-                        "qty": _ZERO,
-                        "item_code": fact.item_code,
-                        "lines": [],
-                        "line": line,
-                        "required_date": fact.required_date or line.delivery_date,
-                    },
-                )
-                pile["qty"] += qty
+                pile = pile_for(line, fact, str(item.warehouse_id))
+                pile["borrowed"] += qty
+                pile["lines"].append(line.line_no)
+            pool_id = str(fact.pool.id) if fact.pool else None
+            own_id = str(fact.warehouse.id) if fact.warehouse else None
+            if not pool_id or pool_id == own_id:
+                continue
+            for item in entry.reserve or []:
+                qty = _dec(item.qty)
+                if qty <= _ZERO or str(item.warehouse_id) != pool_id:
+                    continue
+                pile = pile_for(line, fact, pool_id)
+                pile["reserved"] += qty
                 pile["lines"].append(line.line_no)
         if not piles:
             return []
@@ -1465,23 +1507,31 @@ class ProjectSupplyService:
         out: List[Dict[str, Any]] = []
         reference = order.autocount_doc_no or order.provisional_ref or ""
         for key, pile in piles.items():
-            after = availability.get(key, _ZERO) - pile["qty"]
+            taken = pile["borrowed"] + pile["reserved"]
+            after = availability.get(key, _ZERO) - taken
             if after >= _ZERO:
                 continue
             warehouse = self._warehouse_row(key[1])
             code = warehouse.warehouse_code if warehouse else ""
-            lines = ", ".join(f"line {no}" for no in sorted(pile["lines"]))
+            lines = ", ".join(f"line {no}" for no in sorted(set(pile["lines"])))
+            parts: List[str] = []
+            if pile["borrowed"] > _ZERO:
+                parts.append(f"borrowed {qty_text(pile['borrowed'])}")
+            if pile["reserved"] > _ZERO:
+                parts.append(f"reserved {qty_text(pile['reserved'])} at {code}")
+            what = " and ".join(parts)
+            what = what[:1].upper() + what[1:]
             out.append(
                 {
                     "line": pile["line"],
                     "item_code": pile["item_code"],
-                    # The hole, not the borrow: taking 20 from a donor with 10 to spare
+                    # The hole, not the take: taking 20 from a location with 10 to spare
                     # leaves 10 to be bought, and the other 10 was theirs to give.
-                    "qty": min(pile["qty"], -after),
+                    "qty": min(taken, -after),
                     "required_date": pile["required_date"],
                     "stock_location": code,
                     "note": (
-                        f"Borrowed {qty_text(pile['qty'])} for {reference} {lines}; "
+                        f"{what} for {reference} {lines}; "
                         f"{code} goes short by {qty_text(-after)}"
                     ),
                 }
@@ -1880,7 +1930,7 @@ class ProjectSupplyService:
                 ].pool_warehouse_id
             ],
         )
-        hot, unavailable = self._classification(product_ids)
+        hot, unavailable, hot_where = self._classification(product_ids)
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
         spo = self._spo_rows(product_ids, warehouse_ids)
@@ -1914,6 +1964,8 @@ class ProjectSupplyService:
                 if required_date is None
                 or (row.arrival_date is not None and row.arrival_date <= required_date)
             ]
+            claim = pool_ahead.get(str(line.id), {})
+            claimed = _dec(claim.get("qty"))
             facts[str(line.id)] = _LineFacts(
                 line=line,
                 core=core,
@@ -1928,18 +1980,17 @@ class ProjectSupplyService:
                 lines_ahead=int(shares.get("lines_ahead") or 0),
                 available_to_this_line=_dec(shares.get("available_to_this_line")),
                 pool_free=(
-                    max(
-                        self._free_at(product_id, str(pool.id))
-                        - pool_ahead.get(str(line.id), _ZERO),
-                        _ZERO,
-                    )
+                    max(self._free_at(product_id, str(pool.id)) - claimed, _ZERO)
                     if pool
                     else _ZERO
                 ),
+                pool_claimed_qty=claimed if pool else _ZERO,
+                pool_claimed_lines=int(claim.get("lines") or 0) if pool else 0,
                 pool_reorder_level=levels.get(
                     (product_id or "", str(pool.id) if pool else ""), _ZERO
                 ),
                 is_hot_selling=(product_id or "") in hot,
+                hot_selling_where=list(hot_where.get(product_id or "", [])),
                 classification_unavailable=(product_id or "") in unavailable,
                 is_discontinued=(product_id or "") in discontinued,
                 timely_qty=shares.get(TIMELY_SPO, _ZERO),
@@ -2166,17 +2217,28 @@ class ProjectSupplyService:
             (product_id or "", warehouse_id, project_id), _ZERO
         )
 
-    def _classification(self, product_ids: Iterable[str]) -> Tuple[set, set]:
+    def _classification(
+        self, product_ids: Iterable[str]
+    ) -> Tuple[set, set, Dict[str, List[str]]]:
         """PLAN 3.3's dealer hot-selling predicate, and the "no evidence" case.
 
         `computed_at` is display evidence, never a freshness gate: the existing ABC facts
         are the test, and adding an age threshold would be a new knob this contract forbids.
+
+        Returns the hot set, the unclassified set, and WHERE each hot product earned it - the
+        dealer locations holding it as ABC A, by code and sorted. The captain, reading a trail
+        that never mentioned it: "where is the consideration of dealer hot selling?" A bare
+        boolean would be something to take on trust; "ABC A at BRW" is something to check.
         """
         ids = [pid for pid in product_ids if pid]
         if not ids:
-            return set(), set()
+            return set(), set(), {}
         rows = (
-            self.db.query(ItemClassification.product_id, ItemClassification.abc_class)
+            self.db.query(
+                ItemClassification.product_id,
+                ItemClassification.abc_class,
+                Warehouse.warehouse_code,
+            )
             .join(Warehouse, Warehouse.id == ItemClassification.warehouse_id)
             .filter(
                 ItemClassification.product_id.in_(ids),
@@ -2186,9 +2248,14 @@ class ProjectSupplyService:
             )
             .all()
         )
-        seen = {str(product_id) for product_id, _abc in rows}
-        hot = {str(product_id) for product_id, abc in rows if (abc or "").upper() == "A"}
-        return hot, {pid for pid in ids if pid not in seen}
+        seen = {str(product_id) for product_id, _abc, _code in rows}
+        where: Dict[str, List[str]] = {}
+        for product_id, abc, code in rows:
+            if (abc or "").upper() == "A":
+                where.setdefault(str(product_id), []).append(code or "")
+        for codes in where.values():
+            codes.sort()
+        return set(where), {pid for pid in ids if pid not in seen}, where
 
     def _reorder_levels(
         self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
@@ -2464,7 +2531,7 @@ class ProjectSupplyService:
         members: Sequence[Dict[str, Any]],
         *,
         exclude_order_id: Optional[str] = None,
-    ) -> Dict[str, Decimal]:
+    ) -> Dict[str, Dict[str, Any]]:
         """What a shared pool's OWN book claims ahead of each line that would draw on it.
 
         The pool is a pile like any other: the lines fulfilled directly from it want it too,
@@ -2474,13 +2541,15 @@ class ProjectSupplyService:
 
         `members` are the lines asking, each stating `key`, `product_id`, `pool_id`,
         `required_date`, `order_date`, `payment_terms_days`, `demand_class`, `so_number` and
-        `line_no`. Returns the quantity ranked ahead, per member key.
+        `line_no`. Returns, per member key, the quantity ranked ahead (`qty`) and how many of
+        the pool's lines that is (`lines`) - the count travels with the sum because the trail
+        prints both ("BRW's own orders ranked ahead of this line claim 1").
         """
         book = self._pile_book(product_ids, pool_ids, exclude_order_id=exclude_order_id)
         if not members:
             return {}
         weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
-        out: Dict[str, Decimal] = {}
+        out: Dict[str, Dict[str, Any]] = {}
         by_pile: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         for member in members:
             key = (str(member["product_id"]), str(member["pool_id"]))
@@ -2541,9 +2610,11 @@ class ProjectSupplyService:
                         str(member["key"]),
                     )
                 )
-                out[str(member["key"])] = sum(
-                    (row[4] for row in ordered_pool if sort_key(row[:4]) < mine), _ZERO
-                )
+                ahead = [row for row in ordered_pool if sort_key(row[:4]) < mine]
+                out[str(member["key"])] = {
+                    "qty": sum((row[4] for row in ahead), _ZERO),
+                    "lines": len(ahead),
+                }
         return out
 
     def _attribution(
@@ -2868,6 +2939,19 @@ class ProjectSupplyService:
             )["spo_qty"] = sum((ref.qty for ref in refs), _ZERO)
 
         return pile
+
+    def pile_triples(
+        self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], Dict[str, Decimal]]:
+        """AutoCount's `on hand / SO qty / SPO qty` per (product, location), over a stated span.
+
+        Public for the board's pool rung: `Pool BRW | Had 0` beside an Inventory screen saying
+        `Available 1` is two true numbers with nothing between them, and the trail has to print
+        the pile the pool's queue was netted from. The same three reads the donor list is built
+        on (`_pile_read`), so the pool rung and a Borrow row can never describe one pile two
+        ways. One batched read for every pool pile a board touches, never one per rung.
+        """
+        return self._pile_read(product_ids, warehouse_ids)
 
     def donor_availability(
         self, pairs: Iterable[Tuple[str, str]]

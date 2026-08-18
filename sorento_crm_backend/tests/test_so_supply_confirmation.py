@@ -1324,3 +1324,201 @@ def test_a_line_named_twice_in_the_payload_is_refused_not_promised_twice(api):
     assert db.query(SOSupplyDecision).filter(
         SOSupplyDecision.project_sales_order_id == order.id
     ).count() == 0
+
+
+# ------------------------------------------------- order back on a POOL reserve (13.11)
+
+
+def _behind_ours(core_so):
+    """A core sales order the queue ranks BEHIND every `ZZT-PSO-*` line of this file.
+
+    With no policy row the active weights name only `po_document_sequence`, which no sales-
+    order line carries, so every demand row scores 0.0 and the pile's queue falls through to
+    the sales-order number. `ZZT-ZCORE-*` sorts after `ZZT-PSO-*`; the default `ZZT-CORE-*`
+    sorts before it and would put this order AHEAD of ours.
+    """
+    core_so.so_number = f"ZZT-ZCORE-{_uid()[:8]}"
+    return core_so
+
+
+def test_a_pool_reserve_that_oversells_the_pool_raises_an_order_inquiry_for_the_pool(api):
+    """The captain, 19 August 2026, on a rung reading `Pool BRW | 4 | took 4`: "when we take
+    from BRW, first we need to see its available quantity also, if available quantity is
+    negative and if we want to take, we must have an order back just like mentioned."
+
+    Same rule as a Borrow, one location along. The pool holds 100 with 90 of it already sold
+    to its own book, so reserving 20 from it opens a hole of 10 - and purchasing is told
+    about the 10, at the POOL's location.
+
+    The pool's own line is ranked BEHIND ours, deliberately: the confirmation only lets a
+    line reserve what the pool's queue AHEAD of it leaves (`pool_free`), so a pool line ranked
+    ahead would have refused the reserve outright. The hole a pool take opens is the pool's
+    book ranked BEHIND this line - stock the queue did not protect, and the availability did.
+    """
+    from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    # The pool's OWN book: 90 of that 100 is already owed there, ranked behind our line.
+    theirs = _behind_ours(_core_so(db, world.company_id))
+    _core_line(db, theirs, world.product, world.pool_wh, qty_ordered="90")
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "20"}],
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["inquiry_rows_created"] == 1
+
+    rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
+        .all()
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert str(row.qty) in ("10", "10.0000")
+    assert row.stock_location == world.pool_wh.warehouse_code
+    assert row.state == "raised"
+    assert row.so_line_id == line.id
+    assert row.note == (
+        f"Reserved 20 at {world.pool_wh.warehouse_code} for {order.provisional_ref} "
+        f"line 20; {world.pool_wh.warehouse_code} goes short by 10"
+    )
+
+
+def test_a_pool_reserve_the_pool_can_afford_raises_nothing(api):
+    """A pool still covering its own book is not short of anything."""
+    from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "20"}],
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["inquiry_rows_created"] == 0
+    assert (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
+        .count()
+        == 0
+    )
+
+
+def test_an_own_location_reserve_never_raises_a_shortfall_however_oversold(api):
+    """The line's own location's demand IS this line, so subtracting the reserve from that
+    location's availability would count the same quantity twice. Own-location reserves are
+    outside this rule by construction, not by luck."""
+    from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    # 20 on hand at the line's own location and 200 already owed there: deeply oversold.
+    # Ranked behind our line, so the queue leaves ours its 20 and the confirm accepts it.
+    _stock(db, world.product, world.own_wh, on_hand=20)
+    theirs = _behind_ours(_core_so(db, world.company_id))
+    _core_line(db, theirs, world.product, world.own_wh, qty_ordered="200")
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[{"warehouse_id": world.own_wh.id, "qty": "20"}],
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
+        .count()
+        == 0
+    )
+
+
+def test_a_pool_reserve_and_a_borrow_at_one_location_open_one_hole_between_them(api):
+    """Aggregated per donor pile, exactly as two borrows are: the location goes short once."""
+    from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    theirs = _behind_ours(_core_so(db, world.company_id))
+    _core_line(db, theirs, world.product, world.pool_wh, qty_ordered="90")
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    first = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="12")
+    second = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="8")
+    line_one = _project_line(db, order, line_no=1, product=world.product, core_line=first)
+    line_two = _project_line(db, order, line_no=2, product=world.product, core_line=second)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line_one.id,
+                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "12"}],
+                ),
+                _line_payload(
+                    line_two.id,
+                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "8"}],
+                ),
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    rows = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.verb == IV_BORROW_SHORTFALL,
+            OrderInquiryRow.state == "raised",
+        )
+        .all()
+    )
+    assert len(rows) == 1, "one pile, one hole"
+    assert str(rows[0].qty) in ("10", "10.0000")
+    assert "line 1, line 2" in rows[0].note

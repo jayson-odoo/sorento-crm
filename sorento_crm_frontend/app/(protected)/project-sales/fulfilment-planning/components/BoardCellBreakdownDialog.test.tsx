@@ -35,6 +35,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import {
   buildBoard,
+  OWN_ELIGIBLE,
   PREVIEW_POLICY,
   type BoardDemandLine,
 } from '../../_shared/lib/__testsupport__/boardFixture';
@@ -1547,6 +1548,130 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     expect(screen.getByText(/Reserve 100/)).toBeInTheDocument();
     expect(screen.getByText('Contested')).toBeInTheDocument();
     expect(screen.getAllByTestId(/^share-note-/).length).toBe(2);
+  });
+
+  /**
+   * The flags the ladder judged the item on, and the pool pile behind rung 2.
+   *
+   * The captain, 19 August 2026: "where is the consideration of dealer hot selling / project hot
+   * selling / discontinued, to see if we can take from BRW?" - and, on `Pool BRW | Had 0` beside
+   * an Inventory screen showing `Available 1`: "why it shows 0?"
+   */
+  it('opens the own rung with the hot-selling verdict in words, and shows no chip for an ordinary item', () => {
+    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    const key = cell.contributions[0].key;
+    openTrail(key);
+
+    expect(screen.getByTestId(`trail-why-${key}-reserve_own`).textContent).toBe(
+      `${OWN_ELIGIBLE} First in the queue here; this line takes 40.`,
+    );
+    // An unflagged item is the ordinary case: no badge saying so.
+    expect(screen.queryByTestId(`trail-flags-${key}`)).not.toBeInTheDocument();
+  });
+
+  it('shows the item flags as chips beside the title, each naming its evidence', () => {
+    const cell = cellOf([demand({ qty: '100' })]);
+    const contribution = cell.contributions[0];
+    contribution.item_flags = {
+      dealer_hot_selling: true,
+      dealer_hot_selling_where: ['BRW', 'BRW-IB'],
+      discontinued: true,
+      retail_classification_available: true,
+    };
+    renderCell(cell);
+    openTrail(contribution.key);
+
+    const chips = screen.getByTestId(`trail-flags-${contribution.key}`);
+    expect(chips.textContent).toBe('hot-sellingdiscontinued');
+    expect(screen.getByTestId(`trail-flag-${contribution.key}-hot-selling`)).toHaveAttribute(
+      'title',
+      'Dealer hot-selling: ABC A at BRW, BRW-IB. Own-location stock is kept for retail; pool only.',
+    );
+    expect(screen.queryByTestId(`trail-flag-${contribution.key}-no-retail-classification`)).not.toBeInTheDocument();
+  });
+
+  it('says "no retail classification" rather than reading an unclassified item as cold', () => {
+    const cell = cellOf([demand({ qty: '100' })]);
+    const contribution = cell.contributions[0];
+    contribution.item_flags = {
+      dealer_hot_selling: false,
+      dealer_hot_selling_where: [],
+      discontinued: false,
+      retail_classification_available: false,
+    };
+    renderCell(cell);
+    openTrail(contribution.key);
+
+    expect(screen.getByTestId(`trail-flags-${contribution.key}`).textContent).toBe(
+      'no retail classification',
+    );
+  });
+
+  it('shows no chips at all on a line the ladder never walked', () => {
+    const cell = cellOf([demand({ fulfilment_location: null })]);
+    const key = cell.contributions[0].key;
+    expect(cell.contributions[0].item_flags).toBeNull();
+    renderDialog([demand({ fulfilment_location: null })]);
+    openTrail(key);
+
+    expect(screen.queryByTestId(`trail-flags-${key}`)).not.toBeInTheDocument();
+  });
+
+  it('lays the pool pile out under rung 2 - on hand, SO, SPO, available, free, claimed ahead, left', () => {
+    const cell = cellOf([demand({ qty: '1' })]);
+    const contribution = cell.contributions[0];
+    const pool = contribution.trail?.find((step) => step.kind === 'reserve_pool');
+    // The captain's B2155-NL-BLUE rung: BRW holds 1, its own line ahead claims it, 0 left.
+    Object.assign(pool ?? {}, {
+      location: 'BRW',
+      warehouse_id: 'wh-BRW',
+      opening: '0',
+      offered: '0',
+      taken: '0',
+      outcome: 'nothing_left',
+      note: null,
+      why: "BRW holds 1 on hand (Available 1 in stock), but BRW's own orders ranked ahead of this line claim 1, so 0 is left.",
+      pool: {
+        location: 'BRW',
+        warehouse_id: 'wh-BRW',
+        on_hand: '1',
+        so_qty: '1',
+        spo_qty: '0',
+        available: '0',
+        reserved: '0',
+        free: '1',
+        claimed_ahead_qty: '1',
+        claimed_ahead_lines: 1,
+        left: '0',
+        reorder_level: '0',
+        cap: null,
+      },
+    });
+    renderCell(cell);
+    openTrail(contribution.key);
+
+    expect(stepCells(contribution.key, 'reserve_pool').slice(1, 3)).toEqual(['Pool BRW', '0']);
+    expect(screen.getByTestId(`trail-why-${contribution.key}-reserve_pool`).textContent).toBe(
+      "BRW holds 1 on hand (Available 1 in stock), but BRW's own orders ranked ahead of this line claim 1, so 0 is left.",
+    );
+    const table = screen.getByTestId(`trail-pool-${contribution.key}`);
+    const headers = [...table.querySelectorAll('th')].map((node) => node.textContent);
+    expect(headers).toEqual(['On hand', 'SO qty', 'SPO qty', 'Available', 'Free', 'Claimed ahead', 'Left']);
+    const values = [...table.querySelectorAll('td')].map((node) => node.textContent);
+    expect(values).toEqual(['1', '1', '0', '0', '1', '1 (1 line)', '0']);
+  });
+
+  it('shows no pool sub-table when there is no shared pool', () => {
+    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    const key = cell.contributions[0].key;
+    openTrail(key);
+
+    expect(screen.getByTestId(`trail-why-${key}-reserve_pool`).textContent).toBe(
+      'No shared pool for this product.',
+    );
+    expect(screen.queryByTestId(`trail-pool-${key}`)).not.toBeInTheDocument();
   });
 });
 

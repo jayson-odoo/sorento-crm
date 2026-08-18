@@ -252,7 +252,7 @@ class _Row:
         "raw_facts", "taken_before", "last_taker", "borrow_candidates",
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
-        "decision",
+        "decision", "item_flags",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -287,6 +287,11 @@ class _Row:
         self.available_to_this_line: Optional[Decimal] = _ZERO
         # What the order's ACTIVE revision froze for this line, when it covers it (13.4).
         self.decision: Optional[Dict[str, Any]] = None
+        # The item facts the ladder judged this line on (dealer hot-selling and where,
+        # discontinued, whether anybody classified it). None on a line the ladder never
+        # walked - unplannable or covered - because `false` there would claim a judgement that
+        # was never made.
+        self.item_flags: Optional[Dict[str, Any]] = None
 
     @property
     def covered(self) -> bool:
@@ -333,6 +338,9 @@ class FulfilmentBoardService:
         # confirmed decisions hold there. Read once, printed beside the free figure.
         self._pressure: Dict[Tuple[str, str], Tuple[Decimal, Decimal]] = {}
         self._held: Dict[Tuple[str, str], Decimal] = {}
+        # (product, POOL warehouse) -> AutoCount's `on hand / so_qty / spo_qty`, for the pool
+        # rung of the trail. One batched read over every pool a served line may draw on.
+        self._pool_piles: Dict[Tuple[str, str], Dict[str, Decimal]] = {}
 
     # ----------------------------------------------------------------- public
 
@@ -1188,6 +1196,23 @@ class FulfilmentBoardService:
             ]
         )
 
+        # The pool piles behind rung 2, in AutoCount's own triple, read once for every pool a
+        # served line may draw on. `Pool BRW | Had 0` beside `Available 1` in Inventory is two
+        # true numbers, and the trail has to show the pile the queue was netted from.
+        pool_pairs = {
+            (fact.product_id, str(fact.pool.id))
+            for fact in facts.values()
+            if fact.product_id and fact.pool is not None
+        }
+        self._pool_piles = (
+            self.supply.pile_triples(
+                {product_id for product_id, _pool in pool_pairs},
+                {pool_id for _product, pool_id in pool_pairs},
+            )
+            if pool_pairs
+            else {}
+        )
+
         piles: Dict[Tuple[str, str], List[_Row]] = defaultdict(list)
         for row in proposable:
             piles[(row.product_id, row.warehouse_id)].append(row)
@@ -1285,6 +1310,14 @@ class FulfilmentBoardService:
                 row.borrow_candidates = []
 
             row.sources = [self._source(component, row) for component in components]
+            # Said, not implied: the ladder consulted these and never printed them, and the
+            # captain read the trail as if it had consulted nothing.
+            row.item_flags = {
+                "dealer_hot_selling": bool(fact.is_hot_selling),
+                "dealer_hot_selling_where": list(fact.hot_selling_where or []),
+                "discontinued": bool(fact.is_discontinued),
+                "retail_classification_available": not fact.classification_unavailable,
+            }
             row.trail = self._trail(row, fact, components, pool_open)
 
     def _apply_frozen(self, row: _Row) -> None:
@@ -1362,6 +1395,7 @@ class FulfilmentBoardService:
             ),
         ]
         row.trail = []
+        row.item_flags = None
         row.contested = False
         row.borrow_candidates = []
         row.so_qty_ahead = None
@@ -1436,6 +1470,7 @@ class FulfilmentBoardService:
             why: Optional[Callable[[str], str]] = None,
             eligible: bool = True,
             offer_only: bool = False,
+            pool: Optional[Dict[str, Any]] = None,
         ) -> None:
             nonlocal remaining
             wanted = remaining
@@ -1475,6 +1510,9 @@ class FulfilmentBoardService:
                     # is what needed explaining, so restating it would explain nothing.
                     "why": _COVERED_BEFORE if why is None else why(outcome),
                     "note": note,
+                    # The pool pile behind rung 2, in AutoCount's triple. Null on every other
+                    # rung, and on a pool rung that has no pile to describe.
+                    "pool": pool,
                 }
             )
 
@@ -1523,6 +1561,7 @@ class FulfilmentBoardService:
             balance = max(_dec(pool_open), _ZERO)
             pool_offered = max(balance - level, _ZERO) if fact.is_hot_selling else balance
             pool_taken = took(RESERVE, pool_code)
+            pile = self._pool_pile(row, fact, balance, level, pool_offered)
             add(
                 "reserve_pool",
                 location=pool_code,
@@ -1536,8 +1575,9 @@ class FulfilmentBoardService:
                     else None
                 ),
                 why=lambda outcome: self._pool_why(
-                    fact, outcome, balance, level, pool_offered, pool_taken
+                    fact, outcome, pile, balance, level, pool_offered, pool_taken
                 ),
+                pool=pile,
             )
 
         # 3. Supply already on its way that lands on or before the required date.
@@ -1573,13 +1613,63 @@ class FulfilmentBoardService:
             "buy",
             offered=residual,
             taken=residual,
-            why=lambda outcome: (
-                "Nothing left to take, so the remainder is bought."
-                if outcome == "took"
-                else _COVERED_BEFORE
-            ),
+            why=lambda outcome: self._buy_why(fact, outcome),
         )
         return steps
+
+    def _pool_pile(
+        self,
+        row: _Row,
+        fact: Any,
+        balance: Decimal,
+        level: Decimal,
+        offered: Decimal,
+    ) -> Dict[str, Any]:
+        """The pool's pile as rung 2 saw it, in AutoCount's vocabulary and this line's.
+
+        The captain, on `Pool BRW | Had 0` beside `Available 1` in Inventory: "why it shows
+        0?" Because `Had` is what the pool's OWN book ranked ahead of this line left, and
+        Available is the pile's whole position - two true numbers, so both are printed with
+        the subtraction between them. `available` is SIGNED and never clamped, as on a
+        donor row. `cap` is stated only when a cap applies (a dealer hot-selling item may
+        draw only above the pool's reorder level); null otherwise, never a number that would
+        read as a limit nobody set.
+        """
+        pool_id = str(fact.pool.id)
+        key = (fact.product_id, pool_id)
+        triple = self._pool_piles.get(
+            key, {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO}
+        )
+        on_hand, reserved = self._levels.get(key, (triple["on_hand"], _ZERO))
+        return {
+            "location": fact.pool_code,
+            "warehouse_id": pool_id,
+            "on_hand": qty_text(on_hand),
+            "so_qty": qty_text(triple["so_qty"]),
+            "spo_qty": qty_text(triple["spo_qty"]),
+            "available": qty_text(on_hand - triple["so_qty"] + triple["spo_qty"]),
+            "reserved": qty_text(reserved),
+            "free": qty_text(self._free.get(key, _ZERO)),
+            "claimed_ahead_qty": qty_text(fact.pool_claimed_qty),
+            "claimed_ahead_lines": int(fact.pool_claimed_lines or 0),
+            "left": qty_text(balance),
+            "reorder_level": qty_text(level),
+            "cap": qty_text(offered) if fact.is_hot_selling else None,
+        }
+
+    @staticmethod
+    def _flag_sentence(fact: Any) -> str:
+        """What the dealer hot-selling check concluded, in words, for the own rung."""
+        if fact.is_hot_selling:
+            where = ", ".join(fact.hot_selling_where or [])
+            evidence = f" (ABC A at {where})" if where else ""
+            return (
+                f"Dealer hot-selling{evidence}: own-location stock is kept for retail, "
+                "pool only."
+            )
+        if fact.classification_unavailable:
+            return "No retail classification for this item, so own-location stock is eligible."
+        return "Not dealer hot-selling, so own-location stock is eligible."
 
     # ------------------------------------------------------------------ why, per rung
 
@@ -1600,44 +1690,93 @@ class FulfilmentBoardService:
         planner's words, never in the policy's factor keys.
         """
         where = f" at {location}" if location else ""
+        # The flag the rung was decided on comes FIRST, in words. The captain: "where is the
+        # consideration of dealer hot selling ... to see if we can take from BRW?" It was
+        # consulted on every line and never said, so a trail that reserved own stock read as
+        # one that had not checked.
+        flag = self._flag_sentence(fact)
         if outcome == "not_eligible":
-            return "Hot-selling item: own-location stock stays for retail, pool only."
+            return flag
         if outcome == "none_needed":
-            return _COVERED_BEFORE
+            return f"{flag} {_COVERED_BEFORE}"
         if outcome == "took":
             if fact.lines_ahead:
                 return (
-                    f"{qty_text(offered)} left after the {fact.lines_ahead} lines ahead; "
-                    f"this line takes {qty_text(taken)}."
+                    f"{flag} {qty_text(offered)} left after the {fact.lines_ahead} lines "
+                    f"ahead; this line takes {qty_text(taken)}."
                 )
-            return f"First in the queue here; this line takes {qty_text(taken)}."
+            return f"{flag} First in the queue here; this line takes {qty_text(taken)}."
         if fact.lines_ahead:
             return (
-                f"{qty_text(opening)} on hand, but {fact.lines_ahead} lines with "
+                f"{flag} {qty_text(opening)} on hand, but {fact.lines_ahead} lines with "
                 f"{_ahead_phrase(fact.ahead_by_factor)} rank ahead and want "
                 f"{qty_text(fact.so_qty_ahead)} - none is left for this line."
             )
-        return f"No free stock{where}."
+        return f"{flag} No free stock{where}."
 
     def _pool_why(
         self,
         fact: Any,
         outcome: str,
+        pile: Dict[str, Any],
         balance: Decimal,
         level: Decimal,
         offered: Decimal,
         taken: Decimal,
     ) -> str:
+        """Why the pool rung ended where it did, with the pool's own numbers in the sentence.
+
+        The captain, on `Pool BRW | Had 0` beside `Available 1` in Inventory: "why it shows
+        0?" - and on `Pool BRW | 4 | took 4`: "is it taken because for location BRW there is
+        no outstanding quantity?" The answer is the pool's on hand, its availability, and what
+        its own orders ranked ahead of this line claim, said together.
+        """
+        code = fact.pool_code
         if outcome == "none_needed":
             return _COVERED_BEFORE
-        if outcome == "took":
-            return f"The pool offers {qty_text(offered)}; this line takes {qty_text(taken)}."
-        if fact.is_hot_selling and level > _ZERO and balance > _ZERO:
-            return (
-                f"Pool holds {qty_text(balance)} free, capped by reorder level "
-                f"{qty_text(level)}."
+        on_hand = _dec(pile.get("on_hand"))
+        # The "Available" the captain was holding the rung against is the Inventory screen's
+        # (on hand less reserved), so that is the figure the sentence quotes; AutoCount's
+        # signed position (on hand - SO + SPO) is beside it in the sub-table.
+        available = on_hand - _dec(pile.get("reserved"))
+        claimed = _dec(pile.get("claimed_ahead_qty"))
+        capped = fact.is_hot_selling and level > _ZERO
+        left = (
+            f"{code}: {qty_text(balance)} left after its own queue ahead of this line"
+        )
+        if capped:
+            left += (
+                f", capped above {code}'s reorder level {qty_text(level)}: "
+                f"{qty_text(offered)} left"
             )
-        return "No free stock at the pool."
+        if outcome == "took":
+            return f"{left}; this line takes {qty_text(taken)}."
+        if capped and balance > _ZERO:
+            return f"{left}."
+        if claimed > _ZERO:
+            return (
+                f"{code} holds {qty_text(on_hand)} on hand (Available {qty_text(available)} "
+                f"in stock), but {code}'s own orders ranked ahead of this line claim "
+                f"{qty_text(claimed)}, so {qty_text(balance)} is left."
+            )
+        if on_hand > _ZERO:
+            return (
+                f"{code} holds {qty_text(on_hand)} on hand (Available {qty_text(available)} "
+                f"in stock), but none is left for this line."
+            )
+        return f"No stock at {code}."
+
+    @staticmethod
+    def _buy_why(fact: Any, outcome: str) -> str:
+        """Why the remainder is bought - and, for a discontinued item, that the buy will need
+        a reason. `is_discontinued` only ever forced a REASON on the buy; saying so here is
+        cheaper than a refusal at confirm being the first anybody hears of it."""
+        if outcome != "took":
+            return _COVERED_BEFORE
+        sentence = "Nothing left to take, so the remainder is bought."
+        if fact.is_discontinued:
+            return f"{sentence} Discontinued: the buy needs a reason."
+        return sentence
 
     def _incoming_why(self, fact: Any, outcome: str, taken: Decimal) -> str:
         if outcome == "none_needed":
@@ -2030,6 +2169,9 @@ class FulfilmentBoardService:
             # gave nothing, because "the pool was checked and had none" is the answer to "how
             # did you arrive at the Buy" and an omitted step reads as a step never taken.
             "trail": row.trail,
+            # The item facts the ladder judged this line on. Null, never `false`, on a line
+            # it did not walk: an unplannable or covered line was judged against nothing.
+            "item_flags": row.item_flags,
             "contested": row.contested,
         }
 

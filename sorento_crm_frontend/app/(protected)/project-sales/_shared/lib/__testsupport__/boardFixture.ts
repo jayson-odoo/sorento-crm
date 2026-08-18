@@ -345,8 +345,10 @@ function allocate(
           reason: 'No fulfilment location on the sales order line, so nothing can be sourced for it.',
         },
       ];
-      // No ladder was walked for it, so it carries no trail - never an invented empty one.
+      // No ladder was walked for it, so it carries no trail - never an invented empty one -
+      // and no flags: it was judged against nothing.
       contribution.trail = [];
+      contribution.item_flags = null;
       continue;
     }
     const location = contribution.fulfilment_location as string;
@@ -388,6 +390,15 @@ function allocate(
       });
     }
     contribution.sources = sources;
+    // The item facts the ladder judged the line on, said rather than implied. This fixture models
+    // an ordinary item: classified, not dealer hot-selling, not discontinued. A test that wants a
+    // flagged item overrides these on the contribution, as it does the trail's steps.
+    contribution.item_flags = {
+      dealer_hot_selling: false,
+      dealer_hot_selling_where: [],
+      discontinued: false,
+      retail_classification_available: true,
+    };
     contribution.trail = trailFor({
       location,
       opening: opening[stockKey] ?? 0,
@@ -457,6 +468,7 @@ function applyFrozen(contribution: BoardContribution): void {
   }
   contribution.sources = sources;
   contribution.trail = [];
+  contribution.item_flags = null;
   contribution.contested = false;
   contribution.qty_proposed_reserve = fromMinor(
     (decision.reserve ?? []).reduce((total, row) => total + toMinor(row.qty), 0),
@@ -473,6 +485,9 @@ function applyFrozen(contribution: BoardContribution): void {
  * are always empty - which is exactly the case worth having in the tests, because "checked and
  * had nothing" is the reading the screen must not silently drop.
  */
+/** What rung 1 opens with for an ordinary item, in the server's own words. */
+export const OWN_ELIGIBLE = 'Not dealer hot-selling, so own-location stock is eligible.';
+
 function trailFor(input: {
   location: string;
   opening: number;
@@ -532,14 +547,16 @@ function trailFor(input: {
     ahead_by_factor: byFactor,
     offered: input.offered,
     taken: input.reserved,
-    why:
+    // The flag the rung was judged on comes first, in words, exactly as the server says it.
+    why: `${OWN_ELIGIBLE} ${
       input.reserved > 0
         ? input.ahead.lines > 0
           ? `${fromMinor(input.offered)} left after the ${input.ahead.lines} lines ahead; this line takes ${fromMinor(input.reserved)}.`
           : `First in the queue here; this line takes ${fromMinor(input.reserved)}.`
         : input.ahead.lines > 0
           ? `${fromMinor(input.opening)} on hand, but ${input.ahead.lines} lines with ${aheadPhraseOf(byFactor)} rank ahead and want ${fromMinor(input.ahead.qty)} - none is left for this line.`
-          : `No free stock at ${input.location}.`,
+          : `No free stock at ${input.location}.`
+    }`,
   });
   add('reserve_pool', {
     offered: 0,

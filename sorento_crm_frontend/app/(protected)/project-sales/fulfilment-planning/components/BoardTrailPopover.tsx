@@ -8,6 +8,7 @@ import { aheadFactorLabel } from '../../_shared/lib/fulfilmentBoard';
 import type {
   BoardAheadLine,
   BoardContribution,
+  BoardTrailPool,
   BoardTrailStep,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { PileQueueDialog } from './PileQueueDialog';
@@ -69,8 +70,9 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                 and clipping them silently drops Still owed and Outcome - the two that say how the
                 rung ended. */}
             <div data-testid={`trail-${contribution.key}`} className="max-h-[60vh] overflow-auto">
-              <div className="border-b px-3 py-2 text-xs font-semibold">
-                How this decision was reached
+              <div className="flex flex-wrap items-center gap-1.5 border-b px-3 py-2 text-xs font-semibold">
+                <span>How this decision was reached</span>
+                <ItemFlagChips contribution={contribution} />
               </div>
               {trail.length === 0 ? (
                 <p className="px-3 py-2 text-xs text-muted-foreground">
@@ -140,6 +142,9 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                               {step.note && (
                                 <p className="text-2xs text-muted-foreground">{step.note}</p>
                               )}
+                              {step.kind === 'reserve_pool' && step.pool && (
+                                <PoolPile pool={step.pool} contributionKey={contribution.key} />
+                              )}
                               {step.kind === 'reserve_own' && (step.ahead?.length ?? 0) > 0 && (
                                 <AheadList
                                   step={step}
@@ -176,9 +181,122 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
   );
 }
 
-/** A rung says something under itself when it has a sentence, a hint or a queue to name. */
+/** A rung says something under itself when it has a sentence, a hint, a pile or a queue to name. */
 function hasFooter(step: BoardTrailStep): boolean {
-  return Boolean(step.why || step.note || (step.ahead?.length ?? 0) > 0);
+  return Boolean(step.why || step.note || step.pool || (step.ahead?.length ?? 0) > 0);
+}
+
+/**
+ * The item facts the ladder judged this line on, as chips beside the title.
+ *
+ * The captain: "where is the consideration of dealer hot selling / project hot selling /
+ * discontinued, to see if we can take from BRW?" They were consulted on every line and never
+ * printed. Nothing renders when the flags are absent (the ladder was not walked) or all clear -
+ * an unflagged item is the ordinary case and needs no badge saying so.
+ */
+function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
+  const flags = contribution.item_flags;
+  if (!flags) return null;
+  const chips: Array<{ key: string; label: string; title: string }> = [];
+  if (flags.dealer_hot_selling) {
+    const where = flags.dealer_hot_selling_where.join(', ');
+    chips.push({
+      key: 'hot-selling',
+      label: 'hot-selling',
+      title: where
+        ? `Dealer hot-selling: ABC A at ${where}. Own-location stock is kept for retail; pool only.`
+        : 'Dealer hot-selling. Own-location stock is kept for retail; pool only.',
+    });
+  }
+  if (flags.discontinued) {
+    chips.push({
+      key: 'discontinued',
+      label: 'discontinued',
+      title: 'Discontinued: a Buy for it needs a reason.',
+    });
+  }
+  if (!flags.retail_classification_available) {
+    chips.push({
+      key: 'no-retail-classification',
+      label: 'no retail classification',
+      title: 'Nobody has classified this item at a dealer location, so hot-selling cannot be judged.',
+    });
+  }
+  if (chips.length === 0) return null;
+  return (
+    <span data-testid={`trail-flags-${contribution.key}`} className="inline-flex flex-wrap gap-1">
+      {chips.map((chip) => (
+        <span
+          key={chip.key}
+          data-testid={`trail-flag-${contribution.key}-${chip.key}`}
+          title={chip.title}
+          className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-2xs font-medium text-amber-800"
+        >
+          {chip.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * The pool's pile under rung 2, in AutoCount's vocabulary.
+ *
+ * The captain, on `Pool BRW | Had 0` beside an Inventory screen showing `Available 1`: "why it
+ * shows 0?" `Had` is what the pool's own queue ahead of this line left; Available is the pile's
+ * whole position. Both are here, with the subtraction between them, so the rung can be checked
+ * against the stock screen. Seven fixed cells of arithmetic, so a plain table.
+ */
+function PoolPile({ pool, contributionKey }: { pool: BoardTrailPool; contributionKey: string }) {
+  const cells: Array<{ label: string; value: string; title?: string }> = [
+    { label: 'On hand', value: pool.on_hand },
+    { label: 'SO qty', value: pool.so_qty, title: 'Owed by every open sales order at this location' },
+    { label: 'SPO qty', value: pool.spo_qty, title: 'On the water to this location' },
+    { label: 'Available', value: pool.available, title: 'On hand - SO qty + SPO qty' },
+    { label: 'Free', value: pool.free, title: 'On hand less reserved less confirmed holds' },
+    {
+      label: 'Claimed ahead',
+      value: `${pool.claimed_ahead_qty} (${pool.claimed_ahead_lines} line${
+        pool.claimed_ahead_lines === 1 ? '' : 's'
+      })`,
+      title: "By this location's own orders ranked ahead of this line",
+    },
+    { label: 'Left', value: pool.left, title: 'For this line, when the rung was reached' },
+  ];
+  return (
+    <table
+      data-testid={`trail-pool-${contributionKey}`}
+      className="mt-0.5 text-2xs tabular-nums"
+    >
+      <thead>
+        <tr className="text-muted-foreground">
+          {cells.map((cell) => (
+            <th
+              key={cell.label}
+              scope="col"
+              title={cell.title}
+              className="pe-3 text-end font-medium uppercase tracking-wide"
+            >
+              {cell.label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          {cells.map((cell) => (
+            <td
+              key={cell.label}
+              data-testid={`trail-pool-${contributionKey}-${cell.label.toLowerCase().replace(/\s+/g, '-')}`}
+              className="pe-3 text-end"
+            >
+              {cell.value}
+            </td>
+          ))}
+        </tr>
+      </tbody>
+    </table>
+  );
 }
 
 /**
