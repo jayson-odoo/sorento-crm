@@ -1149,6 +1149,37 @@ date STILL TO COME, falling back to the earliest owed only when everything is pa
 guessed into a bucket, because a guessed date is the same class of silent wrong answer as a guessed
 warehouse (section 11, question 2).
 
+#### Window-scoped versus selection-scoped, and which the screen may read
+
+The day window put a second, subtler version of the same defect into every headline number: any
+figure the FE summed off `cells` counted only what the window was showing, so the identical board
+reported one thing on week and another on day. Four SELECTION-scoped totals now sit at the top level
+of `PlanningBoard` beside `granularity` and `as_of`, counted over every contributing line before any
+window: **`line_count`, `past_line_count`, `unplannable_line_count`, `contested_line_count`**. And
+`orders[]` is built from all rows rather than the displayed ones.
+
+The rule the FE follows, and the two places it was breaking:
+
+- **The summary banner reads `past_line_count` / `line_count`**, never a sum of `cell.past_count` /
+  `cell.contributions.length`. The per-cell `past_count` is correct FOR ITS CELL and still drives
+  the cell's own reading; it was only ever wrong as a banner source.
+- **The commit rail reads `orders[]` for `line_count` and `unplannable_count`**, and overlays ONLY
+  `decided_count` from the client draft. Built from the cells instead, a forty-line order read
+  "3 of 3 lines decided" on the day view and the Confirm beside it promised to leave nothing behind
+  - the exact counter this section exists to make visible. Confirmed live on SO391698 (40 lines) and
+  SO324265 (32 lines): both read the same on week and on day, and "Confirms 1, leaves 39 undecided
+  for reorder planning" is stated against the whole order.
+- The key-to-order map behind `decided_count` is **accumulated across every board shown**, not
+  rebuilt per board, so a verdict given at week granularity is still counted after the planner
+  switches to a day window that no longer shows that cell.
+- **No cells is not "nothing is owed".** A day window scrolled to a stretch nobody owes has no
+  cells while the selection still holds every line, so the empty state reads the selection total and
+  says "Nothing is owed in these dates" instead of contradicting the 161 lines behind it.
+- There is deliberately **no board-level total QUANTITY**. The grid's row and column totals are
+  legitimately window-scoped, because they describe the visible columns. If a banner ever wants
+  "X units still owed across the selection", it gets a proper server-side total rather than a sum
+  over cells.
+
 Bucketing is a DISPLAY choice and nothing is ever stored bucketed: every breakdown row carries the
 line's own real `required_date`, and the allocation rule sorts on that date, never on the bucket.
 
