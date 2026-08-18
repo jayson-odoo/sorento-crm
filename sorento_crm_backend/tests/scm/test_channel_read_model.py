@@ -86,6 +86,26 @@ def _today() -> date:
     return to_naive_datetime(datetime.now(MALAYSIA_TZ)).date()
 
 
+def _project_numbering_rule(db) -> None:
+    """`register_project` draws the project code from an enabled numbering rule.
+
+    The prod-copy database has one; a freshly migrated one (CI, `bootstrap_env`) has none,
+    and the registration then 422s `project_numbering_rule_missing`. Seed our own inside the
+    rolled-back session, the way `tests/test_project_registration.py` does, rather than
+    borrowing whatever the environment happens to hold.
+    """
+    db.execute(
+        text(
+            "insert into document_numbering_rules "
+            "(id, doc_type, enabled, prefix_template, number_digits, next_value, "
+            " start_value, reset_policy) "
+            "values (:id, 'project', true, :prefix, 6, 123, 1, 'none')"
+        ),
+        {"id": _u(), "prefix": f"{MARKER}-"},
+    )
+    db.flush()
+
+
 @pytest.fixture()
 def db():
     with pg_session() as s:
@@ -307,6 +327,7 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
     owner_id = _u()
     db.add(User(id=owner_id, email=f"{owner_id}@{MARKER.lower()}.test", name=f"{MARKER} CS"))
     db.flush()
+    _project_numbering_rule(db)
     project = register_project(
         db, company_id=SORENTO_COMPANY_ID, actor_user_id=owner_id,
         developer_party_id=None, title=f"{MARKER} project {_u()[:8]}",

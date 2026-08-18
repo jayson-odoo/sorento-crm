@@ -349,7 +349,10 @@ def test_schedule_version_neighbours_unknown_id_is_404(seeded):
 
 # ------------------------------------------------------------------ endpoint auth
 
-PROJECT_ID = str(uuid.uuid4())
+# A FIXED id, not uuid4(): parametrize ids are part of the collected test id, and
+# pytest-xdist refuses to run when workers collect different ids ("Different tests
+# were collected between gw4 and gw3"). The value is never looked up.
+PROJECT_ID = "00000000-0000-4000-8000-0000000000a1"
 NEIGHBOUR_PATHS = [
     f"/api/v1/project-sales/projects/{PROJECT_ID}/sales-orders/neighbours",
     f"/api/v1/project-sales/projects/{PROJECT_ID}/purchase-orders/neighbours",
