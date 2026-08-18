@@ -30,13 +30,13 @@ The catalogue item. The hub everything else (stock, orders, promotions, supplier
 **Filters (product list endpoint):**
 * `query` — substring match over `product_code`, `product_name`, **and** `description`.
 * `category_id` — accepts a category **id, code, or name** (resolved).
-* `brand_id` — accepts a brand **id, code, or name** (resolved).
+* `brand_id` — accepts a brand **id, code, or name** (resolved), or a **comma-separated list** of them (`a,b` matches any of the listed brands). The list form is what a brand-scoped "products discontinued" deep link carries.
 * `status` — `active` | `inactive` | `all` (maps to `is_active`).
 * `item_type` — exact (`product` | `bundle` | `service` | `other`).
 * `price_min` / `price_max` — on `list_price`.
 * `length_min/max`, `width_min/max`, `height_min/max` — per-axis (mm).
 * `any_dimension_min/max` — matches when **any** of L/W/H is in range (use for "dimension > 300mm" regardless of axis).
-* `discontinued_batch_id` — restricts to products reported in one discontinued batch.
+* `discontinued_batch_id` — restricts to products reported in one discontinued batch. A recipient whose subscription covers only some brands gets that param **plus** `brand_id=<ids>`, so their link opens exactly the subset their notice counted.
 * `product_ids` — explicit id set.
 * Advanced filter (list-query, resource key `products`): column-level conditions on **any** product field.
 

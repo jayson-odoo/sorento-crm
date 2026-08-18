@@ -15,7 +15,7 @@ import pytest
 
 from app.models.notification import Notification
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.models.user import User
+from app.models.user import User, UserProductDiscontinuedScope
 from app.schemas.product import ProductUpdate
 from app.services.product_service import ProductService
 import app.services.product_discontinued_notify_service as svc
@@ -80,6 +80,11 @@ def _user(db, *, email: str, email_pref=False, wa_pref=False):
         notify_whatsapp_on_product_discontinued=wa_pref,
     )
     db.add(u)
+    if email_pref or wa_pref:
+        # The all-companies / all-brands scope every pre-existing subscriber is
+        # given by migration 375. Without a scope a user hears nothing, so this is
+        # what "subscribed to everything" now looks like.
+        db.add(UserProductDiscontinuedScope(id=str(uuid.uuid4()), user_id=u.id))
     return u
 
 

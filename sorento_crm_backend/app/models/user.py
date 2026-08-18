@@ -1,6 +1,6 @@
 """User management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric, Text, Index, Integer, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric, Text, Index, Integer, UniqueConstraint, text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
@@ -106,6 +106,52 @@ class User(Base):
         Index("ix_users_respond_contact_id", "respond_contact_id"),
         # One phone == one user. Postgres allows multiple NULLs, so unlinked users are fine.
         UniqueConstraint("contact_number", name="uq_users_contact_number"),
+    )
+
+
+class UserProductDiscontinuedScope(Base):
+    """One (company, brand) slice of the catalogue a user is notified about.
+
+    ``company_id`` NULL = every company (which forces ``brand_id`` NULL);
+    ``brand_id`` NULL = every brand in that company. A product matches a scope iff
+    ``(scope.company_id IS NULL OR = product.company_id) AND
+    (scope.brand_id IS NULL OR = product.brand_id)``, so a product carrying no
+    brand is only ever reported to an all-brands scope.
+
+    The channel toggles on ``users`` stay HOW a recipient is notified; these rows
+    decide WHAT they hear about. Zero rows = zero notices.
+
+    Deliberately a plain ``Base`` and NOT ``CompanyScopedMixin``: this is a user
+    preference, not company-owned business data, and the scheduled task that fans
+    the batch out runs under a per-task company scope. An owned table would be
+    filtered by that scope and would silently drop recipients mid-run.
+    """
+
+    __tablename__ = "user_product_discontinued_scopes"
+
+    id = Column(PG_UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    company_id = Column(
+        PG_UUID(as_uuid=False), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True
+    )
+    brand_id = Column(
+        PG_UUID(as_uuid=False), ForeignKey("brands.id", ondelete="CASCADE"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_user_product_discontinued_scopes_user_id", "user_id"),
+        Index("ix_user_product_discontinued_scopes_company_id", "company_id"),
+        Index("ix_user_product_discontinued_scopes_brand_id", "brand_id"),
+        # Dedupe guard. Expression index over coalesced NULLs rather than
+        # NULLS NOT DISTINCT, which needs Postgres 15.
+        Index(
+            "uq_user_product_discontinued_scopes",
+            "user_id",
+            text("coalesce(company_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
+            text("coalesce(brand_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
+            unique=True,
+        ),
     )
 
 

@@ -20,6 +20,11 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 
 export interface GetProductsParams extends DataGridApiFetchParams {
   category_id?: string;
+  /**
+   * One brand id, or a comma-separated list (`a,b`) which the backend filters
+   * with IN. The list form is what a discontinued-notice deep link carries for a
+   * recipient scoped to specific brands.
+   */
   brand_id?: string;
   status?: 'active' | 'inactive' | 'all';
   price_min?: number;

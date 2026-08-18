@@ -20,7 +20,7 @@ import pytest
 from app.models.company import Company
 from app.models.notification import Notification
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.models.user import User
+from app.models.user import User, UserProductDiscontinuedScope
 from app.models.base import set_company_scope
 from app.services.company_scope import DEFAULT_COMPANY_ID
 import app.services.product_discontinued_notify_service as svc
@@ -85,6 +85,10 @@ def _subscriber(db):
         notify_email_on_product_discontinued=True,
     )
     db.add(u)
+    # The all-companies / all-brands scope every pre-existing subscriber is given
+    # by migration 375. Without a scope a user hears nothing, so this is what
+    # "subscribed to everything" now looks like.
+    db.add(UserProductDiscontinuedScope(id=str(uuid.uuid4()), user_id=u.id))
     return u
 
 

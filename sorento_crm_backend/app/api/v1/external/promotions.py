@@ -256,15 +256,13 @@ def create_promotion(
     )
 
     if existing_promotion is not None:
-        # If the promotion's window has ended, reject — it's locked.
-        if existing_promotion.end_date is not None and existing_promotion.end_date < today:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"Promotion '{desc_norm}' already exists and is past end_date "
-                    f"({existing_promotion.end_date}); cannot update."
-                ),
-            )
+        # A resubmit updates the row in place whatever its window says. The old
+        # "past end_date is locked" rule (mirrored from the packing-list intake)
+        # tested the STORED end_date, so a re-issued flyer carrying a fresh window
+        # could never land: n8n got a 409 and no promotion was written at all.
+        # Nothing transactional hangs off a promotion's lines - the only foreign key
+        # from outside marketing is a dealer-kit tile, which points at promotions.id
+        # and survives the update.
         for key, value in promotion_kw.items():
             if key == "created_by":
                 continue
