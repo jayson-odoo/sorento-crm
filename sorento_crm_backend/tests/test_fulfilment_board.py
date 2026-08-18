@@ -25,7 +25,7 @@ Postgres, blank scratch schema, every FK target seeded here (PRINCIPLES).
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -2502,3 +2502,237 @@ def test_a_contribution_can_be_pivoted_by_customer_and_project_without_guessing(
         # And the project a pivot would group by, stable for the same project string.
         assert by_order["ZZT-SO-C1"]["project_key"] == by_order["ZZT-SO-C2"]["project_key"]
         assert by_order["ZZT-SO-C1"]["project_key"] is not None
+
+
+# --------------------------------------------------------------------------- #
+# fair share: a Reserve only out of what is left for THIS line
+#
+# The captain, reading their own strip: "okay if the available is negative then i can't really
+# reserve, right? i need to find other way". Their card said Available -8013 at BRW-BB and
+# proposed Reserve 80 out of it, because the ladder reserved against `free` (on hand less
+# reserved less confirmed holds) while the strip read the whole book.
+#
+# The rule (option (c) of the quantification, chosen by the captain): a line may reserve from
+# its own location only what is left after the demand the ACTIVE POLICY ranks AHEAD of it at
+# that pile. Not the whole SO qty - somebody gets the 1015, and it should be the lines ranked
+# first.
+# --------------------------------------------------------------------------- #
+
+
+def _oversold_pile(db, *, on_hand: int, ahead_lines: int, ahead_each: str, mine: str):
+    """One pile, `ahead_lines` earlier-required lines in front of ours, and ours behind them."""
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+    _stock(db, product, warehouse, on_hand=on_hand)
+    for index in range(ahead_lines):
+        earlier = _order(
+            db, so_number=f"ZZT-SO-A{index:02d}{_uid()[:4]}", order_date=date(2026, 1, 1)
+        )
+        _line(db, earlier, product, qty=ahead_each,
+              required_date=date(2026, 3, 1) + timedelta(days=index), warehouse=warehouse)
+    ours = _order(db, so_number=f"ZZT-SO-MINE{_uid()[:4]}", order_date=date(2026, 1, 1))
+    _line(db, ours, product, qty=mine, required_date=date(2026, 12, 29), warehouse=warehouse)
+    return ours, product, warehouse
+
+
+def test_a_line_behind_more_demand_than_the_pile_holds_reserves_nothing():
+    """The captain's own case, to scale: 1015 on hand, 12 earlier lines wanting all of it."""
+    with blank_session() as db:
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        ours, product, _warehouse = _oversold_pile(
+            db, on_hand=1015, ahead_lines=12, ahead_each="1015", mine="80"
+        )
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
+        assert contribution["qty_proposed_reserve"] == "0"
+        assert contribution["qty_proposed_buy"] == "80"
+        # The arithmetic, in the strip's own words, so the planner can check it against the
+        # drill-down: 1015 on hand, all of it owed to lines ranked ahead, nothing left here.
+        assert contribution["so_qty_ahead"] == "12180"
+        assert contribution["lines_ahead"] == 12
+        assert contribution["available_to_this_line"] == "0"
+
+
+def test_the_line_ranked_first_at_a_pile_still_gets_its_whole_reserve():
+    """Fair share is a queue, not a ban: somebody gets the stock, and it is the first in line."""
+    with blank_session() as db:
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=1015)
+        first = _order(db, so_number="ZZT-SO-FIRST", order_date=date(2026, 1, 1))
+        _line(db, first, product, qty="80", required_date=date(2026, 3, 1), warehouse=warehouse)
+        later = _order(db, so_number="ZZT-SO-LATER", order_date=date(2026, 1, 1))
+        _line(db, later, product, qty="9000", required_date=date(2026, 12, 29),
+              warehouse=warehouse)
+
+        board = _service(db).build(
+            ["ZZT-SO-FIRST", "ZZT-SO-LATER"], granularity="week", as_of=TODAY
+        )
+
+        earliest = _cell(board, product.product_code, "2026-02-23")["contributions"][0]
+        assert earliest["so_qty_ahead"] == "0"
+        assert earliest["lines_ahead"] == 0
+        assert earliest["available_to_this_line"] == "1015"
+        assert earliest["qty_proposed_reserve"] == "80"
+        # And the line behind it takes what is left of the pile, not none of it.
+        behind = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
+        assert behind["so_qty_ahead"] == "80"
+        assert behind["available_to_this_line"] == "935"
+        assert behind["qty_proposed_reserve"] == "935"
+        assert behind["qty_proposed_buy"] == "8065"
+
+
+def test_demand_a_confirmed_decision_already_holds_is_not_subtracted_twice():
+    """The double-count rule, decided and pinned.
+
+    A line ranked ahead that a confirmed decision already covers has its claim on the pile
+    expressed ONCE, as a hold that has already been taken out of free stock. Counting its
+    outstanding quantity in `so_qty_ahead` as well would subtract the same units twice and
+    understate what is left for everybody behind it.
+
+    So `so_qty_ahead` counts only demand that is NOT yet covered by an active decision - the
+    same per-line test `scm.committed_v` applies.
+    """
+    from datetime import datetime
+
+    from app.models.project_so import (
+        DECISION_ACTIVE,
+        SO_STATUS_ADOPTED,
+        ProjectSalesOrder,
+        ProjectSalesOrderLine,
+        SOLineAllocation,
+        SOSupplyDecision,
+    )
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=100)
+        # Ranked ahead of us, owed 40, and already confirmed: 40 of the 100 is held for it.
+        ahead = _order(db, so_number="ZZT-SO-AHEAD", order_date=date(2026, 1, 1))
+        ahead_line = _line(db, ahead, product, qty="40", required_date=date(2026, 3, 1),
+                           warehouse=warehouse)
+        record = ProjectSalesOrder(
+            id=_uid(), company_id=company_id, project_id=None,
+            provisional_ref=ahead.so_number, autocount_doc_no=ahead.so_number,
+            so_id=ahead.id, status=SO_STATUS_ADOPTED, grouping_origin="area",
+        )
+        db.add(record)
+        db.flush()
+        mirror = ProjectSalesOrderLine(
+            id=_uid(), company_id=company_id, project_sales_order_id=record.id, line_no=1,
+            product_id=product.id, description=f"{MARKER} mirror", qty=Decimal("40"),
+            uom="UNIT", unit_price=Decimal("1.00"), amount=Decimal("40.00"),
+            delivery_date=date(2026, 3, 1), core_sales_order_line_id=ahead_line.id,
+        )
+        decision = SOSupplyDecision(
+            id=_uid(), company_id=company_id, project_sales_order_id=record.id,
+            revision_no=1, state=DECISION_ACTIVE, confirmed_at=datetime.utcnow(),
+            line_snapshots=[{"core_line_id": str(ahead_line.id), "line_no": 1}],
+        )
+        db.add_all([mirror, decision])
+        db.flush()
+        db.add(
+            SOLineAllocation(
+                id=_uid(), company_id=company_id, so_line_id=mirror.id, source_type="own",
+                warehouse_id=warehouse.id, qty=Decimal("40"), decision_id=decision.id,
+                confirmed_at=datetime.utcnow(),
+            )
+        )
+        ours = _order(db, so_number="ZZT-SO-OURS", order_date=date(2026, 1, 1))
+        _line(db, ours, product, qty="70", required_date=date(2026, 12, 29),
+              warehouse=warehouse)
+        db.flush()
+
+        board = _service(db).build(["ZZT-SO-OURS"], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
+        # 100 on hand, 40 held by the confirmed decision -> 60 free. The confirmed line is NOT
+        # counted again in what is ranked ahead, so 60 is what is left for us.
+        assert contribution["so_qty_ahead"] == "0"
+        assert contribution["available_to_this_line"] == "60"
+        assert contribution["qty_proposed_reserve"] == "60"
+        assert contribution["qty_proposed_buy"] == "10"
+
+
+def test_the_pool_is_netted_against_its_own_book_too():
+    """The shared pool is a pile like any other: its own outstanding demand claims it first."""
+    with blank_session() as db:
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, pool, on_hand=50)
+        # The pool's own book wants 45 of its 50, and wants it sooner than we do.
+        pool_demand = _order(db, so_number="ZZT-SO-POOLBOOK", order_date=date(2026, 1, 1))
+        _line(db, pool_demand, product, qty="45", required_date=date(2026, 3, 1),
+              warehouse=pool)
+        ours = _order(db, so_number="ZZT-SO-OURS", order_date=date(2026, 1, 1))
+        _line(db, ours, product, qty="30", required_date=date(2026, 12, 29), warehouse=own)
+
+        board = _service(db).build(["ZZT-SO-OURS"], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
+        assert contribution["qty_proposed_reserve"] == "5", "only the pool's leftover 5"
+        assert contribution["qty_proposed_buy"] == "25"
+
+
+def test_the_confirmation_accepts_what_the_ladder_proposes_over_an_oversold_pile():
+    """The contract, over the shape that broke it: a pile the book has already sold twice."""
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=1015)
+        for index in range(3):
+            earlier = _order(
+                db, so_number=f"ZZT-SO-E{index}{_uid()[:4]}", order_date=date(2026, 1, 1)
+            )
+            _line(db, earlier, product, qty="3000",
+                  required_date=date(2026, 3, 1) + timedelta(days=index), warehouse=warehouse)
+        ours = _order(db, so_number=f"ZZT-SO-M{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, ours, product, qty="80", required_date=date(2026, 12, 29),
+              warehouse=warehouse)
+        _adopt(db, str(ours.id))
+        db.commit()
+
+        client, originals = _client(db, actor, [VIEW, EDIT])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                board = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={"orders": ours.so_number, "granularity": "week"},
+                ).json()
+                pso_id = board["orders"][0]["project_sales_order_id"]
+                lines = [
+                    {
+                        "project_line_id": contribution["project_line_id"],
+                        "timely_spo_qty": contribution["qty_proposed_incoming"],
+                        "reserve": [
+                            {"warehouse_id": source["warehouse_id"], "qty": source["qty"]}
+                            for source in contribution["sources"]
+                            if source["kind"] == "reserve"
+                        ],
+                        "buy_qty": contribution["qty_proposed_buy"],
+                    }
+                    for cell in board["cells"]
+                    for contribution in cell["contributions"]
+                ]
+                response = client.post(
+                    f"{BASE}/sales-orders/{pso_id}/confirm", json={"lines": lines}
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        assert lines[0]["reserve"] == [], "nothing was left at that pile for this line"
+        assert lines[0]["buy_qty"] == "80"

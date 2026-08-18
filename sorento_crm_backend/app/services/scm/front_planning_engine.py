@@ -315,6 +315,7 @@ def attribute_sources(
     opening_stock: Any = ZERO,
     supply_events: Optional[Sequence[Mapping[str, Any]]] = None,
     demand_lines: Optional[Sequence[Mapping[str, Any]]] = None,
+    preserve_demand_order: bool = False,
 ) -> Dict[Tuple[str, Optional[int]], Tuple[Component, ...]]:
     """Share one product-location's dated supply across the lines asking for it.
 
@@ -349,8 +350,18 @@ def attribute_sources(
         for event in _sorted_supply(supply_events or [])
     ]
 
+    # ``preserve_demand_order`` consumes the lines IN THE ORDER GIVEN. The caller who sets it
+    # has already ordered the pile by the active fulfilment-priority policy, and re-sorting by
+    # required date here would serve the stock in one order while the screen reports the queue
+    # in another. Without it, the documented PLAN 3.5 order applies.
+    ordered = (
+        list(demand_lines or [])
+        if preserve_demand_order
+        else sorted(demand_lines or [], key=_demand_sort_key)
+    )
+
     out: Dict[Tuple[str, Optional[int]], Tuple[Component, ...]] = {}
-    for line in sorted(demand_lines or [], key=_demand_sort_key):
+    for line in ordered:
         remaining = max(_dec(line.get("open_qty")), ZERO)
         required_date = _as_date(line.get("required_date"))
         components: List[Component] = []

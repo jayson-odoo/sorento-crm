@@ -199,6 +199,7 @@ class _Row:
         "sources", "contested", "qty_ordered", "qty_delivered", "proposed", "free_before",
         "raw_facts", "taken_before", "last_taker", "borrow_candidates",
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
+        "so_qty_ahead", "lines_ahead", "available_to_this_line",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -223,6 +224,10 @@ class _Row:
         # component addresses a warehouse by id and the screen reads a code, so the pair has
         # to travel together (the same reason `SupplyComponent.source_warehouse_id` exists).
         self.warehouse_ids = {}
+        # The queue in front of this line at its own pile, and what it left behind.
+        self.so_qty_ahead = _ZERO
+        self.lines_ahead = 0
+        self.available_to_this_line = _ZERO
 
     @property
     def unplannable(self) -> bool:
@@ -872,10 +877,17 @@ class FulfilmentBoardService:
             [
                 {
                     "key": row.key,
+                    # The core line id, which is what the book-wide projection is keyed by.
+                    "line_id": row.line_id,
                     "product_id": row.product_id,
                     "warehouse_id": row.warehouse_id,
                     "open_qty": row.qty,
                     "required_date": row.required_date,
+                    "order_date": row.order_date,
+                    "payment_terms_days": row.payment_terms_days,
+                    "demand_class": row.demand_class,
+                    "so_number": row.so_number,
+                    "line_no": row.line_no,
                     "item_code": row.item_code,
                 }
                 for row in plannable
@@ -886,33 +898,19 @@ class FulfilmentBoardService:
         for row in plannable:
             piles[(row.product_id, row.warehouse_id)].append(row)
 
-        # Pass one: how much of its own location's pile each line may have.
-        #
-        # This is the SHEET'S projection across the whole book, not a contest among the orders
-        # on this board, and that is the difference between a proposal that can be committed
-        # and one that cannot. `confirm` judges every Reserve against exactly this share
-        # (`_check_line` -> `reserve_capacity` over `fact.own_free`), so a board that shared
-        # the pile only among its selection offered lines stock the book had already promised
-        # elsewhere - and the refusal said "Reserve may only come from this line's own
-        # location" about the line's own location, because a location contributing zero is
-        # simply absent from the capacity map.
-        #
-        # Nothing about what the system RESERVES changes by reading it here: the confirmation
-        # always applied this figure. What changes is that the board stops proposing what the
-        # confirmation was always going to refuse.
-        attribution = self.supply.attribution_by_core_line(product_ids, warehouse_ids)
+        # Pass one: bookkeeping only. How much of its own pile each line may have was already
+        # decided by `demand_facts`, from the SAME book-wide projection the confirmation judges
+        # against - a line reserves what is left after the demand the active policy ranks ahead
+        # of it, and nothing more. What is recorded here is who drew the pile down before this
+        # row was reached, which is what the contest sentence and `qty_free_remaining` say.
         for (product_id, warehouse_id), members in piles.items():
             free_left = free.get((product_id, warehouse_id), _ZERO)
             taken = _ZERO
             taker: Optional[_Row] = None
-            shares = attribution.get((product_id, warehouse_id), {})
             for row in members:
-                share = shares.get(row.line_id, {})
-                own_share = share.get(RESERVE, _ZERO)
-                timely_share = share.get(TIMELY_SPO, _ZERO)
                 fact = facts[row.key]
-                fact.own_free = own_share
-                fact.timely_qty = timely_share
+                own_share = fact.own_free
+                timely_share = fact.timely_qty
                 # Stock is not per date, so the same free figure is true of every column of
                 # this product; what differs is how much an earlier date has already taken.
                 row.free_before = free_left
@@ -933,6 +931,9 @@ class FulfilmentBoardService:
                 pool_left[pool_key] = fact.pool_free
             # A Reserve component names its location by CODE and the confirmation addresses a
             # warehouse by ID, so the pair is captured here where both are in hand.
+            row.so_qty_ahead = fact.so_qty_ahead
+            row.lines_ahead = fact.lines_ahead
+            row.available_to_this_line = fact.available_to_this_line
             row.warehouse_ids = {
                 code: warehouse_id
                 for code, warehouse_id in (
@@ -1222,6 +1223,12 @@ class FulfilmentBoardService:
             #: What could be borrowed instead of bought, and from where. Never PROPOSED - a
             #: Borrow needs a donor and a reason from a person (AC-B09) - but never hidden
             #: either, or a Buy reads as "this stock exists nowhere".
+            #: The arithmetic behind the Reserve, in the strip's own vocabulary, so the planner
+            #: can check it against the drill-down: "1015 on hand, 1015 owed to 12 lines ranked
+            #: ahead, 0 left for this line, so it is bought".
+            "so_qty_ahead": qty_text(row.so_qty_ahead),
+            "lines_ahead": row.lines_ahead,
+            "available_to_this_line": qty_text(row.available_to_this_line),
             "qty_borrow_available": qty_text(
                 sum(
                     (_dec(candidate["free_qty"]) for candidate in row.borrow_candidates),

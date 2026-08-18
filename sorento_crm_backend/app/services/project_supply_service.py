@@ -81,6 +81,7 @@ from app.models.projects import Project
 from app.models.scm import ItemClassification, ReorderLevel
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.scm import priority
 from app.services.scm.demand import is_open_demand
 from app.services.scm.front_planning_engine import (
     BUY,
@@ -186,6 +187,15 @@ class _LineFacts:
     #: This line's share of the fulfilment location's free stock, from the shared
     #: projection - NOT the whole pile, or two lines would each be offered all of it.
     own_free: Decimal = _ZERO
+    #: What the demand ranked AHEAD of this line at its own pile still wants, and how many
+    #: lines that is. The arithmetic behind `own_free`, carried so a screen can print it:
+    #: "1015 on hand, 1015 owed to 12 earlier lines, 0 left for this line".
+    so_qty_ahead: Decimal = _ZERO
+    lines_ahead: int = 0
+    #: What was left AT THIS LINE'S OWN LOCATION when it was reached - `on hand - reserved -
+    #: held - so_qty_ahead`. Distinct from `own_free`, which is what the line actually TOOK of
+    #: it (capped at what it needs), and from a Reserve total, which may also draw on the pool.
+    available_to_this_line: Decimal = _ZERO
     pool_free: Decimal = _ZERO
     pool_reorder_level: Decimal = _ZERO
     is_hot_selling: bool = False
@@ -458,11 +468,12 @@ class ProjectSupplyService:
         verdict, product lifecycle, and the location's undelivered incoming. Each row states
         `key`, `product_id`, `warehouse_id`, `open_qty`, `required_date` and `item_code`.
 
-        What it deliberately does NOT fill is `own_free` and `timely_qty`: those are one line's
-        SHARE of a contested pile, and who gets that share is the question each surface answers
-        differently - the sheet by required date across every outstanding line, the board by the
-        fulfilment-priority ranking across the selected orders. The caller sets them and then
-        calls `compose_line`.
+        `own_free` and `timely_qty` are filled here too, from the SAME book-wide projection the
+        confirmation judges against (`_attribution`): a line may reserve what is left of its
+        pile after the demand the active policy ranks ahead of it, and nothing more. They used
+        to be left for the caller, from when the board ran a contest of its own among the
+        selected orders - which is exactly how it came to propose Reserves the confirmation
+        refused.
         """
         product_ids = {str(r["product_id"]) for r in rows if r.get("product_id")}
         warehouse_ids = {str(r["warehouse_id"]) for r in rows if r.get("warehouse_id")}
@@ -478,6 +489,39 @@ class ProjectSupplyService:
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
         spo = self._spo_rows(product_ids, warehouse_ids)
+
+        attribution = self._attribution(
+            product_ids, warehouse_ids, warehouses, self._spo_rows(product_ids, warehouse_ids)
+        )
+        # What the shared pool's own book claims ahead of each line that would draw on it.
+        pool_ahead = self.pool_claims(
+            product_ids,
+            {
+                str(w.pool_warehouse_id)
+                for w in warehouses.values()
+                if w.pool_warehouse_id
+            },
+            [
+                {
+                    "key": str(row["key"]),
+                    "product_id": str(row["product_id"]),
+                    "pool_id": str(
+                        warehouses[str(row["warehouse_id"])].pool_warehouse_id
+                    ),
+                    "required_date": row.get("required_date"),
+                    "order_date": row.get("order_date"),
+                    "payment_terms_days": row.get("payment_terms_days"),
+                    "demand_class": row.get("demand_class"),
+                    "so_number": row.get("so_number"),
+                    "line_no": row.get("line_no"),
+                }
+                for row in rows
+                if row.get("product_id")
+                and row.get("warehouse_id")
+                and str(row["warehouse_id"]) in warehouses
+                and warehouses[str(row["warehouse_id"])].pool_warehouse_id
+            ],
+        )
 
         facts: Dict[str, _LineFacts] = {}
         for row in rows:
@@ -498,6 +542,12 @@ class ProjectSupplyService:
                 if required_date is None
                 or (ref.arrival_date is not None and ref.arrival_date <= required_date)
             ]
+            # The projection is keyed by CORE LINE id; the caller's own `key` may be anything
+            # (the board's is a cell address). It states `line_id` when the two differ.
+            shares = attribution.get(key, {}).get(
+                str(row.get("line_id") or row["key"]), {}
+            )
+            claimed = pool_ahead.get(str(row["key"]), _ZERO)
             facts[str(row["key"])] = _LineFacts(
                 item_code=row.get("item_code"),
                 product_id=product_id,
@@ -505,7 +555,18 @@ class ProjectSupplyService:
                 required_date=required_date,
                 warehouse=warehouse,
                 pool=pool,
-                pool_free=(self._free_at(product_id, str(pool.id)) if pool else _ZERO),
+                own_free=_dec(shares.get(RESERVE)),
+                timely_qty=_dec(shares.get(TIMELY_SPO)),
+                so_qty_ahead=_dec(shares.get("so_qty_ahead")),
+                lines_ahead=int(shares.get("lines_ahead") or 0),
+                available_to_this_line=_dec(shares.get("available_to_this_line")),
+                # The pool nets its own book the same way the own location does: what is left
+                # after the lines the policy ranks ahead of this one there.
+                pool_free=(
+                    max(self._free_at(product_id, str(pool.id)) - claimed, _ZERO)
+                    if pool
+                    else _ZERO
+                ),
                 pool_reorder_level=levels.get(
                     (product_id or "", str(pool.id) if pool else ""), _ZERO
                 ),
@@ -1574,11 +1635,48 @@ class ProjectSupplyService:
         self._holds_cache = self._holds_by_project(
             product_ids, exclude_order_id=str(order.id)
         )
+        pool_ahead = self.pool_claims(
+            product_ids,
+            pool_ids,
+            exclude_order_id=str(order.id),
+            members=[
+                {
+                    "key": str(line.id),
+                    "product_id": str(
+                        (cores.get(str(line.core_sales_order_line_id or "")) or line).product_id
+                    ),
+                    "pool_id": str(
+                        warehouses[
+                            str(cores[str(line.core_sales_order_line_id)].warehouse_id)
+                        ].pool_warehouse_id
+                    ),
+                    "required_date": (
+                        cores[str(line.core_sales_order_line_id)].required_date
+                        or line.delivery_date
+                    ),
+                    "order_date": None,
+                    "payment_terms_days": None,
+                    "demand_class": None,
+                    "so_number": order.provisional_ref,
+                    "line_no": line.line_no,
+                }
+                for line in lines
+                if line.core_sales_order_line_id
+                and str(line.core_sales_order_line_id) in cores
+                and cores[str(line.core_sales_order_line_id)].warehouse_id
+                and str(cores[str(line.core_sales_order_line_id)].warehouse_id) in warehouses
+                and warehouses[
+                    str(cores[str(line.core_sales_order_line_id)].warehouse_id)
+                ].pool_warehouse_id
+            ],
+        )
         hot, unavailable = self._classification(product_ids)
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
         spo = self._spo_rows(product_ids, warehouse_ids)
-        attribution = self._attribution(product_ids, warehouse_ids, warehouses, spo)
+        attribution = self._attribution(
+            product_ids, warehouse_ids, warehouses, spo, exclude_order_id=str(order.id)
+        )
 
         facts: Dict[str, _LineFacts] = {}
         for line in lines:
@@ -1598,6 +1696,7 @@ class ProjectSupplyService:
             )
             key = (product_id or "", str(warehouse.id) if warehouse else "")
             shares = attribution.get(key, {}).get(str(core.id) if core else "", {})
+            ahead = _dec(shares.get("so_qty_ahead"))
             required_date = (core.required_date if core else None) or line.delivery_date
             timely_refs = [
                 row
@@ -1615,8 +1714,17 @@ class ProjectSupplyService:
                 warehouse=warehouse,
                 pool=pool,
                 own_free=shares.get(RESERVE, _ZERO),
+                so_qty_ahead=ahead,
+                lines_ahead=int(shares.get("lines_ahead") or 0),
+                available_to_this_line=_dec(shares.get("available_to_this_line")),
                 pool_free=(
-                    self._free_at(product_id, str(pool.id)) if pool else _ZERO
+                    max(
+                        self._free_at(product_id, str(pool.id))
+                        - pool_ahead.get(str(line.id), _ZERO),
+                        _ZERO,
+                    )
+                    if pool
+                    else _ZERO
                 ),
                 pool_reorder_level=levels.get(
                     (product_id or "", str(pool.id) if pool else ""), _ZERO
@@ -1960,19 +2068,54 @@ class ProjectSupplyService:
             )
         return out
 
-    def _attribution(
+    def _decided_elsewhere(self, exclude_order_id: Optional[str]) -> set:
+        """Core lines an ACTIVE decision covers, other than the one being composed.
+
+        The carve-out matters as much as the rule. A line covered by a decision holds stock,
+        and that hold is already out of `_free_stock`, so counting its demand again as ranked
+        ahead would subtract the same units twice. But `_free_stock` EXCLUDES the order being
+        composed - its own previous revision must not compete with the one replacing it - so
+        for that order the hold is NOT netted out, and its covered lines therefore have to stay
+        in the queue. Miss this and re-confirming an order that reserved everything is refused
+        as "nothing free for this line", which is what the sheet's own suite caught.
+        """
+        rows = (
+            self.db.query(
+                SOSupplyDecision.project_sales_order_id, SOSupplyDecision.line_snapshots
+            )
+            .filter(SOSupplyDecision.state == DECISION_ACTIVE)
+            .all()
+        )
+        out: set = set()
+        for pso_id, snapshots in rows:
+            if exclude_order_id and str(pso_id) == str(exclude_order_id):
+                continue
+            for snapshot in snapshots or []:
+                core_line_id = (snapshot or {}).get("core_line_id")
+                if core_line_id:
+                    out.add(str(core_line_id))
+        return out
+
+    def _pile_book(
         self,
         product_ids: Iterable[str],
         warehouse_ids: Iterable[str],
-        warehouses: Dict[str, Warehouse],
-        spo: Dict[Tuple[str, str], List[_SpoRow]],
-    ) -> Dict[Tuple[str, str], Dict[str, Dict[str, Decimal]]]:
-        """Share each product-location pile across EVERY outstanding line wanting it.
+        *,
+        exclude_order_id: Optional[str] = None,
+    ) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
+        """Every line still competing for each (product, location) pile, IN RANK ORDER.
 
-        This is the section 3.5 projection, and it is why two lines never both count the
-        same SPO: one run per (product, location), all competing lines in it, the answer
-        read back per core line. Keyed by core line id rather than by the engine's own
-        `(so_number, line_no)` so the caller cannot pick up a namesake's answer.
+        Ranked by the active `scm.priority_policy` - the one policy that also ranks the
+        planning board and the loading plan - with sales-order number then line number then
+        line id as the total tie-break, so the queue is reproducible.
+
+        **Lines a confirmed decision already covers are excluded, and that is the
+        double-count rule.** Such a line's claim on this pile is already expressed once, as a
+        hold that `_free_stock` has taken out of the opening stock. Counting its outstanding
+        quantity again as demand ranked ahead would subtract the same units twice and
+        understate what is left for everybody behind it. The exception is the order being
+        composed, whose own holds `_free_stock` deliberately does not net - see
+        `_decided_elsewhere`.
         """
         pids = [pid for pid in product_ids if pid]
         wids = [wid for wid in warehouse_ids if wid]
@@ -1987,6 +2130,9 @@ class ProjectSupplyService:
                 SalesOrderLine.qty_delivered,
                 SalesOrderLine.required_date,
                 SalesOrder.so_number,
+                SalesOrder.order_date,
+                SalesOrder.demand_class,
+                SalesOrder.customer_id,
                 SalesOrder.requested_delivery_date,
                 ProjectSalesOrderLine.line_no,
             )
@@ -2003,6 +2149,17 @@ class ProjectSupplyService:
             )
             .all()
         )
+        if not rows:
+            return {}
+        decided = self._decided_elsewhere(exclude_order_id)
+        rows = [row for row in rows if str(row.id) not in decided]
+        if not rows:
+            return {}
+
+        terms = priority.payment_terms_by_customer(
+            self.db, [str(row.customer_id) for row in rows if row.customer_id]
+        )
+        weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
 
         grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         for row in rows:
@@ -2020,8 +2177,159 @@ class ProjectSupplyService:
                     "line_id": str(row.id),
                     "open_qty": open_qty,
                     "required_date": row.required_date or row.requested_delivery_date,
+                    "order_date": row.order_date,
+                    "demand_class": row.demand_class,
+                    "payment_terms_days": terms.get(str(row.customer_id or "")),
                 }
             )
+
+        for key, lines in grouped.items():
+            factors = priority.factors_for_demand_rows(
+                self.db,
+                [
+                    {
+                        "row_key": line["line_id"],
+                        "required_date": line["required_date"],
+                        "order_date": line["order_date"],
+                        "payment_terms_days": line["payment_terms_days"],
+                        "demand_class": line["demand_class"],
+                    }
+                    for line in lines
+                ],
+                weights=weights,
+                class_weights=class_weights,
+            )
+            scores = priority.scores_for(factors)
+            for line in lines:
+                line["rank_score"] = scores[line["line_id"]]
+            # Score first, then PLAN 3.5's own order as the tie-break: required date (missing
+            # last), sales-order number, line number, line id. The tie-break is load-bearing
+            # rather than decorative - a database with no policy configured scores every demand
+            # row 0.0 (the default weights name only `po_document_sequence`, which no
+            # sales-order line has), and without the date here the queue for a scarce pile
+            # would be alphabetical by sales-order number.
+            lines.sort(
+                key=lambda line: (
+                    -line["rank_score"],
+                    line["required_date"] is None,
+                    line["required_date"] or date.min,
+                    line["so_number"],
+                    line["line_no"] if line["line_no"] is not None else 0,
+                    line["line_id"],
+                )
+            )
+        return grouped
+
+    def pool_claims(
+        self,
+        product_ids: Iterable[str],
+        pool_ids: Iterable[str],
+        members: Sequence[Dict[str, Any]],
+        *,
+        exclude_order_id: Optional[str] = None,
+    ) -> Dict[str, Decimal]:
+        """What a shared pool's OWN book claims ahead of each line that would draw on it.
+
+        The pool is a pile like any other: the lines fulfilled directly from it want it too,
+        and a member location's shortfall queues behind whichever of them the policy ranks
+        first. Without this a pool draw promised stock the pool's own outstanding orders had
+        already been sold - the same defect as the own-location one, one location along.
+
+        `members` are the lines asking, each stating `key`, `product_id`, `pool_id`,
+        `required_date`, `order_date`, `payment_terms_days`, `demand_class`, `so_number` and
+        `line_no`. Returns the quantity ranked ahead, per member key.
+        """
+        book = self._pile_book(product_ids, pool_ids, exclude_order_id=exclude_order_id)
+        if not members:
+            return {}
+        weights, class_weights = priority.policy_weights(priority.active_policy(self.db))
+        out: Dict[str, Decimal] = {}
+        by_pile: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for member in members:
+            key = (str(member["product_id"]), str(member["pool_id"]))
+            by_pile.setdefault(key, []).append(member)
+
+        for key, asking in by_pile.items():
+            pool_lines = book.get(key, [])
+            # Rank the askers against the pool's own book, in one candidate set, so "ahead"
+            # means the same thing for both.
+            everyone = [
+                {
+                    "row_key": line["line_id"],
+                    "required_date": line["required_date"],
+                    "order_date": line["order_date"],
+                    "payment_terms_days": line["payment_terms_days"],
+                    "demand_class": line["demand_class"],
+                }
+                for line in pool_lines
+            ] + [
+                {
+                    "row_key": member["key"],
+                    "required_date": member.get("required_date"),
+                    "order_date": member.get("order_date"),
+                    "payment_terms_days": member.get("payment_terms_days"),
+                    "demand_class": member.get("demand_class"),
+                }
+                for member in asking
+            ]
+            scores = priority.scores_for(
+                priority.factors_for_demand_rows(
+                    self.db, everyone, weights=weights, class_weights=class_weights
+                )
+            )
+
+            def sort_key(entry: Tuple[float, str, Any, str]) -> Tuple[Any, ...]:
+                score, so_number, line_no, ident = entry
+                return (-score, so_number, line_no if line_no is not None else 0, ident)
+
+            ordered_pool = sorted(
+                (
+                    (
+                        scores[line["line_id"]],
+                        line["so_number"],
+                        line["line_no"],
+                        line["line_id"],
+                        line["open_qty"],
+                    )
+                    for line in pool_lines
+                ),
+                key=lambda row: sort_key(row[:4]),
+            )
+            for member in asking:
+                mine = sort_key(
+                    (
+                        scores[member["key"]],
+                        member.get("so_number") or "",
+                        member.get("line_no"),
+                        str(member["key"]),
+                    )
+                )
+                out[str(member["key"])] = sum(
+                    (row[4] for row in ordered_pool if sort_key(row[:4]) < mine), _ZERO
+                )
+        return out
+
+    def _attribution(
+        self,
+        product_ids: Iterable[str],
+        warehouse_ids: Iterable[str],
+        warehouses: Dict[str, Warehouse],
+        spo: Dict[Tuple[str, str], List[_SpoRow]],
+        exclude_order_id: Optional[str] = None,
+    ) -> Dict[Tuple[str, str], Dict[str, Dict[str, Any]]]:
+        """Share each product-location pile across every line still competing for it.
+
+        The section 3.5 projection, now served in the ACTIVE POLICY's order rather than by
+        required date alone (`_pile_book`), which is what makes a Reserve mean "what is left
+        for this line after the demand ranked ahead of it" - the rule the captain asked for on
+        reading a strip that said Available -8013 beside a proposed Reserve of 80.
+
+        Per line it answers the components AND the arithmetic behind them: what is ranked
+        ahead, how many lines that is, and what was therefore left.
+        """
+        grouped = self._pile_book(
+            product_ids, warehouse_ids, exclude_order_id=exclude_order_id
+        )
 
         out: Dict[Tuple[str, str], Dict[str, Dict[str, Decimal]]] = {}
         for key, demand_lines in grouped.items():
@@ -2043,15 +2351,33 @@ class ProjectSupplyService:
                     for row in spo.get(key, [])
                 ],
                 demand_lines=demand_lines,
+                # `_pile_book` has already ordered them by the active policy; re-sorting by
+                # required date here would serve the pile in one order and report the queue
+                # in another.
+                preserve_demand_order=True,
             )
-            per_line: Dict[str, Dict[str, Decimal]] = {}
-            for line_id, components in attributed.items():
+            opening = self._free_at(product_id, warehouse_id)
+            per_line: Dict[str, Dict[str, Any]] = {}
+            ahead = _ZERO
+            lines_ahead = 0
+            for line in demand_lines:
+                line_id = line["line_id"]
                 totals: Dict[str, Decimal] = {}
-                for component in components:
+                for component in attributed.get(line_id, ()):  # type: ignore[arg-type]
                     totals[component.kind] = (
                         totals.get(component.kind, _ZERO) + component.qty
                     )
-                per_line[line_id] = totals
+                per_line[line_id] = {
+                    **totals,
+                    # The arithmetic behind the share, in the strip's own words: what the
+                    # queue in front of this line still wants, how long that queue is, and
+                    # what was therefore left of the pile when this line was reached.
+                    "so_qty_ahead": ahead,
+                    "lines_ahead": lines_ahead,
+                    "available_to_this_line": max(opening - ahead, _ZERO),
+                }
+                ahead += line["open_qty"]
+                lines_ahead += 1
             out[key] = per_line
         return out
 

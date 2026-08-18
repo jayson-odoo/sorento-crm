@@ -1674,13 +1674,48 @@ the eight fixture orders, `WESERP10B` is owed by four different orders out of bo
   contributions still carry a Reserve (16,053 units), 40,549 units are honest Buy, and the captain's
   own order confirms end to end.
 
+  **AMENDED AGAIN, and this is the rule now: fair share (option (c)).** The captain, reading a
+  card that said Available -8013 at BRW-BB beside a proposed Reserve of 80: "okay if the
+  available is negative then i can't really reserve, right? i need to find other way". The strip
+  read the whole book and the ladder still reserved against `free` (on hand less reserved less
+  confirmed holds), so the two visibly disagreed.
+
+  A line may now reserve from a location only what is left after the demand the ACTIVE POLICY
+  ranks ahead of it there:
+
+      available_to_this_line = on hand - reserved - held by confirmed decisions - so_qty_ahead
+
+  where `so_qty_ahead` is the still-owed quantity of the lines ranked before it at that pile. Not
+  the whole SO qty: somebody gets the 1015, and it is the lines the policy ranks first. The shared
+  pool nets its own book the same way (`pool_claims`), so a pool draw can no longer promise stock
+  the pool's own orders have already been sold. Borrow stays offered, never proposed; Buy is what
+  is left. It lives in the SERVICE (`_pile_book` -> `_attribution` -> `compose_line`), so the
+  sheet, the board and the confirm-time recheck read one projection.
+
+  **The double-count rule.** A line a confirmed decision already covers is left OUT of
+  `so_qty_ahead`, because its claim is already expressed once as a hold that `_free_stock` took out
+  of the opening stock. The exception is the order being composed: `_free_stock` excludes its holds
+  so a previous revision cannot compete with the one replacing it, so its own covered lines stay in
+  the queue (`_decided_elsewhere`). Missing that carve-out refused every re-confirmation with
+  "nothing free for this line", which the sheet's own suite caught.
+
+  **Three numbers live near each other and none may be printed as another:** the strip's
+  `available_qty` (the whole pile), the line's `available_to_this_line` (what was left for it at
+  its OWN location), and `qty_proposed_reserve` (what it took, which may exceed the second because
+  the pool is a second source with its own queue).
+
+  Measured after the change, 7 real orders, 357 contributions: **117 still carry a Reserve (32.8%),
+  15,032 units reserved against 41,570 bought**, board build 0.48s (0.58s at the 50-order cap). The
+  captain's own card now reads: pile -8013, but 6 lines ahead wanting 388 of the 1015, 627 left for
+  this line, so its Reserve of 80 stands and says why.
+
   **What the ranking still decides, and what it no longer does.** It orders the rows in a cell, it
   decides who draws the SHARED POOL first (contested among the selected orders and nowhere else), and
-  it explains itself through the factor chips. It does NOT decide who gets own-location stock: that
-  follows the book's required-date projection, because that is what the confirmation enforces.
-  Making the ranking authoritative end to end means sorting that projection by
-  `scm.priority_policy` instead of by required date, which changes the per-order sheet's proposals
-  too - a business decision, not a coder's, and it is the natural follow-up to the fair policy.
+  it explains itself through the factor chips. It now DECIDES who gets own-location stock as well:
+  the book-wide projection is ordered by `scm.priority_policy`, with required date, sales-order
+  number and line number as the tie-break - so a database with no policy configured still queues by
+  required date (PLAN 3.5's own order) rather than alphabetically, which the default weights would
+  otherwise have produced.
 - A contributing row whose sales-order line states **no location** renders the blocked state already
   designed (AC-FP16): it contributes its quantity to the cell total so the demand is not hidden, is
   marked as unplannable, links to its SCM sales order, and blocks its own order's confirm. The cell

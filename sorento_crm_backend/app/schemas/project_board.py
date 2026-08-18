@@ -119,6 +119,19 @@ class BoardContribution(BaseModel):
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"
     qty_proposed_buy: str = "0"
+    # ---- why the Reserve is the size it is, in the strip's vocabulary ----
+    #: What the demand ranked AHEAD of this line at its own pile still wants, and how many
+    #: lines that is. The active policy decides the order; required date is the tie-break.
+    so_qty_ahead: str = "0"
+    lines_ahead: int = 0
+    #: What was LEFT AT THIS LINE'S OWN LOCATION when it was reached: on hand, less reserved,
+    #: less what confirmed decisions hold, less `so_qty_ahead`. Three numbers live near each
+    #: other and none may be printed as another:
+    #:   * the strip's `available_qty` is the WHOLE pile's position (on hand - all SO + all SPO);
+    #:   * this is what was left for THIS line at its own location;
+    #:   * `qty_proposed_reserve` is what the line actually took - which can EXCEED this one,
+    #:     because the shared pool is a second source with a queue of its own.
+    available_to_this_line: str = "0"
     #: What could be borrowed instead of bought, and from where. Borrow is never proposed on
     #: either surface - it needs a donor and a reason from a person - but a Buy printed with no
     #: mention of it reads as "this stock exists nowhere".
