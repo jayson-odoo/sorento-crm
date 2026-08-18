@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -11,6 +11,7 @@ import {
   ALL_COMPANIES_LABEL,
   ALL_COMPANIES_VALUE,
   createAllScopeRow,
+  isScopeRowBrandsUnknown,
   nextScopeRowKey,
   type ScopeRow,
 } from '../../lib/productDiscontinuedScopes';
@@ -29,6 +30,8 @@ interface ScopeRowFieldsProps {
   allCompaniesTaken: boolean;
   disabled?: boolean;
   onChange: (row: ScopeRow) => void;
+  /** Load-state only, so a failed fetch never counts as the admin editing a scope. */
+  onBrandsLoadErrorChange: (hasError: boolean) => void;
   onRemove: () => void;
 }
 
@@ -39,6 +42,7 @@ const ScopeRowFields = ({
   allCompaniesTaken,
   disabled,
   onChange,
+  onBrandsLoadErrorChange,
   onRemove,
 }: ScopeRowFieldsProps) => {
   const isAllCompanies = row.companyId === null;
@@ -97,6 +101,13 @@ const ScopeRowFields = ({
     return Array.from(byId.values());
   }, [brands, row.brandIds, row.brandLabels]);
 
+  useEffect(() => {
+    if (Boolean(row.brandsLoadError) === isError) return;
+    onBrandsLoadErrorChange(isError);
+  }, [isError, row.brandsLoadError, onBrandsLoadErrorChange]);
+
+  const brandsUnknown = isScopeRowBrandsUnknown({ ...row, brandsLoadError: isError });
+
   const handleCompanyChange = (value: string) => {
     const companyId = value === ALL_COMPANIES_VALUE ? null : value;
     const company = companies.find((c) => c.id === companyId);
@@ -107,6 +118,7 @@ const ScopeRowFields = ({
       companyName: company?.name ?? null,
       brandIds: [],
       brandLabels: {},
+      brandsLoadError: false,
     });
   };
 
@@ -146,7 +158,9 @@ const ScopeRowFields = ({
         />
         {isError ? (
           <p role="alert" className="mt-1 text-xs text-destructive">
-            Brands could not be loaded.
+            {brandsUnknown
+              ? 'Brands could not be loaded. Remove this row to save.'
+              : 'Brands could not be loaded.'}
           </p>
         ) : null}
       </div>
@@ -170,6 +184,11 @@ interface ProductDiscontinuedScopeEditorProps {
   companies: ScopeCompanyOption[];
   disabled?: boolean;
   onChange: (rows: ScopeRow[]) => void;
+  /**
+   * Rows carrying a refreshed brand-load flag. Kept apart from ``onChange`` so a
+   * failed fetch cannot mark the scope set edited and rewrite it on the next save.
+   */
+  onBrandsLoadErrorChange?: (rows: ScopeRow[]) => void;
 }
 
 /**
@@ -181,6 +200,7 @@ const ProductDiscontinuedScopeEditor = ({
   companies,
   disabled,
   onChange,
+  onBrandsLoadErrorChange,
 }: ProductDiscontinuedScopeEditorProps) => {
   const takenCompanyIds = useMemo(
     () =>
@@ -274,6 +294,15 @@ const ProductDiscontinuedScopeEditor = ({
               onChange={(next) =>
                 onChange(
                   rows.map((current, i) => (i === index ? next : current)),
+                )
+              }
+              onBrandsLoadErrorChange={(hasError) =>
+                (onBrandsLoadErrorChange ?? onChange)(
+                  rows.map((current, i) =>
+                    i === index
+                      ? { ...current, brandsLoadError: hasError }
+                      : current,
+                  ),
                 )
               }
               onRemove={() => onChange(rows.filter((_, i) => i !== index))}

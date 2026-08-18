@@ -113,15 +113,20 @@ beforeEach(() => {
   });
 });
 
-function renderEditor(rows: ScopeRow[], onChange = vi.fn()) {
+function renderEditor(
+  rows: ScopeRow[],
+  onChange = vi.fn(),
+  onBrandsLoadErrorChange = vi.fn(),
+) {
   render(
     <ProductDiscontinuedScopeEditor
       rows={rows}
       companies={COMPANIES}
       onChange={onChange}
+      onBrandsLoadErrorChange={onBrandsLoadErrorChange}
     />,
   );
-  return { onChange };
+  return { onChange, onBrandsLoadErrorChange };
 }
 
 describe('ProductDiscontinuedScopeEditor - empty state', () => {
@@ -383,6 +388,45 @@ describe('ProductDiscontinuedScopeEditor - the brand load failed', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/brands could not be loaded/i);
     expect(screen.getByTestId('brand-multiselect')).toHaveAttribute('aria-disabled', 'true');
     expect(screen.getByTestId('brand-select-all')).toBeDisabled();
+  });
+
+  it('marks the row so it cannot be saved as all brands, without dirtying the scopes', () => {
+    const { onChange, onBrandsLoadErrorChange } = renderEditor([
+      { key: 'k1', companyId: 'co-1', companyName: 'Sorento', brandIds: [], brandLabels: {} },
+    ]);
+    expect(onBrandsLoadErrorChange).toHaveBeenCalledWith([
+      expect.objectContaining({ companyId: 'co-1', brandsLoadError: true }),
+    ]);
+    // A failed fetch is not an edit: it must not make the dialog send scopes.
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('tells the row it is unsavable while nothing is picked', () => {
+    renderEditor([
+      {
+        key: 'k1',
+        companyId: 'co-1',
+        companyName: 'Sorento',
+        brandIds: [],
+        brandLabels: {},
+        brandsLoadError: true,
+      },
+    ]);
+    expect(screen.getByRole('alert')).toHaveTextContent(/remove this row to save/i);
+  });
+
+  it('a row that still has its saved brands is savable, so it keeps the plain message', () => {
+    renderEditor([
+      {
+        key: 'k1',
+        companyId: 'co-1',
+        companyName: 'Sorento',
+        brandIds: ['br-1'],
+        brandLabels: { 'br-1': 'Mocha' },
+        brandsLoadError: true,
+      },
+    ]);
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/remove this row/i);
   });
 
   it('keeps the brands already saved on the row visible while the load is broken', () => {

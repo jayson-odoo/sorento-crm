@@ -45,6 +45,7 @@ import { UserStatusProps } from '../../constants/status';
 import {
   createAllScopeRow,
   rowsToScopePayload,
+  scopeRowsHaveUnknownBrands,
   scopesToRows,
   type ScopeRow,
 } from '../../lib/productDiscontinuedScopes';
@@ -73,6 +74,9 @@ const UserProfileEditDialog = ({
     scopesToRows(user?.productDiscontinuedScopes),
   );
   const [scopesDirty, setScopesDirty] = useState(false);
+  // A row whose brand list failed to load would otherwise save as "all brands in
+  // that company", so saving waits until the admin resolves it.
+  const scopeBrandsUnknown = scopeRowsHaveUnknownBrands(scopeRows);
   const { companies: scopeCompanies } = useCompany();
 
   // Fetch available roles
@@ -810,6 +814,7 @@ const UserProfileEditDialog = ({
                 setScopeRows(rows);
                 setScopesDirty(true);
               }}
+              onBrandsLoadErrorChange={setScopeRows}
             />
             <FormField
               control={form.control}
@@ -833,7 +838,11 @@ const UserProfileEditDialog = ({
               </Button>
               <Button
                 type="submit"
-                disabled={(!form.formState.isDirty && !scopesDirty) || isProcessing}
+                disabled={
+                  (!form.formState.isDirty && !scopesDirty) ||
+                  isProcessing ||
+                  scopeBrandsUnknown
+                }
               >
                 {isProcessing && <LoaderCircleIcon className="animate-spin" />}
                 Save Changes

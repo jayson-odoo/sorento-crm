@@ -12,7 +12,9 @@ import {
   ALL_COMPANIES_LABEL,
   createAllScopeRow,
   describeScopeRow,
+  isScopeRowBrandsUnknown,
   rowsToScopePayload,
+  scopeRowsHaveUnknownBrands,
   scopesToRows,
   type ScopeRow,
 } from './productDiscontinuedScopes';
@@ -146,6 +148,43 @@ describe('scopesToRows -> rowsToScopePayload round-trip', () => {
         { company_id: 'co-1', brand_id: 'br-2' },
       ].sort((a, b) => (a.brand_id ?? '').localeCompare(b.brand_id ?? '')),
     );
+  });
+});
+
+describe('a row whose brands never loaded is not all brands', () => {
+  const errored = (brandIds: string[]): ScopeRow => ({
+    key: 'k1',
+    companyId: 'co-1',
+    brandIds,
+    brandLabels: {},
+    brandsLoadError: true,
+  });
+
+  it('an errored row with nothing picked is unknown, not all-brands', () => {
+    expect(isScopeRowBrandsUnknown(errored([]))).toBe(true);
+    expect(scopeRowsHaveUnknownBrands([errored([])])).toBe(true);
+  });
+
+  it('an errored row that kept its saved brands is still savable', () => {
+    expect(isScopeRowBrandsUnknown(errored(['br-1']))).toBe(false);
+    expect(scopeRowsHaveUnknownBrands([errored(['br-1'])])).toBe(false);
+  });
+
+  it('an all-companies row is never blocked (it has no brand list to load)', () => {
+    const row: ScopeRow = { ...createAllScopeRow(), brandsLoadError: true };
+    expect(isScopeRowBrandsUnknown(row)).toBe(false);
+  });
+
+  it('the unknown row is dropped from the payload rather than saved as all brands', () => {
+    const good: ScopeRow = {
+      key: 'k2',
+      companyId: 'co-2',
+      brandIds: ['br-9'],
+      brandLabels: {},
+    };
+    expect(rowsToScopePayload([errored([]), good])).toEqual([
+      { company_id: 'co-2', brand_id: 'br-9' },
+    ]);
   });
 });
 

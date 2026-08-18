@@ -150,7 +150,14 @@ def subset_for_scopes(
     Returns ``(products, brand_ids_for_link)``. An all-brands scope for the company
     (or an all-companies scope, which is the same thing everywhere) takes the whole
     batch with no brand filter on the link. Otherwise the subset is the products
-    whose brand the recipient named, and the link carries those brands.
+    whose brand the recipient named.
+
+    The link only ever carries the brands actually PRESENT in that subset, and
+    carries none at all when the subset is the whole batch. Naming brands the batch
+    does not contain would make a link that says less than the plain one while
+    being longer, and a recipient who ticked every brand of a big catalogue could
+    push the WhatsApp body past its 4096-character limit with ids that filter
+    nothing.
 
     A product with no brand therefore reaches only all-brands scopes, which is the
     honest reading of "I look after brand X": an unbranded product is not brand X.
@@ -166,7 +173,9 @@ def subset_for_scopes(
 
     wanted = {brand_id for _, brand_id in relevant if brand_id}
     subset = [p for p in pending if getattr(p, "brand_id", None) and str(p.brand_id) in wanted]
-    return subset, sorted(wanted)
+    if len(subset) == len(pending):
+        return subset, []
+    return subset, sorted({str(p.brand_id) for p in subset})
 
 
 def run_product_discontinued_check(db: Session, task: Any = None) -> dict:

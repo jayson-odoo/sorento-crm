@@ -26,6 +26,29 @@ export interface ScopeRow {
   brandIds: string[];
   /** brand id -> brand name, carried from the saved scopes so chips show names. */
   brandLabels: Record<string, string>;
+  /**
+   * The company's brand list failed to load, so the picker is showing nothing it
+   * could offer. An empty pick then says nothing about what the admin wanted.
+   */
+  brandsLoadError?: boolean;
+}
+
+/**
+ * A row whose brands never loaded AND which has no brand picked. Empty means all
+ * brands, so serialising this row would save the whole company off the back of a
+ * failed request - the exact widening the picker's error state exists to stop.
+ */
+export function isScopeRowBrandsUnknown(row: ScopeRow): boolean {
+  return (
+    Boolean(row.brandsLoadError) &&
+    row.companyId !== null &&
+    row.brandIds.length === 0
+  );
+}
+
+/** True while any row is unsavable because its brands could not be loaded. */
+export function scopeRowsHaveUnknownBrands(rows: ScopeRow[]): boolean {
+  return rows.some(isScopeRowBrandsUnknown);
 }
 
 let rowSeq = 0;
@@ -97,6 +120,7 @@ export function rowsToScopePayload(
   const payload: { company_id: string | null; brand_id: string | null }[] = [];
 
   for (const row of rows) {
+    if (isScopeRowBrandsUnknown(row)) continue;
     // All companies can only ever mean all brands.
     const brandIds =
       row.companyId === null || row.brandIds.length === 0

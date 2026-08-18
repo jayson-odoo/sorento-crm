@@ -55,6 +55,7 @@ vi.mock('./product-discontinued-scope-editor', () => ({
   default: (props: {
     rows: { companyId: string | null; brandIds: string[] }[];
     onChange: (rows: unknown[]) => void;
+    onBrandsLoadErrorChange?: (rows: unknown[]) => void;
   }) => {
     editorProps.current = props;
     return (
@@ -65,6 +66,17 @@ vi.mock('./product-discontinued-scope-editor', () => ({
         </span>
         <button type="button" onClick={() => props.onChange([])}>
           clear-all-rows
+        </button>
+        {/* What the real editor reports when a row's brand list fails to load. */}
+        <button
+          type="button"
+          onClick={() =>
+            props.onBrandsLoadErrorChange?.(
+              props.rows.map((r) => ({ ...r, brandsLoadError: true })),
+            )
+          }
+        >
+          fail-brand-load
         </button>
       </div>
     );
@@ -305,5 +317,45 @@ describe('UserProfileEditDialog - PUT body carries product_discontinued_scopes (
     )!;
     const body = JSON.parse(putCall[1].body as string);
     expect(body.product_discontinued_scopes).toEqual([{ company_id: null, brand_id: null }]);
+  });
+});
+
+
+describe('UserProfileEditDialog - a row whose brands failed to load blocks Save', () => {
+  const userWithCompanyRow = () =>
+    ({
+      ...BASE_USER,
+      notifyEmailOnProductDiscontinued: true,
+      productDiscontinuedScopes: [
+        { company_id: 'co-1', company_name: 'Sorento', brand_id: null },
+      ],
+    }) as unknown as User;
+
+  it('Save stays disabled while a company row has no brands and no brand list', async () => {
+    renderDialog(userWithCompanyRow());
+    await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('1'));
+
+    // Dirty an unrelated field so only the errored row can be holding Save back.
+    fireEvent.click(screen.getByRole('checkbox', { name: /email on assignment/i }));
+    const saveButton = screen.getByRole('button', { name: /save changes/i });
+    await waitFor(() => expect(saveButton).not.toBeDisabled());
+
+    fireEvent.click(screen.getByText('fail-brand-load'));
+
+    await waitFor(() => expect(saveButton).toBeDisabled());
+  });
+
+  it('the failed load alone does not count as an edit, so Save stays closed', async () => {
+    renderDialog(userWithCompanyRow());
+    await waitFor(() => expect(screen.getByTestId('scope-row-count')).toHaveTextContent('1'));
+
+    fireEvent.click(screen.getByText('fail-brand-load'));
+
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled();
+    expect(
+      apiFetch.mock.calls.filter(
+        (call) => (call[1] as { method?: string } | undefined)?.method === 'PUT',
+      ),
+    ).toHaveLength(0);
   });
 });

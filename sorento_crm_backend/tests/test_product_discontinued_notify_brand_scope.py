@@ -172,6 +172,32 @@ def test_subset_multiple_specific_brand_scopes_union_and_sort_the_link_ids():
     assert brand_ids == ["aa-brand", "zz-brand"]  # sorted
 
 
+def test_subset_scope_brands_covering_the_whole_batch_drop_the_link_filter():
+    """Naming every brand present is the same slice as naming none of them.
+
+    Picking every brand in a big catalogue would otherwise stuff the notice link
+    with ids that filter nothing, and the link rides inside the WhatsApp body.
+    """
+    a = type("P", (), {"brand_id": "brand-a"})()
+    b = type("P", (), {"brand_id": "brand-b"})()
+    subset, brand_ids = svc.subset_for_scopes(
+        [(SORENTO, "brand-a"), (SORENTO, "brand-b")], SORENTO, [a, b]
+    )
+    assert subset == [a, b]
+    assert brand_ids == []
+
+
+def test_subset_link_carries_only_brands_present_in_the_batch():
+    """A scope brand with no product in this batch is not worth a link parameter."""
+    a = type("P", (), {"brand_id": "brand-a"})()
+    other = type("P", (), {"brand_id": "brand-z"})()
+    subset, brand_ids = svc.subset_for_scopes(
+        [(SORENTO, "brand-a"), (SORENTO, "brand-absent")], SORENTO, [a, other]
+    )
+    assert subset == [a]
+    assert brand_ids == ["brand-a"]
+
+
 # --------------------------------------------------------------------------- #
 # AC-1: an all/all scope is byte-identical to pre-feature behaviour
 # --------------------------------------------------------------------------- #
@@ -483,3 +509,51 @@ def test_fanout_does_not_reselect_products_per_recipient(db):
     assert out["subscribers"] == 3
     assert out["notified_users"] == 3
     assert len(product_selects) == 1, product_selects
+
+
+def test_select_all_equivalent_scopes_send_the_plain_batch_link(db):
+    """End to end: one specific-brand scope per brand in the batch.
+
+    That is what the editor's Select-all saves, and it must reach the recipient as
+    the same short link an all-brands scope produces, on the same full count.
+    """
+    brand_a = _brand(db, company_id=SORENTO, name="A")
+    brand_b = _brand(db, company_id=SORENTO, name="B")
+    _product(db, code="ZZT-A", company_id=SORENTO, brand_id=brand_a)
+    _product(db, code="ZZT-B", company_id=SORENTO, brand_id=brand_b)
+
+    user = _user(db, email=f"{unique_code('selectall')}@zzt.test")
+    _scope(db, user.id, company_id=SORENTO, brand_id=brand_a)
+    _scope(db, user.id, company_id=SORENTO, brand_id=brand_b)
+    db.commit()
+
+    out = svc.run_product_discontinued_check(db)
+
+    assert out["subscribers"] == 1
+    note = _note_for(db, user.id)
+    assert note.title == "2 products discontinued"
+    params = _link_params((note.data or {}).get("discontinued_link", ""))
+    assert params.get("discontinued_batch_id") == out["batch_id"]
+    assert "brand_id" not in params
+
+
+def test_partial_scope_link_names_only_the_brands_in_the_recipient_subset(db):
+    brand_a = _brand(db, company_id=SORENTO, name="A")
+    brand_b = _brand(db, company_id=SORENTO, name="B")
+    brand_absent = _brand(db, company_id=SORENTO, name="Absent")
+    _product(db, code="ZZT-A", company_id=SORENTO, brand_id=brand_a)
+    _product(db, code="ZZT-B", company_id=SORENTO, brand_id=brand_b)
+
+    user = _user(db, email=f"{unique_code('partial')}@zzt.test")
+    _scope(db, user.id, company_id=SORENTO, brand_id=brand_a)
+    _scope(db, user.id, company_id=SORENTO, brand_id=brand_absent)
+    db.commit()
+
+    out = svc.run_product_discontinued_check(db)
+
+    assert out["subscribers"] == 1
+    note = _note_for(db, user.id)
+    assert note.title == "1 product discontinued"
+    params = _link_params((note.data or {}).get("discontinued_link", ""))
+    # The brand with nothing in this batch is left out; only brand A filters anything.
+    assert params.get("brand_id") == brand_a
