@@ -183,8 +183,10 @@ _AHEAD_PHRASES = {
     "customer_credit": "shorter payment terms",
     "demand_class": "a higher-ranked demand type",
     "po_document_sequence": "an earlier purchase order sequence",
-    #: Not a policy factor at all: these two are the tie-break, and naming a factor here would
-    #: claim a difference the two lines do not have.
+    #: Not policy factors at all: these three are the tie-break, in `_pile_book`'s own order
+    #: (required date, then line number within an order, then sales-order number), and naming
+    #: a factor here would claim a score difference the two lines do not have.
+    "earlier_date": "the same rank and an earlier required date",
     "line_order": "an earlier line number in the same order",
     "tie_break": "the same rank and a lower sales order number",
 }
@@ -668,6 +670,19 @@ class FulfilmentBoardService:
             {row["customer_id"] for row in book if row.get("customer_id")}
         )
 
+        asked_position = (
+            next(
+                (
+                    position
+                    for position, row in enumerate(book, start=1)
+                    if row["line_id"] == asked["line_id"]
+                ),
+                None,
+            )
+            if asked is not None
+            else None
+        )
+
         lines: List[Dict[str, Any]] = []
         running = _ZERO
         for position, row in enumerate(book, start=1):
@@ -692,10 +707,12 @@ class FulfilmentBoardService:
                         for factor in (row.get("factors") or [])
                     ],
                     # Why this line is in front of the one that asked. Null for the asked line
-                    # itself, which outranks nobody, and null when nobody asked.
+                    # itself, which outranks nobody; null for every row BEHIND it, which is
+                    # not in front of anything and must not claim a reason for being; and
+                    # null when nobody asked.
                     "leading_factor": (
                         None
-                        if asked is None or row["line_id"] == asked["line_id"]
+                        if asked_position is None or position >= asked_position
                         else _leading_factor(asked, row)
                     ),
                     #: What the queue has claimed by the time it has served this row, this row
@@ -909,10 +926,11 @@ class FulfilmentBoardService:
     ) -> Dict[str, Any]:
         """One covered line's frozen composition, in the words the confirmation takes back.
 
-        The WHOLE composition rather than a summary of it: a later confirmation on the same
-        order covers the UNION of what was decided before and what is being decided now (13.4),
-        and the board builds that union out of this. A summary could not be re-posted, and a
-        board that posted only the newly decided lines would silently un-decide the rest.
+        The WHOLE composition rather than a summary of it: the Amend editor is seeded from
+        it (there is no proposal to seed from on a covered line), and an amendment posts the
+        composition back in these words. The board does NOT re-post an untouched covered
+        line - the server carries every covered line the body does not name into the next
+        revision itself (`ProjectSupplyService.confirm`, 13.4).
         """
         components = list(frozen.get("components") or [])
 
@@ -1175,6 +1193,10 @@ class FulfilmentBoardService:
         self._held = self.supply.held_stock_by_location(product_ids)
         self._pressure = self._demand_pressure(product_ids, warehouse_ids)
         self._incoming = self.supply.incoming_by_location(product_ids, warehouse_ids)
+        # Facts for every plannable row, covered ones included: a covered line is not run
+        # through the ladder (its share fields come back empty, and `_apply_frozen` reads
+        # none of them), but its DONORS are still read below, from the same fact - Amend on a
+        # decided line offers a Borrow exactly as it does on an undecided one.
         facts = self.supply.demand_facts(
             [
                 {
@@ -1192,7 +1214,7 @@ class FulfilmentBoardService:
                     "line_no": row.line_no,
                     "item_code": row.item_code,
                 }
-                for row in proposable
+                for row in plannable
             ]
         )
 
@@ -1289,25 +1311,11 @@ class FulfilmentBoardService:
                 (row.product_id, row.warehouse_id), _ZERO
             ) > _ZERO
 
-            if bought > _ZERO:
-                # Cached per (product, location, hot-selling, the Buy being covered): the
-                # facts depend on the fact's reserve reach rather than on the line, and
-                # recomputing them per row walks the whole free-stock cache once per row - but
-                # the RANKING is against this line's residual (13.11), so two rows buying
-                # different quantities are two different questions.
-                cache_key = (
-                    fact.product_id,
-                    row.warehouse_id,
-                    fact.is_hot_selling,
-                    bought,
-                )
-                if cache_key not in borrow_cache:
-                    borrow_cache[cache_key] = self.supply.borrow_candidates_for(
-                        fact, need=bought
-                    )
-                row.borrow_candidates = borrow_cache[cache_key]
-            else:
-                row.borrow_candidates = []
+            # Donors on EVERY plannable row, not only a row the engine is buying for. The
+            # captain's flow is "borrow instead of taking the reserved stock", and a line met
+            # from its own Reserve had no donors on it, so Amend said nobody held any and
+            # offered no Borrow. A need of 0 ranks the donors by availability alone.
+            row.borrow_candidates = self._donors_for(borrow_cache, row, fact, bought)
 
             row.sources = [self._source(component, row) for component in components]
             # Said, not implied: the ladder consulted these and never printed them, and the
@@ -1320,6 +1328,36 @@ class FulfilmentBoardService:
             }
             row.trail = self._trail(row, fact, components, pool_open)
 
+        # A covered line is amendable too, so its donors are read - ranked against what its
+        # frozen composition is still buying - and nothing else about it is touched: no
+        # ladder, no contest, no share of a queue it is not in.
+        for row in plannable:
+            if not row.covered:
+                continue
+            row.borrow_candidates = self._donors_for(
+                borrow_cache, row, facts[row.key], row.proposed.get(BUY, _ZERO)
+            )
+
+    def _donors_for(
+        self,
+        borrow_cache: Dict[Tuple[Any, ...], List[Dict[str, Any]]],
+        row: _Row,
+        fact: Any,
+        need: Decimal,
+    ) -> List[Dict[str, Any]]:
+        """Where else this line could be met from, read once per distinct question.
+
+        Cached per (product, location, hot-selling, the quantity being covered): the donors
+        depend on the fact's reserve reach rather than on the line, and recomputing them per
+        row walks the whole free-stock cache once per row - but the RANKING is against this
+        line's residual (13.11), so two rows covering different quantities are two different
+        questions.
+        """
+        cache_key = (fact.product_id, row.warehouse_id, fact.is_hot_selling, need)
+        if cache_key not in borrow_cache:
+            borrow_cache[cache_key] = self.supply.borrow_candidates_for(fact, need=need)
+        return borrow_cache[cache_key]
+
     def _apply_frozen(self, row: _Row) -> None:
         """A covered line states what was decided for it, and nothing else (13.4).
 
@@ -1327,7 +1365,8 @@ class FulfilmentBoardService:
         but a person did, and printing it as anything else would describe a decision nobody
         took. There is no trail because no ladder was walked, no contest because a decided line
         is not competing, and no share of the queue because it is not in the queue: `null`
-        there, never `0`, which would be a claim about a contest it left.
+        there, never `0`, which would be a claim about a contest it left. Its donors are the
+        one thing still read for it, by `_allocate`, because it can still be amended.
         """
         decision = row.decision or {}
         reserve = sum((_dec(c["qty"]) for c in decision.get("reserve") or []), _ZERO)
@@ -1397,7 +1436,8 @@ class FulfilmentBoardService:
         row.trail = []
         row.item_flags = None
         row.contested = False
-        row.borrow_candidates = []
+        # Donors are NOT cleared: `_allocate` reads them for a covered line too, because a
+        # decided line is still amendable and Amend has to be able to offer a Borrow on it.
         row.so_qty_ahead = None
         row.lines_ahead = None
         row.available_to_this_line = None
@@ -1548,7 +1588,7 @@ class FulfilmentBoardService:
                 note="no shared pool",
                 why=lambda _outcome: "No shared pool for this product.",
             )
-        elif pool_code == own_code:
+        elif pool_code == own_code and not fact.is_hot_selling:
             add(
                 "reserve_pool",
                 location=pool_code,
@@ -1556,6 +1596,33 @@ class FulfilmentBoardService:
                 eligible=False,
                 note="pool is this location",
                 why=lambda _outcome: "The pool is this location, already checked above.",
+            )
+        elif pool_code == own_code:
+            # A dealer hot-selling item at a location that is its OWN pool (a bare site code
+            # points at itself, migration 311). Rung 1 rightly refused the dealer stock, and
+            # the engine then reserved at this same location above its reorder level - so
+            # THIS is the rung that took it, and it says so, or the trail never reaches 0
+            # while the source strip shows a Reserve.
+            balance = max(_dec(pool_open), _ZERO)
+            self_offered = max(balance - level, _ZERO)
+            self_taken = took(RESERVE, pool_code)
+            self_pile = self._pool_pile(row, fact, balance, level, self_offered)
+            add(
+                "reserve_pool",
+                location=pool_code,
+                warehouse_id=row.warehouse_ids.get(pool_code),
+                opening=balance,
+                offered=self_offered,
+                taken=self_taken,
+                note=(
+                    f"own location is the pool; capped by reorder level {qty_text(level)}"
+                    if level > _ZERO
+                    else "own location is the pool"
+                ),
+                why=lambda outcome: self._self_pool_why(
+                    fact, outcome, level, self_offered, self_taken
+                ),
+                pool=self_pile,
             )
         else:
             balance = max(_dec(pool_open), _ZERO)
@@ -1765,6 +1832,28 @@ class FulfilmentBoardService:
                 f"in stock), but none is left for this line."
             )
         return f"No stock at {code}."
+
+    @staticmethod
+    def _self_pool_why(
+        fact: Any, outcome: str, level: Decimal, offered: Decimal, taken: Decimal
+    ) -> str:
+        """The pool rung of a hot-selling line whose own location IS the pool.
+
+        One sentence carrying both facts, because the reader has just been told on rung 1
+        that this location's dealer stock was off limits: it is off limits AS THE LINE'S OWN
+        LOCATION, and reachable AS THE POOL above the reorder level, and only the second
+        reading took anything.
+        """
+        if outcome == "none_needed":
+            return _COVERED_BEFORE
+        code = fact.pool_code
+        left = (
+            f"{code} is this line's own location and the shared pool: {qty_text(offered)} "
+            f"left above the reorder level {qty_text(level)}"
+        )
+        if outcome == "took":
+            return f"{left}; this line takes {qty_text(taken)}."
+        return f"{left}."
 
     @staticmethod
     def _buy_why(fact: Any, outcome: str) -> str:

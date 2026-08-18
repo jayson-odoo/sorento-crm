@@ -11,6 +11,7 @@ import type {
   BoardContribution,
 } from '../types/fulfilmentPlanning.types';
 import {
+  aheadFactorLabel,
   amendNeedsReason,
   boardAxis,
   bucketLabelText,
@@ -663,6 +664,95 @@ describe('amendNeedsReason', () => {
   it('demands one when the Buy changes, however the Reserve was left', () => {
     expect(amendNeedsReason(contribution, { ...proposed, buy_qty: '20' })).toBe(true);
   });
+
+  it('demands one when the same Reserve total is moved to another warehouse', () => {
+    // 40 at the pool instead of 40 at the own location is a displacement of the rule too.
+    expect(
+      amendNeedsReason(contribution, {
+        ...proposed,
+        reserve: [{ qty: '40', warehouse_id: 'wh-elsewhere' }],
+      }),
+    ).toBe(true);
+  });
+});
+
+/**
+ * Review finding F9: a covered line's baseline is what was DECIDED, not the engine's proposal.
+ *
+ * The frozen composition already carries a Borrow (decided on the sheet, with no amend reason),
+ * so "any borrow is an override" demanded a reason to re-save an unchanged composition. The
+ * reason is mandatory only when the composition differs from what was frozen.
+ */
+describe('amendNeedsReason on a covered line', () => {
+  const frozen = {
+    revision_no: 1,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '5' }],
+    borrow: [
+      {
+        source: 'other_location' as const,
+        warehouse_id: 'wh-mwh-ib',
+        location: 'MWH-IB',
+        donor_project_id: null,
+        qty: '10',
+        reason: 'The other site can wait a week.',
+      },
+    ],
+    buy_qty: '28',
+    amend_reason: null,
+  };
+  const board = buildBoard([line({ qty: '43', decision: frozen })], { today: TODAY });
+  const covered = board.cells[0].contributions[0];
+  const unchanged = {
+    timely_spo_qty: '0',
+    reserve: [{ qty: '5', warehouse_id: 'wh-BRW-BB' }],
+    borrow: [{ qty: '10', warehouse_id: 'wh-mwh-ib', donor_project_id: null }],
+    buy_qty: '28',
+  };
+
+  it('is a covered contribution to begin with', () => {
+    expect(covered.covered).toBe(true);
+  });
+
+  it('does not demand a reason for re-saving the frozen composition, borrow included', () => {
+    expect(amendNeedsReason(covered, unchanged)).toBe(false);
+  });
+
+  it('demands one when the frozen borrow quantity changes', () => {
+    expect(
+      amendNeedsReason(covered, {
+        ...unchanged,
+        borrow: [{ qty: '15', warehouse_id: 'wh-mwh-ib', donor_project_id: null }],
+        buy_qty: '23',
+      }),
+    ).toBe(true);
+  });
+
+  it('demands one when the borrow moves to another donor at the same quantity', () => {
+    expect(
+      amendNeedsReason(covered, {
+        ...unchanged,
+        borrow: [{ qty: '10', warehouse_id: 'wh-other', donor_project_id: null }],
+      }),
+    ).toBe(true);
+  });
+
+  it('demands one when the frozen reserve or buy changes', () => {
+    expect(
+      amendNeedsReason(covered, {
+        ...unchanged,
+        reserve: [{ qty: '8', warehouse_id: 'wh-BRW-BB' }],
+        buy_qty: '25',
+      }),
+    ).toBe(true);
+  });
+
+  it('demands one when the frozen borrow is dropped', () => {
+    expect(
+      amendNeedsReason(covered, { ...unchanged, borrow: [], buy_qty: '38' }),
+    ).toBe(true);
+  });
 });
 
 /**
@@ -755,6 +845,24 @@ describe('factorLabel', () => {
 
   it('turns a factor nobody has named yet into words rather than printing the key', () => {
     expect(factorLabel('supplier_reliability')).toBe('Supplier reliability');
+  });
+});
+
+/**
+ * Why a line is ahead, when the policy separated nothing: `_pile_book` breaks the tie on the
+ * required date first, then line order within an order, then the sales-order number - three
+ * keys, each with words of its own, and none of them read as a policy factor.
+ */
+describe('aheadFactorLabel', () => {
+  it('names the three tie-break keys apart from the policy factors', () => {
+    expect(aheadFactorLabel('earlier_date')).toBe('Earlier required date (tie)');
+    expect(aheadFactorLabel('line_order')).toBe('same order');
+    expect(aheadFactorLabel('tie_break')).toBe('tie-break');
+  });
+
+  it('still names a policy factor as the factor', () => {
+    expect(aheadFactorLabel('need_by_date')).toBe('Required date');
+    expect(aheadFactorLabel('customer_credit')).toBe('Payment terms');
   });
 });
 
@@ -1091,14 +1199,17 @@ describe('confirmLinesFor and a composed amendment', () => {
 });
 
 /**
- * A LATER confirmation on the same order covers the UNION (PLAN 13.4).
+ * A LATER confirmation on the same order covers the UNION (PLAN 13.4), and THE UNION IS THE
+ * SERVER'S.
  *
  * "Deciding more lines later is a NEW revision covering the union, which is exactly what
- * revisions already do." The per-order sheet gets that for free - it submits every line, seeded
- * from the frozen decision - and the board did not: `confirmLinesFor` sent only the lines the
- * client had just decided, and `_write_decision` supersedes the active revision and writes ONLY
- * what it was sent. So a second confirm on the same order silently UN-DECIDED everything
- * confirmed before it, and nothing on screen said so.
+ * revisions already do." The board briefly built that union itself, re-posting every covered
+ * line from its frozen decision, and that had two holes: at day granularity the cells are a
+ * window, so a covered line outside it was not re-posted and was silently un-decided; and the
+ * re-posted line was rebuilt without its buy reason and re-judged against live facts, so a
+ * discontinued product's covered line 422'd the confirmation of an unrelated one. The server now
+ * carries every covered line the body does not name, verbatim, so the body names ONLY what the
+ * planner just decided or amended.
  */
 describe('confirmLinesFor and a line an active decision already covers', () => {
   const frozen = {
@@ -1130,32 +1241,16 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
   const keyOf = (lineNo: number) =>
     contributions.find((entry) => entry.line_no === lineNo)!.key;
 
-  it('re-emits the covered line beside the newly decided one, so the earlier decision survives', () => {
+  it('posts ONLY the newly decided line; the covered one is carried by the server', () => {
     const lines = confirmLinesFor(contributions, 'so-a', {
       [keyOf(2)]: { verdict: 'approved' },
     });
 
-    expect(lines).toHaveLength(2);
-    const covered = lines.find((entry) => entry.project_line_id === 'pl-so-a-1');
-    // Verbatim: the same donor, the same warehouse id, the same reason, the same Buy. A
-    // re-derived composition would be a second opinion about a decision already taken.
-    expect(covered).toEqual({
-      project_line_id: 'pl-so-a-1',
-      timely_spo_qty: '0',
-      reserve: [],
-      borrow: [
-        {
-          source: 'other_location',
-          warehouse_id: 'wh-mwh-ib',
-          donor_project_id: null,
-          qty: '10',
-          reason: 'The other site can wait a week.',
-        },
-      ],
-      buy_qty: '33',
-      amend_reason: 'Borrowed rather than bought, agreed with the other site.',
-    });
-    expect(lines.find((entry) => entry.project_line_id === 'pl-so-a-2')?.buy_qty).toBe('16');
+    // The covered line is NOT re-posted. The server carries every covered line the body does
+    // not name, verbatim from its frozen snapshot, so re-posting it here would only re-judge
+    // it against live facts - and at day granularity the board could not even see all of them.
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
+    expect(lines[0].buy_qty).toBe('16');
   });
 
   it('confirms nothing at all when every decided line is already confirmed', () => {
@@ -1207,6 +1302,43 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
       new Set([keyOf(1)]),
     );
     expect(standings[0].decided_count).toBe(1);
+  });
+
+  it('does not count a carried line as left undecided by the press', () => {
+    // The body names one line and the server carries the covered one, so after the press
+    // BOTH are decided: "Confirms 1, leaves 1 undecided" would describe an un-decide that
+    // never happens.
+    const owners = new Map(contributions.map((entry) => [entry.key, entry.sales_order_id]));
+    const draft = { [keyOf(2)]: { verdict: 'approved' as const } };
+    const standing = standingsFor(board.orders, owners, draft, new Set([keyOf(1)]))[0];
+    expect(standing.carried_count).toBe(1);
+    expect(commitPreviewFor(standing, confirmLinesFor(contributions, 'so-a', draft).length)).toEqual({
+      committing: 1,
+      leaving_undecided: 0,
+      blocked: 0,
+    });
+  });
+
+  it('counts an amended covered line as committing, not as carried', () => {
+    const owners = new Map(contributions.map((entry) => [entry.key, entry.sales_order_id]));
+    const draft = {
+      [keyOf(1)]: {
+        verdict: 'amended' as const,
+        reserve_qty: '5',
+        timely_spo_qty: '0',
+        reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '5' }],
+        borrow: [],
+        buy_qty: '38',
+        reason: 'The stock arrived at my own warehouse.',
+      },
+    };
+    const standing = standingsFor(board.orders, owners, draft, new Set([keyOf(1)]))[0];
+    expect(standing.carried_count).toBe(0);
+    expect(commitPreviewFor(standing, confirmLinesFor(contributions, 'so-a', draft).length)).toEqual({
+      committing: 1,
+      leaving_undecided: 1,
+      blocked: 0,
+    });
   });
 
   it('leaves a covered line out when it has no mirror id, rather than posting a null', () => {

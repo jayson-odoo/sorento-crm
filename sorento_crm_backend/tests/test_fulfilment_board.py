@@ -4119,3 +4119,211 @@ def test_the_flags_and_the_pool_facts_reach_the_wire():
         pile = _step(contribution, "reserve_pool")["pool"]
         assert pile["on_hand"] == "12"
         assert pile["reorder_level"] == "10"
+
+
+# --------------------------------------------------------------------------- #
+# review findings F3 / F6 / F8, 19 August 2026
+#
+# F3: a dealer hot-selling item whose fulfilment location IS its own pool (a bare site code
+#     points at itself, migration 311). The engine reserves there above the reorder level, but
+#     rung 1 said "hot-selling, not eligible", rung 2 said "the pool is this location, already
+#     checked above", and neither counted the Reserve: the trail never reached 0 while the
+#     source strip said Reserve 3.
+# F6: donors were only looked up when the engine proposed a Buy, and cleared on a covered
+#     line, so Amend on a Reserve-met or covered line said nobody held any stock and offered no
+#     Add-a-borrow (the captain's flow: borrow instead of taking the reserved stock).
+# F8: the queue dialog printed "Ahead because <factor>" on rows BEHIND the asked line.
+# --------------------------------------------------------------------------- #
+
+
+def _self_pool_dealer(db, product, *, level: int):
+    """A dealer location that is its own pool, holding the item as ABC A."""
+    from app.models.scm import ItemClassification, ReorderLevel
+
+    own = _warehouse(db, f"ZZTS{_uid()[:6]}"[:20])
+    own.segment = "dealer"
+    own.pool_warehouse_id = own.id
+    db.flush()
+    db.add(
+        ItemClassification(id=_uid(), product_id=product.id, warehouse_id=own.id, abc_class="A")
+    )
+    db.add(ReorderLevel(id=_uid(), product_id=product.id, warehouse_id=own.id, level=level))
+    db.flush()
+    return own
+
+
+def test_a_hot_selling_line_at_its_own_pool_takes_the_reserve_on_the_pool_rung():
+    """F3. 15 on hand, reorder level 10, 3 owed: Reserve 3 above the level, and the trail
+    says so on rung 2, so the rungs add up to the proposal and end at 0."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _self_pool_dealer(db, product, level=10)
+        _stock(db, product, own, on_hand=15)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        assert contribution["qty_proposed_reserve"] == "3"
+        assert contribution["qty_proposed_buy"] == "0"
+
+        own_step = _step(contribution, "reserve_own")
+        assert own_step["outcome"] == "not_eligible"
+        assert own_step["taken"] == "0"
+
+        pool_step = _step(contribution, "reserve_pool")
+        assert pool_step["location"] == own.warehouse_code
+        assert pool_step["opening"] == "15"
+        assert pool_step["offered"] == "5", "only the headroom above the reorder level"
+        assert pool_step["taken"] == "3"
+        assert pool_step["outcome"] == "took"
+        assert pool_step["remaining_after"] == "0"
+        assert pool_step["pool"] is not None
+        assert pool_step["pool"]["reorder_level"] == "10"
+        assert pool_step["why"] == (
+            f"{own.warehouse_code} is this line's own location and the shared pool: 5 left "
+            "above the reorder level 10; this line takes 3."
+        )
+
+        reserved = sum(
+            Decimal(step["taken"])
+            for step in _trail(contribution)
+            if step["kind"] in ("reserve_own", "reserve_pool")
+        )
+        assert reserved == Decimal(contribution["qty_proposed_reserve"])
+        assert _trail(contribution)[-1]["remaining_after"] == "0"
+        for kind in ("incoming", "borrow", "buy"):
+            assert _step(contribution, kind)["outcome"] == "none_needed", kind
+
+
+def test_a_hot_selling_line_at_its_own_pool_says_when_the_level_leaves_nothing():
+    """F3, the other outcome: 8 on hand under a level of 10 leaves nothing above it."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _self_pool_dealer(db, product, level=10)
+        _stock(db, product, own, on_hand=8)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        pool_step = _step(contribution, "reserve_pool")
+        assert pool_step["location"] == own.warehouse_code
+        assert pool_step["opening"] == "8"
+        assert pool_step["offered"] == "0"
+        assert pool_step["taken"] == "0"
+        assert pool_step["outcome"] == "nothing_left"
+        assert pool_step["why"] == (
+            f"{own.warehouse_code} is this line's own location and the shared pool: 0 left "
+            "above the reorder level 10."
+        )
+        assert contribution["qty_proposed_buy"] == "3"
+
+
+def test_a_cold_line_at_its_own_pool_still_reserves_on_the_own_rung_and_not_twice():
+    """F3 must not double count: a NON hot-selling line at a self-pool location takes its stock
+    on rung 1, and rung 2 still says the pool is this location."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTS{_uid()[:6]}"[:20])
+        own.pool_warehouse_id = own.id
+        db.flush()
+        _stock(db, product, own, on_hand=15)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        assert _step(contribution, "reserve_own")["taken"] == "3"
+        pool_step = _step(contribution, "reserve_pool")
+        assert pool_step["outcome"] == "not_eligible"
+        assert pool_step["taken"] == "0"
+        assert pool_step["note"] == "pool is this location"
+        assert _trail(contribution)[-1]["remaining_after"] == "0"
+
+
+def test_a_reserve_met_line_still_carries_its_donors():
+    """F6. Fully reserved at its own location, and another location holds 25: the donors are
+    on the payload, ranked by availability, so Amend can offer a Borrow instead."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTO{_uid()[:6]}"[:20])
+        elsewhere = _warehouse(db, f"ZZTE{_uid()[:6]}"[:20])
+        _stock(db, product, own, on_hand=50)
+        _stock(db, product, elsewhere, on_hand=25)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        assert contribution["qty_proposed_reserve"] == "10"
+        assert contribution["qty_proposed_buy"] == "0"
+        assert [c["warehouse_code"] for c in contribution["borrow_candidates"]] == [
+            elsewhere.warehouse_code
+        ]
+        candidate = contribution["borrow_candidates"][0]
+        assert candidate["warehouse_id"] == str(elsewhere.id)
+        # Nothing is being bought, so the ranking is against a need of 0.
+        assert candidate["need_qty"] == "0"
+        assert candidate["available_after_need"] == candidate["available_qty"]
+        assert candidate["recommended"] is True
+        assert contribution["qty_borrow_available"] == "25"
+        # The trail still takes nothing from a donor and needs nothing after the Reserve.
+        borrow_step = _step(contribution, "borrow")
+        assert borrow_step["taken"] == "0"
+        assert borrow_step["outcome"] == "none_needed"
+
+
+def test_a_covered_line_carries_its_donors_ranked_against_its_frozen_buy():
+    """F6. Line 1 is decided as borrow 10 from the donor + buy 33. A third location holds
+    7 free, so it is offered on the covered line, ranked against the 33 still being bought."""
+    with blank_session() as db:
+        world = _covered_world(db)
+        spare = _warehouse(db, f"ZZTX{_uid()[:6]}"[:20])
+        _stock(db, world["product"], spare, on_hand=7)
+        _decide_line_one(db, world)
+
+        board = _service(db).build(
+            ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=TODAY
+        )
+
+        contribution = _covered_contribution(board, world)
+        assert contribution["covered"] is True
+        # Still no ladder, no contest, no queue share: only the donors are read for it.
+        assert contribution["trail"] == []
+        assert contribution["so_qty_ahead"] is None
+        candidates = contribution["borrow_candidates"]
+        # The frozen donor's 10 is now a confirmed hold and out of its free stock, so it is
+        # not offered again; the spare location is. The line's own location is inside its
+        # Reserve reach and is never a donor.
+        assert [c["warehouse_code"] for c in candidates] == [spare.warehouse_code]
+        assert candidates[0]["warehouse_id"] == str(spare.id)
+        assert candidates[0]["free_qty"] == "7"
+        assert candidates[0]["need_qty"] == "33"
+        assert contribution["qty_borrow_available"] == "7"
+
+
+def test_the_pile_queue_names_no_leading_factor_on_a_row_behind_the_asked_line():
+    """F8. "Ahead because" is a claim about the rows ABOVE the mark; below it the answer is
+    null, which the screen reads as "Behind this line"."""
+    with blank_session() as db:
+        ours, product, warehouse = _queued_pile(db)
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        cell = _cell(board, product.product_code, "2026-12-28")
+        # The one of our two lines that the queue put FIRST: its sibling is behind it.
+        front = min(cell["contributions"], key=lambda c: c["lines_ahead"])
+
+        queue = _service(db).pile_queue(str(product.id), str(warehouse.id), front["line_id"])
+
+        mine = next(line for line in queue["lines"] if line["is_this_line"])
+        assert mine["position"] == 6
+        assert mine["leading_factor"] is None
+        ahead = [line for line in queue["lines"] if line["position"] < mine["position"]]
+        behind = [line for line in queue["lines"] if line["position"] > mine["position"]]
+        assert len(behind) == 1
+        assert all(line["leading_factor"] for line in ahead)
+        assert behind[0]["leading_factor"] is None

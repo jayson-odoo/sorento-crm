@@ -239,12 +239,16 @@ class ProjectOrderInquiryService:
           `CANCEL_BALANCE` exception row stating both figures, so somebody answers it.
 
         Since partial confirmation (PLAN-fulfilment-planning-from-autocount-so.md 13.4) a
-        revision covers the lines the planner chose, so a line the PREVIOUS revision
-        covered can be absent from this one. That line is undecided again and its whole
-        open quantity goes back to counting as demand, so a still-raised Buy row from the
-        old revision would be the same requirement told to purchasing twice. Those rows
-        are cancelled below, by the same rule and with the same words as any other
-        superseded row - never deleted, because they are what purchasing was told.
+        revision covers the lines the planner chose. A line the previous revision covered
+        and this confirmation did not name is CARRIED into the new revision by
+        `ProjectSupplyService.confirm` and arrives here in `buy_lines` like any other, so
+        its Buy stays on purchasing's list. `_retire_uncovered_rows` still cancels the
+        still-raised rows of a line genuinely absent from the revision (one no longer on
+        the order): that line is undecided again and its whole open quantity goes back to
+        counting as demand, so a raised Buy row left behind would be the same requirement
+        told to purchasing twice. Cancelled by the same rule and with the same words as
+        any other superseded row - never deleted, because they are what purchasing was
+        told.
 
         `borrow_shortfalls` is the fourth thing purchasing is handed, and the only one that
         is not about the borrowing line's own quantity: a borrow that pushed a DONOR
@@ -364,24 +368,33 @@ class ProjectOrderInquiryService:
 
         The lifecycle is the same as every other row here: a still-raised one from an
         earlier revision is CANCELLED and kept, never edited in place, and one purchasing
-        has already actioned stays.
+        has already actioned stays - AND is netted, exactly as an actioned ORDER row is
+        netted off the line's next Buy. A hole of 10 that purchasing placed is not
+        raised again by the next revision; a hole that has widened to 15 raises the 5
+        still outstanding. Netted per (item, donor location), which is the pile the hole
+        is in: a donor short of two products has two holes.
         """
-        stale = (
+        rows = (
             self.db.query(OrderInquiryRow)
             .filter(
                 OrderInquiryRow.order_inquiry_id == inquiry.id,
                 OrderInquiryRow.verb == IV_BORROW_SHORTFALL,
-                OrderInquiryRow.state == INQUIRY_RAISED,
             )
             .all()
         )
-        for row in stale:
-            row.state = INQUIRY_CANCELLED
-            row.note = f"Superseded by revision {decision.revision_no}"
+        placed: Dict[Tuple[Optional[str], Optional[str]], Decimal] = {}
+        for row in rows:
+            if row.state == INQUIRY_RAISED:
+                row.state = INQUIRY_CANCELLED
+                row.note = f"Superseded by revision {decision.revision_no}"
+            elif row.state == INQUIRY_ACTIONED:
+                key = (row.item_code or None, row.stock_location or None)
+                placed[key] = placed.get(key, _ZERO) + _dec(row.qty)
 
         created = 0
         for entry in shortfalls:
-            qty = _dec(entry.get("qty"))
+            key = (entry.get("item_code") or None, entry.get("stock_location") or None)
+            qty = _dec(entry.get("qty")) - placed.get(key, _ZERO)
             if qty <= _ZERO:
                 continue
             line = entry.get("line")

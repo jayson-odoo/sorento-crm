@@ -226,6 +226,21 @@ describe('BoardAmendDialog: the Borrow', () => {
     );
   });
 
+  it('offers Add a borrow on a line the Reserve already meets in full', () => {
+    // Review finding F6, the captain's flow: "borrow instead of taking the reserved stock".
+    // 200 free covers the 100 owed, nothing is bought, and the donor is still offered.
+    renderDialog(
+      contributionOf({ 'B2155-NL-BLUE|BRW-BB': '200' }, { borrow_candidates: [DONOR] }),
+    );
+
+    expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(100);
+    expect(screen.getByLabelText('Buy')).toHaveValue(0);
+    expect(screen.getByRole('button', { name: 'Add a borrow' })).toBeInTheDocument();
+    expect(
+      screen.queryByText('No other location or project holds free stock of this item.'),
+    ).toBeNull();
+  });
+
   it('offers no donor the confirmation could not name', () => {
     renderDialog(
       contributionOf({ 'B2155-NL-BLUE|BRW-BB': '40' }, {
@@ -374,6 +389,48 @@ describe('BoardAmendDialog: a line a decision already covers', () => {
       'Borrowed rather than bought, agreed with the other site.',
     );
     expect(screen.getByRole('button', { name: 'Save the amendment' })).toBeEnabled();
+  });
+
+  it('offers Add a borrow when the server states donors for the covered line', () => {
+    // Review finding F6: the board now reads donors for a decided line too.
+    renderDialog({ ...coveredContribution(), borrow_candidates: [DONOR] });
+
+    expect(screen.getByRole('button', { name: 'Add a borrow' })).toBeInTheDocument();
+  });
+
+  it('re-saves the frozen composition, borrow and all, without demanding a reason', () => {
+    // Review finding F9: the baseline for a covered line is what was DECIDED. The frozen
+    // Borrow is not an override of anything, so an unchanged composition needs no reason -
+    // even with the carried-forward reason cleared.
+    const { onSave } = renderDialog(coveredContribution());
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), { target: { value: '' } });
+
+    const save = screen.getByRole('button', { name: 'Save the amendment' });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        borrow: [expect.objectContaining({ warehouse_id: 'wh-mwh-ib', qty: '10' })],
+        buy_qty: '33',
+        reason: undefined,
+      }),
+    );
+  });
+
+  it('demands a reason once the frozen composition is changed', () => {
+    renderDialog(coveredContribution());
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Borrow from MWH-IB'), { target: { value: '15' } });
+    fireEvent.change(screen.getByLabelText('Buy'), { target: { value: '28' } });
+
+    const save = screen.getByRole('button', { name: 'Save the amendment' });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Taking five more from the other site.' },
+    });
+    expect(save).toBeEnabled();
   });
 
   it('saves the composition the planner leaves behind, borrow reason intact', () => {

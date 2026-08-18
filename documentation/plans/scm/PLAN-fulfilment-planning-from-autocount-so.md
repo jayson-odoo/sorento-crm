@@ -2068,15 +2068,39 @@ Undo undoes a draft entry that does not exist), no share note, a trail popover r
 the borrow that was made, the buy that was confirmed, the reason that was given - because there
 is no proposal to seed from.
 
-**The body is the UNION.** `_write_decision` supersedes the active revision and writes only the
-lines it was sent; `confirmLinesFor` sent only the lines the planner had just decided. So a
+**The union is the SERVER's.** `_write_decision` supersedes the active revision and writes only
+the lines it was sent; `confirmLinesFor` sent only the lines the planner had just decided. So a
 second confirm on the same order silently UN-DECIDED everything confirmed before it - while the
 per-order sheet, which submits every line seeded from the frozen decision, got the union for
-free. `confirmLinesFor` now re-emits every covered line of the order verbatim from its
-`decision` (same warehouse ids, same donors, same reasons, same buy) beside the newly decided
-ones, and a confirmation carrying nothing NEW is not sent at all. The order card counts a
-covered line as decided (`standingsFor` takes the covered keys beside the draft), so an order
-with one confirmed line of two reads "1 of 2 lines decided" rather than "0 of 2".
+free. The first fix (18 August) had `confirmLinesFor` re-emit every covered line verbatim from
+its `decision` beside the newly decided ones. Code review found two holes in that, one root:
+the board builds the body from the cells the SERVER returned, and at day granularity those are
+a window, so a covered line outside it was not re-posted and was un-decided anyway (data loss);
+and the re-posted line was rebuilt from the frozen snapshot WITHOUT its buy `cs_reason` and
+re-validated against live facts, so a discontinued product's covered line, or one whose open
+quantity had drifted, 422'd the whole confirmation when the planner approved an unrelated line
+(false refusal). Both are the same mistake: the client cannot know the union, and re-judging a
+decision already taken is not confirming it.
+
+So the union moved to `ProjectSupplyService.confirm` (19 August 2026). After the NAMED lines
+are validated as before, every line the ACTIVE revision covers that the body does not name is
+**carried forward verbatim**: the same frozen snapshot dict goes into the new revision
+unchanged (borrow reason, buy reason, amend reason, open quantity as frozen), its allocation
+rows are copied under the new decision id row for row (same warehouse, quantity, source, claim
+and donor snapshot, so its hold is neither lost nor doubled and no second claim is made), it is
+not re-validated and not re-locked, it counts in `lines_decided`, its Buy stays in `buy_lines`
+so purchasing's row is not cancelled as "dropped", and its borrows and pool takes count in the
+donor-shortfall arithmetic. A NAMED line replaces its frozen one (that is an amendment). There
+is no un-decide verb yet: the only way a covered line leaves the decision is a material change
+superseding the whole revision or a drift challenging it. `confirmLinesFor` now posts ONLY the
+newly decided and amended lines, `frozenLineOf` is gone, and a confirmation carrying nothing
+new is an empty body that is not sent. The order card counts a covered line as decided
+(`standingsFor` takes the covered keys beside the draft), so an order with one confirmed line
+of two reads "1 of 2 lines decided" rather than "0 of 2", and the commit sentence nets the
+carried lines off "leaves N undecided" (`carried_count`), because a line the server carries is
+not left behind. Tests: `tests/test_supply_partial_confirmation.py` (carry, verbatim
+snapshot, hold intact, amend replaces, discontinued and drifted covered lines survive),
+`fulfilmentBoard.test.ts` (the body names only the new line).
 
 **The three ids it is built from are live** (18 August 2026): `orders[].project_sales_order_id`
 (the `{pso_id}` to post to, null when nobody has adopted the order - Confirm is then disabled

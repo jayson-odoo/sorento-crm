@@ -1522,3 +1522,196 @@ def test_a_pool_reserve_and_a_borrow_at_one_location_open_one_hole_between_them(
     assert len(rows) == 1, "one pile, one hole"
     assert str(rows[0].qty) in ("10", "10.0000")
     assert "line 1, line 2" in rows[0].note
+
+
+# --------------------------------------------------- the donor's availability nets holds
+
+
+def test_a_donor_hole_counts_what_other_confirmed_borrows_already_hold_there(api):
+    """F4(a). A confirmed borrow writes a hold that the donor's `on hand - SO + SPO`
+    knows nothing about (a borrow is an allocation, not a sales-order line at the donor),
+    so a second borrower judged on the triple alone sees stock the first one has already
+    taken. Donor: 100 on hand, 60 sold on its own book, so 40 available. Order B borrows
+    30 (fine, 10 left). Order A then borrows 30: the hole is 20, not nothing."""
+    from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    donor_wh = _warehouse(db, f"ZZT-TWICE-{_uid()[:4]}")
+    _stock(db, world.product, donor_wh, on_hand=100)
+    theirs = _core_so(db, world.company_id)
+    _core_line(db, theirs, world.product, donor_wh, qty_ordered="60")
+
+    def borrower():
+        order = _project_so(db, world.project)
+        core_so = _core_so(db, world.company_id)
+        core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="30")
+        line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+        db.commit()
+        return order, line
+
+    order_b, line_b = borrower()
+    order_a, line_a = borrower()
+
+    def borrow(order, line):
+        return client.post(
+            f"{BASE}/sales-orders/{order.id}/confirm",
+            json={
+                "lines": [
+                    _line_payload(
+                        line.id,
+                        borrow=[
+                            {
+                                "source": "other_location",
+                                "warehouse_id": donor_wh.id,
+                                "qty": "30",
+                                "reason": "Their hand-over is in December.",
+                            }
+                        ],
+                    )
+                ]
+            },
+        )
+
+    first = borrow(order_b, line_b)
+    assert first.status_code == 200, first.text
+    assert first.json()["inquiry_rows_created"] == 0, "40 available, 30 taken: no hole"
+
+    second = borrow(order_a, line_a)
+    assert second.status_code == 200, second.text
+    assert second.json()["inquiry_rows_created"] == 1
+
+    rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].so_line_id == line_a.id
+    assert str(rows[0].qty) in ("20", "20.0000")
+    assert "short by 20" in rows[0].note
+
+
+def test_a_hot_selling_line_borrowing_from_its_own_location_opens_no_hole_of_its_own(api):
+    """F4(b). A dealer hot-selling product may only Reserve from the pool, so its own
+    location is a legitimate Borrow source. But that location's SO qty already contains
+    THIS line's demand, so a shortfall judged from `on hand - SO qty` counts the line
+    twice: once as the demand and once as the take. Own location holds 10 and owes this
+    line 20; the line borrows the 10 and buys 10. Purchasing is told about the 10 to buy,
+    and about no hole - the pool-reserve branch already guards its own location the same
+    way."""
+    from app.models.project_so import IV_BORROW_SHORTFALL, IV_ORDER, OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    _classification(db, world.product, world.pool_wh, abc_class="A")
+    _stock(db, world.product, world.own_wh, on_hand=10)
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    borrow=[
+                        {
+                            "source": "other_location",
+                            "warehouse_id": world.own_wh.id,
+                            "qty": "10",
+                            "reason": "It is our own stock; the pool has none.",
+                        }
+                    ],
+                    buy_qty="10",
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["inquiry_rows_created"] == 1, "the Buy, and nothing else"
+
+    rows = db.query(OrderInquiryRow).all()
+    assert [row.verb for row in rows] == [IV_ORDER]
+    assert not [row for row in rows if row.verb == IV_BORROW_SHORTFALL]
+
+
+# ---------------------------------------------- a placed shortfall is not raised again
+
+
+def test_a_shortfall_purchasing_already_placed_is_netted_off_the_next_revision(api):
+    """F5. Revision 1 opens a hole of 10 at the donor and purchasing actions it. A re-confirm
+    of the same hole raises nothing new; a re-confirm that widens the hole to 15 raises only
+    the 5 still outstanding - the same rule the ORDER rows already follow, because placed
+    supply is in the ledger and this service does not get to ask for it twice."""
+    from app.models.project_so import (
+        INQUIRY_ACTIONED,
+        IV_BORROW_SHORTFALL,
+        OrderInquiryRow,
+    )
+
+    client, world = api
+    db = world.db
+    donor_wh = _warehouse(db, f"ZZT-PLACED-{_uid()[:4]}")
+    _stock(db, world.product, donor_wh, on_hand=100)
+    theirs = _core_so(db, world.company_id)
+    _core_line(db, theirs, world.product, donor_wh, qty_ordered="90")
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="25")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    def confirm(borrow_qty, buy_qty):
+        return client.post(
+            f"{BASE}/sales-orders/{order.id}/confirm",
+            json={
+                "lines": [
+                    _line_payload(
+                        line.id,
+                        borrow=[
+                            {
+                                "source": "other_location",
+                                "warehouse_id": donor_wh.id,
+                                "qty": borrow_qty,
+                                "reason": "Their hand-over is in December.",
+                            }
+                        ],
+                        buy_qty=buy_qty,
+                    )
+                ]
+            },
+        )
+
+    def shortfall_rows():
+        return (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
+            .order_by(OrderInquiryRow.created_at.asc())
+            .all()
+        )
+
+    # Revision 1: 10 available, 20 borrowed, hole of 10. Purchasing places it.
+    assert confirm("20", "5").status_code == 200
+    rows = shortfall_rows()
+    assert len(rows) == 1 and str(rows[0].qty) in ("10", "10.0000")
+    rows[0].state = INQUIRY_ACTIONED
+    db.commit()
+
+    # Revision 2, the same hole: nothing outstanding, so nothing new.
+    assert confirm("20", "5").status_code == 200
+    db.expire_all()
+    rows = shortfall_rows()
+    assert [row.state for row in rows] == [INQUIRY_ACTIONED]
+
+    # Revision 3 widens the hole to 15: only the 5 not yet placed is raised.
+    assert confirm("25", "0").status_code == 200
+    db.expire_all()
+    rows = shortfall_rows()
+    assert [row.state for row in rows] == [INQUIRY_ACTIONED, "raised"]
+    assert str(rows[1].qty) in ("5", "5.0000")

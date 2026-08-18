@@ -139,16 +139,27 @@ def _leading_factor(mine: Dict[str, Any], theirs: Dict[str, Any]) -> str:
     one. Absent on either side is skipped rather than read as zero, the same rule `rank_score`
     itself applies.
 
+    A factor THEY carry and I do not is a difference too: their score has a term mine has
+    nothing to answer, so it counts as `weight * their value` and is named for that factor
+    (they have payment terms recorded, I have none). Without it every shared difference was
+    zero and the answer fell through to "a lower sales order number", which is not why they
+    are ahead.
+
     Equal scores mean the POLICY separated nothing and the queue was decided by the tie-break
-    instead. Saying "required date" there would be a lie about a date the two lines share, so it
-    is named for what it was: an earlier line of the same order, or a lower sales-order number.
+    instead, in `_pile_book`'s own order: the required date first (`earlier_date` - it IS a
+    date difference, but a tie-break rather than a factor, so it is named apart from
+    `need_by_date`), then an earlier line of the same order, then a lower sales-order number.
     """
     same_order = (theirs.get("so_number") or "") == (mine.get("so_number") or "")
-    tie = "line_order" if same_order else "tie_break"
     if round(float(theirs.get("rank_score") or 0.0), 9) == round(
         float(mine.get("rank_score") or 0.0), 9
     ):
-        return tie
+        their_date = theirs.get("required_date")
+        my_date = mine.get("required_date")
+        if their_date is not None and (my_date is None or their_date < my_date):
+            return "earlier_date"
+        return "line_order" if same_order else "tie_break"
+    tie = "line_order" if same_order else "tie_break"
     ours = {
         factor.key: factor
         for factor in (mine.get("factors") or [])
@@ -160,9 +171,8 @@ def _leading_factor(mine: Dict[str, Any], theirs: Dict[str, Any]) -> str:
         if not factor.present or factor.value is None or factor.weight <= 0:
             continue
         counterpart = ours.get(factor.key)
-        if counterpart is None:
-            continue
-        diff = float(factor.weight) * (float(factor.value) - float(counterpart.value))
+        my_value = 0.0 if counterpart is None else float(counterpart.value)
+        diff = float(factor.weight) * (float(factor.value) - my_value)
         if diff > best_diff:
             best_key, best_diff = factor.key, diff
     return best_key or tie
@@ -356,6 +366,56 @@ class _BorrowLedger:
     ) -> None:
         key = (product_id or "", warehouse_id, donor_id)
         self._held[key] = max(self._held.get(key, _ZERO) - qty, _ZERO)
+
+
+@dataclass
+class _FrozenComponent:
+    """One component read back off a frozen snapshot, in the shape the payload's own
+    components have (`.warehouse_id`, `.qty`, and for a borrow `.source`), so the shortfall
+    arithmetic can walk a carried line and a named line with one loop."""
+
+    warehouse_id: Optional[str]
+    qty: Decimal
+    source: Optional[str] = None
+    donor_project_id: Optional[str] = None
+
+
+@dataclass
+class _CarriedLine:
+    """A line the ACTIVE revision covers that this confirmation did not name.
+
+    Carried into the new revision verbatim: `snapshot` is the previous revision's dict,
+    unchanged, and its holds are copied row for row. It is judged against nothing, because
+    it was judged when it was decided and nobody has asked to change it.
+    """
+
+    line: ProjectSalesOrderLine
+    snapshot: Dict[str, Any]
+    fact: _LineFacts
+
+    def _components(self, kind: str) -> List[_FrozenComponent]:
+        return [
+            _FrozenComponent(
+                warehouse_id=component.get("source_warehouse_id"),
+                qty=_dec(component.get("qty")),
+                source=component.get("source"),
+                donor_project_id=component.get("donor_project_id"),
+            )
+            for component in (self.snapshot.get("components") or [])
+            if component.get("kind") == kind
+        ]
+
+    @property
+    def reserve(self) -> List[_FrozenComponent]:
+        return self._components(RESERVE)
+
+    @property
+    def borrow(self) -> List[_FrozenComponent]:
+        return self._components("borrow")
+
+    @property
+    def buy_qty(self) -> Decimal:
+        return _dec(self.snapshot.get("buy_qty"))
 
 
 class ProjectSupplyService:
@@ -627,6 +687,9 @@ class ProjectSupplyService:
                     "demand_class": row.get("demand_class"),
                     "so_number": row.get("so_number"),
                     "line_no": row.get("line_no"),
+                    # The core line, when the caller named one, so a member fulfilled from
+                    # the pool itself is not counted ahead of itself.
+                    "line_id": row.get("line_id"),
                 }
                 for row in rows
                 if row.get("product_id")
@@ -960,9 +1023,21 @@ class ProjectSupplyService:
         by PLAN-fulfilment-planning-from-autocount-so.md 13.4).
 
         The payload names the lines being confirmed. They commit together or not at all;
-        the lines it does not name stay undecided and keep flowing to reorder planning.
-        A payload naming NO line is refused, because superseding the revision that is
-        holding stock and putting nothing in its place is not a decision anybody made.
+        a line it does not name and that NO active revision covers stays undecided and
+        keeps flowing to reorder planning. A payload naming NO line is refused, because
+        superseding the revision that is holding stock and putting nothing in its place
+        is not a decision anybody made.
+
+        **The union is the server's.** A line the ACTIVE revision covers that the payload
+        does not name is CARRIED FORWARD into the new revision verbatim: the same frozen
+        snapshot dict, the same holds copied row for row, no re-validation against live
+        facts. The board posts only what the planner just decided (at day granularity it
+        cannot even see every covered line), and re-posting a covered line rebuilt from
+        its snapshot re-judged it against facts that had moved since - a discontinued
+        product's covered line 422'd the confirmation of an unrelated one. A named line
+        REPLACES its frozen one (that is an amendment). There is no un-decide verb yet:
+        the only way a covered line leaves the decision is a material change superseding
+        the whole revision (`supersede_for_material_change`) or a drift challenging it.
 
         The caller owns the commit. Everything here runs inside it, including the Order
         Inquiry refresh, so purchasing can never be told to buy something that was not
@@ -1054,7 +1129,38 @@ class ProjectSupplyService:
                 failing_lines=failing,
             )
 
-        return self._write_decision(order, checked, actor_user_id=actor_user_id)
+        carried = self._carried_lines(
+            self.active_decision(str(order.id)), named=seen, by_id=by_id, facts=facts
+        )
+        return self._write_decision(
+            order, checked, carried=carried, actor_user_id=actor_user_id
+        )
+
+    def _carried_lines(
+        self,
+        previous: Optional[SOSupplyDecision],
+        *,
+        named: set,
+        by_id: Dict[str, ProjectSalesOrderLine],
+        facts: Dict[str, _LineFacts],
+    ) -> List[_CarriedLine]:
+        """The active revision's lines this confirmation did not name, verbatim.
+
+        A snapshot for a line no longer on the order is not carried: there is no row to
+        hold stock for, and the read-side drift check names exactly that case as a
+        challenge. Everything else comes across untouched.
+        """
+        if previous is None:
+            return []
+        out: List[_CarriedLine] = []
+        for snapshot in previous.line_snapshots or []:
+            line_id = str(snapshot.get("project_line_id") or "")
+            if not line_id or line_id in named or line_id not in by_id:
+                continue
+            out.append(
+                _CarriedLine(line=by_id[line_id], snapshot=snapshot, fact=facts[line_id])
+            )
+        return out
 
     def _lock_stock(
         self,
@@ -1345,6 +1451,7 @@ class ProjectSupplyService:
         order: ProjectSalesOrder,
         checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]],
         *,
+        carried: Sequence[_CarriedLine] = (),
         actor_user_id: str,
     ) -> Dict[str, Any]:
         previous = self.active_decision(str(order.id))
@@ -1359,9 +1466,11 @@ class ProjectSupplyService:
         latest = self.latest_decision(str(order.id))
         revision_no = (latest.revision_no if latest else 0) + 1
         now = datetime.utcnow()
+        # The named lines as decided now, then the carried ones exactly as they were
+        # frozen (`confirm`): the same dicts, not a re-serialisation of them.
         snapshots = [
             self._snapshot(line, entry, fact) for line, entry, fact in checked
-        ]
+        ] + [entry.snapshot for entry in carried]
 
         decision = SOSupplyDecision(
             company_id=order.company_id,
@@ -1407,6 +1516,21 @@ class ProjectSupplyService:
                     "stock_location": line.stock_location,
                 }
             )
+        for entry in carried:
+            # Its holds move to this revision row for row, and its Buy stays on
+            # purchasing's list: `refresh_for_decision` treats a line absent from
+            # `buy_lines` as dropped and cancels its raised rows.
+            self._carry_allocations(decision, previous, entry.line)
+            buy_lines.append(
+                {
+                    "line": entry.line,
+                    "line_no": entry.line.line_no,
+                    "item_code": entry.fact.item_code,
+                    "buy_qty": entry.buy_qty,
+                    "required_date": entry.fact.required_date or entry.line.delivery_date,
+                    "stock_location": entry.line.stock_location,
+                }
+            )
         self.db.flush()
 
         from app.services.project_order_inquiry_service import (
@@ -1418,9 +1542,12 @@ class ProjectSupplyService:
             decision,
             buy_lines,
             actor_user_id=actor_user_id,
-            borrow_shortfalls=self._borrow_shortfalls(order, checked),
+            borrow_shortfalls=self._borrow_shortfalls(
+                order,
+                list(checked) + [(entry.line, entry, entry.fact) for entry in carried],
+            ),
         )
-        decided = len(checked)
+        decided = len(checked) + len(carried)
         return {
             "revision_no": decision.revision_no,
             "confirmed_at": decision.confirmed_at,
@@ -1460,7 +1587,21 @@ class ProjectSupplyService:
         the pool's `on hand - SO + SPO` below zero opens a hole there, and purchasing is told
         about the hole at the POOL's location. A Reserve at the line's OWN location is never
         one: that location's demand IS this line, already inside its `SO qty`, and taking the
-        reserve out again would count the same quantity twice.
+        reserve out again would count the same quantity twice. **A Borrow from the line's
+        own location is never one either, for the same reason** - a dealer hot-selling
+        product may only Reserve from the pool, so its own location is a legitimate Borrow
+        source, and its demand is still inside that location's SO qty.
+
+        The donor's availability is the AutoCount triple LESS what other confirmed
+        decisions already hold there from elsewhere. A borrow, or a pool take, writes a
+        hold and no sales-order line at the donor, so `on hand - SO + SPO` cannot see it,
+        and a second borrower judged on the triple alone would be offered stock the first
+        one has already taken. A hold whose line's own location IS the donor is left out:
+        that demand is already inside the donor's SO qty.
+
+        `checked` carries the named lines AND the carried ones (`_CarriedLine`), because
+        a carried borrow still holds its donor's stock and the hole is the order's, not the
+        revision's.
         """
         piles: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
@@ -1482,15 +1623,17 @@ class ProjectSupplyService:
         for line, entry, fact in checked:
             if not fact.product_id:
                 continue
+            pool_id = str(fact.pool.id) if fact.pool else None
+            own_id = str(fact.warehouse.id) if fact.warehouse else None
             for item in entry.borrow or []:
                 qty = _dec(item.qty)
                 if qty <= _ZERO or not item.warehouse_id:
                     continue
+                if str(item.warehouse_id) == own_id:
+                    continue
                 pile = pile_for(line, fact, str(item.warehouse_id))
                 pile["borrowed"] += qty
                 pile["lines"].append(line.line_no)
-            pool_id = str(fact.pool.id) if fact.pool else None
-            own_id = str(fact.warehouse.id) if fact.warehouse else None
             if not pool_id or pool_id == own_id:
                 continue
             for item in entry.reserve or []:
@@ -1504,11 +1647,18 @@ class ProjectSupplyService:
             return []
 
         availability = self.donor_availability(piles.keys())
+        held_from_elsewhere = self._holds_from_elsewhere(
+            piles.keys(), exclude_order_id=str(order.id)
+        )
         out: List[Dict[str, Any]] = []
         reference = order.autocount_doc_no or order.provisional_ref or ""
         for key, pile in piles.items():
             taken = pile["borrowed"] + pile["reserved"]
-            after = availability.get(key, _ZERO) - taken
+            after = (
+                availability.get(key, _ZERO)
+                - held_from_elsewhere.get(key, _ZERO)
+                - taken
+            )
             if after >= _ZERO:
                 continue
             warehouse = self._warehouse_row(key[1])
@@ -1782,6 +1932,50 @@ class ProjectSupplyService:
                 )
             )
 
+    def _carry_allocations(
+        self,
+        decision: SOSupplyDecision,
+        previous: Optional[SOSupplyDecision],
+        line: ProjectSalesOrderLine,
+    ) -> None:
+        """A carried line's components, copied from the superseded revision row for row.
+
+        Copied rather than re-derived: a hold is an allocation row under an ACTIVE decision
+        (`_hold_rows`), and the superseded revision's rows stop holding the moment it is
+        superseded, so the new revision needs its own. The copy keeps the same warehouse,
+        quantity, source, claim and donor snapshot - the claim was accepted once and is not
+        made again, and the donor's position is the one the decision was taken against, not
+        today's. `confirmed_by` / `confirmed_at` stay the original's, because that is when
+        and by whom the line was decided; this revision only carries it.
+        """
+        if previous is None:
+            return
+        rows = (
+            self.db.query(SOLineAllocation)
+            .filter(
+                SOLineAllocation.decision_id == previous.id,
+                SOLineAllocation.so_line_id == line.id,
+            )
+            .all()
+        )
+        for row in rows:
+            self.db.add(
+                SOLineAllocation(
+                    company_id=row.company_id,
+                    so_line_id=row.so_line_id,
+                    source_type=row.source_type,
+                    warehouse_id=row.warehouse_id,
+                    source_project_id=row.source_project_id,
+                    qty=row.qty,
+                    claim_id=row.claim_id,
+                    decision_id=decision.id,
+                    reason=row.reason,
+                    donor_impact_snapshot=row.donor_impact_snapshot,
+                    confirmed_by=row.confirmed_by,
+                    confirmed_at=row.confirmed_at,
+                )
+            )
+
     def _project_id_of(self, line: ProjectSalesOrderLine) -> Optional[str]:
         """The project the line's order belongs to, or None for an adopted order.
 
@@ -1919,6 +2113,7 @@ class ProjectSupplyService:
                     "demand_class": None,
                     "so_number": order.provisional_ref,
                     "line_no": line.line_no,
+                    "line_id": str(line.core_sales_order_line_id),
                 }
                 for line in lines
                 if line.core_sales_order_line_id
@@ -1935,7 +2130,15 @@ class ProjectSupplyService:
         discontinued = self._discontinued(product_ids)
         spo = self._spo_rows(product_ids, warehouse_ids)
         attribution = self._attribution(
-            product_ids, warehouse_ids, warehouses, spo, exclude_order_id=str(order.id)
+            product_ids,
+            warehouse_ids,
+            warehouses,
+            spo,
+            exclude_order_id=str(order.id),
+            # The sheet prints the share and never the names behind it, so it asks for
+            # nobody's queue: describing every line of every pile is quadratic work on a
+            # crowded location, paid on every sheet read and every confirm, for nothing.
+            detail_for=set(),
         )
 
         facts: Dict[str, _LineFacts] = {}
@@ -2147,6 +2350,29 @@ class ProjectSupplyService:
         Ported from `project_allocation_service._holds` and narrowed by decision state,
         because a superseded revision must stop holding stock the moment it is superseded.
         """
+        query = self._hold_query(product_ids, exclude_order_id=exclude_order_id)
+        # An ADOPTED order holds stock with no project behind it (section 4), and the
+        # holding project is a dict KEY here - so it is the empty string rather than the
+        # string "None", which is a value that looks like an id and matches nothing. The
+        # hold still nets out of free stock either way; what it cannot be is a cross-project
+        # Borrow donor, because there is no project to borrow FROM.
+        return [
+            ((str(product_id), str(warehouse_id)), str(project_id) if project_id else "",
+             _dec(qty))
+            for product_id, warehouse_id, project_id, qty in query.all()
+        ]
+
+    def _hold_query(
+        self, product_ids: Sequence[str], *, exclude_order_id: Optional[str]
+    ):
+        """The one predicate for "this allocation row is holding stock right now".
+
+        A hold counts when its allocation belongs to no decision (every row written before
+        Stage 1C) or to an ACTIVE one; the order being composed is excluded so its own
+        previous revision does not compete with the one replacing it. Shared by the
+        free-stock arithmetic and the donor-shortfall netting so the two cannot come to
+        disagree about what is held.
+        """
         query = (
             self.db.query(
                 ProjectSalesOrderLine.product_id,
@@ -2180,16 +2406,50 @@ class ProjectSupplyService:
             query = query.filter(
                 ProjectSalesOrder.id != exclude_order_id
             )
-        # An ADOPTED order holds stock with no project behind it (section 4), and the
-        # holding project is a dict KEY here - so it is the empty string rather than the
-        # string "None", which is a value that looks like an id and matches nothing. The
-        # hold still nets out of free stock either way; what it cannot be is a cross-project
-        # Borrow donor, because there is no project to borrow FROM.
-        return [
-            ((str(product_id), str(warehouse_id)), str(project_id) if project_id else "",
-             _dec(qty))
-            for product_id, warehouse_id, project_id, qty in query.all()
-        ]
+        return query
+
+    def _holds_from_elsewhere(
+        self, pairs: Iterable[Tuple[str, str]], *, exclude_order_id: Optional[str]
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """What other confirmed decisions hold at each (product, warehouse) FROM ELSEWHERE.
+
+        The holds `_pile_read`'s `SO qty` cannot see: a borrow or a pool take by a line
+        whose OWN location (its core line's warehouse) is somewhere else. A hold by a line
+        whose own location is this very pile is a Reserve at home, and that line's demand
+        is already inside the pile's SO qty - counting the hold too would count it twice.
+        """
+        wanted = {(str(product_id), str(warehouse_id)) for product_id, warehouse_id in pairs}
+        if not wanted:
+            return {}
+        rows = (
+            self._hold_query(
+                [product_id for product_id, _w in wanted],
+                exclude_order_id=exclude_order_id,
+            )
+            .outerjoin(
+                SalesOrderLine,
+                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+            )
+            .filter(
+                SOLineAllocation.warehouse_id.in_([w for _p, w in wanted]),
+                or_(
+                    SalesOrderLine.warehouse_id.is_(None),
+                    SalesOrderLine.warehouse_id != SOLineAllocation.warehouse_id,
+                ),
+            )
+            .with_entities(
+                ProjectSalesOrderLine.product_id,
+                SOLineAllocation.warehouse_id,
+                func.coalesce(func.sum(SOLineAllocation.qty), 0),
+            )
+            .group_by(ProjectSalesOrderLine.product_id, SOLineAllocation.warehouse_id)
+            .all()
+        )
+        return {
+            (str(product_id), str(warehouse_id)): _dec(qty)
+            for product_id, warehouse_id, qty in rows
+            if (str(product_id), str(warehouse_id)) in wanted
+        }
 
     def _holds_by_project(
         self, product_ids: Iterable[str], *, exclude_order_id: Optional[str]
@@ -2541,9 +2801,15 @@ class ProjectSupplyService:
 
         `members` are the lines asking, each stating `key`, `product_id`, `pool_id`,
         `required_date`, `order_date`, `payment_terms_days`, `demand_class`, `so_number` and
-        `line_no`. Returns, per member key, the quantity ranked ahead (`qty`) and how many of
-        the pool's lines that is (`lines`) - the count travels with the sum because the trail
-        prints both ("BRW's own orders ranked ahead of this line claim 1").
+        `line_no`, and - when the member IS a core line - its `line_id`. Returns, per member
+        key, the quantity ranked ahead (`qty`) and how many of the pool's lines that is
+        (`lines`) - the count travels with the sum because the trail prints both ("BRW's own
+        orders ranked ahead of this line claim 1").
+
+        A member fulfilled from the pool itself (a bare site code is its own pool, migration
+        311) is IN the pool's book, and must not be counted ahead of itself: it is one line
+        with two keys here, and reading it as a rival took its own quantity out of what it
+        could then draw. `line_id` is what excludes it.
         """
         book = self._pile_book(product_ids, pool_ids, exclude_order_id=exclude_order_id)
         if not members:
@@ -2610,7 +2876,12 @@ class ProjectSupplyService:
                         str(member["key"]),
                     )
                 )
-                ahead = [row for row in ordered_pool if sort_key(row[:4]) < mine]
+                own_line_id = str(member["line_id"]) if member.get("line_id") else None
+                ahead = [
+                    row
+                    for row in ordered_pool
+                    if row[3] != own_line_id and sort_key(row[:4]) < mine
+                ]
                 out[str(member["key"])] = {
                     "qty": sum((row[4] for row in ahead), _ZERO),
                     "lines": len(ahead),

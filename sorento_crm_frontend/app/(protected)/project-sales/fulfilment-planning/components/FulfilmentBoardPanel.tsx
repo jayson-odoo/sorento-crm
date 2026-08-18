@@ -217,7 +217,11 @@ export function FulfilmentBoardPanel({
    *
    * The board writes nothing of its own (13.4): this is the SAME endpoint the sheet posts to,
    * so there is one write path and one set of invariants. Partial by construction - a line the
-   * body does not name is left undecided and keeps flowing to reorder planning.
+   * body does not name and no active revision covers is left undecided and keeps flowing to
+   * reorder planning. The body names ONLY what was decided or amended on this screen; a line
+   * the active revision already covers is carried into the new revision by the server, so the
+   * board never re-posts it (a day window could not even see all of them, and a re-post was
+   * re-judged against live facts).
    *
    * On success the confirmed keys leave the draft, because they are in the database now and a
    * draft that still claimed them would offer to confirm them twice. On a REFUSAL the draft is

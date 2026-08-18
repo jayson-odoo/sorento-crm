@@ -23,7 +23,6 @@ import type {
   BoardContribution,
   BoardDecision,
   BoardDraft,
-  BoardLineDecision,
   BoardOrderStanding,
   BoardRowAxis,
   ConfirmLine,
@@ -73,12 +72,14 @@ export function factorLabel(key: string): string {
 /**
  * Why one line stands in front of another, named.
  *
- * The policy's factors, plus the two the TIE-BREAK produces when the policy separated nothing:
- * an earlier line of the same order, or a lower sales-order number. Those two are not factors
- * and must not read as if they were - "Required date" beside two lines that share a required
- * date is the kind of confident wrong answer that stops a screen being believed.
+ * The policy's factors, plus the three the TIE-BREAK produces when the policy separated
+ * nothing, in the queue's own order: an earlier required date, an earlier line of the same
+ * order, or a lower sales-order number. Those three are not factors and must not read as if
+ * they were - the date tie is named apart from the "Required date" factor, because a factor
+ * label there would claim a score difference the two lines do not have.
  */
 export function aheadFactorLabel(key: string): string {
+  if (key === 'earlier_date') return 'Earlier required date (tie)';
   if (key === 'line_order') return 'same order';
   if (key === 'tie_break') return 'tie-break';
   return factorLabel(key);
@@ -126,6 +127,7 @@ export function standingsFor(
 ): BoardOrderStanding[] {
   const decided = new Map<string, number>();
   const committing = new Map<string, number>();
+  const carried = new Map<string, number>();
   const counted = new Set<string>();
   const count = (key: string, commits: boolean) => {
     const salesOrderId = owners.get(key);
@@ -140,12 +142,22 @@ export function standingsFor(
     // deliberately omits it so it stays undecided and keeps flowing to reorder planning.
     count(key, decision.verdict !== 'rejected');
   }
-  for (const key of covered) count(key, true);
+  for (const key of covered) {
+    // A covered line the planner has NOT amended is carried by the server on the next confirm
+    // (the body never names it - `confirmLinesFor`), so it is decided after the press without
+    // being posted by it.
+    const salesOrderId = owners.get(key);
+    if (salesOrderId && draft[key]?.verdict !== 'amended') {
+      carried.set(salesOrderId, (carried.get(salesOrderId) ?? 0) + 1);
+    }
+    count(key, true);
+  }
   return [...orders]
     .map((order) => ({
       ...order,
       decided_count: decided.get(order.sales_order_id) ?? 0,
       committing_count: committing.get(order.sales_order_id) ?? 0,
+      carried_count: carried.get(order.sales_order_id) ?? 0,
     }))
     .sort((left, right) => left.so_number.localeCompare(right.so_number));
 }
@@ -174,9 +186,13 @@ export function commitPreviewFor(
   // What would be POSTED, which is not every verdict: a rejection decides a line and commits
   // nothing for it. A button reading "Confirm 2 lines" that posts one is a button that lies.
   const committing = postable ?? standing.committing_count ?? standing.decided_count;
+  // A covered line the body does not name is CARRIED by the server into the new revision, so
+  // it is decided after the press without being posted by it - and not "left undecided". Only
+  // netted beside a BODY length: `committing_count` already counts the covered lines itself.
+  const carried = postable === undefined ? 0 : (standing.carried_count ?? 0);
   return {
     committing,
-    leaving_undecided: standing.line_count - committing,
+    leaving_undecided: Math.max(standing.line_count - committing - carried, 0),
     blocked: standing.unplannable_count,
   };
 }
@@ -202,15 +218,18 @@ export function commitPreviewFor(
  * An AMENDMENT moves the difference into Buy. The quantity a planner takes off a Reserve does
  * not evaporate: it is still owed, and somebody still has to buy it.
  *
- * THE BODY IS THE UNION (13.4): every line the order's ACTIVE decision already covers is
- * re-emitted from what was frozen for it, beside the lines being decided now. A confirmation
- * SUPERSEDES the active revision and writes only the lines it was sent, so a body naming just
- * the new ones silently un-decides everything confirmed before it - which is precisely what the
- * board did, while the per-order sheet (which submits every line, seeded from the frozen
- * decision) got the union for free.
+ * THE BODY NAMES ONLY WHAT WAS DECIDED OR AMENDED NOW; the union is the SERVER's (13.4). A
+ * confirmation supersedes the active revision, and every line that revision covers which the
+ * body does not name is carried into the new one verbatim from its frozen snapshot - same
+ * holds, same reasons, no re-validation. The board briefly built that union itself, re-posting
+ * every covered line, and that had two holes: at day granularity the cells are a window, so a
+ * covered line outside it was not re-posted and was silently un-decided; and the re-posted line
+ * was rebuilt without its buy reason and re-judged against live facts, so a discontinued
+ * product's covered line 422'd the confirmation of an unrelated one. So a covered line the
+ * planner has not touched is NEVER posted from here.
  *
- * A confirmation carrying nothing NEW is not sent at all: re-posting the covered lines on their
- * own would supersede a revision with a copy of itself, which is a decision nobody took.
+ * A confirmation carrying nothing new is not sent at all (an empty body), because there is
+ * nothing to decide: the covered lines are already in the database.
  */
 export function confirmLinesFor(
   contributions: BoardContribution[],
@@ -218,21 +237,14 @@ export function confirmLinesFor(
   draft: BoardDraft,
 ): ConfirmLine[] {
   const lines: ConfirmLine[] = [];
-  let decidedNow = 0;
   for (const contribution of contributions) {
     if (contribution.sales_order_id !== salesOrderId) continue;
     const decision = draft[contribution.key];
-    if (decision && decision.verdict !== 'rejected') decidedNow += 1;
 
-    // ALREADY CONFIRMED, AND NOT TOUCHED SINCE: posted back exactly as it was frozen. Not
-    // re-derived from the proposal, because there is no proposal - the board proposes nothing
-    // for a covered line, and inventing one would overwrite a person's composition with the
-    // engine's opinion of it.
-    if (contribution.covered && contribution.decision && !isAmendment(decision)) {
-      if (!contribution.project_line_id) continue;
-      lines.push(frozenLineOf(contribution.project_line_id, contribution.decision));
-      continue;
-    }
+    // ALREADY CONFIRMED, AND NOT TOUCHED SINCE: the server carries it. Nothing to post, and
+    // nothing to derive - the board proposes nothing for a covered line, and inventing one
+    // would overwrite a person's composition with the engine's opinion of it.
+    if (contribution.covered && !isAmendment(decision)) continue;
 
     if (!decision || decision.verdict === 'rejected') continue;
     if (!contribution.project_line_id) continue;
@@ -309,38 +321,12 @@ export function confirmLinesFor(
       amend_reason: decision.verdict === 'amended' ? decision.reason : undefined,
     });
   }
-  // Nothing new was decided, so there is nothing to confirm. The covered lines above are
-  // already in the database.
-  return decidedNow > 0 ? lines : [];
+  return lines;
 }
 
 /** An amendment composed in the editor, which replaces whatever was there before. */
 function isAmendment(decision: BoardDecision | undefined): boolean {
   return decision?.verdict === 'amended';
-}
-
-/** One already-confirmed line, posted back as it was frozen (see `confirmLinesFor`). */
-function frozenLineOf(projectLineId: string, decision: BoardLineDecision): ConfirmLine {
-  return {
-    project_line_id: projectLineId,
-    timely_spo_qty: decision.timely_spo_qty,
-    reserve: decision.reserve
-      .filter((row) => toMinor(row.qty) > 0)
-      .map((row) => ({ warehouse_id: row.warehouse_id, qty: row.qty })),
-    borrow: decision.borrow
-      .filter((row) => toMinor(row.qty) > 0)
-      .map((row) => ({
-        source: row.source,
-        warehouse_id: row.warehouse_id ?? '',
-        donor_project_id: row.donor_project_id ?? null,
-        qty: row.qty,
-        // The person's own reason, kept: the confirmation refuses a Borrow without one, so a
-        // re-post that dropped it would fail the whole body for a line nobody had touched.
-        reason: row.reason,
-      })),
-    buy_qty: decision.buy_qty,
-    amend_reason: decision.amend_reason ?? undefined,
-  };
 }
 
 /** The server's figure when it sent one, else the fallback. Absent is not zero. */
@@ -467,34 +453,110 @@ export function plannedLineCount(
  * It looked at the Reserve alone while the Reserve was all a board amendment could change.
  * Now that the editor composes all four kinds, a planner could take 40 out of the Reserve and
  * put 40 into a Borrow - displacing the rule completely - and be asked for nothing.
+ *
+ * The BASELINE is what the composition is compared against, and it differs by line. On an
+ * undecided line it is the engine's proposal, on which a Borrow of any size is an override,
+ * because the engine proposes none. On a line an active decision COVERS it is the frozen
+ * composition itself: a Borrow decided on the sheet is already the decision, and demanding a
+ * reason to re-save it unchanged is the rubber stamp again from the other side.
  */
 export function amendNeedsReason(
   contribution: BoardContribution,
-  composition: {
-    timely_spo_qty: string;
-    reserve: { qty: string }[];
-    borrow: { qty: string }[];
-    buy_qty: string;
-  },
+  composition: AmendComposition,
 ): boolean {
-  const proposedOf = (
-    stated: string | null | undefined,
-    kind: string,
-  ): number => (stated === null || stated === undefined
-    ? sumSources(contribution, kind)
-    : toMinor(stated));
-  const total = (rows: { qty: string }[]) =>
-    rows.reduce((sum, row) => sum + toMinor(row.qty), 0);
+  const frozen = contribution.covered ? contribution.decision : null;
+  const baseline: AmendComposition = frozen
+    ? {
+        timely_spo_qty: frozen.timely_spo_qty,
+        reserve: frozen.reserve.map((row) => ({ qty: row.qty, warehouse_id: row.warehouse_id })),
+        borrow: frozen.borrow.map((row) => ({
+          qty: row.qty,
+          warehouse_id: row.warehouse_id ?? null,
+          donor_project_id: row.donor_project_id ?? null,
+        })),
+        buy_qty: frozen.buy_qty,
+      }
+    : proposalBaseline(contribution);
 
   return (
-    total(composition.reserve) !==
-      proposedOf(contribution.qty_proposed_reserve, 'reserve') ||
-    toMinor(composition.timely_spo_qty) !==
-      proposedOf(contribution.qty_proposed_incoming, 'timely_spo') ||
-    toMinor(composition.buy_qty) !== proposedOf(contribution.qty_proposed_buy, 'buy') ||
-    // The engine proposes no Borrow on either surface, so ANY borrow is an override.
-    total(composition.borrow) !== 0
+    !sameRows(baseline.reserve, composition.reserve, (row) => row.warehouse_id ?? '') ||
+    toMinor(composition.timely_spo_qty) !== toMinor(baseline.timely_spo_qty) ||
+    toMinor(composition.buy_qty) !== toMinor(baseline.buy_qty) ||
+    !sameRows(
+      baseline.borrow,
+      composition.borrow,
+      (row) => `${row.warehouse_id ?? ''}|${row.donor_project_id ?? ''}`,
+    )
   );
+}
+
+/** The four kinds as the editor holds them; the ids are what makes "the same" mean something. */
+interface AmendComposition {
+  timely_spo_qty: string;
+  reserve: { qty: string; warehouse_id?: string | null }[];
+  borrow: { qty: string; warehouse_id?: string | null; donor_project_id?: string | null }[];
+  buy_qty: string;
+}
+
+/**
+ * The engine's proposal as a composition: the Reserve per warehouse off the sources (the
+ * server's total when it addressed none of them), the incoming cover, the Buy, and no Borrow.
+ */
+function proposalBaseline(contribution: BoardContribution): AmendComposition {
+  const reserve = contribution.sources
+    .filter((source) => source.kind === 'reserve')
+    .map((source) => ({ qty: source.qty, warehouse_id: source.warehouse_id ?? null }));
+  const statedReserve = numberOr(contribution.qty_proposed_reserve, () =>
+    sumSources(contribution, 'reserve'),
+  );
+  return {
+    timely_spo_qty: fromMinor(
+      numberOr(contribution.qty_proposed_incoming, () => sumSources(contribution, 'timely_spo')),
+    ),
+    reserve:
+      reserve.length > 0 || statedReserve === 0
+        ? reserve
+        : [{ qty: fromMinor(statedReserve), warehouse_id: null }],
+    borrow: [],
+    buy_qty: fromMinor(numberOr(contribution.qty_proposed_buy, () => sumSources(contribution, 'buy'))),
+  };
+}
+
+/**
+ * Whether two lists of quantities are the same composition. Compared per key when every row on
+ * both sides carries one, so 40 at the pool is not "the same" as 40 at the own location; by
+ * total otherwise, which is all an unaddressed row can be compared on. A zero row is nobody's.
+ */
+function sameRows<T extends { qty: string }>(
+  left: T[],
+  right: T[],
+  keyOf: (row: T) => string,
+): boolean {
+  const kept = (rows: T[]) => rows.filter((row) => toMinor(row.qty) !== 0);
+  const a = kept(left);
+  const b = kept(right);
+  const addressed = [...a, ...b].every((row) => keyOf(row) !== '' && keyOf(row) !== '|');
+  if (!addressed) {
+    return sumMinor(a) === sumMinor(b);
+  }
+  const byKey = (rows: T[]) => {
+    const totals = new Map<string, number>();
+    for (const row of rows) {
+      totals.set(keyOf(row), (totals.get(keyOf(row)) ?? 0) + toMinor(row.qty));
+    }
+    return totals;
+  };
+  const mine = byKey(a);
+  const theirs = byKey(b);
+  if (mine.size !== theirs.size) return false;
+  for (const [key, qty] of mine) {
+    if (theirs.get(key) !== qty) return false;
+  }
+  return true;
+}
+
+function sumMinor(rows: { qty: string }[]): number {
+  return rows.reduce((total, row) => total + toMinor(row.qty), 0);
 }
 
 

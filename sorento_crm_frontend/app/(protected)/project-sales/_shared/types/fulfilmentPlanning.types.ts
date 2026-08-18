@@ -651,9 +651,11 @@ export interface BoardAheadLine {
   required_date?: string | null;
   rank_score: number;
   /**
-   * The policy factor with the largest weighted difference in that line's favour. `line_order`
-   * or `tie_break` when the two scores are EQUAL: the policy separated nothing and the queue
-   * was decided by the tie-break, so naming a factor would claim a difference that is not there.
+   * The policy factor with the largest weighted difference in that line's favour (a factor
+   * that line carries and this one does not counts in full). `earlier_date`, `line_order` or
+   * `tie_break` when the two scores are EQUAL: the policy separated nothing and the queue was
+   * decided by the tie-break, in that order, so naming a factor would claim a difference that
+   * is not there.
    */
   leading_factor?: string | null;
   /** An earlier line of the SAME sales order, which is not a rival at all. */
@@ -675,10 +677,10 @@ export interface BoardDecisionBorrow {
 /**
  * What the ACTIVE revision froze for one line (13.4).
  *
- * The WHOLE composition rather than a summary of it, because the board POSTS it back: a second
- * confirmation on the same order covers the UNION of what was decided before and what is being
- * decided now, so every already-decided line has to be re-emitted from this. A board that sent
- * only its newly decided lines silently un-decided the earlier ones.
+ * The WHOLE composition rather than a summary of it, because the Amend editor is seeded from it
+ * (a covered line has no proposal to seed from) and an amendment posts the composition back in
+ * these words. An UNTOUCHED covered line is never posted from the board: the server carries every
+ * covered line the body does not name into the next revision itself, verbatim.
  */
 export interface BoardLineDecision {
   revision_no: number;
@@ -1082,6 +1084,12 @@ export interface BoardOrderStanding {
    * would promise to commit something the body deliberately omits.
    */
   committing_count?: number;
+  /**
+   * Lines an ACTIVE decision covers that the planner has not amended. The body never names
+   * them; the server carries them into the next revision verbatim, so a Confirm leaves them
+   * decided without posting them.
+   */
+  carried_count?: number;
   /** Lines that can never be decided here because their sales order states no location. */
   unplannable_count: number;
 }
@@ -1282,7 +1290,11 @@ export interface PileQueueLine {
   rank_score: number;
   /** The same per-factor breakdown a board row carries, so one popover explains both. */
   rank_factors: BoardRankFactor[];
-  /** Which factor puts this line in front of the one that asked. Null for that line itself. */
+  /**
+   * Which factor puts this line in front of the one that asked. Null for that line itself and
+   * for every row BEHIND it, which is in front of nothing (the screen reads that as "Behind
+   * this line"), and null when nobody asked.
+   */
   leading_factor?: string | null;
   /** What the queue has claimed by the time it has served this row, this row included. */
   cumulative_ahead_qty: string;
