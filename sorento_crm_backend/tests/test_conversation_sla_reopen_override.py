@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Iterator
+from typing import Iterator, NamedTuple
 
 import pytest
 from sqlalchemy import text
@@ -25,20 +25,23 @@ from app.models.access import AccessAgent, RespondContact
 from app.models.sla import ConversationSLATracking, SLAPolicy, SLAPolicyTier
 from app.services.sla_service import ConversationSLATrackingService
 
-# Every business key this file writes is unique per RUN. They used to be fixed strings
-# cleaned up by the fixture below, which is correct only while that cleanup always
-# succeeds. It is best effort and swallows what it catches, so on a busy database a
-# blocked DELETE left the row behind and the next test died on the unique index instead
-# of on anything it was testing. Under the serial gate the database was quiet and it
-# never fired; under `-n auto` it does. A key nothing else can collide with removes the
-# dependency altogether: cleanup now only keeps the shared database tidy, and can fail
-# without taking a test with it.
+# Two levels of uniqueness, and both are load-bearing.
+#
+# RUN separates this PROCESS from every other one, so the cleanup below can delete
+# what this file wrote without reaching into a concurrent xdist worker's rows.
+#
+# The per-seed suffix separates one TEST from the next, and that is the part that
+# matters for correctness. `_seed` commits, so its rows outlive the session rollback
+# and the only thing that removed them between tests was the fixture below - which is
+# best effort and swallows what it catches. On a busy database that DELETE does not
+# always land, and the next test then died on the unique index instead of on anything
+# it was exercising. Fixed keys made cleanup a correctness dependency; per-seed keys
+# make it only housekeeping.
 RUN = uuid.uuid4().hex[:8]
 NAME_MARKER = f"REOPENCONV{RUN}"
-PHONE = f"+6099911{int(RUN, 16) % 10000:04d}"
-POLICY_CODE = f"REOPEN-CONV-POLICY-{RUN}"
-AGENT_CODE = f"REOPEN-AGENT-{RUN}"
-TEAM_SET_CODE = f"REOPEN_TEAM_{RUN}"
+POLICY_PREFIX = f"REOPEN-CONV-POLICY-{RUN}"
+AGENT_PREFIX = f"REOPEN-AGENT-{RUN}"
+TEAM_SET_PREFIX = f"REOPEN_TEAM_{RUN}"
 # sla_policies.company_id is NOT NULL at the DB level (migration 320) on this
 # live test DB; Sorento is the incumbent company for all pre-multi-company data.
 SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
@@ -59,11 +62,18 @@ def _clean_state():
             {"marker": f"{NAME_MARKER}%"},
         )
         conn.execute(
-            text("DELETE FROM sla_policy_tiers WHERE policy_id IN (SELECT id FROM sla_policies WHERE code = :c)"),
-            {"c": POLICY_CODE},
+            text(
+                "DELETE FROM sla_policy_tiers WHERE policy_id IN "
+                "(SELECT id FROM sla_policies WHERE code LIKE :p)"
+            ),
+            {"p": f"{POLICY_PREFIX}%"},
         )
-        conn.execute(text("DELETE FROM sla_policies WHERE code = :c"), {"c": POLICY_CODE})
-        conn.execute(text("DELETE FROM access_agents WHERE code = :c"), {"c": AGENT_CODE})
+        conn.execute(
+            text("DELETE FROM sla_policies WHERE code LIKE :p"), {"p": f"{POLICY_PREFIX}%"}
+        )
+        conn.execute(
+            text("DELETE FROM access_agents WHERE code LIKE :p"), {"p": f"{AGENT_PREFIX}%"}
+        )
 
     with engine.connect() as conn:
         try:
@@ -90,10 +100,25 @@ def db() -> Iterator[Session]:
         s.close()
 
 
-def _seed(db: Session) -> ConversationSLATracking:
+class Seeded(NamedTuple):
+    """What one `_seed` call created. The codes travel with the rows rather than
+    living in module constants, because two tests in this file must not share a
+    business key: `_seed` commits, so the first test's rows are still there when the
+    second one runs."""
+
+    tracking: ConversationSLATracking
+    agent_code: str
+    team_set_code: str
+
+
+def _seed(db: Session) -> Seeded:
+    unique = uuid.uuid4().hex[:8]
+    policy_code = f"{POLICY_PREFIX}-{unique}"
+    agent_code = f"{AGENT_PREFIX}-{unique}"
+    team_set_code = f"{TEAM_SET_PREFIX}_{unique}"
     policy = SLAPolicy(
         id=str(uuid.uuid4()),
-        code=POLICY_CODE,
+        code=policy_code,
         name="Reopen Policy",
         is_active=True,
         company_id=SORENTO_COMPANY_ID,
@@ -110,8 +135,14 @@ def _seed(db: Session) -> ConversationSLATracking:
             resolution_hours=48,
         )
     )
-    db.add(AccessAgent(id=str(uuid.uuid4()), code=AGENT_CODE, name="Reopen Agent", is_active=True))
-    contact = RespondContact(id=str(uuid.uuid4()), phone_number=PHONE, name=f"{NAME_MARKER}-1")
+    db.add(
+        AccessAgent(id=str(uuid.uuid4()), code=agent_code, name="Reopen Agent", is_active=True)
+    )
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{int(unique, 16) % 1000000000:09d}",
+        name=f"{NAME_MARKER}-{unique}",
+    )
     db.add(contact)
     db.commit()
 
@@ -133,11 +164,11 @@ def _seed(db: Session) -> ConversationSLATracking:
     db.add(t)
     db.commit()
     db.refresh(t)
-    return t
+    return Seeded(t, agent_code, team_set_code)
 
 
 def test_reopen_clears_state_sets_routing_and_recomputes_due(db: Session) -> None:
-    t = _seed(db)
+    t, agent_code, team_set_code = _seed(db)
     svc = ConversationSLATrackingService(db)
 
     new_start = datetime.utcnow()  # naive UTC, as the override accepts
@@ -146,8 +177,8 @@ def test_reopen_clears_state_sets_routing_and_recomputes_due(db: Session) -> Non
         {
             "is_resolved": False,
             "is_responded": False,
-            "agent_code": AGENT_CODE,
-            "team_set_code": TEAM_SET_CODE,
+            "agent_code": agent_code,
+            "team_set_code": team_set_code,
             "current_tier_started_at": new_start,
         },
     )
@@ -159,9 +190,9 @@ def test_reopen_clears_state_sets_routing_and_recomputes_due(db: Session) -> Non
     assert t.is_responded is False
     assert t.responded_at is None and t.responded_by is None and t.response_time is None
     # Routing applied
-    agent = db.query(AccessAgent).filter(AccessAgent.code == AGENT_CODE).first()
+    agent = db.query(AccessAgent).filter(AccessAgent.code == agent_code).first()
     assert str(t.agent_id) == str(agent.id)
-    assert t.team_set_code == TEAM_SET_CODE
+    assert t.team_set_code == team_set_code
     # Due recomputed forward from the new tier start (>= now, no longer overdue)
     assert t.due_at is not None and t.due_at_resolution is not None
     assert t.due_at > datetime.utcnow()
@@ -172,7 +203,7 @@ def test_reopen_clears_state_sets_routing_and_recomputes_due(db: Session) -> Non
 def test_reopen_recomputes_due_without_explicit_tier_start(db: Session) -> None:
     # No current_tier_started_at in the request: due must still be recomputed from
     # the existing tier start so a previously-overdue row gets a clean clock.
-    t = _seed(db)
+    t, _agent_code, _team_set_code = _seed(db)
     svc = ConversationSLATrackingService(db)
 
     svc.admin_test_override_tracking(t.id, {"is_resolved": False})
@@ -187,7 +218,7 @@ def test_reopen_recomputes_due_without_explicit_tier_start(db: Session) -> None:
 
 
 def test_agent_code_unknown_raises(db: Session) -> None:
-    t = _seed(db)
+    t, _agent_code, _team_set_code = _seed(db)
     svc = ConversationSLATrackingService(db)
     with pytest.raises(Exception):
         svc.admin_test_override_tracking(t.id, {"agent_code": "NO-SUCH-AGENT"})
