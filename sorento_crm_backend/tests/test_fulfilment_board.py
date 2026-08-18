@@ -514,19 +514,33 @@ def test_the_loser_of_a_contest_is_reported_as_contested_and_named_who_took_it()
         }
 
 
-def test_shorter_payment_terms_win_the_stock_when_the_policy_weights_credit():
+def test_shorter_payment_terms_rank_higher_and_take_the_pool_first():
+    """What the ranking still decides, now that own-location stock follows the book.
+
+    A line's share of its OWN location is the projection `confirm` judges against - required
+    date first, across every outstanding line in the book - because a board that redistributed
+    that share by its own ranking proposed Reserves the confirmation refused (the SO396351
+    defect). What the ranking still decides is the order the rows are served in, and with it
+    who draws the SHARED POOL first, which is contested among the selected orders and nowhere
+    else. So the policy is pinned here on the pool.
+
+    Making the ranking decide own-location stock as well means sorting the book-wide projection
+    by the policy instead of by required date - which changes the per-order sheet too, and is a
+    business decision rather than a coder's.
+    """
     with blank_session() as db:
         _policy(db, {"customer_credit": 1.0})
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
-        _stock(db, product, warehouse, on_hand=10)
+        own, pool = _pooled_warehouses(db)
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, pool, on_hand=10)
         prompt = _customer(db, f"{MARKER} pays in 30", terms=30)
         slow = _customer(db, f"{MARKER} pays in 90", terms=90)
         # The slower payer is FIRST by sales-order number, so an alphabetical answer loses.
         a = _order(db, so_number="ZZT-SO-AAA", customer=slow, order_date=date(2026, 1, 1))
         b = _order(db, so_number="ZZT-SO-BBB", customer=prompt, order_date=date(2026, 1, 1))
-        _line(db, a, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
-        _line(db, b, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+        _line(db, a, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+        _line(db, b, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
 
         board = _service(db).build(
             ["ZZT-SO-AAA", "ZZT-SO-BBB"], granularity="week", as_of=TODAY
@@ -534,21 +548,31 @@ def test_shorter_payment_terms_win_the_stock_when_the_policy_weights_credit():
 
         cell = _cell(board, product.product_code, "2026-08-31")
         assert [c["so_number"] for c in cell["contributions"]] == ["ZZT-SO-BBB", "ZZT-SO-AAA"]
-        assert cell["contributions"][0]["sources"][0]["kind"] == "reserve"
+        winner, loser = cell["contributions"]
+        assert winner["qty_proposed_reserve"] == "10", "the prompt payer draws the pool first"
+        assert [s["location"] for s in winner["sources"] if s["kind"] == "reserve"] == [
+            pool.warehouse_code
+        ]
+        assert loser["qty_proposed_buy"] == "10"
 
 
-def test_the_older_sales_order_wins_the_stock_when_the_policy_weights_document_age():
-    """The prototype had this inverted, with the NEWEST document winning. 2024 beats 2026."""
+def test_the_older_sales_order_ranks_higher_and_takes_the_pool_first():
+    """The prototype had this inverted, with the NEWEST document winning. 2024 beats 2026.
+
+    Pinned on the pool draw for the same reason as the test above: own-location stock follows
+    the book's projection, which is what the confirmation enforces.
+    """
     with blank_session() as db:
         _policy(db, {"document_age": 1.0})
         product = _product(db, f"ZZT-{_uid()[:6]}")
-        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
-        _stock(db, product, warehouse, on_hand=10)
+        own, pool = _pooled_warehouses(db)
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, pool, on_hand=10)
         # The NEWER order is first alphabetically, so an accidental sort cannot pass this.
         new = _order(db, so_number="ZZT-SO-AAA", order_date=date(2026, 7, 28))
         old = _order(db, so_number="ZZT-SO-BBB", order_date=date(2024, 1, 9))
-        _line(db, new, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
-        _line(db, old, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+        _line(db, new, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+        _line(db, old, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
 
         board = _service(db).build(
             ["ZZT-SO-AAA", "ZZT-SO-BBB"], granularity="week", as_of=TODAY
@@ -556,7 +580,8 @@ def test_the_older_sales_order_wins_the_stock_when_the_policy_weights_document_a
 
         cell = _cell(board, product.product_code, "2026-08-31")
         assert [c["so_number"] for c in cell["contributions"]] == ["ZZT-SO-BBB", "ZZT-SO-AAA"]
-        assert cell["contributions"][0]["sources"][0]["kind"] == "reserve"
+        assert cell["contributions"][0]["qty_proposed_reserve"] == "10"
+        assert cell["contributions"][1]["qty_proposed_buy"] == "10"
 
 
 def test_a_policy_that_ranks_nothing_is_reported_flat_rather_than_dressed_up():
@@ -1933,3 +1958,223 @@ def test_a_line_with_no_location_states_no_pressure_either():
         assert location["qty_owed_all_orders"] is None
         assert location["qty_held_by_decisions"] is None
         assert location["qty_owed_confirmed"] is None
+
+
+# --------------------------------------------------------------------------- #
+# the board and the confirmation must agree about how much may be reserved
+#
+# Live defect, SO396351 (ORIONIS TECHNOLOGY): the board proposed Reserve at BRW-BB and named
+# BRW-BB's own warehouse id, and the confirmation refused every line with "Reserve may only come
+# from this line's own location or the shared pool. Move that quantity to Borrow."
+#
+# Both sides agreed about the LOCATIONS - measured on that order, the confirm's reserve reach is
+# {BRW-BB 75842575..., BRW 21608757...} and the board posted 75842575..., which is in it. What
+# they disagreed about is HOW MUCH BRW-BB may contribute to that line: the board offered its
+# share of the pile as contested among the SELECTED orders, and the confirmation computes it as
+# the line's share across the WHOLE BOOK, which for that product at that location is 0 (47,009
+# owed against 478 on hand). `reserve_capacity` omits a location contributing nothing, so the
+# id fell through the "not in capacity" branch and reported a location error for a quantity
+# problem.
+# --------------------------------------------------------------------------- #
+
+
+def _crowded_pile(db, *, on_hand: int, mine: str, theirs: str, their_date: date):
+    """Free stock at one location, and an earlier-dated order elsewhere in the book wanting it."""
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+    _stock(db, product, warehouse, on_hand=on_hand)
+    mine_order = _order(db, so_number=f"ZZT-SO-M{_uid()[:6]}", order_date=date(2026, 1, 1))
+    _line(db, mine_order, product, qty=mine, required_date=date(2026, 12, 29),
+          warehouse=warehouse)
+    # Not on the board, dated earlier, and it claims the pile first.
+    theirs_order = _order(db, so_number=f"ZZT-SO-T{_uid()[:6]}", order_date=date(2026, 1, 1))
+    _line(db, theirs_order, product, qty=theirs, required_date=their_date, warehouse=warehouse)
+    return mine_order, product, warehouse
+
+
+def test_the_board_does_not_propose_a_reserve_the_confirmation_would_refuse():
+    """The live defect, as arithmetic: 100 free, 400 owed ahead of us, we are owed 23.
+
+    The confirmation gives this line a share of 0 at its own location, so a board that offers
+    it 23 there is offering something that cannot be committed. Nothing about what the system
+    RESERVES changes here - the confirmation already refused it. What changes is that the board
+    stops proposing it.
+    """
+    with blank_session() as db:
+        mine, product, warehouse = _crowded_pile(
+            db, on_hand=100, mine="23", theirs="400", their_date=date(2026, 6, 1)
+        )
+
+        board = _service(db).build([mine.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
+        assert contribution["qty_proposed_reserve"] == "0", (
+            "the whole pile is already claimed by earlier-dated demand"
+        )
+        assert contribution["qty_proposed_buy"] == "23"
+        assert contribution["contested"] is True
+        # And the strip still states the pile, so the planner can see WHY it got nothing.
+        location = _cell(board, product.product_code, "2026-12-28")["locations"][0]
+        assert location["qty_free"] == "100"
+        assert location["qty_owed_all_orders"] == "423"
+
+
+def test_the_board_still_reserves_what_the_book_leaves_for_this_line():
+    """The other half: prior demand takes part of the pile and this line gets the rest."""
+    with blank_session() as db:
+        mine, product, warehouse = _crowded_pile(
+            db, on_hand=100, mine="40", theirs="70", their_date=date(2026, 6, 1)
+        )
+
+        board = _service(db).build([mine.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
+        assert contribution["qty_proposed_reserve"] == "30", "100 on hand, 70 claimed first"
+        assert contribution["qty_proposed_buy"] == "10"
+
+
+def test_every_reserve_the_board_proposes_is_accepted_by_the_confirmation():
+    """The contract, extended to the case that broke: a crowded pile AND a pool draw.
+
+    The body is built only from board fields, as the frontend builds it, and the assertion is
+    that the confirmation takes it. If the board can propose something unconfirmable, this
+    fails.
+    """
+    from app.models.base import company_scope
+    from app.models.project_so import SOSupplyDecision
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        # Nothing free at the line's own location once the earlier order is counted, and a
+        # pool that can cover part of the rest: the two source kinds in one confirmation.
+        _stock(db, product, own, on_hand=30)
+        _stock(db, product, pool, on_hand=12)
+        mine = _order(db, so_number=f"ZZT-SO-M{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, mine, product, qty="40", required_date=date(2026, 12, 29), warehouse=own)
+        crowd = _order(db, so_number=f"ZZT-SO-T{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, crowd, product, qty="30", required_date=date(2026, 6, 1), warehouse=own)
+        _adopt(db, str(mine.id))
+        db.commit()
+
+        client, originals = _client(db, actor, [VIEW, EDIT])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                board = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={"orders": mine.so_number, "granularity": "week"},
+                ).json()
+                pso_id = board["orders"][0]["project_sales_order_id"]
+                lines = [
+                    {
+                        "project_line_id": contribution["project_line_id"],
+                        "timely_spo_qty": contribution["qty_proposed_incoming"],
+                        "reserve": [
+                            {"warehouse_id": source["warehouse_id"], "qty": source["qty"]}
+                            for source in contribution["sources"]
+                            if source["kind"] == "reserve"
+                        ],
+                        "buy_qty": contribution["qty_proposed_buy"],
+                    }
+                    for cell in board["cells"]
+                    for contribution in cell["contributions"]
+                ]
+                response = client.post(
+                    f"{BASE}/sales-orders/{pso_id}/confirm", json={"lines": lines}
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        # The pool covered what the crowded own location could not, and it was addressed by its
+        # own id rather than the line's location id.
+        reserve = lines[0]["reserve"]
+        assert [(item["warehouse_id"], item["qty"]) for item in reserve] == [
+            (str(pool.id), "12")
+        ]
+        assert lines[0]["buy_qty"] == "28"
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.project_sales_order_id == pso_id)
+            .first()
+        )
+        assert decision.revision_no == 1
+
+
+def test_a_refused_reserve_says_which_warehouse_and_what_to_do_about_it():
+    """The message the captain read was "Reserve may only come from this line's own location or
+    the shared pool. Move that quantity to Borrow." - printed about their own location, naming
+    no warehouse, and pointing at a control the board does not have.
+
+    Two refusals, two different truths, and each must say which one it is.
+    """
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTO{_uid()[:6]}"[:20])
+        stranger = _warehouse(db, f"ZZTX{_uid()[:6]}"[:20])
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, stranger, on_hand=50)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+        pso_id = _adopt(db, str(order.id))
+        # Through the ORM, never raw SQL naming `projects.*`: a schema-translated scratch
+        # session resolves that qualified name to the REAL projects schema.
+        from app.models.project_so import ProjectSalesOrderLine
+
+        line_id = str(
+            db.query(ProjectSalesOrderLine.id)
+            .filter(ProjectSalesOrderLine.project_sales_order_id == pso_id)
+            .scalar()
+        )
+        db.commit()
+
+        client, originals = _client(db, actor, [VIEW, EDIT])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                # 1. a warehouse that is neither the line's own nor its pool
+                elsewhere = client.post(
+                    f"{BASE}/sales-orders/{pso_id}/confirm",
+                    json={
+                        "lines": [
+                            {
+                                "project_line_id": line_id,
+                                "reserve": [
+                                    {"warehouse_id": str(stranger.id), "qty": "10"}
+                                ],
+                                "buy_qty": "0",
+                            }
+                        ]
+                    },
+                )
+                # 2. the line's OWN location, which simply has nothing free for it
+                empty = client.post(
+                    f"{BASE}/sales-orders/{pso_id}/confirm",
+                    json={
+                        "lines": [
+                            {
+                                "project_line_id": line_id,
+                                "reserve": [{"warehouse_id": str(own.id), "qty": "10"}],
+                                "buy_qty": "0",
+                            }
+                        ]
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        wrong_place = elsewhere.json()["failing_lines"][0]["reason"]
+        assert stranger.warehouse_code in wrong_place, wrong_place
+        assert own.warehouse_code in wrong_place, "it must name what IS allowed"
+        assert "Borrow" not in wrong_place, "the board has no Borrow control"
+        assert "borrow it from that location on the order's own sheet" in wrong_place
+
+        nothing_free = empty.json()["failing_lines"][0]["reason"]
+        assert nothing_free.startswith(f"{own.warehouse_code} has nothing free for this line")
+        assert "10" in nothing_free, "it must say how much was asked for"
+        assert "Buy that quantity instead" in nothing_free

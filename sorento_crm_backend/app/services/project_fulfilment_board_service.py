@@ -60,7 +60,6 @@ from app.services.scm.front_planning_engine import (
     BUY,
     RESERVE,
     TIMELY_SPO,
-    attribute_sources,
     qty_text,
 )
 
@@ -720,7 +719,7 @@ class FulfilmentBoardService:
         self._levels = self.supply.stock_levels_by_location(product_ids)
         self._held = self.supply.held_stock_by_location(product_ids)
         self._pressure = self._demand_pressure(product_ids, warehouse_ids)
-        spo = self._incoming = self.supply.incoming_by_location(product_ids, warehouse_ids)
+        self._incoming = self.supply.incoming_by_location(product_ids, warehouse_ids)
         facts = self.supply.demand_facts(
             [
                 {
@@ -739,45 +738,30 @@ class FulfilmentBoardService:
         for row in plannable:
             piles[(row.product_id, row.warehouse_id)].append(row)
 
-        # Pass one: share each own-location pile and its dated incoming, in board order. This
-        # is the sheet's `_attribution` projection with the ranking as its order instead of the
-        # required date, which is the one thing the board decides differently.
+        # Pass one: how much of its own location's pile each line may have.
+        #
+        # This is the SHEET'S projection across the whole book, not a contest among the orders
+        # on this board, and that is the difference between a proposal that can be committed
+        # and one that cannot. `confirm` judges every Reserve against exactly this share
+        # (`_check_line` -> `reserve_capacity` over `fact.own_free`), so a board that shared
+        # the pile only among its selection offered lines stock the book had already promised
+        # elsewhere - and the refusal said "Reserve may only come from this line's own
+        # location" about the line's own location, because a location contributing zero is
+        # simply absent from the capacity map.
+        #
+        # Nothing about what the system RESERVES changes by reading it here: the confirmation
+        # always applied this figure. What changes is that the board stops proposing what the
+        # confirmation was always going to refuse.
+        attribution = self.supply.attribution_by_core_line(product_ids, warehouse_ids)
         for (product_id, warehouse_id), members in piles.items():
-            location = members[0].location or warehouse_id
-            attributed = attribute_sources(
-                warehouse_code=location,
-                opening_stock=free.get((product_id, warehouse_id), _ZERO),
-                supply_events=[
-                    {
-                        "spo_number": ref.spo_number,
-                        "spo_line_no": ref.spo_line_no,
-                        "allocation_id": ref.allocation_id,
-                        "arrival_date": ref.arrival_date,
-                        "qty": ref.qty,
-                    }
-                    for ref in spo.get((product_id, warehouse_id), [])
-                ],
-                demand_lines=[
-                    {
-                        "so_number": row.so_number,
-                        "line_no": row.line_no,
-                        "line_id": row.line_id,
-                        "open_qty": row.qty,
-                        "required_date": row.required_date,
-                    }
-                    for row in members
-                ],
-                preserve_demand_order=True,
-            )
             free_left = free.get((product_id, warehouse_id), _ZERO)
             taken = _ZERO
             taker: Optional[_Row] = None
+            shares = attribution.get((product_id, warehouse_id), {})
             for row in members:
-                components = attributed.get((row.so_number, row.line_no), ())
-                own_share = sum((c.qty for c in components if c.kind == RESERVE), _ZERO)
-                timely_share = sum(
-                    (c.qty for c in components if c.kind == TIMELY_SPO), _ZERO
-                )
+                share = shares.get(row.line_id, {})
+                own_share = share.get(RESERVE, _ZERO)
+                timely_share = share.get(TIMELY_SPO, _ZERO)
                 fact = facts[row.key]
                 fact.own_free = own_share
                 fact.timely_qty = timely_share
@@ -827,10 +811,13 @@ class FulfilmentBoardService:
             incoming = sum((c.qty for c in components if c.kind == TIMELY_SPO), _ZERO)
             bought = sum((c.qty for c in components if c.kind == BUY), _ZERO)
             row.proposed = {RESERVE: reserved, TIMELY_SPO: incoming, BUY: bought}
-            # Contested means the supply this line would otherwise have had was actually TAKEN
-            # by a row served before it. A location that never held any stock is NOT contested;
-            # it is a plain Buy.
-            row.contested = bought > _ZERO and (row.taken_before or _ZERO) > _ZERO
+            # Contested means this line is buying while its location DOES hold free stock -
+            # somebody got there first, whether that somebody is on this board or is one of the
+            # earlier-dated orders in the book that the share above already accounts for. A
+            # location that never held any stock is NOT contested; it is a plain Buy.
+            row.contested = bought > _ZERO and self._free.get(
+                (row.product_id, row.warehouse_id), _ZERO
+            ) > _ZERO
 
             if bought > _ZERO:
                 # Cached per (product, location, hot-selling): the answer depends on the fact's

@@ -13,6 +13,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const routerReplace = vi.fn();
+let currentSearchParams = new URLSearchParams('');
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: (...args: unknown[]) => routerReplace(...args) }),
+  usePathname: () => '/project-sales/fulfilment-planning',
+  useSearchParams: () => currentSearchParams,
+}));
+
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
@@ -129,6 +138,7 @@ function closeDialog() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  currentSearchParams = new URLSearchParams('');
 });
 
 /**
@@ -681,7 +691,8 @@ describe('FulfilmentBoardPanel: the ranking policy (13.5)', () => {
 
     renderPanel();
 
-    expect(await screen.findByText('need_by_date 3 · document_age 1')).toBeInTheDocument();
+    // In words now, not in column names.
+    expect(await screen.findByText('Required date 3 · Order date 1')).toBeInTheDocument();
     expect(
       screen.queryByText(/the ranking is flat/),
     ).not.toBeInTheDocument();
@@ -750,17 +761,19 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
     );
   });
 
-  it('previews a fairer weighting without activating it', async () => {
+  it('asks the server for the live policy, the preview offer having been retired', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Preview a fairer weighting' }));
-
-    await waitFor(() =>
-      expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'week', true, {}),
-    );
+    // The what-if existed to show a fair weighting before one was switched on. It is now the
+    // live one, so every board is fetched against the live policy and nothing offers to
+    // preview it against itself.
+    expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'week', false, {});
+    expect(
+      screen.queryByRole('button', { name: 'Preview a fairer weighting' }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -1104,5 +1117,246 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
     // That notice is for a mirror that is genuinely missing a line, which is a different
     // problem with a different fix. On a not-yet-adopted order it would name every line.
     expect(screen.queryByText(/not on the planning record yet/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Searching the board (the captain: "i need the search here also btw").
+ *
+ * The board is ONE already-fetched payload, so this filters the product ROWS in the browser: it
+ * must not refetch, and it must not touch the selection. The headline totals do NOT move with
+ * it - they describe the selection, not the rows on screen, which is the same lesson the day
+ * window taught - so the filter states its own count instead, or a planner reads a filtered
+ * board as the whole one.
+ */
+describe('FulfilmentBoardPanel: searching the product rows', () => {
+  function catalogue() {
+    return boardOf([
+      demand({ line_no: 1, item_code: 'WESERP10B', product_name: 'Wall socket 10A white' }),
+      demand({ line_no: 2, item_code: 'TPE-9204', product_name: 'Trunking 92mm' }),
+      demand({ line_no: 3, item_code: 'CKS1050', product_name: 'Ceiling kit 50' }),
+    ]);
+  }
+
+  function productRows() {
+    return [...screen.getByTestId('fulfilment-board-matrix').querySelectorAll('tbody tr')].map(
+      (row) => row.querySelector('th')?.textContent ?? '',
+    );
+  }
+
+  async function searchFor(term: string) {
+    const box = screen.getByPlaceholderText('Search product');
+    fireEvent.change(box, { target: { value: term } });
+    await waitFor(() => expect(box).toHaveValue(term));
+  }
+
+  it('narrows the rows by item code, case-insensitively', async () => {
+    getPlanningBoard.mockResolvedValue(catalogue());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(productRows()).toEqual(['CKS1050', 'TPE-9204', 'WESERP10B']);
+
+    await searchFor('tpe');
+
+    await waitFor(() => expect(productRows()).toEqual(['TPE-9204']));
+  });
+
+  it('narrows the rows by product name too', async () => {
+    getPlanningBoard.mockResolvedValue(catalogue());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    await searchFor('ceiling');
+
+    await waitFor(() => expect(productRows()).toEqual(['CKS1050']));
+  });
+
+  it('never refetches: the board is one payload and this is a filter over its rows', async () => {
+    getPlanningBoard.mockResolvedValue(catalogue());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    const calls = getPlanningBoard.mock.calls.length;
+
+    await searchFor('tpe');
+    await waitFor(() => expect(productRows()).toEqual(['TPE-9204']));
+
+    expect(getPlanningBoard.mock.calls.length).toBe(calls);
+  });
+
+  it('says how many rows are shown of how many, but only while a filter is on', async () => {
+    getPlanningBoard.mockResolvedValue(catalogue());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.queryByText(/products$/)).not.toBeInTheDocument();
+
+    await searchFor('tpe');
+
+    expect(await screen.findByText('1 of 3 products')).toBeInTheDocument();
+  });
+
+  it('leaves the selection-scoped totals exactly where they were', async () => {
+    const board = catalogue();
+    getPlanningBoard.mockResolvedValue({ ...board, line_count: 161, past_line_count: 130 });
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    const banner = '130 of 161 lines are already past their required date';
+    expect(screen.getByText(banner)).toBeInTheDocument();
+
+    await searchFor('tpe');
+
+    // The banner describes the SELECTION, not the rows on screen. Moving it with the filter
+    // would be the day-window mistake again, in a different corner.
+    await waitFor(() => expect(productRows()).toEqual(['TPE-9204']));
+    expect(screen.getByText(banner)).toBeInTheDocument();
+    expect(screen.getByText('Planning 2 sales orders together')).toBeInTheDocument();
+  });
+
+  it('says nothing matches, rather than claiming the selection owes nothing', async () => {
+    getPlanningBoard.mockResolvedValue(catalogue());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    await searchFor('zzzz');
+
+    expect(await screen.findByText('No products match')).toBeInTheDocument();
+    expect(screen.getByText('0 of 3 products')).toBeInTheDocument();
+    // The "owes nothing" copy would be a flat lie: the selection owes plenty.
+    expect(
+      screen.queryByText('These sales orders owe nothing that can be planned'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('carries the term in the URL, so a filtered board is shareable', async () => {
+    getPlanningBoard.mockResolvedValue(catalogue());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    await searchFor('tpe');
+
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith(
+        '/project-sales/fulfilment-planning?product=tpe',
+        expect.objectContaining({ scroll: false }),
+      ),
+    );
+  });
+
+  it('opens on the term the URL carries', async () => {
+    currentSearchParams = new URLSearchParams('product=ceiling');
+    getPlanningBoard.mockResolvedValue(catalogue());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByPlaceholderText('Search product')).toHaveValue('ceiling');
+    await waitFor(() => expect(productRows()).toEqual(['CKS1050']));
+  });
+
+  it('clears with the X, and the whole board comes back', async () => {
+    getPlanningBoard.mockResolvedValue(catalogue());
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    await searchFor('tpe');
+    await waitFor(() => expect(productRows()).toEqual(['TPE-9204']));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear the product search' }));
+
+    await waitFor(() =>
+      expect(productRows()).toEqual(['CKS1050', 'TPE-9204', 'WESERP10B']),
+    );
+    expect(screen.queryByText(/of 3 products/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The policy banner, now that a policy that actually ranks is live.
+ *
+ * It was printing the same raw identifiers the rank chips were told to stop printing
+ * ("demand_class 3 · document_age 1 · need_by_date 3"), and offering to preview a fairer
+ * weighting when the fair weighting IS the live one.
+ */
+describe('FulfilmentBoardPanel: the policy banner reads as words', () => {
+  function withPolicy(policy: Partial<BoardPolicy>) {
+    const board = boardOf([demand()]);
+    return { ...board, policy: { ...board.policy, ...policy } };
+  }
+
+  it('names the weighted factors in plain words, never as database columns', async () => {
+    getPlanningBoard.mockResolvedValue(
+      withPolicy({
+        name: 'Fair weighting',
+        factors: { need_by_date: 3, document_age: 1, customer_credit: 1, demand_class: 0 },
+        discriminates_nothing: false,
+      }),
+    );
+
+    renderPanel();
+
+    expect(await screen.findByText('Required date 3 · Order date 1 · Payment terms 1')).toBeInTheDocument();
+    expect(screen.queryByText(/need_by_date/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/po_document_sequence/)).not.toBeInTheDocument();
+  });
+
+  it('offers no preview when the live policy already ranks these rows', async () => {
+    getPlanningBoard.mockResolvedValue(
+      withPolicy({ name: 'Fair weighting', is_preview: false, discriminates_nothing: false }),
+    );
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // "Preview a fairer weighting" against a policy that IS the fair one is an offer to
+    // nowhere.
+    expect(
+      screen.queryByRole('button', { name: 'Preview a fairer weighting' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('offers no preview even on a flat board, because the fair policy is the live one now', async () => {
+    // Measured on the live stack: the active policy IS "Fair fulfilment priority (delivery
+    // date, document date, customer credit)" and STILL reports discriminates_nothing on a
+    // single-order board, because those factors are constant across one order's lines. So a
+    // flat ranking no longer implies an unfair policy, and "preview a fairer weighting" would
+    // offer the policy that is already running.
+    getPlanningBoard.mockResolvedValue(
+      withPolicy({
+        name: 'Fair fulfilment priority (delivery date, document date, customer credit)',
+        is_preview: false,
+        discriminates_nothing: true,
+      }),
+    );
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(
+      screen.queryByRole('button', { name: 'Preview a fairer weighting' }),
+    ).not.toBeInTheDocument();
+    // The flatness itself is still stated - that is a fact about this board.
+    expect(
+      screen.getByText(
+        'This policy weights nothing that separates these rows, so every one scores the same and the ranking is flat.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('offers the way back while a preview is on show', async () => {
+    getPlanningBoard.mockResolvedValue(
+      withPolicy({ is_preview: true, discriminates_nothing: false }),
+    );
+
+    renderPanel();
+
+    expect(
+      await screen.findByRole('button', { name: 'Back to the live policy' }),
+    ).toBeInTheDocument();
   });
 });

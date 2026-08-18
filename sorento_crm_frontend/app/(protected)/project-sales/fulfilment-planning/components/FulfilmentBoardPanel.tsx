@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { ArrowLeft, PackageSearch } from 'lucide-react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { ArrowLeft, PackageSearch, Search, X } from 'lucide-react';
 import {
   Alert,
   AlertContent,
@@ -12,6 +13,7 @@ import {
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
@@ -23,6 +25,7 @@ import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningSer
 import {
   bucketLabelText,
   commitPreviewFor,
+  factorLabel,
   confirmLinesFor,
   plannedLineCount,
   standingsFor,
@@ -70,12 +73,36 @@ export function FulfilmentBoardPanel({
   soNumbers: string[];
   onBack: () => void;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [granularity, setGranularity] = React.useState<BoardGranularity>('week');
+  /**
+   * Narrowing the PRODUCT ROWS (the captain: "i need the search here also btw").
+   *
+   * A filter over one already-fetched payload, never a refetch and never a change to the
+   * selection: the board is a single response, and asking the server again for a subset of
+   * rows it already sent would be slower and could disagree with the cells beside it.
+   */
+  const [productSearch, setProductSearch] = React.useState(
+    () => searchParams.get('product') ?? '',
+  );
   const [draft, setDraft] = React.useState<BoardDraft>({});
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
   const [previewPolicy, setPreviewPolicy] = React.useState(false);
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
   const [dayWindow, setDayWindow] = React.useState<string | undefined>(undefined);
+
+  // The term travels in the URL so a filtered board is shareable. `replace`, not `push`:
+  // narrowing a list is not a place in history to go back to.
+  React.useEffect(() => {
+    const next = new URLSearchParams(searchParams.toString());
+    if (productSearch.trim()) next.set('product', productSearch.trim());
+    else next.delete('product');
+    const query = next.toString();
+    if (query === searchParams.toString()) return;
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [productSearch, pathname, router, searchParams]);
 
   const board = usePlanningBoard(
     soNumbers,
@@ -306,6 +333,26 @@ export function FulfilmentBoardPanel({
     );
   }, [standings, board.data, draft]);
 
+  /**
+   * The rows on screen, and the rows the selection holds.
+   *
+   * Matching on the code AND the name, because a planner knows a product by either. The counts
+   * this produces are about the FILTER; every headline number on this screen stays
+   * selection-scoped, exactly as it does under the day window.
+   */
+  const visibleProductRows = React.useMemo(() => {
+    const needle = productSearch.trim().toLowerCase();
+    const rows = board.data?.productRows ?? [];
+    if (!needle) return rows;
+    return rows.filter(
+      (row) =>
+        row.item_code.toLowerCase().includes(needle) ||
+        (row.description ?? '').toLowerCase().includes(needle),
+    );
+  }, [board.data, productSearch]);
+
+  const filtering = productSearch.trim().length > 0;
+
   const bucketLabel = React.useMemo(() => {
     const map = new Map<string, string>();
     // Through the same de-jargoning the column headers go through: the dialog title reads the
@@ -360,6 +407,31 @@ export function FulfilmentBoardPanel({
         >
           {`Planning ${soNumbers.length} sales orders together`}
         </h2>
+        <div className="relative w-full sm:w-64">
+          <Search
+            className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
+          <Input
+            placeholder="Search product"
+            aria-label="Search product"
+            value={productSearch}
+            onChange={(event) => setProductSearch(event.target.value)}
+            className="w-full ps-9"
+          />
+          {productSearch.length > 0 && (
+            <Button
+              mode="icon"
+              variant="dim"
+              aria-label="Clear the product search"
+              className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
+              onClick={() => setProductSearch('')}
+            >
+              <X />
+            </Button>
+          )}
+        </div>
+
         <div
           data-testid="board-header-actions"
           className="flex w-full flex-wrap items-center gap-2 sm:w-auto"
@@ -471,13 +543,32 @@ export function FulfilmentBoardPanel({
             onPreviewChange={setPreviewPolicy}
           />
 
+          {/* How much of the board is on screen. Only while a filter is on, and stated as a
+              fraction, so a narrowed board is never mistaken for the whole one. */}
+          {filtering && (
+            <p className="text-sm text-muted-foreground tabular-nums">
+              {`${visibleProductRows.length} of ${board.data.productRows.length} products`}
+            </p>
+          )}
+
+          {visibleProductRows.length === 0 ? (
+            <Card>
+              <CardContent className="px-6 py-10 text-center">
+                <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
+                {/* NOT the "owes nothing" copy: the selection owes plenty, the filter simply
+                    matched none of it. */}
+                <h3 className="mt-2 text-sm font-semibold">No products match</h3>
+              </CardContent>
+            </Card>
+          ) : (
           <FulfilmentBoardMatrix
             dateBuckets={board.data.dateBuckets}
-            productRows={board.data.productRows}
+            productRows={visibleProductRows}
             cells={board.data.cells}
             decidedKeys={decidedKeys}
             onOpenCell={(cell) => setOpenCell(cell)}
           />
+          )}
 
           <Card>
             <CardHeader className="block">
@@ -671,20 +762,32 @@ function PolicyNote({
           </p>
         ) : (
           <p className="min-w-0 text-sm text-muted-foreground break-words">
-            {weights.map(([key, weight]) => `${key} ${weight}`).join(' · ')}
+            {/* Words, not database columns. These printed `need_by_date 3 · document_age 1`
+                - the same identifiers the rank chips were told to stop showing, in a banner
+                that is now describing a ranking somebody has to trust. */}
+            {weights.map(([key, weight]) => `${factorLabel(key)} ${weight}`).join(' · ')}
           </p>
         )}
         {/* A what-if, never an activation: previewing shows what a fair weighting would do to
-            these real orders without changing what container loading and stock assignment use. */}
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="shrink-0"
-          onClick={() => onPreviewChange(!previewing)}
-        >
-          {previewing ? 'Back to the live policy' : 'Preview a fairer weighting'}
-        </Button>
+            these real orders without changing what container loading and stock assignment use.
+            The offer is RETIRED: it existed to show what a fair weighting would do before one
+            was switched on, and the fair policy is now the live one (PLAN 13.5's "ship the
+            preview first, then re-weight the active row" - both have happened). Offering to
+            preview the policy that is already running is an offer to nowhere. Only the way
+            BACK survives, for a preview that is on show. Note a flat ranking no longer implies
+            an unfair policy: the fair policy still separates nothing on a single-order board,
+            because customer, order date and demand class are constant across one order. */}
+        {policy.is_preview && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            onClick={() => onPreviewChange(!previewing)}
+          >
+            {policy.is_preview ? 'Back to the live policy' : 'Preview a fairer weighting'}
+          </Button>
+        )}
       </div>
     </div>
   );

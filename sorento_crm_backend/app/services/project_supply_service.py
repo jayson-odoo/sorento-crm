@@ -424,6 +424,27 @@ class ProjectSupplyService:
         """
         return self._borrow_candidates(fact)
 
+    def attribution_by_core_line(
+        self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], Dict[str, Dict[str, Decimal]]]:
+        """Each CORE line's share of its product-location pile, keyed by core line id.
+
+        The section 3.5 projection, made public because the confirmation judges a Reserve
+        against it and therefore anything that PROPOSES a Reserve has to be judged against the
+        same figure. The board used to share the pile among the orders in its own selection,
+        which on a crowded location offered a line stock the book had already promised
+        elsewhere: `confirm` then refused it, and the planner was told their own location was
+        not their own location.
+
+        Requires `demand_facts` (or `_facts_for`) to have run: it reads the free-stock cache
+        that the proposal was computed from, so the share and the availability behind it cannot
+        come from two different reads.
+        """
+        warehouses = self._warehouses(warehouse_ids)
+        return self._attribution(
+            product_ids, warehouse_ids, warehouses, self._spo_rows(product_ids, warehouse_ids)
+        )
+
     def demand_facts(
         self, rows: Sequence[Dict[str, Any]]
     ) -> Dict[str, _LineFacts]:
@@ -927,14 +948,36 @@ class ProjectSupplyService:
                 ),
             )
         }
+        allowed = " or ".join([code for code in (fact.own_code, fact.pool_code) if code])
         for item in entry.reserve or []:
             warehouse = self._warehouse_of(fact, str(item.warehouse_id))
             qty = _dec(item.qty)
-            if warehouse is None or warehouse not in capacity:
+            if warehouse is None:
+                # A location that is neither this line's own nor its pool. Name what was
+                # asked for and what is allowed, by CODE - the old message named neither, so
+                # a planner reading it could not tell whether the location, the quantity or
+                # the whole line was the problem.
+                posted = self._warehouse_row(str(item.warehouse_id))
+                posted_code = posted.warehouse_code if posted else "another location"
                 refuse(
                     invalid,
-                    "Reserve may only come from this line's own location or the shared "
-                    "pool. Move that quantity to Borrow.",
+                    f"Reserve was asked for from {posted_code}, and this line can only "
+                    f"reserve from {allowed or 'no location, because it states none'}. "
+                    "Buy the quantity instead, or borrow it from that location on the "
+                    "order's own sheet, which records who it came from and why.",
+                )
+                continue
+            if warehouse not in capacity:
+                # The location IS this line's own or its pool; it simply has nothing left for
+                # this line. `reserve_capacity` omits a location contributing zero, so this
+                # used to fall through to the message above and report a location error for a
+                # quantity problem - which is what the planner saw as "Reserve may only come
+                # from this line's own location" printed about their own location.
+                refuse(
+                    stale,
+                    f"{warehouse} has nothing free for this line now, so none of the "
+                    f"{qty_text(qty)} asked for can be reserved from it. Buy that quantity "
+                    "instead, or borrow it on the order's own sheet.",
                 )
                 continue
             if qty > capacity[warehouse]:
@@ -1956,7 +1999,6 @@ class ProjectSupplyService:
         )
 
         grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
-        keys: Dict[Tuple[str, str], Dict[Tuple[str, Optional[int]], str]] = {}
         for row in rows:
             key = (str(row.product_id), str(row.warehouse_id))
             open_qty = max(_dec(row.qty_ordered) - _dec(row.qty_delivered), _ZERO)
@@ -1964,6 +2006,9 @@ class ProjectSupplyService:
                 continue
             grouped.setdefault(key, []).append(
                 {
+                    # The CORE line id is the key, so two lines of one order that nobody has
+                    # mirrored cannot collapse onto `(so_number, None)` and lose their share.
+                    "key": str(row.id),
                     "so_number": row.so_number or "",
                     "line_no": row.line_no,
                     "line_id": str(row.id),
@@ -1971,7 +2016,6 @@ class ProjectSupplyService:
                     "required_date": row.required_date or row.requested_delivery_date,
                 }
             )
-            keys.setdefault(key, {})[(row.so_number or "", row.line_no)] = str(row.id)
 
         out: Dict[Tuple[str, str], Dict[str, Dict[str, Decimal]]] = {}
         for key, demand_lines in grouped.items():
@@ -1995,10 +2039,7 @@ class ProjectSupplyService:
                 demand_lines=demand_lines,
             )
             per_line: Dict[str, Dict[str, Decimal]] = {}
-            for engine_key, components in attributed.items():
-                line_id = keys.get(key, {}).get(engine_key)
-                if not line_id:
-                    continue
+            for line_id, components in attributed.items():
                 totals: Dict[str, Decimal] = {}
                 for component in components:
                     totals[component.kind] = (

@@ -48,6 +48,8 @@ export interface BoardDemandLine {
   project_label?: string | null;
   line_no: number;
   item_code: string;
+  /** The product's own name, which the board's search matches as well as the code. */
+  product_name?: string | null;
   qty: string;
   /** What the sales order ordered on the line. A server fact, never derived here. */
   qty_ordered?: string | null;
@@ -473,9 +475,13 @@ export function buildBoard(
     }
   }
 
+  const nameByItem = new Map<string, string | null>();
+  for (const line of lines) {
+    if (line.product_name) nameByItem.set(line.item_code, line.product_name);
+  }
   const productRows: BoardProductRow[] = [...productSet]
     .sort()
-    .map((item_code) => ({ item_code }));
+    .map((item_code) => ({ item_code, description: nameByItem.get(item_code) ?? null }));
 
   const everyContribution = [...contributionsByCell.values()].flat();
 

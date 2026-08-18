@@ -1937,6 +1937,41 @@ the count is STATED ("60 ticked. A board takes at most 50 sales orders.") and Pl
 disabled: a planner who ticked everything and got a board of the first fifty would be planning a
 set they did not choose.
 
+**THE BOARD HAS ITS OWN SEARCH** (captain: "i need the search here also btw"). A four-order
+selection is already forty product rows tall, and there was no way to narrow it.
+
+- It filters the PRODUCT ROWS of the already-fetched payload, in the browser: **no refetch, no
+  change to the selection**. Asking the server again for a subset of rows it has already sent
+  would be slower and could disagree with the cells beside it.
+- Matches item code OR product name, case-insensitive substring, because a planner knows a
+  product by either.
+- **The headline totals do NOT move with it.** The header count and the past-lines banner
+  describe the SELECTION, not the rows on screen - the same lesson the day window taught. So the
+  filter states its own fraction instead, "3 of 40 products", shown only while a filter is on,
+  and a narrowed board can never be read as the whole one. Verified live: filtering to 3 of 40
+  rows left "96 of 106 lines are already past their required date" untouched.
+- No match renders **"No products match"** plus the count, never the "these sales orders owe
+  nothing" copy, which would be a flat lie about a selection that owes plenty.
+- The term travels in the URL (`?product=cks`, `replace` not `push`) and clears with the usual X.
+- Cell dialogs, decisions and confirm are untouched: a decision on a filtered board is a decision
+  on the same line.
+
+**The policy banner reads as words, and the preview offer is retired.** The banner was printing
+`need_by_date 3 · document_age 1 · customer_credit 1` - the same database identifiers the rank
+chips were told to stop showing - in a banner that now describes a ranking somebody has to trust.
+It goes through the same `factorLabel` map: "Required date 3 · Order date 1 · Payment terms 1".
+
+The "Preview a fairer weighting" button is gone; only "Back to the live policy" survives, for a
+preview that is on show. It existed to show what a fair weighting would do BEFORE one was
+switched on, and 13.5's sequence ("ship the preview first, then re-weight the active row") has
+now completed: the live policy is `Fair fulfilment priority (delivery date, document date,
+customer credit)`. Offering to preview the policy that is already running is an offer to nowhere.
+
+**Measured, and worth knowing: a flat ranking no longer implies an unfair policy.** The live fair
+policy still reports `discriminates_nothing: true` on a single-order board, because customer,
+order date and demand class are constant across one order's lines. So the flatness message stays
+(it is a true fact about that board) while the preview offer does not.
+
 **The board header is title left, actions right** (captain, 18 August 2026, with a screenshot of
 Back overlapping the title): the granularity control and then **Back to the worklist** sit together
 in the actions on the right, Back as `ghost` because returning is secondary to the control that
