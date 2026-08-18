@@ -536,6 +536,7 @@ class FulfilmentBoardService:
         owed = demand_qty()
         rows = (
             self.db.query(
+                SalesOrderLine.id.label("line_id"),
                 SalesOrder.id.label("sales_order_id"),
                 SalesOrder.so_number,
                 SalesOrder.order_date,
@@ -559,8 +560,37 @@ class FulfilmentBoardService:
             .all()
         )
 
-        sales_orders = [
-            {
+        # The rank each document holds in THIS pile's queue - the same `pile_book` the trail
+        # serves stock down and the queue screen reads out, never a second ranking. The captain,
+        # reading the drill-down sorted by delivery date: "is this sorted by the rank also? ...
+        # we should have a rank column and be able to sort by that (default sort by that)". A
+        # covered line is absent from the book (its claim is already a hold, PLAN 13.5), so it
+        # carries no rank and lists after the queue in date order.
+        book = self.supply.pile_book(str(product.id), str(warehouse.id))
+        ranked = {
+            row["line_id"]: (
+                position,
+                round(float(row.get("rank_score") or 0.0), 6),
+                [
+                    {**factor.as_dict(), "raw": raw.get(factor.key)}
+                    for factor in (row.get("factors") or [])
+                ],
+                # The mirror line's number, when the order is adopted; a core line has none of
+                # its own (`PileQueueLine.line_no`).
+                row.get("line_no"),
+            )
+            for position, row in enumerate(book, start=1)
+            for raw in (priority.raw_facts_for_demand_row(row),)
+        }
+        policy_name = self._policy(None)[0]
+
+        def _so_row(row) -> Dict[str, Any]:
+            position, score, factors, line_no = ranked.get(
+                str(row.line_id), (None, None, [], None)
+            )
+            return {
+                "line_id": str(row.line_id),
+                "line_no": line_no,
                 "sales_order_id": str(row.sales_order_id),
                 "so_number": row.so_number,
                 "customer_name": row.customer_name,
@@ -574,9 +604,18 @@ class FulfilmentBoardService:
                 #: A confirmed decision already covers this line, so its demand is committed
                 #: rather than merely outstanding.
                 "is_covered": bool(row.covered),
+                "rank_position": position,
+                "rank_score": score,
+                "rank_factors": factors,
             }
-            for row in rows
-        ]
+
+        sales_orders = sorted(
+            (_so_row(row) for row in rows),
+            # Queue order first (the default sort the captain asked for), then the unranked
+            # covered lines in the date order the query already gave them (a stable sort keeps
+            # it).
+            key=lambda so: (so["rank_position"] is None, so["rank_position"] or 0),
+        )
         incoming_rows = self.supply.incoming_by_location([product_id], [warehouse_id]).get(
             (str(product_id), str(warehouse_id)), []
         )
@@ -620,6 +659,8 @@ class FulfilmentBoardService:
             "qty_free": qty_text(free),
             "sales_orders": sales_orders,
             "incoming": incoming,
+            #: The policy the ranks above came from, named beside them as the queue names it.
+            "policy_name": policy_name,
         }
 
     def pile_queue(

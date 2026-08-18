@@ -448,6 +448,16 @@ class StockDetailSalesOrder(BaseModel):
     so_qty: str
     #: A confirmed decision already covers this line: committed demand, not merely outstanding.
     is_covered: bool = False
+    #: The CORE sales-order line this document row IS. Addressing only: one order stands
+    #: behind a location once per line, so the order id alone does not name a row.
+    line_id: Optional[str] = None
+    line_no: Optional[int] = None
+    #: Where this line stands in the pile's queue (1-based, `pile_book` order) and the score
+    #: that put it there, with the same per-factor breakdown the queue screen shows. Null on a
+    #: covered line: its claim is already a hold, so it is not in the queue at all.
+    rank_position: Optional[int] = None
+    rank_score: Optional[float] = None
+    rank_factors: List[BoardRankFactor] = []
 
 
 class StockDetailIncoming(BaseModel):
@@ -485,6 +495,8 @@ class StockDetail(BaseModel):
     qty_free: str
     sales_orders: List[StockDetailSalesOrder] = []
     incoming: List[StockDetailIncoming] = []
+    #: The `scm.priority_policy` the ranks in `sales_orders` came from.
+    policy_name: Optional[str] = None
 
 
 class PileQueueLine(BaseModel):

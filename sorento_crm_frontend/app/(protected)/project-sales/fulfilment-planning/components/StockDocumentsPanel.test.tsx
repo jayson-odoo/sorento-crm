@@ -181,6 +181,61 @@ describe('StockDocumentsPanel', () => {
   });
 
   /**
+   * The captain, reading the list sorted by delivery date: "is this sorted by the rank also? or
+   * just delivery date, we should have a rank column and be able to sort by that (default sort
+   * by that), along with the reason tooltip like How this rank was calculated". The rank is the
+   * pile queue's own; a covered line is not in the queue and says so instead of going blank.
+   */
+  it('shows each document\'s rank in the queue with the calculation behind it, and names an unqueued line', async () => {
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        policy_name: 'Board preview',
+        sales_orders: [
+          {
+            sales_order_id: 'so-a',
+            so_number: 'SO391698',
+            customer_name: 'OIB CONSTRUCTION SDN BHD',
+            doc_date: '2026-01-05',
+            delivery_date: '2026-09-04',
+            so_qty: '47000',
+            is_covered: false,
+            line_id: 'line-a',
+            rank_position: 1,
+            rank_score: 1,
+            rank_factors: [
+              { key: 'need_by_date', weight: 3, value: 1, present: true, raw: '2026-09-04' },
+            ],
+          },
+          {
+            sales_order_id: 'so-b',
+            so_number: 'SO324265',
+            customer_name: 'MASUKA BINA SDN BHD',
+            doc_date: '2025-11-02',
+            delivery_date: '2026-10-01',
+            so_qty: '9',
+            is_covered: true,
+            line_id: 'line-b',
+            rank_position: null,
+            rank_score: null,
+            rank_factors: [],
+          },
+        ],
+      }),
+    );
+
+    renderPanel();
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText('Rank')).toBeInTheDocument();
+    expect(within(table).getByText('#1')).toBeInTheDocument();
+    expect(within(table).getByText('1.00')).toBeInTheDocument();
+    expect(
+      within(table).getByRole('button', { name: 'How this rank was calculated' }),
+    ).toBeInTheDocument();
+    expect(within(table).getByText('Not queued')).toBeInTheDocument();
+  });
+
+  /**
    * The live book tops out at 501 documents for one product at one location, and this now opens
    * INSIDE a row of the cell dialog. So the documents scroll in a region of their own rather
    * than growing the dialog until nothing else is reachable.

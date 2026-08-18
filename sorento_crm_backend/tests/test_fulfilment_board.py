@@ -2394,6 +2394,34 @@ def test_the_drill_down_says_which_demand_a_decision_already_covers():
         assert detail["sales_orders"][0]["is_covered"] is False
 
 
+def test_the_drill_down_lists_the_documents_in_the_queue_order_with_their_rank():
+    """The captain, reading it sorted by delivery date: "is this sorted by the rank also? ...
+    we should have a rank column and be able to sort by that (default sort by that)". The
+    order and the ranks are the pile queue's own, never a second ranking of the same pile."""
+    with blank_session() as db:
+        _planned, _other, product, warehouse = _pressure_world(db)
+        service = _service(db)
+
+        detail = service.stock_detail(str(product.id), str(warehouse.id))
+        queue = service.pile_queue(str(product.id), str(warehouse.id))
+
+        assert [row["line_id"] for row in detail["sales_orders"]] == [
+            line["line_id"] for line in queue["lines"]
+        ]
+        assert [row["rank_position"] for row in detail["sales_orders"]] == [1, 2, 3]
+        assert [row["rank_score"] for row in detail["sales_orders"]] == [
+            line["rank_score"] for line in queue["lines"]
+        ]
+        # The same per-factor breakdown the queue explains a line with, so the rank popover on
+        # a document row reads exactly as it does on the queue.
+        assert [row["rank_factors"] for row in detail["sales_orders"]] == [
+            line["rank_factors"] for line in queue["lines"]
+        ]
+        assert detail["policy_name"] == queue["policy_name"]
+        assert all(row["line_no"] is None or isinstance(row["line_no"], int)
+                   for row in detail["sales_orders"])
+
+
 def test_an_empty_product_location_drills_down_to_an_honest_nothing():
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")

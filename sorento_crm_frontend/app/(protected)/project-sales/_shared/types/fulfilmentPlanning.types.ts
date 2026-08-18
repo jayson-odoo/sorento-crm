@@ -1241,6 +1241,17 @@ export interface StockDetailSalesOrder {
   so_qty: string;
   /** Already covered by a confirmed decision, so it is not competing for this stock. */
   is_covered?: boolean;
+  /** The core sales-order line this row is. Addressing only. */
+  line_id?: string | null;
+  line_no?: number | null;
+  /**
+   * Where the line stands in the pile's queue (1-based, the order the stock is served in) and
+   * the score that put it there, with the same factors the queue screen shows. Null on a
+   * covered line, which is not in the queue at all.
+   */
+  rank_position?: number | null;
+  rank_score?: number | null;
+  rank_factors?: BoardRankFactor[];
 }
 
 /** One purchase order standing behind the SPO quantity. */
@@ -1277,6 +1288,8 @@ export interface StockDetail {
   qty_free: string;
   sales_orders: StockDetailSalesOrder[];
   incoming: StockDetailIncoming[];
+  /** The priority policy the ranks in `sales_orders` came from. */
+  policy_name?: string | null;
 }
 
 /**
