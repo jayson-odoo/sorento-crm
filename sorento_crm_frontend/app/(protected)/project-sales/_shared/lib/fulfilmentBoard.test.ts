@@ -1435,6 +1435,8 @@ describe('confirmLinesFor and a discontinued product', () => {
   const discontinued = {
     dealer_hot_selling: false,
     dealer_hot_selling_where: [],
+    project_hot_selling: false,
+    project_hot_selling_where: [],
     discontinued: true,
     retail_classification_available: true,
   };

@@ -33,6 +33,8 @@ from tests.scm.front_planning_golden import (
     CONFIRMED_COVER_RETAIL_NEED,
     DEALER_LOCATION,
     HOT_SELLING_WORKED_CASE,
+    POOL_LOCATION,
+    PROJECT_HOT_SELLING_WORKED_CASE,
     PROPOSAL_CASES,
     RESERVE,
     TWO_LINE_ATTRIBUTION_CASE,
@@ -61,8 +63,8 @@ def _as_tuple(component):
 # ------------------------------------------------------------------- AC-B08
 
 
-def test_the_hot_selling_worked_case_reserves_only_above_the_brw_floor():
-    """AC-B08 and PLAN section 3.3's own worked example, to the unit."""
+def test_the_dealer_hot_selling_worked_case_reserves_own_location_and_offers_no_pool():
+    """AC-B08 and PLAN 3.3a's own worked example, to the unit (amended 19 August 2026)."""
     from app.services.scm.front_planning_engine import propose_line
 
     case = HOT_SELLING_WORKED_CASE
@@ -73,8 +75,11 @@ def test_the_hot_selling_worked_case_reserves_only_above_the_brw_floor():
     )
 
 
-def test_a_hot_selling_product_reserves_no_dealer_facing_stock():
-    """AC-B06. The 50 dealer units are visible and untouchable, not merely unpreferred."""
+def test_a_dealer_hot_selling_product_reserves_its_own_dealer_facing_stock_in_full():
+    """PLAN 3.3a: own-location Reserve is always eligible, hot-selling or not. The 50
+    dealer units are reserved just as they would be for an ordinary item; it is the SHARED
+    POOL that is gated by dealer hot-selling, not the dealer's own stock.
+    """
     from app.services.scm.front_planning_engine import propose_line
 
     case = HOT_SELLING_WORKED_CASE
@@ -88,8 +93,31 @@ def test_a_hot_selling_product_reserves_no_dealer_facing_stock():
         ),
         Decimal("0"),
     )
-    assert dealer_reserve == Decimal("0")
-    assert case.qty_from(DEALER_LOCATION) == Decimal("0")
+    assert dealer_reserve == Decimal("50")
+    assert case.qty_from(DEALER_LOCATION) == Decimal("50")
+
+    pool_reserve = sum(
+        (
+            Decimal(str(c.qty))
+            for c in proposed
+            if c.kind == RESERVE and c.source_location == POOL_LOCATION
+        ),
+        Decimal("0"),
+    )
+    assert pool_reserve == Decimal("0")
+
+
+def test_the_project_hot_selling_worked_case_caps_the_pool_at_its_availability():
+    """PLAN 3.3a's other worked example: project hot-selling draws the pool only while its
+    signed availability stays positive."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    case = PROJECT_HOT_SELLING_WORKED_CASE
+    proposed = _components(propose_line(**case.inputs))
+
+    assert tuple(_as_tuple(c) for c in proposed) == tuple(
+        _as_tuple(c) for c in case.components
+    )
 
 
 # ------------------------------------------------------------------- AC-B12

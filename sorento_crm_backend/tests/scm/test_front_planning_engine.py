@@ -46,7 +46,6 @@ def test_reserve_draws_from_the_own_location_before_the_pool_and_states_both_wor
             is_dealer_hot_selling=False,
             free_stock={OWN_LOCATION: Decimal("30"), POOL_LOCATION: Decimal("100")},
             pool_location=POOL_LOCATION,
-            reorder_levels={},
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
@@ -64,13 +63,18 @@ def test_reserve_draws_from_the_own_location_before_the_pool_and_states_both_wor
     assert not any(c.kind == "buy" for c in proposed)
 
 
-# --------------------------------------------------------------- hot-selling / BRW cap
+# --------------------------------------------------------------- hot-selling (PLAN 3.3a)
+#
+# Amended 19 August 2026 (the captain): "reserve can always reserve regardless of dealer
+# hot selling or not ... it is the pool BRW that is dependent on dealer hot selling ... if
+# it is dealer hot selling, then we shouldn't take from BRW, if it is project hot selling,
+# then we can take from BRW (provided the available quantity is positive)".
 
 
-def test_hot_selling_reserve_never_draws_dealer_stock_even_when_the_pool_falls_short():
-    """AC-B06, with different numbers than the pinned worked case: the pool cap (50) is
-    smaller than open quantity (200), and 999 units are sitting at the dealer location.
-    Reserve must still stop at the cap rather than reaching for the dealer pile.
+def test_dealer_hot_selling_reserves_own_location_in_full_and_offers_no_pool():
+    """Own-location Reserve is ALWAYS eligible, hot-selling or not - the dealer stock at
+    999 is reserved just as it would be for an ordinary item, and the pool contributes
+    nothing at all (not even a capped amount): the old reorder-level cap is gone.
     """
     from app.services.scm.front_planning_engine import propose_line
 
@@ -83,44 +87,71 @@ def test_hot_selling_reserve_never_draws_dealer_stock_even_when_the_pool_falls_s
             is_dealer_hot_selling=True,
             free_stock={DEALER_LOCATION: Decimal("999"), POOL_LOCATION: Decimal("150")},
             pool_location=POOL_LOCATION,
-            reorder_levels={POOL_LOCATION: Decimal("100")},
+            pool_available=Decimal("150"),
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
 
-    assert not any(c.source_location == DEALER_LOCATION for c in proposed)
+    assert not any(c.source_location == POOL_LOCATION for c in proposed)
 
     reserve = next(c for c in proposed if c.kind == "reserve")
-    assert reserve.qty == Decimal("50")  # max(150 - 100, 0)
-    assert reserve.source_location == POOL_LOCATION
-    assert reserve.reason == (
-        "free stock in the shared BRW pool above its reorder level of 100 covers "
-        "the need by the required date"
-    )
-
-    buy = next(c for c in proposed if c.kind == "buy")
-    assert buy.qty == Decimal("150")
-    assert buy.reason == "remaining uncovered need"
+    assert reserve.qty == Decimal("200")
+    assert reserve.source_location == DEALER_LOCATION
+    assert reserve.reason == "free stock at DLR-KL covers the need by the required date"
+    assert not any(c.kind == "buy" for c in proposed)
 
 
-def test_the_brw_cap_floors_at_zero_when_pool_free_stock_is_below_its_reorder_level():
-    """PLAN 3.3: `MAX(BRW free unclaimed stock - level, 0)`. Free stock 50 against a level
-    of 80 is a negative gap, and the rule is explicit that it floors at zero rather than
-    going negative -- Reserve must not be proposed at all, and the whole line is Buy.
+def test_project_hot_selling_caps_the_pool_at_its_own_signed_availability():
+    """PLAN 3.3a: `max(min(pool free, pool_available), 0)`. The pool's free balance (150)
+    is more than its signed availability (40), so the draw stops at 40 - the residual
+    still buys, rather than reaching further into a pool that is already thin.
     """
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
         propose_line(
-            open_qty=Decimal("40"),
+            open_qty=Decimal("200"),
             line_no=9,
             required_date=REQUIRED_DATE,
-            fulfilment_location=DEALER_LOCATION,
-            is_dealer_hot_selling=True,
-            free_stock={DEALER_LOCATION: Decimal("500"), POOL_LOCATION: Decimal("50")},
+            fulfilment_location=OWN_LOCATION,
+            is_project_hot_selling=True,
+            free_stock={OWN_LOCATION: Decimal("0"), POOL_LOCATION: Decimal("150")},
             pool_location=POOL_LOCATION,
-            reorder_levels={POOL_LOCATION: Decimal("80")},
+            pool_available=Decimal("40"),
+            timely_spo_qty=Decimal("0"),
+            is_discontinued=False,
+        )
+    )
+
+    reserve = next(c for c in proposed if c.kind == "reserve")
+    assert reserve.qty == Decimal("40")
+    assert reserve.source_location == POOL_LOCATION
+    assert reserve.reason == (
+        "free stock in the shared BRW pool covers the need by the required date, drawn "
+        "while its availability stays positive (40 available)"
+    )
+
+    buy = next(c for c in proposed if c.kind == "buy")
+    assert buy.qty == Decimal("160")
+    assert buy.reason == "remaining uncovered need"
+
+
+def test_project_hot_selling_offers_nothing_when_the_pools_availability_is_not_positive():
+    """The other side of the same boundary: a pool already oversold (`pool_available`
+    negative or zero) offers nothing at all, never a floor read as "some" (PLAN 3.3a)."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("40"),
+            line_no=11,
+            required_date=REQUIRED_DATE,
+            fulfilment_location=DEALER_LOCATION,
+            is_project_hot_selling=True,
+            free_stock={DEALER_LOCATION: Decimal("0"), POOL_LOCATION: Decimal("50")},
+            pool_location=POOL_LOCATION,
+            pool_available=Decimal("-12"),
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
@@ -130,7 +161,36 @@ def test_the_brw_cap_floors_at_zero_when_pool_free_stock_is_below_its_reorder_le
     assert len(proposed) == 1, "no zero-quantity Reserve should be proposed at all"
     assert proposed[0].kind == "buy"
     assert proposed[0].qty == Decimal("40")
-    assert proposed[0].reason == "remaining uncovered need"
+
+
+def test_dealer_hot_selling_wins_when_a_product_is_hot_on_both_demand_classes():
+    """Precedence (PLAN 3.3a): a product hot on both classes at once is judged dealer-hot,
+    so the pool is not offered even though it would have had positive availability under
+    the project-hot rule."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("40"),
+            line_no=13,
+            required_date=REQUIRED_DATE,
+            fulfilment_location=DEALER_LOCATION,
+            is_dealer_hot_selling=True,
+            is_project_hot_selling=True,
+            free_stock={DEALER_LOCATION: Decimal("10"), POOL_LOCATION: Decimal("50")},
+            pool_location=POOL_LOCATION,
+            pool_available=Decimal("50"),
+            timely_spo_qty=Decimal("0"),
+            is_discontinued=False,
+        )
+    )
+
+    assert not any(c.source_location == POOL_LOCATION for c in proposed)
+    reserve = next(c for c in proposed if c.kind == "reserve")
+    assert reserve.qty == Decimal("10")
+    assert reserve.source_location == DEALER_LOCATION
+    buy = next(c for c in proposed if c.kind == "buy")
+    assert buy.qty == Decimal("30")
 
 
 # --------------------------------------------------------------- timely vs late SPO
@@ -226,7 +286,6 @@ def test_quantities_stay_exact_decimal_with_fractional_inputs():
             is_dealer_hot_selling=False,
             free_stock={OWN_LOCATION: Decimal("20.125"), POOL_LOCATION: Decimal("100")},
             pool_location=POOL_LOCATION,
-            reorder_levels={},
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )

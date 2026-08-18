@@ -239,6 +239,49 @@ Borrow or Buy. The 50 dealer-facing units and BRW's protected 80 are not consume
 CS selects 10 dealer units as Borrow with a reason, Buy becomes 20 and the line balances at
 confirmation.
 
+### 3.3a Amendment, 19 August 2026 - hot-selling per demand class, own location always Reserve
+
+The captain, live-testing: "reserve can always reserve regardless of dealer hot selling or not,
+it is the pool BRW that is dependent on dealer hot selling, cause own location like BRW-BB is
+memang for project only ... if it is dealer hot selling, then we shouldn't take from BRW, if it
+is project hot selling, then we can take from BRW (provided the available quantity is positive)
+... you should do the demand over project classed demand to judge project hot selling, same for
+dealer." This replaces section 3.3's dealer-only test and its BRW reorder-level cap.
+
+**Own-location Reserve is always eligible, hot-selling or not.** A dealer hot-selling product's
+own dealer-facing stock is no longer excluded from Reserve - it reserves exactly as an ordinary
+item's own stock does, uncapped. What hot-selling gates is the SHARED POOL alone, in three modes:
+
+| Mode | Pool contribution |
+| --- | --- |
+| Dealer hot-selling | Nothing. The pool is kept for retail and is not offered at all. |
+| Project hot-selling (and not dealer hot) | `max(min(pool free, pool_available), 0)`, where `pool_available` is the pool's own SIGNED position, `on hand - SO qty + SPO qty` - the same figure the donor list and the pool-pile trail already compute. A take that would leave this negative is refused instead of proposed. |
+| Neither | The pool's whole free balance, uncapped - unchanged from before this amendment. |
+
+Dealer wins when a product is hot-selling on both demand classes at once. The old reorder-level
+cap (`MAX(BRW free unclaimed stock - BRW reorder level, 0)`) is gone from both the dealer path
+(which now offers nothing) and every other path; `pool_cap` stays on the wire for compatibility
+but is always null.
+
+**The predicate is per demand class, and it is BY QUANTITY, not value.** `scm.item_classification`
+carries two ABC columns computed on delivered QUANTITY within each demand class's own trailing-12mo
+window - `abc_class_project` for project-classed demand, `abc_class_retail` for retail (dealer)
+demand - independent of the reorder engine's own value-based `abc_class`. A product is dealer
+hot-selling when any row has `abc_class_retail = 'A'`; project hot-selling when any row has
+`abc_class_project = 'A'`. Neither reads the warehouse's own `segment` any more - the demand class
+already states who bought it. **Unclassified is now a real, checked state, not an inferred one**: a
+row can exist (the classification job ran) with a NULL letter in a column, meaning no delivered
+demand of that class in the window - "unknown", never a computed "not hot". A product with no
+NON-NULL letter in EITHER column is unclassified; the pool rung then offers the pool as it would
+for a classified, non-hot item, and says so ("No ABC classification for this item (no delivered
+demand of that class in the last year), so `<pool>` is offered as for a non-hot item").
+
+The own rung's sentence no longer names a hot-selling verdict at all - it reads exactly as it does
+for an ordinary item ("N on hand, but ..." / "N left after the k lines ahead; this line takes q" /
+"First in the queue here; this line takes q"). The evidence sentence ("Dealer hot-selling (ABC A by
+quantity on retail demand at `<codes>`): ...") moved to the pool rung, which is the one it now
+governs.
+
 ### 3.4 Borrow and discontinued Buy
 
 Borrow requires exactly one approval: explicit confirmation by the CS actor confirming the

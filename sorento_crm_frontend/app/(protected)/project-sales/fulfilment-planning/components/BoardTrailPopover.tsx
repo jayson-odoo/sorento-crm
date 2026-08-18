@@ -191,6 +191,10 @@ function hasFooter(step: BoardTrailStep): boolean {
  * discontinued, to see if we can take from BRW?" They were consulted on every line and never
  * printed. Nothing renders when the flags are absent (the ladder was not walked) or all clear -
  * an unflagged item is the ordinary case and needs no badge saying so.
+ *
+ * Amended 19 August 2026 (PLAN 3.3a): both a dealer and a project hot-selling chip may show
+ * (dealer wins the pool, but both are stated - the flags are evidence, not a single verdict).
+ * Own-location stock is never restricted by either flag any more; only the shared pool is.
  */
 function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
   const flags = contribution.item_flags;
@@ -199,11 +203,21 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
   if (flags.dealer_hot_selling) {
     const where = flags.dealer_hot_selling_where.join(', ');
     chips.push({
-      key: 'hot-selling',
-      label: 'hot-selling',
+      key: 'dealer-hot-selling',
+      label: 'dealer hot-selling',
       title: where
-        ? `Dealer hot-selling: ABC A at ${where}. Own-location stock is kept for retail; pool only.`
-        : 'Dealer hot-selling. Own-location stock is kept for retail; pool only.',
+        ? `Dealer hot-selling: ABC A by quantity on retail demand at ${where}. The shared pool is kept for retail, not offered.`
+        : 'Dealer hot-selling. The shared pool is kept for retail, not offered.',
+    });
+  }
+  if (flags.project_hot_selling) {
+    const where = flags.project_hot_selling_where.join(', ');
+    chips.push({
+      key: 'project-hot-selling',
+      label: 'project hot-selling',
+      title: where
+        ? `Project hot-selling: ABC A by quantity on project demand at ${where}. The shared pool may be drawn while its availability stays positive.`
+        : 'Project hot-selling. The shared pool may be drawn while its availability stays positive.',
     });
   }
   if (flags.discontinued) {
@@ -215,9 +229,9 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
   }
   if (!flags.retail_classification_available) {
     chips.push({
-      key: 'no-retail-classification',
-      label: 'no retail classification',
-      title: 'Nobody has classified this item at a dealer location, so hot-selling cannot be judged.',
+      key: 'no-classification',
+      label: 'no classification',
+      title: 'No ABC classification for this item (no delivered demand of either class in the last year), so hot-selling cannot be judged.',
     });
   }
   if (chips.length === 0) return null;

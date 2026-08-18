@@ -356,12 +356,17 @@ export interface SupplyLine {
    * blocked and never names it in a confirmation; `null` on every plannable line.
    */
   unplannable_reason?: string | null;
+  /** ABC A by quantity on retail demand (3.3a): the shared pool is not offered at all. */
   is_dealer_hot_selling: boolean;
-  /** No classification row at any qualifying dealer warehouse (AC-B05). */
+  /** ABC A by quantity on project demand (3.3a): the pool is capped by its own availability. */
+  is_project_hot_selling: boolean;
+  /** No non-null ABC letter in either demand class (AC-B05, amended 3.3a). */
   classification_unavailable: boolean;
   is_discontinued: boolean;
   pool_location?: string | null;
-  /** `max(pool free - coalesce(pool reorder level, 0), 0)` when hot-selling (AC-B06). */
+  /** The old reorder-level cap. Always null now (19 August 2026, PLAN 3.3a) - dealer
+   * hot-selling offers the pool nothing and project hot-selling caps it by availability
+   * instead. Kept for wire compatibility. */
   pool_cap?: string | null;
   pool_reorder_level?: string | null;
   components: SupplyComponent[];
@@ -631,7 +636,9 @@ export interface BoardTrailPool {
   /** What was left for THIS line when the rung was reached - the rung's own `opening`. */
   left: string;
   reorder_level: string;
-  /** What could be taken above the reorder level, when a cap applies. Null when none does. */
+  /** The old reorder-level cap. Always null now (19 August 2026, PLAN 3.3a) - dealer
+   * hot-selling offers the pool nothing and project hot-selling caps it by availability
+   * instead. Kept for wire compatibility. */
   cap?: string | null;
 }
 
@@ -639,14 +646,24 @@ export interface BoardTrailPool {
  * The item facts the ladder judged a line on, said rather than implied.
  *
  * The captain: "where is the consideration of dealer hot selling / project hot selling /
- * discontinued, to see if we can take from BRW?" There is no project hot-selling concept - only
- * the dealer one - and `retail_classification_available: false` is "nobody has classified it",
- * which is a different answer from "not hot-selling".
+ * discontinued, to see if we can take from BRW?" Amended 19 August 2026 (PLAN 3.3a):
+ * hot-selling is judged PER DEMAND CLASS, BY QUANTITY delivered in that class - a SKU can be
+ * hot-selling on retail demand, on project demand, on both (dealer wins) or on neither.
+ * Own-location Reserve is always eligible regardless of either flag; the flags gate only how
+ * much the SHARED POOL contributes. `retail_classification_available: false` is "nobody has
+ * judged either class" (no delivered demand of either in the trailing-12mo window), which is
+ * a different answer from "not hot-selling".
  */
 export interface BoardItemFlags {
+  /** ABC A by quantity on retail demand: the pool contributes nothing at all. */
   dealer_hot_selling: boolean;
-  /** The dealer locations where it earned that, by code. */
+  /** The locations where it earned that, by code. */
   dealer_hot_selling_where: string[];
+  /** ABC A by quantity on project demand: the pool contributes only while its own signed
+   * availability stays positive. */
+  project_hot_selling: boolean;
+  /** The locations where it earned that, by code. */
+  project_hot_selling_where: string[];
   discontinued: boolean;
   retail_classification_available: boolean;
 }

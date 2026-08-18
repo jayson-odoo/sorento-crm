@@ -155,6 +155,7 @@ function supply(overrides: Partial<SupplyProposal> = {}): SupplyProposal {
         required_date: '2026-07-01',
         fulfilment_location: 'BRW-BB',
         is_dealer_hot_selling: false,
+        is_project_hot_selling: false,
         classification_unavailable: false,
         is_discontinued: false,
         pool_location: 'BRW-BB',
