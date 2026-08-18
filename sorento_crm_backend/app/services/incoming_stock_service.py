@@ -53,6 +53,9 @@ CLEARANCE_KEYS = tuple(GATED_FIELDS["incoming_stock"])
 from app.services.identifier_resolver import resolve_identifier
 from app.services.company_scope import stamp_lookup_companies
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
+# Header OR any line: a container filled by two factories has no header supplier,
+# so the header alone would hide it from both of them.
+from app.services.procurement_service import shipment_supplier_predicate
 
 
 # Line statuses considered "received" and therefore excluded from incoming-stock results.
@@ -459,7 +462,7 @@ class IncomingStockService:
         if shipment_ids:
             q = q.filter(InboundShipment.id.in_(shipment_ids))
         if supplier_ids:
-            q = q.filter(InboundShipment.supplier_id.in_(supplier_ids))
+            q = q.filter(shipment_supplier_predicate(supplier_ids))
         if query:
             term = f"%{query.strip()}%"
             q = q.filter(
@@ -563,7 +566,7 @@ class IncomingStockService:
         if shipment_ids:
             shipment_filters.append(InboundShipment.id.in_(shipment_ids))
         if supplier_ids:
-            shipment_filters.append(InboundShipment.supplier_id.in_(supplier_ids))
+            shipment_filters.append(shipment_supplier_predicate(supplier_ids))
         if eta_from is not None:
             shipment_filters.append(InboundShipment.estimated_arrival_date >= eta_from)
         if eta_to is not None:

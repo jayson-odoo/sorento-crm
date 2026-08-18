@@ -3,6 +3,16 @@ export interface InboundShipmentLine {
   shipment_id: string;
   product_id: string;
   quantity_shipped: number;
+  /**
+   * Whose line this is. One container is routinely loaded by two or three factories,
+   * and the header supplier is null once it is mixed - the line is then the only
+   * place the attribution survives. Null on a line nobody has claimed.
+   */
+  supplier_id?: string | null;
+  /** Volume as the packing list stated it. Decimal on the wire, so a string is possible. */
+  cbm?: number | string | null;
+  /** The supplier's own note on the line. */
+  remarks?: string | null;
   uom_id?: string | null;
   batch_number?: string | null;
   serial_number_range_from?: string | null;
@@ -40,7 +50,8 @@ export interface InboundShipmentLine {
 export interface PackingList extends ClearanceFields {
   id: string;
   shipment_number: string | null;
-  supplier_id: string;
+  /** Null on a mixed container - the header names no factory once two of them loaded it. */
+  supplier_id: string | null;
   shipment_date: Date;
   estimated_arrival_date?: Date | null;
   actual_arrival_date?: Date | null;
@@ -148,6 +159,8 @@ export interface PackingListFormData {
   shipment_lines?: Array<{
     product_id: string;
     quantity_shipped: number;
+    /** Round-tripped on save so an edit does not strip a line's factory. */
+    supplier_id?: string;
     uom_id?: string;
     batch_number?: string;
     serial_number_range_from?: string;

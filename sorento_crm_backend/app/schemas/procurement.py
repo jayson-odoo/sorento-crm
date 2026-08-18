@@ -159,6 +159,9 @@ class ProductSupplierResponse(ProductSupplierBase):
 class InboundShipmentLineBase(BaseModel):
     product_id: str
     quantity_shipped: int
+    # Whose line this is, when the caller knows. Left unset it falls back to the header's
+    # supplier at write time, so an existing single-supplier payload is unchanged.
+    supplier_id: Optional[str] = None
     uom_id: Optional[str] = None
     batch_number: Optional[str] = None
     serial_number_range_from: Optional[str] = None
@@ -175,6 +178,9 @@ class InboundShipmentLineBase(BaseModel):
     # denominates: a read that returns `unit_cost` and no currency hands its caller the same
     # meaningless number the write path exists to prevent.
     currency: Optional[str] = None
+    # Volume as the packing list stated it, and the supplier's own note on the line.
+    cbm: Optional[Decimal] = None
+    remarks: Optional[str] = None
 
 
 class InboundShipmentLineCreate(InboundShipmentLineBase):

@@ -25,6 +25,7 @@ a Test means everywhere else in this system.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -33,7 +34,12 @@ from sqlalchemy.orm import Session
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
 from app.services.error_handler import AppException
 from app.services.scm.currency_resolution import resolve_currency
-from app.services.scm.packing_list_reader import PackingBlock, PackingReadResult, read_workbook
+from app.services.scm.packing_list_reader import (
+    PackingBlock,
+    PackingLine,
+    PackingReadResult,
+    read_workbook,
+)
 from app.services.scm.supplier_scope import assert_supplier
 from app.services.scm.upload_validation import envelope, named
 
@@ -53,6 +59,23 @@ def _priced(parsed: PackingReadResult) -> int:
     return sum(1 for b in parsed.blocks for ln in b.lines if ln.unit_price is not None)
 
 
+def _line_cbm(ln: PackingLine) -> Optional[Decimal]:
+    """The volume of one line, in the unit the file states it in.
+
+    The stated total when there is one, otherwise the per-unit figure times the quantity.
+    `None` when the file measured neither: an unmeasured line must not be stored as 0, or a
+    subtotal reads as complete when it is not.
+
+    Through `str` rather than `Decimal(float)`, so 0.21 stays 0.21 instead of arriving as
+    its binary approximation in a Numeric(12,4) column.
+    """
+    if ln.cbm_total is not None:
+        return Decimal(str(ln.cbm_total))
+    if ln.cbm_per_unit is not None and ln.qty:
+        return Decimal(str(round(ln.cbm_per_unit * ln.qty, 6)))
+    return None
+
+
 def _parse(db: Session, data: bytes) -> PackingReadResult:
     return read_workbook(data, db=db)
 
@@ -60,8 +83,9 @@ def _parse(db: Session, data: bytes) -> PackingReadResult:
 def _check_supplier(db: Session, supplier_id: Optional[str]) -> None:
     """A STATED supplier has to be one we hold, same rule as the proforma channel.
 
-    The supplier is optional here (a pre-load list can arrive before anyone knows), so only a
-    stated one is checked. It has to be checked before the currency resolution below it: the
+    Optional on `preview` and `validate` (a pre-load list is read before anyone commits to
+    whose it is), required on `apply`, so only a stated one is checked here and `apply`'s own
+    signature does the requiring. It has to be checked before the currency resolution: the
     supplier price list is one of the currency sources, and a value that is not an id reached
     a UUID column there, which is a 500 with the session aborted rather than the 422 the
     operator can act on.
@@ -227,7 +251,7 @@ def apply(
     db: Session,
     data: bytes,
     *,
-    supplier_id: Optional[str] = None,
+    supplier_id: str,
     shipment_date: Optional[date] = None,
     currency: Optional[str] = None,
     source_ref: Optional[str] = None,
@@ -239,6 +263,10 @@ def apply(
     Idempotent because the shipment NAME is derived from the file rather than generated: the
     same file uploaded twice resolves to the same shipments and updates them in place, which is
     AC-G3 and is also what stops a nervous second click doubling a container.
+
+    `supplier_id` is REQUIRED. A packing list comes from one factory, and a container is
+    routinely filled by two or three of them; an upload that does not say whose it is speaks
+    for the whole container and would delete the other factories' lines.
     """
     _check_supplier(db, supplier_id)
     parsed = _parse(db, data)
@@ -281,6 +309,10 @@ def apply(
             lines.append(
                 InboundShipmentLineCreate(
                     product_id=str(product["id"]),
+                    # Whose line this is, stated on the LINE and not only on the header:
+                    # one container carries several factories, and a line that does not
+                    # say which one is a line the next factory's upload would replace.
+                    supplier_id=supplier_id,
                     quantity_shipped=int(ln.qty),
                     uom_id=str(product["base_uom_id"]) if product.get("base_uom_id") else None,
                     cartons_count=int(ln.cartons) if ln.cartons else 1,
@@ -289,6 +321,12 @@ def apply(
                     # incoming figure look comparable to the ordered one when it is not.
                     unit_cost=ln.unit_price,
                     currency=resolved_currency if ln.unit_price is not None else None,
+                    # The reader has always parsed volume and the supplier's remark and
+                    # thrown both away. The total when the file states it, otherwise the
+                    # per-unit figure times the quantity; never zero for an unmeasured
+                    # item, because zero reads as "takes no space".
+                    cbm=_line_cbm(ln),
+                    remarks=ln.remark,
                 )
             )
 

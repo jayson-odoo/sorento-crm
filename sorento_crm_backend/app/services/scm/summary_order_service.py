@@ -1283,7 +1283,10 @@ def _last_incoming_cost(db: Session, product_id: str) -> dict[str, tuple]:
 
     rows = (
         db.query(
-            InboundShipment.supplier_id,
+            # Whose line this is, else whose container it is: a mixed container has no
+            # header supplier, and reading the header alone dropped every one of its
+            # lines out of the per-supplier cost.
+            func.coalesce(InboundShipmentLine.supplier_id, InboundShipment.supplier_id),
             InboundShipmentLine.unit_cost,
             InboundShipmentLine.currency,
             func.coalesce(
@@ -1304,6 +1307,9 @@ def _last_incoming_cost(db: Session, product_id: str) -> dict[str, tuple]:
     )
     out: dict[str, tuple] = {}
     for sid, cost, currency, when in rows:
+        if sid is None:
+            # A line nobody has attributed to a factory is not a price from any supplier.
+            continue
         key = str(sid)
         if key in out:
             continue

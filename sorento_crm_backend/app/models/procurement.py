@@ -276,6 +276,12 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     shipment_id = Column(UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"), nullable=False)
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
+    # Whose line this is. A container carries several factories' goods and each sends its
+    # own packing list, so the supplier belongs on the LINE; the header supplier is derived
+    # from these and goes NULL when they disagree.
+    # NULLABLE: the n8n PDF path names no supplier, and a line whose factory we were never
+    # told is an honest NULL rather than an invented owner.
+    supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
     quantity_shipped = Column(Integer, nullable=False)
     uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
     batch_number = Column(String(100), nullable=True)
@@ -293,6 +299,13 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     # here would silently assert that ordered and incoming are in the same unit, which is
     # the whole content of the variance.
     currency = Column(String(3), nullable=True)
+    # Volume for this line, as the packing list stated it (`总体积(cbm)`, or per-unit times
+    # the quantity). The reader has always parsed it and thrown it away; the consolidated
+    # packing list needs it for the per-factory and per-company subtotals.
+    cbm = Column(Numeric(12, 4), nullable=True)
+    # The supplier's own note on the line (`备注`). Kept separate from the discrepancies the
+    # system derives, which are computed at read time and never stored.
+    remarks = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
@@ -304,10 +317,23 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     shipment = relationship("InboundShipment", back_populates="shipment_lines")
     product = relationship("Product", back_populates="inbound_shipment_lines")
     uom = relationship("UnitOfMeasure", foreign_keys=[uom_id])
+    supplier = relationship("Supplier", foreign_keys=[supplier_id])
     __table_args__ = (
         Index("ix_inbound_shipment_lines_shipment_id", "shipment_id"),
         Index("ix_inbound_shipment_lines_product_id", "product_id"),
-        UniqueConstraint("shipment_id", "product_id", name="uk_inbound_shipment_lines_shipment_product"),
+        Index("ix_inbound_shipment_lines_supplier_id", "supplier_id"),
+        # One row per product PER SUPPLIER, replacing the (shipment, product) unique
+        # constraint that made a second factory's packing list overwrite the first's.
+        # `NULLS NOT DISTINCT` (PG 15+) keeps a supplier-less line unique on the product
+        # alone, so the n8n PDF path behaves exactly as it did.
+        Index(
+            "uk_inbound_shipment_lines_ship_prod_sup",
+            "shipment_id",
+            "product_id",
+            "supplier_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
     )
 
 
