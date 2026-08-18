@@ -300,13 +300,42 @@ export function unpostableDecidedFor(
   contributions: BoardContribution[],
   salesOrderId: string,
   draft: BoardDraft,
+  /**
+   * Whether the order HAS a planning record. On one that was simply never adopted every line
+   * lacks a mirror, which is not this problem at all - the press adopts first and the mirrors
+   * appear - so naming all of them would be eleven false alarms.
+   */
+  isAdopted = true,
 ): BoardContribution[] {
+  if (!isAdopted) return [];
   return contributions.filter((contribution) => {
     if (contribution.sales_order_id !== salesOrderId) return false;
     const decision = draft[contribution.key];
     if (!decision || decision.verdict === 'rejected') return false;
     return !contribution.project_line_id;
   });
+}
+
+/**
+ * The lines this press INTENDS to commit, whether or not their mirrors exist yet.
+ *
+ * On an adopted order this is the body's own length. On one that has not been adopted the body
+ * cannot be built at all yet - `project_line_id` is null everywhere until adoption mirrors the
+ * open lines - so the count comes from the verdicts instead, and the press adopts before it
+ * builds anything. Without this the Confirm on a fresh order would read "Confirm 0 lines" and
+ * be disabled, which is exactly the dead end the captain hit.
+ */
+export function plannedLineCount(
+  contributions: BoardContribution[],
+  salesOrderId: string,
+  draft: BoardDraft,
+): number {
+  return contributions.filter((contribution) => {
+    if (contribution.sales_order_id !== salesOrderId) return false;
+    if (contribution.unplannable) return false;
+    const decision = draft[contribution.key];
+    return Boolean(decision) && decision.verdict !== 'rejected';
+  }).length;
 }
 
 /**

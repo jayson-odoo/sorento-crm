@@ -181,7 +181,7 @@ describe('FulfilmentPlanningClient', () => {
     await screen.findByText('PSO-000123');
 
     fireEvent.change(
-      screen.getByPlaceholderText('Search sales order, project or customer'),
+      screen.getByPlaceholderText('Search sales order, customer, project or product'),
       { target: { value: 'buimaco' } },
     );
 
@@ -708,7 +708,7 @@ describe('FulfilmentPlanningClient: sorting', () => {
     await screen.findByText('ALPHA SDN BHD');
 
     fireEvent.click(screen.getByRole('button', { name: 'Customer' }));
-    fireEvent.change(screen.getByPlaceholderText('Search sales order, project or customer'), {
+    fireEvent.change(screen.getByPlaceholderText('Search sales order, customer, project or product'), {
       target: { value: 'alpha' },
     });
 
@@ -819,5 +819,71 @@ describe('FulfilmentPlanningClient: select all', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear the selection' }));
 
     expect(screen.getByRole('button', { name: /Plan together \(0\)/ })).toBeDisabled();
+  });
+});
+
+/**
+ * Searching the worklist (captain: "i should be able to search by product, by sales order, by
+ * customer, to shrink the dataset i am viewing").
+ *
+ * The box must SAY what it searches. A planner who types an item code into a box labelled
+ * "Search" and gets nothing concludes product search is broken, when the truth would only be
+ * that nobody told them what the box covers.
+ */
+describe('FulfilmentPlanningClient: search', () => {
+  it('names what it searches, so a product code is not typed into a box that never promised it', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([row()]));
+
+    renderClient();
+
+    expect(
+      await screen.findByPlaceholderText('Search sales order, customer, project or product'),
+    ).toBeInTheDocument();
+  });
+
+  it('sends a product code as the same query parameter', async () => {
+    listFulfilmentPlanning.mockResolvedValue(envelope([row()]));
+
+    renderClient();
+    await screen.findByText('PSO-000123');
+
+    fireEvent.change(
+      screen.getByPlaceholderText('Search sales order, customer, project or product'),
+      { target: { value: 'WESERP10B' } },
+    );
+
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({ query: 'WESERP10B' }),
+      ),
+    );
+  });
+
+  it('shrinks the set without clobbering the sort or the filter already in the URL', async () => {
+    currentSearchParams = new URLSearchParams('sort=customer_name&dir=desc');
+    listFulfilmentPlanning.mockResolvedValue(envelope([row()]));
+
+    renderClient();
+    await screen.findByText('PSO-000123');
+
+    openFilters();
+    fireEvent.change(within(screen.getByRole('menu')).getByRole('combobox'), {
+      target: { value: 'needs_cs_review' },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText('Search sales order, customer, project or product'),
+      { target: { value: 'WESERP10B' } },
+    );
+
+    await waitFor(() =>
+      expect(listFulfilmentPlanning).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: 'WESERP10B',
+          review_state: 'needs_cs_review',
+          sort: 'customer_name',
+          dir: 'desc',
+        }),
+      ),
+    );
   });
 });

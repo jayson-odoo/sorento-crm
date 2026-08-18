@@ -167,6 +167,16 @@ class BoardCellLocation(BaseModel):
     #: Of that, what was still unclaimed when THIS cell's lines were served - earlier dates
     #: draw first, so a December cell can face a smaller pile than `qty_free` suggests.
     qty_free_remaining: Optional[str] = None
+    #: What confirmed decisions are holding here. On hand, less reserved, less this, IS
+    #: `qty_free` - the third term of that arithmetic, printed so the sum closes on screen.
+    qty_held_by_decisions: Optional[str] = None
+    #: What the WHOLE BOOK still owes at this location: every open line of every open sales
+    #: order, not merely the ones on this board, by the shared `is_open_demand()` rule. Without
+    #: it "478 free" reads as "478 available to me" while 47,009 is owed at that location.
+    qty_owed_all_orders: Optional[str] = None
+    #: Of that, the part a confirmed decision already covers (per LINE, the rule
+    #: `scm.committed_v` applies), so committed pressure can be told from uncommitted.
+    qty_owed_confirmed: Optional[str] = None
     #: Allocated on a supply PO and not yet received, at this location.
     qty_incoming: Optional[str] = None
     incoming: List["BoardIncoming"] = []

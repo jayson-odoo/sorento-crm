@@ -1743,3 +1743,193 @@ def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addre
         }
         assert named[product_a.product_code] is not None
         assert named[product_b.product_code] is None
+
+
+# --------------------------------------------------------------------------- #
+# the pressure on the pile
+#
+# The captain, reading a cell: "why is everything free, are you sure there is no SO occupying
+# this?" They were right to doubt it. `_free_stock` subtracts `stock.quantity_reserved` (zero
+# on most rows) and holds belonging to CONFIRMED decisions (two orders have ever been
+# confirmed), so "free" is effectively raw on-hand - and the strip printed 478 free beside 482
+# owed IN THIS CELL while 47,009 was owed at that location across 289 open lines.
+#
+# Nothing about allocation changes here. What changes is that the strip stops implying the pile
+# is uncommitted: the demand on it is stated beside it.
+# --------------------------------------------------------------------------- #
+
+
+def _pressure_world(db):
+    """One board order, and a book full of other orders wanting the same pile."""
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+    _stock(db, product, warehouse, on_hand=100)
+
+    planned = _order(db, so_number=f"ZZT-SO-A{_uid()[:6]}", order_date=date(2026, 1, 1))
+    _line(db, planned, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+    # Not on the board, and both kinds count: the stock is occupied by whoever ordered it,
+    # not only by the project orders this screen can plan.
+    other_project = _order(db, so_number=f"ZZT-SO-B{_uid()[:6]}", order_date=date(2026, 1, 1))
+    _line(db, other_project, product, qty="40", required_date=date(2026, 10, 1), warehouse=warehouse)
+    dealer = _order(
+        db, so_number=f"ZZT-SO-C{_uid()[:6]}", order_date=date(2026, 1, 1), demand_class=None
+    )
+    _line(db, dealer, product, qty="25", required_date=date(2026, 10, 1), warehouse=warehouse)
+
+    # None of these is still owed, so none of them may add to the pressure.
+    spent = _order(db, so_number=f"ZZT-SO-D{_uid()[:6]}", order_date=date(2026, 1, 1))
+    _line(db, spent, product, qty="50", delivered="50", required_date=date(2026, 10, 1),
+          warehouse=warehouse)
+    _line(db, spent, product, qty="30", required_date=date(2026, 10, 1), warehouse=warehouse,
+          purchasing_status="covered")
+    _line(db, spent, product, qty="20", required_date=date(2026, 10, 1), warehouse=warehouse,
+          line_status="closed")
+    closed_order = _order(
+        db, so_number=f"ZZT-SO-E{_uid()[:6]}", order_date=date(2026, 1, 1), status="closed"
+    )
+    _line(db, closed_order, product, qty="70", required_date=date(2026, 10, 1),
+          warehouse=warehouse)
+    return planned, other_project, product, warehouse
+
+
+def test_a_location_states_what_the_whole_book_owes_it_not_only_this_board():
+    with blank_session() as db:
+        planned, _other, product, _warehouse = _pressure_world(db)
+
+        board = _service(db).build([planned.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        assert location["qty_demand"] == "10", "this cell's own demand is unchanged"
+        # 10 on the board + 40 another project order + 25 a dealer order. The delivered,
+        # covered, closed-line and closed-order quantities are not owed and do not count.
+        assert location["qty_owed_all_orders"] == "75"
+
+
+def test_the_pressure_figure_and_the_free_figure_are_read_from_the_same_facts():
+    """"478 free" beside "47,009 owed" is the whole point: both, together, or neither."""
+    with blank_session() as db:
+        planned, _other, product, _warehouse = _pressure_world(db)
+
+        board = _service(db).build([planned.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        assert location["qty_on_hand"] == "100"
+        assert location["qty_reserved"] == "0"
+        assert location["qty_free"] == "100"
+        assert location["qty_owed_all_orders"] == "75"
+        # Nothing is committed yet, so the two decision figures are zero rather than absent.
+        assert location["qty_held_by_decisions"] == "0"
+        assert location["qty_owed_confirmed"] == "0"
+
+
+def test_a_confirmed_decision_shows_up_as_both_a_hold_and_covered_demand():
+    """Two different facts, and the strip owes both.
+
+    `qty_held_by_decisions` is the STOCK side - the quantity a confirmed decision is holding
+    at this location, which is exactly what `_free_stock` subtracts, so on hand minus reserved
+    minus held is the free figure and the arithmetic on screen closes.
+
+    `qty_owed_confirmed` is the DEMAND side - how much of what is owed here sits on lines a
+    confirmed decision already covers, so a planner can tell committed pressure from
+    uncommitted pressure.
+    """
+    from datetime import datetime
+
+    from app.models.project_so import (
+        DECISION_ACTIVE,
+        SO_STATUS_ADOPTED,
+        ProjectSalesOrder,
+        ProjectSalesOrderLine,
+        SOLineAllocation,
+        SOSupplyDecision,
+    )
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        planned, other, product, warehouse = _pressure_world(db)
+        core_line = (
+            db.query(SalesOrderLine)
+            .filter(SalesOrderLine.sales_order_id == other.id)
+            .first()
+        )
+        record = ProjectSalesOrder(
+            id=_uid(), company_id=company_id, project_id=None,
+            provisional_ref=other.so_number, autocount_doc_no=other.so_number,
+            so_id=other.id, status=SO_STATUS_ADOPTED, grouping_origin="area",
+        )
+        db.add(record)
+        db.flush()
+        mirror = ProjectSalesOrderLine(
+            id=_uid(), company_id=company_id, project_sales_order_id=record.id, line_no=1,
+            product_id=product.id, description=f"{MARKER} mirror", qty=Decimal("40"),
+            uom="UNIT", unit_price=Decimal("1.00"), amount=Decimal("40.00"),
+            delivery_date=date(2026, 10, 1), core_sales_order_line_id=core_line.id,
+        )
+        decision = SOSupplyDecision(
+            id=_uid(), company_id=company_id, project_sales_order_id=record.id,
+            revision_no=1, state=DECISION_ACTIVE, confirmed_at=datetime.utcnow(),
+            # A line is covered iff `line_snapshots` holds an object for it, carrying the
+            # CORE line id - that JSONB is what `committed_v` reads and therefore what
+            # "already confirmed" has to mean here too (13.4, migration 384). An allocation
+            # row alone holds stock but says nothing about which demand is covered.
+            line_snapshots=[{"core_line_id": str(core_line.id), "line_no": 1}],
+        )
+        db.add_all([mirror, decision])
+        db.flush()
+        db.add(
+            SOLineAllocation(
+                id=_uid(), company_id=company_id, so_line_id=mirror.id,
+                source_type="own", warehouse_id=warehouse.id, qty=Decimal("15"),
+                decision_id=decision.id, confirmed_at=datetime.utcnow(),
+            )
+        )
+        db.flush()
+
+        board = _service(db).build([planned.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        assert location["qty_on_hand"] == "100"
+        assert location["qty_held_by_decisions"] == "15"
+        # On hand, less reserved, less held, IS the free figure the proposal was computed from.
+        assert location["qty_free"] == "85"
+        assert location["qty_owed_all_orders"] == "75"
+        # Of that 75, the 40 owed on the confirmed order is committed pressure.
+        assert location["qty_owed_confirmed"] == "40"
+
+
+def test_the_pressure_is_stated_for_every_location_of_a_multi_location_cell():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        here = _warehouse(db, f"ZZTA{_uid()[:6]}"[:20])
+        there = _warehouse(db, f"ZZTB{_uid()[:6]}"[:20])
+        _stock(db, product, here, on_hand=10)
+        _stock(db, product, there, on_hand=10)
+        planned = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, planned, product, qty="4", required_date=date(2026, 9, 3), warehouse=here)
+        _line(db, planned, product, qty="6", required_date=date(2026, 9, 3), warehouse=there)
+        crowd = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, crowd, product, qty="500", required_date=date(2026, 10, 1), warehouse=there)
+
+        board = _service(db).build([planned.so_number], granularity="week", as_of=TODAY)
+
+        pressure = {
+            entry["location"]: entry["qty_owed_all_orders"]
+            for entry in _cell(board, product.product_code, "2026-08-31")["locations"]
+        }
+        assert pressure[here.warehouse_code] == "4"
+        assert pressure[there.warehouse_code] == "506", "per location, never pooled together"
+
+
+def test_a_line_with_no_location_states_no_pressure_either():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="4", required_date=date(2026, 9, 3), warehouse=None)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
+        assert location["qty_owed_all_orders"] is None
+        assert location["qty_held_by_decisions"] is None
+        assert location["qty_owed_confirmed"] is None

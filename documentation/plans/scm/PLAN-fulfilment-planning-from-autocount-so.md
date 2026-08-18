@@ -619,8 +619,18 @@ GET /project-sales/fulfilment-planning
       across page boundaries. review_state sorts in WORKFLOW order
       (not_started < awaiting_reconciliation < needs_cs_review < confirmed), not
       alphabetically. Text sorts case-folded; a blank string counts as absent.
-    query matches sales-order number, customer name, the project string, project code and title,
-      provisional ref, AutoCount doc no, area group
+    query (ONE box, both arms) matches, per the captain's "search by product, by sales order,
+      by customer, to shrink the dataset i am viewing":
+        * the sales-order number
+        * the customer name (and, on the authored arm, the issuing party's own name)
+        * the project label - the Order Inquiry project string on a core order, the project
+          code or title on an authored record
+        * A PRODUCT ON ANY OF THE ORDER'S OUTSTANDING LINES, by item code OR product name
+        * plus, on the authored arm, its provisional ref, AutoCount doc no and area group
+      An order matches if ANY of its open lines carries a matching product, and it is still
+      ONE row carrying the WHOLE order's counts and quantity. The product arm applies the
+      same `is_open_demand()` the rest of the screen does, so a search never surfaces an
+      order whose only match is a line this list calls finished.
 
 FulfilmentPlanningRow {                      // additive to the Stage 1B row
   row_kind: 'sales_order' | 'planning_record',
@@ -757,6 +767,29 @@ cheaper alternative - sorting `line_count` on the core arm's own open-line count
 because for an authored order linked to a core order that is a different number from the one the
 cell prints. If the cost ever bites, the answer is a stored review state or a materialised line
 count, which is a schema decision for this plan's owner and not a coder's.
+
+**4. Search by PRODUCT, added on the captain's request** ("i should be able to search by product,
+by sales order, by customer, to shrink the dataset i am viewing"). One box, the existing `query`
+parameter, no second search param. Before this the box matched the sales-order number, the
+customer and the project label; the product needed the LINES and was the missing one.
+
+Shape: a **membership test against a separately-computed id set**, one extra query per arm, not
+a join and not a correlated `EXISTS`. A join would fan an order owing six of the wanted item into
+six rows and - because arm 1 aggregates - would silently narrow that order's `min`, `sum` and
+`count` to the matching lines, printing the wrong totals under a search. A correlated sub-select
+would do the same thing by accident: arm 1 already has `sales_order_lines` in its FROM, so a
+sub-select over the same table auto-correlates to the row being aggregated. A separate query
+cannot be adapted wrongly. The core-arm set carries the SAME header predicate as the arm it
+filters, so the `IN` list has a measured ceiling (605, the whole outstanding project book) rather
+than one that grows with the 90k-row sales-order-line table.
+
+Measured on the live book, 606 subjects, page size 25, against a baseline of 25 to 38 ms:
+`B2155-NL-BLUE` (381 open project lines, 147 orders) **33 ms**; a needle matching no product at
+all **32 ms**; the pathological broad needles `"S"`, `"a"`, `"-"`, which push the id set to its
+605 ceiling, **45 to 48 ms**. **No new index is needed and none was added**: the id-set query is
+served by `idx_products_code_trgm` / `idx_products_name_trgm` (pg_trgm GIN, which is what makes a
+leading-wildcard `ILIKE` cheap) and then by `ix_sales_order_lines_product_warehouse_status`
+(leading `product_id`), executing in about 5 ms.
 
 ---
 
@@ -1083,7 +1116,7 @@ Why, and why not the alternatives:
   back. The captain's words are "the user might want to plan against multiple sales order" - a
   choice, made by a person.
 - **Not a customer/project filter as the selection mechanism.** It is a fine way to NARROW (and the
-  worklist already searches customer, project string and area group), but a filter is a query, not a
+  worklist already searches sales order, customer, project and product), but a filter is a query, not a
   set: it silently changes underneath the board when the next upload lands, and the board would then
   be planning something other than what CS ticked. Filter to find, tick to select.
 - **The cap is not arbitrary.** Section 13.9 measures the whole book at 862 distinct products across
@@ -1406,7 +1439,51 @@ that arrives, `customer_credit` changes from terms to `1 - (outstanding / credit
 [0, 1], as a data change to `factors` plus a new value source - no migration, which is the whole
 reason the policy is JSONB. Until then the board must not pretend to know.
 
-#### The blocker the captain has to see
+#### The blocker the captain has to see - RESOLVED, Phase 2 (migration 385)
+
+**This subsection is kept because it explains why the board ranked nothing, and superseded because
+it no longer does.** The captain, after seeing a live board where every contribution scored 0.00:
+"I need a fair policy please".
+
+Migration `385_fulfilment_priority_fair` seeds
+`Fair fulfilment priority (delivery date, document date, customer credit)` and makes it the active
+row, leaving the legacy rule present and INACTIVE so the change is undone by flipping back rather
+than by remembering what it used to be. Recommendation 1 (a second active policy) stays rejected:
+the partial unique index still allows exactly one, and the fair row replaces the legacy one rather
+than sitting beside it. The what-if preview of recommendation 3 stays, and is now a preview of
+whatever a planner wants to compare the LIVE fair policy against.
+
+Weights, and what beats what:
+
+| Factor | Weight | Meaning | On a board row | On a purchase-order candidate |
+|---|---|---|---|---|
+| `need_by_date` | 3.0 | delivery date, sooner higher | the deciding voice | expected date |
+| `demand_class` | 3.0 | project 1.0, retail 0.4 | constant (all project), so it shifts every score equally and separates nobody | KEPT: what migration 374 switched on, so a PO owed to a customer still outranks one owed to nobody |
+| `document_age` | 1.0 | document date, older higher | the sales order's own `order_date` | `po_date` |
+| `customer_credit` | 1.0 | shorter payment terms higher | `customers.payment_terms_days` | ABSENT |
+| `po_document_sequence` | 1.0 | the buyer's original rule, as tie-break | ABSENT (a sales-order line has no purchase order) | the buyer's list order |
+
+An absent factor is dropped from BOTH sums, never scored zero - so a customer nobody has assessed
+is neither the safest nor the riskiest, and the board's structurally-absent sequence costs it
+nothing.
+
+**Rank-delta measured before the flip**, on seven real AutoCount orders (357 contributions, 306
+cells): 4 cells change order, 12 contributions move position, and 3 contributions change their
+Reserve quantity. Scores go from 0.00 everywhere to 0.625 / 0.875 / 1.000; 13 of 36 multi-row
+cells are now separated by rank and the remaining 23 are genuine ties, where the sentence says so
+rather than claiming one outranks the other. Example: in `WESERP10B` w/c 2026-11-02, SO414033 line
+60 rises to the top on a required date of 2026-11-02 against SO413738's 2026-11-03, despite the
+older document date sitting with SO413738 - which is the trade-off "delivery date leads" states.
+
+**Blast radius, stated rather than discovered:** the same policy drives container loading and the
+arriving-stock suggestion through `factors_for_candidates`. Their ranking changes from "document
+sequence alone" to "demand band, then expected date, then document age, then sequence". On this
+database that reorders nothing measurable - there is ONE open purchase-order line in the whole book
+- but on a book with real purchasing volume a buyer WOULD see containers load in a different order,
+and that is the cost of one policy serving three moments. The loading-plan and allocation-suggestion
+suites pass unchanged (66 tests), because they seed their own policies.
+
+#### Why it ranked nothing before (kept for the record)
 
 **Under the policy that is live right now, the board cannot rank at all.** The single active row is
 `Today's rule (PO document sequence)`, weighting `po_document_sequence: 1.0` and
@@ -1620,7 +1697,7 @@ Live scratch DB `sorento_scm_e2e_stack`, 18 August 2026, open lines of open proj
 | **Ranking factor sources, over the 11,166 open project lines** | `required_date` 11,103 (99.4%); `sales_orders.order_date` 11,166 (100%, 2023-12-08 to 2026-07-28); `customers.payment_terms_days` 10,982 (98.4%); `customers.credit_limit` **8 (0.07%)** | The factor table in 13.5. Credit LIMIT is unusable; payment TERMS is the only credit signal with coverage. |
 | Invoice or receivables tables | **none exist in the database** | Exposure-against-limit is not computable today, so `customer_credit` cannot mean it yet (13.5). |
 | `customers` with a credit limit | 172 of 6,397 (169 positive) | Same. |
-| Live `scm.priority_policy` | one active row, `Today's rule (PO document sequence)`: `po_document_sequence` 1.0, everything else 0.0 | Under it every board row scores 0.0, so the board cannot rank until the policy question in 13.5 is answered. |
+| Live `scm.priority_policy` | SUPERSEDED by migration 385. Was one active row, `Today's rule (PO document sequence)` (`po_document_sequence` 1.0, everything else 0.0), under which every board row scored 0.0. Now `Fair fulfilment priority (delivery date, document date, customer credit)`, with the legacy row kept inactive. | The board ranks: measured 0.625 / 0.875 / 1.000 on seven real orders, `discriminates_nothing` false (13.5). |
 | Free stock nets confirmed holds only | `project_supply_service._free_stock` | Two unconfirmed orders both propose the same stock today (13.5). |
 | Products shared across the 8 fixture orders | e.g. `WESERP10B` in 4 orders over BRW-BB + BRW-IB (1,774), `CKS1050` and `CKSW015` in 4 each (517), `SRTSC03-ABS-NL` in 2 where one states no location | The mock aggregates visibly, and covers the multi-location and blocked cells (13.7). |
 
@@ -1699,6 +1776,62 @@ free, incoming, with the SPO documents behind the incoming in the tooltip. **Eve
 is NULL, never zero, when the sales order states no location, and renders "Stock not stated"** -
 `0 free` means do not look here, nothing stated means nobody said where to look, and those are
 opposite instructions.
+
+**ADOPT ON CONFIRM (captain, 18 August 2026): "why i cannot confirm the sales order partially?
+like i decided few lines then i should be able to confirm partially right".** They selected nine
+orders, decided lines across several, and every Confirm refused: none had been adopted, so there
+was no planning record to confirm against. Partial confirmation worked; we had simply let them do
+the whole job and said no at the last step. Deciding lines and pressing Confirm IS the act, so:
+
+- Pressing Confirm on an order with `project_sales_order_id: null` **adopts it first, then
+  confirms, as one press** with one busy state. `POST /fulfilment-planning/adopt` is idempotent,
+  so a second press or a second planner lands on the same record.
+- **The board is re-read between the two.** `project_line_id` is null on every contribution until
+  the mirror lines exist, so a body built before adoption names nothing. The ids are asked for,
+  never guessed.
+- If adoption fails, the row says so ("Could not start planning this sales order: ...") and
+  **nothing is confirmed** - it never pretends the confirmation happened.
+- The "Nobody has started planning this sales order yet" disabled state is GONE. It also
+  contradicted the counter beside it: "9 of 63 lines decided" and "nobody has started planning"
+  in one breath, when the planner plainly had. Confirm is enabled whenever a line is decided.
+- The unmirrored-line notice now fires ONLY for its genuine case - an order that IS adopted and
+  has since gained a core line the mirror does not hold. On a never-adopted order it would have
+  named every line. Verified live on a freshly adopted order: the notice is empty, so adoption is
+  mirroring what the board shows.
+
+**Proven live on a never-adopted order, 18 August 2026.** SO284663, one cell bulk-approved on the
+board, Confirm pressed once: `POST /fulfilment-planning/adopt` 200, then the board GET (the
+refetch), then `POST /sales-orders/07c7fd68-.../confirm` 200. The active decision came back as
+revision 1 covering **exactly 1 of the order's 4 lines** (line 3, CKS1050, 150 open,
+`reserve 2 at BRW-IB` + `buy 148` - two components, so the multi-component body is exercised),
+`review_state` moved to `confirmed`, the counter returned to "0 of 4 lines decided" and no notice
+fired.
+
+**BULK DECISIONS in the dialog (captain, naming `/user-management/users` as the model).** The
+screenshot was eleven identical rows; deciding those one at a time is eleven presses to say one
+thing. Same idiom as that list: `buildSelectColumn` with a header select-all, and the actions in
+a strip that appears while rows are selected ("3 selected", Approve selected, Reject selected,
+Clear). It writes into the client draft only - nothing posts until Confirm - the selection clears
+after the action, and the per-row verbs stay, because bulk is an addition for the identical-rows
+case and not a replacement. A row that cannot be decided is **not selectable**, with the same
+sentence as its tooltip that its Decision cell carries.
+
+**AMEND is deliberately NOT offered in bulk**, and I agree with the instruction after building
+it: an amendment is a quantity and a reason for ONE line, and a single quantity applied to eleven
+different owed quantities is not a decision anybody meant to make.
+
+**No dialog footer.** The captain: "don't need this close button, the cross button at top right
+is enough". The footer's only content duplicated the X, and it was the band that used to paint
+over the row actions. The scroll-region layout that fixed that overlap STAYS; the footer is gone.
+
+**The Rank cell is the rank and nothing else** (captain: "the word here is too long already,
+don't explain too much"). It read "Not ranked" over a truncated "Purchase order sequence not
+recorded, Deman..." repeated on every row - and it was identical on every row because the factors
+are identical there, which is a fact about the POLICY, not about any row. So: the score
+(right-aligned, tabular, sortable) or a short "Not ranked"; the per-row factor detail is the
+cell's `title`; and the policy's flatness is stated ONCE at the top of the dialog ("The active
+policy separates none of these rows."). Designed for the fair policy the captain has asked for,
+where the number differs per row, with "Not ranked" as the degenerate fallback.
 
 **Rank reads facts first.** Each factor carries `raw` (the absolute fact as text: "2026-09-03",
 "45 days", "project"); the chip leads with the factor's plain-English name and that raw value.

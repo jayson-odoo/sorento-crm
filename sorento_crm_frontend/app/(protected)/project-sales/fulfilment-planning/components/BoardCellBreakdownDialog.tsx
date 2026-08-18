@@ -2,18 +2,19 @@
 
 import * as React from 'react';
 import { AlertTriangle, Check, Pencil, X } from 'lucide-react';
-import { ColumnDef } from '@tanstack/react-table';
+import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogBody,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -79,9 +80,42 @@ export function BoardCellBreakdownDialog({
   const decided = cell.contributions.filter((entry) => draft[entry.key]).length;
   /** The row being amended, if any. One at a time: two open forms is two half-decisions. */
   const [amending, setAmending] = React.useState<BoardContribution | null>(null);
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+
+  const selectedKeys = React.useMemo(
+    () => Object.keys(rowSelection).filter((key) => rowSelection[key]),
+    [rowSelection],
+  );
+
+  /**
+   * One verdict, applied to every ticked row.
+   *
+   * The captain's screenshot was eleven identical rows: deciding those one at a time is eleven
+   * presses to say one thing. It writes into the same client draft a single decision does, so
+   * nothing posts here and Confirm remains the only write.
+   *
+   * AMEND is deliberately not offered in bulk: an amendment is a quantity and a reason for ONE
+   * line, and a single quantity applied to eleven different owed quantities is not a decision
+   * anybody meant to make.
+   */
+  const decideSelected = React.useCallback(
+    (decision: BoardDecision) => {
+      for (const key of selectedKeys) onDecide(key, decision);
+      setRowSelection({});
+    },
+    [selectedKeys, onDecide],
+  );
 
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
     () => [
+      // The repo's own select column, the one the users list uses, so the header select-all and
+      // its indeterminate state are not a second implementation.
+      buildSelectColumn<BoardContribution>({
+        enableRow: (row) => !row.original.unplannable,
+        disabledReason: () =>
+          'This line cannot be decided here: its sales order states no fulfilment location.',
+        rowLabel: (row) => `Select ${row.original.so_number} line ${row.original.line_no}`,
+      }),
       {
         id: 'so_number',
         accessorFn: (row) => row.so_number,
@@ -251,34 +285,24 @@ export function BoardCellBreakdownDialog({
         id: 'rank',
         accessorFn: (row) => row.rank_score,
         header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
+        // The cell is the RANK and nothing else. It used to carry the factor sentence too,
+        // which was identical on every row - because the factors are identical there, which is
+        // a fact about the POLICY, not about any row - and truncated mid-word. The captain:
+        // "the word here is too long already, don't explain too much". The facts are per row
+        // and wanted only when comparing two of them, so they are a tooltip; the policy's own
+        // flatness is stated once at the top.
         cell: ({ row }) => (
-          <div className="min-w-0" data-testid={`rank-factors-${row.original.key}`}>
-            {/* No 0.00 on every row when the policy separates nothing: that reads as a
-                considered ranking rather than as the absence of one (13.5). */}
-            <span className="block text-sm font-medium tabular-nums">
-              {rankingIsFlat ? 'Not ranked' : row.original.rank_score.toFixed(2)}
-            </span>
-            {/* The RAW fact leads - "2026-09-03", "45 days" - because that is what a planner
-                recognises; the normalised 0-to-1 number is an artefact of the scoring. The
-                WEIGHT is deliberately not here: `need_by_date 1.00 x3` reads to everybody as
-                a weight of 1.00. It is in the tooltip, named. */}
-            <span
-              className="block truncate text-[11px] text-muted-foreground"
-              title={factorsTitle(row.original)}
-            >
-              {row.original.rank_factors
-                .map((factor) =>
-                  factor.present
-                    ? `${factorLabel(factor.key)} ${factor.raw ?? ''}`.trim()
-                    : `${factorLabel(factor.key)} not recorded`,
-                )
-                .join(', ')}
-            </span>
-          </div>
+          <span
+            data-testid={`rank-factors-${row.original.key}`}
+            className="block truncate text-sm font-medium tabular-nums text-end"
+            title={factorsTitle(row.original)}
+          >
+            {rankingIsFlat ? 'Not ranked' : row.original.rank_score.toFixed(2)}
+          </span>
         ),
-        size: 190,
-        minSize: 140,
-        meta: { headerTitle: 'Rank' },
+        size: 110,
+        minSize: 90,
+        meta: { headerTitle: 'Rank', cellClassName: 'text-end' },
       },
       {
         id: 'decision',
@@ -332,6 +356,15 @@ export function BoardCellBreakdownDialog({
             {cellBalanceLine(cell)}
           </div>
 
+          {/* Said ONCE, because it is a fact about the policy rather than about any row. It was
+              repeated under every rank, eleven identical grey sentences saying nothing
+              row-specific. */}
+          {rankingIsFlat && (
+            <p className="text-sm text-muted-foreground break-words">
+              The active policy separates none of these rows.
+            </p>
+          )}
+
           {/* The source strip again, because the dialog has to stand on its own: a reader who
               opened it from a cell they can no longer see still needs to know one cell can
               draw on several locations. */}
@@ -365,6 +398,52 @@ export function BoardCellBreakdownDialog({
             rows={cell.contributions}
             getRowId={(row) => row.key}
             listingKey="projects.projects.view::project-board-cell-breakdown"
+            sortable
+            rowSelection={rowSelection}
+            onRowSelectionChange={setRowSelection}
+            enableRowSelection={(row) => !row.original.unplannable}
+            toolbar={
+              selectedKeys.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Says exactly how many rows the verbs will act on. With a paginated cell
+                      the header ticks this page, and this count is what was ticked - so the
+                      strip never implies more than it will do. */}
+                  <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
+                    {`${selectedKeys.length} selected`}
+                  </Badge>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => decideSelected({ verdict: 'approved' })}
+                  >
+                    <Check className="size-4" aria-hidden />
+                    Approve selected
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      decideSelected({
+                        verdict: 'rejected',
+                        reason: 'Rejected on the planning board.',
+                      })
+                    }
+                  >
+                    <X className="size-4" aria-hidden />
+                    Reject selected
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setRowSelection({})}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              ) : undefined
+            }
             emptyTitle="No line contributes to this cell"
             emptyBody="Nothing in the selection owes this product by this date."
             pageSize={25}
@@ -381,15 +460,6 @@ export function BoardCellBreakdownDialog({
             />
           )}
         </DialogBody>
-
-        <DialogFooter
-          data-testid="cell-dialog-footer"
-          className="shrink-0 gap-2 border-t p-4 sm:p-6"
-        >
-          <Button variant="outline" onClick={onClose}>
-            Close
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

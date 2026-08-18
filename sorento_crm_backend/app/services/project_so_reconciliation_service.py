@@ -1440,11 +1440,23 @@ class ProjectSOReconciliationService:
             aggregate = aggregate.filter(SalesOrder.id == str(sales_order_id))
         if needle:
             like = f"%{needle}%"
-            aggregate = aggregate.filter(
+            matched = (
                 SalesOrder.so_number.ilike(like)
                 | SalesOrder.internal_note.ilike(like)
                 | SalesOrder.customer.has(Customer.customer_name.ilike(like))
             )
+            # The product arm, as a MEMBERSHIP TEST against a set computed by its own
+            # query. Not a join (an order owing six of the wanted item would fan out into
+            # six rows, or - worse, since this query aggregates - would silently narrow
+            # `min`, `sum` and `count` to the matching lines and print the wrong totals),
+            # and not a correlated EXISTS either: the outer query already has
+            # `sales_order_lines` in its FROM, so a sub-select over the same table would
+            # auto-correlate to the row being aggregated and quietly become that same
+            # per-line filter. A separate query cannot be adapted wrongly.
+            owners = self._core_orders_matching_product(like)
+            if owners:
+                matched = matched | SalesOrder.id.in_(list(owners))
+            aggregate = aggregate.filter(matched)
         rows = aggregate.all()
         names = self._customer_names([row[3] for row in rows])
         return [
@@ -1459,6 +1471,53 @@ class ProjectSOReconciliationService:
             }
             for row in rows
         ]
+
+    def _core_orders_matching_product(self, like: str) -> set:
+        """Which outstanding project-class core orders owe a product answering to `like`.
+
+        BOUNDED BY THE WORKLIST'S OWN POPULATION, deliberately. The same header predicate as
+        `_core_arm` is applied here, so the answer can never be larger than the arm it
+        filters - 605 orders on the live book - and the `IN` list it becomes has a ceiling
+        somebody has measured rather than one that grows with the sales-order table.
+
+        `is_open_demand()` is applied VERBATIM, the same as everywhere else on this screen.
+        Without it the box would surface an order whose only matching line this very screen
+        calls finished, and a filter that disagrees with the list it filters is how a
+        planner learns to stop trusting the box.
+
+        `DISTINCT` at the database, so an order owing six of the item arrives once.
+        """
+        rows = (
+            self.db.query(SalesOrderLine.sales_order_id)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .join(Product, Product.id == SalesOrderLine.product_id)
+            .filter(
+                SalesOrder.demand_class == PROJECT_CLASS,
+                SalesOrder.status == _CORE_SO_OPEN,
+                is_open_demand(),
+                Product.product_code.ilike(like) | Product.product_name.ilike(like),
+            )
+            .distinct()
+            .all()
+        )
+        return {str(row[0]) for row in rows}
+
+    def _records_matching_product(self, like: str) -> set:
+        """The same question for the authored arm, over the record's OWN lines.
+
+        An arm-2 record has no core sales order - that absence is what puts it on this arm -
+        so there is no `is_open_demand()` to apply and no core line to read. Its own lines
+        are what it owes, which is the same set the row's `line_count` and `outstanding_qty`
+        are computed from, so the box and the columns agree.
+        """
+        rows = (
+            self.db.query(ProjectSalesOrderLine.project_sales_order_id)
+            .join(Product, Product.id == ProjectSalesOrderLine.product_id)
+            .filter(Product.product_code.ilike(like) | Product.product_name.ilike(like))
+            .distinct()
+            .all()
+        )
+        return {str(row[0]) for row in rows}
 
     def _customer_names(self, customer_ids: Iterable[Any]) -> Dict[str, Optional[str]]:
         wanted = {str(value) for value in customer_ids if value}
@@ -1528,6 +1587,22 @@ class ProjectSOReconciliationService:
             # project or customer", and a search that quietly covered only the sales
             # order would answer "no results" for a project code sitting in the list.
             like = f"%{needle}%"
+            matched = (
+                ProjectSalesOrder.provisional_ref.ilike(like)
+                | ProjectSalesOrder.autocount_doc_no.ilike(like)
+                | ProjectSalesOrder.area_group.ilike(like)
+                | Project.project_code.ilike(like)
+                | Project.title.ilike(like)
+                | Customer.customer_name.ilike(like)
+                # The party's own name is the customer column's fallback, so it has
+                # to be searchable or a row would not answer to the name it shows.
+                | ProjectParty.name.ilike(like)
+            )
+            # The product arm, on THIS arm's own lines. Same membership-test shape as arm 1
+            # and for the same reason: a record with six matching lines is one row.
+            owners = self._records_matching_product(like)
+            if owners:
+                matched = matched | ProjectSalesOrder.id.in_(list(owners))
             rows = (
                 rows.outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
                 .outerjoin(
@@ -1539,17 +1614,7 @@ class ProjectSOReconciliationService:
                     ProjectParty.id == ProjectPurchaseOrder.issuing_party_id,
                 )
                 .outerjoin(Customer, Customer.id == ProjectParty.customer_id)
-                .filter(
-                    ProjectSalesOrder.provisional_ref.ilike(like)
-                    | ProjectSalesOrder.autocount_doc_no.ilike(like)
-                    | ProjectSalesOrder.area_group.ilike(like)
-                    | Project.project_code.ilike(like)
-                    | Project.title.ilike(like)
-                    | Customer.customer_name.ilike(like)
-                    # The party's own name is the customer column's fallback, so it has
-                    # to be searchable or a row would not answer to the name it shows.
-                    | ProjectParty.name.ilike(like)
-                )
+                .filter(matched)
             )
         orders = [
             order for order in rows.all() if str(order.so_id or "") not in taken

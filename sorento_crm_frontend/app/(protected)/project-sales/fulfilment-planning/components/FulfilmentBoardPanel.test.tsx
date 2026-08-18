@@ -19,13 +19,14 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 
 const getPlanningBoard = vi.fn();
 const confirmSupply = vi.fn();
+const adoptSalesOrder = vi.fn();
 
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getPlanningBoard: (...args: unknown[]) => getPlanningBoard(...args),
   listFulfilmentPlanning: vi.fn(),
   getReconciliation: vi.fn(),
   rerunReconciliation: vi.fn(),
-  adoptSalesOrder: vi.fn(),
+  adoptSalesOrder: (...args: unknown[]) => adoptSalesOrder(...args),
   getSupply: vi.fn(),
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
   // Declared INSIDE the factory: `vi.mock` is hoisted above every top-level binding, so a
@@ -966,21 +967,142 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     expect(confirmSupply.mock.calls[0][1].lines).toHaveLength(1);
   });
 
-  it('refuses to post an order that has no planning record, and says why', async () => {
-    const board = twoLineOrder();
-    getPlanningBoard.mockResolvedValue({
+  // The "no planning record, so no Confirm" state is deliberately GONE: pressing Confirm on
+  // such an order now adopts it first. See "Confirm adopts first when it has to" below.
+});
+
+/**
+ * Adopt on confirm (the captain: "why i cannot confirm the sales order partially? like i
+ * decided few lines then i should be able to confirm partially right").
+ *
+ * They selected nine orders, decided lines across several of them, and every Confirm refused:
+ * none had been adopted, so there was no planning record to confirm against. We let them do the
+ * whole job and said no at the last step. Deciding lines and pressing Confirm IS the act, so the
+ * press adopts first and then confirms, as one action.
+ *
+ * The refetch in the middle is not optional: `project_line_id` is null on every contribution
+ * until the mirror lines exist, so a body built before adoption names nothing.
+ */
+describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
+  /** A board for an order nobody has adopted: no planning record, no mirror lines. */
+  function unadopted() {
+    const board = boardOf([
+      demand({ line_no: 1, item_code: 'WESERP10B' }),
+      demand({ line_no: 2, item_code: 'TPE-9204' }),
+    ]);
+    return {
       ...board,
       orders: board.orders.map((order) => ({ ...order, project_sales_order_id: null })),
+      cells: board.cells.map((cell) => ({
+        ...cell,
+        contributions: cell.contributions.map((entry) => ({ ...entry, project_line_id: null })),
+      })),
+    };
+  }
+
+  function adopted() {
+    return boardOf([
+      demand({ line_no: 1, item_code: 'WESERP10B' }),
+      demand({ line_no: 2, item_code: 'TPE-9204' }),
+    ]);
+  }
+
+  async function approveOne() {
+    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    closeDialog();
+    await waitFor(() => expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument());
+  }
+
+  it('offers Confirm on an order nobody has adopted, and never says planning has not started', async () => {
+    getPlanningBoard.mockResolvedValue(unadopted());
+
+    renderPanel(['SO403340']);
+    await approveOne();
+
+    expect(screen.getByRole('button', { name: 'Confirm 1 line' })).toBeEnabled();
+    // The old copy contradicted the counter beside it: "1 of 2 lines decided" and "nobody has
+    // started planning" in the same breath, when the planner plainly had.
+    expect(
+      screen.queryByText('Nobody has started planning this sales order yet.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('adopts, refetches, then posts the body built from the ids that arrived', async () => {
+    getPlanningBoard.mockResolvedValueOnce(unadopted()).mockResolvedValue(adopted());
+    adoptSalesOrder.mockResolvedValue({
+      project_sales_order_id: 'pso-so-a',
+      so_number: 'SO403340',
+      review_state: 'needs_cs_review',
+      already_adopted: false,
+    });
+    confirmSupply.mockResolvedValue({
+      revision_no: 1,
+      review_state: 'confirmed',
+      inquiry_rows_created: 1,
+      exceptions: [],
     });
 
     renderPanel(['SO403340']);
-    await decideFirstCell();
+    await approveOne();
 
-    const confirm = screen.getByRole('button', { name: 'Confirm 1 line' });
-    expect(confirm).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
+
+    await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
+    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    const [psoId, body] = confirmSupply.mock.calls[0];
+    expect(psoId).toBe('pso-so-a');
+    // Built from the REFETCHED board: guessing an id before the mirror exists names nothing.
+    expect(body.lines).toEqual([
+      expect.objectContaining({ project_line_id: 'pl-so-a-1' }),
+    ]);
+  });
+
+  it('does not adopt an order that already has a planning record', async () => {
+    getPlanningBoard.mockResolvedValue(adopted());
+    confirmSupply.mockResolvedValue({
+      revision_no: 2,
+      review_state: 'confirmed',
+      inquiry_rows_created: 0,
+      exceptions: [],
+    });
+
+    renderPanel(['SO403340']);
+    await approveOne();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
+
+    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    expect(adoptSalesOrder).not.toHaveBeenCalled();
+  });
+
+  it('says so when adoption fails, and confirms nothing', async () => {
+    getPlanningBoard.mockResolvedValue(unadopted());
+    adoptSalesOrder.mockRejectedValue(new Error('Another planning record already holds SO403340.'));
+
+    renderPanel(['SO403340']);
+    await approveOne();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
+
     expect(
-      screen.getByText('Nobody has started planning this sales order yet.'),
+      await screen.findByText(
+        'Could not start planning this sales order: Another planning record already holds SO403340.',
+      ),
     ).toBeInTheDocument();
     expect(confirmSupply).not.toHaveBeenCalled();
+    // Nothing was committed, so the work is still the planner's.
+    expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument();
+  });
+
+  it('shows no unmirrored notice on an order that was simply never adopted', async () => {
+    getPlanningBoard.mockResolvedValue(unadopted());
+
+    renderPanel(['SO403340']);
+    await approveOne();
+
+    // That notice is for a mirror that is genuinely missing a line, which is a different
+    // problem with a different fix. On a not-yet-adopted order it would name every line.
+    expect(screen.queryByText(/not on the planning record yet/)).not.toBeInTheDocument();
   });
 });

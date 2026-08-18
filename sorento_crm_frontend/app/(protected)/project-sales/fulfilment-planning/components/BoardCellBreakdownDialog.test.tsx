@@ -214,10 +214,12 @@ describe('BoardCellBreakdownDialog: the table', () => {
   it('names a ranking factor in words, never as a database column', () => {
     renderDialog([demand()]);
 
-    const rank = screen.getByTestId('rank-factors-so-a|1|WESERP10B|2026-08-31');
-    expect(rank.textContent).toContain('Purchase order sequence');
-    expect(rank.textContent).not.toContain('po_document_sequence');
-    expect(rank.textContent).not.toContain('need_by_date');
+    // In the tooltip now, not in the cell body - but still words, never a column name.
+    const detail =
+      screen.getByTestId('rank-factors-so-a|1|WESERP10B|2026-08-31').getAttribute('title') ?? '';
+    expect(detail).toContain('Purchase order sequence');
+    expect(detail).not.toContain('po_document_sequence');
+    expect(detail).not.toContain('need_by_date');
   });
 });
 
@@ -294,6 +296,69 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     expect(within(row as HTMLElement).getByText('20')).toBeInTheDocument();
   });
 
+  it('shows the rank and NOTHING else, with the factors reachable as a tooltip', () => {
+    const cell = cellOf([demand()]);
+    const ranked = {
+      ...cell,
+      contributions: [
+        {
+          ...cell.contributions[0],
+          rank_score: 0.72,
+          rank_factors: [
+            { key: 'need_by_date', weight: 3, value: 1, raw: '2026-09-03', present: true },
+            { key: 'customer_credit', weight: 1, value: 0.5, raw: '45 days', present: true },
+          ],
+        },
+      ],
+    };
+    renderCell(ranked);
+
+    const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
+    // The captain: "the word here is too long already, don't explain too much". The cell is
+    // the number; the facts behind it are a tooltip, wanted only when comparing two rows.
+    expect(rank.textContent).toBe('0.72');
+    expect(rank.getAttribute('title')).toContain('Required date');
+    expect(rank.getAttribute('title')).toContain('2026-09-03');
+  });
+
+  it('reads the number as a number: right-aligned, tabular figures', () => {
+    const cell = cellOf([demand()]);
+    renderCell(cell);
+
+    const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
+    expect(rank.className).toContain('tabular-nums');
+    expect(rank.className).toContain('text-end');
+  });
+
+  it('sorts by rank, because comparing rows is the whole reason the column exists', () => {
+    const cell = cellOf([
+      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+      demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
+    ]);
+    const ranked = {
+      ...cell,
+      contributions: cell.contributions.map((entry, index) => ({
+        ...entry,
+        rank_score: index === 0 ? 0.9 : 0.2,
+      })),
+    };
+    renderCell(ranked);
+
+    // Opens in the order the allocation rule served, which is the order the stock was given
+    // out in - never a sort of our own choosing.
+    const before = [...screen.getByRole('table').querySelectorAll('tbody tr')].map(
+      (row) => row.textContent ?? '',
+    );
+    expect(before[0]).toContain('0.90');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rank' }));
+
+    const after = [...screen.getByRole('table').querySelectorAll('tbody tr')].map(
+      (row) => row.textContent ?? '',
+    );
+    expect(after[0]).toContain('0.20');
+  });
+
   it('leads a rank factor with the RAW fact, not the normalised number', () => {
     const cell = cellOf([demand()]);
     const withRaw = {
@@ -312,13 +377,13 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     renderCell(withRaw);
 
     const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
-    expect(rank.textContent).toContain('0.72');
-    expect(rank.textContent).toContain('2026-09-03');
-    expect(rank.textContent).toContain('45 days');
+    const detail = rank.getAttribute('title') ?? '';
+    expect(detail).toContain('2026-09-03');
+    expect(detail).toContain('45 days');
     // The weight never sits beside the value as a bare number: "need_by_date 1.00 x3" reads
-    // to everybody as a weight of 1.00.
+    // to everybody as a weight of 1.00. It is named in the tooltip instead.
     expect(rank.textContent).not.toContain('x3');
-    expect(rank.textContent).not.toContain('1.00');
+    expect(detail).toContain('weighted 3');
   });
 
   it('prints no score at all when the server says the policy separates nothing', () => {
@@ -328,8 +393,34 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     // The live policy scores every row 0.00, and a column of 0.00 reads as a considered
     // ranking rather than as no ranking.
     const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
-    expect(rank.textContent).not.toContain('0.00');
-    expect(rank.textContent).toContain('Not ranked');
+    expect(rank.textContent).toBe('Not ranked');
+  });
+
+  /**
+   * The sentence was identical on all eleven rows because the FACTORS are identical there -
+   * which is a fact about the POLICY, not about any row. Repeating it per row is eleven copies
+   * of one sentence; it belongs once, at the top.
+   */
+  it('states a flat ranking ONCE at the top, never on every row', () => {
+    const cell = cellOf([
+      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+      demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
+    ]);
+    renderCell(cell, true);
+
+    expect(
+      screen.getByText('The active policy separates none of these rows.'),
+    ).toBeInTheDocument();
+    // Once, not once per row.
+    expect(screen.getAllByText('The active policy separates none of these rows.')).toHaveLength(1);
+    expect(screen.queryByText(/not recorded/)).not.toBeInTheDocument();
+  });
+
+  it('says nothing about the policy when it does rank', () => {
+    renderCell(cellOf([demand()]), false);
+    expect(
+      screen.queryByText('The active policy separates none of these rows.'),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -432,20 +523,39 @@ describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
  * footer sits OUTSIDE that region so it can never cover a control.
  */
 describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
-  it('puts the scrolling region between the header and the footer, with the table inside it', () => {
+  it('keeps the scrolling region that stops a row action being covered', () => {
     renderDialog([demand()]);
 
     const body = screen.getByTestId('cell-dialog-body');
     expect(body.className).toContain('overflow-y-auto');
     expect(body.className).toContain('min-h-0');
     expect(body.contains(screen.getByRole('table'))).toBe(true);
-    expect(body.contains(screen.getByRole('button', { name: 'Approve' }))).toBe(true);
+    expect(body.contains(screen.getAllByRole('button', { name: 'Approve' })[0])).toBe(true);
+  });
 
-    // The footer is a SIBLING of the scroll region, never an overlay on top of it.
-    const footer = screen.getByTestId('cell-dialog-footer');
-    expect(footer.contains(body)).toBe(false);
-    expect(body.contains(footer)).toBe(false);
-    expect(footer.parentElement).toBe(body.parentElement);
+  /**
+   * The captain: "don't need this close button, the cross button at top right is enough". A
+   * footer whose only content duplicated the X was a band of chrome earning nothing - and it
+   * was the band that used to paint over the row actions. The scroll layout stays; the footer
+   * does not.
+   */
+  it('has no footer, and the corner X still closes', () => {
+    const onClose = vi.fn();
+    render(
+      <BoardCellBreakdownDialog
+        cell={cellOf([demand()])}
+        bucketLabel="31 Aug 2026"
+        draft={{}}
+        onDecide={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+
+    expect(screen.queryByTestId('cell-dialog-footer')).not.toBeInTheDocument();
+    const closers = screen.getAllByRole('button', { name: 'Close' });
+    expect(closers).toHaveLength(1);
+    fireEvent.click(closers[0]);
+    expect(onClose).toHaveBeenCalled();
   });
 
   it('lays the dialog out as a column so the body is what shrinks, not the footer', () => {
@@ -537,5 +647,120 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     expect(screen.getByTestId('cell-balance').textContent).toBe(
       '15 owed = 0 reserve + 10 incoming + 5 buy',
     );
+  });
+});
+
+/**
+ * Bulk decisions (the captain, pointing at the users list: "I should have a bulk decision
+ * function ... so I can bulk approve / reject, like I can select all then approve / reject").
+ *
+ * The screenshot behind it was eleven identical rows: deciding those one at a time is eleven
+ * presses to say one thing. Same idiom as `/user-management/users` - `buildSelectColumn` with a
+ * header select-all, and the actions appearing in a strip while rows are selected.
+ *
+ * AMEND stays per row, and I agree with the instruction: an amendment is a quantity and a
+ * reason for ONE line, and a single quantity applied to eleven different owed quantities is not
+ * a decision anybody meant to make.
+ */
+describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
+  function threeLines() {
+    return [
+      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+      demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
+      demand({ line_no: 3, so_number: 'SO000003', sales_order_id: 'so-c' }),
+    ];
+  }
+
+  function selectAll() {
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+  }
+
+  it('offers no bulk action until something is selected', () => {
+    renderDialog(threeLines());
+    expect(screen.queryByRole('button', { name: 'Approve selected' })).not.toBeInTheDocument();
+  });
+
+  it('approves every selected row in one press, and says how many are selected', () => {
+    const { onDecide } = renderDialog(threeLines());
+
+    selectAll();
+    expect(screen.getByText('3 selected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
+
+    expect(onDecide).toHaveBeenCalledTimes(3);
+    for (const call of onDecide.mock.calls) {
+      expect(call[1]).toEqual({ verdict: 'approved' });
+    }
+  });
+
+  it('rejects every selected row in one press, with the same reason a single reject carries', () => {
+    const { onDecide } = renderDialog(threeLines());
+
+    selectAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Reject selected' }));
+
+    expect(onDecide).toHaveBeenCalledTimes(3);
+    for (const call of onDecide.mock.calls) {
+      expect(call[1]).toEqual({
+        verdict: 'rejected',
+        reason: 'Rejected on the planning board.',
+      });
+    }
+  });
+
+  it('clears the selection once the bulk decision is made', () => {
+    renderDialog(threeLines());
+
+    selectAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
+
+    expect(screen.queryByText('3 selected')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve selected' })).not.toBeInTheDocument();
+  });
+
+  it('select-all covers exactly the rows of this cell', () => {
+    const { onDecide } = renderDialog(threeLines());
+
+    selectAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
+
+    const keys = onDecide.mock.calls.map((call) => call[0]).sort();
+    expect(keys).toEqual(
+      [
+        'so-a|1|WESERP10B|2026-08-31',
+        'so-b|2|WESERP10B|2026-08-31',
+        'so-c|3|WESERP10B|2026-08-31',
+      ].sort(),
+    );
+  });
+
+  it('will not select a line that cannot be decided, and says why on its own checkbox', () => {
+    const { onDecide } = renderDialog([
+      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+      demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b', fulfilment_location: null }),
+    ]);
+
+    selectAll();
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+    // Twice on purpose: on the checkbox that will not tick, and on the Decision cell that
+    // offers no verb. buildSelectColumn's own rule - the SAME string, so the two cannot drift
+    // into two explanations of one rule.
+    expect(
+      screen.getAllByTitle(
+        'This line cannot be decided here: its sales order states no fulfilment location.',
+      ),
+    ).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide.mock.calls[0][0]).toBe('so-a|1|WESERP10B|2026-08-31');
+  });
+
+  it('leaves the per-row verbs alone: bulk is an addition, not a replacement', () => {
+    const { onDecide } = renderDialog(threeLines());
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Approve' })[0]);
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByRole('button', { name: 'Amend' })).toHaveLength(3);
   });
 });

@@ -4,8 +4,12 @@ import * as React from 'react';
 import {
   ColumnDef,
   PaginationState,
+  Row,
+  RowSelectionState,
+  SortingState,
   getCoreRowModel,
   getPaginationRowModel,
+  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { Card, CardFooter, CardHeader, CardTable, CardTitle } from '@/components/ui/card';
@@ -50,6 +54,10 @@ export function PanelDataGrid<TRow extends object>({
   searchPlaceholder,
   searchOf,
   renderGroupHeader,
+  sortable = false,
+  rowSelection,
+  onRowSelectionChange,
+  enableRowSelection,
   pageSize = 10,
 }: {
   title: string;
@@ -82,6 +90,27 @@ export function PanelDataGrid<TRow extends object>({
    * a second list living beside it.
    */
   renderGroupHeader?: (row: TRow, previousRow: TRow | null) => React.ReactNode | null;
+  /**
+   * Let the reader sort the rows, client-side.
+   *
+   * OPT-IN, and deliberately not the default: a panel holds one record's rows in a meaningful
+   * order (the allocation ranking, the quotation's bill order), and turning sorting on
+   * everywhere would put a live control on every header of fifteen existing panels that never
+   * asked for one. The initial order is always the order the caller passed.
+   */
+  sortable?: boolean;
+  /**
+   * Row selection, for a panel that offers bulk actions.
+   *
+   * The STATE is the caller's, because the actions are: a panel that owns a selection but not
+   * the verbs that act on it can only hand the selection back, which is the same thing with an
+   * extra step. Pass `buildSelectColumn(...)` as the first column and render the strip in
+   * `toolbar`, exactly as the users list does.
+   */
+  rowSelection?: RowSelectionState;
+  onRowSelectionChange?: React.Dispatch<React.SetStateAction<RowSelectionState>>;
+  /** Which rows may be ticked. TanStack reads this from the TABLE, never from the column. */
+  enableRowSelection?: (row: Row<TRow>) => boolean;
   pageSize?: number;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
@@ -89,6 +118,7 @@ export function PanelDataGrid<TRow extends object>({
     pageSize,
   });
   const [search, setSearch] = React.useState('');
+  const [sorting, setSorting] = React.useState<SortingState>([]);
 
   const filtered = React.useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -101,8 +131,21 @@ export function PanelDataGrid<TRow extends object>({
     data: filtered,
     pageCount: Math.ceil(filtered.length / pagination.pageSize) || 0,
     getRowId,
-    state: { pagination },
+    state: {
+      pagination,
+      ...(sortable ? { sorting } : {}),
+      ...(rowSelection ? { rowSelection } : {}),
+    },
+    ...(rowSelection
+      ? {
+          onRowSelectionChange,
+          enableRowSelection: enableRowSelection ?? true,
+        }
+      : {}),
     onPaginationChange: setPagination,
+    ...(sortable
+      ? { onSortingChange: setSorting, getSortedRowModel: getSortedRowModel() }
+      : { enableSorting: false }),
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',

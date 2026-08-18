@@ -78,6 +78,41 @@ SEEDED_WEIGHTS = {
 #: What each resolved demand class is worth, seeded alongside `SEEDED_WEIGHTS`.
 SEEDED_CLASS_WEIGHTS = {"project": 1.0, "retail": 0.4}
 
+#: The policy migration 385 seeds and switches on, after the captain asked for "a fair policy".
+#:
+#: The rule it replaces weighted `po_document_sequence` alone, which no sales-order line can
+#: carry, so every board row scored 0.00 and the ranking ranked nothing. This one weights what
+#: a demand row actually has - and keeps what the purchase-order path already relied on, because
+#: ONE policy serves three moments and a change made for the board reaches container loading:
+#:
+#:   * `need_by_date` 3.0     - the captain's "delivery date", and the strongest voice. It
+#:                              outweighs document age and credit together, so a sooner
+#:                              delivery wins even against an older document from a prompter
+#:                              payer.
+#:   * `demand_class` 3.0     - KEPT at what migration 374 deliberately switched on. On the
+#:                              board it separates nothing (every row is project-class by
+#:                              construction) and only shifts every score by the same amount;
+#:                              on the purchase-order path it is what keeps a line owed to a
+#:                              customer ahead of one owed to nobody.
+#:   * `document_age` 1.0     - the captain's "document date", older first.
+#:   * `customer_credit` 1.0  - shorter payment terms first. Absent for a purchase-order
+#:                              candidate, and absent for a customer nobody has assessed, which
+#:                              in both cases means DROPPED from the average rather than zeroed.
+#:   * `po_document_sequence` 1.0 - the buyer's original rule, kept as the tie-break it always
+#:                              should have been. Absent on every board row, so it costs the
+#:                              board nothing.
+#:
+#: Reversible by flipping back: the migration leaves the previous row present and inactive.
+FAIR_POLICY_NAME = "Fair fulfilment priority (delivery date, document date, customer credit)"
+FAIR_WEIGHTS = {
+    "po_document_sequence": 1.0,
+    "demand_class": 3.0,
+    "need_by_date": 3.0,
+    "document_age": 1.0,
+    "customer_credit": 1.0,
+}
+FAIR_CLASS_WEIGHTS = {"project": 1.0, "retail": 0.4}
+
 #: The named what-if the fulfilment board offers (PLAN 13.5, recommendation 3 then 2).
 #:
 #: It is NOT a second active policy - the partial unique index allows exactly one, and two

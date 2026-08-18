@@ -79,9 +79,10 @@ def list_fulfilment_planning(
     query: Optional[str] = Query(
         None,
         description=(
-            "Matches the sales-order number, customer name, the Order Inquiry project "
-            "string, provisional ref, AutoCount doc no, area group, project code or "
-            "project title"
+            "One box. Matches the sales-order number, the customer name, the project "
+            "label, or a PRODUCT (item code or name) on any of the order's outstanding "
+            "lines. Also the provisional ref, AutoCount doc no and area group of an "
+            "authored record."
         ),
     ),
     # A closed set, so an unknown value is a 422 rather than a 200 with an empty list:

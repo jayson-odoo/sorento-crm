@@ -1626,6 +1626,24 @@ class ProjectSupplyService:
             else None
         )
 
+    def held_stock_by_location(
+        self, product_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """What CONFIRMED decisions are holding, per `(product_id, warehouse_id)`.
+
+        The third term of the free-stock arithmetic, exposed so a screen can print it: on hand,
+        less reserved, less THIS, is what `free_stock_by_location` answers. Without it a strip
+        showing 478 on hand and 478 free looks like a rounding error rather than the truth that
+        nothing is committed yet.
+        """
+        ids = [pid for pid in product_ids if pid]
+        if not ids:
+            return {}
+        out: Dict[Tuple[str, str], Decimal] = {}
+        for key, _project_id, qty in self._hold_rows(ids, exclude_order_id=None):
+            out[key] = out.get(key, _ZERO) + qty
+        return out
+
     def stock_levels_by_location(
         self, product_ids: Iterable[str]
     ) -> Dict[Tuple[str, str], Tuple[Decimal, Decimal]]:

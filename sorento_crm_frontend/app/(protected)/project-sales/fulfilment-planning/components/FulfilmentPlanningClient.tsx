@@ -601,7 +601,7 @@ export function FulfilmentPlanningClient() {
                     aria-hidden
                   />
                   <Input
-                    placeholder="Search sales order, project or customer"
+                    placeholder="Search sales order, customer, project or product"
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     className="w-full ps-9 sm:w-72"

@@ -45,6 +45,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -54,7 +55,7 @@ from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
 from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, _dec, _open_of
 from app.services.scm import priority
-from app.services.scm.demand import is_open_demand
+from app.services.scm.demand import demand_qty, is_open_demand, is_plan_demand_line
 from app.services.scm.front_planning_engine import (
     BUY,
     RESERVE,
@@ -234,6 +235,10 @@ class FulfilmentBoardService:
         self._incoming: Dict[Tuple[str, str], List[Any]] = {}
         # Core line id -> how the confirm endpoint names it (planning record, mirror line).
         self._addressing: Dict[str, Dict[str, Any]] = {}
+        # (product, warehouse) -> (owed by the whole book, of which confirmed) and what
+        # confirmed decisions hold there. Read once, printed beside the free figure.
+        self._pressure: Dict[Tuple[str, str], Tuple[Decimal, Decimal]] = {}
+        self._held: Dict[Tuple[str, str], Decimal] = {}
 
     # ----------------------------------------------------------------- public
 
@@ -505,6 +510,69 @@ class FulfilmentBoardService:
             rows.append(row)
         return rows
 
+    def _demand_pressure(
+        self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], Tuple[Decimal, Decimal]]:
+        """`(owed by the whole book, of which already covered by a confirmed decision)`.
+
+        The captain, reading a cell that said 478 free beside 482 owed: "why is everything
+        free, are you sure there is no SO occupying this?" They were right to doubt it - 47,009
+        was owed at that location across 289 open lines, and `_free_stock` nets only
+        `stock.quantity_reserved` and holds belonging to CONFIRMED decisions, of which the book
+        has two. So "free" is very nearly raw on-hand, and printing it alone invites exactly
+        that wrong conclusion.
+
+        This changes NO allocation. It states the pressure beside the pile.
+
+        The predicate is the shared one, not a private restatement: `is_open_demand()` plus
+        `SalesOrder.status = 'open'`, which is what the worklist, the netting engine and
+        `scm.committed_v` all mean by outstanding - so the two screens cannot disagree about
+        what is owed. Deliberately NOT narrowed to `demand_class = 'project'`: that filter says
+        which orders this screen may PLAN, and the question here is what occupies the stock,
+        which a dealer order does just as well as a project one.
+
+        The quantity is `demand_qty()` - `coalesce(qty_required, qty_ordered) - delivered`,
+        floored - the same figure the netting engine sums, so a planner comparing this against
+        the reorder plan sees one number. It can differ from a board row's own
+        `qty_outstanding`, which is what is owed the CUSTOMER (AC-B01) rather than what
+        purchasing was asked to cover; they differ only where CS has stated a `qty_required`.
+
+        "Covered" is per LINE, through `is_plan_demand_line()`, so a partially confirmed order
+        contributes only its confirmed lines - the same rule `committed_v` applies since
+        migration 384, rather than a second opinion about what a decision covers.
+        """
+        pids = [pid for pid in product_ids if pid]
+        wids = [wid for wid in warehouse_ids if wid]
+        if not pids or not wids:
+            return {}
+        owed = demand_qty()
+        rows = (
+            self.db.query(
+                SalesOrderLine.product_id,
+                SalesOrderLine.warehouse_id,
+                func.coalesce(func.sum(owed), 0).label("owed"),
+                func.coalesce(
+                    func.sum(case((~is_plan_demand_line(), owed), else_=0)), 0
+                ).label("confirmed"),
+            )
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(
+                SalesOrderLine.product_id.in_(pids),
+                SalesOrderLine.warehouse_id.in_(wids),
+                SalesOrder.status == "open",
+                is_open_demand(),
+            )
+            .group_by(SalesOrderLine.product_id, SalesOrderLine.warehouse_id)
+            .all()
+        )
+        return {
+            (str(row.product_id), str(row.warehouse_id)): (
+                _dec(row.owed),
+                _dec(row.confirmed),
+            )
+            for row in rows
+        }
+
     def _customers(self, customer_ids: Iterable[str]) -> Dict[str, str]:
         ids = [cid for cid in customer_ids if cid]
         if not ids:
@@ -650,6 +718,8 @@ class FulfilmentBoardService:
         # from.
         free = self._free = self.supply.free_stock_by_location(product_ids)
         self._levels = self.supply.stock_levels_by_location(product_ids)
+        self._held = self.supply.held_stock_by_location(product_ids)
+        self._pressure = self._demand_pressure(product_ids, warehouse_ids)
         spo = self._incoming = self.supply.incoming_by_location(product_ids, warehouse_ids)
         facts = self.supply.demand_facts(
             [
@@ -913,6 +983,23 @@ class FulfilmentBoardService:
             "qty_free_remaining": (
                 qty_text(first.free_before) if stated and first.free_before is not None
                 else None
+            ),
+            #: What confirmed decisions are holding here. On hand, less reserved, less this, IS
+            #: `qty_free`, so the arithmetic on screen closes rather than looking like a
+            #: rounding error.
+            "qty_held_by_decisions": (
+                qty_text(self._held.get(key, _ZERO)) if stated else None
+            ),
+            #: What the WHOLE BOOK still owes at this location - every open line of every open
+            #: sales order, not merely the ones on this board. The number that stops "478 free"
+            #: being read as "478 available to me" when 47,009 is owed.
+            "qty_owed_all_orders": (
+                qty_text(self._pressure.get(key, (_ZERO, _ZERO))[0]) if stated else None
+            ),
+            #: Of that, the part already covered by a confirmed decision, so committed pressure
+            #: can be told from uncommitted pressure.
+            "qty_owed_confirmed": (
+                qty_text(self._pressure.get(key, (_ZERO, _ZERO))[1]) if stated else None
             ),
             #: Still to arrive at this location: allocated on a supply PO, not yet received.
             "qty_incoming": (

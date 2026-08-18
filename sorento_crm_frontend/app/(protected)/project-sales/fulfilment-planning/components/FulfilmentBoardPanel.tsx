@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
+  useFulfilmentPlanningMutations,
   useReconciliationMutations,
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
@@ -23,6 +24,7 @@ import {
   bucketLabelText,
   commitPreviewFor,
   confirmLinesFor,
+  plannedLineCount,
   standingsFor,
   unpostableDecidedFor,
 } from '../../_shared/lib/fulfilmentBoard';
@@ -120,6 +122,7 @@ export function FulfilmentBoardPanel({
   const decidedKeys = React.useMemo(() => new Set(Object.keys(draft)), [draft]);
 
   const { confirm } = useReconciliationMutations();
+  const { adopt } = useFulfilmentPlanningMutations();
   /** Which order is in flight, and what the server refused, per order. */
   const [confirming, setConfirming] = React.useState<string | null>(null);
   const [refusals, setRefusals] = React.useState<Record<string, SupplyFailingLine[]>>({});
@@ -138,16 +141,64 @@ export function FulfilmentBoardPanel({
    */
   const confirmOrder = React.useCallback(
     async (standing: BoardOrderStanding) => {
-      const psoId = standing.project_sales_order_id;
-      if (!psoId || !board.data) return;
-      const contributions = board.data.cells.flatMap((cell) => cell.contributions);
-      const lines = confirmLinesFor(contributions, standing.sales_order_id, draft);
-      if (lines.length === 0) return;
-
+      if (!board.data) return;
       setConfirming(standing.sales_order_id);
       setRefusals((current) => ({ ...current, [standing.sales_order_id]: [] }));
+
+      let psoId = standing.project_sales_order_id ?? null;
+      let contributions = board.data.cells.flatMap((cell) => cell.contributions);
+
       try {
-        await confirm.mutateAsync({ psoId, body: { lines } });
+        // ADOPT FIRST when there is no planning record. Deciding lines and pressing Confirm is
+        // the whole act as far as the planner is concerned, and refusing at the last step after
+        // they have composed nine orders is the dead end this exists to remove. Adoption is
+        // idempotent, so a second press or a second user lands on the same record.
+        if (!psoId) {
+          let adopted;
+          try {
+            adopted = await adopt.mutateAsync(standing.sales_order_id);
+          } catch (error) {
+            setRefusals((current) => ({
+              ...current,
+              [standing.sales_order_id]: [
+                {
+                  reason: `Could not start planning this sales order: ${
+                    error instanceof Error ? error.message : 'the request was refused.'
+                  }`,
+                },
+              ],
+            }));
+            return;
+          }
+          psoId = adopted.project_sales_order_id;
+          // The board MUST be re-read before the body is built: `project_line_id` is null on
+          // every contribution until the mirror lines exist, so anything built a moment ago
+          // names nothing. The ids are asked for, never guessed.
+          const fresh = await board.refetch();
+          if (!fresh.data) {
+            setRefusals((current) => ({
+              ...current,
+              [standing.sales_order_id]: [
+                { reason: 'Planning started, but the board could not be re-read. Try again.' },
+              ],
+            }));
+            return;
+          }
+          contributions = fresh.data.cells.flatMap((cell) => cell.contributions);
+        }
+
+        const lines = confirmLinesFor(contributions, standing.sales_order_id, draft);
+        if (lines.length === 0) {
+          setRefusals((current) => ({
+            ...current,
+            [standing.sales_order_id]: [
+              { reason: 'None of the decided lines could be confirmed against this order yet.' },
+            ],
+          }));
+          return;
+        }
+
+        await confirm.mutateAsync({ psoId: psoId as string, body: { lines } });
         const committed = new Set(lines.map((line) => line.project_line_id));
         setDraft((current) => {
           const next = { ...current };
@@ -182,7 +233,7 @@ export function FulfilmentBoardPanel({
         setConfirming(null);
       }
     },
-    [board.data, confirm, draft],
+    [board, confirm, adopt, draft],
   );
 
   /**
@@ -228,7 +279,11 @@ export function FulfilmentBoardPanel({
         standing.sales_order_id,
         commitPreviewFor(
           standing,
-          confirmLinesFor(contributions, standing.sales_order_id, draft).length,
+          // On an adopted order the body is the truth; on one that has not been adopted the
+          // body cannot exist yet, so the verdicts are, and the press adopts before building.
+          standing.project_sales_order_id
+            ? confirmLinesFor(contributions, standing.sales_order_id, draft).length
+            : plannedLineCount(contributions, standing.sales_order_id, draft),
         ),
       ]),
     );
@@ -241,7 +296,12 @@ export function FulfilmentBoardPanel({
     return Object.fromEntries(
       standings.map((standing) => [
         standing.sales_order_id,
-        unpostableDecidedFor(contributions, standing.sales_order_id, draft),
+        unpostableDecidedFor(
+          contributions,
+          standing.sales_order_id,
+          draft,
+          Boolean(standing.project_sales_order_id),
+        ),
       ]),
     );
   }, [standings, board.data, draft]);
@@ -494,9 +554,6 @@ function OrderCommitRow({
   const committing = preview?.committing ?? 0;
   const leaving = preview?.leaving_undecided ?? 0;
   const blocked = preview?.blocked ?? 0;
-  // An order nobody has adopted has no planning record, and the confirm endpoint is keyed on
-  // one. Saying so beats a button that posts to a path that does not exist.
-  const plannable = Boolean(standing.project_sales_order_id);
   return (
     <div className="space-y-2 rounded-lg border border-border px-3 py-2.5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -516,22 +573,20 @@ function OrderCommitRow({
           {/* What this press would actually do, stated before it is pressed. The counter above
               is information; this is the consequence. */}
           <span className="min-w-0 text-sm text-muted-foreground break-words">
-            {!plannable
-              ? 'Nobody has started planning this sales order yet.'
-              : committing === 0
+            {committing === 0
                 ? 'Nothing decided yet on this order.'
                 : leaving === 0
                   ? `Confirms all ${committing}.`
-                  : `Confirms ${committing}, leaves ${leaving} undecided for reorder planning${
-                      blocked > 0
-                        ? ` (${blocked} of them need a location on the sales order)`
-                        : ''
-                    }.`}
+                : `Confirms ${committing}, leaves ${leaving} undecided for reorder planning${
+                    blocked > 0
+                      ? ` (${blocked} of them need a location on the sales order)`
+                      : ''
+                  }.`}
           </span>
           <Button
             type="button"
             size="sm"
-            disabled={committing === 0 || !plannable || busy}
+            disabled={committing === 0 || busy}
             onClick={onConfirm}
           >
             {/* "Confirm 0 lines" on an untouched order would be a button describing nothing.
